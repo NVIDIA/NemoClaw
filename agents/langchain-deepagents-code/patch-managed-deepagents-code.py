@@ -4,8 +4,9 @@
 
 # Source-of-truth review for this pinned third-party patch boundary:
 # invalidState: upstream entrypoints can independently enable credential stores,
-# ambient MCP discovery, update/install flows, or child-process config paths that
-# bypass NemoClaw's managed inference, policy, and integrity-bound MCP boundaries.
+# ambient MCP discovery, update/install flows, first-run model selection, or
+# child-process config paths that bypass NemoClaw's managed inference, policy,
+# and integrity-bound MCP boundaries.
 # sourceBoundary: deepagents-code owns those Python entrypoints; NemoClaw owns the
 # sandbox image posture and therefore validates every patched symbol before build.
 # whyNotSourceFix: upstream 0.1.30 has no single managed-runtime hook that can
@@ -861,6 +862,15 @@ def _nemoclaw_select_with_auth_check(self, model_spec: str, provider: str) -> No
 ModelSelectorScreen._select_with_auth_check = _nemoclaw_select_with_auth_check
 '''
 
+ONBOARDING_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+def should_run_onboarding(state_dir=None) -> bool:
+    """Skip upstream first-run setup because NemoClaw owns model configuration."""
+    del state_dir
+    return False
+'''
+
 
 def _top_level_functions(tree: ast.Module) -> set[str]:
     return {
@@ -953,6 +963,7 @@ def main() -> None:
         "auth_ui": root / "widgets" / "auth.py",
         "codex_ui": root / "widgets" / "codex_auth.py",
         "model_selector": root / "widgets" / "model_selector.py",
+        "onboarding": root / "onboarding.py",
         "approval": root / "widgets" / "approval.py",
         "server": root / "server.py",
         "server_config": root / "_server_config.py",
@@ -1090,6 +1101,9 @@ def main() -> None:
         "ModelSelectorScreen",
         {"_select_with_auth_check"},
     )
+    _require_functions(
+        paths["onboarding"], texts["onboarding"], {"should_run_onboarding"}
+    )
     _require_methods(
         paths["approval"],
         texts["approval"],
@@ -1163,6 +1177,9 @@ def main() -> None:
     )
     transformed["model_selector"] = _append_patch(
         paths["model_selector"], texts["model_selector"], MODEL_SELECTOR_PATCH
+    )
+    transformed["onboarding"] = _append_patch(
+        paths["onboarding"], texts["onboarding"], ONBOARDING_PATCH
     )
     transformed["approval"] = _append_patch(
         paths["approval"], texts["approval"], APPROVAL_PATCH

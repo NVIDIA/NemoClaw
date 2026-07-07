@@ -32,6 +32,14 @@ export function checkRebuildGatewaySchemaPreflight(
   return true;
 }
 
+export async function runRebuildGatewayIntentPreflight<T>(options: {
+  checkGatewaySchema: () => boolean;
+  confirmIntent: () => Promise<T | null>;
+}): Promise<T | null> {
+  if (!options.checkGatewaySchema()) return null;
+  return options.confirmIntent();
+}
+
 export function getRebuildSandboxEntryOrBail(
   sandboxName: string,
   bail: RebuildBail,

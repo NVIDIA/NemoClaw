@@ -614,6 +614,74 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
+  it("tolerates verbose npm metadata output when installing the Teams plugin (#6389)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-teams-npm-buffer-"));
+    const tracePath = path.join(tmp, "openclaw.trace");
+    fs.writeFileSync(
+      path.join(tmp, "npm"),
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        "const path = require('node:path');",
+        "const [command, packageSpec, fieldOrFlag, destination] = process.argv.slice(2);",
+        "fs.appendFileSync(process.env.OPENCLAW_TRACE, `npm|${command}|${packageSpec}|${fieldOrFlag || ''}\\n`);",
+        "process.stderr.write('npm notice verbose teams metadata '.repeat(50000));",
+        "if (command === 'view' && packageSpec === '@openclaw/msteams@2026.6.10' && fieldOrFlag === 'dist.integrity') {",
+        "  process.stdout.write(`${process.env.OPENCLAW_MSTEAMS_2026_6_10_INTEGRITY}\\n`);",
+        "  process.exit(0);",
+        "}",
+        "if (command === 'view' && packageSpec === '@openclaw/msteams@2026.6.10' && fieldOrFlag === 'dist.tarball') {",
+        "  process.stdout.write('https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.6.10.tgz\\n');",
+        "  process.exit(0);",
+        "}",
+        "if (command === 'pack' && packageSpec === '@openclaw/msteams@2026.6.10') {",
+        "  const packFile = 'msteams-2026.6.10.tgz';",
+        "  fs.writeFileSync(path.join(destination, packFile), 'fake plugin tarball');",
+        "  process.stdout.write(JSON.stringify([{ filename: packFile, integrity: process.env.OPENCLAW_MSTEAMS_2026_6_10_INTEGRITY }]) + '\\n');",
+        "  process.exit(0);",
+        "}",
+        "process.exit(1);",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(tmp, "openclaw"),
+      [
+        "#!/bin/sh",
+        'printf \'openclaw|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" >> "$OPENCLAW_TRACE"',
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = await withLegacyMessagingPlanEnvDirect(
+        {
+          PATH: `${tmp}:${TEST_PATH}`,
+          OPENCLAW_TRACE: tracePath,
+          OPENCLAW_MSTEAMS_2026_6_10_INTEGRITY,
+          OPENCLAW_VERSION: "2026.6.10",
+          NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["teams"]),
+          NEMOCLAW_TEAMS_CONFIG_B64: teamsConfigB64(),
+        },
+        "openclaw",
+      );
+      const plan = readMessagingBuildPlanFromEnv(env, "openclaw");
+
+      expect(applyMessagingBuildPhase(plan, "agent-install", env)).toEqual([]);
+      const trace = fs.readFileSync(tracePath, "utf-8");
+      expect(trace).toContain("npm|view|@openclaw/msteams@2026.6.10|dist.integrity");
+      expect(trace).toContain("npm|view|@openclaw/msteams@2026.6.10|dist.tarball");
+      expect(trace).toContain("npm|pack|@openclaw/msteams@2026.6.10|--pack-destination");
+      expect(trace).toContain("openclaw|plugins|install|");
+      expect(trace).toContain("msteams-2026.6.10.tgz|--pin");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed before installing reviewed OpenClaw plugins absent from active channel manifests", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-package-plan-"));
     const tracePath = path.join(tmp, "openclaw.trace");

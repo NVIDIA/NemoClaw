@@ -145,6 +145,18 @@ def cli_main():
   );
   writeFixtureFile(
     packageDir,
+    "onboarding.py",
+    `
+from __future__ import annotations
+
+
+def should_run_onboarding(state_dir=None):
+    del state_dir
+    return True
+`,
+  );
+  writeFixtureFile(
+    packageDir,
     "app.py",
     fs.readFileSync(
       path.join(process.cwd(), "test", "fixtures", "langchain-deepagents-code", "app.py"),
@@ -627,6 +639,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "widgets/auth.py",
       "widgets/codex_auth.py",
       "widgets/model_selector.py",
+      "onboarding.py",
       "widgets/approval.py",
       "server.py",
       "_server_config.py",
@@ -657,6 +670,30 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ]) {
       expect(main).toContain(expected);
     }
+  });
+
+  it("skips the upstream first-run model picker in managed interactive sessions (#6410)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        "from deepagents_code.onboarding import should_run_onboarding; print(should_run_onboarding())",
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          DEEPAGENTS_CODE_DEBUG_ONBOARDING: "1",
+        },
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("False\n");
   });
 
   it.each([
