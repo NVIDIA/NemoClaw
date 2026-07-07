@@ -408,11 +408,18 @@ export function printDashboardUi(
   deps: {
     note: (msg: string) => void;
     buildControlUiUrls: (token: string | null, port: number) => string[];
+    effectiveDashboardPort?: number;
   },
 ): void {
   const info = getAgentDashboardInfo(agent);
   const { auth, kind, label, path } = agent.dashboard;
   const cliName = getAgentBranding(agent.name).cli;
+  const effectiveDashboardPort =
+    Number.isInteger(deps.effectiveDashboardPort) &&
+    Number(deps.effectiveDashboardPort) >= 1 &&
+    Number(deps.effectiveDashboardPort) <= 65535
+      ? Number(deps.effectiveDashboardPort)
+      : info.port;
 
   if (kind === "api") {
     console.log(`  ${info.displayName} ${label}`);
@@ -433,20 +440,24 @@ export function printDashboardUi(
 
   if (auth !== "url_token") {
     console.log(`  ${info.displayName} ${label}`);
-    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
-    for (const url of deps.buildControlUiUrls(null, info.port)) {
+    console.log(`  Port ${effectiveDashboardPort} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(null, effectiveDashboardPort)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
     printBearerTokenApiAccess(sandboxName, agent, cliName);
-    printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
-    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
+    printOptionalDashboardUi(agent, {
+      ...deps,
+      effectiveDashboardPort,
+      redactUrl: dashboardUrlForDisplay,
+    });
+    printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
     return;
   }
 
   if (token) {
     console.log(`  ${info.displayName} ${label} (auth token redacted from displayed URLs)`);
-    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
-    for (const url of deps.buildControlUiUrls(token, info.port)) {
+    console.log(`  Port ${effectiveDashboardPort} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(token, effectiveDashboardPort)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
     console.log(`  Token: ${cliName} ${sandboxName} gateway-token --quiet`);
@@ -454,13 +465,17 @@ export function printDashboardUi(
   } else {
     deps.note("  Could not read gateway token from the sandbox (download failed).");
     console.log(`  ${info.displayName} ${label}`);
-    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
-    for (const url of deps.buildControlUiUrls(null, info.port)) {
+    console.log(`  Port ${effectiveDashboardPort} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(null, effectiveDashboardPort)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
   }
-  printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
-  printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
+  printOptionalDashboardUi(agent, {
+    ...deps,
+    effectiveDashboardPort,
+    redactUrl: dashboardUrlForDisplay,
+  });
+  printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
 }
 
 /**
@@ -493,7 +508,7 @@ function printAdditionalForwardPorts(
   const apiPort = agent.healthProbe?.port;
   for (const port of declared) {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) continue;
-    if (port === primaryPort) continue;
+    if (port === primaryPort || port === agent.forwardPort) continue;
     const isApi = port === apiPort;
     const sectionLabel = isApi ? "OpenAI-compatible API" : "additional port";
     console.log("");

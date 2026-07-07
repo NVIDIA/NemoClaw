@@ -11,17 +11,36 @@ import {
 } from "./hermes-dashboard";
 
 describe("onboard Hermes dashboard helpers", () => {
-  it("uses the effective NemoClaw dashboard port as the Hermes WebUI public port (#6277)", () => {
+  it("uses a non-default NEMOCLAW_DASHBOARD_PORT as the Hermes WebUI public port (#6277)", () => {
     expect(
       resolveHermesDashboardOnboardState({
         agentName: "hermes",
-        effectivePort: 9119,
+        effectivePort: 9120,
+        env: {
+          NEMOCLAW_DASHBOARD_PORT: "9120",
+          NEMOCLAW_HERMES_DASHBOARD: "1",
+        },
+      }),
+    ).toMatchObject({
+      enabled: true,
+      config: {
+        port: 9120,
+        internalPort: 19119,
+      },
+    });
+  });
+
+  it("uses a non-default --control-ui-port as the Hermes WebUI public port (#6277)", () => {
+    expect(
+      resolveHermesDashboardOnboardState({
+        agentName: "hermes",
+        effectivePort: 9121,
         env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
       }),
     ).toMatchObject({
       enabled: true,
       config: {
-        port: 9119,
+        port: 9121,
         internalPort: 19119,
       },
     });
@@ -182,6 +201,9 @@ describe("onboard Hermes dashboard helpers", () => {
 
     expect(() => ensure("my-hermes", true)).toThrow(/Failed to start Hermes dashboard forward/);
     expect(rollback).toHaveBeenCalledWith("my-hermes");
-    expect(fail).toHaveBeenCalled();
+    expect(fail).toHaveBeenCalledWith(
+      expect.stringMatching(/set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N>/i),
+    );
+    expect(fail.mock.calls[0]?.[0]).not.toContain("NEMOCLAW_HERMES_DASHBOARD_PORT");
   });
 });

@@ -38,21 +38,25 @@ export function resolveSandboxDashboardPort(
   sandboxName: string,
   deps: SandboxPortDeps = {},
 ): number {
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const sandbox = getSandbox(sandboxName);
+  if (isValidPort(sandbox?.dashboardPort)) {
+    return sandbox.dashboardPort;
+  }
+
   const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName);
   if (agent && agentRuntime.hasGatewayRuntime(agent) && isValidPort(agent.forwardPort)) {
     return agent.forwardPort;
   }
 
-  const getSandbox = deps.getSandbox ?? registry.getSandbox;
-  const sandbox = getSandbox(sandboxName);
-  return isValidPort(sandbox?.dashboardPort) ? sandbox.dashboardPort : DASHBOARD_PORT;
+  return DASHBOARD_PORT;
 }
 
 /**
  * Re-establish the dashboard port forward to the sandbox.
- * Uses the recorded dashboard port for OpenClaw sandboxes, or the agent's
- * declared forward port when a non-OpenClaw agent is active.
+ * Uses the recorded dashboard port when available, including custom ports for
+ * non-OpenClaw agents, then falls back to the active agent's declared port.
  * Returns true when `forward start` succeeded and a follow-up probe
  * confirms the new entry is running, false otherwise.
  */

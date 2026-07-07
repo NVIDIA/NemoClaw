@@ -4905,7 +4905,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         sandbox: {
           resumeAgentChanged,
-          controlUiPort: opts.controlUiPort || null,
+          controlUiPort: _preflightDashboardPort,
           rootDir: ROOT,
         },
         sandboxDeps: {

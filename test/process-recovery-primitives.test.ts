@@ -59,11 +59,20 @@ describe("resolveSandboxDashboardPort", () => {
     ).toBe(18789);
   });
 
-  it("keeps non-OpenClaw agents on their declared forward port", () => {
+  it("keeps non-OpenClaw agents on their recorded custom dashboard port (#6277)", () => {
     expect(
       resolveSandboxDashboardPort("hermes-box", {
         getSessionAgent: () => ({ forwardPort: 8642 }),
         getSandbox: () => ({ name: "hermes-box", dashboardPort: 18790 }),
+      }),
+    ).toBe(18790);
+  });
+
+  it("falls back to a non-OpenClaw agent's declared port without registry metadata", () => {
+    expect(
+      resolveSandboxDashboardPort("hermes-box", {
+        getSessionAgent: () => ({ forwardPort: 8642 }),
+        getSandbox: () => null,
       }),
     ).toBe(8642);
   });
