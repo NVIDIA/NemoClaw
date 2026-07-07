@@ -330,6 +330,8 @@ describe("runInferenceSet compatible providers", () => {
               provider === "compatible-endpoint"
                 ? "COMPATIBLE_API_KEY"
                 : "COMPATIBLE_ANTHROPIC_API_KEY",
+            inferenceApi:
+              provider === "compatible-endpoint" ? "openai-completions" : "anthropic-messages",
           },
           deps,
         ),

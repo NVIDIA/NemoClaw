@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 
-import { describe, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createSetupNimOllamaHandlers } from "./setup-nim-ollama";
 import type { SetupNimSelectionState } from "./setup-nim-selection";
@@ -61,6 +61,92 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
 }
 
 describe("createSetupNimOllamaHandlers", () => {
+  it("guards the selected route before systemd recovery and model preparation (#6315)", async () => {
+    const events: string[] = [];
+    const state = makeState();
+    state.assertRouteCompatible = () => {
+      events.push(`guard:${String(state.model)}`);
+      return {
+        requiredModel: "required/model",
+        requiredEndpointUrl: null,
+        requiredInferenceApi: null,
+      };
+    };
+    const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        ensureOllamaLoopbackSystemdOverride: () => {
+          events.push("systemd");
+          return "unchanged";
+        },
+        selectAndValidateOllamaModel: async (_gpu, _provider, args, onModelSelected) => {
+          expect(args.lockedModel).toBe("required/model");
+          events.push("prepare-model");
+          onModelSelected?.("required/model");
+          return { outcome: "selected", model: "required/model", allowToolsIncompatible: false };
+        },
+      }),
+    );
+
+    await handleRunningOllamaSelection(null, "required/model", null, true, state);
+
+    expect(events).toEqual([
+      "guard:required/model",
+      "systemd",
+      "prepare-model",
+      "guard:required/model",
+    ]);
+  });
+
+  it("does not install Ollama when shared-gateway preflight rejects", async () => {
+    const state = makeState();
+    state.assertRouteCompatible = () => {
+      throw new Error("route conflict");
+    };
+    const install = vi.fn(() => ({ ok: true }));
+    const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({ installOllamaOnLinux: install, installOllamaOnMacOS: install }),
+    );
+
+    await expect(
+      handleInstallOllamaSelection(null, "conflict/model", null, state, {
+        hasUpgradableOllama: false,
+      }),
+    ).rejects.toThrow("route conflict");
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  it("does not switch, install, or restart Windows Ollama when preflight rejects", async () => {
+    const state = makeState();
+    state.assertRouteCompatible = () => {
+      throw new Error("route conflict");
+    };
+    const switchHost = vi.fn();
+    const install = vi.fn(async () => ({ ok: true }));
+    const restart = vi.fn(() => true);
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        switchToWindowsOllamaHost: switchHost,
+        installOllamaOnWindowsHost: install,
+        setupWindowsOllamaWith0000Binding: restart,
+      }),
+    );
+
+    await expect(
+      handleWindowsHostOllamaSelection(
+        null,
+        "start-windows-ollama",
+        "conflict/model",
+        true,
+        false,
+        null,
+        state,
+      ),
+    ).rejects.toThrow("route conflict");
+    expect(switchHost).not.toHaveBeenCalled();
+    expect(install).not.toHaveBeenCalled();
+    expect(restart).not.toHaveBeenCalled();
+  });
+
   it("preserves accepted tools-incompatible state for running Ollama", async () => {
     const state = makeState();
     const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(makeDeps());

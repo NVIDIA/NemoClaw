@@ -2,13 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parseGatewayInference } from "../inference/config";
+import {
+  type CurrentGatewayRouteCompatibilityCheck,
+  type CurrentGatewayRouteDiscoveryPreflight,
+  checkGatewayRouteCompatibility as checkGatewayRouteCompatibilityForRegistry,
+  preflightGatewayRouteDiscovery as preflightGatewayRouteDiscoveryForRegistry,
+} from "../inference/gateway-route-compatibility";
+import { listSandboxes } from "../state/registry";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string | null;
 
-export function createInferenceRouteHelpers(runCaptureOpenshell: RunCaptureOpenshell) {
-  function verifyInferenceRoute(provider: string, model: string): void {
+export function createInferenceRouteHelpers(
+  runCaptureOpenshell: RunCaptureOpenshell,
+  listSandboxesFn: typeof listSandboxes = listSandboxes,
+) {
+  function verifyInferenceRoute(gatewayName: string, provider: string, model: string): void {
     const live = parseGatewayInference(
-      runCaptureOpenshell(["inference", "get"], { ignoreError: true }),
+      runCaptureOpenshell(["inference", "get", "-g", gatewayName], { ignoreError: true }),
     );
     if (!live) {
       console.error("  OpenShell inference route was not configured.");
@@ -22,12 +32,29 @@ export function createInferenceRouteHelpers(runCaptureOpenshell: RunCaptureOpens
     }
   }
 
-  function isInferenceRouteReady(provider: string, model: string): boolean {
+  function isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean {
     const live = parseGatewayInference(
-      runCaptureOpenshell(["inference", "get"], { ignoreError: true }),
+      runCaptureOpenshell(["inference", "get", "-g", gatewayName], { ignoreError: true }),
     );
     return Boolean(live && live.provider === provider && live.model === model);
   }
 
-  return { verifyInferenceRoute, isInferenceRouteReady };
+  const checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck = (request) =>
+    checkGatewayRouteCompatibilityForRegistry({
+      ...request,
+      sandboxes: listSandboxesFn().sandboxes,
+    });
+
+  const preflightGatewayRouteDiscovery: CurrentGatewayRouteDiscoveryPreflight = (request) =>
+    preflightGatewayRouteDiscoveryForRegistry({
+      ...request,
+      sandboxes: listSandboxesFn().sandboxes,
+    });
+
+  return {
+    verifyInferenceRoute,
+    isInferenceRouteReady,
+    checkGatewayRouteCompatibility,
+    preflightGatewayRouteDiscovery,
+  };
 }

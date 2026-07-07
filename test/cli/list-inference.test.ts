@@ -20,7 +20,7 @@ import {
 
 describe("CLI dispatch", () => {
   it(
-    "redirects `inference set` to openshell when provider or model is missing",
+    "keeps `inference set` inside NemoClaw when provider or model is missing",
     () => {
       for (const argv of [
         "inference set 2>&1",
@@ -29,11 +29,13 @@ describe("CLI dispatch", () => {
       ]) {
         const r = run(argv);
         expect(r.code, `nemoclaw ${argv}`).toBe(1);
-        expect(r.out, `nemoclaw ${argv}`).toContain("Unknown nemoclaw command: inference set");
-        expect(r.out, `nemoclaw ${argv}`).toContain("This operation belongs to OpenShell.");
         expect(r.out, `nemoclaw ${argv}`).toContain(
-          "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
+          "nemoclaw inference set requires --provider and --model",
         );
+        expect(r.out, `nemoclaw ${argv}`).toContain(
+          "Run: nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>]",
+        );
+        expect(r.out, `nemoclaw ${argv}`).not.toContain("openshell inference set");
         expect(r.out, `nemoclaw ${argv}`).not.toContain("Missing required flag");
         expect(r.out, `nemoclaw ${argv}`).not.toContain("FailedFlagValidationError");
         expect(r.out, `nemoclaw ${argv}`).not.toContain("node_modules/@oclif/core");
@@ -65,11 +67,11 @@ describe("CLI dispatch", () => {
         hermesCode = result.code;
       }
       expect(hermesCode).toBe(1);
-      expect(hermesOut).toContain("Unknown nemohermes command: inference set");
-      expect(hermesOut).toContain("This operation belongs to OpenShell.");
+      expect(hermesOut).toContain("nemohermes inference set requires --provider and --model");
       expect(hermesOut).toContain(
-        "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
+        "Run: nemohermes inference set --provider <provider> --model <model> [--sandbox <name>]",
       );
+      expect(hermesOut).not.toContain("openshell inference set");
     },
     testTimeout(15_000),
   );

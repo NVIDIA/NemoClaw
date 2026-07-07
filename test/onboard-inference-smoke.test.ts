@@ -114,6 +114,9 @@ const { setupInference } = require(${onboardPath});
     "compatible-endpoint",
     "https://broken.example.invalid/v1",
     "BROKEN_API_KEY",
+    null,
+    [],
+    { preferredInferenceApi: "openai-completions" },
   );
   console.log(JSON.stringify({ outcome: "resolved", calls }));
 })().catch((error) => {

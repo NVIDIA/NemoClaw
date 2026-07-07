@@ -37,6 +37,12 @@ function requireLoadedSession(sessionDeps = onboardSession) {
   return loaded ?? sessionDeps.createSession();
 }
 
+function writeSuccessfulOpenShell(tmpDir: string): string {
+  const openshellPath = path.join(tmpDir, "openshell");
+  fs.writeFileSync(openshellPath, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  return openshellPath;
+}
+
 describe("onboard exit handler registration", () => {
   let tmpDir: string;
   let listeners: Array<(code: number) => void>;
@@ -192,6 +198,7 @@ const { onboard } = require(${onboardPath});
   it("onboard() does not mark a completed session failed on later nonzero exit", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const scriptPath = path.join(tmpDir, "onboard-exit-completed.cjs");
+    const openshellPath = writeSuccessfulOpenShell(tmpDir);
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const initialPhasesPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "onboard", "machine", "initial-flow-phases.ts"),
@@ -324,6 +331,7 @@ const { onboard } = require(${onboardPath});
         HOME: tmpDir,
         TMPDIR: tmpDir,
         NEMOCLAW_TEST_NO_SLEEP: "1",
+        NEMOCLAW_OPENSHELL_BIN: openshellPath,
       },
       timeout: 60_000,
     });

@@ -27,7 +27,29 @@ vi.mock("./nim", () => ({
   getGpuIndicesByName: mocks.getGpuIndicesByName,
 }));
 
-import { buildVllmRunCommand, detectVllmProfile, installVllm, pullImage } from "./vllm";
+import {
+  buildVllmRunCommand,
+  detectVllmProfile,
+  installVllm,
+  pullImage,
+  resolveVllmServedModelId,
+} from "./vllm";
+
+describe("vLLM served route identity", () => {
+  it("uses one safe served-model override and rejects ambiguous aliases (#6315)", () => {
+    expect(resolveVllmServedModelId("catalog/model", [])).toBe("catalog/model");
+    expect(resolveVllmServedModelId("catalog/model", ["--served-model-name", "served/model"])).toBe(
+      "served/model",
+    );
+    expect(() =>
+      resolveVllmServedModelId("catalog/model", [
+        "--served-model-name",
+        "served/one",
+        "served/two",
+      ]),
+    ).toThrow("exactly one safe model ID");
+  });
+});
 
 describe("vLLM profile detection", () => {
   beforeEach(() => {
@@ -175,6 +197,7 @@ describe("installVllm model resolution", () => {
     errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     delete process.env.NEMOCLAW_VLLM_MODEL;
+    delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
     delete process.env.HF_TOKEN;
     delete process.env.HUGGING_FACE_HUB_TOKEN;
     // Fail dockerPrereqsOk so the function returns before any docker work,
@@ -258,5 +281,45 @@ describe("installVllm model resolution", () => {
     expect(mocks.runCapture).not.toHaveBeenCalled();
     const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(errors).toMatch(/gated on Hugging Face/);
+  });
+
+  it("guards the effective served model before any docker work (#6315)", async () => {
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
+      "--served-model-name",
+      "shared/served-model",
+    ]);
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const beforeInstall = vi.fn();
+
+    await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    expect(beforeInstall).toHaveBeenCalledWith("shared/served-model");
+    expect(beforeInstall.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runCapture.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("performs no Docker work when the shared-gateway guard rejects installation (#6315)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+
+    await expect(
+      installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+        beforeInstall: () => {
+          throw new Error("route conflict");
+        },
+      }),
+    ).rejects.toThrow("route conflict");
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
   });
 });
