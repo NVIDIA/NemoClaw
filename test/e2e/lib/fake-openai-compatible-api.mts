@@ -162,6 +162,8 @@ const server = createServer(async (req, res) => {
     path,
     bodyBytes: raw.length,
     auth,
+    // Presence only (never the token), matching the models request record.
+    authorizationSent: Boolean(req.headers.authorization),
     model: payload.model,
     stream: Boolean(payload.stream),
     forbiddenMarkerMatches: forbiddenMarkerMatches(req, raw),
