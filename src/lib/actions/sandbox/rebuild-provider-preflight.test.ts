@@ -153,6 +153,18 @@ describe("classifyRebuildGatewayProviderRegistration", () => {
         "compatible-endpoint",
       ),
     ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr: [
+            'Error: status: NotFound, message: "gateway not found"',
+            'Error: status: Unavailable, message: "provider not found"',
+          ].join("\n"),
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
     expect(classifyRebuildGatewayProviderRegistration({ status: 0 }, "compatible-endpoint")).toBe(
       "registered",
     );

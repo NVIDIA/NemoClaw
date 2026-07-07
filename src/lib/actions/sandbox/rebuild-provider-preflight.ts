@@ -44,10 +44,11 @@ export type RebuildGatewayProviderRegistration = "registered" | "missing" | "ind
 /** Match OpenShell 0.0.72's typed gRPC absence without accepting transport failures. */
 function openshellReportsStructuredProviderNotFound(detail: string): boolean {
   const bounded = detail.slice(0, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER);
-  return (
-    /\bstatus:\s*NotFound\b/i.test(bounded) &&
-    /\bmessage:\s*["']provider not found["']/i.test(bounded)
-  );
+  return bounded
+    .split(/\r?\n/)
+    .some((line) =>
+      /\bstatus:\s*NotFound\b[^\r\n]*\bmessage:\s*["']provider not found["']/i.test(line),
+    );
 }
 
 export function classifyRebuildGatewayProviderRegistration(
