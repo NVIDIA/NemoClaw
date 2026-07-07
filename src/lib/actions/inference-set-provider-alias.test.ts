@@ -215,16 +215,17 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
       entry: { name, agent: "langchain-deepagents-code" },
     });
-    const error = await runInferenceSet(
+    const attempt = runInferenceSet(
       { provider: "nvidia-prod", model: "nvidia/model-a", sandboxName: name },
       deps,
-    ).catch((caught: unknown) => caught as Error);
+    );
 
     // shellQuote always single-quotes, so the hint carries the quoted form.
+    // `toThrow(string)` does a substring match on the error message.
     expect(shellQuote(name)).toBe("'dcode-sb'");
-    expect(error.message).toContain(`--name ${shellQuote(name)} --fresh`);
+    await expect(attempt).rejects.toThrow(`--name ${shellQuote(name)} --fresh`);
     // The bare, unquoted name must not sit directly after --name.
-    expect(error.message).not.toContain(`--name ${name} --fresh`);
+    await expect(attempt).rejects.not.toThrow(`--name ${name} --fresh`);
   });
 });
 
