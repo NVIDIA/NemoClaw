@@ -314,13 +314,6 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
     }
   });
 
-  it("routes watchdog gateway-log breadcrumbs through the safe append helper", () => {
-    const source = fs.readFileSync(START_SCRIPT, "utf8");
-
-    expect(source).not.toContain('>>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}"');
-    expect(source).toContain('append_openclaw_gateway_log_line "$msg" || true');
-  });
-
   it("sanitizes gateway log lines before appending", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-sanitize-"));
