@@ -236,6 +236,44 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
   });
 
+  it("recreates an absent sandbox from its preserved registry metadata", async () => {
+    const harness = createRebuildFlowHarness({
+      staleRecovery: true,
+      onboard: () => undefined,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+
+    expect(output).toContain("absent from the live OpenShell gateway");
+    expect(output).toContain("No live workspace state to back up");
+    expect(output).toContain("Creating new sandbox with current image");
+    expect(output).toContain("rebuilt successfully");
+    expect(output).toContain("Recovered from a stale registry entry");
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.prepareMcpBridgesForAbsentSandboxRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resume: true,
+        nonInteractive: true,
+        recreateSandbox: true,
+        authoritativeResumeConfig: true,
+        autoYes: true,
+        controlUiPort: 18789,
+        targetGatewayName: "nemoclaw",
+        targetGatewayPort: 8080,
+      }),
+    );
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).toHaveBeenCalledOnce();
+    expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
+    expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
+  });
+
   it("does NOT destroy/recreate when a foreign gateway is active (multi-gateway guard)", async () => {
     // A different OpenShell gateway is active, so the sandbox is missing from
     // the active gateway's list — but it may still be live on the named
