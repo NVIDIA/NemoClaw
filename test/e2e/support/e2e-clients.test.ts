@@ -183,28 +183,31 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
-  it("host client stops a forward and accepts an already-absent forward", async () => {
+  it.each([
+    "No active forward",
+    "forward 18789 not found",
+    "forward stop failed: not running",
+  ])("host client accepts canonical already-absent forward output: %s", async (stderr) => {
     const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 0 });
-    runner.enqueue({ exitCode: 1, stderr: "No active forward" });
+    runner.enqueue({ exitCode: 1, stderr });
     const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
 
     await host.cleanupForward(18789);
-    await host.cleanupForward(18789);
 
-    expect(runner.calls.map((call) => call.args)).toEqual([
-      ["forward", "stop", "18789"],
-      ["forward", "stop", "18789"],
-    ]);
+    expect(runner.calls.map((call) => call.args)).toEqual([["forward", "stop", "18789"]]);
   });
 
-  it("host client surfaces unexpected forward cleanup failures", async () => {
+  it.each([
+    "permission denied",
+    "daemon not running",
+    "some unrelated error: not running",
+  ])("host client surfaces unexpected forward cleanup failure: %s", async (stderr) => {
     const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    runner.enqueue({ exitCode: 1, stderr });
     const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
 
     await expect(host.cleanupForward(18789)).rejects.toThrow(
-      "cleanup forward 18789 failed: permission denied",
+      `cleanup forward 18789 failed: ${stderr}`,
     );
   });
 

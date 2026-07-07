@@ -21,7 +21,8 @@ const GATEWAY_ALREADY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
-const FORWARD_ALREADY_ABSENT = /no (?:active )?forward|forward .* not found|not running/i;
+const FORWARD_ALREADY_ABSENT =
+  /no (?:active )?forward|forward[^\n]*(?:not found|not running)|forward stop[^\n]*not running/i;
 
 export class HostCliClient {
   private readonly runner: CommandRunner;
