@@ -100,8 +100,51 @@ export function setBridgeState(sandboxName: string, bridges: Record<string, McpB
 export function assertMcpDestroyNotPending(sandbox: SandboxEntry): void {
   if (!sandbox.mcp?.destroyPreparedAt && !sandbox.mcp?.destroyPendingAt) return;
   throw new McpBridgeError(
-    `Sandbox '${sandbox.name}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup before using MCP commands.`,
+    `Sandbox '${sandbox.name}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup, or clear the incomplete-destroy markers non-destructively with \`nemoclaw ${sandbox.name} mcp remove <server> --force\`.`,
   );
+}
+
+/**
+ * Non-destructive recovery for a stuck MCP destroy transaction.
+ *
+ * When a prior destroy leaves `destroyPreparedAt` / `destroyPendingAt`
+ * markers behind (crash mid-teardown, aborted destroy, etc.) every MCP
+ * command is refused by `assertMcpDestroyNotPending`, and rebuild refuses
+ * up front with the same guard. Before #6376 the only advertised recovery
+ * was `nemoclaw <name> destroy` — full sandbox destruction — because
+ * `mcp remove <server> --force` itself ran the guard before its `--force`
+ * branch.
+ *
+ * This helper clears the two markers in place so a `--force` caller can
+ * proceed with the requested removal. The sandbox's external resources
+ * (providers, adapters, policies) are not touched — the marker file is
+ * the only mutable state — and downstream operations will re-discover the
+ * true resource state through their own inspection.
+ *
+ * Returns whether markers were actually cleared, so callers can log
+ * accurately (no-op vs. cleared).
+ */
+export function clearMcpDestroyMarkers(sandboxName: string): boolean {
+  const sandbox = registry.getSandbox(sandboxName);
+  const mcpState = sandbox?.mcp;
+  if (!mcpState?.destroyPreparedAt && !mcpState?.destroyPendingAt) return false;
+  const bridges = mcpState.bridges ?? {};
+  const managedServerNames = mcpState.managedServerNames ?? [];
+  const updated = registry.updateSandbox(sandboxName, {
+    mcp:
+      Object.keys(bridges).length > 0 || managedServerNames.length > 0
+        ? {
+            bridges,
+            ...(managedServerNames.length > 0 ? { managedServerNames } : {}),
+          }
+        : undefined,
+  });
+  if (!updated) {
+    throw new McpBridgeError(
+      `Could not clear incomplete MCP destroy markers for sandbox '${sandboxName}'.`,
+    );
+  }
+  return true;
 }
 
 export function assertNoDerivedResourceCollision(
