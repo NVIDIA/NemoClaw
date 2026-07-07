@@ -23,15 +23,15 @@ type WalkEntry = {
 };
 
 function snippet(value: string, limit = 300): string {
-  const squashed = value
+  const sanitized = value
     .replace(ANSI_OSC_PATTERN, "")
     .replace(ANSI_CSI_PATTERN, "")
     .replace(/\r|\u0008/gu, "")
-    .replace(CONTROL_PATTERN, "")
-    .replace(/\s+/gu, " ")
-    .trim();
-  const redacted = redactProvenanceDetail(squashed);
-  return redacted.length <= limit ? redacted : `${redacted.slice(0, limit - 3)}...`;
+    .replace(CONTROL_PATTERN, "");
+  // Preserve line boundaries while redacting so line-oriented header patterns
+  // cannot consume unrelated details that happen to follow on another line.
+  const squashed = redactProvenanceDetail(sanitized).replace(/\s+/gu, " ").trim();
+  return squashed.length <= limit ? squashed : `${squashed.slice(0, limit - 3)}...`;
 }
 
 function redactProvenanceDetail(value: string): string {
