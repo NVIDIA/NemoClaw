@@ -212,7 +212,8 @@ Provider presence, attachment, and credential-key checks read OpenShell metadata
 The verdict appears as `provider.credentialResolution` in JSON (`ok` true, false, or null with an optional `httpStatus` and redacted `detail`) and as a `credential resolution:` line in text output.
 `mcp add` runs the same probe once after the add commits and prints a warning on failure without failing the add.
 Pass `--no-probe` to skip the probe, or `--probe` to force it for every server in the multi-server status form; the bare `mcp list` and `mcp status` forms never probe so they stay fast.
-An HTTP 2xx verdict proves end-to-end resolution; HTTP 400, 401, or 403 means the upstream rejected the request on the same path agents use; endpoint outages, policy denials, timeouts, and unreachable sandboxes report `ok: null` so an endpoint problem is never blamed on the host's credential rewrite.
+An HTTP 2xx verdict proves end-to-end resolution and HTTP 401 or 403 means the upstream rejected the request on the same path agents use; an HTTP 400, endpoint outages, policy denials, timeouts, and unreachable sandboxes report `ok: null` so an endpoint problem is never blamed on the host's credential rewrite.
+Because some endpoints answer a literal placeholder bearer with HTTP 400, that verdict's detail names both hypotheses and recommends comparing against a known-good host.
 
 ### Rotate a Credential
 

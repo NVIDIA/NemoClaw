@@ -61,6 +61,10 @@ describe("MCP credential-resolution probe command", () => {
     expect(command).toContain('"method":"initialize"');
     expect(command).toContain(MCP_PROBE_HTTP_MARKER);
     expect(command).toContain(MCP_PROBE_EXIT_MARKER);
+    expect(command).toContain(
+      'response_path="$(mktemp /tmp/nemoclaw-mcp-credential-probe.XXXXXX)"',
+    );
+    expect(command).toContain("trap 'rm -f \"$response_path\"' EXIT");
     expect(command?.trimEnd().endsWith("exit 0")).toBe(true);
   });
 
@@ -90,7 +94,7 @@ describe("MCP credential-resolution probe classification", () => {
   });
 
   it("classifies HTTP 401 and 403 as resolution failures with the status (#6379)", () => {
-    for (const httpStatus of [400, 401, 403]) {
+    for (const httpStatus of [401, 403]) {
       const probe = classifyCredentialResolutionProbe(
         { status: 0, stdout: probeStdout({ httpStatus, curlExit: 0 }), stderr: "" },
         baseEntry,
@@ -98,6 +102,17 @@ describe("MCP credential-resolution probe classification", () => {
       expect(probe.ok).toBe(false);
       expect(probe.httpStatus).toBe(httpStatus);
     }
+  });
+
+  it("classifies HTTP 400 as indeterminate while naming the placeholder hypothesis (#6379)", () => {
+    const probe = classifyCredentialResolutionProbe(
+      { status: 0, stdout: probeStdout({ httpStatus: 400, curlExit: 0 }), stderr: "" },
+      baseEntry,
+    );
+    expect(probe.ok).toBeNull();
+    expect(probe.httpStatus).toBe(400);
+    expect(probe.detail).toContain("unresolved credential placeholder");
+    expect(probe.detail).toContain("known-good host");
   });
 
   it("classifies HTTP 502 as indeterminate instead of blaming the credential rewrite (#6379)", () => {

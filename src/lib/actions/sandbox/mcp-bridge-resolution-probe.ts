@@ -75,20 +75,23 @@ function runtimeWrappedCommand(adapter: AgentMcpAdapter, quotedCurl: string): st
   }
 }
 
+// Shell reference expanded inside the sandbox to the mktemp result; must not
+// be shell-quoted or the literal dollar text would become the curl -o target.
+const RESPONSE_PATH_SHELL_REF = '"$response_path"';
+
 export function buildCredentialResolutionProbeCommand(
   entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
   adapter: AgentMcpAdapter,
 ): string | null {
   const authorization = authorizationValue(entry);
   if (!authorization) return null;
-  const responsePath = `/tmp/nemoclaw-mcp-credential-probe-${entry.server}.body`;
   const curlArgs = [
     "curl",
     "-sS",
     "--max-time",
     String(PROBE_CURL_MAX_TIME_SECONDS),
     "-o",
-    responsePath,
+    RESPONSE_PATH_SHELL_REF,
     "-w",
     `\\n${MCP_PROBE_HTTP_MARKER}%{http_code}\\n`,
     "-X",
@@ -104,17 +107,20 @@ export function buildCredentialResolutionProbeCommand(
     "--data-binary",
     MCP_INITIALIZE_BODY,
   ];
-  const quotedCurl = curlArgs.map(shellQuote).join(" ");
-  const quotedResponsePath = shellQuote(responsePath);
+  const quotedCurl = curlArgs
+    .map((arg) => (arg === RESPONSE_PATH_SHELL_REF ? arg : shellQuote(arg)))
+    .join(" ");
   return [
     // SSH sessions can miss the sandbox proxy environment (#2704).
     "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh || true",
-    `rm -f ${quotedResponsePath}`,
+    // mktemp keeps parallel probes and same-sandbox symlink races away from a
+    // predictable body path; a failed mktemp classifies as missing markers.
+    'response_path="$(mktemp /tmp/nemoclaw-mcp-credential-probe.XXXXXX)" || exit 0',
+    "trap 'rm -f \"$response_path\"' EXIT",
     runtimeWrappedCommand(adapter, quotedCurl),
     "rc=$?",
     `printf '\\n${MCP_PROBE_EXIT_MARKER}%s\\n' "$rc"`,
-    `head -c ${PROBE_BODY_EXCERPT_BYTES} ${quotedResponsePath} 2>/dev/null | tr -d '\\r' || true`,
-    `rm -f ${quotedResponsePath}`,
+    `head -c ${PROBE_BODY_EXCERPT_BYTES} "$response_path" 2>/dev/null | tr -d '\\r' || true`,
     // Always exit 0 so a nonzero SSH status unambiguously means transport
     // failure, never a probe outcome.
     "exit 0",
@@ -146,13 +152,24 @@ export function classifyCredentialResolutionProbe(
     if (!httpMatch) return { ok: null, detail: "probe output missing HTTP status" };
     const httpStatus = Number(httpMatch[1]);
     if (httpStatus >= 200 && httpStatus < 300) return { ok: true, httpStatus };
-    if (httpStatus === 400 || httpStatus === 401 || httpStatus === 403) {
-      const excerptStart = result.stdout.indexOf(exitMatch[0]) + exitMatch[0].length;
-      const excerpt = redactedProbeText(result.stdout.slice(excerptStart), entry);
+    const excerptStart = result.stdout.indexOf(exitMatch[0]) + exitMatch[0].length;
+    const excerpt = redactedProbeText(result.stdout.slice(excerptStart), entry);
+    if (httpStatus === 401 || httpStatus === 403) {
       return {
         ok: false,
         httpStatus,
         ...(excerpt ? { detail: excerpt } : {}),
+      };
+    }
+    // A 400 can also mean the endpoint rejected the initialize request itself
+    // (protocol-version or request validation) after a correct rewrite, so it
+    // must not blame the host outright — but some endpoints answer a literal
+    // placeholder bearer with 400, so the detail names both hypotheses.
+    if (httpStatus === 400) {
+      return {
+        ok: null,
+        httpStatus,
+        detail: `endpoint rejected the probe request with HTTP 400; this can mean an unresolved credential placeholder or an initialize request this endpoint does not accept — compare against a known-good host${excerpt ? `: ${excerpt}` : ""}`,
       };
     }
     // 404/405/5xx: a successfully rewritten credential against a broken or
