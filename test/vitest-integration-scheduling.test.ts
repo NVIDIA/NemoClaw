@@ -21,15 +21,17 @@ describe("integration project scheduling", () => {
   });
 
   it.each([
-    [["--maxWorkers=1"], 1],
-    [["--maxWorkers", "2"], 2],
-    [["--maxWorkers=8"], 4],
-  ])("honors the explicit local worker cap in %j (#6245)", (argv, maxWorkers) => {
+    [["--maxWorkers=1"], 1, 8],
+    [["--maxWorkers", "2"], 2, 8],
+    [["--maxWorkers=10%"], 2, 20],
+    [["--maxWorkers=8"], 4, 8],
+  ])("honors the explicit local worker cap in %j (#6245)", (argv, maxWorkers, workers) => {
     expect(
       resolveIntegrationProjectScheduling({
         isCi: false,
         npmLifecycleEvent: "test",
         argv,
+        availableParallelism: workers,
       }),
     ).toEqual({
       fileParallelism: true,
@@ -39,11 +41,28 @@ describe("integration project scheduling", () => {
   });
 
   it.each([
+    "--maxWorkers=invalid",
+    "--maxWorkers",
+  ])("rejects the invalid local worker cap %s (#6245)", (argument) => {
+    expect(() =>
+      resolveIntegrationProjectScheduling({
+        isCi: false,
+        npmLifecycleEvent: "test",
+        argv: [argument],
+      }),
+    ).toThrow(/--maxWorkers/);
+  });
+
+  it.each([
     ["CI full suite", { isCi: true, npmLifecycleEvent: "test", argv: [] }],
     ["coverage shorthand", { isCi: false, npmLifecycleEvent: "test", argv: ["--coverage"] }],
     [
       "coverage property",
       { isCi: false, npmLifecycleEvent: "test", argv: ["--coverage.enabled=true"] },
+    ],
+    [
+      "coverage sub-option",
+      { isCi: false, npmLifecycleEvent: "test", argv: ["--coverage.provider=v8"] },
     ],
     ["coverage script", { isCi: false, npmLifecycleEvent: "test:coverage:cli", argv: [] }],
     [

@@ -240,6 +240,10 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
 describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
   const PORT_RANGE_START = 18789;
   const PORT_RANGE_END = 18799;
+  const OCCUPIED_PORT_CASES = Array.from(
+    { length: PORT_RANGE_END - PORT_RANGE_START + 1 },
+    (_unused, index) => PORT_RANGE_START + index,
+  ).join("|");
   let home: string;
   let binDir: string;
 
@@ -287,7 +291,7 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
         '  case "$arg" in :*) port="${arg#:}";; esac',
         "done",
         'case "$port" in',
-        '  18789|1879[0-9]) echo "node 1 user 1u IPv4 TCP 127.0.0.1:${port} (LISTEN)"; exit 0;;',
+        `  ${OCCUPIED_PORT_CASES}) echo "node 1 user 1u IPv4 TCP 127.0.0.1:\${port} (LISTEN)"; exit 0;;`,
         "esac",
         "exit 1",
       ].join("\n"),
