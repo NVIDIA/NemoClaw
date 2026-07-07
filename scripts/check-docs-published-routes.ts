@@ -212,6 +212,39 @@ export function findBrokenPublishedRoutes(
   return violations;
 }
 
+export type ResolvedPageLink = {
+  /** The raw link target as written in the source, e.g. `../deployment/x`. */
+  target: string;
+  /** The published route of the linking page. */
+  fromRoute: string;
+  /** The route the link resolves to, the way Fern serves it. */
+  resolved: string;
+  /** Whether `resolved` is an actual published route (false ⇒ 404 on the site). */
+  published: boolean;
+};
+
+/**
+ * Resolve a single named link on a published docs page to the route a reader
+ * navigates to. Returns null if the page has no link with that display text.
+ */
+export function resolvePageLinkByText(
+  sourcePath: string,
+  linkText: string,
+  index: PublishedRouteIndex,
+  docsDir: string = docsRoot,
+): ResolvedPageLink | null {
+  const routes = index.sourceToRoutes.get(sourcePath);
+  if (!routes || routes.length === 0) {
+    throw new Error(`${sourcePath} is not a published navigation page in docs/index.yml`);
+  }
+  const body = readFileSync(path.join(docsDir, sourcePath), "utf8");
+  const link = extractMarkdownLinks(body).find((entry) => entry.text === linkText);
+  if (!link) return null;
+  const fromRoute = routes[0];
+  const resolved = resolvePublishedRoute(fromRoute, link.target);
+  return { target: link.target, fromRoute, resolved, published: index.routes.has(resolved) };
+}
+
 // Pages that have repeatedly regressed on source-path-vs-published-route drift
 // (NemoClaw#5445, #6290, #5465, #5460). Scoped intentionally: the wider docs
 // tree has unrelated pre-existing broken links tracked separately.

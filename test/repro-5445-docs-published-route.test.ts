@@ -6,31 +6,27 @@
 // SOURCE directory (`docs/deployment/install-openclaw-plugins.mdx`) rather than
 // its PUBLISHED nav section. Fern serves that page under the `manage-sandboxes`
 // section, so the source-directory link 404s on the live site even though the
-// file exists on disk. `fern check` and source-path checks (PR #6290) missed it;
-// these assertions derive the published route from docs/index.yml and check the
-// route the reader actually navigates to.
+// file exists on disk. `fern check` and source-path checks (PR #6290) missed it.
+//
+// These assertions exercise behavior: the route map is derived from
+// docs/index.yml and the link is resolved the way Fern serves it, both inside
+// the checker under test (docs page reads happen there, not here).
 
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildPublishedRouteIndex,
   extractMarkdownLinks,
   findBrokenPublishedRoutes,
+  resolvePageLinkByText,
   resolvePublishedRoute,
 } from "../scripts/check-docs-published-routes.ts";
 
-const REPO_ROOT = path.dirname(import.meta.dirname);
 const COMMANDS_SOURCE = "reference/commands.mdx";
 const CORRECT_ROUTE = "/user-guide/openclaw/manage-sandboxes/install-openclaw-plugins";
 const WRONG_ROUTE = "/user-guide/openclaw/deployment/install-openclaw-plugins";
 
 const index = buildPublishedRouteIndex();
-const commandsBody = fs.readFileSync(path.join(REPO_ROOT, "docs", COMMANDS_SOURCE), "utf8");
-const installLink = extractMarkdownLinks(commandsBody).find(
-  (link) => link.text === "Install OpenClaw Plugins",
-);
-const commandsRoutes = index.sourceToRoutes.get(COMMANDS_SOURCE) ?? [];
+const installLink = resolvePageLinkByText(COMMANDS_SOURCE, "Install OpenClaw Plugins", index);
 
 describe("docs published-route map derived from docs/index.yml (#5445)", () => {
   it("publishes Install OpenClaw Plugins under the manage-sandboxes section (#5445)", () => {
@@ -42,33 +38,28 @@ describe("docs published-route map derived from docs/index.yml (#5445)", () => {
   });
 
   it("maps the commands source to the published OpenClaw commands route (#5445)", () => {
-    expect(commandsRoutes).toContain("/user-guide/openclaw/reference/commands");
+    expect(index.sourceToRoutes.get(COMMANDS_SOURCE)).toContain(
+      "/user-guide/openclaw/reference/commands",
+    );
   });
 });
 
 describe("OpenClaw commands page Install OpenClaw Plugins link (#5445)", () => {
-  it("still contains the Install OpenClaw Plugins link (#5445)", () => {
-    expect(installLink).toBeDefined();
+  it("still links to Install OpenClaw Plugins from the commands page (#5445)", () => {
+    expect(installLink).not.toBeNull();
   });
 
   it("resolves to the published manage-sandboxes route, not a source-path route (#5445)", () => {
-    expect(installLink).toBeDefined();
-    const resolved = resolvePublishedRoute(
-      "/user-guide/openclaw/reference/commands",
-      installLink?.target ?? "",
-    );
     // Pre-fix (../deployment/install-openclaw-plugins) this resolved to
-    // WRONG_ROUTE and this assertion failed on upstream/main.
-    expect(resolved).toBe(CORRECT_ROUTE);
-    expect(resolved).not.toBe(WRONG_ROUTE);
-    expect(index.routes.has(resolved)).toBe(true);
+    // WRONG_ROUTE (not a published route), so these assertions failed on
+    // upstream/main and pass only after the link is corrected.
+    expect(installLink?.resolved).toBe(CORRECT_ROUTE);
+    expect(installLink?.resolved).not.toBe(WRONG_ROUTE);
+    expect(installLink?.published).toBe(true);
   });
-});
 
-describe("commands reference relative links resolve to published routes (#5445)", () => {
   it("has no relative link that resolves to a nonexistent published route (#5445)", () => {
-    const violations = findBrokenPublishedRoutes(COMMANDS_SOURCE, index);
-    expect(violations).toEqual([]);
+    expect(findBrokenPublishedRoutes(COMMANDS_SOURCE, index)).toEqual([]);
   });
 });
 
