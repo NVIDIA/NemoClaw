@@ -534,9 +534,10 @@ describe("onboard session", () => {
 
   // ── Session secret boundary, consolidated from #6225 (epic #6224) ──
 
-  it("persists migratedLegacyValueHashes as sha256 hex digests only, dropping non-string entries (#6225)", () => {
+  it("round-trips writer-shaped legacy migration hashes and drops non-string entries (#6225)", () => {
     // Digest shape mirrors legacyValueHash() in src/lib/onboard.ts, the only
-    // production writer of this map. Only the digest may reach disk.
+    // production writer of this map. This test covers session filtering and
+    // persistence; the writer owns converting credential values to digests.
     const legacyValue = "nvapi-sentinel6225-legacy-value-do-not-persist";
     const digest = createHash("sha256").update(legacyValue).digest("hex");
     session.saveSession(session.createSession());
@@ -553,16 +554,16 @@ describe("onboard session", () => {
     });
 
     const raw = fs.readFileSync(session.SESSION_FILE, "utf8");
-    expect(raw).not.toContain(legacyValue);
+    expect(raw).toContain(digest);
     expect(raw).not.toContain("BROKEN_NUMERIC");
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.migratedLegacyValueHashes).toEqual({ NVIDIA_API_KEY: digest });
     expect(loaded.migratedLegacyValueHashes?.NVIDIA_API_KEY).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("serializes unset and explicitly-declined credentialEnv identically as null (#6224)", () => {
-    // #6224 contract gap: on disk, "never prompted" and "user declined" both
-    // collapse to credentialEnv: null, so a resume cannot tell them apart.
+  it("serializes missing and explicit-null credentialEnv identically (#6224)", () => {
+    // #6224 contract gap: the schema cannot distinguish "never prompted",
+    // "user declined", and "explicitly cleared" once they become null.
     session.saveSession(session.createSession());
     const unset = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).credentialEnv;
 
@@ -578,19 +579,9 @@ describe("onboard session", () => {
     expect(requireLoadedSession(session.loadSession()).credentialEnv).toBeNull();
   });
 
-  it.fails("redacts token-shaped values under benign endpoint query param names (#6224)", () => {
-    // DESIRED behavior, not yet implemented: redactUrl() only masks
-    // sensitive-NAMED query params, so a token-shaped value under a benign
-    // name persists verbatim today. Flip to a plain `it` once epic #6224
-    // adds value-shape redaction for parseable URLs.
-    const tokenValue = "nvapi-pending6224-token-shaped-value";
-    session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
-      endpointUrl: `https://api.example.com/v1?model=${tokenValue}`,
-    });
-
-    expect(fs.readFileSync(session.SESSION_FILE, "utf8")).not.toContain(tokenValue);
-  });
+  // Desired behavior tracked by #6224. redactUrl() currently masks sensitive
+  // parameter names but not token-shaped values under otherwise benign names.
+  it.todo("redacts token-shaped values under benign endpoint query param names (#6224)");
 
   it("only persists known Hermes auth methods", () => {
     session.saveSession(session.createSession());

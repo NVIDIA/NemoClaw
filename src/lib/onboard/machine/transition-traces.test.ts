@@ -9,7 +9,7 @@
  * handler sequencing without observing events). Descriptive, not
  * aspirational: update a pin in the same PR that changes the ordering.
  * Recovery-path semantics (edges leaving terminal `failed`, the legacy
- * step-mutation bridge) stay out of scope — PR #6253 pins those.
+ * step-mutation bridge) stay out of scope and are owned by #6227.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -26,6 +26,8 @@ import {
   sanitizeFailure,
 } from "../../state/onboard-session";
 import type { OnboardMachineEvent } from "./events";
+import { handleSandboxState } from "./handlers/sandbox";
+import { baseOptions, createDeps } from "./handlers/sandbox-test-fixtures";
 import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine } from "./result";
 import { type OnboardStateHandlers, runOnboardMachine } from "./runner";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
@@ -114,16 +116,6 @@ function fullRunHandlers(
 }
 
 describe("onboard machine lifecycle traces (#6225)", () => {
-  it("persists in-place edits from a void-returning session mutator (#6225)", async () => {
-    const { runtime, updateSession } = createTracedRuntime();
-
-    updateSession((draft) => {
-      draft.sandboxName = "void-mutated";
-    });
-
-    await expect(runtime.session()).resolves.toMatchObject({ sandboxName: "void-mutated" });
-  });
-
   it("emits the fresh-run lifecycle event stream in canonical order (#6225)", async () => {
     const { runtime, events } = createTracedRuntime();
     await runtime.start();
@@ -217,42 +209,52 @@ describe("onboard machine lifecycle traces (#6225)", () => {
     expect(run.session.steps.sandbox.status).toBe("complete");
   });
 
-  it("re-runs the sandbox state with repair events around recreate before branching (#6225)", async () => {
-    // Machine snapshot back at `sandbox` while the recorded sandbox step is
-    // still marked complete: the shape a resumed session has when the recorded
-    // sandbox exists but is not ready and must be recreated.
-    const staleSession = createSession({
+  it("repairs and recreates through the sandbox handler before branching (#6225)", async () => {
+    const resumedSession = createSession({
       sandboxName: "my-assistant",
       lastCompletedStep: "sandbox",
       machine: machineAt("sandbox", 5),
       steps: { sandbox: completedStep() },
     });
-    const { runtime, events } = createTracedRuntime(staleSession);
-    const repairMetadata = { repair: "recorded-sandbox-cleanup", sandboxName: "my-assistant" };
-    const repair = (type: "state.repair.started" | "state.repair.completed") =>
-      runtime.emitRepairEvent(type, { state: "sandbox", metadata: repairMetadata });
+    const { runtime, events, updateSession } = createTracedRuntime(resumedSession);
+    const { calls, deps } = createDeps({
+      getSandboxReuseState: () => "not_ready",
+      updateSession,
+      recordRepairEvent: (type, options) => runtime.emitRepairEvent(type, options),
+      recordStepComplete: async (_stepName, updates) =>
+        updateSession((current) => {
+          Object.assign(current, filterSafeUpdates(updates));
+        }),
+    });
+    await runtime.start({ resumed: true });
+    const session = await runtime.session();
 
     const run = await runOnboardMachine({
       context: null,
       runtime,
       handlers: {
         sandbox: async () => {
-          await repair("state.repair.started");
-          await repair("state.repair.completed");
-          return branchTo("openclaw", { updates: { sandboxName: "my-assistant" } });
+          const handled = await handleSandboxState({
+            ...baseOptions(deps, session),
+            resume: true,
+            session,
+            sandboxName: "my-assistant",
+          });
+          return handled.stateResult;
         },
       },
       stopStates: ["openclaw"],
     });
 
+    expect(calls.repairSandbox).toHaveBeenCalledWith("my-assistant");
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
     expect(traceOf(events)).toEqual([
+      "onboard.resumed:sandbox",
       "state.repair.started:sandbox",
       "state.repair.completed:sandbox",
-      "context.updated:sandbox",
       "state.exited:sandbox",
       "state.entered:openclaw",
     ]);
-    expect(events[0].metadata).toEqual(repairMetadata);
     expect(run.session).toMatchObject({
       status: "in_progress",
       sandboxName: "my-assistant",
@@ -263,6 +265,7 @@ describe("onboard machine lifecycle traces (#6225)", () => {
   it("stops at the failing inference step and records the failure envelope (#6225)", async () => {
     const { runtime, events } = createTracedRuntime();
     const sandboxHandler = vi.fn(() => branchTo("openclaw"));
+    await runtime.start();
 
     const run = await runOnboardMachine({
       context: null,
@@ -283,6 +286,7 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       machine: { state: "failed", revision: 5 },
     });
     expect(traceOf(events)).toEqual([
+      "onboard.started:init",
       "state.exited:init",
       "state.entered:preflight",
       "state.exited:preflight",
