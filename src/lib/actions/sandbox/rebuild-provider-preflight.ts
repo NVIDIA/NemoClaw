@@ -41,6 +41,15 @@ const { readGatewayProviderMetadata, REMOTE_PROVIDER_CONFIG } =
 
 export type RebuildGatewayProviderRegistration = "registered" | "missing" | "indeterminate";
 
+/** Match OpenShell 0.0.72's typed gRPC absence without accepting transport failures. */
+function openshellReportsStructuredProviderNotFound(detail: string): boolean {
+  const bounded = detail.slice(0, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER);
+  return (
+    /\bstatus:\s*NotFound\b/i.test(bounded) &&
+    /\bmessage:\s*["']provider not found["']/i.test(bounded)
+  );
+}
+
 export function classifyRebuildGatewayProviderRegistration(
   result: {
     status: number | null;
@@ -57,6 +66,7 @@ export function classifyRebuildGatewayProviderRegistration(
     .join("\n");
   const explicitMissing =
     openshellReportsProviderNotFound(detail, provider) ||
+    openshellReportsStructuredProviderNotFound(detail) ||
     detail
       .slice(0, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER)
       .split(/\r?\n/)

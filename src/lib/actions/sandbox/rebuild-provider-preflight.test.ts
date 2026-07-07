@@ -98,6 +98,16 @@ describe("classifyRebuildGatewayProviderRegistration", () => {
     expect(
       classifyRebuildGatewayProviderRegistration(
         {
+          status: 1,
+          stderr:
+            'Error: status: NotFound, message: "provider not found", details: [], metadata: MetadataMap { headers: {} }',
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("missing");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
           status: 7,
           stderr: "gateway transport unavailable",
         },
@@ -122,6 +132,24 @@ describe("classifyRebuildGatewayProviderRegistration", () => {
     expect(
       classifyRebuildGatewayProviderRegistration(
         { status: 1, stderr: "provider 'other-provider' not found" },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 7,
+          stderr: 'Error: status: Unavailable, message: "provider not found"',
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr: 'Error: status: NotFound, message: "gateway not found"',
+        },
         "compatible-endpoint",
       ),
     ).toBe("indeterminate");
