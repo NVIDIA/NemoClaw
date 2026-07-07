@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { PollingError, pollUntil } from "../fixtures/polling.ts";
+
 export type DeniedReasonLogProof = {
   line: string;
   reason: string;
@@ -30,13 +32,23 @@ export async function pollDeniedReasonLog(options: {
   settle: () => Promise<void>;
 }): Promise<DeniedReasonLogProof> {
   let latestLogs = "";
-  for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
-    latestLogs = await options.readLogs(attempt);
-    const proof = deniedReasonLogProof(latestLogs, options.endpoint);
-    if (proof) return proof;
-    await options.settle();
+  try {
+    const result = await pollUntil({
+      artifactPrefix: "network-policy-denied-log",
+      attempts: options.attempts,
+      delayMs: 1,
+      sleep: async () => options.settle(),
+      probe: async (attempt) => {
+        latestLogs = await options.readLogs(attempt);
+        return deniedReasonLogProof(latestLogs, options.endpoint);
+      },
+      accept: (proof) => proof !== null,
+    });
+    return result.value as DeniedReasonLogProof;
+  } catch (error) {
+    if (!(error instanceof PollingError)) throw error;
+    throw new Error(
+      `denied egress audit event for ${options.endpoint} did not settle into nemoclaw logs --tail 50:\n${latestLogs}`,
+    );
   }
-  throw new Error(
-    `denied egress audit event for ${options.endpoint} did not settle into nemoclaw logs --tail 50:\n${latestLogs}`,
-  );
 }
