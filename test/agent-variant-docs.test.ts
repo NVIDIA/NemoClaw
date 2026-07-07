@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs";
@@ -90,5 +92,63 @@ describe("agent variant docs", () => {
     expect(rendered).toContain("[Commands](../reference/commands#nemohermes-list)");
     expect(rendered).toContain("[Backup](backup-restore)");
     expect(rendered).toContain("![Diagram](../../../manage-sandboxes/images/diagram.png)");
+  });
+
+  it("renders strict Landlock troubleshooting for Deep Agents only", () => {
+    const troubleshooting = readFileSync(
+      new URL("../docs/reference/troubleshooting.mdx", import.meta.url),
+      "utf8",
+    );
+    const deepAgents = renderAgentVariantPage(troubleshooting, "deepagents", {
+      sourcePath: "/repo/docs/reference/troubleshooting.mdx",
+    });
+    const openclaw = renderAgentVariantPage(troubleshooting, "openclaw", {
+      sourcePath: "/repo/docs/reference/troubleshooting.mdx",
+    });
+
+    expect(deepAgents).toContain("### Landlock filesystem policy blocks sandbox startup");
+    expect(deepAgents).toContain("Deep Agents uses strict Landlock compatibility.");
+    expect(deepAgents).toContain(
+      "OpenShell refuses to start the sandbox instead of silently degrading.",
+    );
+    expect(deepAgents).not.toContain("### Landlock filesystem restrictions silently degraded");
+    expect(deepAgents).not.toContain("best_effort mode");
+    expect(deepAgents).not.toContain(
+      "This warning is informational and does not block sandbox creation.",
+    );
+
+    expect(openclaw).toContain("### Landlock filesystem restrictions silently degraded");
+    expect(openclaw).toContain("best_effort mode");
+    expect(openclaw).not.toContain("### Landlock filesystem policy blocks sandbox startup");
+  });
+
+  it("does not render managed web-search troubleshooting for Deep Agents", () => {
+    const troubleshooting = readFileSync(
+      new URL("../docs/reference/troubleshooting.mdx", import.meta.url),
+      "utf8",
+    );
+    const deepAgents = renderAgentVariantPage(troubleshooting, "deepagents", {
+      sourcePath: "/repo/docs/reference/troubleshooting.mdx",
+    });
+    const openclaw = renderAgentVariantPage(troubleshooting, "openclaw", {
+      sourcePath: "/repo/docs/reference/troubleshooting.mdx",
+    });
+
+    expect(deepAgents).toContain("### Tavily remains blocked after opt-in");
+    expect(deepAgents).toContain(
+      "Deep Agents does not have a NemoClaw-managed web-search feature.",
+    );
+    expect(deepAgents).not.toContain("### Web search verification reports a warning");
+    expect(deepAgents).not.toContain(
+      "When web search is enabled, onboarding checks the selected agent configuration",
+    );
+    expect(deepAgents).not.toContain(
+      "Rerunning onboarding with a different provider recreates the sandbox",
+    );
+
+    expect(openclaw).toContain("### Web search verification reports a warning");
+    expect(openclaw).not.toContain(
+      "Deep Agents does not have a NemoClaw-managed web-search feature.",
+    );
   });
 });

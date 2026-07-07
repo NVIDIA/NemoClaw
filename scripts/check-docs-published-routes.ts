@@ -271,24 +271,34 @@ export function resolvePageLinkByText(
   index: PublishedRouteIndex,
   docsDir: string = docsRoot,
 ): ResolvedPageLink | null {
+  return resolvePageLinksByText(sourcePath, linkText, index, docsDir)[0] ?? null;
+}
+
+export function resolvePageLinksByText(
+  sourcePath: string,
+  linkText: string,
+  index: PublishedRouteIndex,
+  docsDir: string = docsRoot,
+): ResolvedPageLink[] {
   const routes = index.sourceToRoutes.get(sourcePath);
   if (!routes || routes.length === 0) {
     throw new Error(`${sourcePath} is not a published navigation page in docs/index.yml`);
   }
   const source = readFileSync(path.join(docsDir, sourcePath), "utf8");
-  const publishedRoute = routes[0];
-  const body = renderBodyForPublishedRoute(source, sourcePath, publishedRoute);
-  const link = extractMarkdownLinks(body).find((entry) => entry.text === linkText);
-  if (!link) return null;
-  const fromRoute = publishedRoute.route;
-  const resolved = resolvePublishedRoute(fromRoute, link.target);
-  return { target: link.target, fromRoute, resolved, published: index.routes.has(resolved) };
+  return routes.flatMap((publishedRoute) => {
+    const body = renderBodyForPublishedRoute(source, sourcePath, publishedRoute);
+    const link = extractMarkdownLinks(body).find((entry) => entry.text === linkText);
+    if (!link) return [];
+    const fromRoute = publishedRoute.route;
+    const resolved = resolvePublishedRoute(fromRoute, link.target);
+    return [{ target: link.target, fromRoute, resolved, published: index.routes.has(resolved) }];
+  });
 }
 
 // Pages that have repeatedly regressed on source-path-vs-published-route drift
 // (NemoClaw#5445, #6290, #5465, #5460). Scoped intentionally: the wider docs
 // tree has unrelated pre-existing broken links tracked separately.
-const GUARDED_SOURCE_PAGES = ["reference/commands.mdx"];
+const GUARDED_SOURCE_PAGES = ["reference/commands.mdx", "reference/platform-support.mdx"];
 
 function main(): void {
   const index = buildPublishedRouteIndex();

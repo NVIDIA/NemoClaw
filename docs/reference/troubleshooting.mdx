@@ -433,6 +433,8 @@ $$nemoclaw onboard --resume
 
 </AgentOnly>
 
+<AgentOnly variant="openclaw,hermes">
+
 ### Web search verification reports a warning
 
 When web search is enabled, onboarding checks the selected agent configuration and sends a real search request through the sandbox egress path.
@@ -448,6 +450,7 @@ $$nemoclaw <name> policy-list
 Look for `<name>-brave-search` with the `brave` preset or `<name>-tavily-search` with the `tavily` preset.
 Do not replace an `openshell:resolve:env:<KEY>` value in the sandbox configuration with a raw API key.
 
+</AgentOnly>
 <AgentOnly variant="openclaw">
 
 Confirm that OpenClaw reports the provider selected during onboarding.
@@ -473,9 +476,13 @@ If it does not, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` and 
 
 </AgentOnly>
 
+<AgentOnly variant="openclaw,hermes">
+
 Rerunning onboarding with a different provider recreates the sandbox because the provider configuration and credential attachment are build-time inputs.
 NemoClaw validates the replacement key before it removes the existing sandbox, then backs up and restores the supported workspace state during recreation.
 If the configuration is correct but the egress probe fails, keep the matching preset applied and inspect the blocked request with `openshell term` before widening any policy rule.
+
+</AgentOnly>
 
 ### Sandbox containers cannot reach the gateway
 
@@ -1105,9 +1112,9 @@ If a read-only path probe reports that protected paths are writable, rebuild wit
 nemo-deepagents <name> rebuild
 ```
 
-If the warning mentions degraded Landlock support, check the host kernel and container runtime.
-Linux kernels older than 5.13 and some VM-backed Docker runtimes can run with reduced filesystem enforcement.
-NemoClaw still relies on container mount configuration in that mode, but you should treat the host as lower assurance until Landlock is available.
+If startup reports that Landlock enforcement is unavailable, the Deep Agents sandbox fails closed instead of running with reduced filesystem enforcement.
+Deep Agents uses `compatibility: strict` for its managed filesystem policy, so kernels older than 5.13 or VM-backed Docker runtimes without Landlock support can block sandbox creation.
+Move the sandbox to a Linux kernel and container runtime that support Landlock, then rerun onboarding or rebuild the sandbox.
 
 </AgentOnly>
 
@@ -1688,6 +1695,8 @@ To fix, run `$$nemoclaw <other-sandbox> destroy` on whichever sandbox should sto
 
 </AgentOnly>
 
+<AgentOnly variant="openclaw,hermes">
+
 ### Landlock filesystem restrictions silently degraded
 
 After sandbox creation, NemoClaw checks whether the host kernel supports Landlock (Linux 5.13+).
@@ -1701,6 +1710,23 @@ If the kernel is too old or you are running on macOS (where the Docker VM kernel
 This warning is informational and does not block sandbox creation.
 The sandbox runs without kernel-level filesystem restrictions, relying on container mount configuration instead.
 For full filesystem enforcement, run on a Linux kernel 5.13 or later (Ubuntu 22.04 LTS and later include Landlock support).
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+### Landlock filesystem policy blocks sandbox startup
+
+Deep Agents uses strict Landlock compatibility.
+If the host kernel, Docker VM, or sandbox filesystem mount cannot enforce the managed read-only policy, OpenShell refuses to start the sandbox instead of silently degrading.
+
+Run Deep Agents on a Linux kernel 5.13 or later with a container runtime that exposes Landlock to the sandbox.
+After moving to a compatible host or runtime, rerun onboarding or rebuild the sandbox:
+
+```bash
+nemo-deepagents <name> rebuild
+```
+
+</AgentOnly>
 
 ### Sandbox lost after gateway restart
 
