@@ -7,6 +7,7 @@ import {
   bindGatewayUpsertProvider,
   createGatewayScopedOpenshellRunner,
   scopeGatewayOpenshellArgs,
+  selectGatewayForFollowupOrExit,
 } from "./setup-inference";
 
 const GATEWAY = "nemoclaw-9090";
@@ -131,6 +132,26 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
       undefined,
       GATEWAY,
     );
+  });
+
+  it("selects the managed gateway for follow-up commands and fails closed on error", () => {
+    const run = vi.fn().mockReturnValueOnce({ status: 0 }).mockReturnValueOnce({ status: 17 });
+    const error = vi.fn();
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    });
+
+    expect(selectGatewayForFollowupOrExit(GATEWAY, run, error, exitProcess)).toBeUndefined();
+    expect(() => selectGatewayForFollowupOrExit(GATEWAY, run, error, exitProcess)).toThrow(
+      "exit 17",
+    );
+    expect(run).toHaveBeenNthCalledWith(1, ["gateway", "select", GATEWAY], {
+      ignoreError: true,
+    });
+    expect(run).toHaveBeenNthCalledWith(2, ["gateway", "select", GATEWAY], {
+      ignoreError: true,
+    });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("No follow-up operations"));
   });
 });
 

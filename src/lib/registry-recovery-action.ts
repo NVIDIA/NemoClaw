@@ -109,14 +109,18 @@ function upsertRecoveredSandbox(
   const existing = registry.getSandbox(validName);
   if (existing && resolveSandboxGatewayName(existing) !== gatewayName) return false;
   const recovered = buildRecoveredSandboxEntry(validName, metadata);
+  // A persisted row is the atomic source of truth for its complete route
+  // identity. Never fill one of its missing fields from a historical session:
+  // mixing provider/model from the registry with endpoint/API metadata from
+  // another route can manufacture an identity that never existed.
+  const routeIdentity = existing ?? recovered;
   const entry = {
     ...recovered,
-    provider: existing?.provider ?? recovered.provider ?? null,
-    model: existing?.model ?? recovered.model ?? null,
-    endpointUrl: existing?.endpointUrl ?? recovered.endpointUrl ?? null,
-    credentialEnv: existing?.credentialEnv ?? recovered.credentialEnv ?? null,
-    preferredInferenceApi:
-      existing?.preferredInferenceApi ?? recovered.preferredInferenceApi ?? null,
+    provider: routeIdentity.provider ?? null,
+    model: routeIdentity.model ?? null,
+    endpointUrl: routeIdentity.endpointUrl ?? null,
+    credentialEnv: routeIdentity.credentialEnv ?? null,
+    preferredInferenceApi: routeIdentity.preferredInferenceApi ?? null,
     gatewayName: existing?.gatewayName ?? gatewayName,
   };
   const inference = getSandboxEntryInference(entry);

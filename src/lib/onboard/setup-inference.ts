@@ -155,6 +155,21 @@ export function bindGatewayUpsertProvider(
     upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
 }
 
+export function selectGatewayForFollowupOrExit(
+  gatewayName: string,
+  runOpenshell: SetupInferenceDeps["runOpenshell"],
+  error: (message: string) => void = console.error,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
+): void {
+  const selected = runOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
+  if (selected.status === 0) return;
+  error(
+    `  Error: OpenShell could not select managed gateway '${gatewayName}' after onboarding. ` +
+      "No follow-up operations were run against an ambient gateway.",
+  );
+  exitProcess(typeof selected.status === "number" && selected.status !== 0 ? selected.status : 1);
+}
+
 function resolveLocalInferenceRouteApplier(
   deps: SetupInferenceDeps,
   runOpenshell: SetupInferenceDeps["runOpenshell"],
