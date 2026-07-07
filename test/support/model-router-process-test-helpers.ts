@@ -159,12 +159,10 @@ export async function readRouterLaunchLog(
 ): Promise<RouterLaunchLog[]> {
   for (let attempt = 0; attempt < 100; attempt++) {
     if (fs.existsSync(logPath)) {
-      const entries = fs
-        .readFileSync(logPath, "utf8")
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as RouterLaunchLog);
+      const contents = fs.readFileSync(logPath, "utf8");
+      const lines = contents.split("\n");
+      if (!contents.endsWith("\n")) lines.pop();
+      const entries = lines.filter(Boolean).map((line) => JSON.parse(line) as RouterLaunchLog);
       if (entries.length >= expectedEntries) return entries;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
