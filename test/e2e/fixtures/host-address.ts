@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
+import { assertExitZero } from "./clients/command.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
 
@@ -49,5 +50,6 @@ export async function discoverHostAddress(
     ],
     { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 30_000 },
   );
+  assertExitZero(probe, "host address discovery");
   return { ...parseHostAddressProbe(probe.stdout), probe };
 }
