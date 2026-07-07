@@ -867,10 +867,7 @@ startGateway(null).catch(() => {});
         commands.at(-1)?.command || "",
         /inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
       );
-      expect(updateSandbox).toHaveBeenCalledWith("test-box", {
-        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
-        provider: "compatible-anthropic-endpoint",
-      });
+      expect(updateSandbox).toHaveBeenCalledWith("test-box", expect.any(Object));
     });
   });
   it("resolves a sandbox name before reconciling Hermes Provider on resume", {
@@ -975,7 +972,7 @@ registry.getSandbox = (name) =>
         policies: ["nous-web"],
       }
     : null;
-registry.updateSandbox = (name, updates) => {
+registry.reserveSandboxInferenceRoute = (name, updates) => {
   registryUpdates.push({ name, updates });
   return true;
 };

@@ -38,7 +38,18 @@ export type RecoveredSandboxEntry = SandboxEntry & {
 type Session = ReturnType<typeof onboardSession.loadSession>;
 
 type RecoveredSandboxMetadata = Partial<
-  Pick<SandboxEntry, "model" | "provider" | "gpuEnabled" | "policies" | "nimContainer" | "agent">
+  Pick<
+    SandboxEntry,
+    | "model"
+    | "provider"
+    | "gpuEnabled"
+    | "policies"
+    | "nimContainer"
+    | "agent"
+    | "endpointUrl"
+    | "credentialEnv"
+    | "preferredInferenceApi"
+  >
 > & {
   policyPresets?: string[] | null;
 };
@@ -63,6 +74,9 @@ function buildRecoveredSandboxEntry(
         ? metadata.policyPresets
         : [],
     nimContainer: metadata.nimContainer || null,
+    endpointUrl: metadata.endpointUrl ?? null,
+    credentialEnv: metadata.credentialEnv ?? null,
+    preferredInferenceApi: metadata.preferredInferenceApi ?? null,
   };
   // Only assert `agent` when recovery actually knows it. Object.assign in
   // updateSandbox would otherwise overwrite a persisted agent (e.g. "hermes")
@@ -99,9 +113,10 @@ function upsertRecoveredSandbox(
     ...recovered,
     provider: existing?.provider ?? recovered.provider ?? null,
     model: existing?.model ?? recovered.model ?? null,
-    endpointUrl: existing?.endpointUrl ?? null,
-    credentialEnv: existing?.credentialEnv ?? null,
-    preferredInferenceApi: existing?.preferredInferenceApi ?? null,
+    endpointUrl: existing?.endpointUrl ?? recovered.endpointUrl ?? null,
+    credentialEnv: existing?.credentialEnv ?? recovered.credentialEnv ?? null,
+    preferredInferenceApi:
+      existing?.preferredInferenceApi ?? recovered.preferredInferenceApi ?? null,
     gatewayName: existing?.gatewayName ?? gatewayName,
   };
   const inference = getSandboxEntryInference(entry);
@@ -206,6 +221,9 @@ function seedRecoveryMetadata(
       nimContainer: session.nimContainer || null,
       policyPresets: session.policyPresets || null,
       agent: session.agent || null,
+      endpointUrl: session.endpointUrl ?? null,
+      credentialEnv: session.credentialEnv ?? null,
+      preferredInferenceApi: session.preferredInferenceApi ?? null,
     }),
   );
   const sessionSandboxMissing = !current.sandboxes.some(

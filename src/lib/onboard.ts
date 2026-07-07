@@ -4584,6 +4584,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       recordStateResult: recordCompatibleStateResult,
     });
+    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
     const coreContext = coreFlowResult.context;
     session = coreContext.session;
     sandboxName = coreContext.sandboxName;

@@ -1077,6 +1077,10 @@ describe("setupInference dependency failures", () => {
     expect(harness.updateSandbox).toHaveBeenCalledWith("test-box", {
       model: "router/model",
       provider: "nvidia-router",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: null,
+      gatewayName: "nemoclaw",
     });
     expect(harness.logs).toEqual(["  ✓ Inference route set: nvidia-router / router/model"]);
     expect(harness.errors).toEqual([]);
