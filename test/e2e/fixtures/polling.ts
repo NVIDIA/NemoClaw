@@ -20,10 +20,13 @@ export interface PollOptions<T> {
   now?: () => number;
 }
 
+export type PollingFailureReason = "aborted" | "terminal" | "exhausted";
+
 export class PollingError<T> extends Error {
   constructor(
     message: string,
     readonly lastAttempt?: PollAttempt<T>,
+    readonly reason: PollingFailureReason = "exhausted",
   ) {
     super(message);
   }
@@ -43,14 +46,14 @@ export async function pollUntil<T>(options: PollOptions<T>): Promise<PollAttempt
   const deadline = options.deadlineMs === undefined ? undefined : now() + options.deadlineMs;
   let lastAttempt: PollAttempt<T> | undefined;
   for (let attempt = 1; ; attempt += 1) {
-    if (options.signal?.aborted) throw new PollingError("polling aborted", lastAttempt);
+    if (options.signal?.aborted) throw new PollingError("polling aborted", lastAttempt, "aborted");
     if (options.attempts !== undefined && attempt > options.attempts) break;
     if (deadline !== undefined && attempt > 1 && now() >= deadline) break;
     const artifactName = pollingArtifactName(options.artifactPrefix, attempt);
     const value = await options.probe(attempt, artifactName);
     lastAttempt = { attempt, artifactName, value };
     const terminal = options.terminal?.(value, attempt);
-    if (terminal) throw new PollingError(terminal, lastAttempt);
+    if (terminal) throw new PollingError(terminal, lastAttempt, "terminal");
     if (options.accept(value, attempt)) return lastAttempt;
     const delay =
       typeof options.delayMs === "function" ? options.delayMs(attempt) : (options.delayMs ?? 0);

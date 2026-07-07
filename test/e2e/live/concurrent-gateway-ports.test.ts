@@ -162,7 +162,7 @@ async function waitForSandboxReady(
     return result.value.phase;
   } catch (error) {
     if (!(error instanceof PollingError)) throw error;
-    if (error.message.includes("terminal phase")) throw error;
+    if (error.reason === "terminal") throw error;
     const last = error.lastAttempt?.value;
     throw new Error(
       `${sandboxName} did not reach Ready/Running on ${gatewayName}; last phase '${last?.phase ?? "missing"}'\n${last?.output ?? ""}`,

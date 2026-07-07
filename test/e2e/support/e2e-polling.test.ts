@@ -36,6 +36,7 @@ describe("bounded polling", () => {
     }
     expect(delays).toEqual([10, 20]);
     expect(error?.lastAttempt?.value).toBe("not-ready-2");
+    expect(error?.reason).toBe("exhausted");
   });
 
   it("honors deadlines, terminal states, and abort signals", async () => {
@@ -60,7 +61,7 @@ describe("bounded polling", () => {
         accept: () => false,
         terminal: (value) => (value === "Failed" ? "terminal failure" : undefined),
       }),
-    ).rejects.toThrow("terminal failure");
+    ).rejects.toMatchObject({ reason: "terminal" });
     const controller = new AbortController();
     controller.abort();
     await expect(
@@ -71,6 +72,6 @@ describe("bounded polling", () => {
         probe: async () => true,
         accept: Boolean,
       }),
-    ).rejects.toThrow("polling aborted");
+    ).rejects.toMatchObject({ reason: "aborted" });
   });
 });
