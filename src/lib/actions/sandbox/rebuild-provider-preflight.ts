@@ -172,7 +172,7 @@ export function checkRebuildGatewayProviderOrBail(
   ) {
     options.onProviderReconfigureRequired?.(provider, credentialEnv);
     log(
-      `Preflight gateway provider check: validated prepared recovery will recreate missing provider '${provider}' from ${credentialEnv ?? "the exported host credential"}`,
+      `Preflight gateway provider check: validated prepared recovery will recreate missing provider '${provider}' from ${credentialEnv}`,
     );
     return true;
   }
