@@ -232,6 +232,42 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
+    it("aborts if the provider credential disappears at the delete edge (#6114)", async () => {
+      let credentialHydrations = 0;
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: MODEL,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          endpointUrl: "https://inference.example.test/v1",
+          preferredInferenceApi: "openai-completions",
+        },
+        hydrateCredentialEnv: () => {
+          credentialHydrations += 1;
+          return credentialHydrations < 3 ? "host-provider-key" : null;
+        },
+        runOpenshell: providerRuntime([]),
+        staleRecovery: true,
+      });
+      configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
+        endpointUrl: "https://inference.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("became unavailable before sandbox deletion");
+
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    });
+
     it("aborts when the delete-edge provider lookup is indeterminate (#6114)", async () => {
       const missingProvider = providerRuntime([]);
       const indeterminateProvider = () => ({
