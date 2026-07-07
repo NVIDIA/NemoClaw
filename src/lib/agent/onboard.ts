@@ -5,35 +5,64 @@
 // non-default agent (e.g. Hermes) is selected via --agent flag or
 // NEMOCLAW_AGENT env var. The OpenClaw path never touches this module.
 
-import fs from "fs";
-import os from "os";
-import path from "path";
-
-import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
-import { ROOT, redact, run, shellQuote } from "../runner";
-import {
-  buildLocalBaseTag,
-  resolveSandboxBaseImage,
-  SANDBOX_BASE_TAG,
-} from "../sandbox-base-image";
+import { redact, run } from "../runner";
+import * as baseImage from "./base-image";
+import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
-import { type AgentDefinition, loadAgent, resolveAgentName } from "./defs";
+import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
+import { runAgentSmokeCommands } from "./terminal-smoke";
+import { enforceTerminalAgentVersion } from "./terminal-version-enforcement";
+import { printBearerTokenApiAccess } from "./web-auth-ui";
+
+export { verifyAgentBinaryAvailable } from "./binary-availability";
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
-  runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
+  runCaptureOpenshell: (
+    args: string[],
+    opts?: { ignoreError?: boolean; timeout?: number },
+  ) => string | null;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
   startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
+}
+
+// Keep these compatibility exports as ordinary writable functions. Focused
+// onboarding and rebuild harnesses replace them at the facade boundary, while
+// the implementation stays isolated in base-image.ts.
+export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
+  return baseImage.getAgentSandboxBaseImageEnvVar(agentName);
+}
+
+export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string): string {
+  return baseImage.pinAgentSandboxBaseImageRef(agentName, imageRef);
+}
+
+export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
+  return baseImage.hermesBaseImageSupportsMcp(imageRef);
+}
+
+export function ensureAgentBaseImage(
+  agent: AgentDefinition,
+  options: baseImage.EnsureAgentBaseImageOptions = {},
+): baseImage.EnsureAgentBaseImageResult {
+  return baseImage.ensureAgentBaseImage(agent, options);
+}
+
+export function createAgentSandbox(
+  agent: AgentDefinition,
+  options: baseImage.EnsureAgentBaseImageOptions = {},
+): baseImage.CreateAgentSandboxResult {
+  return baseImage.createAgentSandbox(agent, options);
 }
 
 /**
@@ -50,125 +79,6 @@ export function resolveAgent({
   const name = resolveAgentName({ agentFlag, session });
   if (name === "openclaw") return null;
   return loadAgent(name);
-}
-
-/**
- * Ensure the agent-specific sandbox base image exists locally.
- * Rebuild callers can force this so local Dockerfile.base edits are applied.
- */
-export function ensureAgentBaseImage(
-  agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): {
-  imageTag: string | null;
-  built: boolean;
-} {
-  const baseDockerfile = agent.dockerfileBasePath;
-
-  if (!baseDockerfile) {
-    return { imageTag: null, built: false };
-  }
-
-  const baseImageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
-  const baseImageTag = `${baseImageName}:${SANDBOX_BASE_TAG}`;
-  const forceBaseImageRebuild = opts.forceBaseImageRebuild === true;
-  if (forceBaseImageRebuild) {
-    console.log(`  Rebuilding ${agent.displayName} base image...`);
-    const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
-      ignoreError: true,
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    if (buildResult.error || buildResult.status !== 0) {
-      const detail = buildResult.error
-        ? `: ${buildResult.error.message}`
-        : ` (exit ${buildResult.status ?? "unknown"})`;
-      throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
-    }
-    console.log(`  \u2713 Base image built: ${baseImageTag}`);
-    return { imageTag: baseImageTag, built: true };
-  }
-
-  const resolved = resolveSandboxBaseImage({
-    imageName: baseImageName,
-    dockerfilePath: baseDockerfile,
-    localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
-    envVar: `NEMOCLAW_${agent.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`,
-    label: `${agent.displayName} sandbox base image`,
-    requireOpenshellSandboxAbi: process.platform === "linux",
-    rootDir: ROOT,
-  });
-  if (resolved && !forceBaseImageRebuild) {
-    console.log(`  Using ${agent.displayName} base image: ${resolved.ref}`);
-    return { imageTag: resolved.ref, built: false };
-  }
-  if (!resolved && process.platform === "linux" && !forceBaseImageRebuild) {
-    throw new Error(
-      `No compatible ${agent.displayName} sandbox base image found for ${baseImageName}`,
-    );
-  }
-  const inspectResult = dockerImageInspect(baseImageTag, {
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  if (inspectResult?.status !== 0) {
-    console.log(`  Building ${agent.displayName} base image (first time only)...`);
-    const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
-      ignoreError: true,
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    if (buildResult.error || buildResult.status !== 0) {
-      const detail = buildResult.error
-        ? `: ${buildResult.error.message}`
-        : ` (exit ${buildResult.status ?? "unknown"})`;
-      throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
-    }
-    console.log(`  \u2713 Base image built: ${baseImageTag}`);
-    return { imageTag: baseImageTag, built: true };
-  }
-
-  console.log(`  Base image exists: ${baseImageTag}`);
-  return { imageTag: baseImageTag, built: false };
-}
-
-/**
- * Stage build context for an agent-specific sandbox image.
- * Builds the base image if the agent defines one and it's not cached locally.
- */
-export function createAgentSandbox(
-  agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): {
-  buildCtx: string;
-  stagedDockerfile: string;
-} {
-  const agentDockerfile = agent.dockerfilePath;
-
-  if (!agentDockerfile) {
-    throw new Error(`${agent.displayName} is missing a sandbox Dockerfile`);
-  }
-
-  const { imageTag: baseImageRef } = ensureAgentBaseImage(agent, opts);
-
-  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-  fs.cpSync(ROOT, buildCtx, {
-    recursive: true,
-    filter: (src) => {
-      const base = path.basename(src);
-      return !["node_modules", ".git", ".venv", "__pycache__", ".claude"].includes(base);
-    },
-  });
-  const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.copyFileSync(agentDockerfile, stagedDockerfile);
-  if (baseImageRef) {
-    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
-    fs.writeFileSync(
-      stagedDockerfile,
-      dockerfile.replace(/^ARG BASE_IMAGE=.*$/m, `ARG BASE_IMAGE=${baseImageRef}`),
-    );
-  }
-  console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
-
-  return { buildCtx, stagedDockerfile };
 }
 
 /**
@@ -192,24 +102,6 @@ function agentCliName(agent: AgentDefinition): string {
   return getAgentBranding(agent.name).cli;
 }
 
-/**
- * Resolve the executable name expected inside the agent sandbox.
- */
-function agentExecutableName(agent: AgentDefinition): string {
-  const configuredPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
-  return path.basename(configuredPath || agent.name);
-}
-
-type AgentBinaryAvailability =
-  | { available: true }
-  | {
-      available: false;
-      reason: "not_found" | "not_executable" | "path_mismatch";
-      binaryPath?: string;
-      resolvedPath?: string;
-    };
-
-const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
 const HERMES_TIRITH_MARKER_ABSENT = "tirith marker: absent";
 const HERMES_STARTUP_DIAGNOSTICS_SCRIPT = `
 set +e
@@ -246,81 +138,6 @@ for log in /tmp/nemoclaw-start.log /tmp/gateway.log; do
   fi
 done
 `.trim();
-
-/**
- * Check whether the selected agent binary is available inside the sandbox.
- *
- * Exported so tests can exercise the sandbox-side guard without running the
- * full onboarding flow.
- */
-export function verifyAgentBinaryAvailable(
-  sandboxName: string,
-  agent: AgentDefinition,
-  runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
-): AgentBinaryAvailability {
-  const executable = agentExecutableName(agent);
-  const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
-  const script = binaryPath
-    ? [
-        `if [ -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)}; exit 0; fi`,
-        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
-        `[ -n "$resolved" ] || { echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}; exit 0; }`,
-        `[ -x "$resolved" ] || { printf '${AGENT_BINARY_CHECK_PREFIX}not_executable:%s\\n' "$resolved"; exit 0; }`,
-        `printf '${AGENT_BINARY_CHECK_PREFIX}path_mismatch:%s\\n' "$resolved"`,
-      ].join("; ")
-    : [
-        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
-        `[ -n "$resolved" ] && [ -x "$resolved" ] && echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)} || echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}`,
-      ].join("; ");
-  const result = runCaptureOpenshell(
-    ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", script],
-    {
-      ignoreError: true,
-    },
-  );
-  const status = result?.trim() ?? "";
-  const marker = status
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.startsWith(AGENT_BINARY_CHECK_PREFIX));
-  const checkStatus = marker?.slice(AGENT_BINARY_CHECK_PREFIX.length) ?? "";
-  if (checkStatus === "ok") {
-    return { available: true };
-  }
-  if (binaryPath && checkStatus) {
-    const mismatch = checkStatus.match(/^path_mismatch:(.+)$/);
-    if (mismatch) {
-      return {
-        available: false,
-        reason: "path_mismatch",
-        binaryPath,
-        resolvedPath: mismatch[1].trim(),
-      };
-    }
-    if (checkStatus.startsWith("not_executable")) {
-      return { available: false, reason: "not_executable", binaryPath };
-    }
-  }
-  return { available: false, reason: "not_found", binaryPath: binaryPath || undefined };
-}
-
-/**
- * Format a user-facing explanation for an agent binary availability failure.
- */
-function describeAgentBinaryFailure(
-  sandboxName: string,
-  agent: AgentDefinition,
-  result: Exclude<AgentBinaryAvailability, { available: true }>,
-): string {
-  const executable = agentExecutableName(agent);
-  if (result.reason === "path_mismatch") {
-    return `${agent.displayName} binary '${executable}' resolves to '${result.resolvedPath}', expected '${result.binaryPath}' inside sandbox '${sandboxName}'`;
-  }
-  if (result.reason === "not_executable") {
-    return `${agent.displayName} configured binary '${result.binaryPath}' is not executable inside sandbox '${sandboxName}'`;
-  }
-  return `${agent.displayName} binary '${executable}' is missing inside sandbox '${sandboxName}'`;
-}
 
 /**
  * Collect read-only Hermes startup diagnostics for Step 7 health timeouts.
@@ -426,6 +243,27 @@ export async function handleAgentSetup(
   };
 
   if (resume && sandboxName) {
+    if (isTerminalAgent(agent)) {
+      const binaryAvailability = verifyAgentBinaryAvailable(
+        sandboxName,
+        agent,
+        runCaptureOpenshell,
+      );
+      if (binaryAvailability.available) {
+        syncNemoClawConfig();
+        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+        if (smokeResult.ok) {
+          await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
+            beforeFailure: () => startRecordedStep("agent_setup", { sandboxName, provider, model }),
+            onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+          });
+          skippedStepMessage("agent_setup", sandboxName);
+          await recordStepComplete("agent_setup", { sandboxName, provider, model });
+          return;
+        }
+      }
+    }
+
     const probe = agent.healthProbe;
     if (probe?.url) {
       const result = runCaptureOpenshell(
@@ -467,6 +305,25 @@ export async function handleAgentSetup(
   }
 
   syncNemoClawConfig();
+
+  if (isTerminalAgent(agent)) {
+    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+    if (!smokeResult.ok) {
+      await failAgentSetup(
+        sandboxName,
+        agent,
+        `${agent.displayName} terminal smoke command failed: ${smokeResult.command}`,
+        recordStepFailed,
+        smokeResult.output ? [String(redact(smokeResult.output)).slice(0, 500)] : [],
+      );
+    }
+    await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
+      onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+    });
+    console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
+    await recordStepComplete("agent_setup", { sandboxName, provider, model });
+    return;
+  }
 
   const probe = agent.healthProbe;
   if (probe?.url) {
@@ -568,6 +425,7 @@ export function printDashboardUi(
       seen.add(url);
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    printBearerTokenApiAccess(sandboxName, agent, cliName);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
     printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
     return;
@@ -579,6 +437,7 @@ export function printDashboardUi(
     for (const url of deps.buildControlUiUrls(null, info.port)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    printBearerTokenApiAccess(sandboxName, agent, cliName);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
     printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
     return;
@@ -619,10 +478,10 @@ export function printDashboardUi(
  * The URL filter normalises empty `URL.port` results to the scheme
  * default. `new URL("http://h:80").port` returns `""` because WHATWG
  * URL elides the default scheme port; a strict `urlPort === String(port)`
- * comparison would silently drop URLs for ports 80 and 443 even though
- * the underlying `forward_ports` validation accepts them. The
- * normalisation keeps the filter sound while still excluding any URL
- * whose port truly does not match the declared entry.
+ * comparison would silently drop scheme-default URLs from older or
+ * direct-call agent definitions. The normalisation keeps the filter
+ * sound while still excluding any URL whose port truly does not match
+ * the declared entry.
  */
 function printAdditionalForwardPorts(
   agent: AgentDefinition,
@@ -631,9 +490,9 @@ function printAdditionalForwardPorts(
 ): void {
   const declared = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
   if (declared.length === 0) return;
-  const apiPort = agent.healthProbe.port;
+  const apiPort = agent.healthProbe?.port;
   for (const port of declared) {
-    if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) continue;
     if (port === primaryPort) continue;
     const isApi = port === apiPort;
     const sectionLabel = isApi ? "OpenAI-compatible API" : "additional port";

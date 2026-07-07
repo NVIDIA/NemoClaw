@@ -1,46 +1,98 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import type { Interface as ReadlineInterface } from "node:readline";
-import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { spawnSync } from "node:child_process";
-import * as policies from "../dist/lib/policy";
-import { execTimeout } from "./helpers/timeouts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireForTest = createRequire(import.meta.url);
 const readline = requireForTest("node:readline") as typeof import("node:readline");
 const YAML = requireForTest("yaml");
 const REPO_ROOT = path.join(import.meta.dirname, "..");
+const policies = requireForTest(
+  path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"),
+) as typeof import("../src/lib/policy");
 const resolveOpenshellModule = requireForTest(
-  path.join(REPO_ROOT, "dist", "lib", "adapters", "openshell", "resolve.js"),
+  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "resolve.ts"),
 ) as { resolveOpenshell: (...args: unknown[]) => string | null };
-const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
-const CREDENTIALS_PATH = JSON.stringify(
-  path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js"),
-);
-const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
-const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
+const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"));
+const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
+const SOURCE_NODE_ARGS = ["--import", "tsx"];
 const SELECT_FROM_LIST_ITEMS = [
-  { name: "npm", description: "npm and Yarn registry access" },
-  { name: "pypi", description: "Python Package Index (PyPI) access" },
+  { name: "npm", description: "npm and Yarn registry access", file: "npm.yaml" },
+  { name: "pypi", description: "Python Package Index (PyPI) access", file: "pypi.yaml" },
 ];
-
-type PolicyCall = {
-  type: string;
-  message?: string;
-  sandboxName?: string;
-  presetName?: string;
-  path?: string;
-  presets?: string[];
-};
-
 type AppliedOptions = {
   applied?: string[];
 };
+
+type SelectionFunction = "selectFromList" | "selectForRemoval";
+
+async function runSelectionPrompt(
+  functionName: SelectionFunction,
+  input: string,
+  { applied = [] }: AppliedOptions = {},
+) {
+  const stderr: string[] = [];
+  const counts = { ref: 0, pause: 0, unref: 0 };
+  const stdin = process.stdin as typeof process.stdin & {
+    ref: () => typeof process.stdin;
+    pause: () => typeof process.stdin;
+    unref: () => typeof process.stdin;
+  };
+  const original = {
+    ref: stdin.ref,
+    pause: stdin.pause,
+    unref: stdin.unref,
+  };
+  const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+    stderr.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write);
+  const close = vi.fn();
+  const createInterface = vi.spyOn(readline, "createInterface").mockImplementation((options) => {
+    expect(options).toEqual({ input: process.stdin, output: process.stderr });
+    return {
+      question: (question: string, callback: (answer: string) => void) => {
+        process.stderr.write(question);
+        callback(input);
+      },
+      close,
+    } as unknown as ReadlineInterface;
+  });
+  stdin.ref = () => {
+    counts.ref += 1;
+    return process.stdin;
+  };
+  stdin.pause = () => {
+    counts.pause += 1;
+    return process.stdin;
+  };
+  stdin.unref = () => {
+    counts.unref += 1;
+    return process.stdin;
+  };
+
+  try {
+    const selected = await policies[functionName](SELECT_FROM_LIST_ITEMS, { applied });
+    return {
+      selected,
+      stderr: stderr.join(""),
+      counts,
+      close,
+    };
+  } finally {
+    stdin.ref = original.ref;
+    stdin.pause = original.pause;
+    stdin.unref = original.unref;
+    createInterface.mockRestore();
+    stderrWrite.mockRestore();
+  }
+}
 
 function requirePresetContent(content: string | null): string {
   expect(content).toBeTruthy();
@@ -61,41 +113,17 @@ function parseRepoYaml(relativePath: string): Record<string, any> {
   >;
 }
 
+function presetInfoPath(preset: { file: string }): string {
+  return preset.file.includes("/")
+    ? path.join(REPO_ROOT, preset.file)
+    : path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets", preset.file);
+}
+
 function parseResultPayload(stdout: string): any {
   const marker = "__RESULT__";
   const markerIndex = stdout.indexOf(marker);
   expect(markerIndex).toBeGreaterThanOrEqual(0);
   return JSON.parse(stdout.slice(markerIndex + marker.length));
-}
-
-function runSelectFromList(input: string, { applied = [] }: AppliedOptions = {}) {
-  const script = String.raw`
-const { selectFromList } = require(${POLICIES_PATH});
-const items = JSON.parse(process.env.NEMOCLAW_TEST_ITEMS);
-const options = JSON.parse(process.env.NEMOCLAW_TEST_OPTIONS || "{}");
-
-selectFromList(items, options)
-  .then((value) => {
-    process.stdout.write(String(value) + "\n");
-  })
-  .catch((error) => {
-    const message = error && error.message ? error.message : String(error);
-    process.stderr.write(message);
-    process.exit(1);
-  });
-`;
-
-  return spawnSync(process.execPath, ["-e", script], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-    timeout: execTimeout(5_000),
-    input,
-    env: {
-      ...process.env,
-      NEMOCLAW_TEST_ITEMS: JSON.stringify(SELECT_FROM_LIST_ITEMS),
-      NEMOCLAW_TEST_OPTIONS: JSON.stringify({ applied }),
-    },
-  });
 }
 
 describe("policies", () => {
@@ -145,6 +173,8 @@ describe("policies", () => {
         "public-reference",
         "pypi",
         "slack",
+        "tavily",
+        "teams",
         "telegram",
         "weather",
         "wechat",
@@ -170,13 +200,12 @@ describe("policies", () => {
     });
 
     it("includes /usr/bin/node in communication presets", () => {
-      for (const preset of ["discord", "slack", "telegram", "whatsapp"]) {
+      for (const preset of ["discord", "slack", "teams", "telegram", "whatsapp"]) {
         const content = requirePresetContent(policies.loadPreset(preset));
         expect(content).toContain("/usr/local/bin/node");
         expect(content).toContain("/usr/bin/node");
       }
     });
-
     it("whatsapp preset routes web.whatsapp.com as a raw L4 tunnel with TLS pass-through", () => {
       // The /ws/chat upgrade is HTTP/1.1-only; if the proxy terminates TLS it
       // negotiates h2 ALPN with Meta's edge and the WS upgrade fails (Meta
@@ -421,7 +450,7 @@ describe("policies", () => {
       // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
       // runtime, so the preset lists each known iLink IDC host explicitly.
       // Both hosts are load-bearing today — `ilinkai.weixin.qq.com` is the
-      // bootstrap (hard-coded in src/ext/wechat/qr.ts), `ilinkai.wechat.com`
+      // bootstrap (hard-coded in src/lib/messaging/channels/wechat/qr.ts), `ilinkai.wechat.com`
       // is the per-account baseUrl returned after QR confirm. Additional
       // IDC hosts may need to be added when operators observe new
       // `DENIED ... -> <host>:443` lines in OCSF logs.
@@ -552,7 +581,7 @@ exit 1
       );
 
       try {
-        const result = spawnSync(process.execPath, ["-e", script], {
+        const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
           cwd: REPO_ROOT,
           encoding: "utf-8",
           env: {
@@ -624,7 +653,7 @@ exit 1
       );
 
       try {
-        const result = spawnSync(process.execPath, ["-e", script], {
+        const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
           cwd: REPO_ROOT,
           encoding: "utf-8",
           env: {
@@ -704,7 +733,7 @@ exit 1
       );
 
       try {
-        const result = spawnSync(process.execPath, ["-e", script], {
+        const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
           cwd: REPO_ROOT,
           encoding: "utf-8",
           env: {
@@ -732,12 +761,16 @@ exit 1
 
   describe("applyPreset disclosure logging", () => {
     it("logs egress endpoints before applying", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-disclosure-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      fs.writeFileSync(
+        fakeOpenshell,
+        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        { mode: 0o755 },
+      );
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("exit");
-      });
-
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
       try {
         try {
           policies.applyPreset("test-sandbox", "npm");
@@ -753,7 +786,8 @@ exit 1
       } finally {
         logSpy.mockRestore();
         errSpy.mockRestore();
-        exitSpy.mockRestore();
+        vi.unstubAllEnvs();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
 
@@ -860,19 +894,11 @@ exit 1
     });
   });
 
-  describe("buildPolicyGetCommand", () => {
-    it("returns an argv array with sandbox name as a separate element", () => {
-      const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd[0]).toMatch(/openshell$/);
-      expect(cmd.slice(1)).toEqual(["policy", "get", "--full", "my-assistant"]);
-    });
-  });
-
   // Regression for issue #4224: when openshell is installed at ~/.local/bin/openshell
   // (the installer's user-local location) but PATH from a non-interactive shell does
   // not include ~/.local/bin/, buildPolicySetCommand / buildPolicyGetCommand must
   // resolve openshell to an absolute path so spawnSync does not raise ENOENT.
-  describe("issue 4224: spawnSync openshell ENOENT in non-interactive shells", () => {
+  describe("spawnSync openshell ENOENT in non-interactive shells (#4224)", () => {
     let tmpHome: string;
     let fakeOpenshell: string;
     let origHome: string | undefined;
@@ -884,7 +910,11 @@ exit 1
       const localBin = path.join(tmpHome, ".local", "bin");
       fs.mkdirSync(localBin, { recursive: true });
       fakeOpenshell = path.join(localBin, "openshell");
-      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(
+        fakeOpenshell,
+        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        { mode: 0o755 },
+      );
 
       origHome = process.env.HOME;
       origPath = process.env.PATH;
@@ -922,7 +952,7 @@ exit 1
     it("buildPolicyGetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
       expect(cmd[0]).toBe(fakeOpenshell);
-      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--full", "my-assistant"]);
+      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--base", "my-assistant"]);
     });
 
     it("assertOpenshellResolvable emits a diagnostic listing every checked location and exits nonzero when openshell cannot be resolved", () => {
@@ -987,7 +1017,10 @@ exit 1
     it("applyPreset does not create temp dirs before the openshell resolvability check", () => {
       const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
 
-      const resolveSpy = vi.spyOn(resolveOpenshellModule, "resolveOpenshell").mockReturnValue(null);
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValueOnce(fakeOpenshell)
+        .mockReturnValue(null);
       const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -1013,14 +1046,13 @@ exit 1
     });
   });
 
-  describe("issue 4586: preset apply must not overwrite a live policy that could not be read", () => {
+  describe("preset apply must not overwrite a live policy that could not be read (#4586)", () => {
     const registryModule = requireForTest(
-      path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"),
+      path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
     ) as Record<string, any>;
     const CUSTOM = "network_policies:\n  example:\n    host: example.com\n";
     const DEGRADED =
       '#!/bin/sh\nif [ "$1" = "policy" ] && [ "$2" = "get" ]; then echo "error: gateway is restarting"; fi\nexit 0\n';
-    const EMPTY_OK = "#!/bin/sh\nexit 0\n";
 
     let tmpHome: string;
     let fakeOpenshell: string;
@@ -1077,25 +1109,6 @@ exit 1
       }
     });
 
-    it("still applies applyPresetContent when policy get returns an empty policy (fresh sandbox)", () => {
-      fs.writeFileSync(fakeOpenshell, EMPTY_OK, { mode: 0o755 });
-      const logs: string[] = [];
-      const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
-        logs.push(a.map((x) => String(x)).join(" "));
-      });
-      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-      try {
-        const result = policies.applyPresetContent("alpha", "my-custom", CUSTOM, {
-          custom: { sourcePath: "/tmp/x.yaml" },
-        });
-        expect(result).toBe(true);
-        expect(logs.join("\n")).toContain("Applied preset:");
-      } finally {
-        logSpy.mockRestore();
-        errSpy.mockRestore();
-      }
-    });
-
     it("aborts applyPresets (returns false) when policy get exits 0 with degraded output", () => {
       fs.writeFileSync(fakeOpenshell, DEGRADED, { mode: 0o755 });
       const errs: string[] = [];
@@ -1114,9 +1127,9 @@ exit 1
     });
   });
 
-  describe("issue 4510: policy-add --from-file false success when the sandbox is absent from the registry", () => {
+  describe("policy-add --from-file false success when the sandbox is absent from the registry (#4510)", () => {
     const registryModule = requireForTest(
-      path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"),
+      path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
     ) as Record<string, any>;
     const CUSTOM_CONTENT = "network_policies:\n  slack-files-upload:\n    host: files.slack.com\n";
     const SOURCE_PATH = "/tmp/slack-files-upload-case.yaml";
@@ -1133,7 +1146,11 @@ exit 1
       const localBin = path.join(tmpHome, ".local", "bin");
       fs.mkdirSync(localBin, { recursive: true });
       fakeOpenshell = path.join(localBin, "openshell");
-      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(
+        fakeOpenshell,
+        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        { mode: 0o755 },
+      );
       origHome = process.env.HOME;
       process.env.HOME = tmpHome;
       resolveSpy = vi
@@ -1344,20 +1361,17 @@ exit 1
   });
 
   describe("mergePresetIntoPolicy", () => {
-    // Legacy list-style entries (backward compat — uses text-based fallback)
-    const sampleEntries = "  - host: example.com\n    allow: true";
+    const sampleEntries = "  example:\n    endpoints:\n      - host: example.com";
 
-    it("appends network_policies when current policy has content but no version header", () => {
+    it("refuses an unmarked current mapping without a policy root", () => {
       const versionless = "some_key:\n  foo: bar";
-      const merged = policies.mergePresetIntoPolicy(versionless, sampleEntries);
-      expect(merged).toContain("version:");
-      expect(merged).toContain("some_key:");
-      expect(merged).toContain("network_policies:");
-      expect(merged).toContain("example.com");
+      expect(() => policies.mergePresetIntoPolicy(versionless, sampleEntries)).toThrow(
+        /current policy is not a valid YAML mapping/,
+      );
     });
 
     it("appends preset entries when current policy has network_policies but no version", () => {
-      const versionlessWithNp = "network_policies:\n  - host: existing.com\n    allow: true";
+      const versionlessWithNp = "network_policies:\n  existing:\n    host: existing.com";
       const merged = policies.mergePresetIntoPolicy(versionlessWithNp, sampleEntries);
       expect(merged).toContain("version:");
       expect(merged).toContain("existing.com");
@@ -1365,7 +1379,7 @@ exit 1
     });
 
     it("keeps existing version when present", () => {
-      const withVersion = "version: 2\n\nnetwork_policies:\n  - host: old.com";
+      const withVersion = "version: 2\nnetwork_policies:\n  old:\n    host: old.com";
       const merged = policies.mergePresetIntoPolicy(withVersion, sampleEntries);
       expect(merged).toContain("version: 2");
       expect(merged).toContain("example.com");
@@ -1378,19 +1392,20 @@ exit 1
       expect(merged).toContain("example.com");
     });
 
-    it("rebuilds from a clean scaffold when current policy read is truncated", () => {
-      const merged = policies.mergePresetIntoPolicy("Version: 3\nHash: abc123", sampleEntries);
-      expect(merged).toBe(
-        "version: 1\n\nnetwork_policies:\n  - host: example.com\n    allow: true",
-      );
+    it("fails closed when the current policy read is truncated", () => {
+      expect(() =>
+        policies.mergePresetIntoPolicy("Version: 3\nHash: abc123", sampleEntries),
+      ).toThrow(/Cannot merge policy preset: the current policy is not a valid YAML mapping/);
     });
 
-    it("adds a blank line after synthesized version headers", () => {
-      const merged = policies.mergePresetIntoPolicy("some_key:\n  foo: bar", sampleEntries);
-      expect(merged.startsWith("version: 1\n\nsome_key:")).toBe(true);
+    it("fails closed when preset entries are malformed or not a mapping", () => {
+      for (const invalidEntries of ["  broken: [unterminated", "  - host: example.com"]) {
+        expect(() => policies.mergePresetIntoPolicy("version: 1", invalidEntries)).toThrow(
+          /preset network_policies entries must be a valid YAML mapping/,
+        );
+      }
     });
 
-    // --- Structured merge tests (real preset format) ---
     const realisticEntries =
       "  pypi_access:\n" +
       "    name: pypi_access\n" +
@@ -1627,151 +1642,6 @@ exit 1
       }
     });
 
-    it("Slack REST endpoints opt into OpenShell request-body credential rewrite", () => {
-      const policySources = [
-        fs.readFileSync(
-          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets/slack.yaml"),
-          "utf8",
-        ),
-        fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"), "utf8"),
-        fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"), "utf8"),
-        fs.readFileSync(
-          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml"),
-          "utf8",
-        ),
-      ];
-      const slackRestHosts = new Set(["slack.com", "api.slack.com", "hooks.slack.com"]);
-
-      for (const content of policySources) {
-        const parsed = YAML.parse(content) as {
-          network_policies?: Record<
-            string,
-            {
-              endpoints?: Array<{
-                host?: string;
-                protocol?: string;
-                request_body_credential_rewrite?: boolean;
-              }>;
-            }
-          >;
-        };
-        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
-          (policy) => policy.endpoints ?? [],
-        );
-        for (const endpoint of endpoints.filter((candidate) =>
-          slackRestHosts.has(candidate.host ?? ""),
-        )) {
-          expect(endpoint).toMatchObject({
-            protocol: "rest",
-            request_body_credential_rewrite: true,
-          });
-        }
-      }
-    });
-
-    it("Hermes messaging gateway policies use native inspected WebSocket policy", () => {
-      const policyFiles = [
-        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
-        path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"),
-      ];
-      const cases = [
-        "gateway.discord.gg",
-        "*.discord.gg",
-        "wss-primary.slack.com",
-        "wss-backup.slack.com",
-      ];
-
-      for (const file of policyFiles) {
-        const content = fs.readFileSync(file, "utf8");
-        const parsed = YAML.parse(content) as {
-          network_policies?: Record<
-            string,
-            {
-              endpoints?: Array<{
-                host?: string;
-                protocol?: string;
-                access?: string;
-                tls?: string;
-                websocket_credential_rewrite?: boolean;
-                rules?: Array<{ allow?: { method?: string; path?: string } }>;
-              }>;
-            }
-          >;
-        };
-        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
-          (policy) => policy.endpoints ?? [],
-        );
-        for (const host of cases) {
-          const endpoint = endpoints.find((candidate) => candidate.host === host);
-          expect(endpoint).toBeTruthy();
-          expect(endpoint).toMatchObject({
-            protocol: "websocket",
-            enforcement: "enforce",
-            websocket_credential_rewrite: true,
-          });
-          expect(endpoint).not.toHaveProperty("access");
-          expect(endpoint).not.toHaveProperty("tls");
-          expect(endpoint?.rules).toEqual(
-            expect.arrayContaining([
-              { allow: { method: "GET", path: "/**" } },
-              { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
-            ]),
-          );
-        }
-      }
-    });
-
-    it("Hermes Discord REST mutations are scoped to discord.com", () => {
-      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
-      const networkPolicies = parsed.network_policies as Record<
-        string,
-        {
-          endpoints?: Array<{
-            host?: string;
-            rules?: Array<{ allow?: { method?: string; path?: string } }>;
-          }>;
-        }
-      >;
-      const rulesFor = (policy: string, host: string) =>
-        (networkPolicies[policy]?.endpoints ?? [])
-          .filter((endpoint) => endpoint.host === host)
-          .flatMap((endpoint) => endpoint.rules ?? [])
-          .map((rule) => rule.allow)
-          .filter((rule): rule is { method: string; path: string } =>
-            Boolean(rule?.method && rule?.path),
-          );
-      const sortRules = (rules: Array<{ method: string; path: string }>) =>
-        [...rules].sort((a, b) => `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`));
-
-      const nousRules = rulesFor("nous_research", "nousresearch.com");
-      expect(nousRules).not.toContainEqual({ method: "PUT", path: "/**" });
-      expect(nousRules).not.toContainEqual({ method: "PATCH", path: "/**" });
-      expect(nousRules.filter((rule) => ["PUT", "PATCH", "DELETE"].includes(rule.method))).toEqual(
-        [],
-      );
-
-      const discordMutationRules = sortRules(
-        rulesFor("discord", "discord.com").filter((rule) =>
-          ["PUT", "PATCH", "DELETE"].includes(rule.method),
-        ),
-      );
-      expect(discordMutationRules).toEqual(
-        sortRules([
-          { method: "PUT", path: "/api/v*/applications/*/commands" },
-          { method: "PUT", path: "/api/v*/channels/*/messages/*/reactions/*/@me" },
-          { method: "PATCH", path: "/api/v*/applications/*" },
-          { method: "PATCH", path: "/api/v*/applications/*/commands/*" },
-          { method: "PATCH", path: "/api/v*/channels/*/messages/*" },
-          { method: "PATCH", path: "/api/v*/webhooks/*/*/messages/*" },
-          { method: "DELETE", path: "/api/v*/applications/*/commands/*" },
-          { method: "DELETE", path: "/api/v*/channels/*/messages/*" },
-          { method: "DELETE", path: "/api/v*/channels/*/messages/*/reactions/*/*" },
-          { method: "DELETE", path: "/api/v*/webhooks/*/*/messages/*" },
-        ]),
-      );
-      expect(discordMutationRules.some((rule) => rule.path === "/**")).toBe(false);
-    });
-
     it("Hermes PyPI policy lets curl verify read-only package index access (#4014)", () => {
       const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
       const pypiPolicy = parsed.network_policies?.pypi as
@@ -1833,11 +1703,7 @@ exit 1
         : [];
       const policyFiles = [
         path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
-        ...policies
-          .listPresets()
-          .map((preset) =>
-            path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets", preset.file),
-          ),
+        ...policies.listPresets().map((preset) => presetInfoPath(preset)),
         ...agentPolicyFiles,
       ];
 
@@ -2049,64 +1915,57 @@ exit 1
   });
 
   describe("selectFromList", () => {
-    it("returns preset name by number from stdin input", () => {
-      const result = runSelectFromList("1\n");
+    it("returns preset name by number from stdin input", async () => {
+      const result = await runSelectionPrompt("selectFromList", "1\n");
 
-      expect(result.status).toBe(0);
-      expect(result.stdout.trim()).toBe("npm");
+      expect(result.selected).toBe("npm");
       expect(result.stderr).toContain("Choose preset [1]:");
     });
 
-    it("uses the first preset as the default when input is empty", () => {
-      const result = runSelectFromList("\n");
+    it("uses the first preset as the default when input is empty", async () => {
+      const result = await runSelectionPrompt("selectFromList", "\n");
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Choose preset [1]:");
-      expect(result.stdout.trim()).toBe("npm");
+      expect(result.selected).toBe("npm");
     });
 
-    it("defaults to the first not-applied preset", () => {
-      const result = runSelectFromList("\n", { applied: ["npm"] });
+    it("defaults to the first not-applied preset", async () => {
+      const result = await runSelectionPrompt("selectFromList", "\n", { applied: ["npm"] });
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Choose preset [2]:");
-      expect(result.stdout.trim()).toBe("pypi");
+      expect(result.selected).toBe("pypi");
     });
 
-    it("rejects selecting an already-applied preset", () => {
-      const result = runSelectFromList("1\n", { applied: ["npm"] });
+    it("rejects selecting an already-applied preset", async () => {
+      const result = await runSelectionPrompt("selectFromList", "1\n", { applied: ["npm"] });
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Preset 'npm' is already applied.");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("rejects out-of-range preset number", () => {
-      const result = runSelectFromList("99\n");
+    it("rejects out-of-range preset number", async () => {
+      const result = await runSelectionPrompt("selectFromList", "99\n");
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Invalid preset number.");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("rejects non-numeric preset input", () => {
-      const result = runSelectFromList("npm\n");
+    it("rejects non-numeric preset input", async () => {
+      const result = await runSelectionPrompt("selectFromList", "npm\n");
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Invalid preset number.");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("prints numbered list with applied markers, legend, and default prompt", () => {
-      const result = runSelectFromList("2\n", { applied: ["npm"] });
+    it("prints numbered list with applied markers, legend, and default prompt", async () => {
+      const result = await runSelectionPrompt("selectFromList", "2\n", { applied: ["npm"] });
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toMatch(/Available presets:/);
       expect(result.stderr).toMatch(/1\) ● npm — npm and Yarn registry access/);
       expect(result.stderr).toMatch(/2\) ○ pypi — Python Package Index \(PyPI\) access/);
       expect(result.stderr).toMatch(/● applied, ○ not applied/);
       expect(result.stderr).toMatch(/Choose preset \[2\]:/);
-      expect(result.stdout.trim()).toBe("pypi");
+      expect(result.selected).toBe("pypi");
     });
   });
 
@@ -2177,151 +2036,55 @@ exit 1
       expect(result).not.toContain("pypi");
     });
 
-    it("returns policy unchanged when network_policies is a legacy array", () => {
+    it("rejects removal when network_policies is a legacy array", () => {
       const current = "version: 1\n\nnetwork_policies:\n  - host: pypi.org\n    allow: true\n";
-      const result = policies.removePresetFromPolicy(current, pypiEntries);
-      expect(result).toContain("pypi.org");
-      expect(result).toContain("allow: true");
+      expect(() => policies.removePresetFromPolicy(current, pypiEntries)).toThrow(
+        /current policy is not a valid YAML mapping/i,
+      );
     });
   });
 
   describe("selectForRemoval", () => {
-    function runSelectForRemoval(input: string, { applied = [] }: AppliedOptions = {}) {
-      const script = String.raw`
-const { selectForRemoval } = require(${POLICIES_PATH});
-const items = JSON.parse(process.env.NEMOCLAW_TEST_ITEMS);
-const options = JSON.parse(process.env.NEMOCLAW_TEST_OPTIONS || "{}");
-
-selectForRemoval(items, options)
-  .then((value) => {
-    process.stdout.write(String(value) + "\n");
-  })
-  .catch((error) => {
-    const message = error && error.message ? error.message : String(error);
-    process.stderr.write(message);
-    process.exit(1);
-  });
-`;
-
-      return spawnSync(process.execPath, ["-e", script], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-        timeout: execTimeout(5_000),
-        input,
-        env: {
-          ...process.env,
-          NEMOCLAW_TEST_ITEMS: JSON.stringify(SELECT_FROM_LIST_ITEMS),
-          NEMOCLAW_TEST_OPTIONS: JSON.stringify({ applied }),
-        },
-      });
-    }
-
-    it("returns null when no presets are applied", () => {
-      const result = runSelectForRemoval("1\n", { applied: [] });
-      expect(result.status).toBe(0);
+    it("returns null when no presets are applied", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "1\n", { applied: [] });
       expect(result.stderr).toContain("No presets are currently applied");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("shows only applied presets and returns selected name", () => {
-      const result = runSelectForRemoval("1\n", { applied: ["npm"] });
-      expect(result.status).toBe(0);
+    it("shows only applied presets and returns selected name", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "1\n", { applied: ["npm"] });
       expect(result.stderr).toContain("Applied presets:");
       expect(result.stderr).toContain("1) npm");
       expect(result.stderr).not.toContain("pypi");
-      expect(result.stdout.trim()).toBe("npm");
+      expect(result.selected).toBe("npm");
     });
 
-    it("returns null for empty input", () => {
-      const result = runSelectForRemoval("\n", { applied: ["npm"] });
-      expect(result.status).toBe(0);
-      expect(result.stdout.trim()).toBe("null");
+    it("returns null for empty input", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "\n", { applied: ["npm"] });
+      expect(result.selected).toBeNull();
     });
 
-    it("rejects non-numeric input", () => {
-      const result = runSelectForRemoval("npm\n", { applied: ["npm"] });
-      expect(result.status).toBe(0);
+    it("rejects non-numeric input", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "npm\n", {
+        applied: ["npm"],
+      });
       expect(result.stderr).toContain("Invalid preset number");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("rejects out-of-range number", () => {
-      const result = runSelectForRemoval("99\n", { applied: ["npm"] });
-      expect(result.status).toBe(0);
+    it("rejects out-of-range number", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "99\n", { applied: ["npm"] });
       expect(result.stderr).toContain("Invalid preset number");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("selects second preset when both are applied", () => {
-      const result = runSelectForRemoval("2\n", { applied: ["npm", "pypi"] });
-      expect(result.status).toBe(0);
+    it("selects second preset when both are applied", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "2\n", {
+        applied: ["npm", "pypi"],
+      });
       expect(result.stderr).toContain("1) npm");
       expect(result.stderr).toContain("2) pypi");
-      expect(result.stdout.trim()).toBe("pypi");
-    });
-  });
-
-  describe("policy-remove custom presets", () => {
-    function runPolicyRemoveCustom(
-      presetName: string,
-      extraArgs: string[] = [],
-      envOverrides: Record<string, string | undefined> = {},
-    ) {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-remove-custom-"));
-      const scriptPath = path.join(tmpDir, "policy-remove-custom-check.js");
-      const script = String.raw`
-const registry = require(${REGISTRY_PATH});
-const policies = require(${POLICIES_PATH});
-const credentials = require(${CREDENTIALS_PATH});
-const calls = [];
-// No built-in matches.
-policies.listPresets = () => [];
-policies.listCustomPresets = () => [
-  { file: "/tmp/my-api.yaml", name: "my-api", description: "custom preset" },
-];
-policies.getAppliedPresets = () => ["my-api"];
-policies.loadPreset = () => null; // built-in lookup misses
-policies.getPresetEndpoints = () => ["api.example.internal"];
-policies.removePreset = (sandboxName, presetName) => {
-  calls.push({ type: "remove", sandboxName, presetName });
-  return true;
-};
-registry.getSandbox = (name) =>
-  name === "test-sandbox" ? { name, policies: [], customPolicies: [] } : null;
-registry.getCustomPolicies = () => [
-  { name: "my-api", content: "network_policies:\n  my-api: {}\n", sourcePath: "/tmp/my-api.yaml" },
-];
-registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
-credentials.prompt = async () => "y";
-process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-remove", ${JSON.stringify(presetName)}, ...${JSON.stringify(extraArgs)}];
-Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
-  process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
-});
-`;
-      fs.writeFileSync(scriptPath, script);
-      return spawnSync(process.execPath, [scriptPath], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir, ...envOverrides },
-      });
-    }
-
-    it("removes a custom preset by name using registry-persisted content", () => {
-      const result = runPolicyRemoveCustom("my-api", ["--yes"]);
-      expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
-      expect(calls).toContainEqual({
-        type: "remove",
-        sandboxName: "test-sandbox",
-        presetName: "my-api",
-      });
-      expect(result.stdout).toMatch(/api\.example\.internal/);
-    });
-
-    it("rejects an unknown preset name even when no built-ins are defined", () => {
-      const result = runPolicyRemoveCustom("bogus", ["--yes"]);
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/Unknown preset 'bogus'/);
+      expect(result.selected).toBe("pypi");
     });
   });
 
@@ -2494,260 +2257,23 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
     });
   });
 
-  describe("policy-add --from-file / --from-dir", () => {
-    function runPolicyAddExternal(
-      extraArgs: string[] = [],
-      envOverrides: Record<string, string | undefined> = {},
-      promptAnswer = "y",
-    ) {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-external-"));
-      const scriptPath = path.join(tmpDir, "policy-add-external.js");
-      const script = String.raw`
-const registry = require(${REGISTRY_PATH});
-const policies = require(${POLICIES_PATH});
-const credentials = require(${CREDENTIALS_PATH});
-const calls = [];
-policies.selectFromList = async () => null;
-policies.listPresets = () => [];
-policies.getAppliedPresets = () => [];
-policies.loadPresetFromFile = (p) => {
-  calls.push({ type: "load", path: p });
-  if (String(p).includes("bad")) return null;
-  const m = String(p).match(/([a-z0-9-]+)\.yaml$/);
-  const name = m ? m[1] : "unknown";
-  return { presetName: name, content: "network_policies:\n  " + name + ":\n    host: " + name + ".example.com\n" };
-};
-policies.applyPresetContent = (sandboxName, presetName) => {
-  calls.push({ type: "apply", sandboxName, presetName });
-  return true;
-};
-policies.getPresetEndpoints = (content) => {
-  const m = String(content).match(/host:\s*([^\s]+)/);
-  return m ? [m[1]] : [];
-};
-credentials.prompt = async (message) => {
-  calls.push({ type: "prompt", message });
-  return ${JSON.stringify(promptAnswer)};
-};
-registry.getSandbox = (name) => (name === "test-sandbox" ? { name } : null);
-registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
-process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
-Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
-  process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
-});
-`;
-      fs.writeFileSync(scriptPath, script);
-      return spawnSync(process.execPath, [scriptPath], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir, ...envOverrides },
-      });
-    }
-
-    it("applies a custom preset when --from-file and --yes are provided", () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-"));
-      const file = path.join(tmp, "custom-rule.yaml");
-      fs.writeFileSync(
-        file,
-        "preset:\n  name: custom-rule\nnetwork_policies:\n  custom-rule:\n    name: r\n",
-      );
-      const result = runPolicyAddExternal(["--from-file", file, "--yes"]);
-      expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
-      expect(calls).toContainEqual({ type: "load", path: file });
-      expect(calls).toContainEqual({
-        type: "apply",
-        sandboxName: "test-sandbox",
-        presetName: "custom-rule",
-      });
-      expect(calls.some((c) => c.type === "prompt")).toBeFalsy();
-    });
-
-    it("exits non-zero when --from-file points to an unreadable preset", () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-bad-"));
-      const file = path.join(tmp, "bad.yaml");
-      fs.writeFileSync(file, "preset:\n  name: ignored\n");
-      const result = runPolicyAddExternal(["--from-file", file, "--yes"]);
-      expect(result.status).not.toBe(0);
-    });
-
-    it("does not apply and does not prompt under --from-file --dry-run", () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-dry-"));
-      const file = path.join(tmp, "custom-rule.yaml");
-      fs.writeFileSync(file, "preset:\n  name: custom-rule\nnetwork_policies: {}\n");
-      const result = runPolicyAddExternal(["--from-file", file, "--dry-run", "--yes"]);
-      expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
-      expect(calls.some((c) => c.type === "apply")).toBeFalsy();
-      expect(calls.some((c) => c.type === "prompt")).toBeFalsy();
-      expect(result.stdout).toMatch(/--dry-run: 'custom-rule' not applied\./);
-    });
-
-    it("skips the confirmation prompt when NEMOCLAW_NON_INTERACTIVE=1", () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-env-"));
-      const file = path.join(tmp, "custom-rule.yaml");
-      fs.writeFileSync(file, "preset:\n  name: custom-rule\nnetwork_policies: {}\n");
-      const result = runPolicyAddExternal(["--from-file", file], { NEMOCLAW_NON_INTERACTIVE: "1" });
-      expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
-      expect(calls.some((c) => c.type === "prompt")).toBeFalsy();
-      expect(calls).toContainEqual({
-        type: "apply",
-        sandboxName: "test-sandbox",
-        presetName: "custom-rule",
-      });
-    });
-
-    it("does not apply an external preset when the confirmation prompt is declined", () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-no-"));
-      const file = path.join(tmp, "custom-rule.yaml");
-      fs.writeFileSync(file, "preset:\n  name: custom-rule\nnetwork_policies: {}\n");
-      const result = runPolicyAddExternal(["--from-file", file], {}, "no");
-      expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
-      expect(calls.some((c) => c.type === "prompt")).toBeTruthy();
-      expect(calls.some((c) => c.type === "apply")).toBeFalsy();
-    });
-
-    it("errors when --from-file and --from-dir are combined", () => {
-      const result = runPolicyAddExternal(["--from-file", "a.yaml", "--from-dir", "b"]);
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/cannot also be provided/);
-    });
-
-    it("errors when --from-file is missing its path argument", () => {
-      const result = runPolicyAddExternal(["--from-file"]);
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/--from-file/);
-      expect(result.stderr).toMatch(/value|argument|path/);
-    });
-
-    it("applies every preset in --from-dir in sorted order and aborts on the first failure", () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-"));
-      fs.writeFileSync(
-        path.join(dir, "a-good.yaml"),
-        "preset:\n  name: a-good\nnetwork_policies: {}\n",
-      );
-      fs.writeFileSync(
-        path.join(dir, "b-bad.yaml"),
-        "preset:\n  name: b-bad\nnetwork_policies: {}\n",
-      );
-      fs.writeFileSync(
-        path.join(dir, "c-skipped.yaml"),
-        "preset:\n  name: c-skipped\nnetwork_policies: {}\n",
-      );
-      const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
-      expect(result.status).not.toBe(0);
-      // a-good succeeded (visible as the [a-good] endpoints log), b-bad triggered abort,
-      // c-skipped was never loaded because the loop stopped at b-bad.
-      expect(result.stdout).toMatch(/\[a-good\] Endpoints that would be opened/);
-      expect(result.stdout).not.toMatch(/\[c-skipped\]/);
-      expect(result.stderr).toMatch(/Aborting --from-dir/);
-    });
-
-    it("--from-dir skips hidden dotfile yaml presets", () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-hidden-"));
-      fs.writeFileSync(path.join(dir, ".bad.yaml"), "preset:\n  name: bad\nnetwork_policies: {}\n");
-      fs.writeFileSync(
-        path.join(dir, "real.yaml"),
-        "preset:\n  name: real\nnetwork_policies: {}\n",
-      );
-      const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
-      expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
-      const loads = calls.filter((c) => c.type === "load").map((c) => c.path);
-      expect(loads.length).toBe(1);
-      expect(loads[0]).toMatch(/real\.yaml$/);
-    });
-
-    it("errors when --from-dir points at a non-directory", () => {
-      const result = runPolicyAddExternal(["--from-dir", "/does/not/exist"]);
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/Directory not found/);
-    });
-
-    it("--from-dir skips sub-directories whose names end in .yaml/.yml", () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-skipdir-"));
-      // A real preset file and a directory that happens to match the yaml glob.
-      fs.writeFileSync(
-        path.join(dir, "real.yaml"),
-        "preset:\n  name: real\nnetwork_policies: {}\n",
-      );
-      fs.mkdirSync(path.join(dir, "archived.yaml"));
-      const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
-      expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
-      // Only the real file should have been loaded.
-      const loads = calls.filter((c) => c.type === "load").map((c) => c.path);
-      expect(loads.length).toBe(1);
-      expect(loads[0]).toMatch(/real\.yaml$/);
-    });
-  });
-
   describe("interactive prompt cleanup", () => {
-    async function runPromptLifecycle(
-      functionName: "selectFromList" | "selectForRemoval",
-      input: string,
-    ) {
-      const counts = { ref: 0, pause: 0, unref: 0 };
-      const stdin = process.stdin as typeof process.stdin & {
-        ref: () => typeof process.stdin;
-        pause: () => typeof process.stdin;
-        unref: () => typeof process.stdin;
-      };
-      const original = {
-        ref: stdin.ref,
-        pause: stdin.pause,
-        unref: stdin.unref,
-      };
-      const createInterface = vi.spyOn(readline, "createInterface").mockReturnValue({
-        question: (_question: string, callback: (answer: string) => void) => callback(input),
-        close: vi.fn(),
-      } as unknown as ReadlineInterface);
-      stdin.ref = () => {
-        counts.ref += 1;
-        return process.stdin;
-      };
-      stdin.pause = () => {
-        counts.pause += 1;
-        return process.stdin;
-      };
-      stdin.unref = () => {
-        counts.unref += 1;
-        return process.stdin;
-      };
-      const items = [
-        { name: "alpha", description: "first", file: "/tmp/alpha.yaml" },
-        { name: "beta", description: "second", file: "/tmp/beta.yaml" },
-      ];
-      const options =
-        functionName === "selectForRemoval" ? { applied: ["alpha"] } : { applied: [] };
-
-      try {
-        const selected = await policies[functionName](items, options);
-        return { selected, counts };
-      } finally {
-        stdin.ref = original.ref;
-        stdin.pause = original.pause;
-        stdin.unref = original.unref;
-        createInterface.mockRestore();
-      }
-    }
-
     it("releases and re-refs stdin around policy-add preset prompts", async () => {
-      const result = await runPromptLifecycle("selectFromList", "1\n");
-      expect(result.selected).toBe("alpha");
+      const result = await runSelectionPrompt("selectFromList", "1\n");
+      expect(result.selected).toBe("npm");
       expect(result.counts.ref).toBeGreaterThanOrEqual(1);
       expect(result.counts.pause).toBeGreaterThanOrEqual(1);
       expect(result.counts.unref).toBeGreaterThanOrEqual(1);
+      expect(result.close).toHaveBeenCalledOnce();
     });
 
     it("releases and re-refs stdin around policy-remove preset prompts", async () => {
-      const result = await runPromptLifecycle("selectForRemoval", "1\n");
-      expect(result.selected).toBe("alpha");
+      const result = await runSelectionPrompt("selectForRemoval", "1\n", { applied: ["npm"] });
+      expect(result.selected).toBe("npm");
       expect(result.counts.ref).toBeGreaterThanOrEqual(1);
       expect(result.counts.pause).toBeGreaterThanOrEqual(1);
       expect(result.counts.unref).toBeGreaterThanOrEqual(1);
+      expect(result.close).toHaveBeenCalledOnce();
     });
   });
 });

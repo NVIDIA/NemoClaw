@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChannelManifest } from "../../manifest";
-import { WECHAT_PLUGIN_INSTALL_SPEC } from "./hooks/seed-openclaw-account";
 
 export const wechatManifest = {
   schemaVersion: 1,
@@ -108,50 +107,40 @@ export const wechatManifest = {
       },
     },
   ],
-  state: {
-    persist: {
-      wechatConfig: ["accountId", "baseUrl", "userId"],
-      allowedIds: ["allowedIds"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "wechatConfig.accountId",
-        env: "WECHAT_ACCOUNT_ID",
+  runtime: {
+    openclaw: {
+      channelName: "openclaw-weixin",
+      visibility: {
+        configKeys: ["openclaw-weixin"],
+        logPatterns: ["wechat", "openclaw-weixin"],
       },
-      {
-        statePath: "wechatConfig.baseUrl",
-        env: "WECHAT_BASE_URL",
-      },
-      {
-        statePath: "wechatConfig.userId",
-        env: "WECHAT_USER_ID",
-      },
-      {
-        statePath: "allowedIds.wechat",
-        env: "WECHAT_ALLOWED_IDS",
-      },
-    ],
-  },
-  hooks: [
-    {
-      id: "wechat-openclaw-package-install",
-      phase: "agent-install",
-      handler: "common.staticOutputs",
-      agents: ["openclaw"],
-      outputs: [
+      nodePreloads: [
         {
-          id: "openclawPluginPackage",
-          kind: "package-install",
-          required: true,
-          value: {
-            manager: "openclaw-plugin",
-            spec: WECHAT_PLUGIN_INSTALL_SPEC,
-            pin: true,
-          },
+          module: "wechat-diagnostics",
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing WeChat diagnostics (provider readiness + inference errors)",
+          installedMessage: "[channels] WeChat diagnostics installed (NODE_OPTIONS updated)",
         },
       ],
-      onFailure: "abort",
     },
+  },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+      pin: true,
+      integrity:
+        "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+      tarballUrl:
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+      required: true,
+    },
+  ],
+  hooks: [
     {
       id: "wechat-host-qr",
       phase: "enroll",

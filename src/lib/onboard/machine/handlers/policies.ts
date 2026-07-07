@@ -24,12 +24,14 @@ export interface PolicyPresetEntry {
 
 export interface ActiveSandboxPolicyState {
   messaging?: { plan: SandboxMessagingPlan } | null;
+  policyTier?: string | null;
 }
 
 export interface PolicyResumeSelection {
   policyPresets: string[];
   recordedPolicyPresetsNeedReconcile: boolean;
   disabledMessagingPolicyPresetApplied: boolean;
+  suppressedAgentRequiredPresetsLive: boolean;
 }
 
 export interface PoliciesStateOptions<Agent, WebSearchConfig> {
@@ -41,6 +43,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   credentialEnv: string | null;
   selectedMessagingChannels: string[];
   webSearchConfig: WebSearchConfig | null;
+  webSearchConfigChanged?: boolean;
   webSearchSupported: boolean;
   hermesToolGateways: string[];
   agent: Agent;
@@ -71,7 +74,9 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         hermesToolGateways: string[];
         agent?: string | null;
         webSearchConfig: WebSearchConfig | null;
+        webSearchConfigChanged: boolean;
         webSearchSupported: boolean;
+        tierName?: string | null;
       },
     ): PolicyResumeSelection;
     arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[]): boolean;
@@ -128,6 +133,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   credentialEnv,
   selectedMessagingChannels,
   webSearchConfig,
+  webSearchConfigChanged = false,
   webSearchSupported,
   hermesToolGateways,
   agent,
@@ -137,7 +143,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
     ? latestSession.policyPresets
     : null;
-  const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan) ?? [];
+  const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
   const activePlan = activeSandbox?.messaging?.plan;
   const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);
@@ -165,13 +171,16 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     hermesToolGateways,
     agent: normalizeAgentName((agent as { name?: string } | null)?.name),
     webSearchConfig,
+    webSearchConfigChanged,
     webSearchSupported,
+    tierName: activeSandbox?.policyTier ?? null,
   });
   const recordedPolicyPresetsForSupport = policyResumeSelection.policyPresets;
   const resumePolicies =
     resume &&
     !policyResumeSelection.recordedPolicyPresetsNeedReconcile &&
     !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
+    !policyResumeSelection.suppressedAgentRequiredPresetsLive &&
     deps.arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
 
   let appliedPolicyPresets = recordedPolicyPresetsForSupport;

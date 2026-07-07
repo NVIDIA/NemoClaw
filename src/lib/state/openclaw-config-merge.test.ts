@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { mergeOpenClawRestoredConfig } from "../../../dist/lib/state/openclaw-config-merge";
+import { mergeOpenClawRestoredConfig } from "./openclaw-config-merge";
 
 describe("mergeOpenClawRestoredConfig", () => {
   it("keeps rebuilt runtime-owned config while restoring durable backup-only settings", () => {
@@ -58,11 +58,36 @@ describe("mergeOpenClawRestoredConfig", () => {
     expect((merged as { channels: Record<string, unknown> }).channels.slack).toBeUndefined();
   });
 
+  it("keeps the rebuilt gateway section — including the reload pin — over the backup's (#4710)", () => {
+    // gateway.reload.mode="hot" is what keeps the in-sandbox gateway from
+    // SIGUSR1-restarting itself out from under the nemoclaw-start respawn
+    // loop. A backup taken before the pin existed (or carrying a different
+    // mode) must not reintroduce restart-mode reloads on restore.
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        gateway: {
+          auth: { token: "stale-token" },
+          reload: { mode: "hybrid" },
+          controlUi: { allowInsecureAuth: true },
+        },
+      },
+      { gateway: { auth: { token: "fresh-token" }, reload: { mode: "hot" } } },
+    ) as { gateway: unknown };
+
+    expect(merged.gateway).toEqual({
+      auth: { token: "fresh-token" },
+      reload: { mode: "hot" },
+    });
+  });
+
   it("does not resurrect managed channels when the rebuilt config omits channels", () => {
     const merged = mergeOpenClawRestoredConfig(
       {
         channels: {
           telegram: { accounts: { default: { token: "openshell:resolve:env:v111_TOKEN" } } },
+          whatsapp: { accounts: { default: { session: "stale" } } },
+          wechat: { accounts: { default: { accountId: "legacy" } } },
+          "openclaw-weixin": { accounts: { default: { accountId: "stale-current" } } },
           matrix: { accounts: { default: { room: "#ops" } } },
         },
       },
@@ -71,9 +96,16 @@ describe("mergeOpenClawRestoredConfig", () => {
 
     expect(merged).toMatchObject({
       gateway: { auth: { token: "fresh-token" } },
-      channels: { matrix: { accounts: { default: { room: "#ops" } } } },
+      channels: {
+        wechat: { accounts: { default: { accountId: "legacy" } } },
+        matrix: { accounts: { default: { room: "#ops" } } },
+      },
     });
     expect((merged as { channels: Record<string, unknown> }).channels.telegram).toBeUndefined();
+    expect((merged as { channels: Record<string, unknown> }).channels.whatsapp).toBeUndefined();
+    expect(
+      (merged as { channels: Record<string, unknown> }).channels["openclaw-weixin"],
+    ).toBeUndefined();
   });
 
   it("preserves backup provider and plugin entries when current entry maps are absent", () => {
@@ -227,5 +259,130 @@ describe("mergeOpenClawRestoredConfig", () => {
         },
       },
     });
+  });
+
+  it("keeps fresh Tavily search config authoritative while preserving user plugins", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        tools: {
+          web: {
+            search: { enabled: true, provider: "brave" },
+            fetch: { enabled: false, maxChars: 5000 },
+            customSetting: "keep-me",
+          },
+        },
+        plugins: {
+          entries: {
+            brave: {
+              enabled: true,
+              config: { webSearch: { apiKey: "openshell:resolve:env:OLD_BRAVE_API_KEY" } },
+            },
+            customPlugin: { enabled: true, config: { value: "keep-me" } },
+          },
+        },
+      },
+      {
+        tools: {
+          web: {
+            search: { enabled: true, provider: "tavily" },
+            fetch: { enabled: true, useTrustedEnvProxy: true },
+          },
+        },
+        plugins: {
+          entries: {
+            tavily: {
+              enabled: true,
+              config: { webSearch: { apiKey: "openshell:resolve:env:TAVILY_API_KEY" } },
+            },
+          },
+        },
+      },
+    ) as {
+      tools: { web: Record<string, unknown> };
+      plugins: { entries: Record<string, unknown> };
+    };
+
+    expect(merged.tools.web.search).toEqual({ enabled: true, provider: "tavily" });
+    expect(merged.tools.web.fetch).toEqual({
+      enabled: false,
+      maxChars: 5000,
+      useTrustedEnvProxy: true,
+    });
+    expect(merged.tools.web.customSetting).toBe("keep-me");
+    expect(merged.plugins.entries.tavily).toEqual({
+      enabled: true,
+      config: { webSearch: { apiKey: "openshell:resolve:env:TAVILY_API_KEY" } },
+    });
+    expect(merged.plugins.entries.brave).toBeUndefined();
+    expect(merged.plugins.entries.customPlugin).toEqual({
+      enabled: true,
+      config: { value: "keep-me" },
+    });
+  });
+
+  it("does not resurrect web search config or managed plugins after disablement", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        tools: {
+          web: {
+            search: { enabled: true, provider: "tavily" },
+            fetch: { enabled: false },
+          },
+        },
+        plugins: {
+          entries: {
+            tavily: {
+              enabled: true,
+              config: { webSearch: { apiKey: "openshell:resolve:env:TAVILY_API_KEY" } },
+            },
+            customPlugin: { enabled: true },
+          },
+        },
+      },
+      {
+        tools: { web: { fetch: { enabled: true, useTrustedEnvProxy: true } } },
+        plugins: { entries: {} },
+      },
+    ) as {
+      tools: { web: Record<string, unknown> };
+      plugins: { entries: Record<string, unknown> };
+    };
+
+    expect(merged.tools.web.search).toBeUndefined();
+    expect(merged.plugins.entries.tavily).toBeUndefined();
+    expect(merged.plugins.entries.customPlugin).toEqual({ enabled: true });
+  });
+
+  it("does not restore managed search state when fresh config omits whole sections", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        tools: {
+          customTool: { enabled: true },
+          web: {
+            search: { enabled: true, provider: "tavily" },
+            fetch: { enabled: false },
+          },
+        },
+        plugins: {
+          entries: {
+            tavily: {
+              enabled: true,
+              config: { webSearch: { apiKey: "openshell:resolve:env:TAVILY_API_KEY" } },
+            },
+            customPlugin: { enabled: true },
+          },
+        },
+      },
+      { gateway: { auth: { token: "fresh-token" } } },
+    ) as {
+      tools: { customTool: unknown; web: Record<string, unknown> };
+      plugins: { entries: Record<string, unknown> };
+    };
+
+    expect(merged.tools.web.search).toBeUndefined();
+    expect(merged.tools.web.fetch).toEqual({ enabled: false });
+    expect(merged.tools.customTool).toEqual({ enabled: true });
+    expect(merged.plugins.entries.tavily).toBeUndefined();
+    expect(merged.plugins.entries.customPlugin).toEqual({ enabled: true });
   });
 });

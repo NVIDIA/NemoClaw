@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-const { REMOTE_PROVIDER_CONFIG } = require("../../../dist/lib/onboard/providers") as {
+const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
   REMOTE_PROVIDER_CONFIG: Record<string, { label: string; providerName: string }>;
 };
 

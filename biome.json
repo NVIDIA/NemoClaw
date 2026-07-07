@@ -86,7 +86,7 @@
         "noExcessiveCognitiveComplexity": {
           "level": "error",
           "options": {
-            "maxAllowedComplexity": 255
+            "maxAllowedComplexity": 149
           }
         }
       },
@@ -124,6 +124,82 @@
         "rules": {
           "correctness": {
             "noUnusedVariables": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/lib/actions/sandbox/status.ts", "src/lib/actions/sandbox/status-text.ts"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/lib/actions/sandbox/doctor.ts",
+        "src/lib/actions/sandbox/doctor-messaging.ts",
+        "src/lib/actions/sandbox/doctor-report.ts",
+        "src/lib/actions/sandbox/doctor-system-checks.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/lib/onboard/machine/handlers/sandbox.ts",
+        "src/lib/onboard/machine/handlers/sandbox-messaging.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/commands/onboard.ts",
+        "src/commands/setup.ts",
+        "src/commands/setup-spark.ts",
+        "src/lib/actions/onboard.ts",
+        "src/lib/onboard/command.ts",
+        "src/lib/onboard/command-support.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
           }
         }
       }

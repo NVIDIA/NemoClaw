@@ -14,8 +14,8 @@ process.env.HOME = TMP_HOME;
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const sandboxState = (await import(
-  pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js")).href
-)) as typeof import("../dist/lib/state/sandbox.js");
+  pathToFileURL(path.join(REPO_ROOT, "src", "lib", "state", "sandbox.ts")).href
+)) as typeof import("../src/lib/state/sandbox.js");
 
 afterAll(() => {
   if (ORIGINAL_HOME === undefined) {

@@ -15,6 +15,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { failLine } from "../cli/terminal-style";
 import { DASHBOARD_PORT } from "../core/ports";
 import {
   assessNvidiaCdiHost,
@@ -27,10 +28,13 @@ import {
   extractCdiMismatchFilePath,
   getNvidiaCdiSpecPath,
 } from "./docker-cdi";
+import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
+import { printRemediationActions } from "./remediation";
 import {
   isWslDockerDesktopRuntime,
   wslDockerDesktopGpuCompatibilityAction,
 } from "./wsl-docker-desktop-gpu";
+
 export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
 export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
@@ -362,6 +366,56 @@ export function isDockerUnderProvisioned(
   return cpuLow || memLow;
 }
 
+export interface CheckContainerRuntimeResourcesOptions {
+  ignored: boolean;
+  nonInteractive: boolean;
+  confirm(): Promise<boolean>;
+  log?: (message: string) => void;
+  warn?: (message: string) => void;
+  error?: (message: string) => void;
+  exit?: (code: number) => never;
+}
+
+/** Report container capacity and gate interactive continuation when it is undersized. */
+export async function checkContainerRuntimeResources(
+  host: HostAssessment,
+  options: CheckContainerRuntimeResourcesOptions,
+): Promise<void> {
+  const log = options.log ?? console.log;
+  const warn = options.warn ?? console.warn;
+  const error = options.error ?? console.error;
+  const exit = options.exit ?? ((code: number): never => process.exit(code));
+  const detected: string[] = [];
+  if (typeof host.dockerCpus === "number") detected.push(`${host.dockerCpus} vCPU`);
+  if (typeof host.dockerMemTotalBytes === "number") {
+    detected.push(`${(host.dockerMemTotalBytes / 1024 ** 3).toFixed(1)} GiB`);
+  }
+  if (!host.isContainerRuntimeUnderProvisioned || options.ignored) {
+    if (host.dockerReachable && detected.length > 0) {
+      log(`  ✓ Container runtime resources: ${detected.join(" / ")}`);
+    }
+    return;
+  }
+
+  printUnderProvisionedRuntimeWarning(
+    {
+      detectedStr: detected.join(" / ") || "unknown",
+      runtime: host.runtime,
+      recommendedCpus: MIN_RECOMMENDED_DOCKER_CPUS,
+      recommendedMemGib: MIN_RECOMMENDED_DOCKER_MEM_GIB,
+    },
+    warn,
+  );
+  if (options.nonInteractive) {
+    warn("    WARNING: Non-interactive mode is continuing despite under-provisioned runtime.");
+    return;
+  }
+  if (!(await options.confirm())) {
+    error("  Aborted by user. Resize your container runtime and rerun `nemoclaw onboard`.");
+    exit(1);
+  }
+}
+
 function readDockerDefaultCgroupnsMode(
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
 ): "host" | "private" | "unknown" {
@@ -385,11 +439,46 @@ function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
   return !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERM_PROGRAM;
 }
 
-function detectNvidiaGpu(runCaptureImpl: RunCaptureFn): boolean {
-  if (!commandExists("nvidia-smi", runCaptureImpl)) {
+// lspci line shape: "<slot> <class label>: <vendor> <device> ...".
+// The slot token contains colons (e.g. "01:00.0"), so anchor on the class
+// label that follows it and ends at the first ": ".
+const LSPCI_LINE = /^\S+\s+([^:]+):\s*(.*)$/;
+// NVIDIA GPUs surface as display-class devices: "VGA compatible controller"
+// (graphics cards), "3D controller" (datacenter/Tesla parts), or the generic
+// "Display controller". Restricting to these classes prevents NVIDIA/Mellanox
+// NICs and other non-GPU NVIDIA PCI devices from being mistaken for a GPU.
+const PCI_DISPLAY_CLASS = /\b(?:vga compatible controller|3d controller|display controller)\b/i;
+
+function lspciLineIsNvidiaGpu(line: string): boolean {
+  const match = LSPCI_LINE.exec(line.trim());
+  if (!match) return false;
+  const [, classLabel, deviceDescription] = match;
+  return PCI_DISPLAY_CLASS.test(classLabel) && /nvidia/i.test(deviceDescription);
+}
+
+function detectNvidiaGpuHardware(runCaptureImpl: RunCaptureFn): boolean {
+  // PCI bus probe so a physically present NVIDIA GPU is still detected when the
+  // driver is not loaded (nvidia-smi unavailable). Mirrors the lspci hint used
+  // by the onboarding GPU-passthrough note.
+  if (!commandExists("lspci", runCaptureImpl)) {
     return false;
   }
-  return Boolean(String(runCaptureImpl(["nvidia-smi", "-L"], { ignoreError: true }) || "").trim());
+  const output = String(runCaptureImpl(["lspci"], { ignoreError: true }) || "");
+  return output.split("\n").some(lspciLineIsNvidiaGpu);
+}
+
+function detectNvidiaGpu(runCaptureImpl: RunCaptureFn): boolean {
+  if (
+    commandExists("nvidia-smi", runCaptureImpl) &&
+    Boolean(String(runCaptureImpl(["nvidia-smi", "-L"], { ignoreError: true }) || "").trim())
+  ) {
+    return true;
+  }
+  // The driver may be missing or unloaded (nvidia-smi absent/empty) even when
+  // NVIDIA GPU hardware is present. Fall back to a hardware probe so CDI/toolkit
+  // remediation still fires when the toolkit is missing and Docker CDI dirs are
+  // configured (#5489); otherwise preflight silently skips toolkit enforcement.
+  return detectNvidiaGpuHardware(runCaptureImpl);
 }
 
 function detectPackageManager(runCaptureImpl: RunCaptureFn): PackageManager {
@@ -602,6 +691,50 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   }
 
   return assessment;
+}
+
+/**
+ * Decide whether onboarding must enforce a present-and-configured NVIDIA CDI
+ * spec (i.e. block on a missing/stale spec). The fix for #5489 makes
+ * `assessHost().hasNvidiaGpu` true via an lspci hardware probe when the driver
+ * is unloaded, which is what flags `cdiNvidiaGpuSpecMissing`. The onboard gate
+ * must enforce based on whether the operator *explicitly* opted out of GPU
+ * passthrough — NOT on whether sandbox GPU was *auto*-disabled because
+ * `nvidia-smi` is unavailable. Auto-disable was the bypass that let onboard skip
+ * the toolkit/CDI remediation in #5489; an explicit `--no-gpu` still skips it so
+ * a host with an unusable GPU can still onboard CPU-only.
+ */
+export function shouldEnforceCdiNvidiaGpuSpec(opts: {
+  cdiNvidiaGpuSpecMissing: boolean;
+  cdiNvidiaGpuSpecNeedsRepair: boolean;
+  explicitlyOptedOutGpuPassthrough: boolean;
+}): boolean {
+  if (opts.explicitlyOptedOutGpuPassthrough) return false;
+  return opts.cdiNvidiaGpuSpecNeedsRepair || opts.cdiNvidiaGpuSpecMissing;
+}
+
+export function assertCdiNvidiaGpuSpecPresent(
+  host: HostAssessment,
+  explicitlyOptedOutGpuPassthrough: boolean,
+  hostGpuPlatform: string | null | undefined = null,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
+): void {
+  if (hostGpuPlatform === "jetson" || isWslDockerDesktopRuntime(host)) return;
+  if (
+    !shouldEnforceCdiNvidiaGpuSpec({
+      cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
+      cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair ?? false,
+      explicitlyOptedOutGpuPassthrough,
+    })
+  )
+    return;
+  console.error(
+    failLine(
+      "Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+    ),
+  );
+  printRemediationActions(planHostRemediation(host));
+  exitProcess(1);
 }
 
 export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {

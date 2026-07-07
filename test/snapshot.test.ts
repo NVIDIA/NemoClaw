@@ -21,7 +21,7 @@ process.env.HOME = TMP_HOME;
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 type BackupScalar = string | number | boolean | null | undefined;
 type BackupValue = BackupScalar | BackupManifestOverrides | BackupValue[];
-type SandboxStateModule = typeof import("../dist/lib/state/sandbox.js");
+type SandboxStateModule = typeof import("../src/lib/state/sandbox.js");
 type SandboxStateModuleCandidate = Partial<SandboxStateModule> | null;
 function isSandboxStateModule(value: SandboxStateModuleCandidate): value is SandboxStateModule {
   return (
@@ -33,7 +33,7 @@ function isSandboxStateModule(value: SandboxStateModuleCandidate): value is Sand
   );
 }
 const loadedSandboxState = await import(
-  pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js")).href
+  pathToFileURL(path.join(REPO_ROOT, "src", "lib", "state", "sandbox.ts")).href
 );
 if (!isSandboxStateModule(loadedSandboxState)) {
   throw new Error("Expected sandbox-state module exports to be available");
@@ -79,7 +79,7 @@ beforeEach(() => {
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
-function writeOpenClawRegistry(sandboxName: string): void {
+function writeAgentRegistry(sandboxName: string, agent: string | null): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
     path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
@@ -92,11 +92,15 @@ function writeOpenClawRegistry(sandboxName: string): void {
           provider: "p",
           gpuEnabled: false,
           policies: [],
-          agent: null,
+          agent,
         },
       },
     }),
   );
+}
+
+function writeOpenClawRegistry(sandboxName: string): void {
+  writeAgentRegistry(sandboxName, null);
 }
 function writeFakeOpenshell(binDir: string): string {
   const openshell = path.join(binDir, "openshell");
@@ -477,7 +481,7 @@ process.exit(0);
 
       writeOpenClawRegistry("alpha");
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
+      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
@@ -604,12 +608,15 @@ process.exit(0);
       const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
       const sshLog = path.join(fixture, "ssh-log.jsonl");
       const extensionsDir = path.join(openclawDir, "extensions");
+      const managedExtensions =
+        "nemoclaw,diagnostics-otel,brave,discord,openclaw-weixin,slack,whatsapp,msteams".split(",");
       fs.mkdirSync(binDir, { recursive: true });
-      fs.mkdirSync(path.join(extensionsDir, "nemoclaw"), { recursive: true });
-      fs.mkdirSync(path.join(extensionsDir, "openclaw-weixin"), { recursive: true });
+      for (const extensionName of managedExtensions) {
+        const extensionDir = path.join(extensionsDir, extensionName);
+        fs.mkdirSync(extensionDir, { recursive: true });
+        fs.writeFileSync(path.join(extensionDir, "marker.txt"), `fresh-${extensionName}\n`);
+      }
       fs.mkdirSync(path.join(extensionsDir, "stale-user-extension"), { recursive: true });
-      fs.writeFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "fresh-nemoclaw\n");
-      fs.writeFileSync(path.join(extensionsDir, "openclaw-weixin", "marker.txt"), "fresh-weixin\n");
       fs.writeFileSync(path.join(extensionsDir, "stale-user-extension", "marker.txt"), "stale\n");
 
       const manifest = writeBackup("alpha", "2026-05-19T12-00-00-000Z", {
@@ -617,14 +624,12 @@ process.exit(0);
         backedUpDirs: ["extensions"],
       });
       const backupExtensionsDir = path.join(String(manifest.backupPath), "extensions");
-      fs.mkdirSync(path.join(backupExtensionsDir, "nemoclaw"), { recursive: true });
-      fs.mkdirSync(path.join(backupExtensionsDir, "openclaw-weixin"), { recursive: true });
+      for (const extensionName of managedExtensions) {
+        const extensionDir = path.join(backupExtensionsDir, extensionName);
+        fs.mkdirSync(extensionDir, { recursive: true });
+        fs.writeFileSync(path.join(extensionDir, "marker.txt"), `old-${extensionName}\n`);
+      }
       fs.mkdirSync(path.join(backupExtensionsDir, "user-extension"), { recursive: true });
-      fs.writeFileSync(path.join(backupExtensionsDir, "nemoclaw", "marker.txt"), "old-nemoclaw\n");
-      fs.writeFileSync(
-        path.join(backupExtensionsDir, "openclaw-weixin", "marker.txt"),
-        "old-weixin\n",
-      );
       fs.writeFileSync(
         path.join(backupExtensionsDir, "user-extension", "marker.txt"),
         "restored\n",
@@ -651,9 +656,10 @@ function readStdin() {
 }
 if (cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf")) {
   const extensionsDir = ${JSON.stringify(extensionsDir)};
+  const managedExtensions = new Set(${JSON.stringify(managedExtensions)});
   fs.mkdirSync(extensionsDir, { recursive: true });
   for (const entry of fs.readdirSync(extensionsDir)) {
-    if (entry === "nemoclaw" || entry === "openclaw-weixin") continue;
+    if (managedExtensions.has(entry)) continue;
     fs.rmSync(path.join(extensionsDir, entry), { recursive: true, force: true });
   }
   process.exit(0);
@@ -681,12 +687,11 @@ process.exit(0);
       const restore = sandboxState.restoreSandboxState("alpha", String(manifest.backupPath));
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(["extensions"]);
-      expect(fs.readFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "utf-8")).toBe(
-        "fresh-nemoclaw\n",
-      );
-      expect(
-        fs.readFileSync(path.join(extensionsDir, "openclaw-weixin", "marker.txt"), "utf-8"),
-      ).toBe("fresh-weixin\n");
+      for (const extensionName of managedExtensions) {
+        expect(
+          fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
+        ).toBe(`fresh-${extensionName}\n`);
+      }
       expect(fs.existsSync(path.join(extensionsDir, "stale-user-extension"))).toBe(false);
       expect(
         fs.readFileSync(path.join(extensionsDir, "user-extension", "marker.txt"), "utf-8"),
@@ -701,8 +706,9 @@ process.exit(0);
         cmd.includes("/sandbox/.openclaw/extensions"),
       );
       expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
-      expect(cleanupCommand).toContain("! -name 'nemoclaw'");
-      expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
+      for (const extensionName of managedExtensions) {
+        expect(cleanupCommand).toContain(`! -name '${extensionName}'`);
+      }
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -728,6 +734,7 @@ process.exit(0);
       const auditLines = [
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal\t../qrcode-terminal/bin/qrcode-terminal.js",
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
+        "l\t/sandbox/.openclaw/extensions/slack/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
       ].join("\n");
 
       const openshell = writeFakeOpenshell(binDir);
@@ -960,7 +967,7 @@ process.exit(0);
       for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
       const auditLines = [
-        "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/etc/passwd",
+        "l\t/sandbox/.openclaw/extensions/slack/node_modules/openclaw\t/etc/passwd",
       ].join("\n");
 
       const openshell = writeFakeOpenshell(binDir);
@@ -987,7 +994,7 @@ process.exit(0);
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
-      expect(backup.error).toMatch(/openclaw-weixin/);
+      expect(backup.error).toMatch(/extensions\/slack/);
       expect(backup.error).toMatch(/\/etc\/passwd/);
     } finally {
       if (oldOpenshell === undefined) {
@@ -1190,6 +1197,144 @@ process.exit(0);
       } else {
         process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
       }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Deep Agents Code durable state files", () => {
+  it("backs up manifest-declared state while excluding credential-bearing files", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-snapshot-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const fakeRoot = path.join(fixture, "sandbox-root");
+      const deepAgentsDir = path.join(fakeRoot, ".deepagents");
+      const sshLog = path.join(fixture, "ssh-log.jsonl");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(deepAgentsDir, ".state"), { recursive: true });
+      fs.mkdirSync(path.join(deepAgentsDir, "skills"), { recursive: true });
+      fs.mkdirSync(path.join(deepAgentsDir, "agent", "skills", "note-summarizer"), {
+        recursive: true,
+      });
+      fs.writeFileSync(path.join(deepAgentsDir, ".state", "thread.json"), "{}\n");
+      fs.writeFileSync(path.join(deepAgentsDir, "skills", "README.md"), "skill\n");
+      // skill-creator writes user skills under ~/.deepagents/agent/skills (#5753)
+      fs.writeFileSync(
+        path.join(deepAgentsDir, "agent", "skills", "note-summarizer", "SKILL.md"),
+        "name: note-summarizer\n",
+      );
+      fs.writeFileSync(path.join(deepAgentsDir, "config.toml"), "generated config\n");
+      fs.writeFileSync(path.join(deepAgentsDir, ".env"), "NVIDIA_API_KEY=should-not-copy\n");
+      fs.writeFileSync(path.join(deepAgentsDir, ".mcp.json"), '{"token":"should-not-copy"}\n');
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".nemoclaw-mcp.json"),
+        '{"mcpServers":{"reconstructable":{}}}\n',
+      );
+
+      const openshell = path.join(binDir, "openshell");
+      writeExecutable(
+        openshell,
+        `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "sandbox" && args[1] === "ssh-config") {
+  process.stdout.write("Host openshell-deepagents\\n  HostName 127.0.0.1\\n  User sandbox\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const fs = require("fs");
+const path = require("path");
+const { spawnSync } = require("child_process");
+const root = ${JSON.stringify(fakeRoot)};
+const log = ${JSON.stringify(sshLog)};
+const cmd = process.argv[process.argv.length - 1] || "";
+fs.appendFileSync(log, JSON.stringify({ cmd }) + "\\n");
+const deepAgentsDir = path.join(root, ".deepagents");
+if (cmd.includes("config.toml") && cmd.includes("cat --")) {
+  process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "config.toml")));
+  process.exit(0);
+}
+if (cmd.includes(".env") || cmd.includes(".mcp.json")) {
+  process.exit(99);
+}
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(".state\\nskills\\nagent/skills\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", deepAgentsDir, ".state", "skills", "agent/skills"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  if (r.stderr) fs.writeSync(2, r.stderr);
+  process.exit(r.status || 0);
+}
+if (cmd.includes("tar --no-same-owner -xf -")) {
+  // drain the piped restore tarball in chunks (no full-stream buffering)
+  const buf = Buffer.alloc(65536);
+  while (fs.readSync(0, buf, 0, buf.length, null) > 0) {
+    // discard
+  }
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeAgentRegistry("deepagents", "langchain-deepagents-code");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("deepagents", { name: "deepagents-state" });
+      expect(backup.success).toBe(true);
+      expect(backup.backedUpDirs).toEqual([".state", "skills", "agent/skills"]);
+      expect(backup.backedUpFiles).toEqual(["config.toml"]);
+      expect(backup.failedDirs).toEqual([]);
+      expect(backup.failedFiles).toEqual([]);
+      expect(backup.manifest?.agentType).toBe("langchain-deepagents-code");
+      expect(backup.manifest?.stateDirs).toEqual([".state", "skills", "agent/skills"]);
+      expect(backup.manifest?.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "thread.json"))).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "skills", "README.md"))).toBe(
+        true,
+      );
+      expect(fs.readFileSync(path.join(backup.manifest!.backupPath, "config.toml"), "utf-8")).toBe(
+        "generated config\n",
+      );
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(false);
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".nemoclaw-mcp.json"))).toBe(
+        false,
+      );
+      const loggedCommands = fs.readFileSync(sshLog, "utf-8");
+      expect(loggedCommands).not.toContain(".env");
+      expect(loggedCommands).not.toContain(".mcp.json");
+      expect(loggedCommands).not.toContain(".nemoclaw-mcp.json");
+
+      // #5753 is "lost after rebuild" (backup + recreate + restore): restore
+      // must list agent/skills among the dirs it brings back into the sandbox.
+      const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
+      expect(restore.success).toBe(true);
+      expect(restore.restoredDirs).toEqual(
+        expect.arrayContaining([".state", "skills", "agent/skills"]),
+      );
+    } finally {
+      oldOpenshell === undefined
+        ? delete process.env.NEMOCLAW_OPENSHELL_BIN
+        : (process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell);
       process.env.PATH = oldPath;
       fs.rmSync(fixture, { recursive: true, force: true });
     }

@@ -151,6 +151,7 @@ export function context(
     hermesAuthMethod: null,
     hermesToolGateways: ["local"],
     preferredInferenceApi: "chat",
+    compatibleEndpointReasoning: null,
     nimContainer: "nim-test",
     webSearchConfig: null,
     webSearchSupported: true,
@@ -208,6 +209,7 @@ export function createPhases(
         policyPresets: ["balanced"],
         recordedPolicyPresetsNeedReconcile: false,
         disabledMessagingPolicyPresetApplied: false,
+        suppressedAgentRequiredPresetsLive: false,
       }),
       arePolicyPresetsApplied: () => false,
       skippedStepMessage: vi.fn(),
@@ -251,6 +253,7 @@ export function createPhases(
       getChatUiUrl: () => "http://127.0.0.1:45123",
       buildVerifyChain: (): DashboardDeliveryChain => ({
         accessUrl: "http://127.0.0.1:45123",
+        fallbackUrls: [],
         corsOrigins: ["http://127.0.0.1:45123"],
         forwardTarget: "45123",
         healthEndpoint: "/health",

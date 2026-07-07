@@ -7,16 +7,14 @@ import {
   type UpgradeSandboxesOptions,
 } from "../domain/lifecycle/options";
 import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "../gateway-runtime-action";
+import type { OnboardFlags } from "../onboard/command-support";
+import { buildSubprocessEnv } from "../subprocess-env";
 import { runDeployAction as executeDeployAction } from "./deploy";
 import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,
 } from "./maintenance";
-import {
-  runOnboardAction as executeOnboardAction,
-  runSetupAction as executeSetupAction,
-  runSetupSparkAction as executeSetupSparkAction,
-} from "./onboard";
+import { runOnboardAction as executeOnboardAction } from "./onboard";
 import { help, version } from "./root-help";
 
 type GatewayRecovery = { recovered: boolean };
@@ -25,6 +23,8 @@ type GlobalCliActionRuntimeHooks = {
   recoverNamedGatewayRuntime?: () => Promise<GatewayRecovery>;
   runOpenshell?: typeof runOpenshell;
   upgradeSandboxes?: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
+  recordExtraProvider?: (name: string) => boolean;
+  forgetExtraProvider?: (name: string) => boolean;
 };
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
@@ -33,16 +33,8 @@ export function setGlobalCliActionRuntimeHooksForTest(hooks: GlobalCliActionRunt
   runtimeHooks = hooks;
 }
 
-export async function runOnboardAction(args: string[] = []): Promise<void> {
-  await executeOnboardAction(args);
-}
-
-export async function runSetupAction(args: string[] = []): Promise<void> {
-  await executeSetupAction(args);
-}
-
-export async function runSetupSparkAction(args: string[] = []): Promise<void> {
-  await executeSetupSparkAction(args);
+export async function runOnboardAction(flags: OnboardFlags): Promise<void> {
+  await executeOnboardAction(flags);
 }
 
 export async function runDeployAction(instanceName?: string): Promise<void> {
@@ -96,8 +88,38 @@ export function runOpenshellProviderCommand(
     timeout?: number;
   },
 ) {
+  const explicitEnv = Object.fromEntries(
+    Object.entries(opts?.env ?? {}).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  const providerOpts = {
+    ...opts,
+    env: buildSubprocessEnv(explicitEnv),
+    replaceEnv: true,
+  };
   if (typeof runtimeHooks.runOpenshell === "function") {
-    return runtimeHooks.runOpenshell(args, opts);
+    return runtimeHooks.runOpenshell(args, providerOpts);
   }
-  return runOpenshell(args, opts);
+  return runOpenshell(args, providerOpts);
+}
+
+export function recordExtraProvider(name: string): boolean {
+  if (typeof runtimeHooks.recordExtraProvider === "function") {
+    return runtimeHooks.recordExtraProvider(name);
+  }
+  const { addExtraProvider } = require("../state/registry") as {
+    addExtraProvider: (name: string) => boolean;
+  };
+  return addExtraProvider(name);
+}
+
+export function forgetExtraProvider(name: string): boolean {
+  if (typeof runtimeHooks.forgetExtraProvider === "function") {
+    return runtimeHooks.forgetExtraProvider(name);
+  }
+  const { removeExtraProvider } = require("../state/registry") as {
+    removeExtraProvider: (name: string) => boolean;
+  };
+  return removeExtraProvider(name);
 }

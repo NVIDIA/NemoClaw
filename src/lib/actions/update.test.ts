@@ -15,7 +15,7 @@ import {
 } from "./update";
 
 describe("runUpdateAction", () => {
-  it("--check reports update availability without running the installer", async () => {
+  it("reports update availability without running the installer for --check", async () => {
     const spawnSyncImpl = vi.fn();
     const log = vi.fn();
 
@@ -42,7 +42,7 @@ describe("runUpdateAction", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Latest maintained version: 0.2.0"));
   });
 
-  it("--check renders NemoHermes branding and installer guidance when the Hermes alias is active", async () => {
+  it("renders NemoHermes branding and installer guidance for --check when the Hermes alias is active", async () => {
     const log = vi.fn();
 
     const result = await runUpdateAction(
@@ -62,6 +62,32 @@ describe("runUpdateAction", () => {
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining(
         "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash",
+      ),
+    );
+  });
+
+  it("renders NemoDeepAgents branding and installer guidance for --check when the Deep Agents alias is active", async () => {
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { check: true },
+      {
+        currentVersion: () => "0.1.0",
+        env: { ...process.env, NEMOCLAW_AGENT: "dcode" },
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl: vi.fn(),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Current NemoDeepAgents version: 0.1.0"),
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash",
       ),
     );
   });
@@ -117,6 +143,97 @@ describe("runUpdateAction", () => {
     }
   });
 
+  it("does not run the installer when already up to date without --fresh", async () => {
+    const spawnSyncImpl = vi.fn();
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { yes: true },
+      {
+        currentVersion: () => "0.2.0",
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.updateAvailable).toBe(false);
+    expect(result.ranInstaller).toBe(false);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("already up to date"));
+  });
+
+  it("reinstalls even when already up to date with --fresh (#5960)", async () => {
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "0.2.0",
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.updateAvailable).toBe(false);
+    expect(result.ranInstaller).toBe(true);
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "bash",
+      ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway (--fresh)"));
+  });
+
+  it("does not announce a --fresh reinstall when the user declines the prompt (#5960)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const log = vi.fn();
+    const prompt = vi.fn(async () => "n");
+
+    const result = await runUpdateAction(
+      { fresh: true },
+      {
+        currentVersion: () => "0.2.0",
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        prompt,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    // The reinstall claim must not print before/without confirmation.
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Update cancelled"));
+  });
+
+  it("still refuses --fresh from a developer source checkout (no reinstall)", async () => {
+    const spawnSyncImpl = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "0.2.0",
+        error: vi.fn(),
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => true,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+  });
+
   it("prompts before running the maintained installer", async () => {
     const prompt = vi.fn(async () => "yes");
     const spawnSyncImpl = vi.fn(
@@ -147,7 +264,7 @@ describe("runUpdateAction", () => {
     );
   });
 
-  it("--yes runs the maintained installer without prompting", async () => {
+  it("runs the maintained installer without prompting for --yes", async () => {
     const prompt = vi.fn(async () => "no");
     const spawnSyncImpl = vi.fn(
       () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
@@ -206,6 +323,7 @@ describe("runUpdateAction", () => {
           ...process.env,
           BASH_ENV: "/tmp/review-bash-env",
           ENV: "/tmp/review-env",
+          NEMOCLAW_FRESH: "1",
           NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
           NEMOCLAW_INSTALL_TAG: "not-maintained",
         },
@@ -222,8 +340,49 @@ describe("runUpdateAction", () => {
     const options = calls[0]?.[2];
     expect(options?.env?.BASH_ENV).toBeUndefined();
     expect(options?.env?.ENV).toBeUndefined();
+    expect(options?.env?.NEMOCLAW_FRESH).toBeUndefined();
     expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
     expect(options?.env?.NEMOCLAW_INSTALL_TAG).toBeUndefined();
+  });
+
+  it("preserves the canonical Deep Agents agent selection while sanitizing installer env", async () => {
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+    const log = vi.fn();
+
+    await runUpdateAction(
+      { yes: true },
+      {
+        currentVersion: () => "0.1.0",
+        env: {
+          ...process.env,
+          BASH_ENV: "/tmp/review-bash-env",
+          NEMOCLAW_AGENT: "langchain-deepagents-code",
+          NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
+        },
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    const calls = spawnSyncImpl.mock.calls as unknown as Array<
+      [string, readonly string[], { env?: NodeJS.ProcessEnv }]
+    >;
+    const options = calls[0]?.[2];
+    expect(options?.env?.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
+    expect(options?.env?.BASH_ENV).toBeUndefined();
+    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Running maintained NemoDeepAgents installer"),
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Installer completed. Run `nemo-deepagents upgrade-sandboxes --check`",
+      ),
+    );
   });
 
   it("preserves the Hermes agent selection while sanitizing installer env", async () => {

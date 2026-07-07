@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { resolveAgentNameAlias } from "../agent/aliases";
 import { versionGte } from "../domain/installer/version";
 
 export const NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh";
@@ -23,6 +24,13 @@ type SpawnSyncFn = (
 
 export interface RunUpdateOptions {
   check?: boolean;
+  /**
+   * Reinstall the maintained build even when already up to date. The installer
+   * re-clones `~/.nemoclaw/source`, so this repairs a broken-but-current
+   * install. Does not reset onboarding state (distinct from the installer's
+   * onboard-scoped `--fresh`/`NEMOCLAW_FRESH`).
+   */
+  fresh?: boolean;
   yes?: boolean;
 }
 
@@ -57,12 +65,23 @@ function trimOutput(value: string | Buffer | null | undefined): string {
   return String(value ?? "").trim();
 }
 
+const UPDATE_BRANDING_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+
 function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
-  if (env.NEMOCLAW_AGENT === "hermes") {
+  const agent =
+    resolveAgentNameAlias(env.NEMOCLAW_AGENT, UPDATE_BRANDING_AGENTS) ?? env.NEMOCLAW_AGENT;
+  if (agent === "hermes") {
     return {
       cliName: "nemohermes",
       displayName: "NemoHermes",
       maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=hermes bash`,
+    };
+  }
+  if (agent === "langchain-deepagents-code") {
+    return {
+      cliName: "nemo-deepagents",
+      displayName: "NemoDeepAgents",
+      maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=langchain-deepagents-code bash`,
     };
   }
   return {
@@ -186,6 +205,7 @@ function updateInstallerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next = { ...env };
   delete next.BASH_ENV;
   delete next.ENV;
+  delete next.NEMOCLAW_FRESH;
   delete next.NEMOCLAW_INSTALL_REF;
   delete next.NEMOCLAW_INSTALL_TAG;
   return next;
@@ -244,7 +264,7 @@ export async function runUpdateAction(
     };
   }
 
-  if (available === false) {
+  if (available === false && !options.fresh) {
     log(`  ${branding.displayName} is already up to date.`);
     return {
       currentVersion,
@@ -298,6 +318,15 @@ export async function runUpdateAction(
         updateAvailable: available,
       };
     }
+  }
+
+  // Only announce the --fresh reinstall once the user has actually confirmed
+  // (or passed --yes): before this point the run could still be declined, and
+  // claiming a reinstall was happening would be untrue (CodeRabbit review #5963).
+  if (available === false && options.fresh) {
+    log(
+      `  ${branding.displayName} is already up to date; reinstalling anyway (--fresh) for a clean re-clone.`,
+    );
   }
 
   log(`  Running maintained ${branding.displayName} installer...`);

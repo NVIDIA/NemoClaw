@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { runCapture } from "../dist/lib/runner.js";
+import { runCapture } from "../src/lib/runner.js";
 
 describe("runner", () => {
   describe("runCapture", () => {

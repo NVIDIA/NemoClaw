@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RenderTemplateContext } from "../../compiler/engines/template";
+import type { MessagingSerializableValue } from "../../manifest";
 import {
   allowedIds,
   type BuiltInRenderTemplateResolver,
@@ -15,12 +16,20 @@ import {
 
 const DEFAULT_PROXY_HOST = "10.200.0.1";
 const DEFAULT_PROXY_PORT = "3128";
+const DEFAULT_TELEGRAM_GROUP_POLICY = "open";
+const TELEGRAM_GROUP_POLICIES = new Set(["open", "allowlist", "disabled"]);
 
 export const resolveTelegramTemplateReference: BuiltInRenderTemplateResolver = (
   reference,
   context,
 ) => {
   if (reference === "proxyUrl") return resolvedRenderTemplateReference(proxyUrl(context.env));
+  if (reference === "telegramConfig.groupPolicy") {
+    return resolvedRenderTemplateReference(telegramGroupPolicy(context));
+  }
+  if (reference === "telegramConfig.openclawGroups") {
+    return resolvedRenderTemplateReference(telegramOpenClawGroups(context));
+  }
   if (reference === "telegramConfig.requireMention") {
     return resolvedRenderTemplateReference(
       parseBoolean(stateValue(context, "telegramConfig.requireMention")),
@@ -46,4 +55,17 @@ function proxyUrl(env: RenderTemplateContext["env"]): string {
   const host = nonEmptyString(env?.NEMOCLAW_PROXY_HOST) ?? DEFAULT_PROXY_HOST;
   const port = nonEmptyString(env?.NEMOCLAW_PROXY_PORT) ?? DEFAULT_PROXY_PORT;
   return `http://${host}:${port}`;
+}
+
+function telegramGroupPolicy(context: RenderTemplateContext): string {
+  const value = nonEmptyString(stateValue(context, "telegramConfig.groupPolicy"));
+  return value && TELEGRAM_GROUP_POLICIES.has(value) ? value : DEFAULT_TELEGRAM_GROUP_POLICY;
+}
+
+function telegramOpenClawGroups(
+  context: RenderTemplateContext,
+): Record<string, MessagingSerializableValue> | undefined {
+  if (telegramGroupPolicy(context) !== "open") return undefined;
+  const requireMention = parseBoolean(stateValue(context, "telegramConfig.requireMention"));
+  return requireMention === true ? { "*": { requireMention: true } } : undefined;
 }

@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import path from "node:path";
 
-async function loadSeal(): Promise<typeof import("../../../dist/lib/shields/seal")> {
-  const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "seal.js");
-  return import(distModulePath);
+async function loadSeal(): Promise<typeof import("./seal")> {
+  return import("./seal");
 }
 
 describe("parseSha256Output", () => {

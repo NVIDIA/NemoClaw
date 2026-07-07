@@ -143,6 +143,20 @@ describe("OnboardRuntime", () => {
     expect(events[1]).toMatchObject({ type: "onboard.resumed", state: "init" });
   });
 
+  it("defaults step recording dependencies to record-only machine mutations", async () => {
+    const { runtime, stepOptionCalls } = createHarness();
+
+    await runtime.markStepStarted("preflight");
+    await runtime.markStepComplete("preflight", { sandboxName: "my-assistant" });
+    await runtime.markStepFailed("gateway", "boom");
+
+    expect(stepOptionCalls).toEqual([
+      { method: "markStepStarted", options: { updateMachine: false } },
+      { method: "markStepComplete", options: { updateMachine: false } },
+      { method: "markStepFailed", options: { updateMachine: false } },
+    ]);
+  });
+
   it("forwards step mutation options to step recording dependencies", async () => {
     const { runtime, getSession, stepOptionCalls } = createHarness();
     const recordOnlyOptions = { updateMachine: false };

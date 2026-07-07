@@ -9,27 +9,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
-import type { CurlProbeResult } from "../adapters/http/probe";
+import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime";
+import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
-import type { CaptureResult } from "../runner";
-import { buildSubprocessEnv } from "../subprocess-env";
-import {
-  applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
-  MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
-  parsePositiveInteger,
-  probeOllamaRuntimeModelStatus as probeOllamaRuntimeModelStatusWithHost,
-  resetOllamaRuntimeContextWindowAutoState,
-  resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
-} from "./ollama-runtime-context";
-import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
-import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
-export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
-
-const { shellQuote, runCapture, runCaptureEx } = require("../runner");
-
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
+import { containerCanReachHostLoopback, isWsl } from "../platform";
+import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
+import { buildSubprocessEnv } from "../subprocess-env";
+import { detectNvidiaPlatform } from "./nim";
 import {
   anyRegistryModelFits,
   effectiveGpuMemoryMB,
@@ -39,11 +29,18 @@ import {
   OLLAMA_MODEL_REGISTRY,
   SMALLEST_OLLAMA_MODEL_TAG,
 } from "./ollama-model-registry";
+import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
+import {
+  applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
+  MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  parsePositiveInteger,
+  probeOllamaRuntimeModelStatus as probeOllamaRuntimeModelStatusWithHost,
+  resetOllamaRuntimeContextWindowAutoState,
+  resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
+} from "./ollama-runtime-context";
+import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
 
-const { containerCanReachHostLoopback, isWsl } = require("../platform");
-const { detectContainerRuntimeFromDockerInfo } =
-  require("../adapters/docker/runtime") as typeof import("../adapters/docker/runtime");
-const { detectNvidiaPlatform } = require("./nim");
+export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 /**
  * Port containers use to reach Ollama. Returns the raw Ollama port when the
@@ -82,7 +79,7 @@ export const SMALL_OLLAMA_MODEL = SMALLEST_OLLAMA_MODEL_TAG;
 export const DEFAULT_OLLAMA_MODEL = assertRegistryTag("nemotron-3-nano:30b");
 export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 
-export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
+export type RunCaptureFn = (cmd: readonly string[], opts?: { ignoreError?: boolean }) => string;
 
 export {
   getInstalledOllamaVersion,
@@ -173,8 +170,10 @@ export interface GpuInfo {
    * `true` for integrated/iGPU class devices whose token-generation throughput
    * is too low to clear agent-loop timeouts on 30B-class models, even when
    * advertised memory ostensibly fits. Populated for Jetson (Tegra/Thor/Orin)
-   * platforms. Drives the `computeIntensive` exclusion in the bootstrap-model
-   * selector so compute-constrained hosts are not steered onto 30B+ tags.
+   * platforms and the Windows-ARM N1X integrated GPU (the JMJWOA-Generic
+   * placeholder that clears the bounded Docker CUDA proof). Drives the
+   * `computeIntensive` exclusion in the bootstrap-model selector so
+   * compute-constrained hosts are not steered onto 30B+ tags.
    */
   computeConstrained?: boolean;
 }
@@ -229,7 +228,7 @@ export interface LocalProviderHealthStatus {
 }
 
 export interface LocalProviderHealthProbeOptions {
-  runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
+  runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
   /**
    * Lets callers that perform their own Ollama auth-proxy check avoid the
    * legacy inline proxy subprobe. The inline subprobe is retained for status
@@ -257,8 +256,8 @@ function defaultLoadOllamaProxyToken(): string | null {
   return null;
 }
 
-function runLocalCurlProbe(argv: string[]): CurlProbeResult {
-  return runCurlProbe(argv, { env: buildSubprocessEnv(), replaceEnv: true });
+function runLocalCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
+  return runCurlProbe(argv, { ...opts, env: buildSubprocessEnv(), replaceEnv: true });
 }
 
 // A 200 response on `/api/tags` alone is not enough to call Ollama healthy —
@@ -358,6 +357,26 @@ export function getLocalProviderHealthCheck(provider: string): string[] | null {
   return endpoint ? ["curl", ...buildValidatedCurlCommandArgs(["-sf", endpoint])] : null;
 }
 
+/**
+ * Positive host-side reachability signal for a local inference provider: does
+ * it actually respond on its host loopback endpoint (127.0.0.1:<port>)?
+ *
+ * Unlike validateLocalProvider, this does NOT run the Docker `--add-host`
+ * container-reachability emulation — that probe is unreliable on some Docker
+ * setups (the real sandbox path is k3s CoreDNS), so its failure is not
+ * evidence the route is down. Callers that need a positive "the provider is
+ * up" signal (not merely "the host is not down") should use this.
+ */
+export function isLocalProviderHostHealthy(
+  provider: string,
+  runCaptureImpl?: RunCaptureFn,
+): boolean {
+  const command = getLocalProviderHealthCheck(provider);
+  if (!command) return false;
+  const capture = runCaptureImpl ?? runCapture;
+  return Boolean(capture(command, { ignoreError: true }));
+}
+
 export function getLocalProviderLabel(provider: string): string | null {
   switch (provider) {
     case "vllm-local":
@@ -414,22 +433,34 @@ export function probeOllamaAuthProxyHealth(
   }
   const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
-  const result = runCurlProbeImpl([
-    "-sS",
-    "--connect-timeout",
-    "3",
-    "--max-time",
-    "5",
-    "-H",
-    `Authorization: Bearer ${token}`,
-    endpoint,
-  ]);
-
   const base = {
     providerLabel: "Ollama auth proxy",
     endpoint,
     probeLabel: "auth proxy",
   };
+  let authConfig: ReturnType<typeof createBearerAuthConfig>;
+  try {
+    authConfig = createBearerAuthConfig(token);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      ...base,
+      ok: false,
+      failureLabel: "unhealthy",
+      detail:
+        `Ollama auth proxy health could not prepare the persisted token for ${endpoint}. ` +
+        `(${reason})`,
+    };
+  }
+  let result: CurlProbeResult;
+  try {
+    result = runCurlProbeImpl(
+      ["-sS", "--connect-timeout", "3", "--max-time", "5", ...authConfig.args, endpoint],
+      { trustedConfigFiles: authConfig.trustedConfigFiles },
+    );
+  } finally {
+    authConfig.cleanup();
+  }
   if (result.ok) {
     // A 200 from the proxy alone is not a healthy signal — the proxy may be
     // serving a captive HTTP_PROXY page, or its upstream Ollama backend may

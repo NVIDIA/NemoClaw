@@ -2,8 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import SandboxStatusCommand from "../src/commands/sandbox/status";
+import StatusCommand from "../src/commands/status";
+import { withDirectPublicDispatch } from "./support/public-dispatch-test-harness.js";
 
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
@@ -19,10 +26,10 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("renders native sandbox help without registry recovery", async () => {
-    const cliPath = require.resolve("../dist/nemoclaw.js");
-    const registryPath = require.resolve("../dist/lib/state/registry.js");
-    const registryRecoveryPath = require.resolve("../dist/lib/registry-recovery-action.js");
-    const runnerPath = require.resolve("../dist/lib/runner.js");
+    const cliPath = require.resolve("../src/nemoclaw.js");
+    const registryPath = require.resolve("../src/lib/state/registry.js");
+    const registryRecoveryPath = require.resolve("../src/lib/registry-recovery-action.js");
+    const runnerPath = require.resolve("../src/lib/runner.js");
 
     const priorCli = require.cache[cliPath];
     const priorRegistry = require.cache[registryPath];
@@ -108,13 +115,13 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("hands exact public sandbox execution to oclif by command id", async () => {
-    const cliPath = require.resolve("../dist/nemoclaw.js");
-    const registryPath = require.resolve("../dist/lib/state/registry.js");
-    const registryRecoveryPath = require.resolve("../dist/lib/registry-recovery-action.js");
-    const runnerPath = require.resolve("../dist/lib/runner.js");
-    const publicDispatchPath = require.resolve("../dist/lib/cli/public-dispatch.js");
-    const oclifRunnerPath = require.resolve("../dist/lib/cli/oclif-runner.js");
-    const sandboxConnectPath = require.resolve("../dist/lib/actions/sandbox/connect.js");
+    const cliPath = require.resolve("../src/nemoclaw.js");
+    const registryPath = require.resolve("../src/lib/state/registry.js");
+    const registryRecoveryPath = require.resolve("../src/lib/registry-recovery-action.js");
+    const runnerPath = require.resolve("../src/lib/runner.js");
+    const publicDispatchPath = require.resolve("../src/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../src/lib/cli/oclif-runner.js");
+    const sandboxConnectPath = require.resolve("../src/lib/actions/sandbox/connect.js");
 
     const priorCli = require.cache[cliPath];
     const priorRegistry = require.cache[registryPath];
@@ -218,13 +225,94 @@ describe("oclif compatibility dispatch", () => {
     }
   });
 
+  it("recovers a requested sandbox, rereads the registry, and dispatches connect", async () => {
+    await withDirectPublicDispatch(
+      async ({
+        dispatchCli,
+        getSandbox,
+        recoverRegistryEntries,
+        runOclifArgv,
+        runOclifCommandById,
+        sandboxes,
+        stderr,
+      }) => {
+        recoverRegistryEntries.mockImplementationOnce(
+          async ({ requestedSandboxName }: { requestedSandboxName: string }) => {
+            expect(requestedSandboxName).toBe("alpha");
+            sandboxes.set("alpha", { name: "alpha" });
+            return {
+              sandboxes: [...sandboxes.values()],
+              defaultSandbox: "alpha",
+              recoveredFromSession: true,
+              recoveredFromGateway: 0,
+            };
+          },
+        );
+
+        await dispatchCli(["alpha", "connect"]);
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "alpha" });
+        expect(getSandbox.mock.results[0]?.value).toBeNull();
+        expect(
+          getSandbox.mock.results.slice(1).some((result) => result.value?.name === "alpha"),
+        ).toBe(true);
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["alpha"],
+          expect.objectContaining({ rootDir: process.cwd() }),
+        );
+        expect(runOclifArgv).not.toHaveBeenCalled();
+        expect(stderr).toEqual([]);
+      },
+    );
+  });
+
+  it("guides a missing requested sandbox after recovery finds a different live sandbox", async () => {
+    await withDirectPublicDispatch(
+      async ({
+        dispatchCli,
+        exitSpy,
+        listSandboxes,
+        recoverRegistryEntries,
+        runOclifArgv,
+        runOclifCommandById,
+        sandboxes,
+        stderr,
+      }) => {
+        recoverRegistryEntries.mockImplementationOnce(
+          async ({ requestedSandboxName }: { requestedSandboxName: string }) => {
+            expect(requestedSandboxName).toBe("beta");
+            sandboxes.set("alpha", { name: "alpha" });
+            return {
+              sandboxes: [...sandboxes.values()],
+              defaultSandbox: "alpha",
+              recoveredFromSession: true,
+              recoveredFromGateway: 0,
+            };
+          },
+        );
+
+        await expect(dispatchCli(["beta", "connect"])).rejects.toThrow("process.exit:1");
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "beta" });
+        expect(listSandboxes).toHaveBeenCalled();
+        expect(stderr.join("\n")).toContain("Sandbox 'beta' does not exist.");
+        expect(stderr.join("\n")).toContain("Registered sandboxes: alpha");
+        expect(stderr.join("\n")).toContain("Run 'nemoclaw list' to see all sandboxes.");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        expect(runOclifArgv).not.toHaveBeenCalled();
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   it("forwards exec command help flags after -- instead of rendering NemoClaw help", async () => {
-    const cliPath = require.resolve("../dist/nemoclaw.js");
-    const registryPath = require.resolve("../dist/lib/state/registry.js");
-    const registryRecoveryPath = require.resolve("../dist/lib/registry-recovery-action.js");
-    const runnerPath = require.resolve("../dist/lib/runner.js");
-    const publicDispatchPath = require.resolve("../dist/lib/cli/public-dispatch.js");
-    const oclifRunnerPath = require.resolve("../dist/lib/cli/oclif-runner.js");
+    const cliPath = require.resolve("../src/nemoclaw.js");
+    const registryPath = require.resolve("../src/lib/state/registry.js");
+    const registryRecoveryPath = require.resolve("../src/lib/registry-recovery-action.js");
+    const runnerPath = require.resolve("../src/lib/runner.js");
+    const publicDispatchPath = require.resolve("../src/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../src/lib/cli/oclif-runner.js");
 
     const priorCli = require.cache[cliPath];
     const priorRegistry = require.cache[registryPath];
@@ -315,10 +403,10 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("keeps exact global execution on direct command IDs to avoid flexible taxonomy overmatching", async () => {
-    const cliPath = require.resolve("../dist/nemoclaw.js");
-    const runnerPath = require.resolve("../dist/lib/runner.js");
-    const publicDispatchPath = require.resolve("../dist/lib/cli/public-dispatch.js");
-    const oclifRunnerPath = require.resolve("../dist/lib/cli/oclif-runner.js");
+    const cliPath = require.resolve("../src/nemoclaw.js");
+    const runnerPath = require.resolve("../src/lib/runner.js");
+    const publicDispatchPath = require.resolve("../src/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../src/lib/cli/oclif-runner.js");
 
     const priorCli = require.cache[cliPath];
     const priorRunner = require.cache[runnerPath];
@@ -328,6 +416,15 @@ describe("oclif compatibility dispatch", () => {
 
     const runOclifArgv = vi.fn(async () => undefined);
     const runOclifCommandById = vi.fn(async () => undefined);
+    const stderr: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((message = "") => {
+      stderr.push(String(message));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
+      code?: string | number | null,
+    ) => {
+      throw new Error(`process.exit:${String(code)}`);
+    }) as never);
 
     process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
     requireCache[runnerPath] = {
@@ -348,15 +445,16 @@ describe("oclif compatibility dispatch", () => {
       delete require.cache[publicDispatchPath];
       const { dispatchCli } = require(cliPath);
 
-      await dispatchCli(["status", "bogus"]);
+      await expect(dispatchCli(["status", "bogus"])).rejects.toThrow("process.exit:2");
 
-      expect(runOclifCommandById).toHaveBeenCalledWith(
-        "status",
-        ["bogus"],
-        expect.objectContaining({ rootDir: process.cwd() }),
-      );
+      expect(exitSpy).toHaveBeenCalledWith(2);
+      expect(stderr.join("\n")).toContain("Run: nemoclaw bogus status");
+      expect(runOclifCommandById).not.toHaveBeenCalled();
       expect(runOclifArgv).not.toHaveBeenCalled();
 
+      errorSpy.mockClear();
+      exitSpy.mockClear();
+      stderr.length = 0;
       runOclifArgv.mockClear();
       runOclifCommandById.mockClear();
 
@@ -382,6 +480,124 @@ describe("oclif compatibility dispatch", () => {
     }
   });
 
+  it("corrects a single sandbox-like global status argument without a CLI subprocess", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
+        const cases = [
+          { argv: ["status", "alpha"], command: "nemoclaw alpha status" },
+          { argv: ["status", "--json", "alpha"], command: "nemoclaw alpha status --json" },
+          { argv: ["status", "alpha", "--json"], command: "nemoclaw alpha status --json" },
+          { argv: ["status", "alpha", "--help"], command: "nemoclaw alpha status --help" },
+          {
+            argv: ["status", "alpha", "--json", "--help"],
+            command: "nemoclaw alpha status --help",
+          },
+          {
+            argv: ["status", "alpha", "--help", "--json"],
+            command: "nemoclaw alpha status --help",
+          },
+        ];
+
+        for (const { argv, command } of cases) {
+          stderr.length = 0;
+          exitSpy.mockClear();
+          runOclifArgv.mockClear();
+          runOclifCommandById.mockClear();
+
+          await expect(dispatchCli(argv)).rejects.toThrow("process.exit:2");
+
+          const output = stderr.join("\n");
+          expect(output).toContain("'nemoclaw status' shows the global sandbox/service overview");
+          expect(output).toContain(`Run: ${command}`);
+          expect(output).not.toContain("nemoclaw alpha status --json --help");
+          expect(exitSpy).toHaveBeenCalledWith(2);
+          expect(runOclifArgv).not.toHaveBeenCalled();
+          expect(runOclifCommandById).not.toHaveBeenCalled();
+        }
+      },
+    );
+  });
+
+  it("leaves ambiguous or unsafe global status arguments to the strict parser", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
+        const cases = [
+          ["status", "--bogus"],
+          ["status", "--bogus", "alpha"],
+          ["status", "alpha", "--bogus"],
+          ["status", "alpha", "beta"],
+          ["status", "status"],
+          ["status", "help"],
+          ["status", "sandbox"],
+          ["status", "internal"],
+          ["status", "alpha;echo pwned"],
+        ];
+
+        for (const argv of cases) {
+          stderr.length = 0;
+          exitSpy.mockClear();
+          runOclifArgv.mockClear();
+          runOclifCommandById.mockClear();
+
+          await dispatchCli(argv);
+
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "status",
+            argv.slice(1),
+            expect.objectContaining({ rootDir: process.cwd() }),
+          );
+          expect(runOclifArgv).not.toHaveBeenCalled();
+          expect(exitSpy).not.toHaveBeenCalled();
+          expect(stderr.join("\n")).not.toContain("does not take a sandbox name");
+          expect(stderr.join("\n")).not.toContain("Run:");
+        }
+      },
+    );
+  });
+
+  it("keeps strict status parser errors in process", async () => {
+    for (const args of [["--bogus"], ["--bogus", "alpha"], ["alpha", "--bogus"]]) {
+      await expect(StatusCommand.run(args, process.cwd())).rejects.toThrow(
+        "Nonexistent flag: --bogus",
+      );
+    }
+
+    await expect(StatusCommand.run(["alpha", "beta"], process.cwd())).rejects.toThrow(
+      "Unexpected arguments: alpha, beta",
+    );
+    for (const token of ["status", "help", "sandbox", "internal", "alpha;echo pwned"]) {
+      await expect(StatusCommand.run([token], process.cwd())).rejects.toThrow(
+        `Unexpected argument: ${token}`,
+      );
+    }
+  });
+
+  it("routes sandbox status help directly and keeps its JSON help metadata", async () => {
+    await withDirectPublicDispatch(async ({ dispatchCli, runOclifArgv, runOclifCommandById }) => {
+      await dispatchCli(["alpha", "status", "--help"]);
+      expect(runOclifCommandById).toHaveBeenCalledWith(
+        "sandbox:status",
+        ["alpha", "--help"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+
+      await dispatchCli(["sandbox", "status", "alpha", "--help"]);
+      expect(runOclifArgv).toHaveBeenCalledWith(
+        ["sandbox", "status", "alpha", "--help"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+    });
+
+    expect(SandboxStatusCommand.enableJsonFlag).toBe(true);
+    expect(SandboxStatusCommand.usage.join(" ")).toContain("<name> [--json]");
+    expect(SandboxStatusCommand.examples).toEqual(
+      expect.arrayContaining([
+        "<%= config.bin %> alpha status",
+        "<%= config.bin %> sandbox status alpha --json",
+      ]),
+    );
+  });
+
   it("uses the alias binary name in native oclif help", () => {
     const result = spawnSync(
       process.execPath,
@@ -399,6 +615,32 @@ describe("oclif compatibility dispatch", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("$ nemohermes sandbox channels start <name> <channel>");
     expect(result.stdout).not.toContain("$ nemoclaw sandbox channels start <name> <channel>");
+  });
+
+  it("uses the Deep Agents alias binary name in native oclif help", () => {
+    const aliasDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-oclif-bin-"));
+    const alias = path.join(aliasDir, "nemo-deepagents");
+    fs.symlinkSync(path.join(process.cwd(), "bin", "nemoclaw.js"), alias);
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [alias, "sandbox", "channels", "start", "--help"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NO_COLOR: "1",
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("$ nemo-deepagents sandbox channels start <name> <channel>");
+      expect(result.stdout).not.toContain("$ nemoclaw sandbox channels start <name> <channel>");
+    } finally {
+      fs.rmSync(aliasDir, { force: true, recursive: true });
+    }
   });
 
   it("keeps nested internal commands routable through native oclif help", () => {

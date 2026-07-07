@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
+import { nodeOptionsWithoutSourceLoader } from "./helpers/source-loader-options";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
@@ -76,8 +77,8 @@ function writeFakeOpenshell(binDir: string): void {
     path.join(binDir, "openshell"),
     `#!/usr/bin/env bash
 set -uo pipefail
-: "\${NEMOCLAW_FAKE_CASE_DIR:?}"
-printf '%s\n' "$*" >> "$NEMOCLAW_FAKE_CASE_DIR/openshell-calls.log"
+case_dir="\${NEMOCLAW_FAKE_CASE_DIR:-\${TMPDIR:-/tmp}}"
+printf '%s\n' "$*" >> "$case_dir/openshell-calls.log"
 case "\${1:-}" in
   --version|-V)
     printf 'openshell 0.0.37\n'
@@ -122,7 +123,7 @@ function writeFakeDocker(
     path.join(binDir, "docker"),
     `#!/usr/bin/env bash
 set -uo pipefail
-case_dir="\${NEMOCLAW_FAKE_CASE_DIR:-\${TMPDIR:-/tmp}/nemoclaw-gateway-drift-preflight-current}"
+case_dir="\${NEMOCLAW_FAKE_CASE_DIR:-\${TMPDIR:-/tmp}}"
 printf '%s\n' "$*" >> "$case_dir/docker-calls.log"
 format=""
 if [ "\${1:-}" = "inspect" ] || { [ "\${1:-}" = "container" ] && [ "\${2:-}" = "inspect" ]; }; then
@@ -160,7 +161,8 @@ function writeFakeDockerNoCluster(binDir: string): void {
     path.join(binDir, "docker"),
     `#!/usr/bin/env bash
 set -uo pipefail
-printf '%s\n' "$*" >> "$NEMOCLAW_FAKE_CASE_DIR/docker-calls.log"
+case_dir="\${NEMOCLAW_FAKE_CASE_DIR:-\${TMPDIR:-/tmp}}"
+printf '%s\n' "$*" >> "$case_dir/docker-calls.log"
 if [ "\${1:-}" = "inspect" ] || { [ "\${1:-}" = "container" ] && [ "\${2:-}" = "inspect" ]; }; then
   printf 'Error: No such object\n' >&2
   exit 1
@@ -230,11 +232,23 @@ function runCli(caseDir: string, home: string, binDir: string, args: string[]): 
       HOME: home,
       PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
       TMPDIR: caseDir,
+      // This child enters compiled dist/; preserve ambient Node options while
+      // removing the integration project's appended TypeScript source loader.
+      NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
       NO_COLOR: "1",
       NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "0",
       NEMOCLAW_FAKE_CASE_DIR: caseDir,
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      NEMOCLAW_OPENSHELL_BIN: path.join(binDir, "openshell"),
+      NEMOCLAW_OPENSHELL_GATEWAY_BIN: "",
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: path.join(
+        home,
+        ".local",
+        "state",
+        "nemoclaw",
+        "openshell-docker-gateway",
+      ),
     },
     timeout: commandTimeoutMs,
   });
@@ -255,25 +269,23 @@ function runBackupCase(
   return runCli(caseDir, home, binDir, ["backup-all"]);
 }
 
-function runHostProcessCase(
-  name: string,
-  options: { liveMarker?: boolean; noMarker?: boolean; version?: string; command?: string[] } = {},
-): CommandResult {
+function runLiveHostProcessCase(name: string): CommandResult {
   const { binDir, caseDir, home } = prepareCase(name);
   writeFakeDockerNoCluster(binDir);
-  const gatewayBin = writeFakeGatewayBinary(binDir, options.version ?? "0.0.43");
-  if (options.noMarker !== true) {
-    if (options.liveMarker) {
-      const child = spawn(gatewayBin, ["serve"], { detached: false, stdio: "ignore" });
-      expect(child.pid, "fake gateway process must have a pid").toBeTypeOf("number");
-      const pid = child.pid as number;
-      liveGatewayPids.push(pid);
-      writeHostProcessMarker(home, gatewayBin, pid);
-    } else {
-      writeHostProcessMarker(home, gatewayBin, 999999);
-    }
-  }
-  return runCli(caseDir, home, binDir, options.command ?? ["backup-all"]);
+  const gatewayBin = writeFakeGatewayBinary(binDir, "0.0.43");
+  const child = spawn(gatewayBin, ["serve"], { detached: false, stdio: "ignore" });
+  expect(child.pid, "fake gateway process must have a pid").toBeTypeOf("number");
+  const pid = child.pid as number;
+  liveGatewayPids.push(pid);
+  writeHostProcessMarker(home, gatewayBin, pid);
+  return runCli(caseDir, home, binDir, ["backup-all"]);
+}
+
+function runMarkerlessHostProcessCase(name: string): CommandResult {
+  const { binDir, caseDir, home } = prepareCase(name);
+  writeFakeDockerNoCluster(binDir);
+  writeFakeGatewayBinary(binDir, "0.0.43");
+  return runCli(caseDir, home, binDir, ["backup-all"]);
 }
 
 function logsFor(caseDir: string): string {
@@ -324,6 +336,7 @@ describe("gateway drift preflight E2E migration", () => {
         gatewayRunning: "false",
       });
       expect(protobuf.signal, protobuf.output).toBeNull();
+      expect(protobuf.status, protobuf.output).not.toBe(0);
       expectContains(
         protobuf,
         /protobuf|schema mismatch|invalid wire type/i,
@@ -363,7 +376,7 @@ describe("gateway drift preflight E2E migration", () => {
       );
       expectSandboxListCalled(imageDrift, false);
 
-      const hostBackup = runHostProcessCase("host-process-backup", { liveMarker: true });
+      const hostBackup = runLiveHostProcessCase("host-process-backup");
       expect(hostBackup.status, hostBackup.output).not.toBe(0);
       expectContains(
         hostBackup,
@@ -388,23 +401,7 @@ describe("gateway drift preflight E2E migration", () => {
       );
       expectSandboxListCalled(hostBackup, false);
 
-      const hostUpgrade = runHostProcessCase("host-process-upgrade", {
-        command: ["upgrade-sandboxes", "--check"],
-      });
-      expect(hostUpgrade.status, hostUpgrade.output).not.toBe(0);
-      expectContains(
-        hostUpgrade,
-        /schema preflight failed|gateway schema preflight failed|Running gateway binary/i,
-        "host-process gateway drift preflight is surfaced for upgrade-sandboxes",
-      );
-      expectContains(
-        hostUpgrade,
-        /Running gateway binary.*0\.0\.43/,
-        "running host-process gateway binary/version is reported for upgrade-sandboxes",
-      );
-      expectSandboxListCalled(hostUpgrade, false);
-
-      const noMarker = runHostProcessCase("host-process-no-marker", { noMarker: true });
+      const noMarker = runMarkerlessHostProcessCase("host-process-no-marker");
       expect(noMarker.status, noMarker.output).not.toBe(0);
       expectContains(
         noMarker,

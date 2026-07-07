@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../state/onboard-session";
 import {
@@ -69,6 +69,11 @@ function phase(
 }
 
 describe("runLiveOnboardFlowSlice", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it("uses the strict slice runner for fresh matching entry states", async () => {
     const runSlice = vi.fn(async ({ context }) => ({
       context: { value: context.value + 1 },
@@ -80,7 +85,6 @@ describe("runLiveOnboardFlowSlice", () => {
       context: { value: 1 },
       runtime: runtime("preflight").runtime,
       phases: [phase("preflight", 2)],
-      resume: false,
       runWhenState: ["preflight"],
       compatibilityWhenState: ["provider_selection"],
       runSlice,
@@ -103,6 +107,7 @@ describe("runLiveOnboardFlowSlice", () => {
     const applyCompatibleResult = vi.fn(async (result: OnboardStateResult) =>
       liveRuntime.applyResult(result),
     );
+    const wrappedStates: string[] = [];
 
     const result = await runLiveOnboardFlowSlice({
       context: { value: 1 },
@@ -117,8 +122,14 @@ describe("runLiveOnboardFlowSlice", () => {
           })),
         },
       ],
-      resume: true,
       runWhenState: ["preflight"],
+      compatibilityWhenState: ["provider_selection"],
+      phaseProgress: {
+        wrap: (candidate) => {
+          wrappedStates.push(candidate.state);
+          return candidate;
+        },
+      },
       runSlice,
       applyCompatibleResult,
     });
@@ -126,6 +137,7 @@ describe("runLiveOnboardFlowSlice", () => {
     expect(result.context).toEqual({ value: 3 });
     expect(result.session.machine.state).toBe("inference");
     expect(runSlice).not.toHaveBeenCalled();
+    expect(wrappedStates).toEqual(["preflight", "gateway"]);
     expect(applyCompatibleResult.mock.calls.map(([result]) => result)).toEqual(results);
   });
 
@@ -140,8 +152,8 @@ describe("runLiveOnboardFlowSlice", () => {
       context: { value: 1 },
       runtime: liveRuntime.runtime,
       phases: [phase("preflight", 2)],
-      resume: true,
       runWhenState: ["preflight"],
+      compatibilityWhenState: ["preflight"],
       runSlice,
       applyCompatibleResult,
     });
@@ -161,7 +173,6 @@ describe("runLiveOnboardFlowSlice", () => {
       context: { value: 1 },
       runtime: liveRuntime.runtime,
       phases: [phase("preflight", 2)],
-      resume: false,
       runWhenState: ["preflight"],
       compatibilityWhenState: ["provider_selection"],
       runSlice,
@@ -170,6 +181,48 @@ describe("runLiveOnboardFlowSlice", () => {
 
     expect(runSlice).not.toHaveBeenCalled();
     expect(applyCompatibleResult).toHaveBeenCalledOnce();
+  });
+
+  it("keeps compatibility phases visible through the default heartbeat reporter", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    let markPhaseStarted!: () => void;
+    let releasePhase!: () => void;
+    const phaseStarted = new Promise<void>((resolve) => {
+      markPhaseStarted = resolve;
+    });
+    const phaseReleased = new Promise<void>((resolve) => {
+      releasePhase = resolve;
+    });
+    const liveRuntime = runtime("provider_selection");
+    const pendingGateway: OnboardSequencePhase<Context> = {
+      state: "gateway",
+      async run(context) {
+        markPhaseStarted();
+        await phaseReleased;
+        return { context, result: advanceTo("inference") };
+      },
+    };
+
+    const running = runLiveOnboardFlowSlice({
+      context: { value: 1 },
+      runtime: liveRuntime.runtime,
+      phases: [pendingGateway],
+      runWhenState: ["gateway"],
+      compatibilityWhenState: ["provider_selection"],
+      runSlice: vi.fn(),
+      applyCompatibleResult: (result) => liveRuntime.applyResult(result),
+    });
+    await phaseStarted;
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(log).toHaveBeenCalledWith("  ⏳ Still working on Gateway startup… (30s elapsed)");
+    } finally {
+      releasePhase();
+      await running;
+    }
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("rejects non-resume states before the slice entry before running side effects", async () => {
@@ -183,9 +236,32 @@ describe("runLiveOnboardFlowSlice", () => {
         context: { value: 1 },
         runtime: liveRuntime.runtime,
         phases: [blocked],
-        resume: false,
         runWhenState: ["provider_selection"],
         compatibilityWhenState: ["inference", "sandbox"],
+        runSlice,
+        applyCompatibleResult,
+      }),
+    ).rejects.toBeInstanceOf(UnexpectedLiveOnboardFlowSliceStateError);
+
+    expect(runSlice).not.toHaveBeenCalled();
+    expect(blocked.run).not.toHaveBeenCalled();
+    expect(applyCompatibleResult).not.toHaveBeenCalled();
+  });
+
+  it("rejects undeclared resume states before running side effects", async () => {
+    const liveRuntime = runtime("provider_selection");
+    const blocked = phase("preflight", 2);
+    const runSlice = vi.fn(async ({ context }) => ({ context, session: createSession() }));
+    const applyCompatibleResult = vi.fn(async () => undefined);
+
+    await expect(
+      runLiveOnboardFlowSlice({
+        context: { value: 1 },
+        runtime: liveRuntime.runtime,
+        phases: [blocked],
+
+        runWhenState: ["preflight"],
+        compatibilityWhenState: ["sandbox"],
         runSlice,
         applyCompatibleResult,
       }),
@@ -207,8 +283,8 @@ describe("runLiveOnboardFlowSlice", () => {
         context: { value: 1 },
         runtime: liveRuntime.runtime,
         phases: [first, second],
-        resume: true,
         runWhenState: ["preflight"],
+        compatibilityWhenState: ["provider_selection"],
         runSlice: vi.fn(),
         applyCompatibleResult,
       }),
@@ -228,8 +304,8 @@ describe("runLiveOnboardFlowSlice", () => {
         context: { value: 1 },
         runtime: liveRuntime.runtime,
         phases: [phase("preflight", 2, [])],
-        resume: true,
         runWhenState: ["preflight"],
+        compatibilityWhenState: ["provider_selection"],
         runSlice: vi.fn(),
         applyCompatibleResult,
       }),
@@ -250,8 +326,8 @@ describe("runLiveOnboardFlowSlice", () => {
         context: { value: 1 },
         runtime: liveRuntime.runtime,
         phases: [phase("preflight", 2), later],
-        resume: true,
         runWhenState: ["preflight"],
+        compatibilityWhenState: ["provider_selection"],
         runSlice: vi.fn(),
         applyCompatibleResult,
       }),

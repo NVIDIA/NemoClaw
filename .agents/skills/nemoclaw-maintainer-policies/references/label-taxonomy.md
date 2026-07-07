@@ -150,11 +150,12 @@ Integration labels apply when a recurring external app, channel, tool, or agent 
 
 Use `area: integrations` for integration subsystem work, and add `integration:*` when a listed integration is named or clearly implicated. Use `area: messaging` when delivery, channel lifecycle, manifests, or bridge messages are the affected subsystem; combine it with `integration:*` when the messaging issue is specific to a listed integration.
 
-Specific integration labels are routing labels. If the title, body, linked issue, test name, file path, or PR prefix names `Hermes`, `OpenClaw`, `Discord`, `Slack`, `Telegram`, `WeChat`, `WhatsApp`, or `Brave` as the affected subject, include the corresponding `integration:*` label. Do not replace the specific label with only `area: integrations`.
+Specific integration labels are routing labels. If the title, body, linked issue, test name, file path, or PR prefix names `Hermes`, `OpenClaw`, `LangChain Deep Code`, `Deep Code`, `Discord`, `Slack`, `Telegram`, `WeChat`, `WhatsApp`, or `Brave` as the affected subject, include the corresponding `integration:*` label. Do not replace the specific label with only `area: integrations`.
 
 | Label | Description |
 |---|---|
 | `integration: brave` | Brave integration behavior. |
+| `integration: dcode` | LangChain Deep Code integration behavior. |
 | `integration: discord` | Discord bridge or channel lifecycle. |
 | `integration: hermes` | Hermes startup, plugin, sandbox, TUI, or Hermes model/tool-call behavior. |
 | `integration: openclaw` | OpenClaw runtime, TUI, e2e tests, stubs, plugins, configuration, or bridge. |
@@ -190,7 +191,7 @@ Do not combine:
 
 ### Release Train
 
-Daily `v0.0.x` labels activate PRs for daily release work. Issues may use a daily label as a tracking or attention signal, but issue labels do not determine release inclusion. See `release-train.md`.
+Daily `v0.0.x` labels activate open PRs for daily release work. After a PR merges to `main`, authorized post-merge automation adds its earliest containing release label, or the next patch label after the highest strict-ancestor release when no tag contains it yet. This gives every landed PR release attribution, is additive, and does not remove earlier version labels. Issues may use a daily label as a tracking or attention signal, but issue labels do not determine release inclusion. See `release-train.md`.
 
 ### Agent-Owned
 

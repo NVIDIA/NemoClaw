@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Creates deterministic NemoClaw semver release tags on origin/main and drafts release notes. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, or preparing release announcements.
+description: Creates deterministic NemoClaw semver release tags on origin/main, handles release housekeeping, and drafts release notes. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, or preparing release announcements.
 user_invocable: true
 ---
 
@@ -9,18 +9,22 @@ user_invocable: true
 
 # Cut Release Tag
 
-Use the release scripts only. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
+Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
 
-The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation.
+The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag and `latest` are verified, automatically move remaining open issues/PRs from the released version label to the next patch label, then draft release notes for the maintainer to post.
 
 ## Hard Rules
 
 - Tag only the commit captured in a generated release plan.
+- Do not generate the release plan until release-prep docs are merged or explicitly waived.
+- If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
+- Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that exact commit.
 - Ask the maintainer to paste the exact confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
 - Never push `latest` or `lkg` from this skill.
 - Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
 - Draft release notes locally. Do not create the GitHub Discussion; the maintainer does that.
+- Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) for SSH, authentication, remote access, authorization, or permission failures.
 
 ## Workflow
 
@@ -29,14 +33,18 @@ Copy this checklist and update it as you proceed:
 ```text
 Release Progress:
 - [ ] Step 1: Generate release plan
-- [ ] Step 2: Show plan and exact confirmation phrase
+- [ ] Step 2: Show plan, E2E evidence, and exact confirmation phrase
 - [ ] Step 3: Cut the semver tag from the confirmed plan
 - [ ] Step 4: Wait for workflow-managed latest
-- [ ] Step 5: Generate release-note data and draft Markdown
-- [ ] Step 6: Hand off announcement steps
+- [ ] Step 5: Bump remaining open issues/PRs
+- [ ] Step 6: Generate release-note data and draft Markdown
+- [ ] Step 7: Hand off announcement steps
 ```
 
 ### Step 1: Generate Release Plan
+
+Before this step, confirm release-prep docs are merged or explicitly waived.
+Return to `nemoclaw-maintainer-evening` if docs are still pending.
 
 Run exactly one of:
 
@@ -54,7 +62,7 @@ The script writes a plan outside the checkout root, for example:
 ../nemoclaw-release-v0.0.58/plan.json
 ```
 
-### Step 2: Show Plan and Ask for Exact Confirmation
+### Step 2: Show Plan, E2E Evidence, and Ask for Exact Confirmation
 
 Read the generated `plan.json` and show the maintainer:
 
@@ -63,7 +71,19 @@ Read the generated `plan.json` and show the maintainer:
 - target `origin/main` commit and headline,
 - plan hash,
 - forbidden operations,
-- exact confirmation phrase.
+- exact confirmation phrase,
+- open issue/PR housekeeping plan for the release label.
+
+For the plan's full `origin/main` SHA, review `.github/workflows/e2e.yaml` at that commit and build the evidence ledger required by the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence). The workflow is the sole source of truth; do not substitute or maintain a separate release-gating test list.
+
+Before showing the confirmation prompt, present:
+
+- the exact candidate SHA;
+- the number of tests with green evidence out of the number required by the workflow;
+- each required test mapped to a successful run or job URL and attempt; and
+- an itemized maintainer exception for every test without green evidence, including its current result or failure summary and the rationale for proceeding.
+
+Do not ask for the exact phrase until every test has green evidence or an explicit itemized maintainer exception. If `origin/main` moves or the candidate SHA otherwise changes, regenerate the plan and rebuild the ledger for the new SHA.
 
 Ask the maintainer to paste the exact phrase:
 
@@ -87,7 +107,7 @@ The script verifies a clean worktree, unchanged `origin/main`, tag availability,
 <release-dir>/cut-result.json
 ```
 
-If the script fails, stop and report the error. Do not improvise git commands.
+If the script fails because of SSH, authentication, remote access, authorization, or permissions, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). For other precondition failures, report the failed precondition and use the recovery guidance below. Do not improvise git commands.
 
 ### Step 4: Wait for Workflow-Managed `latest`
 
@@ -105,7 +125,29 @@ The script waits until `vX.Y.Z^{}` and `latest^{}` both peel to the planned comm
 
 If it fails, report the failed workflow/status. Do not manually move `latest`.
 
-### Step 5: Generate Release-Note Data and Draft Markdown
+### Step 5: Bump Remaining Open Issues/PRs
+
+Move every remaining open issue or PR carrying the released version to the next patch label:
+
+```bash
+node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts <released-version> <next-version>
+```
+
+This is automatic post-tag housekeeping covered by the release plan and exact confirmation in Step 2. The script creates the next patch label when needed, removes the released-version label, and adds the next-version label to every open straggler. Do not run it before Step 4 verifies both the semver tag and workflow-managed `latest`.
+
+Then verify the released version has no open stragglers:
+
+```bash
+gh issue list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
+gh pr list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
+```
+
+Summarize:
+
+- open issues/PRs bumped to `<next-version>`;
+- any items that need manual maintainer attention.
+
+### Step 6: Generate Release-Note Data and Draft Markdown
 
 Collect deterministic release-note input:
 
@@ -129,7 +171,7 @@ Draft release notes from `notes-data.json` using the style from `nemoclaw-mainta
 
 Do not create or update a GitHub Discussion.
 
-### Step 6: Hand Off Announcement
+### Step 7: Hand Off Announcement
 
 Return:
 
@@ -138,6 +180,7 @@ Return:
 - plan path and plan hash,
 - `cut-result.json`, `latest-result.json`, and `notes-data.json` paths,
 - Markdown draft path,
+- issue/PR housekeeping summary,
 - suggested discussion title: `NemoClaw <new-version> is out`,
 - reminder: maintainer creates the Announcement discussion and shares its link in external channels.
 
@@ -149,3 +192,4 @@ Return:
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
 - `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
 - `lkg` changed: stop and escalate to a release admin.
+- Post-tag housekeeping fails: report the error and list items still carrying the released label. After the failure is fixed, rerun the same bump command; already-moved items no longer match the source label.

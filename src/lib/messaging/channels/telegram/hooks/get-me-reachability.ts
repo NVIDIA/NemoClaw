@@ -7,6 +7,14 @@ import {
   createTelegramAllowlistAliasesHookRegistration,
   type TelegramAllowlistAliasesHookOptions,
 } from "./allowlist-aliases";
+import {
+  createTelegramGatewayConflictStatusHookRegistration,
+  type TelegramGatewayConflictStatusHookOptions,
+} from "./gateway-conflict-status";
+import {
+  createTelegramOpenClawBridgeHealthHookRegistration,
+  type OpenClawBridgeHealthHookOptions,
+} from "./openclaw-bridge-health";
 
 export const TELEGRAM_GET_ME_REACHABILITY_HOOK_ID = "telegram.getMeReachability";
 const DEFAULT_TELEGRAM_REACHABILITY_TIMEOUT_MS = 10_000;
@@ -33,6 +41,11 @@ export interface TelegramGetMeReachabilityHookOptions extends TelegramAllowlistA
   readonly apiBaseUrl?: string;
   readonly timeoutMs?: number;
   readonly log?: (message: string) => void;
+}
+
+export interface TelegramHookOptions extends TelegramGetMeReachabilityHookOptions {
+  readonly openclawBridgeHealth?: OpenClawBridgeHealthHookOptions;
+  readonly gatewayConflictStatus?: TelegramGatewayConflictStatusHookOptions;
 }
 
 export function createTelegramGetMeReachabilityHook(
@@ -84,10 +97,12 @@ export function createTelegramGetMeReachabilityHook(
 }
 
 export function createTelegramHookRegistrations(
-  options: TelegramGetMeReachabilityHookOptions = {},
+  options: TelegramHookOptions = {},
 ): readonly MessagingHookRegistration[] {
   return [
     createTelegramAllowlistAliasesHookRegistration(options),
+    createTelegramOpenClawBridgeHealthHookRegistration(options.openclawBridgeHealth),
+    createTelegramGatewayConflictStatusHookRegistration(options.gatewayConflictStatus),
     {
       id: TELEGRAM_GET_ME_REACHABILITY_HOOK_ID,
       handler: createTelegramGetMeReachabilityHook(options),

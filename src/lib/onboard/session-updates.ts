@@ -4,6 +4,7 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { HermesAuthMethod, SessionUpdates } from "../state/onboard-session";
+import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 
 export interface OnboardSessionUpdateInput {
   sandboxName?: string | null;
@@ -13,8 +14,10 @@ export interface OnboardSessionUpdateInput {
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | string | null;
   preferredInferenceApi?: string | null;
+  compatibleEndpointReasoning?: string | null;
   nimContainer?: string | null;
   webSearchConfig?: WebSearchConfig | null;
+  toolDisclosure?: ToolDisclosure | string;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
   hermesToolGateways?: string[] | null;
@@ -47,9 +50,16 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
   if (updates.preferredInferenceApi !== undefined) {
     normalized.preferredInferenceApi = toNullableString(updates.preferredInferenceApi);
   }
+  if (updates.compatibleEndpointReasoning !== undefined) {
+    normalized.compatibleEndpointReasoning = toNullableString(updates.compatibleEndpointReasoning);
+  }
   if (updates.nimContainer !== undefined)
     normalized.nimContainer = toNullableString(updates.nimContainer);
   if (updates.webSearchConfig !== undefined) normalized.webSearchConfig = updates.webSearchConfig;
+  if (updates.toolDisclosure !== undefined) {
+    const toolDisclosure = normalizeToolDisclosure(updates.toolDisclosure);
+    if (toolDisclosure) normalized.toolDisclosure = toolDisclosure;
+  }
   if (updates.policyPresets !== undefined) normalized.policyPresets = updates.policyPresets;
   if (updates.messagingPlan !== undefined) normalized.messagingPlan = updates.messagingPlan;
   if (updates.hermesToolGateways !== undefined)

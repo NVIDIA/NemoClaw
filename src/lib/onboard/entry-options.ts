@@ -11,6 +11,14 @@ export interface OnboardEntryOptionsInput {
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
   stdinIsTty: boolean;
   stdoutIsTty: boolean;
+  /**
+   * Status of the persisted onboard session (`~/.nemoclaw/onboard-session.json`),
+   * or null when there is no session on disk. When it is "in_progress" a prior
+   * onboard was interrupted, so resume mode is auto-detected even without an
+   * explicit `--resume` flag (#5470). Optional: omitting it preserves the
+   * flag-only behavior for callers that don't load the session.
+   */
+  persistedSessionStatus?: string | null;
 }
 
 export interface OnboardEntryOptionsDeps {
@@ -35,16 +43,46 @@ export interface ResolvedOnboardEntryOptions {
   cannotPrompt: boolean;
 }
 
+type NonInteractiveEntryOptions = { nonInteractive?: boolean };
+
+/** Scope the CLI flag to helpers that still read the compatibility environment variable. */
+export function withNonInteractiveEnvironment<Options extends NonInteractiveEntryOptions>(
+  run: (options?: Options) => Promise<void>,
+  env: NodeJS.ProcessEnv = process.env,
+): (options?: Options) => Promise<void> {
+  return async (options) => {
+    if (options?.nonInteractive !== true) return run(options);
+
+    const previous = env.NEMOCLAW_NON_INTERACTIVE;
+    env.NEMOCLAW_NON_INTERACTIVE = "1";
+    try {
+      await run(options);
+    } finally {
+      if (previous === undefined) delete env.NEMOCLAW_NON_INTERACTIVE;
+      else env.NEMOCLAW_NON_INTERACTIVE = previous;
+    }
+  };
+}
+
 export function resolveOnboardEntryOptions(
   input: OnboardEntryOptionsInput,
   deps: OnboardEntryOptionsDeps,
 ): ResolvedOnboardEntryOptions {
-  const resume = input.opts.resume === true;
+  const explicitResume = input.opts.resume === true;
   const fresh = input.opts.fresh === true;
-  if (resume && fresh) {
+  // The mutual-exclusion error applies only to the explicit flags — a leftover
+  // in_progress session combined with an explicit `--fresh` is not a conflict
+  // (fresh wins, see below), so it must not trip this guard.
+  if (explicitResume && fresh) {
     deps.error("  --resume and --fresh cannot both be set.");
     deps.exitProcess(1);
   }
+  // Auto-detect resume from a persisted in_progress session so a re-run of
+  // `nemoclaw onboard` after an interrupted attempt continues that attempt
+  // (banner + resume preflight) instead of starting over (#5470). `--fresh`
+  // always wins, and an explicit `--resume` is preserved unchanged.
+  const sessionInProgress = input.persistedSessionStatus === "in_progress";
+  const resume = !fresh && (explicitResume || sessionInProgress);
 
   const requestedFromDockerfile =
     input.opts.fromDockerfile ||

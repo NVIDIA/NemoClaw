@@ -61,20 +61,51 @@ unset _EARLY_DASHBOARD_PORT_RAW _EARLY_DASHBOARD_PORT _EARLY_DASHBOARD_PORT_VALI
 
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so that if
-# the script crashes before touch /tmp/gateway.log (e.g., a Landlock
+# the script crashes before gateway log setup (e.g., a Landlock
 # read failure), the output is still available for diagnostics.
 # The log is written in append mode and also forwarded to the original
 # stderr/stdout via tee so openshell sandbox create can still stream it.
 # SECURITY: restrict permissions before writing — startup diagnostics may
 # include dashboard URLs, but auth tokens must stay redacted in logs.
+_nemoclaw_safe_replace_tmp_file() {
+  local target="$1"
+  local mode="$2"
+  local owner="${3:-}"
+  local chmod_policy="${4:-required}"
+  local dir base tmp
+  dir="$(dirname "$target")"
+  base="$(basename "$target")"
+  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
+
+  if ! cat >"$tmp"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if [ -n "$owner" ] && ! chown "$owner" "$tmp"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if [ "$chmod_policy" = "best-effort" ]; then
+    chmod "$mode" "$tmp" 2>/dev/null || true
+  elif ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv -f "$tmp" "$target"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+}
+
+_nemoclaw_safe_create_tmp_file() {
+  _nemoclaw_safe_replace_tmp_file "$@" </dev/null
+}
+
 _START_LOG="/tmp/nemoclaw-start.log"
 if [ "$(id -u)" -eq 0 ]; then
-  : >"$_START_LOG"
-  chown root:root "$_START_LOG"
-  chmod 600 "$_START_LOG"
+  _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 root:root
 else
-  : >"$_START_LOG"
-  chmod 600 "$_START_LOG" 2>/dev/null || true
+  _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 "" best-effort
 fi
 exec 3>&1
 exec 4>&2
@@ -91,6 +122,13 @@ if [ ! -f "$_SANDBOX_INIT" ]; then
 fi
 # shellcheck source=scripts/lib/sandbox-init.sh
 source "$_SANDBOX_INIT"
+
+_GATEWAY_SUPERVISOR="/usr/local/lib/nemoclaw/gateway-supervisor.sh"
+if [ ! -f "$_GATEWAY_SUPERVISOR" ]; then
+  _GATEWAY_SUPERVISOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gateway-supervisor.sh"
+fi
+# shellcheck source=scripts/lib/gateway-supervisor.sh
+source "$_GATEWAY_SUPERVISOR"
 
 # Harden RLIMITs (nproc #809 + nofile #4527) as root PID 1, before the capsh
 # drop and the setpriv step-down, so the caps are inherited and unraisable.
@@ -193,6 +231,11 @@ case "${1:-}" in
 esac
 NEMOCLAW_CMD=("$@")
 
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Force this
+# after self-wrapper normalization so injected or inherited values cannot make
+# OpenClaw processes probe an impossible credential source.
+export AWS_EC2_METADATA_DISABLED=true
+
 # Marker file the Docker HEALTHCHECK reads to decide whether an in-container
 # gateway liveness check is meaningful. Its presence means this container has
 # entered the OpenClaw gateway launch path (standalone deployments and the #3975
@@ -213,19 +256,127 @@ NEMOCLAW_CMD=("$@")
 # exists if-and-only-if this container is about to start the gateway. Both the
 # root and non-root entrypoint paths call `mark_in_container_gateway` directly
 # before their `openclaw gateway run` invocation.
-# Best-effort: a write failure must never block startup.
-mark_in_container_gateway() {
-  : >/tmp/nemoclaw-gateway-local 2>/dev/null || true
+# Internal test seam shared by the PID writer and watchdog. This is deliberately
+# not documented as a public env API; production always keeps the default path.
+GATEWAY_PID_FILE=/tmp/nemoclaw-gateway.pid
+GATEWAY_WATCHDOG_KILL_FILE="${_NEMOCLAW_GATEWAY_WATCHDOG_KILL_FILE:-/tmp/nemoclaw-gateway-watchdog-kill}"
+
+# A numeric PID is not a process identity: Linux may reuse it immediately
+# after the child is reaped.  Capture `/proc/<pid>/stat` field 22 (starttime)
+# for every supervised process and require the pair to keep matching before
+# admitting, probing, or signalling that process.  The `ps` fallback exists
+# only so the shell helpers remain testable on non-Linux developer hosts;
+# production containers always use the strict `/proc` identity.
+GATEWAY_PID_START_IDENTITY=""
+AUTO_PAIR_PID_START_IDENTITY=""
+GATEWAY_LOG_TAIL_PID_START_IDENTITY=""
+GATEWAY_LOG_PERSIST_PID_START_IDENTITY=""
+PLUGIN_REFRESH_PID_START_IDENTITY=""
+GATEWAY_WATCHDOG_PID_START_IDENTITY=""
+
+openclaw_load_pid_identity() {
+  local pid="$1"
+  local proc_root="${_NEMOCLAW_PROC_ROOT:-/proc}"
+  local stat_line rest parent_pid start_identity started
+
+  OPENCLAW_OBSERVED_PARENT_PID=""
+  OPENCLAW_OBSERVED_START_IDENTITY=""
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+
+  if [ -r "${proc_root}/${pid}/stat" ]; then
+    IFS= read -r stat_line <"${proc_root}/${pid}/stat" || return 1
+    rest="${stat_line##*) }"
+    [ "$rest" != "$stat_line" ] || return 1
+    # After `pid (comm)` is removed, state is $1, ppid is $2, and Linux
+    # starttime (the original field 22) is $20.  `##*) ` deliberately uses
+    # the final closing parenthesis because comm itself may contain `)`.
+    # shellcheck disable=SC2086  # intentional field split of proc stat suffix
+    set -- $rest
+    [ "$#" -ge 20 ] || return 1
+    parent_pid="$2"
+    start_identity="${20}"
+    case "$parent_pid" in
+      '' | *[!0-9]*) return 1 ;;
+    esac
+    case "$start_identity" in
+      '' | *[!0-9]*) return 1 ;;
+    esac
+  else
+    # An explicitly supplied proc root is a fail-closed test seam: never fall
+    # through to host `ps`, which would inspect a different process namespace.
+    [ "${_NEMOCLAW_PROC_ROOT+x}" != x ] || return 1
+    command -v ps >/dev/null 2>&1 || return 1
+    parent_pid="$(ps -o ppid= -p "$pid" 2>/dev/null | awk 'NR == 1 { gsub(/[[:space:]]/, "", $0); print; exit }')"
+    started="$(LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null | awk 'NR == 1 { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print; exit }')"
+    case "$parent_pid" in
+      '' | *[!0-9]*) return 1 ;;
+    esac
+    [ -n "$started" ] || return 1
+    start_identity="ps:${started//[[:space:]]/_}"
+  fi
+
+  OPENCLAW_OBSERVED_PARENT_PID="$parent_pid"
+  OPENCLAW_OBSERVED_START_IDENTITY="$start_identity"
 }
 
-# Record the PID of the live in-container gateway so the Docker HEALTHCHECK
+openclaw_pid_start_identity() {
+  openclaw_load_pid_identity "$1" || return 1
+  printf '%s\n' "$OPENCLAW_OBSERVED_START_IDENTITY"
+}
+
+capture_openclaw_pid_start_identity() {
+  local pid="$1"
+  local output_var="$2"
+  local identity
+  identity="$(openclaw_pid_start_identity "$pid")" || return 1
+  [ -n "$identity" ] || return 1
+  printf -v "$output_var" '%s' "$identity"
+}
+
+openclaw_supervised_pid_is_live() {
+  local pid="$1"
+  local expected_identity="$2"
+  [ -n "$expected_identity" ] || return 1
+  gateway_control_pid_is_live "$pid" || return 1
+  openclaw_load_pid_identity "$pid" || return 1
+  [ "$OPENCLAW_OBSERVED_PARENT_PID" = "$$" ] \
+    && [ "$OPENCLAW_OBSERVED_START_IDENTITY" = "$expected_identity" ]
+}
+
+# Best-effort: a write failure must never block startup.
+mark_in_container_gateway() {
+  _nemoclaw_safe_create_tmp_file /tmp/nemoclaw-gateway-local 600 "" best-effort 2>/dev/null || true
+}
+
+# Record the PID/starttime identity of the live in-container gateway so the
+# Docker HEALTHCHECK
 # can confirm the actual gateway process (not merely *some* `openclaw`
 # process) is still alive when the in-container curl probe cannot reach the
 # dashboard port (#4952). Refreshed on every (re)launch so a respawned gateway
 # is tracked and a window where the gateway is down reads as unhealthy.
 # Best-effort: a write failure must never block startup.
 record_gateway_pid() {
-  printf '%s\n' "${1:-}" >/tmp/nemoclaw-gateway.pid 2>/dev/null || true
+  printf '%s %s\n' "${1:-}" "${2:-}" \
+    | _nemoclaw_safe_replace_tmp_file "$GATEWAY_PID_FILE" 600 "" best-effort 2>/dev/null || true
+}
+
+clear_gateway_pid_record() {
+  printf '' | _nemoclaw_safe_replace_tmp_file "$GATEWAY_PID_FILE" 600 "" best-effort 2>/dev/null || true
+}
+
+record_gateway_watchdog_kill() {
+  printf '%s\n' "${1:-}" \
+    | _nemoclaw_safe_replace_tmp_file "$GATEWAY_WATCHDOG_KILL_FILE" 600 "" best-effort 2>/dev/null || true
+}
+
+consume_gateway_watchdog_kill() {
+  local expected="$1" marked=""
+  [ -f "$GATEWAY_WATCHDOG_KILL_FILE" ] || return 1
+  IFS= read -r marked <"$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
+  rm -f "$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
+  [ -n "$marked" ] && [ "$marked" = "$expected" ]
 }
 
 _chat_ui_url_port() {
@@ -360,29 +511,6 @@ export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 # inherit group=sandbox regardless of which UID created them, so the
 # agent keeps read access and shields-up locking still works the same.
 #
-# Keep the recovery baseline outside the mutable group-write contract. It is
-# readable by the sandbox group for restore, but only root should rewrite it.
-lock_openclaw_config_baseline_if_present() {
-  local config_dir="${1:-/sandbox/.openclaw}"
-  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
-
-  [ -f "$baseline_file" ] || return 0
-  [ "$(id -u)" -eq 0 ] || return 0
-
-  if [ -L "$config_dir" ] || [ -L "$baseline_file" ]; then
-    return 0
-  fi
-
-  if ! chown root:sandbox "$baseline_file"; then
-    printf '[SECURITY] Failed to set ownership on %s\n' "$baseline_file" >&2
-    return 1
-  fi
-  if ! chmod 0440 "$baseline_file"; then
-    printf '[SECURITY] Failed to set permissions on %s\n' "$baseline_file" >&2
-    return 1
-  fi
-}
-
 # Idempotent. Skips when shields are UP (config dir owned by root) so
 # the lock is not weakened.
 #
@@ -391,28 +519,291 @@ lock_openclaw_config_baseline_if_present() {
 # restores the setgid + group-writable contract. Host-side, `nemoclaw <name>
 # doctor --fix` and the rebuild post-upgrade repair step apply the same
 # normalization without requiring a restart.
+resolve_mutable_config_normalizer() {
+  local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"
+  if [ -f "$normalizer" ]; then
+    printf '%s\n' "$normalizer"
+    return 0
+  fi
+  # A privileged repair may execute only the immutable helper installed in the
+  # image. The environment and checkout fallbacks below exist solely for
+  # non-root developer/test harnesses, where they cannot change ownership.
+  if [ "$(id -u)" -eq 0 ]; then
+    return 1
+  fi
+  if [ -n "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER:-}" ] \
+    && [ -f "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}" ]; then
+    printf '%s\n' "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}"
+    return 0
+  fi
+  if [ -f "scripts/lib/normalize_mutable_config_perms.py" ]; then
+    printf '%s\n' "scripts/lib/normalize_mutable_config_perms.py"
+    return 0
+  fi
+  normalizer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/normalize_mutable_config_perms.py"
+  if [ -f "$normalizer" ]; then
+    printf '%s\n' "$normalizer"
+    return 0
+  fi
+  return 1
+}
+
 normalize_mutable_config_perms() {
   local config_dir="/sandbox/.openclaw"
-  [ -d "$config_dir" ] || return 0
+  local operation="${1:-normalize}"
 
-  # Detect shields-up. Config dir owned by root means shields are
-  # currently locked; normalizing would weaken the contract.
-  local config_dir_owner
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" = "root" ]; then
+  if [ "$operation" != "normalize" ] \
+    && [ "$operation" != "capture" ] \
+    && [ "$operation" != "recover" ]; then
+    printf '[SECURITY] Refusing mutable config permission normalization — invalid operation %s\n' "$operation" >&2
+    return 1
+  fi
+
+  local config_dir_uid
+  if ! config_dir_uid="$(
+    python3 -I - "$config_dir" <<'PY_CLASSIFY_MUTABLE_CONFIG'
+import os
+import stat
+import sys
+
+try:
+    metadata = os.lstat(sys.argv[1])
+except FileNotFoundError:
+    print("missing")
+    raise SystemExit(0)
+if not stat.S_ISDIR(metadata.st_mode):
+    raise SystemExit(1)
+print(metadata.st_uid)
+PY_CLASSIFY_MUTABLE_CONFIG
+  )"; then
+    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe classification failed\n' >&2
+    return 1
+  fi
+  [ "$config_dir_uid" = "missing" ] && return 0
+  if [ "$config_dir_uid" = "0" ]; then
+    [ "$operation" = "normalize" ] || return 0
+    # Dockerfile and policy sources establish sandbox:sandbox 2770/660 as the
+    # mutable default. #6300 establishes the root-ownership/write regression,
+    # but not a broader safe-to-repair state; no in-repo producer has been
+    # identified. This compatibility path therefore accepts only the narrow
+    # root:root 0700/0600 fixture, under a sandbox:sandbox 0755 parent. That is
+    # distinct from #6047's sandbox-owned mode collapse, which the owner-UID
+    # normalizer below repairs. Every other root-owned state fails closed.
+    # Remove this path once the runtime preserves the declared ownership and
+    # the live shields-config regression proves that boundary.
+    reclaim_collapsed_mutable_config "$config_dir" || return 1
     return 0
   fi
 
-  chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
-  find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
-  chmod 2770 "$config_dir" 2>/dev/null || true
-  chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
-  lock_openclaw_config_baseline_if_present "$config_dir" || return 1
+  local expected_config_dir_uid expected_config_dir_gid
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! expected_config_dir_uid="$(id -u sandbox)" \
+      || ! expected_config_dir_gid="$(id -g sandbox)"; then
+      printf '[SECURITY] Refusing mutable config permission normalization — sandbox identity lookup failed\n' >&2
+      return 1
+    fi
+  else
+    expected_config_dir_uid="$(id -u)"
+    expected_config_dir_gid="$(id -g)"
+  fi
+  if [ "$config_dir_uid" != "$expected_config_dir_uid" ]; then
+    printf '[SECURITY] Refusing mutable config permission normalization — config directory owner UID %s does not match sandbox UID %s\n' \
+      "$config_dir_uid" "$expected_config_dir_uid" >&2
+    return 1
+  fi
+
+  local normalizer
+  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
+    printf '[SECURITY] Refusing mutable config permission normalization — trusted normalizer is missing\n' >&2
+    return 1
+  fi
+
+  # Root supervises an owner-UID child and receives the still-open config
+  # directory descriptor over a private authenticated socket. The descriptor
+  # stays pinned across the privilege boundary, so inode reuse cannot make the
+  # root baseline phase act on a substituted tree.
+  local -a normalizer_args=(
+    "$config_dir"
+    "$expected_config_dir_uid"
+    "$expected_config_dir_gid"
+  )
+  if [ "$operation" = "capture" ]; then
+    local node_binary
+    if ! node_binary="$(command -v node)" || [ -z "$node_binary" ]; then
+      printf '[config] ERROR: JSON5 baseline validator failed for openclaw.json\n' >&2
+      return 1
+    fi
+    normalizer_args+=(
+      capture
+      "$node_binary"
+      /opt/nemoclaw/node_modules/json5
+    )
+  elif [ "$operation" = "recover" ]; then
+    normalizer_args+=(recover)
+  fi
+
+  if ! python3 -I "$normalizer" "${normalizer_args[@]}"; then
+    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe repair detected an unsafe link, race, owner, or metadata state\n' >&2
+    return 1
+  fi
+}
+
+classify_openclaw_config_seal() {
+  local config_dir="$1"
+  local sandbox_uid sandbox_gid
+  if [ "$(id -u)" -eq 0 ]; then
+    sandbox_uid="$(id -u sandbox)" || return 2
+    sandbox_gid="$(id -g sandbox)" || return 2
+  else
+    sandbox_uid="$(id -u)"
+    sandbox_gid="$(id -g)"
+  fi
+  local normalizer
+  normalizer="$(resolve_mutable_config_normalizer)" || return 2
+  python3 -I "$normalizer" classify-seal \
+    "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null
+}
+
+reclaim_collapsed_mutable_config() {
+  local config_dir="$1"
+
+  if [ "$(id -u)" -ne 0 ]; then
+    if classify_openclaw_config_seal "$config_dir"; then
+      return 0
+    fi
+    printf '[SECURITY] Refusing mutable config reclaim — root privileges are required\n' >&2
+    return 1
+  fi
+
+  local sandbox_uid sandbox_gid
+  if ! sandbox_uid="$(id -u sandbox)" || ! sandbox_gid="$(id -g sandbox)"; then
+    printf '[SECURITY] Refusing mutable config reclaim — sandbox identity lookup failed\n' >&2
+    return 1
+  fi
+
+  local normalizer
+  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
+    printf '[SECURITY] Refusing mutable config reclaim — trusted normalizer is missing\n' >&2
+    return 1
+  fi
+
+  if ! python3 -I "$normalizer" reclaim-if-unsealed "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null; then
+    printf '[SECURITY] Refusing mutable config reclaim — descriptor-safe reclaim detected an unsafe link, race, owner, or metadata state\n' >&2
+    return 1
+  fi
+}
+
+# Invalid state (#4538, #6047): OpenClaw assumes a single-UID 700/600 config
+# tree, while NemoClaw's separate sandbox and gateway UIDs require the mutable
+# 2770/660 group contract. The tightening originates at the OpenClaw command
+# boundary; NemoClaw owns restoring its multi-UID postcondition afterward.
+# Regression proof lives in test/nemoclaw-start-perms.test.ts and the live
+# shields-config documented-exec phase. Issue #6047 tracks the boundary and its
+# removal condition: remove this wrapper only when the pinned OpenClaw preserves
+# 2770/660 after every command outcome; do not replace that upstream source fix
+# with a NemoClaw timeout or permission escape flag.
+run_oneshot_command() {
+  local _nemoclaw_runtime_env_file="${_RUNTIME_SHELL_ENV_FILE:-/tmp/nemoclaw-proxy-env.sh}"
+  local _nemoclaw_oneshot_child_pid=""
+  local _nemoclaw_oneshot_signal=""
+  local _nemoclaw_oneshot_wait_rc=0
+  local _nemoclaw_oneshot_cleanup_rc=0
+
+  # Bash gives asynchronous commands /dev/null stdin and an ignored SIGINT
+  # when job control is off. The explicit stdin and signal reset preserve the
+  # foreground command contract; exec keeps the launched command as our one
+  # direct child rather than adding a forwarding process.
+  (
+    trap - TERM INT
+    # Source the root-owned runtime environment before stepping down so PID-1
+    # one-shot commands use the same proxy, state, and gateway routing contract
+    # as connect-shell and host `exec` commands.
+    # shellcheck source=/dev/null
+    if [ -r "$_nemoclaw_runtime_env_file" ]; then
+      builtin source "$_nemoclaw_runtime_env_file" || exit $?
+    fi
+    # The shared, sandbox-readable file also exports the gateway token.
+    # Remove it from the child's ambient environment so ordinary one-shot argv
+    # uses local device auth and does not print it accidentally. This is not a
+    # secrecy boundary against a command that deliberately reads the file.
+    builtin unset OPENCLAW_GATEWAY_TOKEN
+    builtin exec -- "$@"
+  ) <&0 &
+  _nemoclaw_oneshot_child_pid=$!
+  trap '_nemoclaw_oneshot_signal=TERM; kill -TERM "$_nemoclaw_oneshot_child_pid" 2>/dev/null || true' TERM
+  trap '_nemoclaw_oneshot_signal=INT; kill -INT "$_nemoclaw_oneshot_child_pid" 2>/dev/null || true' INT
+
+  # A trapped signal interrupts `wait`. Forward it above, then wait again so
+  # the direct child is reaped and its final status remains authoritative.
+  while :; do
+    _nemoclaw_oneshot_signal=""
+    if wait "$_nemoclaw_oneshot_child_pid"; then
+      _nemoclaw_oneshot_wait_rc=0
+    else
+      _nemoclaw_oneshot_wait_rc=$?
+    fi
+    [ -n "$_nemoclaw_oneshot_signal" ] || break
+  done
+  _nemoclaw_oneshot_child_pid=""
+
+  if normalize_mutable_config_perms; then
+    _nemoclaw_oneshot_cleanup_rc=0
+  else
+    _nemoclaw_oneshot_cleanup_rc=$?
+  fi
+  trap - TERM INT
+
+  if [ "$_nemoclaw_oneshot_cleanup_rc" -ne 0 ]; then
+    printf '[one-shot] command status=%s; permission cleanup status=%s; returning cleanup failure\n' \
+      "$_nemoclaw_oneshot_wait_rc" "$_nemoclaw_oneshot_cleanup_rc" >&2
+    return "$_nemoclaw_oneshot_cleanup_rc"
+  fi
+  return "$_nemoclaw_oneshot_wait_rc"
 }
 
 openclaw_config_dir_owner() {
   local config_dir="$1"
   stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown
+}
+
+openclaw_locked_parent_is_protected() {
+  local owner mode
+  owner="$(stat -c '%U:%G' /sandbox 2>/dev/null || stat -f '%Su:%Sg' /sandbox 2>/dev/null || true)"
+  mode="$(stat -c '%a' /sandbox 2>/dev/null || stat -f '%Lp' /sandbox 2>/dev/null || true)"
+  case "${owner} ${mode}" in
+    "root:sandbox 1775" | "root:sandbox 01775") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+prepare_openclaw_config_startup() {
+  run_openclaw_config_guard revoke-startup-ready --startup-owner || return 1
+
+  # A persisted #6300 root:root 0700/0600 mutable tree overlaps one broad
+  # orphan-freeze discriminator in the transaction guard. Repair only that
+  # exact signature before recovery; sealed and indeterminate states remain
+  # untouched for the guard to verify or recover under its mutation mutex.
+  if [ "$(openclaw_config_dir_owner /sandbox/.openclaw)" = "root" ]; then
+    local seal_state=0
+    classify_openclaw_config_seal /sandbox/.openclaw || seal_state=$?
+    case "$seal_state" in
+      0 | 2) ;;
+      1) reclaim_collapsed_mutable_config /sandbox/.openclaw || return 1 ;;
+      *)
+        printf '[SECURITY] Refusing mutable config startup — invalid seal classification %s\n' \
+          "$seal_state" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  run_openclaw_config_guard recover --startup-owner || return 1
+  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
+    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
+    timeout --signal=TERM --kill-after=5s 12m \
+      python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
+      --config-dir /sandbox/.openclaw || return 1
+  fi
 }
 
 prepare_openclaw_config_for_write() {
@@ -519,12 +910,16 @@ restore_openclaw_config_after_write() {
 # mode openclaw.json is root-owned and immutable, so an empty file there
 # implies tampering (which integrity check should catch) rather than the
 # #3118 trigger (which requires a writable config).
+# Remove this recovery only after upstream writes can no longer truncate
+# openclaw.json and regression coverage proves the empty-config state cannot
+# recur at any supported inference-update boundary.
 
-# Capture a known-good copy of openclaw.json for later restore. Idempotent:
-# only writes the baseline once. Runs at root after apply_model_override and
-# apply_cors_override so the baseline reflects the post-override config that
-# the user actually started with. Refuses to capture broken state (empty,
-# whitespace-only, or unparseable input).
+# Capture a known-good copy of openclaw.json for later restore. A pristine
+# root-owned baseline is retained; a sandbox-owned candidate is replaced from
+# the exact validated active-config descriptor. Runs at root after
+# apply_model_override and apply_cors_override so the baseline reflects the
+# post-override config that the user actually started with. Refuses to capture
+# broken state (empty, whitespace-only, or unparseable input).
 write_openclaw_config_baseline() {
   local config_dir="/sandbox/.openclaw"
   local config_file="$config_dir/openclaw.json"
@@ -534,94 +929,18 @@ write_openclaw_config_baseline() {
   [ -f "$config_file" ] || return 0
   [ "$(id -u)" -eq 0 ] || return 0
 
-  # Refuse to act through symlinks (mirrors apply_model_override's stance).
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$baseline_file" ]; then
-    return 0
+  local baseline_existed=0
+  [ -e "$baseline_file" ] && baseline_existed=1
+
+  # Capture and lock through the same pinned directory descriptor used by
+  # permission normalization. The permanently dropped child validates and
+  # pins the exact active config; root copies that descriptor into a fresh
+  # inode. No root path-based cp/chown/chmod operation follows an
+  # attacker-swappable entry in the mutable directory.
+  normalize_mutable_config_perms capture || return 1
+  if [ "$baseline_existed" -eq 0 ] && [ -f "$baseline_file" ]; then
+    printf '[config] Baseline snapshot created: %s\n' "$baseline_file" >&2
   fi
-
-  # Idempotent — only capture once per sandbox. Still re-lock an existing
-  # baseline because mutable permission normalization is intentionally broad.
-  if [ -f "$baseline_file" ]; then
-    lock_openclaw_config_baseline_if_present "$config_dir"
-    return $?
-  fi
-
-  # Skip in shields-up mode — config is supposed to be locked, baseline
-  # capture is unnecessary and the prepare/restore permission dance is
-  # already owned by the override paths.
-  if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
-    return 0
-  fi
-
-  # Refuse to capture broken state. grep -q '[^[:space:]]' is false for both
-  # 0-byte and whitespace-only files.
-  if ! grep -q '[^[:space:]]' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  # Refuse to capture content that doesn't parse as JSON5 — keeps the
-  # baseline a known-good restore target. openclaw.json is JSON5 (comments,
-  # trailing commas) everywhere else in the stack — OpenClaw uses
-  # JSON5.parse / parseJsonWithJson5Fallback, and migration-state.ts uses
-  # JSON5.parse — so use the real JSON5 parser instead of approximating the
-  # grammar with regexes.
-  local _json5_rc=0
-  node - "$config_file" <<'NODE_VALIDATE' || _json5_rc=$?
-  const fs = require("fs");
-
-  const configPath = process.argv[2];
-
-  // The entrypoint runs this validator as root. Only load the parser from the
-  // packaged plugin tree, never from sandbox-writable cwd or npm global roots.
-  const candidates = ["/opt/nemoclaw/node_modules/json5"];
-
-  const attempted = [];
-  let JSON5;
-  for (const candidate of [...new Set(candidates)]) {
-    try {
-      JSON5 = require(candidate);
-      if (JSON5 && typeof JSON5.parse === "function") {
-        break;
-      }
-      attempted.push(`${candidate}: missing parse()`);
-      JSON5 = undefined;
-    } catch {
-      attempted.push(candidate);
-    }
-  }
-
-  if (!JSON5) {
-    console.error(
-      `[config] ERROR: unable to load JSON5 parser for baseline validation. Tried: ${
-        attempted.length ? attempted.join(", ") : "(no candidate module paths found)"
-      }`,
-    );
-    process.exit(2);
-  }
-
-  try {
-    JSON5.parse(fs.readFileSync(configPath, "utf8"));
-  } catch {
-    process.exit(3);
-  }
-NODE_VALIDATE
-  case "$_json5_rc" in
-    0) ;;
-    3) return 0 ;;
-    *)
-      printf '[config] ERROR: JSON5 baseline validator failed for %s\n' "$config_file" >&2
-      return 1
-      ;;
-  esac
-
-  if ! cp "$config_file" "$baseline_file" 2>/dev/null; then
-    return 0
-  fi
-  # 0440 root:sandbox so the gateway/sandbox user can READ for recovery but
-  # cannot truncate or rewrite the baseline through the same path that
-  # corrupts the active config.
-  lock_openclaw_config_baseline_if_present "$config_dir" || return 1
-  printf '[config] Baseline snapshot created: %s\n' "$baseline_file" >&2
 }
 
 # Restore openclaw.json from a baseline when the active file has been
@@ -634,64 +953,15 @@ NODE_VALIDATE
 recover_openclaw_config_if_empty() {
   local config_dir="/sandbox/.openclaw"
   local config_file="$config_dir/openclaw.json"
-  local hash_file="$config_dir/.config-hash"
-  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
-  local last_good_file="$config_dir/openclaw.json.last-good"
 
   [ -d "$config_dir" ] || return 0
   [ -f "$config_file" ] || return 0
 
-  # Refuse to act through symlinks.
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    return 0
-  fi
-
-  # Skip in shields-up mode — see header comment.
-  if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
-    return 0
-  fi
-
-  # Active file is non-empty → no-op.
-  if grep -q '[^[:space:]]' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  local source=""
-  if [ -f "$last_good_file" ] && [ ! -L "$last_good_file" ] \
-    && grep -q '[^[:space:]]' "$last_good_file" 2>/dev/null; then
-    source="$last_good_file"
-  elif [ -f "$baseline_file" ] && [ ! -L "$baseline_file" ] \
-    && grep -q '[^[:space:]]' "$baseline_file" 2>/dev/null; then
-    source="$baseline_file"
-  fi
-
-  # Recovery failures must be loud, not silent. In mutable-default mode the
-  # downstream verify_config_integrity_if_locked is intentionally a no-op,
-  # so a soft-fail here would let startup continue with an empty (or
-  # restored-but-unhashed) config and crash much later in a less obvious
-  # place. Return non-zero so `set -e` aborts startup with the diagnostic
-  # already on stderr.
-  if [ -z "$source" ]; then
-    printf '[config] ERROR: openclaw.json is empty (%s). No baseline available; restart cannot recover. See issue #3118.\n' "$config_file" >&2
-    return 1
-  fi
-
-  if ! cp "$source" "$config_file" 2>/dev/null; then
-    printf '[config] ERROR: Failed to restore openclaw.json from %s (see #3118)\n' "$source" >&2
-    return 1
-  fi
-  chown sandbox:sandbox "$config_file" 2>/dev/null || true
-  chmod 660 "$config_file" 2>/dev/null || true
-
-  if (cd "$config_dir" && sha256sum openclaw.json >".config-hash") 2>/dev/null; then
-    chown sandbox:sandbox "$hash_file" 2>/dev/null || true
-    chmod 660 "$hash_file" 2>/dev/null || true
-  else
-    printf '[config] ERROR: Restored openclaw.json from %s but failed to recompute %s (see #3118)\n' "$source" "$hash_file" >&2
-    return 1
-  fi
-
-  printf '[config] openclaw.json restored from %s (was empty — see #3118)\n' "$source" >&2
+  # The owner-identity phase pins the mutable directory and recovery source,
+  # then installs fresh sandbox-owned config/hash inodes with dir-fd-relative
+  # atomic replaces. Root never follows, writes, chowns, or chmods an existing
+  # sandbox-controlled pathname.
+  normalize_mutable_config_perms recover
 }
 
 # Refresh the mutable-default .config-hash so it matches the current
@@ -770,6 +1040,14 @@ apply_model_override() {
 
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
+
+  # A shields-up pair is a host-sealed trust anchor. Startup/restart may read
+  # it, but must never temporarily chmod or rewrite it behind the host's
+  # persisted content seal. Apply host overrides after shields-down instead.
+  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
+    printf '[config] Shields are up; deferring model/inference overrides until config is mutable\n' >&2
+    return 0
+  fi
 
   # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
   # Legacy-layout migration rejects symlinked config paths before overrides; guard here too.
@@ -915,6 +1193,10 @@ PYOVERRIDE
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/3175
 
 reconcile_agent_model_with_provider() {
+  # apply_model_override already won; reconciling against the gateway would
+  # overwrite the user's explicit choice with an inference/-prefixed variant.
+  [ -z "${NEMOCLAW_MODEL_OVERRIDE:-}" ] || return 0
+
   if [ "$(id -u)" -ne 0 ]; then
     return 0
   fi
@@ -923,6 +1205,11 @@ reconcile_agent_model_with_provider() {
   local hash_file="/sandbox/.openclaw/.config-hash"
 
   [ -f "$config_file" ] || return 0
+
+  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
+    printf '[config] Shields are up; skipping provider-model reconciliation for the sealed config\n' >&2
+    return 0
+  fi
 
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     return 0
@@ -1082,6 +1369,11 @@ apply_cors_override() {
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
 
+  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
+    printf '[config] Shields are up; deferring the CORS override until config is mutable\n' >&2
+    return 0
+  fi
+
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing CORS override — config or hash path is a symlink\n' >&2
     return 1
@@ -1139,7 +1431,7 @@ PYCORS
 }
 
 # OpenShell provider snapshots can expose revision-scoped placeholders such as
-# openshell:resolve:env:v11_DISCORD_BOT_TOKEN in the child environment. Refresh
+# openshell:resolve:env:v11_<ENV_KEY> in the child environment. Refresh
 # baked canonical placeholders in openclaw.json after the integrity check so
 # token egress keeps working across provider attach/refresh generations without
 # ever writing a raw credential to disk.
@@ -1148,20 +1440,107 @@ refresh_openclaw_provider_placeholders() {
   local hash_file="/sandbox/.openclaw/.config-hash"
   [ -f "$config_file" ] || return 0
 
-  local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY"
+  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
+    printf '[config] Shields are up; preserving sealed provider placeholders unchanged\n' >&2
+    return 0
+  fi
+
+  local keys
+  keys="$(
+    python3 - "$config_file" <<'PYPLACEHOLDERKEYS'
+import base64
+import json
+import os
+import re
+import sys
+
+config_file = sys.argv[1]
+prefix = "openshell:resolve:env:"
+alias_marker = "-OPENSHELL-RESOLVE-ENV-"
+env_key_re = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+revision_re = re.compile(r"^v[0-9]+_")
+keys = set()
+MESSAGING_RUNTIME_PLAN_DEFAULT_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json"
+
+
+def add_key(value):
+    key = revision_re.sub("", value)
+    if env_key_re.match(key):
+        keys.add(key)
+
+
+def walk(value):
+    if isinstance(value, str):
+        if value.startswith(prefix):
+            add_key(value[len(prefix) :])
+        alias_index = value.find(alias_marker)
+        if alias_index > 0:
+            add_key(value[alias_index + len(alias_marker) :])
+        return
+    if isinstance(value, list):
+        for item in value:
+            walk(item)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            walk(item)
+
+
+try:
+    with open(config_file, encoding="utf-8") as f:
+        walk(json.load(f))
+except Exception:
+    pass
+
+def read_messaging_plan():
+    raw_plan = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+    if raw_plan:
+        try:
+            return json.loads(base64.b64decode(raw_plan).decode("utf-8"))
+        except Exception:
+            return None
+    artifact_path = os.environ.get(
+        "NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH",
+        MESSAGING_RUNTIME_PLAN_DEFAULT_PATH,
+    )
+    if not artifact_path or not os.path.isfile(artifact_path):
+        return None
+    try:
+        with open(artifact_path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+plan = read_messaging_plan()
+if isinstance(plan, dict):
+    for binding in plan.get("credentialBindings", []):
+        if isinstance(binding, dict) and isinstance(binding.get("providerEnvKey"), str):
+            add_key(binding["providerEnvKey"])
+
+base_keys = {
+    key
+    for key in keys
+    if not any(key != candidate and key.startswith(f"{candidate}_") for candidate in keys)
+}
+print(" ".join(sorted(base_keys)))
+PYPLACEHOLDERKEYS
+  )"
+  local base_keys="$keys"
 
   # Append operator-registered extras from NEMOCLAW_EXTRA_PLACEHOLDER_KEYS so
   # the revision-strip walk also collapses suffixed placeholders such as
-  # openshell:resolve:env:v51_TELEGRAM_BOT_TOKEN_AGENT_A back to the canonical
+  # openshell:resolve:env:v51_<ENV_KEY>_AGENT_A back to the canonical
   # form. The host-side onboard parser at
   # src/lib/onboard/extra-placeholder-keys.ts already filters by an identical
   # regex, rejects canonical-channel collisions, and requires every entry to
   # extend a canonical channel envKey with a non-empty `_<suffix>`; this loop
-  # mirrors all three checks because the env var travels through one extra hop
-  # and a sandbox operator could clobber it independently. Keeping both
-  # parsers symmetrical means a host-side restriction (refusing GITHUB_TOKEN,
-  # NEMOCLAW_EXTRA_PLACEHOLDER_KEYS itself, etc.) cannot be bypassed by
-  # mutating the runtime env after sandbox boot.
+  # mirrors those checks against provider envKeys discovered from the messaging
+  # plan and current OpenClaw config because the env var travels through one
+  # extra hop and a sandbox operator could clobber it independently. Keeping the
+  # sandbox parser restrictive means a host-side refusal for unrelated secrets
+  # (GITHUB_TOKEN, NEMOCLAW_EXTRA_PLACEHOLDER_KEYS itself, etc.) cannot be
+  # bypassed by mutating the runtime env after sandbox boot.
   local extra_token
   local _extra_raw="${NEMOCLAW_EXTRA_PLACEHOLDER_KEYS-}"
   # Normalize commas to whitespace so callers can pass either form,
@@ -1170,29 +1549,43 @@ refresh_openclaw_provider_placeholders() {
   local _extras_accepted=0
   local _canon_prefix
   local _accepted_this_token
+  local _canonical_collision
+  local _example_key
+  local _accepted_extra_keys=""
   for extra_token in $_extra_raw; do
-    case "$extra_token" in
-      '' | TELEGRAM_BOT_TOKEN | DISCORD_BOT_TOKEN | SLACK_BOT_TOKEN | SLACK_APP_TOKEN | BRAVE_API_KEY | WECHAT_BOT_TOKEN)
-        continue
-        ;;
-    esac
+    [ -n "$extra_token" ] || continue
+    _canonical_collision=0
+    for _canon_prefix in $base_keys; do
+      if [ "$extra_token" = "$_canon_prefix" ]; then
+        _canonical_collision=1
+        break
+      fi
+    done
+    [ "$_canonical_collision" -eq 1 ] && continue
     if ! printf '%s' "$extra_token" | grep -Eq '^[A-Z][A-Z0-9_]{0,127}$'; then
       printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must match /^[A-Z][A-Z0-9_]{0,127}\$/\n" \
         "$extra_token" >&2
       continue
     fi
     _accepted_this_token=0
-    for _canon_prefix in TELEGRAM_BOT_TOKEN_ DISCORD_BOT_TOKEN_ SLACK_BOT_TOKEN_ SLACK_APP_TOKEN_ WECHAT_BOT_TOKEN_ BRAVE_API_KEY_; do
+    _example_key=""
+    for _canon_prefix in $base_keys; do
+      [ -n "$_example_key" ] || _example_key="$_canon_prefix"
       case "$extra_token" in
-        "${_canon_prefix}"?*)
+        "${_canon_prefix}_"?*)
           _accepted_this_token=1
           break
           ;;
       esac
     done
     if [ "$_accepted_this_token" -ne 1 ]; then
-      printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must extend a canonical channel envKey such as TELEGRAM_BOT_TOKEN_<suffix>\n" \
-        "$extra_token" >&2
+      if [ -n "$_example_key" ]; then
+        printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must extend a discovered provider envKey such as %s_<suffix>\n" \
+          "$extra_token" "$_example_key" >&2
+      else
+        printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must extend a discovered provider envKey from the messaging plan or OpenClaw config\n" \
+          "$extra_token" >&2
+      fi
       continue
     fi
     if [ "$_extras_accepted" -ge 32 ]; then
@@ -1200,6 +1593,7 @@ refresh_openclaw_provider_placeholders() {
       break
     fi
     keys="$keys $extra_token"
+    _accepted_extra_keys="${_accepted_extra_keys:+$_accepted_extra_keys }$extra_token"
     _extras_accepted=$((_extras_accepted + 1))
   done
   if [ "$_extras_accepted" -gt 0 ]; then
@@ -1208,9 +1602,8 @@ refresh_openclaw_provider_placeholders() {
     # revision-scoped placeholder has been staged yet (which is the steady
     # state for a fresh provider attach). Stripping the canonical baseline
     # prefix here keeps the log line about extras only.
-    local _accepted_extras="${keys#TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY }"
     printf '[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted %d entry(ies): %s\n' \
-      "$_extras_accepted" "$_accepted_extras" >&2
+      "$_extras_accepted" "$_accepted_extra_keys" >&2
   fi
 
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
@@ -1232,6 +1625,7 @@ import sys
 
 config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
+alias_marker = "-OPENSHELL-RESOLVE-ENV-"
 keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
 replacements = {}
 warnings = []
@@ -1241,11 +1635,6 @@ for key in keys:
     if value.startswith(prefix) and value != f"{prefix}{key}":
         replacements[f"{prefix}{key}"] = (key, value)
 
-channel_credentials = {
-    "telegram": ("botToken", "TELEGRAM_BOT_TOKEN"),
-    "discord": ("token", "DISCORD_BOT_TOKEN"),
-    }
-
 with open(config_file, encoding="utf-8") as f:
     config = json.load(f)
 
@@ -1253,8 +1642,8 @@ refreshed = set()
 
 # Match each canonical placeholder only as an exact token. The OpenShell
 # placeholder grammar is "openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]*",
-# so the negative-lookahead ensures replacing TELEGRAM_BOT_TOKEN does not
-# also mutate TELEGRAM_BOT_TOKEN_AGENT_A; sort longest-first so two keys
+# so the negative-lookahead ensures replacing one provider env key does not
+# also mutate a suffixed extra placeholder; sort longest-first so two keys
 # sharing a strict prefix still match the more specific one when both
 # replacements happen to apply to the same exact-token position (the
 # lookahead already guarantees disjoint matches in practice, but keeping
@@ -1281,63 +1670,54 @@ def rewrite(value):
 
 updated = rewrite(config)
 
-channels = updated.get("channels", {}) if isinstance(updated, dict) else {}
-if isinstance(channels, dict):
-    for channel, (field, env_key) in channel_credentials.items():
-        channel_cfg = channels.get(channel, {})
-        if not isinstance(channel_cfg, dict):
-            continue
-        accounts = channel_cfg.get("accounts", {})
-        if not isinstance(accounts, dict):
-            continue
-        env_value = os.environ.get(env_key, "")
-        for account_id, account in accounts.items():
-            if not isinstance(account, dict):
-                continue
-            token = account.get(field)
-            if not isinstance(token, str) or not token.startswith(prefix):
-                continue
-            label = f"{channel}.{account_id}.{field}"
-            if not env_value:
-                warnings.append(
-                    f"[channels] {label} is an OpenShell placeholder but {env_key} is missing from the runtime environment"
-                )
-            elif not env_value.startswith(prefix):
-                warnings.append(
-                    f"[channels] {label} left unchanged because {env_key} is not an OpenShell placeholder; refusing to write raw credentials to openclaw.json"
-                )
-            elif token != env_value:
-                warnings.append(
-                    f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
-                )
+def placeholder_suffix_matches_env_key(suffix, env_key):
+    if suffix == env_key:
+        return True
+    revision = re.match(r"^v[0-9]+_", suffix)
+    return bool(revision and suffix[len(revision.group(0)) :] == env_key)
 
-# Slack stores Bolt-compatible aliases (xoxb-/xapp-OPENSHELL-RESOLVE-ENV-*) on
-# disk rather than the canonical "openshell:resolve:env:*" placeholder, so the
-# loop above (which keys on the canonical prefix) never inspects it. Diagnose
-# the alias-vs-runtime-env consistency separately. The aliases themselves are
-# never rewritten on disk — the L7 egress proxy resolves them at request time —
-# so we only warn, never mutate. Ref: NVIDIA/NemoClaw#4274.
-slack_aliases = {
-    "botToken": ("SLACK_BOT_TOKEN", "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN", "xoxb-"),
-    "appToken": ("SLACK_APP_TOKEN", "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN", "xapp-"),
-    }
-if isinstance(channels, dict):
-    slack_cfg = channels.get("slack", {})
-    slack_accounts = slack_cfg.get("accounts", {}) if isinstance(slack_cfg, dict) else {}
-    if isinstance(slack_accounts, dict):
-        for account_id, account in slack_accounts.items():
-            if not isinstance(account, dict):
-                continue
-            for field, (env_key, alias, token_scheme) in slack_aliases.items():
-                if account.get(field) != alias:
+
+def path_label(path):
+    if len(path) >= 5 and path[0] == "channels" and path[2] == "accounts":
+        return f"{path[1]}.{path[3]}.{path[4]}"
+    return ".".join(path)
+
+
+def walk_for_warnings(value, path):
+    if isinstance(value, str):
+        if value.startswith(prefix):
+            suffix = value[len(prefix) :]
+            for env_key in keys:
+                if not placeholder_suffix_matches_env_key(suffix, env_key):
                     continue
-                label = f"slack.{account_id}.{field}"
                 env_value = os.environ.get(env_key, "")
-                # A valid runtime placeholder is the canonical self-referential
-                # form or its revision-scoped variant for *this* key; a
-                # placeholder for a different key (or a suffix collision) is not
-                # accepted and must be surfaced. A genuine xoxb-/xapp- token is
-                # accepted by Bolt as-is.
+                label = path_label(path)
+                if not env_value:
+                    warnings.append(
+                        f"[channels] {label} is an OpenShell placeholder but {env_key} is missing from the runtime environment"
+                    )
+                elif not env_value.startswith(prefix):
+                    warnings.append(
+                        f"[channels] {label} left unchanged because {env_key} is not an OpenShell placeholder; refusing to write raw credentials to openclaw.json"
+                    )
+                elif not placeholder_suffix_matches_env_key(env_value[len(prefix) :], env_key):
+                    warnings.append(
+                        f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
+                    )
+                elif value != env_value:
+                    warnings.append(
+                        f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
+                    )
+                break
+        alias_index = value.find(alias_marker)
+        if alias_index > 0:
+            alias_env_key = value[alias_index + len(alias_marker) :]
+            token_scheme = value[:alias_index] + "-"
+            for env_key in keys:
+                if env_key != alias_env_key:
+                    continue
+                label = path_label(path)
+                env_value = os.environ.get(env_key, "")
                 placeholder_re = re.compile(
                     rf"^{re.escape(prefix)}(v[0-9]+_)?{re.escape(env_key)}$"
                 )
@@ -1347,8 +1727,20 @@ if isinstance(channels, dict):
                     )
                 elif not placeholder_re.match(env_value) and not env_value.startswith(token_scheme):
                     warnings.append(
-                        f"[channels] {label} runtime {env_key} is neither the {env_key} OpenShell placeholder nor a {token_scheme} Slack token; Slack Bolt may reject it"
+                        f"[channels] {label} runtime {env_key} is neither the {env_key} OpenShell placeholder nor a {token_scheme} token; runtime may reject it"
                     )
+                break
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            walk_for_warnings(item, path + [str(index)])
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            walk_for_warnings(item, path + [str(key)])
+
+
+walk_for_warnings(updated, [])
 
 if updated != config:
     with open(config_file, "w", encoding="utf-8") as f:
@@ -1381,150 +1773,388 @@ PYPLACEHOLDERS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
-# ── Slack runtime env normalization (Bolt-compatible placeholder) ──
-# OpenShell injects messaging-provider credentials into the sandbox process
-# environment as canonical resolve placeholders, e.g.
-#   SLACK_BOT_TOKEN=openshell:resolve:env:v51_SLACK_BOT_TOKEN
-# Unlike the canonical OpenClaw config values (handled by
-# refresh_openclaw_provider_placeholders), Slack Bolt validates token *shape*
-# at startup and rejects anything that does not begin with xoxb-/xapp-. After a
-# messaging-provider rebuild the gateway therefore inherits a placeholder it
-# cannot parse and Slack auth fails even though the provider attached
-# successfully (NVIDIA/NemoClaw#4274). The L7 egress proxy rewrites the
-# Bolt-aliased form (xoxb-/xapp-OPENSHELL-RESOLVE-ENV-*) at request time — the
-# same alias the config generator bakes into openclaw.json — so normalize the
-# runtime env to that alias before launching OpenClaw.
-#
-# This runs in the *main* shell (never a subshell / command substitution) so
-# the exported values are inherited by the gateway and any one-shot
-# "${NEMOCLAW_CMD[@]}" child. Real xoxb-/xapp- tokens and already-aliased values
-# are left untouched, so it is safe to call unconditionally and is idempotent.
-#
-# OpenShell injects self-referential placeholders (the SLACK_BOT_TOKEN env var
-# resolves to "openshell:resolve:env:SLACK_BOT_TOKEN" or its revision-scoped
-# form "openshell:resolve:env:v<rev>_SLACK_BOT_TOKEN"). The match is anchored to
-# exactly those two shapes so a placeholder that resolves some *other* key
-# (including a suffix collision like ...v1_NOT_SLACK_BOT_TOKEN) is left alone
-# rather than silently rebound to the Slack secret.
-normalize_slack_runtime_env() {
-  local bot_re='^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$'
-  local app_re='^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$'
+# ── Messaging runtime setup from manifest metadata ───────────────
+# Channel-owned runtime setup is compiled from manifests at image build time.
+# The entrypoint consumes only generic declarations: envAliases, nodePreloads,
+# and secretScans. Prefer a forwarded env plan when present; otherwise load the
+# reduced image artifact written by the messaging build applier.
+_MESSAGING_RUNTIME_PLAN_ARTIFACT="${NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH:-/usr/local/share/nemoclaw/messaging-runtime-plan.json}"
+_MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"
+_MESSAGING_CONNECT_PRELOADS_FILE="/tmp/nemoclaw-messaging-connect-preloads.list"
 
-  if [[ "${SLACK_BOT_TOKEN-}" =~ $bot_re ]]; then
-    export SLACK_BOT_TOKEN="xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"
-    printf '[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
-  fi
-
-  if [[ "${SLACK_APP_TOKEN-}" =~ $app_re ]]; then
-    export SLACK_APP_TOKEN="xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"
-    printf '[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
-  fi
-}
-
-# ── Slack secrets-on-disk tripwire ────────────────────────────────
-# Defense-in-depth: refuse to serve if a real Slack token (anything
-# starting with xoxb- or xapp- that is NOT the OPENSHELL-RESOLVE-ENV-
-# placeholder) ever appears in openclaw.json. This catches a regression
-# where someone re-introduces inline token mutation, or a bug in the
-# config generator that emits raw env values. Runs once at startup,
-# after configure_messaging_channels has finalized the config.
-verify_no_slack_secrets_on_disk() {
-  local config="/sandbox/.openclaw/openclaw.json"
-  [ -f "$config" ] || return 0
-  if python3 - "$config" <<'PYSLACKSECRET'; then
+write_messaging_runtime_setup_plan() {
+  python3 - "$_MESSAGING_RUNTIME_PLAN_ARTIFACT" <<'PYMESSAGINGRUNTIME' | emit_sandbox_sourced_file "$_MESSAGING_RUNTIME_SETUP_PLAN"
+import base64
+import json
+import os
 import re
 import sys
 
-with open(sys.argv[1], "r", encoding="utf-8", errors="ignore") as f:
-    content = f.read()
-sys.exit(0 if re.search(r"(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)", content) else 1)
-PYSLACKSECRET
-    printf '[SECURITY] Slack token leaked into %s — refusing to serve\n' "$config" >&2
-    exit 78 # EX_CONFIG
+EMPTY = {"nodePreloads": [], "envAliases": [], "secretScans": []}
+PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"
+PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"
+ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+
+
+def fail(message):
+    print(f"[channels] Invalid messaging runtime setup plan: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def clean_string(value, field, *, allow_empty=False):
+    if not isinstance(value, str):
+        fail(f"{field} must be a string")
+    if not allow_empty and not value:
+        fail(f"{field} must not be empty")
+    if any(ch in value for ch in "\x00\r\n\t"):
+        fail(f"{field} contains a control character")
+    return value
+
+
+def clean_message(value, field):
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        fail(f"{field} must be a string")
+    if any(ch in value for ch in "\x00\r\n\t"):
+        fail(f"{field} contains a control character")
+    return value
+
+
+def clean_node_preload(entry, index):
+    if not isinstance(entry, dict):
+        fail(f"nodePreloads[{index}] must be an object")
+    source = clean_string(entry.get("source"), f"nodePreloads[{index}].source")
+    target = clean_string(entry.get("target"), f"nodePreloads[{index}].target")
+    if not source.startswith(PRELOAD_SOURCE_PREFIX) or not source.endswith(".js"):
+        fail(f"nodePreloads[{index}].source must be a preload JavaScript file under {PRELOAD_SOURCE_PREFIX}")
+    if not target.startswith(PRELOAD_TARGET_PREFIX) or not target.endswith(".js"):
+        fail(f"nodePreloads[{index}].target must be a JavaScript file under {PRELOAD_TARGET_PREFIX}*")
+    inject_into = entry.get("injectInto", [])
+    if not isinstance(inject_into, list):
+        fail(f"nodePreloads[{index}].injectInto must be a list")
+    normalized_scopes = []
+    for scope in inject_into:
+        if scope not in ("boot", "connect"):
+            fail(f"nodePreloads[{index}].injectInto contains unsupported value {scope!r}")
+        if scope not in normalized_scopes:
+            normalized_scopes.append(scope)
+    optional = entry.get("optional", False)
+    if not isinstance(optional, bool):
+        fail(f"nodePreloads[{index}].optional must be a boolean")
+    return {
+        "source": source,
+        "target": target,
+        "injectInto": normalized_scopes,
+        "optional": optional,
+        "installMessage": clean_message(entry.get("installMessage"), f"nodePreloads[{index}].installMessage"),
+        "installedMessage": clean_message(entry.get("installedMessage"), f"nodePreloads[{index}].installedMessage"),
+    }
+
+
+def clean_env_alias(entry, index):
+    if not isinstance(entry, dict):
+        fail(f"envAliases[{index}] must be an object")
+    env_key = clean_string(entry.get("envKey"), f"envAliases[{index}].envKey")
+    if not ENV_KEY_RE.match(env_key):
+        fail(f"envAliases[{index}].envKey is not a safe environment key")
+    pattern = clean_string(entry.get("match"), f"envAliases[{index}].match")
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        fail(f"envAliases[{index}].match is not a valid regex: {exc}")
+    return {
+        "envKey": env_key,
+        "match": pattern,
+        "value": clean_string(entry.get("value"), f"envAliases[{index}].value", allow_empty=True),
+        "message": clean_message(entry.get("message"), f"envAliases[{index}].message"),
+    }
+
+
+def clean_secret_scan(entry, index):
+    if not isinstance(entry, dict):
+        fail(f"secretScans[{index}] must be an object")
+    path = clean_string(entry.get("path"), f"secretScans[{index}].path")
+    if not path.startswith("/sandbox/"):
+        fail(f"secretScans[{index}].path must be under /sandbox")
+    pattern = clean_string(entry.get("pattern"), f"secretScans[{index}].pattern")
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        fail(f"secretScans[{index}].pattern is not a valid regex: {exc}")
+    exit_code = entry.get("exitCode", 78)
+    if not isinstance(exit_code, int) or exit_code < 1 or exit_code > 255:
+        fail(f"secretScans[{index}].exitCode must be an integer from 1 to 255")
+    return {
+        "path": path,
+        "pattern": pattern,
+        "message": clean_message(entry.get("message"), f"secretScans[{index}].message") or "[SECURITY] Runtime secret scan failed for {path}",
+        "exitCode": exit_code,
+    }
+
+
+def load_messaging_plan():
+    raw_plan = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+    if raw_plan:
+        try:
+            return json.loads(base64.b64decode(raw_plan, validate=True).decode("utf-8"))
+        except Exception as exc:
+            fail(f"NEMOCLAW_MESSAGING_PLAN_B64 is not valid base64 JSON: {exc}")
+    artifact_path = sys.argv[1] if len(sys.argv) > 1 else ""
+    if not artifact_path or not os.path.isfile(artifact_path):
+        return None
+    try:
+        with open(artifact_path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception as exc:
+        fail(f"messaging runtime plan artifact {artifact_path} is not valid JSON: {exc}")
+
+
+plan = load_messaging_plan()
+if plan is None:
+    print(json.dumps(EMPTY, sort_keys=True))
+    raise SystemExit(0)
+if not isinstance(plan, dict):
+    fail("decoded plan must be an object")
+
+disabled_channels = {
+    channel_id
+    for channel_id in plan.get("disabledChannels", [])
+    if isinstance(channel_id, str)
+}
+active_channel_ids = set()
+for channel in plan.get("channels", []):
+    if not isinstance(channel, dict):
+        continue
+    channel_id = channel.get("channelId")
+    if not isinstance(channel_id, str):
+        continue
+    if channel.get("active") is True and channel.get("disabled") is not True and channel_id not in disabled_channels:
+        active_channel_ids.add(channel_id)
+
+runtime_setup = plan.get("runtimeSetup", EMPTY)
+if runtime_setup is None:
+    runtime_setup = EMPTY
+if not isinstance(runtime_setup, dict):
+    fail("runtimeSetup must be an object")
+
+
+def runtime_setup_entries(key):
+    entries = runtime_setup.get(key, [])
+    if not isinstance(entries, list):
+        fail(f"runtimeSetup.{key} must be a list")
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            fail(f"runtimeSetup.{key}[{index}] must be an object")
+        channel_id = entry.get("channelId")
+        if not isinstance(channel_id, str) or not channel_id:
+            fail(f"runtimeSetup.{key}[{index}].channelId must be a string")
+        if channel_id not in active_channel_ids:
+            continue
+        yield entry
+
+
+node_preloads = []
+env_aliases = []
+secret_scans = []
+seen_node_preloads = set()
+seen_aliases = set()
+seen_scans = set()
+
+for entry in runtime_setup_entries("nodePreloads"):
+    preload = clean_node_preload(entry, len(node_preloads))
+    preload_key = (preload["source"], preload["target"])
+    if preload_key not in seen_node_preloads:
+        seen_node_preloads.add(preload_key)
+        node_preloads.append(preload)
+for entry in runtime_setup_entries("envAliases"):
+    alias = clean_env_alias(entry, len(env_aliases))
+    alias_key = (alias["envKey"], alias["match"], alias["value"])
+    if alias_key not in seen_aliases:
+        seen_aliases.add(alias_key)
+        env_aliases.append(alias)
+for entry in runtime_setup_entries("secretScans"):
+    scan = clean_secret_scan(entry, len(secret_scans))
+    scan_key = (scan["path"], scan["pattern"])
+    if scan_key not in seen_scans:
+        seen_scans.add(scan_key)
+        secret_scans.append(scan)
+
+print(json.dumps({"nodePreloads": node_preloads, "envAliases": env_aliases, "secretScans": secret_scans}, sort_keys=True))
+PYMESSAGINGRUNTIME
+}
+
+apply_messaging_runtime_env_aliases() {
+  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
+  local _rows
+  _rows="$(
+    python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGALIASES'
+import json
+import os
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
+for alias in plan.get("envAliases", []):
+    if not re.search(alias["match"], os.environ.get(alias["envKey"], "")):
+        continue
+    print("\t".join([
+        alias["envKey"],
+        alias["value"],
+        alias.get("message", ""),
+    ]))
+PYMESSAGINGALIASES
+  )" || return $?
+  [ -n "$_rows" ] || return 0
+
+  local _env_key _value _message
+  while IFS=$'\t' read -r _env_key _value _message; do
+    export "$_env_key=$_value"
+    [ -n "$_message" ] && printf '%s\n' "$_message" >&2
+  done <<<"$_rows"
+}
+
+node_options_has_require() {
+  local wanted="$1"
+  local previous=""
+  local token
+  local tokens=()
+  IFS=$' \t\n' read -r -a tokens <<<"${NODE_OPTIONS:-}"
+  # Iterating "${tokens[@]}" on an empty array trips `set -u` on bash 3.2
+  # (macOS default); guard so the local unit harnesses run there too.
+  [ "${#tokens[@]}" -gt 0 ] || return 1
+  for token in "${tokens[@]}"; do
+    if [ "$previous" = "--require" ] && [ "$token" = "$wanted" ]; then
+      return 0
+    fi
+    [ "$token" = "--require=$wanted" ] && return 0
+    previous="$token"
+  done
+  return 1
+}
+
+append_node_require_once() {
+  local wanted="$1"
+  if ! node_options_has_require "$wanted"; then
+    export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $wanted"
   fi
 }
 
-# ── Slack channel guard (unhandled-rejection safety net) ─────────
-# Prevents the gateway from crashing when a Slack channel fails to
-# initialize (e.g., invalid_auth, token_revoked, unresolved placeholder
-# tokens). Instead of modifying openclaw.json (which is Landlock
-# read-only at runtime), this injects a Node.js preload via
-# NODE_OPTIONS that catches unhandled promise rejections originating
-# from Slack channel initialization and logs them as warnings instead
-# of letting Node v22 treat them as fatal.
-#
-# Same pattern as the HTTP proxy fix (_PROXY_FIX_SCRIPT) and the
-# WebSocket CONNECT fix (_WS_FIX_SCRIPT).
-#
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
-_SLACK_GUARD_SCRIPT="/tmp/nemoclaw-slack-channel-guard.js"
-_SLACK_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/slack-channel-guard.js"
+install_messaging_runtime_preloads() {
+  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
+  local _rows
+  _rows="$(
+    python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGPRELOADS'
+import json
+import sys
 
-install_slack_channel_guard() {
-  local config_file="/sandbox/.openclaw/openclaw.json"
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
+for preload in plan.get("nodePreloads", []):
+    print("\t".join([
+        preload["source"],
+        preload["target"],
+        ",".join(preload.get("injectInto", [])),
+        "1" if preload.get("optional") else "0",
+        preload.get("installMessage", ""),
+        preload.get("installedMessage", ""),
+    ]))
+PYMESSAGINGPRELOADS
+  )" || return $?
 
-  # Only install if a Slack channel is configured
-  if ! grep -q '"slack"' "$config_file" 2>/dev/null; then
-    return 0
+  local _connect_preloads=()
+  if [ -n "$_rows" ]; then
+    local _source _target _inject_into _optional _install_message _installed_message
+    while IFS=$'\t' read -r _source _target _inject_into _optional _install_message _installed_message; do
+      if [ ! -f "$_source" ]; then
+        [ "$_optional" = "1" ] && continue
+        printf '[channels] Missing runtime preload source: %s\n' "$_source" >&2
+        return 1
+      fi
+      [ -n "$_install_message" ] && printf '%s\n' "$_install_message" >&2
+      emit_sandbox_sourced_file "$_target" <"$_source" || return 1
+      case ",$_inject_into," in
+        *,boot,*)
+          append_node_require_once "$_target"
+          ;;
+      esac
+      case ",$_inject_into," in
+        *,connect,*)
+          _connect_preloads+=("$_target")
+          ;;
+      esac
+      [ -n "$_installed_message" ] && printf '%s\n' "$_installed_message" >&2
+    done <<<"$_rows"
   fi
 
-  printf '[channels] Installing Slack channel guard (unhandled-rejection safety net)\n' >&2
-
-  emit_sandbox_sourced_file "$_SLACK_GUARD_SCRIPT" <"$_SLACK_GUARD_SOURCE"
-
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT"
-  printf '[channels] Slack channel guard installed (NODE_OPTIONS updated)\n' >&2
+  if [ "${#_connect_preloads[@]}" -gt 0 ]; then
+    printf '%s\n' "${_connect_preloads[@]}" \
+      | emit_sandbox_sourced_file "$_MESSAGING_CONNECT_PRELOADS_FILE" || return 1
+  else
+    : | emit_sandbox_sourced_file "$_MESSAGING_CONNECT_PRELOADS_FILE" || return 1
+  fi
 }
 
-# ── Telegram diagnostics (provider-ready + inference-failure clarity) ─
-_TELEGRAM_DIAGNOSTICS_SCRIPT="/tmp/nemoclaw-telegram-diagnostics.js"
-_TELEGRAM_DIAGNOSTICS_SOURCE="/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js"
-
-install_telegram_diagnostics() {
-  local config_file="/sandbox/.openclaw/openclaw.json"
-
-  # Only install when Telegram is configured in the baked OpenClaw config.
-  if ! grep -q '"telegram"' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  printf '[channels] Installing Telegram diagnostics (provider readiness + inference errors)\n' >&2
-
-  emit_sandbox_sourced_file "$_TELEGRAM_DIAGNOSTICS_SCRIPT" <"$_TELEGRAM_DIAGNOSTICS_SOURCE"
-
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_TELEGRAM_DIAGNOSTICS_SCRIPT"
-  printf '[channels] Telegram diagnostics installed (NODE_OPTIONS updated)\n' >&2
+emit_messaging_connect_runtime_preload_exports() {
+  cat <<CONNECTPRELOADSEOF
+if [ -f "$_MESSAGING_CONNECT_PRELOADS_FILE" ]; then
+  while IFS= read -r _nemoclaw_preload; do
+    [ -n "\$_nemoclaw_preload" ] || continue
+    [ -f "\$_nemoclaw_preload" ] || continue
+    export NODE_OPTIONS="\${NODE_OPTIONS:+\$NODE_OPTIONS }--require \$_nemoclaw_preload"
+  done < "$_MESSAGING_CONNECT_PRELOADS_FILE"
+fi
+CONNECTPRELOADSEOF
 }
 
-# ── WhatsApp compact-QR preload (scan-friendly in-sandbox pairing) ───
-# The upstream @openclaw/whatsapp QR renders at full size (~56 rows) and
-# overflows DGX Spark terminals (NemoClaw#4522). The plugin renders through
-# `renderQrTerminal()` → the `qrcode` package's toString(text,{type:"terminal"})
-# WITHOUT a `small` flag, so it defaults to full size. This preload patches the
-# qrcode package to force `{ small: true }` half-block rendering for terminal
-# output, roughly quartering the area without changing the payload.
-# It is NOT added to the global boot NODE_OPTIONS (the gateway never renders the
-# pairing QR); instead it is wired into the connect-session NODE_OPTIONS (so any
-# openclaw invocation in the session gets it, not just the openclaw() shell
-# function) and the openclaw() guard injects it as defense-in-depth.
-_WHATSAPP_QR_COMPACT_SCRIPT="/tmp/nemoclaw-whatsapp-qr-compact.js"
-_WHATSAPP_QR_COMPACT_SOURCE="/usr/local/lib/nemoclaw/preloads/whatsapp-qr-compact.js"
+messaging_runtime_preload_targets() {
+  printf '%s\n' "$_MESSAGING_RUNTIME_SETUP_PLAN" "$_MESSAGING_CONNECT_PRELOADS_FILE"
+  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
+  python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGTARGETS'
+import json
+import sys
 
-install_whatsapp_qr_compact() {
-  local config_file="/sandbox/.openclaw/openclaw.json"
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
+for preload in plan.get("nodePreloads", []):
+    target = preload.get("target")
+    if target:
+        print(target)
+PYMESSAGINGTARGETS
+}
 
-  # Only install when WhatsApp is configured in the baked OpenClaw config.
-  if ! grep -q '"whatsapp"' "$config_file" 2>/dev/null; then
-    return 0
-  fi
+validate_nemoclaw_tmp_permissions() {
+  local _dynamic_targets=()
+  local _target
+  while IFS= read -r _target; do
+    [ -n "$_target" ] && _dynamic_targets+=("$_target")
+  done < <(messaging_runtime_preload_targets)
 
-  # Source file is absent on older base images; skip rather than fail the boot.
-  if [ ! -f "$_WHATSAPP_QR_COMPACT_SOURCE" ]; then
-    return 0
-  fi
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
+}
 
-  printf '[channels] Installing WhatsApp compact-QR renderer (scan-friendly pairing)\n' >&2
-  emit_sandbox_sourced_file "$_WHATSAPP_QR_COMPACT_SCRIPT" <"$_WHATSAPP_QR_COMPACT_SOURCE"
+verify_messaging_runtime_secret_scans() {
+  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
+  python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGSECRETS'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
+
+for scan in plan.get("secretScans", []):
+    path = scan["path"]
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            content = handle.read()
+    except FileNotFoundError:
+        continue
+    if re.search(scan["pattern"], content):
+        print(scan["message"].replace("{path}", path), file=sys.stderr)
+        raise SystemExit(scan["exitCode"])
+PYMESSAGINGSECRETS
 }
 
 _read_gateway_token() {
@@ -1843,6 +2473,11 @@ start_persistent_gateway_log_mirror() {
 
   { tail -n +1 -F /tmp/gateway.log 2>/dev/null >>"$log_file"; } &
   GATEWAY_LOG_PERSIST_PID=$!
+  if ! capture_openclaw_pid_start_identity \
+    "$GATEWAY_LOG_PERSIST_PID" GATEWAY_LOG_PERSIST_PID_START_IDENTITY; then
+    echo "[gateway] could not capture persistent-log process identity" >&2
+    return 1
+  fi
 }
 
 start_auto_pair() {
@@ -1856,13 +2491,28 @@ start_auto_pair() {
   if [ "$(id -u)" -eq 0 ]; then
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
   fi
-  OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
+  # The gateway must retain NemoClaw's private-interface URL, but the watcher
+  # is an ordinary OpenClaw CLI client. Source the trusted runtime environment
+  # in this child only so an injected private URL is removed before the first
+  # `devices list`. OpenClaw can then complete its local-loopback pairing
+  # bootstrap before this unchanged watcher starts approving bounded requests.
+  # An explicit URL override is preserved by write_runtime_shell_env().
+  (
+    if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
+      # shellcheck source=/dev/null
+      builtin source "$_RUNTIME_SHELL_ENV_FILE" || exit $?
+    fi
+    export OPENCLAW_BIN="$OPENCLAW"
+    exec nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u -
+  ) <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import importlib.util
 import os
 import stat
 import subprocess
 import time
+
+print('[auto-pair] watcher started', flush=True)
 
 APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'
 
@@ -1882,11 +2532,10 @@ def load_approval_policy(path):
     return (
         module.approval_request_decision,
         module.gateway_approval_env,
-        getattr(module, 'recover_failed_scope_approval', None),
     )
 
 
-approval_request_decision, gateway_approval_env, recover_failed_scope_approval = load_approval_policy(APPROVAL_POLICY_FILE)
+approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -1910,28 +2559,78 @@ def _env_seconds(name, default):
 # embedded mode. Defaults: 8h total, 30s slow-mode cadence.
 FAST_DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS', 600)
 DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
-SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 30)
+# After convergence the watcher polls at SLOW_INTERVAL. A late allowlisted
+# scope upgrade — e.g. `openclaw tui` or `openclaw agent` invoked after the
+# watcher entered slow mode — can wait up to SLOW_INTERVAL before being
+# approved, which is longer than the OpenClaw client's tolerance for `scope
+# upgrade pending approval` and forces a fallback to embedded mode. The
+# default sits well below typical client-side wait windows; raise it through
+# NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS when the gateway connect handler is
+# load-sensitive. When the watcher successfully approves a fresh allowlisted
+# request during slow mode it also bumps a bounded fast-reentry counter
+# (NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS) that drops polling back to 1s for
+# the next few iterations, so cascading upgrades and transient approve
+# failures both clear before the OpenClaw client gives up. The counter is
+# only bumped on the rising edge for each requestId (tracked in
+# FAST_REENTRY_BUMPED_REQUEST_IDS and garbage-collected against the live
+# pending list), so a sticky failing request cannot pin the watcher in fast
+# polling. This is a polling-cadence fix only — non-allowlisted scopes such
+# as `operator.admin` are still rejected by the device approval policy, and
+# requests that need them must be approved through a separate operator path.
+SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5)
+# SOURCE_OF_TRUTH_REVIEW (auto-pair slow-mode cadence default 30s → 5s):
+#
+#   * Source boundary: the single SLOW_INTERVAL global above is the only
+#     steady-state inter-poll wait for the in-sandbox auto-pair watcher
+#     after browser pairing converges. The watcher's faster pre-converge
+#     cadence (1s) is unaffected.
+#   * Invalid state at the old default: a late
+#     `openclaw tui` / `openclaw agent` allowlisted scope upgrade lands
+#     inside a 30s window and waits up to one full SLOW_INTERVAL before
+#     the watcher polls. Two sibling sandboxes onboarded back-to-back
+#     each hit this window and both fall back to embedded mode (#5343).
+#   * Source-fix constraint: the 5s default is a bounded 6x increase in
+#     steady-state `openclaw devices list --json` calls per sandbox — at
+#     most one extra call per 5s vs. per 30s, which the gateway connect
+#     handler tolerates easily; the bounded fast-reentry counter above
+#     keeps cascading upgrades from exceeding this cadence.
+#   * Migration: operators who relied on the old cadence (load-sensitive
+#     gateways, large multi-sandbox deployments) can restore it by
+#     exporting NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=30 in the sandbox
+#     environment; the PR body calls this out under "Changes" too.
+#   * Regression test: test/nemoclaw-start.test.ts's late-CLI fixture
+#     covers the new default deterministically; #5343 Phase 5 covers it
+#     end to end.
+#   * Removal condition: when OpenClaw signals scope-upgrade requests via
+#     a push channel rather than a poll, the cadence becomes irrelevant
+#     and the variable retires.
+FAST_REENTRY_POLLS = int(_env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS', 5))
+FAST_REENTRY_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS', 1)
+FAST_REENTRY_REMAINING = 0
+FAST_REENTRY_BUMPED_REQUEST_IDS = set()
 QUIET_POLLS = 0
 APPROVED = 0
 SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
-# (the gateway stores connectParams.client.id verbatim). This allowlist
-# is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
-# timeout reduction, and token cleanup for a more comprehensive fix.
+# (the gateway stores connectParams.client.id verbatim). The policy requires
+# an explicit known clientId and never trusts an allowlisted mode by itself.
+# This remains defense-in-depth, not a trust boundary. PR #690 adds one-shot
+# exit, timeout reduction, and token cleanup for a more comprehensive fix.
 # The approval_request_decision helper is shared with connect-time approvals.
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
-# Workaround boundary (NemoClaw#4462): OpenClaw owns the gateway/device
-# approval semantics. In OpenClaw 2026.5.x, a gateway-pinned
-# `openclaw devices approve <scope-upgrade>` can request the upgraded scopes
-# for its own connection and return the same pending-scope error it is trying
-# to resolve. List calls must stay gateway-pinned so we inspect the live
-# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL,
-# OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN to use OpenClaw's local
-# pairing fallback. Remove this when OpenClaw approve can complete scope
-# upgrades through the gateway using only operator.pairing.
+# Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
+# runtime environment, so list calls resolve the same live gateway through
+# local loopback instead of the injected private-interface URL. Approval calls
+# additionally drop the gateway env triplet so OpenClaw must use the local
+# device token. The reviewed 2026.6.10 dist patch requests only
+# operator.pairing for a complete bounded CLI self-upgrade and forces the
+# existing local-only stored-device-auth path so a shared token reloaded from
+# config cannot win authentication. The gateway then validates and commits in
+# OpenClaw's canonical locked pairing writer. Remove both pieces when upstream
+# supports that flow.
 def run(*args, strip_gateway_env=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
@@ -1952,15 +2651,39 @@ def run(*args, strip_gateway_env=False):
         print(f'[auto-pair] timeout calling {args[1] if len(args) > 1 else "openclaw"} {args[2] if len(args) > 2 else ""}'.rstrip())
         return 124, out.strip(), err.strip()
 
+
+def sleep_for_next_poll(default_seconds, productive=True):
+    # Apply the bounded fast-reentry override before the caller's default
+    # sleep so a recent allowlisted approval (which bumps the remaining
+    # counter) drops polling to FAST_REENTRY_INTERVAL for the next few
+    # iterations. Mutates the global counter so callers do not need to
+    # thread the state through. The override is floored by the caller's
+    # default so it never increases the inter-poll latency (e.g. when the
+    # default is already tighter than FAST_REENTRY_INTERVAL during a
+    # bounded retry pass in fast mode).
+    #
+    # Error-path callers pass productive=False so a string of gateway
+    # errors or JSON-parse failures after a fast-reentry bump does not
+    # silently drain the bounded window before a productive poll observes
+    # the cascading upgrades.
+    global FAST_REENTRY_REMAINING
+    if FAST_REENTRY_REMAINING > 0:
+        if productive:
+            FAST_REENTRY_REMAINING -= 1
+        time.sleep(min(FAST_REENTRY_INTERVAL, default_seconds))
+        return
+    time.sleep(default_seconds)
+
+
 while time.time() < DEADLINE:
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
-        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
     try:
         data = json.loads(out)
     except Exception:
-        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
 
     pending = data.get('pending') or []
@@ -1979,11 +2702,16 @@ while time.time() < DEADLINE:
 
     if pending:
         QUIET_POLLS = 0
+        attempted_request_ids = set()
+        pending_request_ids = set()
         for device in pending:
             if not isinstance(device, dict):
                 continue
             request_id = device.get('requestId')
-            if not request_id or request_id in HANDLED:
+            if not request_id:
+                continue
+            pending_request_ids.add(request_id)
+            if request_id in HANDLED:
                 continue
             decision = approval_request_decision(device)
             client_id = decision['client_id']
@@ -2001,6 +2729,7 @@ while time.time() < DEADLINE:
                 scopes = decision['scopes']
                 print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
+            attempted_request_ids.add(request_id)
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
             )
@@ -2015,22 +2744,32 @@ while time.time() < DEADLINE:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
-            elif callable(recover_failed_scope_approval):
-                recovered = recover_failed_scope_approval(
-                    request_id,
-                    os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
-                    aerr or aout or '',
-                    device,
-                )
-                if recovered:
-                    HANDLED.add(request_id)
-                    APPROVED += 1
-                    print(f'[auto-pair] recovered failed approve request={request_id} client={client_id} mode={client_mode}')
-                elif aout or aerr:
-                    print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
-        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
+        # Drop previously-bumped requestIds that the gateway no longer reports
+        # as pending so a future re-appearance of the same id (very unlikely,
+        # but kept robust) can bump again. The set is otherwise small and
+        # never crosses out of the watcher process.
+        FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(pending_request_ids)
+        # Fast-reentry is armed on the rising edge per requestId — once for
+        # each freshly-observed allowlisted attempt. A sticky pending request
+        # that fails approval repeatedly therefore stops bumping the counter
+        # after the first attempt, so it cannot keep the watcher in fast
+        # polling for the rest of DEADLINE; the next slow-cadence poll
+        # decides whether to retry. Cascading approvals from new ids still
+        # bump as they appear, which is the case the override targets.
+        new_attempted_ids = attempted_request_ids - FAST_REENTRY_BUMPED_REQUEST_IDS
+        # Bump in fast mode too: the cadence override is a no-op there
+        # (min(FAST_REENTRY_INTERVAL=1, default=1) = 1) but the requestId
+        # is still recorded in FAST_REENTRY_BUMPED_REQUEST_IDS so the same
+        # sticky id cannot re-arm the counter later when the watcher
+        # transitions into slow mode.
+        if new_attempted_ids and FAST_REENTRY_POLLS > 0:
+            FAST_REENTRY_REMAINING = FAST_REENTRY_POLLS
+            FAST_REENTRY_BUMPED_REQUEST_IDS.update(new_attempted_ids)
+            mode_label = 'slow' if SLOW_MODE else 'fast'
+            print(f'[auto-pair] fast-reentry bumped polls={FAST_REENTRY_POLLS} approved={APPROVED} mode={mode_label}')
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
 
     QUIET_POLLS += 1
@@ -2061,19 +2800,25 @@ while time.time() < DEADLINE:
 
     # Back off polling: 1s in fast mode while waiting for first pairing,
     # 5s in fast mode once anything is paired/approved, and SLOW_INTERVAL
-    # (default 30s) after convergence. Slow-mode keepalive lets late CLI
+    # (default 5s) after convergence. Slow-mode keepalive lets late CLI
     # scope upgrades get approved through the rest of DEADLINE without
-    # hammering the gateway.
+    # hammering the gateway. The bounded fast-reentry counter (bumped above
+    # when an allowlisted upgrade was attempted) overrides whichever tier
+    # is selected here so the next few polls catch cascading upgrades.
     if SLOW_MODE:
-        time.sleep(SLOW_INTERVAL)
+        sleep_for_next_poll(SLOW_INTERVAL)
     elif APPROVED > 0 or paired:
-        time.sleep(5)
+        sleep_for_next_poll(5)
     else:
-        time.sleep(1)
+        sleep_for_next_poll(1)
 else:
     print(f'[auto-pair] watcher deadline reached approvals={APPROVED}')
 PYAUTOPAIR
   AUTO_PAIR_PID=$!
+  if ! capture_openclaw_pid_start_identity "$AUTO_PAIR_PID" AUTO_PAIR_PID_START_IDENTITY; then
+    echo "[gateway] could not capture auto-pair process identity" >&2
+    return 1
+  fi
   echo "[gateway] auto-pair watcher launched (pid $AUTO_PAIR_PID)" >&2
 }
 
@@ -2126,7 +2871,7 @@ fi
 # that could not catch follow-redirects + proxy-from-env bundled as ESM
 # in OpenClaw's dist/ (no require() calls to intercept).
 #
-# Runtime preload modules are copied into /usr/local/lib/nemoclaw/preloads/
+# Node runtime preload modules are copied into /usr/local/lib/nemoclaw/preloads/
 # at image build time, then copied to /tmp before NODE_OPTIONS=--require so
 # the sandbox user can read them under Landlock-constrained runtimes.
 # ── Global sandbox safety net ──────────────────────────────────
@@ -2147,15 +2892,9 @@ fi
 # preserved so errors surface promptly to users running short-lived tools.
 _SANDBOX_SAFETY_NET="/tmp/nemoclaw-sandbox-safety-net.js"
 _SANDBOX_SAFETY_NET_SOURCE="/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js"
-emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <"$_SANDBOX_SAFETY_NET_SOURCE"
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET"
 
 _PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"
 _PROXY_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/http-proxy-fix.js"
-if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-  emit_sandbox_sourced_file "$_PROXY_FIX_SCRIPT" <"$_PROXY_FIX_SOURCE"
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT"
-fi
 
 # NVIDIA endpoint model-specific inference parameter injection
 # (NemoClaw#1193, NemoClaw#2051).
@@ -2182,8 +2921,6 @@ fi
 # regression proof, and removal condition.
 _NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
 _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js"
-emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE"
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT"
 
 # mDNS / ciao network interface guard.
 # The @homebridge/ciao mDNS library calls os.networkInterfaces() which
@@ -2195,8 +2932,6 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCR
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
 _CIAO_GUARD_SCRIPT="/tmp/nemoclaw-ciao-network-guard.js"
 _CIAO_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js"
-emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <"$_CIAO_GUARD_SOURCE"
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT"
 
 # WebSocket CONNECT tunnel fix (NemoClaw#1570).
 # The `ws` library calls https.request() for wss:// WebSocket upgrades.
@@ -2208,12 +2943,6 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIP
 # script itself guards on the env var).
 _WS_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/ws-proxy-fix.js"
 _WS_FIX_SCRIPT="/tmp/nemoclaw-ws-proxy-fix.js"
-if [ -f "$_WS_FIX_SOURCE" ]; then
-  # Copy to /tmp so the sandbox user can read it — /usr/local/lib/ may be
-  # Landlock-restricted in some runtimes. Same pattern as the other preloads.
-  emit_sandbox_sourced_file "$_WS_FIX_SCRIPT" <"$_WS_FIX_SOURCE"
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_WS_FIX_SCRIPT"
-fi
 
 # ── Seccomp syscall guard ─────────────────────────────────────
 # OpenShell ≥0.0.36 seccomp policy blocks syscalls like getifaddrs
@@ -2228,8 +2957,38 @@ fi
 # seccomp-blocked syscalls affect all sandboxes, not just Slack ones.
 _SECCOMP_GUARD_SCRIPT="/tmp/nemoclaw-seccomp-guard.js"
 _SECCOMP_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/seccomp-guard.js"
-emit_sandbox_sourced_file "$_SECCOMP_GUARD_SCRIPT" <"$_SECCOMP_GUARD_SOURCE"
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT"
+
+# Stage the immutable, image-packaged preload set into /tmp. Startup and
+# authenticated PID 1 recovery share this exact path so a pod-recreate-style
+# /tmp wipe cannot drift from the initial security boundary. The shared emit
+# helper atomically replaces each target as root:root 0444 in root mode.
+install_core_runtime_preloads() {
+  emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <"$_SANDBOX_SAFETY_NET_SOURCE" || return 1
+  append_node_require_once "$_SANDBOX_SAFETY_NET"
+
+  if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+    emit_sandbox_sourced_file "$_PROXY_FIX_SCRIPT" <"$_PROXY_FIX_SOURCE" || return 1
+    append_node_require_once "$_PROXY_FIX_SCRIPT"
+  fi
+
+  emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE" || return 1
+  append_node_require_once "$_NEMOTRON_FIX_SCRIPT"
+
+  emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <"$_CIAO_GUARD_SOURCE" || return 1
+  append_node_require_once "$_CIAO_GUARD_SCRIPT"
+
+  if [ -f "$_WS_FIX_SOURCE" ]; then
+    # Copy to /tmp so the sandbox user can read it under Landlock-constrained
+    # runtimes. The missing optional source keeps the historical no-op.
+    emit_sandbox_sourced_file "$_WS_FIX_SCRIPT" <"$_WS_FIX_SOURCE" || return 1
+    append_node_require_once "$_WS_FIX_SCRIPT"
+  fi
+
+  emit_sandbox_sourced_file "$_SECCOMP_GUARD_SCRIPT" <"$_SECCOMP_GUARD_SOURCE" || return 1
+  append_node_require_once "$_SECCOMP_GUARD_SCRIPT"
+}
+
+install_core_runtime_preloads || exit 1
 
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`. Dynamic connect-session
@@ -2259,6 +3018,7 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+export AWS_EC2_METADATA_DISABLED="true"
 export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
@@ -2274,16 +3034,28 @@ PROXYEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
       _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
-      printf "export OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+      # Preserve NemoClaw's sandbox-interface dial-back URL for the few
+      # NemoClaw-owned commands that require it without forcing ordinary
+      # OpenClaw CLI clients onto the explicit remote-gateway pairing path.
+      printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+      cat <<'GATEWAYURLENVEOF'
+# Equality identifies NemoClaw's inherited private-interface value. A different
+# nonempty raw value was supplied explicitly after this file was generated, so
+# preserve that caller override and its matching insecure-WS marker.
+if [ -z "${OPENCLAW_GATEWAY_URL:-}" ] || [ "${OPENCLAW_GATEWAY_URL}" = "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" ]; then
+  unset OPENCLAW_GATEWAY_URL
+  unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
+fi
+GATEWAYURLENVEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
     fi
     if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
-      # Mirrors the gateway-process export above so connect-shell CLI
-      # clients accept the plaintext eth0 ws:// gateway URL too.
-      printf "export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
+      # Retain the matching break-glass under the same private namespace.
+      # WhatsApp reinjects it only for its gateway-backed login command.
+      printf "export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
     fi
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
@@ -2332,170 +3104,29 @@ _nemoclaw_restore_mutable_config_perms() {
   # rootless mode, where the root-only re-lock is skipped (#4538).
   chmod g-w "$_nemoclaw_oc_dir/openclaw.json.nemoclaw-baseline" 2>/dev/null || true
 }
+_nemoclaw_messaging_connect_node_options() {
+  local _nemoclaw_preload _nemoclaw_options=""
+  [ -f "/tmp/nemoclaw-messaging-connect-preloads.list" ] || return 0
+  while IFS= read -r _nemoclaw_preload; do
+    [ -n "$_nemoclaw_preload" ] || continue
+    [ -f "$_nemoclaw_preload" ] || continue
+    _nemoclaw_options="${_nemoclaw_options:+$_nemoclaw_options }--require $_nemoclaw_preload"
+  done < "/tmp/nemoclaw-messaging-connect-preloads.list"
+  printf '%s' "$_nemoclaw_options"
+}
 openclaw() {
-  # NemoClaw#4462: keep user-initiated device approval usable from an
-  # interactive sandbox shell until upstream OpenClaw can approve scope
-  # upgrades through the gateway without requesting the upgraded scopes for
-  # the approval command itself. Approval calls temporarily drop the gateway
-  # URL/port/token; other commands keep the full gateway environment.
+  # NemoClaw#4462: approval calls temporarily drop the gateway URL/port/token
+  # so OpenClaw resolves the local loopback gateway and device token. The
+  # reviewed 2026.6.10 compatibility patch then performs bounded same-device
+  # scope upgrades in the gateway's canonical locked pairing writer. This
+  # wrapper never reads or writes pending.json/paired.json.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
-    _nemoclaw_approve_request_id="${3:-}"
-    _nemoclaw_approve_state_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
-    _nemoclaw_approve_before=""
-    if [ -n "$_nemoclaw_approve_request_id" ] && command -v python3 >/dev/null 2>&1; then
-      _nemoclaw_approve_before="$(NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" python3 - <<'PYAPPROVEBEFORE' 2>/dev/null || true
-import json
-import os
-from pathlib import Path
-
-root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
-request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
-try:
-    pending = json.loads((root / "pending.json").read_text(encoding="utf-8"))
-except Exception:
-    pending = {}
-if not isinstance(pending, dict):
-    pending = {}
-request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
-if request:
-    print(json.dumps({
-        "requestId": request_id,
-        "deviceId": request.get("deviceId"),
-        "scopes": request.get("scopes") or request.get("requestedScopes") or [],
-    }, sort_keys=True))
-PYAPPROVEBEFORE
-)"
-    fi
     _nemoclaw_approve_errexit=0
     case $- in *e*) _nemoclaw_approve_errexit=1 ;; esac
     set +e
-    _nemoclaw_approve_output="$(unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" 2>&1)"
+    (unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@")
     _nemoclaw_approve_rc=$?
     if [ "$_nemoclaw_approve_errexit" = "1" ]; then set -e; else set +e; fi
-    if [ "$_nemoclaw_approve_rc" -eq 0 ]; then
-      printf '%s\n' "$_nemoclaw_approve_output"
-      return 0
-    fi
-    if [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
-      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" NEMOCLAW_APPROVE_OUTPUT="$_nemoclaw_approve_output" python3 - <<'PYAPPROVEAFTER'; then
-import json
-import os
-import re
-from pathlib import Path
-
-request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
-root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
-try:
-    before = json.loads(os.environ.get("NEMOCLAW_APPROVE_BEFORE") or "{}")
-except Exception:
-    before = {}
-approve_output = os.environ.get("NEMOCLAW_APPROVE_OUTPUT") or ""
-
-def load(name):
-    try:
-        value = json.loads((root / name).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return value if isinstance(value, dict) else {}
-
-def save(name, value):
-    path = root / name
-    tmp = path.with_name(f".{path.name}.tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
-
-def norm(value):
-    return str(value or "").strip()
-
-def scope_set(entry, key="scopes"):
-    return {norm(scope) for scope in (entry.get(key) or []) if norm(scope)}
-
-def output_mentions_request_id(value):
-    request = norm(value)
-    return bool(request and re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", approve_output))
-
-def is_scope_upgrade_approval_compat_failure(output):
-    text = norm(output).lower()
-    return "scope upgrade pending approval" in text and (
-        "gatewayclientrequesterror" in text or "gateway" in text
-    )
-
-requested = scope_set(before)
-device_id = norm(before.get("deviceId"))
-pending = load("pending.json")
-paired = load("paired.json")
-original_pending_key = None
-for key, item in pending.items():
-    if isinstance(item, dict) and item.get("requestId") == request_id:
-        original_pending_key = key
-        break
-still_pending = original_pending_key is not None
-paired_entry = paired.get(device_id) if device_id else None
-paired_scopes = scope_set(paired_entry or {}, "approvedScopes") | scope_set(paired_entry or {})
-# Compatibility boundary: treat a nonzero approve as success only when OpenClaw
-# already removed the pending request and persisted the requested paired scopes.
-if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(paired_scopes):
-    print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": sorted(requested), "compatibility": "openclaw-approve-applied-after-nonzero"}, sort_keys=True))
-    raise SystemExit(0)
-
-# Compatibility boundary: repair only the local OpenClaw device state after a
-# failed approve leaves behind exactly one same-device admin-shaped replacement
-# request. Some OpenClaw failures only surface opaque gateway text, so the state
-# files are the source of truth; stderr is only used as an exact disambiguator
-# when it carries a replacement request ID. Remove this once OpenClaw stops
-# replacing operator.write approvals with admin-shaped pending requests or
-# exposes a supported approval repair API.
-allowed = {"operator.pairing", "operator.read", "operator.write"}
-if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes:
-    raise SystemExit(1)
-replacement_allowed = allowed | {"operator.admin"}
-candidates = []
-mentioned = []
-for key, item in pending.items():
-    item_scopes = scope_set(item) if isinstance(item, dict) else set()
-    if (isinstance(item, dict) and norm(item.get("requestId")) != request_id and norm(item.get("deviceId")) == device_id and
-            "operator.admin" in item_scopes and requested.issubset(item_scopes) and item_scopes.issubset(replacement_allowed)):
-        candidates.append((key, item))
-        if output_mentions_request_id(item.get("requestId")):
-            mentioned.append((key, item))
-compatibility = "openclaw-approve-recovered-replacement"
-if len(mentioned) == 1:
-    replacement_key, replacement = mentioned[0]
-elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
-    replacement_key, replacement = candidates[0]
-elif still_pending and not candidates and is_scope_upgrade_approval_compat_failure(approve_output):
-    replacement_key = original_pending_key
-    compatibility = "openclaw-approve-recovered-original"
-else:
-    raise SystemExit(1)
-approved = set(paired_scopes) | requested
-if "operator.write" in approved:
-    approved.add("operator.read")
-if {"operator.read", "operator.write"} & approved:
-    approved.add("operator.pairing")
-if not approved.issubset(allowed):
-    raise SystemExit(1)
-approved_list = [scope for scope in ("operator.pairing", "operator.read", "operator.write") if scope in approved]
-paired_entry["scopes"] = approved_list
-paired_entry["approvedScopes"] = approved_list
-token = paired_entry.get("tokens", {}).get("operator")
-if isinstance(token, dict):
-    token["scopes"] = approved_list
-pending.pop(request_id, None)
-pending.pop(replacement_key, None)
-paired[device_id] = paired_entry
-save("pending.json", pending)
-save("paired.json", paired)
-print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": approved_list, "compatibility": compatibility}, sort_keys=True))
-raise SystemExit(0)
-PYAPPROVEAFTER
-        return 0
-      fi
-    fi
-    printf '%s\n' "$_nemoclaw_approve_output"
     return "$_nemoclaw_approve_rc"
   fi
   case "$1" in
@@ -2568,8 +3199,8 @@ PYAPPROVEAFTER
             echo "Changes inside the sandbox do not persist across rebuilds." >&2
             echo "" >&2
             echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-            echo "  nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>" >&2
-            echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
+            echo "  nemoclaw <sandbox> channels add <channel>" >&2
+            echo "  nemoclaw <sandbox> channels remove <channel>" >&2
             echo "" >&2
             echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
             echo "  openclaw channels login --channel whatsapp" >&2
@@ -2582,8 +3213,17 @@ PYAPPROVEAFTER
           # "1008 abnormal closure") is diagnosed separately from QR rendering,
           # and force compact QR output so the code fits on the screen.
           if [ "$_login_help" != "1" ] && [ "$_login_channel" = "whatsapp" ]; then
-            if [ -z "${OPENCLAW_GATEWAY_URL:-}" ]; then
-              echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL is not set in this shell." >&2
+            # Keep an explicit override coupled to its own opt-in. The private
+            # veth URL may inherit only NemoClaw's matching private-WS marker.
+            if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
+              _nemoclaw_whatsapp_gateway_url="$OPENCLAW_GATEWAY_URL"
+              _nemoclaw_whatsapp_insecure_ws="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
+            else
+              _nemoclaw_whatsapp_gateway_url="${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}"
+              _nemoclaw_whatsapp_insecure_ws="${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
+            fi
+            if [ -z "$_nemoclaw_whatsapp_gateway_url" ]; then
+              echo "Error: WhatsApp pairing cannot start — gateway URL is not set in this shell." >&2
               echo "Pairing talks to the OpenClaw gateway; without the gateway URL the login will" >&2
               echo "close immediately (this is a gateway/env problem, not a QR problem)." >&2
               echo "" >&2
@@ -2595,10 +3235,10 @@ PYAPPROVEAFTER
             # ws://127.0.0.1:<port> at boot). Reject a malformed scheme up front
             # so a typo'd/clobbered URL is reported as a gateway/env problem
             # rather than failing inside the login as an ambiguous close.
-            case "${OPENCLAW_GATEWAY_URL}" in
+            case "$_nemoclaw_whatsapp_gateway_url" in
               ws://*|wss://*) ;;
               *)
-                echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL='${OPENCLAW_GATEWAY_URL}' is not a ws:// gateway URL." >&2
+                echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a ws:// gateway URL." >&2
                 echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
                 echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
                 echo "" >&2
@@ -2607,20 +3247,22 @@ PYAPPROVEAFTER
                 return 1
                 ;;
             esac
-            echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
+            echo "[whatsapp] Pairing via gateway ${_nemoclaw_whatsapp_gateway_url}." >&2
             echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
-            # Defense-in-depth: the connect-session NODE_OPTIONS already wires
-            # this preload in for every openclaw invocation; injecting it again
-            # here covers non-connect shells (e.g. `openshell sandbox exec`).
-            # The preload is idempotent, so a double --require is harmless.
-            # Literal path: this guard body is emitted inside a single-quoted
-            # heredoc, so shell variables are intentionally not expanded here.
-            # Keep in sync with _WHATSAPP_QR_COMPACT_SCRIPT above.
-            _whatsapp_qr_compact="/tmp/nemoclaw-whatsapp-qr-compact.js"
-            if [ -f "$_whatsapp_qr_compact" ]; then
-              NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_whatsapp_qr_compact" command openclaw "$@"
+            # Defense-in-depth: connect-session NODE_OPTIONS already wires
+            # manifest-declared connect preloads for every openclaw invocation;
+            # injecting them again here covers non-connect shells. Runtime
+            # preload modules are idempotent, so a double --require is harmless.
+            _nemoclaw_connect_node_options="$(_nemoclaw_messaging_connect_node_options)"
+            if [ -n "$_nemoclaw_connect_node_options" ]; then
+              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
+                command openclaw "$@"
             else
-              command openclaw "$@"
+              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                command openclaw "$@"
             fi
             _whatsapp_login_exit=$?
             if [ "$_whatsapp_login_exit" -ne 0 ]; then
@@ -2639,8 +3281,8 @@ PYAPPROVEAFTER
           echo "Changes inside the sandbox do not persist across rebuilds." >&2
           echo "" >&2
           echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>" >&2
-          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
+          echo "  nemoclaw <sandbox> channels add <channel>" >&2
+          echo "  nemoclaw <sandbox> channels remove <channel>" >&2
           echo "" >&2
           echo "These stage the change and rebuild the sandbox to apply it." >&2
           echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
@@ -2683,6 +3325,99 @@ PYAPPROVEAFTER
   return "$_nemoclaw_oc_status"
 }
 # nemoclaw-configure-guard end
+# nemoclaw-policy-denial-hint begin
+# #5978: outbound network is denied-by-default and enforced by the OpenShell L7
+# proxy. From inside the sandbox, generic CLIs (curl, git, wget, python, …) see
+# a policy denial only as the opaque protocol error
+# "CONNECT tunnel failed, response 403" — with no pointer to the detailed
+# allow/deny reason, which lives in the NemoClaw logs. Surface a one-line
+# breadcrumb when a human first lands in an interactive connect shell so a later
+# 403 is recognisable and actionable.
+#
+# This deliberately does NOT wrap or alter curl/git/wget: wrapping them to scan
+# stderr turns their stderr into a pipe, which makes the tools treat it as a
+# non-TTY and silently drop progress meters and colour — a worse regression than
+# the missing breadcrumb. The hint is therefore tool-agnostic informational
+# output that leaves every tool's stdout/stderr/TTY behaviour and exit code
+# byte-for-byte unchanged, and covers every connect path that sources this file.
+# Shown once per top-level interactive TTY session; suppress with
+# NEMOCLAW_NO_POLICY_HINT=1.
+#
+# Source-of-truth: the 403 itself is emitted by the OpenShell L7 egress proxy,
+# which lives in a separate codebase/release cycle, so the denial response
+# cannot be made self-describing from this repo. This proactive breadcrumb is
+# the NemoClaw-owned surface that points at the denial reason in the logs.
+# Regression coverage: test/repro-5978-policy-denial-hint.test.ts. Removal
+# condition: drop this stanza once the OpenShell proxy returns a structured,
+# actionable denial (naming the rule / a logs pointer) at the tunnel-failure
+# site, at which point the breadcrumb is redundant.
+#
+# Accepted contract (#5978, maintainer-agreed on PR #6018): the supported
+# behavior is this proactive connect-shell reminder. It does NOT make the
+# denial-time curl/git/wget error itself denial-adjacent — that is intentional,
+# given the source boundary above — so the tool error stays unchanged.
+_nemoclaw_policy_denial_hint_label() {
+  # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
+  # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
+  # interpolated into a copyable `nemoclaw … logs` command, so allowlist it
+  # rather than merely stripping: only render it when it is a valid sandbox name.
+  # This mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts with a lowercase letter,
+  # then lowercase alphanumerics/hyphens, no trailing hyphen. Anything else
+  # (digit-leading labels, control characters, ANSI escapes, shell
+  # metacharacters, whitespace) falls back to a placeholder the user resolves
+  # with `nemoclaw list`. Shell `case` globs match newlines as ordinary
+  # characters, so an embedded newline is rejected by the metacharacter class.
+  #
+  # Evaluate the ranges under the C locale so [a-z0-9-] stays ASCII and is not
+  # widened by the caller's LC_COLLATE/LC_CTYPE (e.g. a locale that folds
+  # additional code points into [a-z]). Safe to set unconditionally: this helper
+  # is only ever called inside $(…) command substitution (a subshell), so the
+  # assignment cannot leak into the interactive shell.
+  LC_ALL=C
+  # Allowlist pattern mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (RFC-1123 label: /^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63). Keep them in sync.
+  case "${OPENSHELL_SANDBOX:-}" in
+    "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
+    [!a-z]* | *- | *[!a-z0-9-]*) printf '<name>' ;;
+    *)
+      if [ "${#OPENSHELL_SANDBOX}" -le 63 ]; then
+        printf '%s' "$OPENSHELL_SANDBOX"
+      else
+        printf '<name>'
+      fi
+      ;;
+  esac
+}
+_nemoclaw_policy_denial_hint_text() {
+  {
+    printf '  Note: this sandbox restricts outbound network access by policy.\n'
+    printf "  Blocked requests fail with 'CONNECT tunnel failed, response 403'.\n"
+    printf '  See which rule denied a request:  nemoclaw %s logs --tail 50\n' \
+      "$(_nemoclaw_policy_denial_hint_label)"
+  } >&2
+}
+_nemoclaw_maybe_policy_denial_hint() {
+  # Once per shell process: a login shell can source this file through more than
+  # one system-wide hook (the login-profile hook and the interactive-bash hook;
+  # #2704), so guard against printing twice. Not exported, so it neither leaks
+  # into child processes nor suppresses sibling connect sessions.
+  [ -n "${_NEMOCLAW_POLICY_HINT_SHOWN:-}" ] && return 0
+  # Suppressed by the user.
+  case "${NEMOCLAW_NO_POLICY_HINT:-}" in 1 | true | TRUE | yes | YES) return 0 ;; esac
+  # Interactive human shells only — never automation (`bash -c`, scripts).
+  case $- in *i*) ;; *) return 0 ;; esac
+  # Real terminal on stderr (where the hint is written).
+  [ -t 2 ] || return 0
+  # Top-level connect shell only — don't repeat in every subshell/pane.
+  [ "${SHLVL:-1}" -le 1 ] || return 0
+  # Nothing is proxied (no egress restriction) ⇒ nothing to explain.
+  [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ] || return 0
+  _NEMOCLAW_POLICY_HINT_SHOWN=1
+  _nemoclaw_policy_denial_hint_text
+}
+_nemoclaw_maybe_policy_denial_hint
+# nemoclaw-policy-denial-hint end
 GUARDENVEOF
     # Global sandbox safety net for connect sessions — must be first.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
@@ -2706,21 +3441,10 @@ GUARDENVEOF
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT\""
     # ciao network guard for connect sessions.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
-    # Telegram diagnostics for connect sessions — same conditional pattern.
-    echo "[ -f \"$_TELEGRAM_DIAGNOSTICS_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_TELEGRAM_DIAGNOSTICS_SCRIPT\""
-    # Slack channel guard for connect sessions. The guard file is installed later
-    # by install_slack_channel_guard() — conditional on the file existing at
-    # source-time so connect sessions started before Slack is configured are safe.
-    echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
-    # WhatsApp compact-QR preload for connect sessions (NemoClaw#4522). The
-    # in-sandbox `openclaw channels login --channel whatsapp` QR renders full
-    # size (~56 rows) and overflows the terminal. Wiring the preload into the
-    # connect-session NODE_OPTIONS forces compact rendering for ANY openclaw
-    # invocation in the session — not only the openclaw() shell-function path,
-    # which a direct binary call would bypass. The file is installed by
-    # install_whatsapp_qr_compact() only for WhatsApp sandboxes, so the
-    # source-time `[ -f ]` check leaves non-WhatsApp connect sessions untouched.
-    echo "[ -f \"$_WHATSAPP_QR_COMPACT_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WHATSAPP_QR_COMPACT_SCRIPT\""
+    # Manifest-declared messaging preloads for connect sessions.
+    if type emit_messaging_connect_runtime_preload_exports >/dev/null 2>&1; then
+      emit_messaging_connect_runtime_preload_exports
+    fi
     # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
     echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -3361,9 +4085,668 @@ start_plugin_registry_refresh() {
     fi
   ) &
   PLUGIN_REFRESH_PID=$!
+  if ! capture_openclaw_pid_start_identity "$PLUGIN_REFRESH_PID" PLUGIN_REFRESH_PID_START_IDENTITY; then
+    # The best-effort refresh may legitimately finish before PID 1 can read
+    # its stat record.  An uncaptured PID is never admitted or signalled.
+    PLUGIN_REFRESH_PID_START_IDENTITY=""
+  fi
+}
+
+# Watchdog for the in-container gateway HTTP listener (#4710). OpenClaw's
+# config reloader can SIGUSR1-restart the gateway in-process; in containers a
+# failed restart parks the process alive with its listener closed ("gateway
+# startup failed: ... Process will stay alive"). The #2757 respawn loop only
+# observes process exit, so an alive-but-deaf gateway would stay wedged until
+# a human runs `nemoclaw <sandbox> recover`. This watchdog probes the local
+# health endpoint and — once it has seen a listener at least once — kills the
+# gateway after sustained connection-refused so the respawn loop relaunches
+# it. Only curl exit 7 counts as "listener gone": 200/401 mean serving, and
+# timeout / HTTP-error outcomes (curl 28/22) mean a listener exists and remain
+# the Docker HEALTHCHECK's responsibility. Arming only after the first
+# non-refused probe means a slow first boot is never killed; failed first
+# boots stay the respawn loop's and HEALTHCHECK's job.
+
+# PID-reuse / tamper defense: only kill a process whose cmdline still looks
+# like the OpenClaw gateway. Match the PID 1 launch argv
+# ("... openclaw gateway run --port N") and the rewritten process titles
+# ("openclaw-gateway", bare "openclaw").
+gateway_pid_is_openclaw_gateway() {
+  # _NEMOCLAW_PROC_ROOT is a test seam (unit tests also run on macOS, which
+  # has no /proc). Production always uses /proc: the watchdog inherits PID 1's
+  # environment, which the sandbox user cannot influence.
+  local cmdline
+  cmdline="$(tr '\0' ' ' <"${_NEMOCLAW_PROC_ROOT:-/proc}/$1/cmdline" 2>/dev/null)" || return 1
+  cmdline="${cmdline%"${cmdline##*[![:space:]]}"}"
+  [ -n "$cmdline" ] || return 1
+  printf '%s' "$cmdline" | grep -qE 'openclaw([ -]gateway| gateway run|$)'
+}
+
+# Positive integer guard used by the gateway watchdog env validation. Extracted
+# so a regression test can exercise the regex against trailing-non-digit and
+# zero/garbage inputs without spinning up the whole watcher.
+gateway_watchdog_positive_int_ok() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+start_gateway_serving_watchdog() {
+  (
+    local interval refused_threshold armed=0 refused_streak=0
+    local pid start_identity extra tracked_identity last_identity="" rc msg
+    interval="${NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS:-30}"
+    refused_threshold="${NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD:-4}"
+    # Both knobs must be positive integers: a zero/garbage interval would
+    # busy-loop the probe, and a zero threshold would kill on the first
+    # refusal. Fall back to the defaults rather than trusting bad input.
+    # gateway_watchdog_positive_int_ok uses regex (=~), not glob, so trailing
+    # non-digit input like "12x" or "30abc" is rejected, not coerced.
+    if ! gateway_watchdog_positive_int_ok "$interval"; then
+      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS='${interval}'; defaulting to 30" >&2
+      interval=30
+    fi
+    if ! gateway_watchdog_positive_int_ok "$refused_threshold"; then
+      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${refused_threshold}'; defaulting to 4" >&2
+      refused_threshold=4
+    fi
+    [ -n "${_DASHBOARD_PORT:-}" ] || exit 0
+    while :; do
+      sleep "$interval"
+      pid=""
+      start_identity=""
+      extra=""
+      IFS=' ' read -r pid start_identity extra <"$GATEWAY_PID_FILE" 2>/dev/null || true
+      case "$pid" in
+        '' | *[!0-9]*)
+          last_identity=""
+          armed=0
+          refused_streak=0
+          continue
+          ;;
+      esac
+      case "$start_identity" in
+        '' | *[!0-9]*)
+          last_identity=""
+          armed=0
+          refused_streak=0
+          continue
+          ;;
+      esac
+      if [ -n "$extra" ]; then
+        last_identity=""
+        armed=0
+        refused_streak=0
+        continue
+      fi
+      tracked_identity="${pid}:${start_identity}"
+      # A respawned gateway must earn its own armed state — never inherit
+      # the previous process identity's serve history, even if the kernel has
+      # already recycled the same numeric PID for the replacement.
+      if [ "$tracked_identity" != "$last_identity" ]; then
+        last_identity="$tracked_identity"
+        armed=0
+        refused_streak=0
+      fi
+      if ! openclaw_supervised_pid_is_live "$pid" "$start_identity"; then
+        # Process exit is the respawn loop's signal, not ours.
+        last_identity=""
+        armed=0
+        refused_streak=0
+        continue
+      fi
+      rc=0
+      curl -s -o /dev/null --max-time 5 "http://127.0.0.1:${_DASHBOARD_PORT}/health" 2>/dev/null || rc=$?
+      if [ "$rc" -ne 7 ]; then
+        armed=1
+        refused_streak=0
+        continue
+      fi
+      [ "$armed" -eq 1 ] || continue
+      refused_streak=$((refused_streak + 1))
+      if [ "$refused_streak" -lt "$refused_threshold" ]; then
+        echo "[gateway-watchdog] gateway pid $pid alive but port ${_DASHBOARD_PORT} refused connection ($refused_streak/$refused_threshold) (#4710)" >&2
+        continue
+      fi
+      if ! gateway_pid_is_openclaw_gateway "$pid"; then
+        echo "[gateway-watchdog] pid $pid no longer looks like the openclaw gateway; not killing (#4710)" >&2
+        armed=0
+        refused_streak=0
+        continue
+      fi
+      if ! openclaw_supervised_pid_is_live "$pid" "$start_identity"; then
+        echo "[gateway-watchdog] pid $pid start identity changed; not killing (#4710)" >&2
+        last_identity=""
+        armed=0
+        refused_streak=0
+        continue
+      fi
+      msg="[gateway-watchdog] CRITICAL: gateway pid $pid is alive but dropped its HTTP listener on port ${_DASHBOARD_PORT} ($refused_streak consecutive refused probes); killing it so the respawn loop can relaunch (#4710)"
+      echo "$msg" >&2
+      # _NEMOCLAW_GATEWAY_LOG is a test seam; production always appends to
+      # /tmp/gateway.log alongside the gateway's own output.
+      echo "$msg" >>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}" 2>/dev/null || true
+      record_gateway_watchdog_kill "$tracked_identity"
+      kill -TERM "$pid" 2>/dev/null || true
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        openclaw_supervised_pid_is_live "$pid" "$start_identity" || break
+        sleep 1
+      done
+      if openclaw_supervised_pid_is_live "$pid" "$start_identity"; then
+        kill -KILL "$pid" 2>/dev/null || true
+      fi
+      armed=0
+      refused_streak=0
+    done
+  ) &
+  GATEWAY_WATCHDOG_PID=$!
+  if ! capture_openclaw_pid_start_identity "$GATEWAY_WATCHDOG_PID" GATEWAY_WATCHDOG_PID_START_IDENTITY; then
+    echo "[gateway-watchdog] could not capture watchdog process identity" >&2
+    return 1
+  fi
+}
+
+openclaw_gateway_pid_owns_listener() {
+  local pid="$1"
+  local port="$2"
+  if [ "$(id -u)" -ne 0 ]; then
+    gateway_control_pid_owns_tcp_listener "$pid" "$port"
+    return $?
+  fi
+  # shellcheck disable=SC2016  # positional args expand in the inner bash
+  "${STEP_DOWN_PREFIX_GATEWAY[@]}" env -u BASH_ENV \
+    bash --noprofile --norc -c \
+    'source "$1"; gateway_control_pid_owns_tcp_listener "$2" "$3"' \
+    bash "$_GATEWAY_SUPERVISOR" "$pid" "$port"
+}
+
+openclaw_gateway_healthy() {
+  local pid="$1"
+  local expected_identity="$2"
+  local code
+  openclaw_supervised_pid_is_live "$pid" "$expected_identity" || return 1
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:${_DASHBOARD_PORT}/health" 2>/dev/null || true)"
+  case "$code" in
+    200 | 401)
+      openclaw_supervised_pid_is_live "$pid" "$expected_identity" \
+        && openclaw_gateway_pid_owns_listener "$pid" "$_DASHBOARD_PORT" \
+        && openclaw_supervised_pid_is_live "$pid" "$expected_identity"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_for_openclaw_gateway_internal() {
+  local pid="$1"
+  local expected_identity="$2"
+  local deadline=$((SECONDS + 90))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    openclaw_supervised_pid_is_live "$pid" "$expected_identity" || return 1
+    openclaw_gateway_healthy "$pid" "$expected_identity" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+launch_openclaw_gateway() {
+  mark_in_container_gateway
+  nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" sh -c \
+    'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh \
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" &
+  GATEWAY_PID=$!
+  if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
+    # An uncaptured numeric PID is never safe to signal: Bash may already have
+    # reaped the short-lived child and the kernel may have reused its PID. Fail
+    # PID 1 so the container/runtime tears down any surviving untracked child.
+    GATEWAY_PID=0
+    GATEWAY_PID_START_IDENTITY=""
+    clear_gateway_pid_record
+    echo "[gateway] could not capture gateway process identity" >&2
+    exit 1
+  fi
+  record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
+  # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
+  SANDBOX_WAIT_PID="$GATEWAY_PID"
+  echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
+}
+
+openclaw_supervised_aux_pid_is_live() {
+  local pid="$1"
+  local expected_identity="$2"
+  openclaw_supervised_pid_is_live "$pid" "$expected_identity"
+}
+
+stop_openclaw_supervised_gateway() {
+  local pid="$1"
+  local expected_identity="$2"
+  openclaw_supervised_pid_is_live "$pid" "$expected_identity" || return 1
+  gateway_control_stop_tracked_pid "$pid" "$expected_identity" || return 1
+  if kill -0 "$pid" 2>/dev/null; then
+    # The shared helper returns success when a later identity read says the
+    # numeric PID changed. Before clearing the gateway identity or relaunching,
+    # require the stronger postcondition that no process occupies that PID.
+    echo "[SECURITY] OpenClaw gateway pid ${pid} remains live after tracked stop; refusing to treat it as stopped" >&2
+    return 1
+  fi
+}
+
+refresh_openclaw_supervised_child_pids() {
+  SANDBOX_CHILD_PIDS=()
+  openclaw_supervised_pid_is_live \
+    "${GATEWAY_PID:-}" "${GATEWAY_PID_START_IDENTITY:-}" \
+    && SANDBOX_CHILD_PIDS+=("$GATEWAY_PID")
+  openclaw_supervised_aux_pid_is_live \
+    "${AUTO_PAIR_PID:-}" "${AUTO_PAIR_PID_START_IDENTITY:-}" \
+    && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+  openclaw_supervised_aux_pid_is_live \
+    "${GATEWAY_LOG_TAIL_PID:-}" "${GATEWAY_LOG_TAIL_PID_START_IDENTITY:-}" \
+    && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
+  openclaw_supervised_aux_pid_is_live \
+    "${GATEWAY_LOG_PERSIST_PID:-}" "${GATEWAY_LOG_PERSIST_PID_START_IDENTITY:-}" \
+    && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
+  openclaw_supervised_aux_pid_is_live \
+    "${PLUGIN_REFRESH_PID:-}" "${PLUGIN_REFRESH_PID_START_IDENTITY:-}" \
+    && SANDBOX_CHILD_PIDS+=("$PLUGIN_REFRESH_PID")
+  openclaw_supervised_aux_pid_is_live \
+    "${GATEWAY_WATCHDOG_PID:-}" "${GATEWAY_WATCHDOG_PID_START_IDENTITY:-}" \
+    && SANDBOX_CHILD_PIDS+=("$GATEWAY_WATCHDOG_PID")
+  return 0
+}
+
+mark_openclaw_gateway_stopped() {
+  GATEWAY_PID=0
+  GATEWAY_PID_START_IDENTITY=""
+  [ -n "${GATEWAY_PID_FILE:-}" ] && clear_gateway_pid_record
+  # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
+  SANDBOX_WAIT_PID=""
+  refresh_openclaw_supervised_child_pids
+}
+
+stop_openclaw_gateway_fail_closed() {
+  if ! stop_openclaw_supervised_gateway \
+    "${GATEWAY_PID:-0}" "${GATEWAY_PID_START_IDENTITY:-}"; then
+    echo "[CRITICAL] OpenClaw gateway revocation could not prove and stop the tracked child; exiting PID 1 for whole-container cleanup without signaling the unproven PID" >&2
+    exit 1
+  fi
+  mark_openclaw_gateway_stopped
+}
+
+OPENCLAW_REAP_EXIT_STATUS=0
+openclaw_reap_exited_gateway() {
+  local pid="${GATEWAY_PID:-0}"
+  local expected_start_identity="${GATEWAY_PID_START_IDENTITY:-}"
+  local current_start_identity state
+  local rc=0
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  [ -n "$expected_start_identity" ] || return 1
+
+  current_start_identity="$(openclaw_pid_start_identity "$pid" 2>/dev/null || true)"
+  if [ -n "$current_start_identity" ] \
+    && [ "$current_start_identity" != "$expected_start_identity" ]; then
+    echo "[SECURITY] OpenClaw gateway pid $pid no longer matches its captured start identity; refusing to poll or reap it" >&2
+    return 2
+  fi
+
+  # kill -0 also succeeds for zombies. Only that exact matching zombie is
+  # safe to reap. A live process, or a process whose state/identity cannot be
+  # proven, must not send PID 1 into an unbounded wait on a recycled PID.
+  if kill -0 "$pid" 2>/dev/null; then
+    state="$(gateway_control_pid_state "$pid" 2>/dev/null || true)"
+    case "$state" in
+      Z*) [ "$current_start_identity" = "$expected_start_identity" ] || return 2 ;;
+      *)
+        if [ "${GATEWAY_CONTROL_SIGNAL_PENDING:-0}" -eq 1 ] \
+          && openclaw_supervised_pid_is_live "$pid" "$expected_start_identity" \
+          && gateway_pid_is_openclaw_gateway "$pid"; then
+          return 3
+        fi
+        echo "[SECURITY] OpenClaw gateway pid $pid cannot be proven exited with its captured start identity; refusing to reap it" >&2
+        return 2
+        ;;
+    esac
+  fi
+
+  wait "$pid" 2>/dev/null || rc=$?
+  # USR1 may interrupt wait without reaping the exact tracked child. Leave its
+  # identity intact so the authenticated request handler can stop it.
+  if [ "${GATEWAY_CONTROL_SIGNAL_PENDING:-0}" -eq 1 ] \
+    && openclaw_supervised_pid_is_live "$pid" "$expected_start_identity" \
+    && gateway_pid_is_openclaw_gateway "$pid"; then
+    return 3
+  fi
+  OPENCLAW_REAP_EXIT_STATUS="$rc"
+  mark_openclaw_gateway_stopped
+}
+
+cleanup_openclaw_on_signal() {
+  # Revalidate every PID immediately before the shared cleanup helper signals
+  # it.  Clear the primary wait PID too if the tracked gateway identity has
+  # disappeared or the numeric PID was recycled.
+  if ! openclaw_supervised_pid_is_live \
+    "${GATEWAY_PID:-}" "${GATEWAY_PID_START_IDENTITY:-}"; then
+    SANDBOX_WAIT_PID=""
+  fi
+  refresh_openclaw_supervised_child_pids
+  cleanup_on_signal
+}
+
+OPENCLAW_RESTART_FAILURE_CODE=internal
+_OPENCLAW_CONFIG_GUARD=/usr/local/lib/nemoclaw/openclaw-config-guard.py
+_OPENCLAW_STATE_DIR_GUARD=/usr/local/lib/nemoclaw/state-dir-guard.py
+OPENCLAW_CONFIG_GUARD_LAST_OUTPUT=""
+run_openclaw_config_guard() {
+  local action="$1"
+  local startup_owner=0
+  local arg output_file rc
+  shift
+  for arg in "$@"; do
+    [ "$arg" = "--startup-owner" ] && startup_owner=1
+  done
+  if [ "$startup_owner" -eq 1 ]; then
+    # The readiness contract authenticates this helper as a direct PID 1
+    # child. A `timeout` wrapper or command substitution would become Python's
+    # parent and invalidate that identity, so capture through a root-private
+    # file while invoking Python directly.
+    install -d -o root -g root -m 700 /run/nemoclaw || return 1
+    output_file="/run/nemoclaw/.openclaw-config-guard.$$.output"
+    : >"$output_file"
+    chmod 600 "$output_file"
+    rc=0
+    python3 -I "$_OPENCLAW_CONFIG_GUARD" "$action" \
+      --config-dir /sandbox/.openclaw "$@" >"$output_file" 2>&1 || rc=$?
+    OPENCLAW_CONFIG_GUARD_LAST_OUTPUT="$(<"$output_file")"
+    rm -f "$output_file"
+    if [ "$rc" -ne 0 ]; then
+      printf '[config-guard] %s failed: %s\n' "$action" "$OPENCLAW_CONFIG_GUARD_LAST_OUTPUT" >&2
+      return "$rc"
+    fi
+    return 0
+  fi
+  OPENCLAW_CONFIG_GUARD_LAST_OUTPUT="$(
+    timeout --signal=TERM --kill-after=5s 5m \
+      python3 -I "$_OPENCLAW_CONFIG_GUARD" "$action" \
+      --config-dir /sandbox/.openclaw "$@" 2>&1
+  )" || {
+    printf '[config-guard] %s failed: %s\n' "$action" "$OPENCLAW_CONFIG_GUARD_LAST_OUTPUT" >&2
+    return 1
+  }
+}
+
+restore_openclaw_restart_config() {
+  run_openclaw_config_guard unseal-restart \
+    || run_openclaw_config_guard recover
+}
+
+cleanup_openclaw_gateway_locks() {
+  timeout --signal=TERM --kill-after=1s 5s python3 -I - <<'PYLOCKS'
+import os
+import re
+import stat
+import sys
+import time
+
+deadline = time.monotonic() + 3
+parent_limit = 64
+entry_limit = 10000
+lock_limit = 128
+lock_pattern = re.compile(r"gateway[.][^/]+[.]lock\Z")
+directory_flags = (
+    os.O_RDONLY
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+)
+tmp_fd = os.open("/tmp", directory_flags)
+tmp_stat = os.fstat(tmp_fd)
+parents = 0
+locks = 0
+observed = 0
+try:
+    with os.scandir(tmp_fd) as entries:
+        for entry in entries:
+            observed += 1
+            if observed > entry_limit or time.monotonic() > deadline:
+                raise RuntimeError("bounded /tmp gateway-lock inventory exceeded")
+            if not entry.name.startswith("openclaw-"):
+                continue
+            parents += 1
+            if parents > parent_limit:
+                raise RuntimeError("too many OpenClaw lock directories")
+            parent_fd = os.open(entry.name, directory_flags, dir_fd=tmp_fd)
+            try:
+                parent_stat = os.fstat(parent_fd)
+                if parent_stat.st_dev != tmp_stat.st_dev:
+                    print(
+                        f"[gateway] refusing cross-device lock directory: /tmp/{entry.name}",
+                        file=sys.stderr,
+                    )
+                    continue
+                child_observed = 0
+                with os.scandir(parent_fd) as children:
+                    for child in children:
+                        child_observed += 1
+                        if child_observed > entry_limit or time.monotonic() > deadline:
+                            raise RuntimeError("bounded gateway-lock directory inventory exceeded")
+                        if not lock_pattern.fullmatch(child.name):
+                            continue
+                        locks += 1
+                        if locks > lock_limit:
+                            raise RuntimeError("too many gateway lock entries")
+                        metadata = os.stat(
+                            child.name, dir_fd=parent_fd, follow_symlinks=False
+                        )
+                        if (
+                            metadata.st_dev != parent_stat.st_dev
+                            or not stat.S_ISREG(metadata.st_mode)
+                        ):
+                            print(
+                                f"[gateway] refusing non-regular lock entry: /tmp/{entry.name}/{child.name}",
+                                file=sys.stderr,
+                            )
+                            continue
+                        os.unlink(child.name, dir_fd=parent_fd)
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+finally:
+    os.close(tmp_fd)
+PYLOCKS
+}
+
+openclaw_runtime_guard_chain_complete() {
+  local targets=(
+    "$_SANDBOX_SAFETY_NET"
+    "$_NEMOTRON_FIX_SCRIPT"
+    "$_CIAO_GUARD_SCRIPT"
+    "$_SECCOMP_GUARD_SCRIPT"
+    "$_RUNTIME_SHELL_ENV_FILE"
+  )
+  local target
+  [ "${NODE_USE_ENV_PROXY:-}" = "1" ] && targets+=("$_PROXY_FIX_SCRIPT")
+  [ -f "$_WS_FIX_SOURCE" ] && targets+=("$_WS_FIX_SCRIPT")
+  for target in "${targets[@]}"; do
+    [ -f "$target" ] && [ ! -L "$target" ] || return 1
+  done
+}
+
+restore_openclaw_runtime_guard_chain() {
+  if ! openclaw_runtime_guard_chain_complete; then
+    local _guard_warn="[gateway-recovery] WARNING: /tmp guard chain missing or unsafe - restoring library guards from packaged preloads (#2478/#2701)"
+    echo "$_guard_warn" >&2
+    echo "$_guard_warn" >>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}" 2>/dev/null || true
+  fi
+
+  # Preserve startup ordering: immutable core preloads first, then the
+  # manifest-declared messaging layer, then the shell environment that refers
+  # to both. Permission validation is the final gate before any relaunch.
+  install_core_runtime_preloads || return 1
+  write_messaging_runtime_setup_plan || return 1
+  install_messaging_runtime_preloads || return 1
+  verify_messaging_runtime_secret_scans || return 1
+  write_runtime_shell_env || return 1
+  validate_nemoclaw_tmp_permissions || return 1
+}
+
+prepare_openclaw_automatic_respawn() {
+  if restore_openclaw_runtime_guard_chain; then
+    return 0
+  fi
+  echo "[gateway] CRITICAL: runtime guard restoration failed; refusing automatic respawn" >&2
+  return 1
+}
+
+prepare_openclaw_gateway_restart() {
+  OPENCLAW_RESTART_FAILURE_CODE=unsafe-config
+  # Restart preflight is deliberately read-only. The gateway and sandbox code
+  # may still hold descriptors into a mutable tree, so pathname recovery,
+  # chmod/chown normalization, and placeholder rewrites here would be root
+  # TOCTOU primitives. The descriptor guard validates the exact config/hash
+  # pair and refuses incoherent or substituted paths; mutation belongs to a
+  # serialized host config command before restart.
+  run_openclaw_config_guard preflight-restart || return 1
+  OPENCLAW_RESTART_FAILURE_CODE=preload-missing
+  restore_openclaw_runtime_guard_chain || return 1
+}
+
+retire_openclaw_supervised_gateway() {
+  local pid="$1"
+  local expected_identity="$2"
+  local reap_status=0
+
+  # A recover request can arrive after the respawn loop has already reaped the
+  # failed child and entered its backoff. Only the canonical stopped state may
+  # bypass retirement; every nonzero tracked PID must still be stopped or
+  # identity-safely reaped before a replacement is launched.
+  [ "${GATEWAY_PID:-0}" = "$pid" ] \
+    && [ "${GATEWAY_PID_START_IDENTITY:-}" = "$expected_identity" ] \
+    || return 1
+  if [ "$pid" = "0" ] \
+    && [ -z "$expected_identity" ] \
+    && [ -z "${SANDBOX_WAIT_PID:-}" ]; then
+    return 0
+  fi
+  if openclaw_supervised_pid_is_live "$pid" "$expected_identity" \
+    && stop_openclaw_supervised_gateway "$pid" "$expected_identity"; then
+    return 0
+  fi
+  openclaw_reap_exited_gateway || reap_status=$?
+  [ "$reap_status" -eq 0 ] \
+    && [ "${GATEWAY_PID:-0}" = "0" ] \
+    && [ -z "${GATEWAY_PID_START_IDENTITY:-}" ] \
+    && [ -z "${SANDBOX_WAIT_PID:-}" ]
+}
+
+handle_openclaw_gateway_control_request() {
+  gateway_control_take_request || return 1
+  local old_pid="${GATEWAY_PID:-0}"
+  local old_identity="${GATEWAY_PID_START_IDENTITY:-}"
+
+  if [ "$GATEWAY_CONTROL_ACTION" = "probe" ]; then
+    if ! run_openclaw_config_guard preflight-restart; then
+      gateway_control_fail unsafe-config "$old_pid"
+      return 1
+    fi
+    if ! openclaw_gateway_healthy "$old_pid" "$old_identity"; then
+      gateway_control_fail health-timeout "$old_pid"
+      return 1
+    fi
+    gateway_control_complete already-running "$old_pid" "$old_pid"
+    return 0
+  fi
+
+  if [ "$GATEWAY_CONTROL_ACTION" = "recover" ] \
+    && openclaw_gateway_healthy "$old_pid" "$old_identity"; then
+    if ! run_openclaw_config_guard recover; then
+      gateway_control_fail unsafe-config "$old_pid"
+      return 1
+    fi
+    gateway_control_complete already-running "$old_pid" "$old_pid"
+    return 0
+  fi
+
+  # Validate every mutable/security input while the currently healthy gateway
+  # is still serving. Refusal must not turn a recoverable config error into an
+  # outage.
+  if ! prepare_openclaw_gateway_restart; then
+    gateway_control_fail "$OPENCLAW_RESTART_FAILURE_CODE" "$old_pid"
+    return 1
+  fi
+
+  # Seal while the old healthy gateway is still serving. This fresh-replaces
+  # the canonical config/hash pair and revokes old writable descriptors before
+  # any outage is introduced. The journal records whether the original posture
+  # was mutable or shields-locked so unseal restores it exactly.
+  if ! run_openclaw_config_guard seal-restart; then
+    if ! restore_openclaw_restart_config; then
+      echo "[SECURITY] OpenClaw restart seal failed and deterministic recovery also failed; stopping the old gateway to revoke stale config descriptors" >&2
+      stop_openclaw_gateway_fail_closed
+    fi
+    gateway_control_fail unsafe-config "$old_pid"
+    return 1
+  fi
+
+  if ! retire_openclaw_supervised_gateway "$old_pid" "$old_identity"; then
+    restore_openclaw_restart_config || true
+    gateway_control_fail internal "$old_pid"
+    return 1
+  fi
+  mark_openclaw_gateway_stopped
+  cleanup_openclaw_gateway_locks \
+    || echo "[gateway] warning: bounded stale gateway-lock cleanup was incomplete" >&2
+
+  if ! launch_openclaw_gateway; then
+    stop_openclaw_gateway_fail_closed
+    restore_openclaw_restart_config || true
+    gateway_control_fail health-timeout "$old_pid"
+    return 1
+  fi
+  # Register the replacement before its bounded health wait. A container stop
+  # in this window must signal the new child, never the already-reaped old PID.
+  refresh_openclaw_supervised_child_pids
+  if ! wait_for_openclaw_gateway_internal \
+    "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"; then
+    stop_openclaw_gateway_fail_closed
+    restore_openclaw_restart_config || true
+    gateway_control_fail health-timeout "$old_pid"
+    return 1
+  fi
+
+  if ! restore_openclaw_restart_config; then
+    # The replacement is healthy and the canonical pair remains fail-closed,
+    # but the original mutable/locked posture could not be restored. Keep the
+    # service running and make the host operation fail loudly for recovery.
+    refresh_openclaw_supervised_child_pids
+    gateway_control_fail unsafe-config "$old_pid"
+    return 1
+  fi
+
+  # PLUGIN_REFRESH_PID remains set after its best-effort background job exits.
+  # Never signal that potentially stale PID during a later gateway restart:
+  # PID reuse could otherwise terminate an unrelated process. A still-running
+  # prior refresh is harmless and will exit on its own.
+  start_plugin_registry_refresh
+  refresh_openclaw_supervised_child_pids
+  gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
 
 # ── Main ─────────────────────────────────────────────────────────
+
+# Begin the root PID 1 readiness lease before any startup path reads or mutates
+# OpenClaw config. Recovery runs before the locked-parent discriminator so a
+# crash in a prior config write/restart/handoff can complete deterministically.
+if [ "$(id -u)" -eq 0 ]; then
+  prepare_openclaw_config_startup || exit 1
+fi
+
+# A root-owned config directory is the shields-up discriminator. Its parent
+# must be sticky and root-owned too; otherwise the sandbox identity can rename
+# the entire `.openclaw` entry and replace the pathname with mutable content.
+# Refuse before migration or any config read. PID 1 cannot repair this posture
+# after startup has failed, so recovery requires a trusted snapshot/recreate.
+if [ "$(openclaw_config_dir_owner /sandbox/.openclaw)" = "root" ] \
+  && ! openclaw_locked_parent_is_protected; then
+  echo "[SECURITY] OPENCLAW_LOCKED_PARENT_UNPROTECTED: /sandbox must be root:sandbox 1775 while OpenClaw shields are up; restore from a trusted backup and recreate the sandbox" >&2
+  exit 1
+fi
 
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
@@ -3404,25 +4787,28 @@ if [ "$(id -u)" -ne 0 ]; then
   # actually runs with.
   write_openclaw_config_baseline
   export_gateway_token
+  write_messaging_runtime_setup_plan
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
   lock_rc_files "$_SANDBOX_HOME" || true
-  # Normalize Slack provider placeholders before any child inherits the env —
-  # covers both the one-shot "${NEMOCLAW_CMD[@]}" exec and the gateway launch.
-  normalize_slack_runtime_env
+  # Apply manifest-declared runtime env aliases before any child inherits the
+  # env. This covers both one-shot commands and the gateway launch.
+  apply_messaging_runtime_env_aliases
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
-    exec "${NEMOCLAW_CMD[@]}"
+    install_messaging_runtime_preloads
+    verify_messaging_runtime_secret_scans
+    _nemoclaw_cmd_rc=0
+    run_oneshot_command "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+    exit "$_nemoclaw_cmd_rc"
   fi
 
   configure_messaging_channels
   refresh_openclaw_provider_placeholders
   ensure_mutable_openclaw_config_hash
   write_openclaw_config_baseline
-  install_telegram_diagnostics
-  install_slack_channel_guard
-  install_whatsapp_qr_compact
-  verify_no_slack_secrets_on_disk
+  install_messaging_runtime_preloads
+  verify_messaging_runtime_secret_scans
 
   # Ensure writable state directories exist and are owned by the current user.
   # The Docker build (Dockerfile) sets this up correctly, but the native curl
@@ -3451,14 +4837,10 @@ if [ "$(id -u)" -ne 0 ]; then
 
   # In non-root mode, detach gateway stdout/stderr from the sandbox-create
   # stream so openshell sandbox create can return once the container is ready.
-  # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-  touch /tmp/gateway.log
-  chmod 644 /tmp/gateway.log
+  _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644
 
   # Separate log for auto-pair in non-root mode as well.
-  # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-  touch /tmp/auto-pair.log
-  chmod 600 /tmp/auto-pair.log
+  _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600
 
   prepare_plugin_refresh_log || exit 1
 
@@ -3466,7 +4848,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
+  validate_nemoclaw_tmp_permissions
 
   # Start gateway in background, auto-pair, then wait. Mark the in-container
   # gateway path so the Docker HEALTHCHECK probes it rather than short-circuiting
@@ -3476,27 +4858,27 @@ if [ "$(id -u)" -ne 0 ]; then
   mark_in_container_gateway
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
-  record_gateway_pid "$GATEWAY_PID"
+  capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
+  record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
   # Diagnostic: mirror gateway log to PID 1's stderr — see root-mode block
   # below for rationale (NVIDIA/NemoClaw#2484).
   { tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
   GATEWAY_LOG_TAIL_PID=$!
+  capture_openclaw_pid_start_identity \
+    "$GATEWAY_LOG_TAIL_PID" GATEWAY_LOG_TAIL_PID_START_IDENTITY || exit 1
   # Persistent mirror: see root-mode block for rationale.
   start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
   start_plugin_registry_refresh
+  start_gateway_serving_watchdog
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
-  SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
-  [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
-  [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
-  [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
-  [ -n "${PLUGIN_REFRESH_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$PLUGIN_REFRESH_PID")
+  refresh_openclaw_supervised_child_pids
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
-  trap cleanup_on_signal SIGTERM SIGINT
+  trap cleanup_openclaw_on_signal SIGTERM SIGINT
   print_dashboard_urls
 
   # Auto-respawn gateway on unexpected death (NVIDIA/NemoClaw#2757). Without
@@ -3511,8 +4893,12 @@ if [ "$(id -u)" -ne 0 ]; then
     # line 33) would otherwise exit PID 1 the instant the gateway returns
     # non-zero, defeating the respawn loop entirely.
     RC=0
-    wait "$GATEWAY_PID" || RC=$?
-    if [ "$RC" -eq 0 ]; then
+    EXITED_GATEWAY_PID="$GATEWAY_PID"
+    EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
+    wait "$EXITED_GATEWAY_PID" || RC=$?
+    mark_openclaw_gateway_stopped
+    if [ "$RC" -eq 0 ] \
+      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
       exit 0
     fi
     NOW=$(date +%s)
@@ -3526,14 +4912,16 @@ if [ "$(id -u)" -ne 0 ]; then
     if [ "$RESPAWN_COUNT" -ge 5 ]; then
       echo "[gateway] CRITICAL: $RESPAWN_COUNT respawns in 60s window — gateway likely unstable; check /tmp/gateway.log" >&2
     fi
-    echo "[gateway] pid $GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
+    echo "[gateway] pid $EXITED_GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
     sleep 2
+    prepare_openclaw_automatic_respawn || exit 1
     nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
     GATEWAY_PID=$!
-    record_gateway_pid "$GATEWAY_PID"
+    capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
+    record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
     # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
     SANDBOX_WAIT_PID="$GATEWAY_PID"
-    SANDBOX_CHILD_PIDS+=("$GATEWAY_PID")
+    refresh_openclaw_supervised_child_pids
     echo "[gateway] respawned (pid $GATEWAY_PID)" >&2
   done
 fi
@@ -3560,21 +4948,20 @@ prepare_gateway_token_for_current_command
 # actually runs with.
 write_openclaw_config_baseline
 export_gateway_token
+write_messaging_runtime_setup_plan
 write_runtime_shell_env
 ensure_runtime_shell_env_shim
 lock_rc_files "$_SANDBOX_HOME"
-# Normalize Slack provider placeholders before any child (the one-shot
+# Apply manifest-declared runtime env aliases before any child (the one-shot
 # "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
 # gosu/setpriv preserve the environment, so the export reaches the gateway user.
-normalize_slack_runtime_env
+apply_messaging_runtime_env_aliases
 
 # Messaging channel config was announced before placeholder refresh so the
 # baseline captures the same provider placeholders the gateway will use.
-# Install channel-specific preloads before starting OpenClaw.
-install_telegram_diagnostics
-install_slack_channel_guard
-install_whatsapp_qr_compact
-verify_no_slack_secrets_on_disk
+# Install manifest-declared Node runtime preloads before starting OpenClaw.
+install_messaging_runtime_preloads
+verify_messaging_runtime_secret_scans
 
 # Write auth profile as sandbox user and recursively re-tighten any
 # auth-profiles.json files under ~/.openclaw. See
@@ -3583,21 +4970,17 @@ setup_auth_profile_as_sandbox
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
-  exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
+  _nemoclaw_cmd_rc=0
+  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+  exit "$_nemoclaw_cmd_rc"
 fi
 
 # Gateway log: owned by gateway user, world-readable for diagnostics.
 # The sandbox user can read but not truncate/overwrite (not owner, sticky /tmp).
-# TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-touch /tmp/gateway.log
-chown gateway:gateway /tmp/gateway.log
-chmod 644 /tmp/gateway.log
+_nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway
 
 # Separate log for auto-pair so sandbox user can write to it
-# TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-touch /tmp/auto-pair.log
-chown sandbox:sandbox /tmp/auto-pair.log
-chmod 600 /tmp/auto-pair.log
+_nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 sandbox:sandbox
 
 prepare_plugin_refresh_log || exit 1
 
@@ -3691,20 +5074,16 @@ seed_default_workspace_templates_as_sandbox
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
+validate_nemoclaw_tmp_permissions
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
-# Mark the in-container gateway path so the Docker HEALTHCHECK probes it
-# rather than short-circuiting to healthy — see mark_in_container_gateway
-# comment near the top of this file for the #4710 rationale.
-mark_in_container_gateway
-nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
-GATEWAY_PID=$!
-record_gateway_pid "$GATEWAY_PID"
-echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
+# Marking, privilege step-down, log redirection, and PID recording are kept in
+# one reusable launch primitive so PID 1 owns initial start, crash respawn, and
+# host-requested restart identically.
+launch_openclaw_gateway
 
 # Diagnostic: mirror gateway log to PID 1's stderr so its content surfaces in
 # docker logs. /tmp/gateway.log is otherwise only readable from inside the
@@ -3715,6 +5094,8 @@ echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" 
 # Ref: NVIDIA/NemoClaw#2484 (TC-SBX-02 hang investigation)
 { tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
 GATEWAY_LOG_TAIL_PID=$!
+capture_openclaw_pid_start_identity \
+  "$GATEWAY_LOG_TAIL_PID" GATEWAY_LOG_TAIL_PID_START_IDENTITY || exit 1
 
 # Persistent mirror: append /tmp/gateway.log content to a file under
 # /sandbox/.openclaw/logs which is volume-mounted by openshell and
@@ -3743,17 +5124,24 @@ start_auto_pair
 # proves /nemoclaw registration without the refresh.
 start_plugin_registry_refresh
 
+start_gateway_serving_watchdog
+
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
-SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
-[ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
-[ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
-[ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
-[ -n "${PLUGIN_REFRESH_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$PLUGIN_REFRESH_PID")
+refresh_openclaw_supervised_child_pids
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
-trap cleanup_on_signal SIGTERM SIGINT
+trap cleanup_openclaw_on_signal SIGTERM SIGINT
+if ! gateway_control_init; then
+  echo "[gateway-control] privileged gateway control unavailable" >&2
+fi
+if ! run_openclaw_config_guard publish-startup-ready --startup-owner; then
+  echo "[SECURITY] OpenClaw config readiness lease could not be published; refusing to keep the gateway running" >&2
+  stop_openclaw_supervised_gateway \
+    "${GATEWAY_PID:-0}" "${GATEWAY_PID_START_IDENTITY:-}" || true
+  exit 1
+fi
 print_dashboard_urls
 
 # Keep container running by waiting on the gateway process.
@@ -3766,12 +5154,38 @@ print_dashboard_urls
 # window boundary still trigger the >=5 alarm.
 RESPAWN_TIMES=()
 while :; do
-  # `wait` must be guarded with `|| RC=$?` because errexit (set -e on
-  # line 33) would otherwise exit PID 1 the instant the gateway returns
-  # non-zero, defeating the respawn loop entirely.
-  RC=0
-  wait "$GATEWAY_PID" || RC=$?
-  if [ "$RC" -eq 0 ]; then
+  # Poll the tracked child instead of entering an unbounded wait immediately.
+  # A USR1 that lands just before `wait` would otherwise set the trap flag and
+  # then leave PID 1 blocked forever because there is no second signal to
+  # interrupt that wait.
+  while openclaw_supervised_pid_is_live \
+    "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY" \
+    && [ "$GATEWAY_CONTROL_SIGNAL_PENDING" -eq 0 ]; do
+    sleep 1 || true
+  done
+  if [ "$GATEWAY_CONTROL_SIGNAL_PENDING" -eq 1 ]; then
+    handle_openclaw_gateway_control_request || true
+    continue
+  fi
+
+  EXITED_GATEWAY_PID="$GATEWAY_PID"
+  EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
+  REAP_STATUS=0
+  openclaw_reap_exited_gateway || REAP_STATUS=$?
+  if [ "$REAP_STATUS" -eq 3 ]; then
+    handle_openclaw_gateway_control_request || true
+    continue
+  fi
+  if [ "$REAP_STATUS" -ne 0 ]; then
+    exit 1
+  fi
+  RC="$OPENCLAW_REAP_EXIT_STATUS"
+  if [ "$GATEWAY_CONTROL_SIGNAL_PENDING" -eq 1 ]; then
+    handle_openclaw_gateway_control_request || true
+    continue
+  fi
+  if [ "$RC" -eq 0 ] \
+    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
     exit 0
   fi
   NOW=$(date +%s)
@@ -3785,13 +5199,17 @@ while :; do
   if [ "$RESPAWN_COUNT" -ge 5 ]; then
     echo "[gateway] CRITICAL: $RESPAWN_COUNT respawns in 60s window — gateway likely unstable; check /tmp/gateway.log" >&2
   fi
-  echo "[gateway] pid $GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
-  sleep 2
-  nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
-  GATEWAY_PID=$!
-  record_gateway_pid "$GATEWAY_PID"
-  # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
-  SANDBOX_WAIT_PID="$GATEWAY_PID"
-  SANDBOX_CHILD_PIDS+=("$GATEWAY_PID")
+  echo "[gateway] pid $EXITED_GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
+  sleep 2 || true
+  # A host request can arrive during the crash backoff. Service it before the
+  # automatic relaunch so PID 1 never launches an untracked extra gateway and
+  # immediately replaces it again.
+  if [ "$GATEWAY_CONTROL_SIGNAL_PENDING" -eq 1 ]; then
+    handle_openclaw_gateway_control_request || true
+    continue
+  fi
+  prepare_openclaw_automatic_respawn || exit 1
+  launch_openclaw_gateway
+  refresh_openclaw_supervised_child_pids
   echo "[gateway] respawned (pid $GATEWAY_PID)" >&2
 done
