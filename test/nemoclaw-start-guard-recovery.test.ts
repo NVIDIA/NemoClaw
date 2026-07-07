@@ -19,6 +19,29 @@ function extractShellFunction(source: string, name: string): string {
   return `${name}() {${body.slice(0, closing?.index ?? 0)}\n}`;
 }
 
+function extractGatewayLogAppendFunction(
+  source: string,
+  gatewayLog: string,
+  { replaceAfterLstat = false }: { replaceAfterLstat?: boolean } = {},
+): string {
+  const functionSource = extractShellFunction(source, "append_openclaw_gateway_log_line").replace(
+    '  local log_file="/tmp/gateway.log"',
+    `  local log_file=${JSON.stringify(gatewayLog)}`,
+  );
+  return replaceAfterLstat
+    ? functionSource.replace(
+        "    fd = os.open(path, flags)",
+        [
+          '    replacement = f"{path}.replacement"',
+          '    with open(replacement, "w", encoding="utf-8") as handle:',
+          '        handle.write("replacement\\n")',
+          "    os.replace(replacement, path)",
+          "    fd = os.open(path, flags)",
+        ].join("\n"),
+      )
+    : functionSource;
+}
+
 type Harness = {
   eventLog: string;
   gatewayLog: string;
@@ -87,7 +110,6 @@ function runRecoveryHarness({
     "set -uo pipefail",
     `EVENT_LOG=${JSON.stringify(eventLog)}`,
     `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
-    "_NEMOCLAW_GATEWAY_LOG_TEST_MODE=1",
     'NODE_OPTIONS=""',
     "NODE_USE_ENV_PROXY=1",
     `_SANDBOX_SAFETY_NET=${JSON.stringify(targets.safety)}`,
@@ -129,7 +151,7 @@ function runRecoveryHarness({
     extractShellFunction(source, "append_node_require_once"),
     extractShellFunction(source, "install_core_runtime_preloads"),
     extractShellFunction(source, "openclaw_runtime_guard_chain_complete"),
-    extractShellFunction(source, "append_openclaw_gateway_log_line"),
+    extractGatewayLogAppendFunction(source, gatewayLog),
     extractShellFunction(source, "restore_openclaw_runtime_guard_chain"),
     extractShellFunction(source, "prepare_openclaw_gateway_restart"),
     "rc=0; prepare_openclaw_gateway_restart || rc=$?",
@@ -244,9 +266,7 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
       const script = [
         "set -uo pipefail",
         `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
-        "_NEMOCLAW_GATEWAY_LOG_TEST_MODE=1",
-        "_NEMOCLAW_GATEWAY_LOG_REPLACE_AFTER_LSTAT_TEST=1",
-        extractShellFunction(source, "append_openclaw_gateway_log_line"),
+        extractGatewayLogAppendFunction(source, gatewayLog, { replaceAfterLstat: true }),
         "rc=0; append_openclaw_gateway_log_line 'safe-line' || rc=$?",
         'printf "rc:%s\\n" "$rc"',
       ].join("\n");
@@ -265,18 +285,20 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
     }
   });
 
-  it("refuses non-canonical gateway log paths outside test mode", () => {
+  it("ignores inherited non-canonical gateway log environment", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-contract-"));
     const gatewayLog = path.join(tmpDir, "gateway.log");
+    const inheritedTarget = path.join(tmpDir, "inherited.log");
     try {
-      fs.writeFileSync(gatewayLog, "existing\n", { mode: 0o644 });
+      fs.writeFileSync(gatewayLog, "", { mode: 0o644 });
+      fs.writeFileSync(inheritedTarget, "existing\n", { mode: 0o644 });
       const script = [
         "set -uo pipefail",
-        `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
-        extractShellFunction(source, "append_openclaw_gateway_log_line"),
-        "rc=0; append_openclaw_gateway_log_line 'unsafe-line' || rc=$?",
-        'printf "rc:%s\\n" "$rc"',
+        `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(inheritedTarget)}`,
+        "_NEMOCLAW_GATEWAY_LOG_TEST_MODE=1",
+        extractGatewayLogAppendFunction(source, gatewayLog),
+        "append_openclaw_gateway_log_line 'safe-line'",
       ].join("\n");
 
       const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
@@ -285,12 +307,18 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("rc:1\n");
-      expect(result.stderr).toContain("refusing non-canonical gateway log path outside test mode");
-      expect(fs.readFileSync(gatewayLog, "utf8")).toBe("existing\n");
+      expect(fs.readFileSync(gatewayLog, "utf8")).toBe("safe-line\n");
+      expect(fs.readFileSync(inheritedTarget, "utf8")).toBe("existing\n");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("routes watchdog gateway-log breadcrumbs through the safe append helper", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+
+    expect(source).not.toContain('>>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}"');
+    expect(source).toContain('append_openclaw_gateway_log_line "$msg" || true');
   });
 
   it("sanitizes gateway log lines before appending", () => {
@@ -302,8 +330,7 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
       const script = [
         "set -uo pipefail",
         `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
-        "_NEMOCLAW_GATEWAY_LOG_TEST_MODE=1",
-        extractShellFunction(source, "append_openclaw_gateway_log_line"),
+        extractGatewayLogAppendFunction(source, gatewayLog),
         "append_openclaw_gateway_log_line $'first\\nsecond'",
       ].join("\n");
 
@@ -342,8 +369,8 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
   // #5874 moved recovery to a docker-IPC path where the warning was written to
   // PID 1 stderr only; the live `issue-2478-crash-loop-recovery` E2E polls
   // /tmp/gateway.log and went red. That target does not run on PR CI, so this
-  // mocked unit pins the file write (via the _NEMOCLAW_GATEWAY_LOG seam) in the
-  // PR gate to keep a refactor from silently regressing to stderr-only.
+  // mocked unit pins the file write through an extracted helper in the PR gate
+  // to keep a refactor from silently regressing to stderr-only.
   it("mirrors the guard-chain restore warning into the gateway log file", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-warn-"));
@@ -353,7 +380,6 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
       const script = [
         "set -uo pipefail",
         `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
-        "_NEMOCLAW_GATEWAY_LOG_TEST_MODE=1",
         // Force the chain-incomplete branch so the warning fires, and stub the
         // downstream restore steps so this isolates the warning emission alone.
         "openclaw_runtime_guard_chain_complete() { return 1; }",
@@ -363,7 +389,7 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
         "verify_messaging_runtime_secret_scans() { return 0; }",
         "write_runtime_shell_env() { return 0; }",
         "validate_nemoclaw_tmp_permissions() { return 0; }",
-        extractShellFunction(source, "append_openclaw_gateway_log_line"),
+        extractGatewayLogAppendFunction(source, gatewayLog),
         extractShellFunction(source, "restore_openclaw_runtime_guard_chain"),
         "rc=0; restore_openclaw_runtime_guard_chain || rc=$?",
         'printf "rc:%s\\n" "$rc"',
@@ -398,7 +424,6 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
       const script = [
         "set -uo pipefail",
         `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
-        "_NEMOCLAW_GATEWAY_LOG_TEST_MODE=1",
         "openclaw_runtime_guard_chain_complete() { return 0; }",
         "install_core_runtime_preloads() { return 0; }",
         "write_messaging_runtime_setup_plan() { return 0; }",

@@ -4119,9 +4119,7 @@ start_gateway_serving_watchdog() {
       fi
       msg="[gateway-watchdog] CRITICAL: gateway pid $pid is alive but dropped its HTTP listener on port ${_DASHBOARD_PORT} ($refused_streak consecutive refused probes); killing it so the respawn loop can relaunch (#4710)"
       echo "$msg" >&2
-      # _NEMOCLAW_GATEWAY_LOG is a test seam; production always appends to
-      # /tmp/gateway.log alongside the gateway's own output.
-      echo "$msg" >>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}" 2>/dev/null || true
+      append_openclaw_gateway_log_line "$msg" || true
       record_gateway_watchdog_kill "$tracked_identity"
       kill -TERM "$pid" 2>/dev/null || true
       for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -4468,35 +4466,26 @@ openclaw_runtime_guard_chain_complete() {
 }
 
 append_openclaw_gateway_log_line() {
-  local log_file="${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}"
+  local log_file="/tmp/gateway.log"
   local line="$1"
-  python3 -I - "$log_file" "$line" "${_NEMOCLAW_GATEWAY_LOG_TEST_MODE:-0}" "${_NEMOCLAW_GATEWAY_LOG_REPLACE_AFTER_LSTAT_TEST:-0}" <<'PYAPPEND'
+  python3 -I - "$log_file" "$line" <<'PYAPPEND'
 import os
 import stat
 import sys
 
 # Source boundary: production startup owns /tmp/gateway.log creation through
 # _nemoclaw_safe_create_tmp_file before any PID 1 recovery path runs. This
-# helper is a permanent defensive append policy for recovery breadcrumbs: it
-# never creates the log, accepts only the canonical production path unless an
-# explicit test-mode seam is set, and refuses link/swap targets before writing.
+# permanent defensive append policy never creates the log, never honors an
+# inherited alternate-path environment variable, and refuses link/swap targets
+# before writing recovery breadcrumbs.
 path = sys.argv[1]
 line = sys.argv[2].replace("\r", " ").replace("\n", " ")
-test_mode = sys.argv[3] == "1"
-if path != "/tmp/gateway.log" and not test_mode:
-    print(f"[SECURITY] refusing non-canonical gateway log path outside test mode: {path}", file=sys.stderr)
-    raise SystemExit(1)
 flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 try:
     before = os.lstat(path)
     if not stat.S_ISREG(before.st_mode):
         print(f"[SECURITY] refusing unsafe gateway log path: {path}", file=sys.stderr)
         raise SystemExit(1)
-    if test_mode and sys.argv[4] == "1":
-        replacement = f"{path}.replacement"
-        with open(replacement, "w", encoding="utf-8") as handle:
-            handle.write("replacement\n")
-        os.replace(replacement, path)
     fd = os.open(path, flags)
 except FileNotFoundError:
     # Production pre-creates /tmp/gateway.log with _nemoclaw_safe_create_tmp_file.
