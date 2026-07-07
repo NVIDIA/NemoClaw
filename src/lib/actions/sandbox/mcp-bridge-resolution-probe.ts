@@ -14,12 +14,14 @@
  * authorization header exactly as agent traffic carries it, and once with a
  * deliberately-unresolvable literal control bearer that no gateway rewrite can
  * ever touch. A working rewrite makes the two requests reach the endpoint with
- * different bearers; a dead rewrite forwards both literally. A placeholder
- * response that differs from the control in the right direction verifies
- * resolution. Identical responses are reported as inconclusive with both
- * hypotheses named: wire evidence alone cannot separate "placeholder forwarded
- * verbatim" from "resolved but expired or revoked credential", because both
- * draw the same rejection from the endpoint.
+ * different bearers; a dead rewrite forwards both literally. Only a
+ * placeholder 2xx paired with a rejected control verifies resolution — an
+ * accepted request proves a valid credential was on the wire while the control
+ * proves the endpoint rejects garbage. Every non-2xx placeholder outcome is
+ * inconclusive with the hypotheses named: identical rejections cannot separate
+ * "forwarded verbatim" from "resolved but expired or revoked", and differing
+ * rejections cannot either, because an endpoint may reject two different
+ * literal bearer strings differently.
  *
  * Response bodies are never captured or printed: they are untrusted
  * authenticated endpoint output, and redaction cannot be guaranteed once the
@@ -235,10 +237,14 @@ export function classifyCredentialResolutionProbe(
     // same 4xx, and an endpoint can fail both probes the same way. Report the
     // evidence and let the operator rule out the credential.
     if (httpStatus >= 400 && httpStatus < 500) {
+      const validationHypothesis =
+        httpStatus === 400
+          ? ", or with an initialize request this endpoint does not accept (request validation)"
+          : "";
       return {
         ok: null,
         ...shared,
-        detail: `the placeholder probe and the unresolvable control probe were rejected identically (HTTP ${httpStatus}); this is consistent with the placeholder being forwarded verbatim, but also with an expired or revoked credential that resolved correctly — verify the stored credential value first`,
+        detail: `the placeholder probe and the unresolvable control probe were rejected identically (HTTP ${httpStatus}); this is consistent with the placeholder being forwarded verbatim, but also with an expired or revoked credential that resolved correctly${validationHypothesis} — verify the stored credential value first`,
       };
     }
     return {
@@ -247,17 +253,14 @@ export function classifyCredentialResolutionProbe(
       detail: `both probes received HTTP ${httpStatus}; the endpoint failed identically and credential resolution could not be judged`,
     };
   }
-  if (httpStatus === 401 || httpStatus === 403) {
-    return {
-      ok: true,
-      ...shared,
-      detail: `the placeholder resolved on the wire (HTTP ${httpStatus} differs from the unresolvable control's HTTP ${controlHttpStatus}) but the endpoint rejected the credential — verify the stored credential value`,
-    };
-  }
+  // Differing non-2xx statuses prove nothing either: a broken gateway forwards
+  // two different literal bearer strings, and an endpoint may reject those
+  // differently (e.g. placeholder 401, control 400) without rewriting one of
+  // them. Only a placeholder 2xx with a rejected control proves resolution.
   return {
     ok: null,
     ...shared,
-    detail: `the placeholder probe received HTTP ${httpStatus} and the unresolvable control HTTP ${controlHttpStatus}; the difference does not prove resolution — compare against a known-good host`,
+    detail: `the placeholder probe received HTTP ${httpStatus} and the unresolvable control HTTP ${controlHttpStatus}; differing rejections do not prove resolution because the endpoint may reject two different literal bearers differently — verify the stored credential value and compare against a known-good host`,
   };
 }
 

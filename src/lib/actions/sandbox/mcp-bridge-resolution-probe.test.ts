@@ -171,7 +171,7 @@ describe("MCP credential-resolution probe classification", () => {
     expect(probe.detail).toContain("failed identically");
   });
 
-  it("classifies a placeholder 401 that differs from the control as resolved but rejected upstream (#6379)", () => {
+  it("never reports differing non-2xx rejections as verified resolution (#6379)", () => {
     const probe = classifyCredentialResolutionProbe(
       {
         status: 0,
@@ -185,8 +185,26 @@ describe("MCP credential-resolution probe classification", () => {
       },
       baseEntry,
     );
-    expect(probe.ok).toBe(true);
-    expect(probe.detail).toContain("verify the stored credential value");
+    expect(probe.ok).toBeNull();
+    expect(probe.detail).toContain("differing rejections do not prove resolution");
+  });
+
+  it("names request validation among the hypotheses for identical 400 rejections (#6379)", () => {
+    const probe = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: probeStdout({
+          httpStatus: 400,
+          curlExit: 0,
+          controlHttpStatus: 400,
+          controlExit: 0,
+        }),
+        stderr: "",
+      },
+      baseEntry,
+    );
+    expect(probe.ok).toBeNull();
+    expect(probe.detail).toContain("request validation");
   });
 
   it("classifies dual 2xx as an endpoint that does not enforce authentication (#6379)", () => {
