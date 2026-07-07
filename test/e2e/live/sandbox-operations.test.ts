@@ -601,7 +601,7 @@ async function assertGatewayRecovery(
 
 liveTest(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
-  async ({ artifacts, cleanup, environment, host, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, docker, environment, host, sandbox, secrets }) => {
     const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.writeJson("target.json", {
@@ -625,17 +625,7 @@ liveTest(
       ],
     });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-sandbox-operations",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for sandbox operations E2E: ${resultText(docker)}`);
-      }
-      skip("Docker is required for sandbox operations E2E");
-    }
+    await docker.requireDocker();
 
     await environment.assertReady(ENVIRONMENT);
     cleanup.add("remove shared NemoClaw gateway registration", () =>
