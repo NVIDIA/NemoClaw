@@ -311,6 +311,7 @@ describe("runtime shared gateway route containment", () => {
         sandboxName: alpha.name,
         provider: customRoute.provider,
         model: customRoute.model,
+        canReuseRecordedRoute: false,
         getSandboxes: () => [alpha, peer],
         rewriteUrlWithDnsPinning,
       }),

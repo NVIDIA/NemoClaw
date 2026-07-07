@@ -49,6 +49,18 @@ $$nemoclaw credentials list
 
 Use the provider ID shown there in the `inference set` commands below.
 
+### Installer Provider Aliases
+
+`inference set` also accepts the installer-facing provider names shown during `$$nemoclaw onboard` (for example `anthropicCompatible`, `build`, or `custom`) and normalizes each one to its canonical OpenShell provider ID before applying the change. The name you picked at onboarding therefore works here without translation:
+
+```bash
+# Both forms select the same provider:
+$$nemoclaw inference set --provider anthropicCompatible --model <model-name>
+$$nemoclaw inference set --provider compatible-anthropic-endpoint --model <model-name>
+```
+
+The sandbox registry always records the canonical OpenShell name (here `compatible-anthropic-endpoint`), not the alias.
+
 ## Switch to a Different Model
 
 <AgentOnly variant="openclaw">
@@ -102,6 +114,8 @@ $$nemoclaw inference set --provider compatible-endpoint --model <model-name>
 ```bash
 $$nemoclaw inference set --provider compatible-anthropic-endpoint --model <model-name>
 ```
+
+To change only the model on a sandbox that is already on this provider, omit `--endpoint-url` — `inference set` reuses the endpoint that onboarding established and does not repoint the gateway route. Any `--endpoint-url` you do pass is always validated by the host-side SSRF guard, so a URL that resolves to a private or internal address is rejected even if it is the same one onboarding recorded; omit the flag to keep the established endpoint. To point the sandbox at a genuinely different endpoint, re-run `$$nemoclaw onboard` with the new endpoint (rebuild reuses the recorded endpoint and cannot change it).
 
 <AgentOnly variant="hermes">
 

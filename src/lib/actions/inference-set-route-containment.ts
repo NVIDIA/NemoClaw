@@ -53,6 +53,10 @@ const INFERENCE_SET_APIS = new Set([
   "openai-responses",
 ]);
 
+// Message prefix for the SSRF/DNS-pinning rejection thrown below. Keep this
+// shared so finalization can append model-switch guidance only to this case.
+export const ENDPOINT_URL_NOT_ALLOWED_PREFIX = "endpoint-url is not allowed:";
+
 function isCustomCompatibleProvider(provider: string): boolean {
   return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
 }
@@ -126,7 +130,7 @@ export async function normalizeCustomEndpointUrl(
     return normalizeEndpointUrlShape(validated).normalized;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new InferenceSetError(`endpoint-url is not allowed: ${message}`, 2);
+    throw new InferenceSetError(`${ENDPOINT_URL_NOT_ALLOWED_PREFIX} ${message}`, 2);
   }
 }
 
@@ -319,6 +323,7 @@ export async function finalizeInferenceSetRoute(options: {
   sandboxName: string;
   provider: string;
   model: string;
+  canReuseRecordedRoute: boolean;
   getSandboxes: () => SandboxEntry[];
   rewriteUrlWithDnsPinning: RewriteConfigUrlsWithDnsPinning;
 }): Promise<{
@@ -332,12 +337,38 @@ export async function finalizeInferenceSetRoute(options: {
       explicitPreferredInferenceApi: null,
     };
   }
-  const registryMetadata: RegistryInferenceMetadata = {
-    ...prepared.preliminaryExplicitMetadata,
-    endpointUrl: await normalizeCustomEndpointUrl(
+  let endpointUrl: string;
+  try {
+    // A supplied endpoint always goes through the host DNS-pinning SSRF guard,
+    // even when it equals the value already recorded for this sandbox. The
+    // registry value is not exclusive onboarding provenance because inference
+    // set persists it too, so equality must never authorize a guard bypass.
+    endpointUrl = await normalizeCustomEndpointUrl(
       prepared.preliminaryExplicitMetadata.endpointUrl,
       options.rewriteUrlWithDnsPinning,
-    ),
+    );
+  } catch (error) {
+    // Only augment the SSRF/DNS-pinning rejection. Missing or malformed URLs
+    // keep their original diagnostics so the guidance cannot contradict them.
+    if (
+      options.canReuseRecordedRoute &&
+      error instanceof InferenceSetError &&
+      error.message.startsWith(ENDPOINT_URL_NOT_ALLOWED_PREFIX)
+    ) {
+      throw new InferenceSetError(
+        `${error.message} This sandbox is already configured for '${options.provider}'. ` +
+          `To switch only the model, omit --endpoint-url — inference set reuses the endpoint ` +
+          `onboarding already established (the gateway route is not changed by inference set). ` +
+          `To point the sandbox at a different endpoint, re-run onboarding with the new endpoint ` +
+          `(rebuild reuses the recorded endpoint and cannot change it).`,
+        error.exitCode,
+      );
+    }
+    throw error;
+  }
+  const registryMetadata: RegistryInferenceMetadata = {
+    ...prepared.preliminaryExplicitMetadata,
+    endpointUrl,
   };
   assertGatewayRouteCompatibility({
     gatewayName: prepared.gatewayName,
