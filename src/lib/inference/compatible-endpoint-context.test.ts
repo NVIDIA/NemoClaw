@@ -24,6 +24,10 @@ async function apply(
       log: (message: string) => messages.push(message),
       warn: (message: string) => messages.push(message),
     },
+    // Inject a clearly-public resolver so the unconditional DNS SSRF preflight
+    // passes for the endpoint.example host these cases probe (#6293). Cases that
+    // exercise SSRF refusal use inline calls with a private-address resolver.
+    resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
     ...options,
   });
   return { env, messages };
@@ -134,13 +138,6 @@ describe("compatible-endpoint context window", () => {
 
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
     expect(messages.some((m) => m.includes("Could not read the endpoint's /v1/models"))).toBe(true);
-  });
-
-  it("skips the real host fetch under the unit-test runner unless one is injected", async () => {
-    const { env, messages } = await apply({}, { VITEST: "true" });
-
-    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
-    expect(messages).toEqual([]);
   });
 
   it("clears its own stale auto value when a re-probed endpoint reports nothing (#6177)", async () => {
@@ -259,6 +256,7 @@ describe("compatible-endpoint context window", () => {
     await applyCompatibleEndpointContextWindow("https://public.example/v1", "model-a", {
       env,
       fetchModels: () => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }),
+      resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
       logger: { log: () => undefined, warn: () => undefined },
     });
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");

@@ -60,6 +60,7 @@ describe("inference selection validation", () => {
       getCredential: () => "test-key",
       probeOpenAiLikeEndpoint,
       promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
 
     try {
@@ -182,6 +183,7 @@ describe("inference selection validation", () => {
       getCredential: () => "test-key",
       probeAnthropicEndpoint,
       promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
 
     try {
@@ -230,6 +232,7 @@ describe("inference selection validation", () => {
       probeAnthropicEndpoint,
       probeOpenAiLikeEndpoint,
       promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
 
     try {
@@ -269,6 +272,7 @@ describe("inference selection validation", () => {
       getCredential: () => "test-key",
       probeAnthropicEndpoint,
       promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
 
     try {
@@ -314,6 +318,7 @@ describe("inference selection validation", () => {
       getCredential: () => "test-key",
       probeAnthropicEndpoint,
       promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
 
     try {

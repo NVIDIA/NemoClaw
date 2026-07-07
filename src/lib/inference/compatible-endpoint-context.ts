@@ -255,26 +255,23 @@ export async function applyCompatibleEndpointContextWindow(
   }
 
   const fetchModels = options.fetchModels;
-  if (!fetchModels && env.VITEST === "true") return;
 
   // DNS-backed SSRF: the string-level isPrivateEndpoint check above only sees
   // literal IPs and reserved names. This host-side GET is its own curl boundary
-  // (independent of the chat-completions validation probe), so pin the resolver
-  // preflight here — a public-looking name that resolves to loopback/link-local/
-  // RFC1918 is refused before the fetch. Skipped when a fake fetcher is injected
-  // without a resolver (unit tests), so it never issues real DNS there; runs in
-  // production (no injected fetcher) and whenever a resolver is injected.
-  // See PR #6293 PRA-3 (GPT-5.5).
-  if (options.resolveHost || !fetchModels) {
-    const preflight = await assertEndpointResolvesPublic(endpointUrl, options.resolveHost);
-    if (!preflight.ok) {
-      logger.warn(
-        `  ⚠ ${preflight.reason}; skipping the /v1/models context probe. ` +
-          "Use a routable public URL to auto-detect the context window.",
-      );
-      clearPreviousAuto();
-      return;
-    }
+  // (independent of the chat-completions validation probe), so always run the
+  // resolver preflight — a public-looking name that resolves to loopback/
+  // link-local/RFC1918 is refused before the fetch. It defaults to the real
+  // dns/promises resolver (assertEndpointResolvesPublic); tests inject
+  // options.resolveHost. No env-gated bypass: an ambient VITEST flag must never
+  // disable SSRF enforcement (cv review, PR #6293).
+  const preflight = await assertEndpointResolvesPublic(endpointUrl, options.resolveHost);
+  if (!preflight.ok) {
+    logger.warn(
+      `  ⚠ ${preflight.reason}; skipping the /v1/models context probe. ` +
+        "Use a routable public URL to auto-detect the context window.",
+    );
+    clearPreviousAuto();
+    return;
   }
 
   const resolveCredential = options.resolveCredential ?? getCredential;

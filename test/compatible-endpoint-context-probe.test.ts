@@ -30,6 +30,11 @@ const MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4";
 // by the unit tests in src/lib/inference/compatible-endpoint-context.test.ts.
 const PUBLIC_ENDPOINT_URL = "https://vllm.public.test/v1";
 
+// The DNS SSRF preflight now runs unconditionally, so inject a clearly-public
+// resolver for the public hostname while the injected fetcher targets the
+// loopback fake server (#6293).
+const RESOLVE_PUBLIC = async () => [{ address: "93.184.216.34", family: 4 }];
+
 let server: FakeOpenAiCompatibleServer | null = null;
 
 function fetchFromServer(apiKey: string): () => unknown | null {
@@ -55,6 +60,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,
       fetchModels: fetchFromServer(""),
+      resolveHost: RESOLVE_PUBLIC,
     });
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
   });
@@ -71,6 +77,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
       env,
       apiKey: "secret-key",
       fetchModels: fetchFromServer("secret-key"),
+      resolveHost: RESOLVE_PUBLIC,
     });
 
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
@@ -95,6 +102,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
       env: noKeyEnv,
       apiKey: "",
       fetchModels: fetchFromServer(""),
+      resolveHost: RESOLVE_PUBLIC,
     });
     expect(noKeyEnv.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
     // Assert the endpoint actually rejected the unauthenticated /v1/models
@@ -109,6 +117,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
       env: keyedEnv,
       apiKey: "secret-key",
       fetchModels: fetchFromServer("secret-key"),
+      resolveHost: RESOLVE_PUBLIC,
     });
     expect(keyedEnv.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
     expect(
@@ -148,6 +157,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,
       fetchModels: fetchFromServer(""),
+      resolveHost: RESOLVE_PUBLIC,
     });
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
   });

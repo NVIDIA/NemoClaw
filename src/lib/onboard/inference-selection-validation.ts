@@ -128,11 +128,9 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string | null,
     helpUrl: string | null,
   ): Promise<EndpointValidationResult | null> {
-    // Under the unit-test runner the default resolver would hit real DNS (and
-    // fixture hostnames do not resolve); skip unless a resolver is injected,
-    // mirroring applyCompatibleEndpointContextWindow's VITEST fetch guard. In
-    // production (VITEST unset) the real dns/promises resolver always runs.
-    if (!deps.resolveEndpointHost && process.env.VITEST === "true") return null;
+    // Always run the SSRF preflight. It defaults to the real dns/promises
+    // resolver; tests inject deps.resolveEndpointHost. No env-gated bypass — an
+    // ambient VITEST flag must never disable SSRF enforcement (cv review, #6293).
     const preflight = await assertEndpointResolvesPublic(endpointUrl, deps.resolveEndpointHost);
     if (preflight.ok) return null;
     const syntheticProbe = {
