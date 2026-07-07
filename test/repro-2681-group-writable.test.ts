@@ -48,12 +48,18 @@ function extractShellFunctionFromSource(src: string, name: string): string {
   return `${name}() {${match[1]}\n}`;
 }
 
+function replaceRequired(source: string, target: string, replacement: string): string {
+  const parts = source.split(target);
+  if (parts.length !== 2) {
+    throw new Error(`Expected exactly one replacement target: ${target}`);
+  }
+  return `${parts[0]}${replacement}${parts[1]}`;
+}
+
 function normalizeMutableConfigPermsFor(configDir: string): string {
   const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-  const normalizeFunction = extractShellFunctionFromSource(
-    startScript,
-    "normalize_mutable_config_perms",
-  ).replace(
+  const normalizeFunction = replaceRequired(
+    extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms"),
     'local config_dir="/sandbox/.openclaw"',
     `local config_dir=${JSON.stringify(configDir)}`,
   );
@@ -65,7 +71,13 @@ function normalizeMutableConfigPermsFor(configDir: string): string {
     startScript,
     "reclaim_collapsed_mutable_config",
   );
-  return [resolveNormalizerFunction, reclaimFunction, normalizeFunction].join("\n");
+  const classifyFunction = extractShellFunctionFromSource(
+    startScript,
+    "classify_openclaw_config_seal",
+  );
+  return [resolveNormalizerFunction, classifyFunction, reclaimFunction, normalizeFunction].join(
+    "\n",
+  );
 }
 
 function modeBits(filePath: string): number {
@@ -717,9 +729,9 @@ process.stdout.write(JSON.stringify(calls));
             "set -euo pipefail",
             // Model the descriptor observing root ownership without requiring
             // the test runner itself to own this fixture as root: the initial
-            // classification reports uid 0, and reclaim-if-unsealed reports a
-            // sealed/no-op tree, so normalize must never reach chmod or find.
-            'python3() { if [ "${2:-}" = "-" ]; then cat >/dev/null; printf "0\\n"; return 0; fi; if [ "${3:-}" = "reclaim-if-unsealed" ]; then return 0; fi; printf "unexpected helper invocation\\n" >&2; return 68; }',
+            // classification reports uid 0, and classify-seal reports a
+            // sealed tree, so normalize must never reach chmod or find.
+            'python3() { if [ "${2:-}" = "-" ]; then cat >/dev/null; printf "0\\n"; return 0; fi; if [ "${3:-}" = "classify-seal" ]; then return 0; fi; printf "unexpected helper invocation\\n" >&2; return 68; }',
             'chmod() { printf "CHMOD %s\\n" "$*" >&2; exit 66; }',
             'find() { printf "FIND %s\\n" "$*" >&2; exit 67; }',
             normalizeMutableConfigPermsFor(configDir),

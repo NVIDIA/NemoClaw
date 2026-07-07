@@ -525,6 +525,9 @@ resolve_mutable_config_normalizer() {
     printf '%s\n' "$normalizer"
     return 0
   fi
+  # A privileged repair may execute only the immutable helper installed in the
+  # image. The environment and checkout fallbacks below exist solely for
+  # non-root developer/test harnesses, where they cannot change ownership.
   if [ "$(id -u)" -eq 0 ]; then
     return 1
   fi
@@ -579,14 +582,15 @@ PY_CLASSIFY_MUTABLE_CONFIG
   [ "$config_dir_uid" = "missing" ] && return 0
   if [ "$config_dir_uid" = "0" ]; then
     [ "$operation" = "normalize" ] || return 0
-    # Root ownership here is the same OpenClaw doctor --fix collapse tracked
-    # by #6047 (https://github.com/NVIDIA/NemoClaw/issues/6047), the upstream
-    # tightening run_oneshot_command's wrapper below also works around.
-    # reclaim_collapsed_mutable_config classifies and, only if unsealed,
-    # reclaims under one pinned descriptor, so a genuinely sealed lock
-    # (root:root 0755 dir, 0444 config) is never reopened for mutation; drop
-    # this call once the pinned OpenClaw stops collapsing the sandbox
-    # 2770/660 contract on its own.
+    # Dockerfile and policy sources establish sandbox:sandbox 2770/660 as the
+    # mutable default. #6300 establishes the root-ownership/write regression,
+    # but not a broader safe-to-repair state; no in-repo producer has been
+    # identified. This compatibility path therefore accepts only the narrow
+    # root:root 0700/0600 fixture, under a sandbox:sandbox 0755 parent. That is
+    # distinct from #6047's sandbox-owned mode collapse, which the owner-UID
+    # normalizer below repairs. Every other root-owned state fails closed.
+    # Remove this path once the runtime preserves the declared ownership and
+    # the live shields-config regression proves that boundary.
     reclaim_collapsed_mutable_config "$config_dir" || return 1
     return 0
   fi
@@ -646,15 +650,30 @@ PY_CLASSIFY_MUTABLE_CONFIG
 
 classify_openclaw_config_seal() {
   local config_dir="$1"
+  local sandbox_uid sandbox_gid
+  if [ "$(id -u)" -eq 0 ]; then
+    sandbox_uid="$(id -u sandbox)" || return 2
+    sandbox_gid="$(id -g sandbox)" || return 2
+  else
+    sandbox_uid="$(id -u)"
+    sandbox_gid="$(id -g)"
+  fi
   local normalizer
   normalizer="$(resolve_mutable_config_normalizer)" || return 2
-  python3 -I "$normalizer" classify-seal "$config_dir" >/dev/null
+  python3 -I "$normalizer" classify-seal \
+    "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null
 }
 
 reclaim_collapsed_mutable_config() {
   local config_dir="$1"
 
-  [ "$(id -u)" -eq 0 ] || return 0
+  if [ "$(id -u)" -ne 0 ]; then
+    if classify_openclaw_config_seal "$config_dir"; then
+      return 0
+    fi
+    printf '[SECURITY] Refusing mutable config reclaim — root privileges are required\n' >&2
+    return 1
+  fi
 
   local sandbox_uid sandbox_gid
   if ! sandbox_uid="$(id -u sandbox)" || ! sandbox_gid="$(id -g sandbox)"; then
@@ -755,6 +774,36 @@ openclaw_locked_parent_is_protected() {
     "root:sandbox 1775" | "root:sandbox 01775") return 0 ;;
     *) return 1 ;;
   esac
+}
+
+prepare_openclaw_config_startup() {
+  run_openclaw_config_guard revoke-startup-ready --startup-owner || return 1
+
+  # A persisted #6300 root:root 0700/0600 mutable tree overlaps one broad
+  # orphan-freeze discriminator in the transaction guard. Repair only that
+  # exact signature before recovery; sealed and indeterminate states remain
+  # untouched for the guard to verify or recover under its mutation mutex.
+  if [ "$(openclaw_config_dir_owner /sandbox/.openclaw)" = "root" ]; then
+    local seal_state=0
+    classify_openclaw_config_seal /sandbox/.openclaw || seal_state=$?
+    case "$seal_state" in
+      0 | 2) ;;
+      1) reclaim_collapsed_mutable_config /sandbox/.openclaw || return 1 ;;
+      *)
+        printf '[SECURITY] Refusing mutable config startup — invalid seal classification %s\n' \
+          "$seal_state" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  run_openclaw_config_guard recover --startup-owner || return 1
+  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
+    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
+    timeout --signal=TERM --kill-after=5s 12m \
+      python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
+      --config-dir /sandbox/.openclaw || return 1
+  fi
 }
 
 prepare_openclaw_config_for_write() {
@@ -4685,14 +4734,7 @@ handle_openclaw_gateway_control_request() {
 # OpenClaw config. Recovery runs before the locked-parent discriminator so a
 # crash in a prior config write/restart/handoff can complete deterministically.
 if [ "$(id -u)" -eq 0 ]; then
-  run_openclaw_config_guard revoke-startup-ready --startup-owner || exit 1
-  run_openclaw_config_guard recover --startup-owner || exit 1
-  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
-    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
-    timeout --signal=TERM --kill-after=5s 12m \
-      python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
-      --config-dir /sandbox/.openclaw || exit 1
-  fi
+  prepare_openclaw_config_startup || exit 1
 fi
 
 # A root-owned config directory is the shields-up discriminator. Its parent
