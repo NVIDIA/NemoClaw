@@ -6,6 +6,7 @@ import {
   type DashboardRuntimeAgent,
   getAgentDeclaredForwardPorts,
   getAgentPrimaryForwardPort,
+  isValidForwardPort,
   shouldManageDashboardForAgent,
 } from "./dashboard-runtime";
 
@@ -22,10 +23,6 @@ export type AgentDashboardForwardConfig = NonNullable<DashboardRuntimeAgent> & {
   dashboard?: { kind?: unknown } | null;
   dashboardUi?: unknown;
 };
-
-function isValidPort(port: number | null | undefined): port is number {
-  return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535;
-}
 
 export function ensureAgentDashboardForward(options: {
   sandboxName: string;
@@ -52,9 +49,11 @@ export function ensureAgentDashboardForward(options: {
   const declaredPrimaryPort = getAgentPrimaryForwardPort(agent, DASHBOARD_PORT);
   const usesFixedApiPort = agent.dashboard?.kind === "api";
   const agentDashboardPort =
-    !usesFixedApiPort && isValidPort(controlUiPort) ? controlUiPort : declaredPrimaryPort;
+    !usesFixedApiPort && isValidForwardPort(controlUiPort) ? controlUiPort : declaredPrimaryPort;
   const optionalDashboardPort =
-    usesFixedApiPort && agent.dashboardUi && isValidPort(controlUiPort) ? controlUiPort : null;
+    usesFixedApiPort && agent.dashboardUi && isValidForwardPort(controlUiPort)
+      ? controlUiPort
+      : null;
   const declaredPorts = getAgentDeclaredForwardPorts(agent).filter(
     (port) => port !== declaredPrimaryPort || port === agentDashboardPort,
   );
@@ -65,7 +64,7 @@ export function ensureAgentDashboardForward(options: {
       optionalDashboardPort,
       ...preserveForwardPorts,
     ]),
-  ].filter(isValidPort);
+  ].filter(isValidForwardPort);
   const requestedDashboardUrl =
     !usesFixedApiPort && chatUiUrl
       ? replaceUrlPort(chatUiUrl, agentDashboardPort)

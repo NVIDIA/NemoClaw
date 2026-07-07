@@ -28,7 +28,7 @@ function readObject(record: ManifestRecordLike, key: string): ManifestRecordLike
   return value as ManifestRecordLike;
 }
 
-function isValidPort(value: unknown): value is number {
+function isValidNonPrivilegedPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1024 && value <= 65535;
 }
 
@@ -37,7 +37,7 @@ export function readDashboardUi(record: ManifestRecordLike): AgentDashboardUi | 
   if (!dashboardUi) return null;
 
   const port = dashboardUi.port;
-  if (!isValidPort(port)) {
+  if (!isValidNonPrivilegedPort(port)) {
     throw new Error(
       "Agent manifest field 'dashboard_ui.port' must be an integer TCP port between 1024 and 65535",
     );
@@ -77,7 +77,7 @@ function dashboardUiPort(
 ): number {
   const dashboardUi = agent.dashboardUi;
   if (!dashboardUi) return agent.forwardPort;
-  if (isValidPort(effectiveDashboardPort)) return effectiveDashboardPort;
+  if (isValidNonPrivilegedPort(effectiveDashboardPort)) return effectiveDashboardPort;
   const raw = env[dashboardUi.portEnv];
   if (raw && /^\d+$/.test(raw.trim())) {
     const port = Number(raw.trim());

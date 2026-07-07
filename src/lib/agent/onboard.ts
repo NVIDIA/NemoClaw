@@ -11,6 +11,7 @@ import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
+import { isValidForwardPort } from "../onboard/dashboard-runtime";
 import { redact, run } from "../runner";
 import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
@@ -414,12 +415,9 @@ export function printDashboardUi(
   const info = getAgentDashboardInfo(agent);
   const { auth, kind, label, path } = agent.dashboard;
   const cliName = getAgentBranding(agent.name).cli;
-  const effectiveDashboardPort =
-    Number.isInteger(deps.effectiveDashboardPort) &&
-    Number(deps.effectiveDashboardPort) >= 1 &&
-    Number(deps.effectiveDashboardPort) <= 65535
-      ? Number(deps.effectiveDashboardPort)
-      : info.port;
+  const effectiveDashboardPort = isValidForwardPort(deps.effectiveDashboardPort)
+    ? deps.effectiveDashboardPort
+    : info.port;
 
   if (kind === "api") {
     console.log(`  ${info.displayName} ${label}`);
