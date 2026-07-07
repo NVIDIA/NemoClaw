@@ -26,11 +26,15 @@
 //
 // WHAT THIS DOES: it hooks Module._load (CJS require AND the CJS-interop path
 // that `import("qrcode")` bottoms out at) and wraps the loaded module:
-//   * `qrcode` (has both `toString` and `create`): force `small: true` for
-//     terminal renders. Non-terminal renders (svg/png/utf8 data URIs) are
-//     left untouched, and a caller that already opts into `small` is a no-op.
+//   * `qrcode` (has both `toString` and `create`): terminal renders are rebuilt
+//     from `qrcode.create(...).modules` with a four-module quiet zone instead of
+//     delegating to qrcode's built-in `small` terminal renderer. Non-terminal
+//     renders (svg/png/utf8 data URIs) are left untouched.
 //   * `qrcode-terminal` (has `generate`): force `small: true` as well, so the
 //     fix also covers any agent/path that renders through that package.
+//   * the reviewed OpenClaw QR renderer ES module: widen the compact-renderer
+//     quiet zone on all four edges. This is hash-gated to the reviewed
+//     OpenClaw 2026.6.10 renderer so a drifted upstream bundle fails closed.
 // The QR text and error-correction level are never altered — only the
 // terminal cell packing — so the rendered code is identical apart from size.
 //
@@ -57,6 +61,143 @@ function hasOwn(mod, name) {
   return mod && Object.prototype.hasOwnProperty.call(mod, name);
 }
 
+function isOpenClawQrTerminalRendererSource(source) {
+  return (
+    typeof source === "string" &&
+    source.indexOf("renderCompactTerminalQr") !== -1 &&
+    source.indexOf("COMPACT_MARGIN_MODULES") !== -1 &&
+    source.indexOf("async function renderQrTerminal") !== -1 &&
+    source.indexOf("if (opts.small === true) return renderCompactTerminalQr") !== -1
+  );
+}
+
+var REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256 =
+  "f74865035a498389fe910b23537a7dffeaee1b05e044999d855b61c96af0ada7";
+
+function isReviewedOpenClawQrTerminalRendererIntegrity(integrity: string | undefined) {
+  return integrity === REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256;
+}
+
+function describeOpenClawQrTerminalPatchSkip(source: string, integrity?: string) {
+  if (!isOpenClawQrTerminalRendererSource(source)) return "";
+  if (
+    integrity !== undefined &&
+    integrity !== null &&
+    !isReviewedOpenClawQrTerminalRendererIntegrity(integrity)
+  ) {
+    return "OpenClaw QR renderer integrity is unreviewed; explicit compact quiet-zone rewrite skipped";
+  }
+
+  var marginTo = "const COMPACT_MARGIN_MODULES = 4;";
+  var yLoopTo =
+    "for (let y = -COMPACT_MARGIN_MODULES; y < modules.size + COMPACT_MARGIN_MODULES; y += 2)";
+  var xLoopTo =
+    "for (let x = -COMPACT_MARGIN_MODULES; x < modules.size + COMPACT_MARGIN_MODULES; x += 1)";
+  var alreadyPatched =
+    source.indexOf(marginTo) !== -1 &&
+    source.indexOf(yLoopTo) !== -1 &&
+    source.indexOf(xLoopTo) !== -1;
+  if (alreadyPatched) return "";
+
+  var marginFrom = "const COMPACT_MARGIN_MODULES = 1;";
+  var yLoopFrom = "for (let y = -1; y < modules.size + COMPACT_MARGIN_MODULES; y += 2)";
+  var xLoopFrom = "for (let x = -1; x < modules.size + COMPACT_MARGIN_MODULES; x += 1)";
+  var hasExactPreimage =
+    source.indexOf(marginFrom) !== -1 &&
+    source.indexOf(yLoopFrom) !== -1 &&
+    source.indexOf(xLoopFrom) !== -1;
+  if (!hasExactPreimage) {
+    return "OpenClaw QR renderer preimage is unrecognized; explicit compact quiet-zone rewrite skipped";
+  }
+  return "";
+}
+
+function patchOpenClawQrTerminalRendererSource(source: string, integrity?: string) {
+  if (!isOpenClawQrTerminalRendererSource(source)) return source;
+  if (describeOpenClawQrTerminalPatchSkip(source, integrity)) return source;
+
+  var marginFrom = "const COMPACT_MARGIN_MODULES = 1;";
+  var marginTo = "const COMPACT_MARGIN_MODULES = 4;";
+  var yLoopFrom = "for (let y = -1; y < modules.size + COMPACT_MARGIN_MODULES; y += 2)";
+  var yLoopTo =
+    "for (let y = -COMPACT_MARGIN_MODULES; y < modules.size + COMPACT_MARGIN_MODULES; y += 2)";
+  var xLoopFrom = "for (let x = -1; x < modules.size + COMPACT_MARGIN_MODULES; x += 1)";
+  var xLoopTo =
+    "for (let x = -COMPACT_MARGIN_MODULES; x < modules.size + COMPACT_MARGIN_MODULES; x += 1)";
+
+  var alreadyPatched =
+    source.indexOf(marginTo) !== -1 &&
+    source.indexOf(yLoopTo) !== -1 &&
+    source.indexOf(xLoopTo) !== -1;
+  if (alreadyPatched) return source;
+
+  var hasExactPreimage =
+    source.indexOf(marginFrom) !== -1 &&
+    source.indexOf(yLoopFrom) !== -1 &&
+    source.indexOf(xLoopFrom) !== -1;
+  if (!hasExactPreimage) return source;
+
+  return source
+    .replace(marginFrom, marginTo)
+    .replace(yLoopFrom, yLoopTo)
+    .replace(xLoopFrom, xLoopTo);
+}
+
+function createOpenClawQrTerminalLoaderSource() {
+  return `
+import { createHash } from "node:crypto";
+
+const REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256 = ${JSON.stringify(
+    REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
+  )};
+const isOpenClawQrTerminalRendererSource = ${isOpenClawQrTerminalRendererSource.toString()};
+const isReviewedOpenClawQrTerminalRendererIntegrity = ${isReviewedOpenClawQrTerminalRendererIntegrity.toString()};
+const describeOpenClawQrTerminalPatchSkip = ${describeOpenClawQrTerminalPatchSkip.toString()};
+const patchOpenClawQrTerminalRendererSource = ${patchOpenClawQrTerminalRendererSource.toString()};
+
+function decodeSource(source) {
+  if (typeof source === "string") return source;
+  if (source && typeof Buffer !== "undefined") return Buffer.from(source).toString("utf8");
+  return "";
+}
+
+function sha256Hex(source) {
+  return createHash("sha256").update(source).digest("hex");
+}
+
+function warnOpenClawQrPatchSkip(message) {
+  try {
+    process.stderr.write("[channels] WhatsApp compact-QR warning: " + message + "\\n");
+  } catch (_e) {
+  }
+}
+
+export async function load(url, context, nextLoad) {
+  const result = await nextLoad(url, context);
+  if (!result || result.format !== "module") return result;
+  const source = decodeSource(result.source);
+  if (!isOpenClawQrTerminalRendererSource(source)) return result;
+  const integrity = sha256Hex(source);
+  const skipReason = describeOpenClawQrTerminalPatchSkip(source, integrity);
+  if (skipReason) {
+    warnOpenClawQrPatchSkip(skipReason);
+    return result;
+  }
+  const patched = patchOpenClawQrTerminalRendererSource(source, integrity);
+  if (patched === source) return result;
+  return { ...result, source: patched };
+}
+	`;
+}
+
+function warnWhatsappQrCompact(message) {
+  try {
+    process.stderr.write("[channels] WhatsApp compact-QR warning: " + message + "\n");
+  } catch (_e) {
+    // Best effort diagnostic only.
+  }
+}
+
 // `qrcode` package main: renderQrTerminal() calls qrcode.toString(text, opts).
 // Require an OWN toString (every object inherits Object.prototype.toString, so
 // a plain `typeof mod.toString` check would also match qrcode's internal
@@ -81,6 +222,61 @@ function isQrcodeTerminalPackage(mod) {
   );
 }
 
+var NEMOCLAW_COMPACT_MARGIN_MODULES = 4;
+var TERMINAL_BLACK_ON_WHITE = "\x1b[47m\x1b[30m";
+var TERMINAL_RESET = "\x1b[0m";
+var FULL_BLOCK = "█";
+var UPPER_HALF_BLOCK = "▀";
+var LOWER_HALF_BLOCK = "▄";
+
+function readQrModule(modules, x, y) {
+  if (x < 0 || y < 0 || x >= modules.size || y >= modules.size) {
+    return false;
+  }
+  return Boolean(modules.data[y * modules.size + x]);
+}
+
+function compactQrBlock(top, bottom) {
+  if (top && bottom) return FULL_BLOCK;
+  if (top) return UPPER_HALF_BLOCK;
+  if (bottom) return LOWER_HALF_BLOCK;
+  return " ";
+}
+
+function renderWhatsappCompactTerminalQr(modules) {
+  var lines = [];
+  for (
+    var y = -NEMOCLAW_COMPACT_MARGIN_MODULES;
+    y < modules.size + NEMOCLAW_COMPACT_MARGIN_MODULES;
+    y += 2
+  ) {
+    var line = TERMINAL_BLACK_ON_WHITE;
+    for (
+      var x = -NEMOCLAW_COMPACT_MARGIN_MODULES;
+      x < modules.size + NEMOCLAW_COMPACT_MARGIN_MODULES;
+      x += 1
+    ) {
+      line += compactQrBlock(readQrModule(modules, x, y), readQrModule(modules, x, y + 1));
+    }
+    lines.push(line + TERMINAL_RESET);
+  }
+  return lines.join("\n");
+}
+
+function cloneQrcodeCreateOptions(opts) {
+  var createOpts = {};
+  for (var key in opts) {
+    if (!Object.prototype.hasOwnProperty.call(opts, key)) continue;
+    if (key === "type" || key === "small") continue;
+    createOpts[key] = opts[key];
+  }
+  return createOpts;
+}
+
+function renderQrcodePackageTerminal(mod, text, opts) {
+  return renderWhatsappCompactTerminalQr(mod.create(text, cloneQrcodeCreateOptions(opts)).modules);
+}
+
 function patchQrcode(mod) {
   if (mod.__nemoclawCompactPatched) return mod;
   var origToString = mod.toString;
@@ -96,12 +292,18 @@ function patchQrcode(mod) {
         if (Object.prototype.hasOwnProperty.call(opts, key)) merged[key] = opts[key];
       }
     }
-    // Only the terminal renderer has the oversize problem. `type` defaults
-    // to "utf8" in the qrcode package, but the WhatsApp path always passes
-    // "terminal" explicitly; force small there and leave every other type
-    // (svg/png/utf8 data URIs used elsewhere) exactly as the caller asked.
     if (merged.type === "terminal") {
-      merged.small = true;
+      if (typeof cb === "function") {
+        try {
+          cb(null, renderQrcodePackageTerminal(mod, text, merged));
+        } catch (err) {
+          cb(err);
+        }
+        return undefined;
+      }
+      return Promise.resolve().then(function () {
+        return renderQrcodePackageTerminal(mod, text, merged);
+      });
     }
     return origToString.call(this, text, merged, cb);
   };
@@ -155,10 +357,47 @@ export {
   hasOwn,
   isQrcodePackage,
   isQrcodeTerminalPackage,
+  renderWhatsappCompactTerminalQr,
+  renderQrcodePackageTerminal,
+  isReviewedOpenClawQrTerminalRendererIntegrity,
+  isOpenClawQrTerminalRendererSource,
+  describeOpenClawQrTerminalPatchSkip,
+  warnWhatsappQrCompact,
+  patchOpenClawQrTerminalRendererSource,
+  REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
+  createOpenClawQrTerminalLoaderSource,
   patchQrcode,
   patchQrcodeTerminal,
   resolvePatchedModule,
 };
+
+function installOpenClawQrTerminalSourceLoader(Module) {
+  if (process.__nemoclawWhatsappQrCompactSourceLoaderInstalled) return;
+  if (!Module || typeof Module.register !== "function") {
+    warnWhatsappQrCompact(
+      "OpenClaw QR renderer source loader registration is unavailable; explicit compact quiet-zone rewrite skipped",
+    );
+    return;
+  }
+  try {
+    Object.defineProperty(process, "__nemoclawWhatsappQrCompactSourceLoaderInstalled", {
+      value: true,
+    });
+  } catch (_e) {
+    process.__nemoclawWhatsappQrCompactSourceLoaderInstalled = true;
+  }
+
+  try {
+    var loaderSource = createOpenClawQrTerminalLoaderSource();
+    var loaderUrl =
+      "data:text/javascript;base64," + Buffer.from(loaderSource, "utf8").toString("base64");
+    Module.register(loaderUrl);
+  } catch (_e) {
+    warnWhatsappQrCompact(
+      "OpenClaw QR renderer source loader registration failed; explicit compact quiet-zone rewrite skipped",
+    );
+  }
+}
 
 // Install the Module._load hook that patches qrcode / qrcode-terminal on load.
 // Guarded so double-require is a no-op. Runs on import (the file is loaded via
@@ -172,6 +411,7 @@ function installWhatsappQrCompactHook() {
   }
 
   var Module = require("module");
+  installOpenClawQrTerminalSourceLoader(Module);
   var origLoad = Module._load;
 
   Module._load = function (request, _parent, _isMain) {
