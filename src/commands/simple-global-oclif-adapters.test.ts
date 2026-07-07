@@ -141,6 +141,7 @@ describe("simple global oclif adapters", () => {
       { quick: true },
       expect.objectContaining({ runDebug: expect.any(Function) }),
     );
+    expect(configure).toHaveBeenCalledWith({ debug: false, quiet: false });
     expect(configure).not.toHaveBeenCalledWith({ debug: false, quiet: true });
   });
 

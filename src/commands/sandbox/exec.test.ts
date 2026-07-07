@@ -44,6 +44,7 @@ describe("SandboxExecCommand oclif parse path", () => {
       tty: null,
       timeoutSeconds: undefined,
     });
+    expect(configure).toHaveBeenCalledWith({ debug: false, quiet: false });
     expect(configure).not.toHaveBeenCalledWith({ debug: true, quiet: false });
     expect(configure).not.toHaveBeenCalledWith({ debug: false, quiet: true });
   });
