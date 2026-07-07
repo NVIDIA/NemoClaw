@@ -112,16 +112,8 @@ describe("internal command documentation (#3782)", () => {
 
 describe("exec command documentation", () => {
   function execSections(text: string, binary: string): string[] {
-    const lines = text.split("\n");
-    const sections: string[] = [];
-    for (let index = 0; index < lines.length; index += 1) {
-      if (lines[index] !== `### \`${binary} <name> exec\``) continue;
-      const nextHeading = lines.findIndex(
-        (line, offset) => offset > index && line.startsWith("### "),
-      );
-      sections.push(lines.slice(index, nextHeading === -1 ? undefined : nextHeading).join("\n"));
-    }
-    return sections;
+    const heading = `### \`${binary} <name> exec\``;
+    return text.split(/\n(?=### )/).filter((section) => section.startsWith(heading));
   }
 
   it.each(
