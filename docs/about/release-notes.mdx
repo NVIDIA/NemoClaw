@@ -16,6 +16,20 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.75
+
+NemoClaw v0.0.75 hardens sandbox upgrade and prepared-backup recovery, custom endpoint inference routing, and local gateway credential handling.
+
+- Upgrading an existing install now recovers a previously onboarded sandbox instead of failing when the recreated gateway has not yet reconfigured its inference route.
+  Prepared-backup recovery restores gateway state before the rebuild and defers the live route check to onboarding, in-place upgrades recover gateway-orphaned sandboxes, and a same-name `--fresh` re-onboard preserves the newly selected LangChain Deep Agents Code routing.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands) and [Troubleshooting](../reference/troubleshooting).
+- Custom Anthropic-compatible inference now uses the OpenAI frontend, and OpenAI-only agents keep the `/v1` base URL when pointed at an Anthropic-compatible endpoint, so switching a managed sandbox to a compatible endpoint routes and reports the provider and model correctly.
+  For more information, refer to [NemoClaw Inference Options](../inference/inference-options) and [NemoClaw CLI Commands Reference](../reference/commands).
+- Local docker-driver gateway credentials no longer expire, which keeps a long-running local sandbox reachable without a manual gateway restart, and Hermes runtime and managed MCP state reconcile after a runtime change while Hermes installs accept a pinned base platform digest.
+  For more information, refer to [Use a Local Inference Server](../inference/use-local-inference) and [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
+- OpenClaw local CLI pairing restores its previous connection path so a local sandbox reconnects without re-pairing.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+
 ## v0.0.74
 
 NemoClaw v0.0.74 upgrades the OpenShell policy boundary, adds managed MCP and progressive tool disclosure, strengthens the experimental LangChain Deep Agents Code integration, and improves onboarding, local inference, messaging, recovery, and contributor workflows.
