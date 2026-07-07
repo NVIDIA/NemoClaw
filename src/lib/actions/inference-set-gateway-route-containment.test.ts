@@ -134,6 +134,38 @@ describe("runtime shared gateway route containment", () => {
     );
   });
 
+  it("aborts before mutation when the target changes gateways while waiting", async () => {
+    const alpha = entry("alpha");
+    const deps = createDeps({
+      config: {},
+      entries: [alpha],
+      defaultSandbox: alpha.name,
+      withGatewayRouteMutationLock: async (gatewayName, operation) => {
+        expect(gatewayName).toBe("nemoclaw");
+        Object.assign(alpha, { gatewayName: "nemoclaw-9090", gatewayPort: 9090 });
+        return await operation();
+      },
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: alpha.name },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("moved from OpenShell gateway 'nemoclaw'"),
+      exitCode: 2,
+    });
+
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
   it("blocks a custom endpoint conflict before DNS validation or mutation (#6315)", async () => {
     const deps = createDeps({
       config: {},
