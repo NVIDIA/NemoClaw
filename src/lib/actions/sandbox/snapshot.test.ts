@@ -693,6 +693,7 @@ describe("runSandboxSnapshot", () => {
     for (const processLine of [
       "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
       "123 /opt/venv/bin/python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
+      "123 /opt/venv/bin/python3 -I -m deepagents_code --sandbox none --no-mcp -n work\n",
       "124 /usr/local/bin/dcode task\n",
       "125 /opt/bin/deepagents_code task\n",
       "126 /opt/bin/deepagents-code task\n",
@@ -747,6 +748,19 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("initial");
     expect(output).toContain("/tmp/alpha/v2");
     expect(output).toContain("2 snapshot(s). Restore with:");
+  });
+
+  it("prints create, list, and restore usage for the bare help branch", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "help" });
+
+    const output = consoleLog.mock.calls.flat().join("\n");
+    expect(output).toContain("Usage:");
+    expect(output).toContain("alpha snapshot create");
+    expect(output).toContain("alpha snapshot list");
+    expect(output).toContain("alpha snapshot restore");
   });
 
   it("restores the latest snapshot into the source sandbox", async () => {

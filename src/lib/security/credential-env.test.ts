@@ -8,6 +8,7 @@ import {
   buildScrubbedCurlProbeEnv,
   CREDENTIAL_ENV_EXPLICIT_DENY,
   isCredentialShapedName,
+  SUPPORTED_CREDENTIAL_ENV_NAMES,
   scrubCredentialEnv,
   shouldStripCredentialEnv,
 } from "./credential-env";
@@ -49,10 +50,14 @@ describe("isCredentialShapedName", () => {
 });
 
 describe("shouldStripCredentialEnv", () => {
-  it("strips every explicitly denied provider var", () => {
-    for (const name of CREDENTIAL_ENV_EXPLICIT_DENY) {
+  it("strips every supported credential env name", () => {
+    for (const name of SUPPORTED_CREDENTIAL_ENV_NAMES) {
       expect(shouldStripCredentialEnv(name)).toBe(true);
     }
+  });
+
+  it("keeps the legacy explicit-deny export on the shared inventory", () => {
+    expect(CREDENTIAL_ENV_EXPLICIT_DENY).toBe(SUPPORTED_CREDENTIAL_ENV_NAMES);
   });
 
   it("keeps benign vars", () => {

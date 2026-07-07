@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-
+import { hasInvalidSessionToolDisclosure } from "../state/onboard-session";
+import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 import { preflightVllmModelEnvOrExit } from "./vllm-model-preflight";
 
 const onboardProviders = require("./providers");
@@ -12,6 +13,7 @@ export interface ResumeSessionLike {
   provider?: string | null;
   model?: string | null;
   agent?: string | null;
+  toolDisclosure?: ToolDisclosure;
   metadata?: { fromDockerfile?: string | null } | null;
   steps?: { sandbox?: { status?: string | null } | null } | null;
 }
@@ -59,8 +61,11 @@ export function getResumeSandboxConflict(
     : null;
 }
 
-export function getRequestedProviderHint(nonInteractive = false): string | null {
-  return onboardProviders.getRequestedProviderHint(nonInteractive);
+export function getRequestedProviderHint(
+  nonInteractive = false,
+  allowHostedInferenceStaging = true,
+): string | null {
+  return onboardProviders.getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging);
 }
 
 /**
@@ -69,14 +74,30 @@ export function getRequestedProviderHint(nonInteractive = false): string | null 
  * preflight (#5207). Either may exit the process with a non-zero code on an
  * invalid value.
  */
-export function preflightEarlyOnboardEnv(nonInteractive = false): string | null {
-  const providerHint = getRequestedProviderHint(nonInteractive);
+export function preflightEarlyOnboardEnv(
+  nonInteractive = false,
+  allowHostedInferenceStaging = true,
+): string | null {
+  const providerHint = getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging);
   preflightVllmModelEnvOrExit();
   return providerHint;
 }
 
-export function getRequestedModelHint(nonInteractive = false): string | null {
-  return onboardProviders.getRequestedModelHint(nonInteractive);
+export function preflightEarlyOnboardEnvForResume(
+  nonInteractive: boolean,
+  authoritativeResumeConfig: boolean,
+): string | null {
+  return preflightEarlyOnboardEnv(
+    authoritativeResumeConfig ? nonInteractive : false,
+    !authoritativeResumeConfig,
+  );
+}
+
+export function getRequestedModelHint(
+  nonInteractive = false,
+  allowHostedInferenceStaging = true,
+): string | null {
+  return onboardProviders.getRequestedModelHint(nonInteractive, allowHostedInferenceStaging);
 }
 
 export function getResumeConfigConflicts(
@@ -86,10 +107,18 @@ export function getResumeConfigConflicts(
     fromDockerfile?: string | null;
     sandboxName?: string | null;
     agent?: string | null;
+    toolDisclosure?: ToolDisclosure | null;
+    /**
+     * Internal rebuild-resume mode: the caller already rewrote the session from
+     * validated registry state, so credential aliases must not synthesize a new
+     * provider/model request while checking that session for conflicts.
+     */
+    authoritativeResumeConfig?: boolean;
   } = {},
 ): ResumeConfigConflict[] {
   const conflicts: ResumeConfigConflict[] = [];
   const nonInteractive = opts.nonInteractive ?? false;
+  const allowHostedInferenceStaging = opts.authoritativeResumeConfig !== true;
 
   const sandboxConflict = getResumeSandboxConflict(session, { sandboxName: opts.sandboxName });
   if (sandboxConflict) {
@@ -100,7 +129,7 @@ export function getResumeConfigConflicts(
     });
   }
 
-  const requestedProvider = getRequestedProviderHint(nonInteractive);
+  const requestedProvider = getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging);
   const effectiveRequestedProvider = onboardProviders.getEffectiveProviderName(requestedProvider);
   if (
     effectiveRequestedProvider &&
@@ -114,7 +143,7 @@ export function getResumeConfigConflicts(
     });
   }
 
-  const requestedModel = getRequestedModelHint(nonInteractive);
+  const requestedModel = getRequestedModelHint(nonInteractive, allowHostedInferenceStaging);
   if (requestedModel && session?.model && requestedModel !== session.model) {
     conflicts.push({
       field: "model",
@@ -132,6 +161,26 @@ export function getResumeConfigConflicts(
       field: "fromDockerfile",
       requested: requestedFrom,
       recorded: recordedFrom,
+    });
+  }
+
+  const requestedToolDisclosure = normalizeToolDisclosure(opts.toolDisclosure);
+  const recordedToolDisclosure = normalizeToolDisclosure(session?.toolDisclosure);
+  if (hasInvalidSessionToolDisclosure(session)) {
+    conflicts.push({
+      field: "tool disclosure",
+      requested: requestedToolDisclosure,
+      recorded: "invalid",
+    });
+  } else if (
+    requestedToolDisclosure &&
+    recordedToolDisclosure &&
+    requestedToolDisclosure !== recordedToolDisclosure
+  ) {
+    conflicts.push({
+      field: "tool disclosure",
+      requested: requestedToolDisclosure,
+      recorded: recordedToolDisclosure,
     });
   }
 

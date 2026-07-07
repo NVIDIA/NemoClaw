@@ -185,7 +185,15 @@ Some corporate networks block outbound UDP port 53 to public DNS servers and for
 
 NemoClaw's preflight runs a short `docker run --rm busybox nslookup nemoclaw-dns-probe-<random>.invalid` probe before starting the sandbox build. The fresh `.invalid` name should return NXDOMAIN through a working resolver, so cached answers cannot hide blocked DNS egress. When the probe confirms a DNS failure, onboarding stops with platform-specific remediation instead of hanging for ~15 minutes and printing a cryptic `Exit handler never called`.
 
-The fix depends on your platform and runtime. Pick the matching path from the preflight output, apply it, then re-run `$$nemoclaw onboard`.
+Use the preflight headline to choose the recovery path:
+
+- If no DNS servers could be reached, Docker could not reach its configured resolver.
+  Follow the platform-specific UDP port 53 and Docker DNS steps below.
+- If the DNS server was reachable but rejected the query with `NXDOMAIN` or `REFUSED`, the resolver answered, so the UDP port 53 fix is not relevant.
+  Check the resolver used by Docker, such as dnsmasq, Pi-hole, unbound, or systemd-resolved, and remove any forwarding rule, blocklist entry, or ACL that rejects `registry.npmjs.org`.
+  If needed, configure Docker to use an organization-approved resolver that can resolve public names, restart Docker, and retry onboarding.
+
+For an unreachable resolver, pick the matching platform path below, apply it, then re-run `$$nemoclaw onboard`.
 
 - **Linux with systemd-resolved.** Add a `DNSStubListenerExtra` drop-in pointing at the docker bridge gateway IP (the preflight prints the detected IP), then add the same IP to `/etc/docker/daemon.json` under `dns`. Restart `systemd-resolved` and `docker`.
 - **macOS with Colima.** Restart Colima with the corporate DNS address, for example `colima stop && colima start --dns <corp-dns-ip>`.
@@ -195,7 +203,7 @@ The fix depends on your platform and runtime. Pick the matching path from the pr
 Verify the fix worked:
 
 ```bash
-docker run --rm busybox nslookup example.com
+docker run --rm busybox nslookup registry.npmjs.org
 ```
 
 When the lookup returns an answer, retry onboarding.
@@ -395,12 +403,14 @@ If GitHub release metadata is unavailable, the script uses its bundled fallback 
 
 During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics.
 If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance.
+Brave Search uses an external OpenClaw plugin and can reach this install path.
+Tavily ships with the pinned OpenClaw runtime, so NemoClaw verifies the bundled extension instead of installing a separate Tavily package.
 
 Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin.
 For example, if the plugin is for web search, disable that feature and resume onboarding:
 
 ```bash
-NEMOCLAW_WEB_SEARCH_ENABLED=0 $$nemoclaw onboard --resume
+NEMOCLAW_WEB_SEARCH_PROVIDER=none $$nemoclaw onboard --resume
 ```
 
 If you want the feature, fix the network or policy path first, then resume onboarding:
@@ -408,6 +418,50 @@ If you want the feature, fix the network or policy path first, then resume onboa
 ```bash
 $$nemoclaw onboard --resume
 ```
+
+### Web search verification reports a warning
+
+When web search is enabled, onboarding checks the selected agent configuration and sends a real search request through the sandbox egress path.
+The verification is best effort, so a failed check prints a warning and lets onboarding finish.
+
+First confirm that the provider credential and matching policy preset exist.
+
+```bash
+$$nemoclaw credentials list
+$$nemoclaw <name> policy-list
+```
+
+Look for `<name>-brave-search` with the `brave` preset or `<name>-tavily-search` with the `tavily` preset.
+Do not replace an `openshell:resolve:env:<KEY>` value in the sandbox configuration with a raw API key.
+
+<AgentOnly variant="openclaw">
+
+Confirm that OpenClaw reports the provider selected during onboarding.
+
+```bash
+$$nemoclaw <name> config get --key tools.web.search --format yaml
+```
+
+The provider should be `brave` or `tavily` and `enabled` should be `true`.
+If the provider is wrong, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=brave` or `tavily` and the matching `BRAVE_API_KEY` or `TAVILY_API_KEY`.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Confirm that the generated Hermes configuration selects the Tavily backend.
+
+```bash
+$$nemoclaw <name> exec -- cat /sandbox/.hermes/config.yaml
+```
+
+The output should include a `web` mapping with `backend: tavily`.
+If it does not, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY`.
+
+</AgentOnly>
+
+Rerunning onboarding with a different provider recreates the sandbox because the provider configuration and credential attachment are build-time inputs.
+NemoClaw validates the replacement key before it removes the existing sandbox, then backs up and restores the supported workspace state during recreation.
+If the configuration is correct but the egress probe fails, keep the matching preset applied and inspect the blocked request with `openshell term` before widening any policy rule.
 
 ### Sandbox containers cannot reach the gateway
 
@@ -930,7 +984,30 @@ curl: (56) CONNECT tunnel failed, response 403
 
 This is a network-policy denial, not a tool or certificate problem.
 
-The first interactive `$$nemoclaw <name> connect` shell prints a one-line reminder of this denial signature and the `logs` command below.
+When you run a command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw checks the sandbox audit log for a policy denial recorded after the command started.
+If it finds one, it appends a short breadcrumb to stderr after the tool's own output, naming the denied `host:port` when it can be extracted safely and showing the commands below:
+
+```text
+curl: (56) CONNECT tunnel failed, response 403
+$$nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'oc-fresh'.
+  The sandbox's egress policy blocked this request; the tool above only saw the proxy's 403.
+  See the denied flow:    $$nemoclaw oc-fresh logs --tail 50
+  Review applied presets: $$nemoclaw oc-fresh policy-list
+  Allow the host:         $$nemoclaw oc-fresh policy-add <preset>
+  Silence this hint:      export NEMOCLAW_NO_POLICY_HINT=1
+```
+
+If the log probe fails, no breadcrumb is added. Unsafe endpoint data is omitted from the breadcrumb, and an invalid sandbox name is shown as `<name>`.
+
+An IPv6 target is named in its RFC 3986 bracketed form:
+
+```text
+$$nemoclaw: recent network policy denial detected for [2001:db8::1]:443 inside sandbox 'oc-fresh'.
+```
+
+The tool's own stdout/stderr bytes and its exit code are left unchanged. The breadcrumb is printed by the host CLI after the command finishes, and only for a genuine failure with a fresh denial. A command that succeeds, or one that fails for an unrelated reason, prints no breadcrumb. Set `NEMOCLAW_NO_POLICY_HINT` to any non-empty value other than `0` or case-insensitive `false` (for example, `1`, `true`, `TRUE`, `yes`, or `YES`) to suppress it entirely.
+
+The first interactive `$$nemoclaw <name> connect` shell also prints a one-line reminder of this denial signature and the `logs` command below.
 The reminder is shown once per top-level interactive session, and only when all of these hold: an egress proxy is configured, the shell is interactive with a terminal attached to stderr, and it is a top-level shell (not a nested subshell or pane).
 Suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
 On OpenShell 0.0.44 or newer the reminder names your real sandbox; on older OpenShell it shows `<name>` as a placeholder — run `$$nemoclaw list` to see your sandbox names.
@@ -948,6 +1025,8 @@ If the host should be reachable, allow it with a preset or a [custom preset](../
 ```bash
 $$nemoclaw <name> policy-add <preset>
 ```
+
+Replace `<preset>` with a real preset name such as `github`, `pypi`, or `npm`. Run `$$nemoclaw <name> policy-add` with no preset to list the available presets.
 
 ### Sandbox creation reports a TLS certificate mismatch
 
@@ -1373,8 +1452,9 @@ Set `TELEGRAM_ALLOWED_IDS` before rebuild; `TELEGRAM_AUTHORIZED_CHAT_IDS` and `T
 Keep the aliases until QA automation and public repro templates have stopped exporting them for at least one full release.
 Bot API `sendMessage` sends from the bot to a chat, so it only proves outbound Telegram API access.
 To prove inbound agent routing, send a message from the Telegram client as an allowed user and then watch the gateway log for the agent turn and outbound reply.
-For a reproducible live check that also exercises an alias, run `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/messaging-providers.test.ts --silent=false --reporter=default` with `TELEGRAM_BOT_TOKEN_REAL`, either `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`; when prompted, send a fresh direct message from that Telegram client.
-The check waits for `[telegram] [default] inbound update received` and `[telegram] [default] outbound sendMessage attempted` in `/tmp/gateway.log`.
+For a reproducible outbound runtime check, run `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/messaging-providers.test.ts --silent=false --reporter=default` with `NVIDIA_INFERENCE_API_KEY` set.
+The check imports the installed OpenClaw Telegram `runtime-api.js`, calls `sendMessageTelegram` through an OpenShell-rewritten credential against a host-side fake Telegram API, and verifies the captured chat, text, token rewrite, and absence of unresolved placeholders.
+When `TELEGRAM_BOT_TOKEN_REAL` and `TELEGRAM_CHAT_ID_E2E` are also set, the same lane performs an additional real outbound send; it does not prompt for or claim an interactive inbound reply.
 
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
@@ -1935,7 +2015,7 @@ Skills that require macOS-only binaries cannot be enabled on Brev.
 Skills that require additional CLI binaries require a custom sandbox image rebuild.
 
 For credentials, use the supported host-side setup flow.
-Re-run onboarding for inference or Brave Search credentials, or use `$$nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
+Rerun onboarding for inference or web search credentials, or use `$$nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
 To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```bash
@@ -2140,11 +2220,20 @@ nemohermes credentials list
 
 Reset a specific provider's credentials with `nemohermes credentials reset <provider>` and re-onboard if the stored value is wrong.
 
-### `Brave Search` policy preset has no effect under Hermes
+### Brave Search is unsupported under Hermes
 
-The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (refer to [Quickstart with Hermes](../../hermes/get-started/quickstart) and [Network Policies](network-policies)).
-If you add the `brave` preset to a Hermes sandbox after onboarding, the L7 egress allowlist opens for Brave's endpoints but the agent itself does not start consuming the credential.
-Configure Hermes web search from the agent's own configuration inside the sandbox.
+Hermes does not have a NemoClaw Brave Search backend.
+Adding the `brave` preset to a Hermes sandbox opens Brave's endpoints but does not configure Hermes to use the credential.
+Use Tavily Search through NemoClaw onboarding instead.
+
+```bash
+NEMOCLAW_WEB_SEARCH_PROVIDER=tavily \
+TAVILY_API_KEY=<your-tavily-key> \
+  nemohermes onboard --recreate-sandbox
+```
+
+NemoClaw writes `web.backend: tavily`, applies the `tavily` policy preset, and configures request-body credential rewriting for Hermes.
+If the same onboarding run selected the Nous-managed web gateway, Tavily replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
 
 ### Re-onboarding asks every messaging prompt again
 

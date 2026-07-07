@@ -48,10 +48,13 @@
       "properties": {
         "host": { "type": "string" },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "protocol": { "type": "string", "enum": ["rest", "websocket"] },
+        "path": { "type": "string", "pattern": "^/" },
+        "protocol": { "type": "string", "enum": ["rest", "websocket", "json-rpc", "mcp"] },
         "enforcement": { "type": "string", "enum": ["enforce", "audit"] },
         "tls": { "type": "string", "enum": ["terminate", "passthrough", "skip"] },
         "access": { "type": "string", "enum": ["full"] },
+        "json_rpc": { "$ref": "#/$defs/jsonRpcOptions" },
+        "mcp": { "$ref": "#/$defs/mcpOptions" },
         "websocket_credential_rewrite": { "type": "boolean" },
         "request_body_credential_rewrite": { "type": "boolean" },
         "allowed_ips": {
@@ -63,43 +66,486 @@
           "type": "array",
           "items": { "$ref": "#/$defs/rule" },
           "minItems": 1
+        },
+        "deny_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/denyRule" },
+          "minItems": 1
         }
       },
-      "if": {
-        "properties": { "protocol": { "enum": ["rest", "websocket"] } },
-        "required": ["protocol"]
-      },
-      "then": { "required": ["rules"] }
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              { "not": { "required": ["protocol"] } },
+              {
+                "properties": { "protocol": { "const": "rest" } },
+                "required": ["protocol"]
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "rules": {
+                "items": { "$ref": "#/$defs/restRule" }
+              },
+              "deny_rules": {
+                "items": { "$ref": "#/$defs/restMatcher" }
+              }
+            },
+            "anyOf": [
+              { "required": ["rules"] },
+              { "required": ["access"] }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "protocol": { "const": "websocket" } },
+            "required": ["protocol"]
+          },
+          "then": {
+            "properties": {
+              "rules": {
+                "items": { "$ref": "#/$defs/websocketRule" }
+              },
+              "deny_rules": {
+                "items": { "$ref": "#/$defs/websocketMatcher" }
+              }
+            },
+            "anyOf": [
+              { "required": ["rules"] },
+              { "required": ["access"] }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "protocol": { "const": "json-rpc" } },
+            "required": ["protocol"]
+          },
+          "then": {
+            "required": ["rules"],
+            "properties": {
+              "rules": {
+                "items": { "$ref": "#/$defs/jsonRpcRule" }
+              },
+              "deny_rules": {
+                "items": { "$ref": "#/$defs/jsonRpcMatcher" }
+              }
+            },
+            "not": { "required": ["access"] }
+          }
+        },
+        {
+          "if": {
+            "properties": { "protocol": { "const": "mcp" } },
+            "required": ["protocol"]
+          },
+          "then": {
+            "properties": {
+              "rules": {
+                "items": { "$ref": "#/$defs/mcpRule" }
+              },
+              "deny_rules": {
+                "items": { "$ref": "#/$defs/mcpMatcher" }
+              }
+            },
+            "not": { "required": ["access"] },
+            "anyOf": [
+              { "required": ["rules"] },
+              {
+                "required": ["mcp"],
+                "properties": {
+                  "mcp": {
+                    "required": ["allow_all_known_mcp_methods"],
+                    "properties": {
+                      "allow_all_known_mcp_methods": { "const": true }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "protocol": { "const": "mcp" } },
+            "required": ["protocol"],
+            "not": {
+              "required": ["mcp"],
+              "properties": {
+                "mcp": {
+                  "required": ["allow_all_known_mcp_methods"],
+                  "properties": {
+                    "allow_all_known_mcp_methods": { "const": true }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "rules": {
+                "items": { "$ref": "#/$defs/mcpMethodRule" }
+              },
+              "deny_rules": {
+                "items": { "$ref": "#/$defs/mcpMethodMatcher" }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "protocol": { "const": "mcp" },
+              "mcp": {
+                "required": ["strict_tool_names"],
+                "properties": { "strict_tool_names": { "const": false } }
+              }
+            },
+            "required": ["protocol", "mcp"]
+          },
+          "then": {
+            "properties": {
+              "rules": {
+                "items": { "$ref": "#/$defs/mcpExactToolRule" }
+              },
+              "deny_rules": {
+                "items": { "$ref": "#/$defs/mcpExactToolMatcher" }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "not": { "required": ["protocol"] } },
+              {
+                "properties": { "protocol": { "not": { "const": "mcp" } } },
+                "required": ["protocol"]
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "mcp": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["strict_tool_names"] },
+                    { "required": ["allow_all_known_mcp_methods"] }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "protocol": { "const": "mcp" },
+              "rules": {
+                "contains": { "$ref": "#/$defs/mcpToolSelectorRule" }
+              }
+            },
+            "required": ["protocol", "rules"]
+          },
+          "then": {
+            "properties": {
+              "rules": {
+                "not": {
+                  "contains": { "$ref": "#/$defs/mcpBroadToolsCallRule" }
+                }
+              },
+              "deny_rules": {
+                "not": {
+                  "contains": { "$ref": "#/$defs/mcpBroadToolsCallMatcher" }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "rule": {
       "type": "object",
       "required": ["allow"],
       "additionalProperties": false,
       "properties": {
-        "allow": {
+        "allow": { "$ref": "#/$defs/l7Matcher" }
+      }
+    },
+    "denyRule": {
+      "$ref": "#/$defs/l7Matcher"
+    },
+    "l7Matcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "pattern": "^/" },
+        "tool": { "$ref": "#/$defs/matcher" },
+        "params": {
           "type": "object",
-          "required": ["method", "path"],
+          "additionalProperties": { "$ref": "#/$defs/paramMatcher" }
+        }
+      }
+    },
+    "restRule": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": { "$ref": "#/$defs/restMatcher" }
+      }
+    },
+    "restMatcher": {
+      "type": "object",
+      "required": ["method", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "HEAD",
+            "OPTIONS",
+            "*"
+          ]
+        },
+        "path": { "type": "string", "pattern": "^/" }
+      }
+    },
+    "websocketRule": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": { "$ref": "#/$defs/websocketMatcher" }
+      }
+    },
+    "websocketMatcher": {
+      "type": "object",
+      "required": ["method", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["GET", "WEBSOCKET_TEXT", "*"]
+        },
+        "path": { "type": "string", "pattern": "^/" }
+      }
+    },
+    "jsonRpcRule": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": { "$ref": "#/$defs/jsonRpcMatcher" }
+      }
+    },
+    "jsonRpcMatcher": {
+      "type": "object",
+      "required": ["method"],
+      "additionalProperties": false,
+      "properties": {
+        "method": { "$ref": "#/$defs/rpcMethod" }
+      }
+    },
+    "mcpRule": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": { "$ref": "#/$defs/mcpMatcher" }
+      }
+    },
+    "mcpMatcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": { "$ref": "#/$defs/mcpMethod" },
+        "tool": { "$ref": "#/$defs/matcher" },
+        "params": {
+          "type": "object",
           "additionalProperties": false,
           "properties": {
-            "method": {
-              "type": "string",
-              "enum": [
-                "GET",
-                "POST",
-                "PUT",
-                "PATCH",
-                "DELETE",
-                "HEAD",
-                "OPTIONS",
-                "WEBSOCKET_TEXT"
-              ]
-            },
-            "path": {
-              "type": "string",
-              "pattern": "^/"
+            "name": { "$ref": "#/$defs/matcher" }
+          },
+          "required": ["name"]
+        }
+      },
+      "allOf": [
+        { "not": { "required": ["tool", "params"] } },
+        {
+          "if": {
+            "anyOf": [{ "required": ["tool"] }, { "required": ["params"] }]
+          },
+          "then": {
+            "anyOf": [
+              { "not": { "required": ["method"] } },
+              {
+                "required": ["method"],
+                "properties": { "method": { "const": "tools/call" } }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "mcpToolSelectorRule": {
+      "type": "object",
+      "required": ["allow"],
+      "properties": {
+        "allow": { "$ref": "#/$defs/mcpToolSelectorMatcher" }
+      }
+    },
+    "mcpToolSelectorMatcher": {
+      "type": "object",
+      "anyOf": [{ "required": ["tool"] }, { "required": ["params"] }]
+    },
+    "mcpBroadToolsCallRule": {
+      "type": "object",
+      "required": ["allow"],
+      "properties": {
+        "allow": { "$ref": "#/$defs/mcpBroadToolsCallMatcher" }
+      }
+    },
+    "mcpBroadToolsCallMatcher": {
+      "type": "object",
+      "required": ["method"],
+      "properties": {
+        "method": { "$ref": "#/$defs/mcpBroadToolsCallMethod" }
+      },
+      "not": {
+        "anyOf": [{ "required": ["tool"] }, { "required": ["params"] }]
+      }
+    },
+    "mcpBroadToolsCallMethod": {
+      "anyOf": [
+        { "const": "tools/call" },
+        {
+          "type": "string",
+          "pattern": "^tools/.*[*?\\[\\]{}].*$"
+        }
+      ]
+    },
+    "mcpMethodRule": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": { "$ref": "#/$defs/mcpMethodMatcher" }
+      }
+    },
+    "mcpMethodMatcher": {
+      "allOf": [
+        { "$ref": "#/$defs/mcpMatcher" },
+        { "required": ["method"] }
+      ]
+    },
+    "mcpExactToolRule": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": { "$ref": "#/$defs/mcpExactToolMatcher" }
+      }
+    },
+    "mcpExactToolMatcher": {
+      "allOf": [
+        { "$ref": "#/$defs/mcpMatcher" },
+        {
+          "properties": {
+            "tool": { "$ref": "#/$defs/exactMatcher" },
+            "params": {
+              "properties": {
+                "name": { "$ref": "#/$defs/exactMatcher" }
+              }
             }
           }
         }
+      ]
+    },
+    "rpcMethod": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(\\*|[^*?\\[\\]{}]+)$"
+    },
+    "mcpMethod": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[^*?\\[\\]{}]+|tools/.*[*?\\[\\]{}].*)$"
+    },
+    "matcher": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "any": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "minItems": 1
+            }
+          },
+          "required": ["any"]
+        }
+      ]
+    },
+    "exactMatcher": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^*?\\[\\]{}]+$"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "any": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^*?\\[\\]{}]+$"
+              },
+              "minItems": 1
+            }
+          },
+          "required": ["any"]
+        }
+      ]
+    },
+    "paramMatcher": {
+      "oneOf": [
+        { "$ref": "#/$defs/matcher" },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/paramMatcher" }
+        }
+      ]
+    },
+    "jsonRpcOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_body_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576 }
+      }
+    },
+    "mcpOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_body_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "strict_tool_names": { "type": "boolean" },
+        "allow_all_known_mcp_methods": { "type": "boolean" }
       }
     },
     "binary": {

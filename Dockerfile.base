@@ -198,8 +198,27 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
 # with the openclaw_version input for a one-off build without editing this file.
-ARG OPENCLAW_VERSION=2026.5.27
-ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+# Dependency review evidence for this runtime pin lives in
+# docs/security/openclaw-2026.6.10-dependency-review.md.
+ARG OPENCLAW_VERSION=2026.6.10
+ARG OPENCLAW_2026_6_10_INTEGRITY=sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==
+ARG OPENCLAW_2026_6_10_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.6.10.tgz
+# E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
+# intentionally build an older OpenClaw base image before proving upgrade
+# behavior. Production workflows reject the fixture flag, both legacy version
+# values, and these four pin overrides before docker build. Only explicit
+# fixture paths may select them; retirement is tracked in #5896 section 9.
+ARG NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=0
+ARG OPENCLAW_2026_3_11_INTEGRITY=sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==
+ARG OPENCLAW_2026_3_11_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz
+ARG OPENCLAW_2026_4_24_INTEGRITY=sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL4BdcnUFgrnB8kHYNXL3MxiHRKuhZB9OYwUMGs8jKFZR/Vg==
+ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.4.24.tgz
+# Keep the mcporter version, integrity, runtime lock, license, and advisory baseline
+# synchronized with agents/openclaw/dependency-review.md.
+ARG MCPORTER_VERSION=0.7.3
+ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
+COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
+COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
 # names do not persist in runtime snapshots or leak-scan inputs.
@@ -210,6 +229,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Install OpenClaw CLI + PyYAML.
 # .openclaw is now writable by default, so exec-approvals writes to
 # ~/.openclaw/exec-approvals.json natively — no sed patch needed.
+# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
+# basename in a fresh directory, local-archive-only install, and cleanup.
+# hadolint ignore=DL3016
 RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/blueprint.yaml \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
     || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)."; exit 1; }; \
@@ -220,21 +242,101 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         echo "Error: OpenClaw version ${OPENCLAW_VERSION} is below the minimum required version ${OPENCLAW_MIN_VERSION}"; \
         echo "Hint: Update min_openclaw_version in nemoclaw-blueprint/blueprint.yaml or use a newer version."; exit 1; \
     fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.3.11" ] || [ "$OPENCLAW_VERSION" = "2026.4.24" ]; then \
+        if [ "$NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW" != "1" ]; then \
+            echo "Error: OpenClaw ${OPENCLAW_VERSION} is a legacy E2E fixture pin; set NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1 for stale-upgrade fixture builds"; exit 1; \
+        fi; \
+    fi; \
     if ! npm view openclaw@${OPENCLAW_VERSION} version > /dev/null 2>&1; then \
         echo "Error: OpenClaw version ${OPENCLAW_VERSION} not found on npm registry"; \
         echo "Hint: Check available versions with: npm view openclaw versions"; exit 1; \
     fi; \
     EXPECTED_INTEGRITY=""; \
-    if [ "$OPENCLAW_VERSION" = "2026.5.27" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_27_INTEGRITY"; fi; \
-    if [ -n "$EXPECTED_INTEGRITY" ]; then \
-        REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
-        if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
-            echo "Error: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch"; \
-            echo "Expected: ${EXPECTED_INTEGRITY}"; \
-            echo "Actual:   ${REGISTRY_INTEGRITY}"; exit 1; \
-        fi; \
+    EXPECTED_TARBALL=""; \
+    if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_6_10_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_6_10_TARBALL"; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_3_11_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_3_11_TARBALL"; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.4.24" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_4_24_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_4_24_TARBALL"; fi; \
+    if [ -z "$EXPECTED_INTEGRITY" ]; then \
+        echo "Error: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin"; exit 1; \
     fi; \
-    npm install -g "openclaw@${OPENCLAW_VERSION}" \
+    REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
+    if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
+        echo "Error: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch"; \
+        echo "Expected: ${EXPECTED_INTEGRITY}"; \
+        echo "Actual:   ${REGISTRY_INTEGRITY}"; exit 1; \
+    fi; \
+    REGISTRY_TARBALL=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.tarball); \
+    if [ "$REGISTRY_TARBALL" != "$EXPECTED_TARBALL" ]; then \
+        echo "Error: OpenClaw ${OPENCLAW_VERSION} npm tarball URL mismatch"; \
+        echo "Expected: ${EXPECTED_TARBALL}"; \
+        echo "Actual:   ${REGISTRY_TARBALL}"; exit 1; \
+    fi; \
+    pack_reviewed_npm_tarball() { \
+        pack_spec="$1"; expected_integrity="$2"; pack_dir="$3"; label="$4"; \
+        pack_json="$(npm pack "$pack_spec" --pack-destination "$pack_dir" --json)"; \
+        pack_integrity="$(printf '%s' "$pack_json" | node -e 'const p = JSON.parse(require("node:fs").readFileSync(0, "utf8")); process.stdout.write(String(p[0]?.integrity ?? ""));')"; \
+        pack_filename="$(printf '%s' "$pack_json" | node -e 'const p = JSON.parse(require("node:fs").readFileSync(0, "utf8")); process.stdout.write(String(p[0]?.filename ?? ""));')"; \
+        if [ -z "$pack_integrity" ] || [ -z "$pack_filename" ]; then \
+            echo "Error: ${label} npm pack did not report filename and integrity" >&2; exit 1; \
+        fi; \
+        if [ "$pack_integrity" != "$expected_integrity" ]; then \
+            echo "Error: ${label} downloaded tarball integrity mismatch" >&2; \
+            echo "Expected: ${expected_integrity}" >&2; \
+            echo "Actual:   ${pack_integrity}" >&2; exit 1; \
+        fi; \
+        if ! pack_archive="$(node -e 'const path = require("node:path"); const [dir, filename, label] = process.argv.slice(1); const parts = filename.split(/[\\/]+/); const unsafe = !filename || path.isAbsolute(filename) || filename === "." || filename === ".." || filename.includes("/") || filename.includes("\\") || parts.includes("..") || parts.includes(""); if (unsafe) { console.error("Error: " + label + " npm pack reported unsafe archive filename: " + filename); process.exit(1); } const root = path.resolve(dir); const archive = path.resolve(root, filename); if (!archive.startsWith(root + path.sep)) { console.error("Error: " + label + " npm pack archive escaped pack directory: " + filename); process.exit(1); } process.stdout.write(archive);' "$pack_dir" "$pack_filename" "$label")"; then exit 1; fi; \
+        printf '%s\n' "$pack_archive"; \
+    }; \
+    OPENCLAW_PACK_DIR="$(mktemp -d)"; \
+    OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR" "OpenClaw ${OPENCLAW_VERSION}")"; \
+    npm install -g --ignore-scripts "$OPENCLAW_PACK_PATH" \
+    && case "$OPENCLAW_VERSION" in \
+        2026.4.24|2026.6.10) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
+        2026.3.11) ;; \
+        *) echo "Error: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy"; exit 1 ;; \
+    esac \
+    && rm -rf "$OPENCLAW_PACK_DIR" \
+    && OPENCLAW_INSTALLED_VERSION="$(openclaw --version 2>/dev/null | awk '{print $2}')" \
+    && if [ "$OPENCLAW_INSTALLED_VERSION" != "$OPENCLAW_VERSION" ]; then \
+        echo "Error: Installed OpenClaw ${OPENCLAW_INSTALLED_VERSION:-unknown} does not match reviewed target ${OPENCLAW_VERSION}"; exit 1; \
+    fi \
+    && MCPORTER_EXPECTED_INTEGRITY="" \
+    && if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi \
+    && if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
+    fi \
+    && MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity) \
+    && if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        echo "Error: mcporter ${MCPORTER_VERSION} npm integrity mismatch"; \
+        echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}"; \
+        echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}"; exit 1; \
+    fi \
+    && rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter \
+    && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
+        --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
+    && ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter \
+    && test "$(mcporter --version)" = "$MCPORTER_VERSION" \
+    && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low \
+    && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures \
+    && MCPORTER_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json | awk '{print $1}')" \
+    && test -n "$MCPORTER_LOCK_SHA256" \
+    && OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1 \
+    && OPENCLAW_PROVENANCE_DIR="$(dirname "$OPENCLAW_PROVENANCE_PATH")" \
+    && mkdir -p "$OPENCLAW_PROVENANCE_DIR" \
+    && OPENCLAW_PROVENANCE_TMP="$(mktemp "${OPENCLAW_PROVENANCE_PATH}.tmp.XXXXXX")" \
+    && printf '%s\n' \
+        'schema=2' \
+        "package=openclaw@${OPENCLAW_VERSION}" \
+        "integrity=${EXPECTED_INTEGRITY}" \
+        "tarball=${EXPECTED_TARBALL}" \
+        'recipe=ignore-scripts+reviewed-lifecycle-v1' \
+        "mcporter-package=mcporter@${MCPORTER_VERSION}" \
+        "mcporter-integrity=${MCPORTER_EXPECTED_INTEGRITY}" \
+        "mcporter-lock-sha256=${MCPORTER_LOCK_SHA256}" \
+        'mcporter-recipe=locked-ci+audit-signatures-v1' \
+        > "$OPENCLAW_PROVENANCE_TMP" \
+    && chmod 0444 "$OPENCLAW_PROVENANCE_TMP" \
+    && mv -f "$OPENCLAW_PROVENANCE_TMP" "$OPENCLAW_PROVENANCE_PATH" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
 

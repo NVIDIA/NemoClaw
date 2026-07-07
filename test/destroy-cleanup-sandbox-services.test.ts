@@ -98,4 +98,18 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
       SANDBOX_PROVIDER_SUFFIXES.map((suffix) => `regression-2717-${suffix}`),
     );
   });
+
+  it("rejects traversal-shaped sandbox names before any cleanup side effect", () => {
+    const harness = buildDeps({ provider: "ollama-local" });
+
+    expect(() =>
+      cleanupSandboxServices("x/../../victim", { stopHostServices: true }, harness.deps),
+    ).toThrow("Invalid sandbox name");
+
+    expect(harness.deps.getSandbox).not.toHaveBeenCalled();
+    expect(harness.deps.stopAll).not.toHaveBeenCalled();
+    expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
+    expect(harness.deps.rmSync).not.toHaveBeenCalled();
+    expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
+  });
 });

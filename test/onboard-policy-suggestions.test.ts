@@ -34,6 +34,7 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
       provider?: string | null;
       agent?: string | null;
       env?: NodeJS.ProcessEnv;
+      webSearchConfig?: { fetchEnabled?: boolean; provider?: "brave" | "tavily" } | null;
     }) => string[];
   };
 const { mergeRequiredSetupPolicyPresets, suppressedAgentRequiredPresets } =
@@ -47,6 +48,7 @@ const { mergeRequiredSetupPolicyPresets, suppressedAgentRequiredPresets } =
         knownPresetNames?: string[] | Set<string> | null;
         env?: NodeJS.ProcessEnv;
         tierName?: string | null;
+        webSearchConfig?: { fetchEnabled?: boolean; provider?: "brave" | "tavily" } | null;
       },
     ) => string[];
     suppressedAgentRequiredPresets: (
@@ -93,6 +95,7 @@ describe("onboard policy preset suggestions", () => {
     "huggingface",
     "brew",
     "brave",
+    "tavily",
     "slack",
     "discord",
     "telegram",
@@ -372,6 +375,45 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
   });
 
+  it("selects Tavily and removes the stale Brave tier default", () => {
+    const knownWithTavily = [...known, "tavily"];
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithTavily,
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      webSearchSupported: true,
+    });
+
+    expect(suggestions).toContain("tavily");
+    expect(suggestions).not.toContain("brave");
+    expect(
+      getSuggestedPolicyPresets({
+        enabledChannels: [],
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      }),
+    ).toContain("tavily");
+
+    const hermesOpen = computeSetupPresetSuggestions("open", {
+      enabledChannels: [],
+      knownPresetNames: knownWithTavily,
+      agent: "hermes",
+      hermesToolGateways: ["nous-web", "nous-audio"],
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      webSearchSupported: true,
+    });
+    expect(hermesOpen).not.toContain("nous-web");
+    expect(hermesOpen).toContain("nous-audio");
+
+    expect(
+      mergeRequiredSetupPolicyPresets(["nous-audio"], {
+        agent: "hermes",
+        hermesToolGateways: ["nous-web", "nous-audio"],
+        knownPresetNames: knownWithTavily,
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      }),
+    ).toEqual(["nous-audio"]);
+  });
+
   it("filters tier defaults to known presets for agent-specific onboarding", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
@@ -380,7 +422,7 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
   });
 
-  it("omits Brave when web search is unsupported", () => {
+  it("omits web-search presets when web search is unsupported", () => {
     const allPresets = known.map((name) => ({ name }));
     const unsupportedPresets = filterSetupPolicyPresets(allPresets, {
       webSearchSupported: false,
@@ -389,7 +431,9 @@ describe("onboard policy preset suggestions", () => {
       webSearchSupported: true,
     }).map((p) => p.name);
     expect(unsupportedPresets).not.toContain("brave");
+    expect(unsupportedPresets).not.toContain("tavily");
     expect(supportedPresets).toContain("brave");
+    expect(supportedPresets).toContain("tavily");
   });
 
   it("drops Brave tier defaults when web search is unsupported", () => {

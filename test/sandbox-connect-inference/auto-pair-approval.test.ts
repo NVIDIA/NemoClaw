@@ -225,11 +225,11 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       );
 
       // Force the approval-pass sandbox-exec to fail with exit status 7
-      // (simulated via the NEMOCLAW_TEST_FAIL_APPROVAL_PASS hook in the
+      // (simulated via the OPENSHELL_TEST_FAIL_APPROVAL_PASS hook in the
       // fake openshell). The connect flow must still reach SSH handoff —
       // the approval pass is best-effort and must not surface failures.
       const result = runConnect(tmpDir, sandboxName, {
-        NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1",
+        OPENSHELL_TEST_FAIL_APPROVAL_PASS: "1",
       });
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
@@ -286,7 +286,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(controlExec?.slice(userIndex, userIndex + 5)).toEqual([
         "--user",
         "root",
-        `openshell-${sandboxName}-fixture`,
+        "sandbox-container-id",
         "/usr/local/bin/nemoclaw-gateway-control",
         "recover",
       ]);
@@ -325,7 +325,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         { gatewaySupervisorRecovery: true },
       );
 
-      const result = runConnect(tmpDir, sandboxName, { NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1" }, [
+      const result = runConnect(tmpDir, sandboxName, { OPENSHELL_TEST_FAIL_APPROVAL_PASS: "1" }, [
         "--probe-only",
       ]);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -356,7 +356,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         "claude-sonnet-4-20250514",
       );
 
-      const result = runConnect(tmpDir, sandboxName, { NEMOCLAW_TEST_GATEWAY_DOWN: "1" }, [
+      const result = runConnect(tmpDir, sandboxName, { OPENSHELL_TEST_GATEWAY_DOWN: "1" }, [
         "--probe-only",
       ]);
       expect(result.status).toBe(1);
@@ -414,7 +414,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
   );
 
   it(
-    "approve timeout matches the watcher (10s), list keeps 2s, and stays within the outer cap",
+    "approve timeout matches the watcher, cold list gets 5s, and both stay within the outer cap",
     testTimeoutOptions(20_000),
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
@@ -443,9 +443,9 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(script).toContain(`MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}`);
 
       // Approve budget matches the in-sandbox watcher RUN_TIMEOUT_SECS = 10;
-      // list budget is 2s.
+      // list budget covers a cold OpenClaw 2026.6.10 CLI load.
       expect(CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S).toBe(10);
-      expect(CONNECT_AUTO_PAIR_LIST_TIMEOUT_S).toBe(2);
+      expect(CONNECT_AUTO_PAIR_LIST_TIMEOUT_S).toBe(5);
 
       // Budget invariant: the inner worst case (list + approve × MAX_APPROVALS)
       // must stay STRICTLY below the outer spawnSync cap. The outer timer starts

@@ -27,6 +27,7 @@ describe("connectSandbox flow", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     if (originalStdoutIsTty === undefined) {
       Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: undefined });
     } else {

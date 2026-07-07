@@ -143,6 +143,8 @@ describe("onboard flow context helpers", () => {
       session: createSession(),
       sandboxName: "my-assistant",
       webSearchConfig: null,
+      webSearchConfigChanged: false,
+      hermesToolGateways: [],
       selectedMessagingChannels: ["telegram"],
       webSearchSupported: true,
     });

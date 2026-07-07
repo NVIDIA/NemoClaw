@@ -246,4 +246,136 @@ describe("credential rotation detection", () => {
       vi.restoreAllMocks();
     });
   });
+
+  // The selective-rebuild contract: when only a subset of messaging credentials
+  // rotate, the provider-name list that drives the user-facing
+  // "Messaging credential(s) rotated: …" line and the rebuild set must name
+  // ONLY the changed provider(s) — never their unchanged siblings. onboard.ts
+  // renders this via `credentialRotation.changedProviders.join(", ")`, so these
+  // cases assert on that exact provider-name selection rather than the boolean
+  // rotation / hash logic covered above.
+  describe("selective-rebuild provider naming", () => {
+    // Three sibling providers sharing a single stored plan; each case rotates a
+    // different subset and asserts the resulting name list.
+    function threeProviderPlan(hashes: { telegram: string; discord: string; slack: string }) {
+      return makePlanEntry("multi-sandbox", [
+        { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: hashes.telegram },
+        { providerEnvKey: "DISCORD_BOT_TOKEN", credentialHash: hashes.discord },
+        { providerEnvKey: "SLACK_BOT_TOKEN", credentialHash: hashes.slack },
+      ]);
+    }
+
+    const A = "multi-telegram-bridge";
+    const B = "multi-discord-bridge";
+    const C = "multi-slack-bridge";
+
+    it("names ONLY provider A and excludes unchanged siblings B and C", () => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue(
+        threeProviderPlan({
+          telegram: hashCredentialOrThrow("tg-old"),
+          discord: hashCredentialOrThrow("dc-same"),
+          slack: hashCredentialOrThrow("sl-same"),
+        }),
+      );
+
+      const result = detectMessagingCredentialRotation("multi-sandbox", [
+        { name: A, envKey: "TELEGRAM_BOT_TOKEN", token: "tg-new" },
+        { name: B, envKey: "DISCORD_BOT_TOKEN", token: "dc-same" },
+        { name: C, envKey: "SLACK_BOT_TOKEN", token: "sl-same" },
+      ]);
+
+      expect(result.changed).toBe(true);
+      // Rebuild set / message name only the rotated provider.
+      expect(result.changedProviders).toEqual([A]);
+      expect(result.changedProviders).not.toContain(B);
+      expect(result.changedProviders).not.toContain(C);
+      // The exact user-facing string driven by this list.
+      expect(result.changedProviders.join(", ")).toBe(A);
+      vi.restoreAllMocks();
+    });
+
+    it("names a middle sibling only, leaving A and C out of the rebuild set", () => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue(
+        threeProviderPlan({
+          telegram: hashCredentialOrThrow("tg-same"),
+          discord: hashCredentialOrThrow("dc-old"),
+          slack: hashCredentialOrThrow("sl-same"),
+        }),
+      );
+
+      const result = detectMessagingCredentialRotation("multi-sandbox", [
+        { name: A, envKey: "TELEGRAM_BOT_TOKEN", token: "tg-same" },
+        { name: B, envKey: "DISCORD_BOT_TOKEN", token: "dc-new" },
+        { name: C, envKey: "SLACK_BOT_TOKEN", token: "sl-same" },
+      ]);
+
+      expect(result.changedProviders).toEqual([B]);
+      expect(result.changedProviders.join(", ")).toBe(B);
+      vi.restoreAllMocks();
+    });
+
+    it("names all changed providers when multiple siblings rotate, preserving order", () => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue(
+        threeProviderPlan({
+          telegram: hashCredentialOrThrow("tg-old"),
+          discord: hashCredentialOrThrow("dc-same"),
+          slack: hashCredentialOrThrow("sl-old"),
+        }),
+      );
+
+      const result = detectMessagingCredentialRotation("multi-sandbox", [
+        { name: A, envKey: "TELEGRAM_BOT_TOKEN", token: "tg-new" },
+        { name: B, envKey: "DISCORD_BOT_TOKEN", token: "dc-same" },
+        { name: C, envKey: "SLACK_BOT_TOKEN", token: "sl-new" },
+      ]);
+
+      expect(result.changed).toBe(true);
+      // Both changed siblings named, in tokenDefs order; unchanged B omitted.
+      expect(result.changedProviders).toEqual([A, C]);
+      expect(result.changedProviders).not.toContain(B);
+      expect(result.changedProviders.join(", ")).toBe(`${A}, ${C}`);
+      vi.restoreAllMocks();
+    });
+
+    it("names every provider when all siblings rotate", () => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue(
+        threeProviderPlan({
+          telegram: hashCredentialOrThrow("tg-old"),
+          discord: hashCredentialOrThrow("dc-old"),
+          slack: hashCredentialOrThrow("sl-old"),
+        }),
+      );
+
+      const result = detectMessagingCredentialRotation("multi-sandbox", [
+        { name: A, envKey: "TELEGRAM_BOT_TOKEN", token: "tg-new" },
+        { name: B, envKey: "DISCORD_BOT_TOKEN", token: "dc-new" },
+        { name: C, envKey: "SLACK_BOT_TOKEN", token: "sl-new" },
+      ]);
+
+      expect(result.changedProviders).toEqual([A, B, C]);
+      expect(result.changedProviders.join(", ")).toBe(`${A}, ${B}, ${C}`);
+      vi.restoreAllMocks();
+    });
+
+    it("produces an empty name list when no sibling rotates (no rebuild, no message)", () => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue(
+        threeProviderPlan({
+          telegram: hashCredentialOrThrow("tg-same"),
+          discord: hashCredentialOrThrow("dc-same"),
+          slack: hashCredentialOrThrow("sl-same"),
+        }),
+      );
+
+      const result = detectMessagingCredentialRotation("multi-sandbox", [
+        { name: A, envKey: "TELEGRAM_BOT_TOKEN", token: "tg-same" },
+        { name: B, envKey: "DISCORD_BOT_TOKEN", token: "dc-same" },
+        { name: C, envKey: "SLACK_BOT_TOKEN", token: "sl-same" },
+      ]);
+
+      expect(result.changed).toBe(false);
+      expect(result.changedProviders).toEqual([]);
+      expect(result.changedProviders.join(", ")).toBe("");
+      vi.restoreAllMocks();
+    });
+  });
 });

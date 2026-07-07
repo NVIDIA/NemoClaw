@@ -70,6 +70,12 @@ jobs:
           npm ci --ignore-scripts
           npm run build
 
+      - name: Run gateway lifecycle regressions
+        run: >-
+          npx vitest run --project integration
+          test/tunnel-gateway-port-release-runtime.test.ts
+          test/onboard-gateway-prelaunch-cutover.test.ts
+
       - name: Detect Docker availability
         id: docker
         run: |

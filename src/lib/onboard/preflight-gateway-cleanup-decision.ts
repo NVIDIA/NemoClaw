@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { warnLine } from "../cli/terminal-style";
 import type { GatewayReuseState } from "../state/gateway";
 
 export type PreflightGatewayCleanupAction = "defer" | "destroy-legacy" | "noop";
 
 export const PREFLIGHT_DEFERRED_RECREATE_MESSAGE =
-  "  ⚠ Gateway will be recreated when sandbox creation starts — this will affect running sandboxes.";
+  "Gateway will be recreated when sandbox creation starts — this will affect running sandboxes.";
 
 export function preflightGatewayCleanupDecision(opts: {
   gatewayReuseState: GatewayReuseState;
@@ -24,6 +25,7 @@ export interface PreflightGatewayCleanupDeps {
   cliDisplayName: string;
   dashboardPort: number;
   log: (line: string) => void;
+  warn: (line: string) => void;
   runOpenshell: (args: string[], options: { ignoreError: true }) => unknown;
   destroyGateway: () => boolean;
   destroyGatewayForReuse: (
@@ -39,7 +41,7 @@ export function applyPreflightGatewayCleanup(deps: PreflightGatewayCleanupDeps):
     isDockerDriverGatewayEnabled: deps.isDockerDriverGatewayEnabled,
   });
   if (action === "defer") {
-    deps.log(PREFLIGHT_DEFERRED_RECREATE_MESSAGE);
+    deps.warn(warnLine(PREFLIGHT_DEFERRED_RECREATE_MESSAGE));
     return deps.gatewayReuseState;
   }
   if (action === "destroy-legacy") {

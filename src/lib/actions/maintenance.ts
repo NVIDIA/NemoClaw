@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
-import {
-  detectOpenShellStateRpcPreflightIssue,
-  detectOpenShellStateRpcResultIssue,
-  printOpenShellStateRpcIssue,
-} from "../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../cli/branding";
 import { prompt as askPrompt } from "../credentials/store";
 import {
@@ -14,10 +9,7 @@ import {
   normalizeGarbageCollectImagesOptions,
 } from "../domain/lifecycle/options";
 import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
-import {
-  captureSandboxListWithGatewayRecovery,
-  printSandboxListFailureWithRecoveryContext,
-} from "../openshell-sandbox-list";
+import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
@@ -42,29 +34,10 @@ export async function backupAll(): Promise<void> {
     return;
   }
 
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
-  if (preflightIssue) {
-    printOpenShellStateRpcIssue(preflightIssue, {
-      action: "backing up registered sandboxes",
-      command: `${CLI_NAME} backup-all`,
-    });
-    process.exit(1);
-  }
-
-  const liveListRecovery = await captureSandboxListWithGatewayRecovery();
-  const liveList = liveListRecovery.result;
-  const resultIssue = detectOpenShellStateRpcResultIssue(liveList);
-  if (resultIssue) {
-    printOpenShellStateRpcIssue(resultIssue, {
-      action: "backing up registered sandboxes",
-      command: `${CLI_NAME} backup-all`,
-    });
-    process.exit(1);
-  }
-  if (liveList.status !== 0) {
-    printSandboxListFailureWithRecoveryContext(liveListRecovery);
-    process.exit(liveList.status || 1);
-  }
+  const liveList = await captureSandboxListWithGatewayPreflightOrExit({
+    action: "backing up registered sandboxes",
+    command: `${CLI_NAME} backup-all`,
+  });
   const readyNames = parseReadySandboxNames(liveList.output || "");
 
   const skipUnreachable = shouldSkipUnreachableSandboxBackup(process.env);

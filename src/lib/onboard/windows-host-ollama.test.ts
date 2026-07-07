@@ -55,7 +55,7 @@ describe("detectWindowsHostOllama", () => {
   it("returns uninstalled when all Windows Ollama probes miss", () => {
     runCapture.mockImplementation(() => "");
 
-    expect(detectWindowsHostOllama()).toEqual({
+    expect(detectWindowsHostOllama({ isWsl: () => true, runCapture })).toEqual({
       installed: false,
       installedPath: "",
       loopbackOnly: false,

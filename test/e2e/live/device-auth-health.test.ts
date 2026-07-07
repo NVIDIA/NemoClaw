@@ -12,6 +12,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   assertDockerAvailable,
@@ -27,6 +28,8 @@ import {
 } from "./device-auth-health-helpers.ts";
 
 const LIVE_TIMEOUT_MS = 30 * 60_000;
+const INFERENCE_API_KEY = "device-auth-health-fixture-credential";
+const INFERENCE_MODEL = "device-auth-health-model";
 
 function assertStatusNotOffline(output: string, context: string): void {
   expect(output, `${context} must not report the #2342 false Health Offline state`).not.toMatch(
@@ -37,9 +40,22 @@ function assertStatusNotOffline(output: string, context: string): void {
 test.skipIf(!shouldRunLiveE2E())(
   "device auth health probes treat 401 as live instead of offline (#2342)",
   { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+  async ({ artifacts, cleanup, host, sandbox, skip }) => {
     const installLog = artifacts.pathFor("phase-1-install-device-auth-health.log");
+    const inference = await startFakeOpenAiCompatibleServer({
+      apiKey: INFERENCE_API_KEY,
+      model: INFERENCE_MODEL,
+      requireAuth: true,
+    });
+    cleanup.add("close device-auth compatible inference fixture", async () => {
+      await artifacts.writeJson("compatible-inference-requests.json", inference.requests());
+      await inference.close();
+    });
+    const inferenceConfig = {
+      apiKey: INFERENCE_API_KEY,
+      endpointUrl: inference.baseUrl,
+      model: INFERENCE_MODEL,
+    };
 
     await artifacts.writeJson("target.json", {
       id: "device-auth-health",
@@ -49,6 +65,7 @@ test.skipIf(!shouldRunLiveE2E())(
       dashboardPort: DASHBOARD_PORT,
       contracts: [
         "onboard succeeds with device auth enabled",
+        "onboard authenticates to the fixture inference endpoint",
         "/health is reachable from inside the sandbox",
         "the authenticated dashboard root may return 401 without being treated as offline",
         "nemoclaw status reports the gateway as live, not Health Offline",
@@ -68,8 +85,15 @@ test.skipIf(!shouldRunLiveE2E())(
     );
     await bestEffort(() => cleanupDeviceAuthSandbox(host, sandbox));
 
-    const install = await installDeviceAuthSandbox(host, apiKey, installLog);
+    const install = await installDeviceAuthSandbox(host, inferenceConfig, installLog);
     expect(install.exitCode, resultText(install)).toBe(0);
+    expect(inference.requests()).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        model: INFERENCE_MODEL,
+        path: "/v1/chat/completions",
+      }),
+    );
 
     await host.expectListed(SANDBOX_NAME, {
       artifactName: "phase-1-nemoclaw-list-device-auth-health",

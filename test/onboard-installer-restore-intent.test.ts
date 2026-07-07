@@ -66,14 +66,18 @@ runner.runCapture = (command) => {
   }
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  gpuEnabled: false,
+  toolDisclosure: "progressive",
+});
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -263,7 +267,11 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant NotReady";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  gpuEnabled: false,
+  toolDisclosure: "progressive",
+});
 sandboxState.getLatestBackup = () => {
   throw new Error("unexpected getLatestBackup without installer restore intent");
 };

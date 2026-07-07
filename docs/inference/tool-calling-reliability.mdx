@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Tool-Calling Reliability for Local Inference"
 sidebar-title: "Tool-Calling Reliability"
-description: "Diagnose local inference setups where tool calls leak as plain text and choose when to use Ollama or vLLM."
-description-agent: "Explains Ollama tool-call leak symptoms, when to use vLLM with a tool-call parser, and how to repoint NemoClaw to a parser-aware local endpoint."
-keywords: ["nemoclaw tool calling", "ollama tool calls", "vllm tool-call-parser", "raw json in tui"]
+description: "Understand progressive tool disclosure across agents and diagnose local inference setups where tool calls leak as plain text."
+description-agent: "Explains agent-specific progressive Tool Search behavior, disclosure overrides, Ollama tool-call leak symptoms, and parser-aware vLLM setup. Use when troubleshooting search_tools, Tool Search, or raw tool-call JSON."
+keywords: ["nemoclaw tool calling", "progressive tool disclosure", "search_tools", "ollama tool calls", "vllm tool-call-parser", "raw json in tui"]
 content:
   type: "troubleshooting"
 ---
@@ -47,11 +47,42 @@ The common failure mode is:
 This is different from a network or policy block.
 `nemoclaw <name> status`, `nemoclaw <name> logs`, and `nemoclaw debug --quick` can all look healthy while tool dispatch still fails inside the conversation.
 
+### Progressive Tool Disclosure by Agent
+
+Progressive disclosure is enabled by default across the supported agents, but each agent keeps its native mechanism and configuration schema.
+The keys, tool names, and result limits are not interchangeable.
+
+| Agent | NemoClaw-generated mechanism | Default results | Maximum results |
+|---|---|---:|---:|
+| OpenClaw | `tools.toolSearch.mode: "tools"` with `searchDefaultLimit` and `maxSearchLimit` | 8 | 20 |
+| Hermes | `tools.tool_search.enabled: "on"` with `search_default_limit` and `max_search_limit` | 5 | 20 |
+| Deep Agents Code | NemoClaw `ProgressiveToolDisclosureMiddleware` and the `search_tools` model tool | Up to 20 | 20 |
+
+For OpenClaw, `mode: "tools"` selects its structured bridge instead of the JavaScript-based `tool_search_code` bridge.
+A model-specific `toolSearch: false` override still disables Tool Search entirely.
+For Hermes, `enabled: "on"` activates its native bridge whenever the session has at least one deferrable MCP or non-core plugin tool, even when that catalog is small; Hermes core tools remain directly visible.
+For Deep Agents Code, the middleware activates only after at least one MCP tool loads successfully.
+It initially exposes `search_tools` and the core filesystem, shell, user-input, and todo tools.
+Each search returns up to 20 name-sorted tools whose names or descriptions match case-insensitively, and the graph thread retains up to 64 discovered named tools.
+Search output is limited to 8 KiB, individual descriptions to 256 characters, individual name UTF-8 and stable-JSON representations to 120 bytes, individual named schemas to 16 KiB, and the discovered schemas visible in one model request to 128 KiB.
+Named tools that exceed the name or schema limits are not discoverable, while core tools remain visible.
+When a broad query exceeds a result or state limit, `search_tools` reports omitted matches so the model can refine its query.
+Provider-native definitions without a callable name remain visible because the middleware cannot search or checkpoint them by name.
+Main-agent and local-subagent discoveries use separate middleware instances.
+
+All three agents keep their full executor registry and route final calls through their normal execution, policy, approval, and hook paths.
+Progressive disclosure is a model-context optimization, not an authorization boundary.
+
+Use `nemoclaw onboard --tool-disclosure direct` (or `NEMOCLAW_TOOL_DISCLOSURE=direct`) to present all registered tools directly.
+For an existing sandbox with managed MCP servers, use `nemoclaw <name> rebuild --tool-disclosure direct`; the transactional rebuild preserves MCP providers and adapter state while changing the mode.
+An explicit `direct` selection is authoritative; model-specific safety settings may disable progressive search for a model, but cannot re-enable it over that selection.
+
 ### Nemotron Managed Inference
 
-For the `nvidia/nemotron-3-super-120b-a12b` managed inference route on `inference.local`, NemoClaw disables OpenClaw's native code-based tool search surface.
-That route otherwise tends to generate invalid JavaScript for the `tool_search_code` helper, which creates `[tools] tool_search_code failed` noise even when normal turns succeed.
-The agent still uses the structured tool-calling surface that the model handles correctly.
+NemoClaw's generated OpenClaw default uses structured Tool Search, exposing `tool_search`, `tool_describe`, and `tool_call` instead of the JavaScript-based `tool_search_code` helper.
+The managed Nemotron Super and Ultra routes retain model-specific `toolSearch: false` safeguards because their code-mode failures are documented and no live structured-search trajectory has cleared the replacement.
+In the model-specific manifest contract, `false` disables Tool Search entirely while `true` selects OpenClaw's default code mode; neither boolean selects structured mode.
+These routes therefore keep direct structured tool calling until search, describe, call, and final tool execution are verified through a real model trajectory.
 
 ## Recommended Fix
 

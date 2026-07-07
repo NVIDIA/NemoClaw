@@ -2,16 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Bridge + DNS preflight gate, extracted from `onboard.ts` so it can be
- * reused as a `--resume` backstop without growing the top-level file
- * past the `onboard-entrypoint-budget` CI ceiling.
- *
- * - `assertDockerBridgeAndContainerDnsHealthy(host)` runs the bridge
- *   container start probe (#3508 Jetson veth) and the DNS-from-inside-
- *   container probe (#3630), and exits with platform-aware remediation
- *   on the fatal reasons described in `[[isFatalContainerDnsProbeFailure]]`.
+ * Bridge + DNS preflight gate extracted from `onboard.ts` for reuse as a
+ * `--resume` backstop. It validates bridge container start (#3508 Jetson veth)
+ * and container DNS (#3630), with platform-aware remediation on fatal results.
  */
 
+import { failLine, warnLine } from "../cli/terminal-style";
 import { cliDisplayName, cliName } from "./branding";
 
 interface DaemonJsonDnsPatchOpts {
@@ -30,19 +26,14 @@ interface DaemonJsonDnsPatchOpts {
 }
 
 /**
- * Print a copy-pastable shell snippet that adds a `dns` key to the
- * given daemon.json safely. The snippet:
- *  - creates the containing directory,
- *  - backs up the existing daemon.json,
- *  - requires `jq` (prints an install hint and aborts if missing — no
- *    bare-echo fallback that would clobber an existing daemon.json),
- *  - merges into an existing JSON object via `jq '. + {...}'`,
- *  - creates a new JSON object via `jq -n {...}` when daemon.json is
- *    absent,
- *  - refuses to write if the existing file is not parseable, asking
- *    the user to fix it manually first.
+ * Print a copy-pastable shell snippet that creates the config directory, backs
+ * up daemon.json, requires `jq`, merges or creates the `dns` key, and refuses
+ * to write invalid JSON.
  *
- * The snippet is printed verbatim; nothing here executes it.
+ * Source boundary: this is privileged, platform-owned Docker configuration.
+ * Unprivileged onboarding cannot safely mutate it or restart Docker without
+ * explicit user consent, so the commands stay plain and nothing executes them.
+ * Remove this only when Docker/OpenShell exposes a managed daemon-DNS API.
  */
 function printDaemonJsonDnsPatch(opts: DaemonJsonDnsPatchOpts): void {
   const { daemonJsonPath, configDir, dnsValue, sudo, installJqHint, indent } = opts;
@@ -96,7 +87,7 @@ export function printDockerBridgeContainerStartFailure(
   result: DockerBridgeContainerStartProbeResult,
   host?: Pick<Host, "isWsl">,
 ): void {
-  console.error("  ✗ Docker could not start a bridge-network test container.");
+  console.error(failLine("Docker could not start a bridge-network test container."));
   if (result.details) {
     for (const line of String(result.details).split("\n").slice(-4)) {
       if (line.trim()) console.error(`    ${line.trim()}`);
@@ -149,7 +140,11 @@ export function printDockerBridgeContainerStartFailure(
  * wall (mirroring the [[assertCdiNvidiaGpuSpecPresent]] resume backstop
  * pattern at #3152).
  */
-export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteractive = false): void {
+export function assertDockerBridgeAndContainerDnsHealthy(
+  host: Host,
+  nonInteractive = false,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
+): void {
   // A minimal bridge-backed container start catches Docker/kernel failures
   // (notably Jetson veth "operation not supported") before longer gateway or
   // sandbox build work starts. Only veth/timeout/killed/daemon-unreachable
@@ -167,10 +162,12 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
     bridgeStart.reason === "docker_daemon_unreachable"
   ) {
     printDockerBridgeContainerStartFailure(bridgeStart, host);
-    process.exit(1);
+    exitProcess(1);
   } else {
     console.warn(
-      `  ⚠ Bridge container start probe inconclusive (reason: ${bridgeStart.reason ?? "unknown"}).`,
+      warnLine(
+        `Bridge container start probe inconclusive (reason: ${bridgeStart.reason ?? "unknown"}).`,
+      ),
     );
     if (bridgeStart.details) {
       for (const line of String(bridgeStart.details).split("\n").slice(-3)) {
@@ -203,14 +200,16 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
   if (!dnsIsFatal) {
     if (dns.reason === "image_pull_failed") {
       console.warn(
-        "  ⚠ Container DNS probe inconclusive: docker couldn't pull the busybox test image.",
+        warnLine("Container DNS probe inconclusive: docker couldn't pull the busybox test image."),
       );
       console.warn("    This usually means the docker daemon itself can't reach Docker Hub,");
       console.warn(
         "    but doesn't prove container DNS is broken — the sandbox build may still succeed.",
       );
     } else {
-      console.warn(`  ⚠ Container DNS probe inconclusive (reason: ${dns.reason ?? "unknown"}).`);
+      console.warn(
+        warnLine(`Container DNS probe inconclusive (reason: ${dns.reason ?? "unknown"}).`),
+      );
     }
     if (dns.details) {
       for (const line of String(dns.details).split("\n").slice(-3)) {
@@ -233,7 +232,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
       },
       host,
     );
-    process.exit(1);
+    exitProcess(1);
   }
   if (dns.reason === "docker_daemon_unreachable") {
     printDockerBridgeContainerStartFailure(
@@ -247,18 +246,18 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
       },
       host,
     );
-    process.exit(1);
+    exitProcess(1);
   }
   if (dns.reason === "timeout" || dns.reason === "killed") {
-    console.error("  ✗ Container DNS probe did not complete.");
+    console.error(failLine("Container DNS probe did not complete."));
   } else if (dns.reason === "image_pull_failed") {
-    console.error("  ✗ Docker could not resolve or pull the DNS probe image.");
+    console.error(failLine("Docker could not resolve or pull the DNS probe image."));
   } else if (dns.reason === "resolution_failed") {
     console.error(
-      "  ✗ Container DNS server is reachable but rejected the query (NXDOMAIN/REFUSED).",
+      failLine("Container DNS server is reachable but rejected the query (NXDOMAIN/REFUSED)."),
     );
   } else {
-    console.error("  ✗ DNS resolution from inside a docker container failed.");
+    console.error(failLine("DNS resolution from inside a docker container failed."));
   }
   if (dns.details) {
     for (const line of String(dns.details).split("\n").slice(-4)) {
@@ -276,7 +275,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
   } else {
     printContainerDnsRemediation(host);
   }
-  process.exit(1);
+  exitProcess(1);
 }
 
 /**
@@ -397,7 +396,7 @@ export function assertHostDnsHealthy(host: Host, opts: AssertHostDnsHealthyOpts 
     return;
   }
   if (!isFatalHostDnsProbeFailure(result)) {
-    console.warn(`  ⚠ Host DNS probe inconclusive (reason: ${result.reason ?? "unknown"}).`);
+    console.warn(warnLine(`Host DNS probe inconclusive (reason: ${result.reason ?? "unknown"}).`));
     if (result.details) {
       console.warn(`    ${String(result.details).trim()}`);
     }
@@ -408,11 +407,15 @@ export function assertHostDnsHealthy(host: Host, opts: AssertHostDnsHealthyOpts 
   }
 
   if (result.reason === "timeout" || result.reason === "killed") {
-    console.error(`  ✗ Host DNS probe did not complete (could not resolve ${result.hostname}).`);
+    console.error(
+      failLine(`Host DNS probe did not complete (could not resolve ${result.hostname}).`),
+    );
   } else if (result.reason === "resolution_failed") {
-    console.error(`  ✗ Host could not resolve ${result.hostname} (resolver answered, no record).`);
+    console.error(
+      failLine(`Host could not resolve ${result.hostname} (resolver answered, no record).`),
+    );
   } else {
-    console.error(`  ✗ Host DNS resolution failed (could not resolve ${result.hostname}).`);
+    console.error(failLine(`Host DNS resolution failed (could not resolve ${result.hostname}).`));
   }
   if (result.details) {
     console.error(`    ${String(result.details).trim()}`);

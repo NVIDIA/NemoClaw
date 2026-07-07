@@ -9,7 +9,7 @@
 //   npx tsx scripts/validate-configs.ts              # validate all known config files
 //   npx tsx scripts/validate-configs.ts --file <config> --schema <schema>  # validate one file
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv/dist/2020.js";
@@ -55,6 +55,10 @@ function discoverTargets(): ConfigTarget[] {
     {
       schema: "schemas/router-pool-config.schema.json",
       files: ["nemoclaw-blueprint/router/pool-config.yaml"],
+    },
+    {
+      schema: "schemas/onboard-config.schema.json",
+      files: ["ci/onboard-performance-budget.json"],
     },
   ];
 
@@ -395,11 +399,11 @@ function main(): void {
 // Export for unit tests without re-running main().
 export {
   DANGEROUS_HOSTS,
-  ROUTER_API_BASE_HOST_ALLOWLIST,
-  isDangerousHost,
+  discoverTargets,
   findDangerousHosts,
   findDangerousRouterApiBases,
-  discoverTargets,
+  isDangerousHost,
+  ROUTER_API_BASE_HOST_ALLOWLIST,
 };
 
 // Only run main() when invoked directly (skip on test `import`).

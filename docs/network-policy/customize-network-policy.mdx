@@ -222,6 +222,7 @@ Available presets:
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
+| `tavily` | Tavily Search API |
 | `telegram` | Telegram Bot API |
 | `wechat` | WeChat (personal) iLink Bot API (experimental) |
 | `whatsapp` | WhatsApp Web messaging (experimental) |
@@ -301,6 +302,10 @@ network_policies:
 
 The top-level `preset.name` must be a lowercase RFC 1123 label (letters, digits, hyphens) and must not collide with a built-in preset name such as `slack` or `pypi`.
 Rename `preset.name` if NemoClaw refuses to apply the file because of a collision.
+Rule matchers must match the endpoint protocol.
+REST and WebSocket rules require `method` and `path`; REST accepts standard HTTP methods or `*`, while WebSocket accepts `GET`, `WEBSOCKET_TEXT`, or `*`.
+JSON-RPC rules accept only `method`, and MCP rules accept `method` plus optional `tool` or `params.name` matchers.
+The same protocol-specific matcher shape applies to `deny_rules`.
 User-authored presets must not declare `allowed_ips` for ordinary endpoints.
 NemoClaw rejects that field in files passed through `--from-file` or `--from-dir` because it can widen the private-address ranges that OpenShell checks during SSRF protection.
 Use hostnames, ports, protocols, methods, paths, and binary restrictions instead.
@@ -418,7 +423,7 @@ For `unsupported`, surface the limitation to the user without retrying.
 ## Related Topics
 
 - [Approve or Deny Agent Network Requests](approve-network-requests) for real-time operator approval.
-- [Common Integration Policy Examples](integration-policy-examples) for maintained preset examples such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
+- [Common Integration Policy Examples](integration-policy-examples) for maintained preset examples such as Outlook, messaging, GitHub, Jira, web search, package managers, Hugging Face, and local inference.
 - [Network Policies](../reference/network-policies) for the full baseline policy reference.
 - OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
 - OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

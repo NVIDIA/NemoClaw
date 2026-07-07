@@ -6,7 +6,11 @@ import {
   HERMES_PROVIDER_NAME,
   type HermesAuthMethod,
 } from "../hermes-provider-auth";
-import type { WebSearchConfig } from "../inference/web-search";
+import {
+  type WebSearchConfig,
+  webSearchLabelFor,
+  webSearchProviderForConfig,
+} from "../inference/web-search";
 import { hermesToolGatewayLabels } from "./hermes-managed-tools";
 
 const HERMES_AUTH_METHOD_OAUTH: HermesAuthMethod = "oauth";
@@ -87,7 +91,9 @@ export function formatOnboardConfigSummary({
       ? enabledChannels.join(", ")
       : "none";
   const webSearch =
-    webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
+    webSearchConfig && webSearchConfig.fetchEnabled === true
+      ? `enabled (${webSearchLabelFor(webSearchProviderForConfig(webSearchConfig))})`
+      : "disabled";
   const effectiveHermesAuthMethod =
     normalizeHermesAuthMethod(hermesAuthMethod) ||
     (provider === HERMES_PROVIDER_NAME && credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV

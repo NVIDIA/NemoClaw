@@ -1138,6 +1138,8 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       providerKey: "custom",
       upstreamProvider: "nemoclaw-inference",
       inferenceApi: "",
+      toolDisclosure: "progressive" as const,
+      webSearchProvider: null,
       messagingCredentialPlaceholders: [],
       managedToolGateways: { brokerEnabled: false, presets: [] },
     };
@@ -1183,6 +1185,8 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         providerKey: "custom",
         upstreamProvider: "nemoclaw-inference",
         inferenceApi: "",
+        toolDisclosure: "progressive" as const,
+        webSearchProvider: null,
         messagingCredentialPlaceholders: [],
         managedToolGateways: { brokerEnabled: false, presets: [] },
       };

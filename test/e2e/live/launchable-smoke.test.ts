@@ -311,6 +311,12 @@ runLaunchableSmokeTest(
       timeoutMs: 30_000,
     });
     expectExitZero(openshellVersion, "openshell is on PATH and --version works");
+    const openshellVersionText = `${openshellVersion.stdout}\n${openshellVersion.stderr}`;
+    expect(
+      process.env.NEMOCLAW_OPENSHELL_CHANNEL !== "dev" ||
+        /\d+\.\d+\.\d+[.-]dev\d*(?:[.+-][0-9A-Za-z]+)*/i.test(openshellVersionText),
+      "the dev integration target must install a dev-channel OpenShell build",
+    ).toBe(true);
 
     const nodeVersion = await host.command(
       "node",

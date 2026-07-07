@@ -40,9 +40,7 @@ export function runUseCommand(sandboxName: string, deps: UseCommandDeps): UseCom
   if (!known.includes(sandboxName)) {
     return { outcome: "not-found", sandboxName, knownSandboxes: known };
   }
-  if (current.defaultSandbox === sandboxName) {
-    return { outcome: "already-default", sandboxName };
-  }
+  const wasAlreadyDefault = current.defaultSandbox === sandboxName;
   const updated = deps.setDefault(sandboxName);
   if (!updated) {
     // setDefault rechecks existence under the registry lock. Refresh after a
@@ -53,6 +51,9 @@ export function runUseCommand(sandboxName: string, deps: UseCommandDeps): UseCom
       sandboxName,
       knownSandboxes: refreshed.sandboxes.map((sb) => sb.name),
     };
+  }
+  if (wasAlreadyDefault) {
+    return { outcome: "already-default", sandboxName };
   }
   return { outcome: "set", sandboxName, previousDefault: current.defaultSandbox };
 }

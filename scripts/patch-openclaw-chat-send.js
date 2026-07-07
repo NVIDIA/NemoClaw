@@ -39,6 +39,17 @@ function listJsFiles(dir) {
     .map((entry) => path.join(dir, entry.name));
 }
 
+let distEntries;
+function getDistEntries() {
+  if (!distEntries) {
+    distEntries = listJsFiles(distDir).map((file) => ({
+      file,
+      source: fs.readFileSync(file, "utf8"),
+    }));
+  }
+  return distEntries;
+}
+
 function patchChatSendRunStart(source, file) {
   if (source.includes("nemoclaw: correlate chat.send run ids")) {
     return { nextSource: source, status: "already-applied" };
@@ -193,6 +204,11 @@ function patchFollowupRunIdPreservation(source, file) {
       error: `OpenClaw followup runner opts binding not recognized in ${file}`,
     };
   }
+  // Source boundary: OpenClaw 2026.5.18 passed opts into runQueuedFollowup,
+  // 2026.5.22 closes over params.opts and uses createReplyOperation, and
+  // 2026.5.27 closes over params.opts and admits a queued reply turn before
+  // creating the run id. OpenClaw 2026.6.10 keeps that admission flow but routes
+  // the session id through effectiveQueued and includes routeThreadId.
   let nextSource = working.replace(
     /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal(?: \?\? opts\?\.abortSignal)?\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,
     (_match, prefix) =>
@@ -201,7 +217,7 @@ function patchFollowupRunIdPreservation(source, file) {
   );
   if (nextSource === working) {
     nextSource = working.replace(
-      /(const admission = await admitReplyTurn\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*kind: "queued_followup",\n\s*resetTriggered: false,\n\s*(?:routeThreadId: queued\.originatingThreadId,\n\s*)?upstreamAbortSignal: queued\.abortSignal\n\s*\}\);[\s\S]*?replyOperation = admission\.operation;[\s\S]*?\n\s*)const runId = crypto\.randomUUID\(\);/,
+      /(const admission = await admitReplyTurn\(\{\n\s*sessionId: (?:run\.sessionId|effectiveQueued\.admissionSessionId \?\? run\.sessionId),\n\s*sessionKey: replySessionKey \?\? "",\n\s*kind: "queued_followup",\n\s*resetTriggered: false,\n\s*(?:routeThreadId: queued\.originatingThreadId,\n\s*)?upstreamAbortSignal: queued\.abortSignal\n\s*\}\);[\s\S]*?replyOperation = admission\.operation;[\s\S]*?\n\s*)const runId = crypto\.randomUUID\(\);/,
       (_match, prefix) =>
         `${prefix}const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); ` +
         `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,
@@ -214,6 +230,29 @@ function patchFollowupRunIdPreservation(source, file) {
       error: `OpenClaw followup runner run-id shape not recognized in ${file}`,
     };
   }
+  return { nextSource, status: "would-apply" };
+}
+
+function patchEmbeddedAgentRetryPersistence(source, file) {
+  if (source.includes("nemoclaw: suppress persisted user turn on embedded retries")) {
+    return { nextSource: source, status: "already-applied" };
+  }
+  const target =
+    /(let suppressNextUserMessagePersistence = params\.suppressNextUserMessagePersistence \?\? false;\n[ \t]*let lastPersistedCurrentMessageId;\n[ \t]*const onUserMessagePersisted = \(message\) => \{\n)([ \t]*)(if \(params\.currentMessageId !== void 0\) lastPersistedCurrentMessageId = params\.currentMessageId;)/;
+  if ((source.match(new RegExp(target.source, "g")) ?? []).length !== 1) {
+    return {
+      nextSource: source,
+      status: "no-match",
+      error: `OpenClaw embedded-agent user persistence callback shape not recognized in ${file}`,
+    };
+  }
+  const nextSource = source.replace(
+    target,
+    (_match, prefix, indent, firstCallbackLine) =>
+      `${prefix}${indent}suppressNextUserMessagePersistence = true; ` +
+      `// nemoclaw: suppress persisted user turn on embedded retries (#2603, #3145)\n` +
+      `${indent}${firstCallbackLine}`,
+  );
   return { nextSource, status: "would-apply" };
 }
 
@@ -293,12 +332,44 @@ const FILES = [
       },
     ],
   },
+  {
+    id: "embedded-agent-retries",
+    label: "embedded-agent retry runtime",
+    requiredWhen(sources) {
+      return sources.some((source) =>
+        source.includes("effectiveQueued.admissionSessionId ?? run.sessionId"),
+      );
+    },
+    selector(source) {
+      return (
+        source.includes("function runEmbeddedAgent(") &&
+        source.includes("const maxEmptyResponseRetryAttempts = 1;") &&
+        source.includes(
+          "let suppressNextUserMessagePersistence = params.suppressNextUserMessagePersistence ?? false;",
+        ) &&
+        source.includes("empty response detected: runId=")
+      );
+    },
+    recognizers: [
+      {
+        id: "retry-user-persistence",
+        marker: "nemoclaw: suppress persisted user turn on embedded retries",
+        postVerifyError: "embedded-agent retry user-persistence patch did not apply",
+        patch: patchEmbeddedAgentRetryPersistence,
+      },
+    ],
+  },
 ];
 
 function resolveFile(fileSpec, { dryRun }) {
-  const candidates = listJsFiles(distDir).filter((file) =>
-    fileSpec.selector(fs.readFileSync(file, "utf8")),
-  );
+  const entries = getDistEntries();
+  const sources = entries.map((entry) => entry.source);
+  if (fileSpec.requiredWhen && !fileSpec.requiredWhen(sources)) {
+    return { file: null, skipped: true };
+  }
+  const candidates = entries
+    .filter((entry) => fileSpec.selector(entry.source))
+    .map((entry) => entry.file);
   if (candidates.length !== 1) {
     const error = `expected exactly one OpenClaw ${fileSpec.label} file, found ${candidates.length}`;
     if (!dryRun) fail(error);
@@ -343,14 +414,15 @@ function processFile(fileSpec, file, { dryRun }) {
 function runApplyMode() {
   const summary = [];
   for (const fileSpec of FILES) {
-    const { file } = resolveFile(fileSpec, { dryRun: false });
+    const { file, skipped } = resolveFile(fileSpec, { dryRun: false });
+    if (skipped) continue;
     processFile(fileSpec, file, { dryRun: false });
     summary.push(path.basename(file));
   }
-  const [chat, getReply, followup] = summary;
-  console.log(
-    `INFO: patched OpenClaw chat.send compatibility in ${chat}, ${getReply}, and ${followup}`,
-  );
+  const lastFile = summary.at(-1);
+  const fileList =
+    summary.length > 1 ? `${summary.slice(0, -1).join(", ")}, and ${lastFile}` : lastFile;
+  console.log(`INFO: patched OpenClaw chat.send compatibility in ${fileList}`);
 }
 
 function statusBadge(status) {
@@ -375,7 +447,8 @@ function runAuditMode() {
   let selectorFailures = 0;
 
   for (const fileSpec of FILES) {
-    const { file, error: selectorError } = resolveFile(fileSpec, { dryRun: true });
+    const { file, error: selectorError, skipped } = resolveFile(fileSpec, { dryRun: true });
+    if (skipped) continue;
     if (!file) {
       selectorFailures += 1;
       console.log("");

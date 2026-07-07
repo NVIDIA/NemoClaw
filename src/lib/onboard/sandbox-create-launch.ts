@@ -10,8 +10,35 @@ import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
+import {
+  prebuildSandboxImageIfEligible,
+  type SandboxPrebuildInput,
+  type SandboxPrebuildResult,
+} from "./sandbox-prebuild";
 
 type OpenshellShellCommand = (args: string[]) => string;
+
+// These non-secret scheduler controls are intentionally forwarded for bounded
+// live-test and operator tuning. Keep this as an exact allowlist: the host's
+// broader NEMOCLAW_* environment must not become sandbox runtime input.
+const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
+  "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
+  "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
+] as const;
+
+function appendOpenClawAutoPairRuntimeEnvArgs(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  for (const key of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
+    const value = env[key]?.trim();
+    if (value) envArgs.push(formatEnvAssignment(key, value));
+  }
+}
 
 export interface SandboxCreateLaunchInput {
   agent: AgentDefinition | null | undefined;
@@ -35,6 +62,15 @@ export interface SandboxCreateLaunch {
   sandboxStartupCommand: string[];
 }
 
+export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
+  sandboxName: string;
+  prebuild: Omit<SandboxPrebuildInput, "createArgs" | "sandboxName">;
+}
+
+export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
+  prebuild: SandboxPrebuildResult;
+}
+
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
   const env = input.env ?? process.env;
   const manageDashboard = input.manageDashboard ?? true;
@@ -54,6 +90,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   }
 
   appendOpenClawRuntimeEnvArgs(envArgs, input.agent ?? null);
+  appendOpenClawAutoPairRuntimeEnvArgs(envArgs, input.agent ?? null, env);
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
   appendHostProxyEnvArgs(envArgs, env, {
     dropCredentialBearingProxyUrls: input.agent?.name === "langchain-deepagents-code",
@@ -109,5 +146,21 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs,
     sandboxEnv,
     sandboxStartupCommand,
+  };
+}
+
+/** Coordinate the optional local image build with the canonical launch renderer. */
+export async function prepareSandboxCreateLaunchWithPrebuild(
+  input: SandboxCreateLaunchWithPrebuildInput,
+): Promise<SandboxCreateLaunchWithPrebuild> {
+  const { prebuild: prebuildInput, ...launchInput } = input;
+  const prebuild = await prebuildSandboxImageIfEligible({
+    ...prebuildInput,
+    createArgs: input.createArgs,
+    sandboxName: input.sandboxName,
+  });
+  return {
+    ...prepareSandboxCreateLaunch({ ...launchInput, createArgs: prebuild.createArgs }),
+    prebuild,
   };
 }

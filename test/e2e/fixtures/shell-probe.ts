@@ -26,6 +26,13 @@ export interface ShellProbeRunOptions {
   killGraceMs?: number;
   artifactName?: string;
   redactionValues?: string[];
+  /** Timestamp-only output observer; chunk contents never cross this boundary. */
+  onOutput?: (event: ShellProbeOutputEvent) => void;
+}
+
+export interface ShellProbeOutputEvent {
+  stream: "stdout" | "stderr";
+  atMs: number;
 }
 
 export type { TrustedShellCommand, TrustedShellCommandInput } from "./shell/trusted-command.ts";
@@ -131,9 +138,19 @@ export class ShellProbe {
       signal: this.signal,
       onStdout: (chunk) => {
         stdout += chunk;
+        try {
+          options.onOutput?.({ stream: "stdout", atMs: Date.now() });
+        } catch {
+          // Test instrumentation must not change command execution.
+        }
       },
       onStderr: (chunk) => {
         stderr += chunk;
+        try {
+          options.onOutput?.({ stream: "stderr", atMs: Date.now() });
+        } catch {
+          // Test instrumentation must not change command execution.
+        }
       },
     });
 

@@ -869,8 +869,8 @@ describe("local inference helpers", () => {
       models: [{ name: "qwen3.6:35b", size_vram: 0, processor: "100% CPU" }],
     });
     const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const rendered = cmd.join(" ");
       if (rendered.includes("/api/ps")) return psOutput;
       return payload;
     };
@@ -888,8 +888,8 @@ describe("local inference helpers", () => {
       models: [{ name: "qwen3.6:35b", size_vram: 24_000_000_000, processor: "100% GPU" }],
     });
     const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const rendered = cmd.join(" ");
       if (rendered.includes("/api/ps")) return psOutput;
       return payload;
     };
@@ -907,8 +907,8 @@ describe("local inference helpers", () => {
       error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)",
     });
     const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return oomPayload;
     };
@@ -923,8 +923,8 @@ describe("local inference helpers", () => {
       error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)",
     });
     const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return oomPayload;
     };
@@ -940,8 +940,8 @@ describe("local inference helpers", () => {
       error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)",
     });
     const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return oomPayload;
     };
@@ -1077,8 +1077,8 @@ describe("local inference helpers", () => {
       if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };
       return { stdout: oomPayload, exitCode: 0, timedOut: false };
     };
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return "";
     };

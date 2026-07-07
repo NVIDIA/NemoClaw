@@ -30,6 +30,11 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  currentGatewayUpgradeInstallerArgs,
+  oldGatewayUpgradeInstallerArgs,
+  upgradeGatewayCleanupScript,
+} from "./openshell-gateway-upgrade-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_OPENSHELL = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
@@ -321,15 +326,16 @@ async function waitForSurvivorAgentReady(host: HostCliClient): Promise<ShellProb
 async function runInstallerPayload(
   host: HostCliClient,
   label: string,
-  installer: string,
+  installerArgs: readonly string[],
   logFile: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[] = [],
 ): Promise<ShellProbeResult> {
+  const quotedInstallerArgs = installerArgs.map(shellQuote).join(" ");
   const result = await bash(
     host,
     `rm -f ${shellQuote(logFile)}
-bash ${shellQuote(installer)} --non-interactive --yes-i-accept-third-party-software >${shellQuote(logFile)} 2>&1`,
+bash ${quotedInstallerArgs} >${shellQuote(logFile)} 2>&1`,
     {
       artifactName: `${label.replace(/[^a-z0-9_.-]+/gi, "-")}-installer`,
       env,
@@ -343,6 +349,10 @@ bash ${shellQuote(installer)} --non-interactive --yes-i-accept-third-party-softw
   });
   expect(result.exitCode, `${label} NemoClaw installer failed:\n${resultText(tail)}`).toBe(0);
   return result;
+}
+
+async function removeUpgradeGateway(host: HostCliClient, artifactName: string): Promise<void> {
+  await bash(host, upgradeGatewayCleanupScript(PID_FILE), { artifactName, timeoutMs: 120_000 });
 }
 
 async function installOldNemoclawAndClaw(
@@ -385,10 +395,13 @@ chmod 755 ${shellQuote(oldInstaller)}`,
     CHAT_UI_URL: "",
   });
 
+  // A transient gateway import failure leaves the old installer session in a
+  // failed state. Keep Vitest retries independent without applying --fresh to
+  // the later current-version upgrade, which must preserve the survivor.
   await runInstallerPayload(
     host,
     `old-${OLD_NEMOCLAW_REF}`,
-    oldInstaller,
+    oldGatewayUpgradeInstallerArgs(oldInstaller),
     oldInstallLog,
     installEnv,
   );
@@ -444,6 +457,39 @@ chmod 755 ${shellQuote(oldInstaller)}`,
   });
   expectExitZero(list, "old nemoclaw list");
   expectOutputContains(list, SURVIVOR_SANDBOX, "old NemoClaw install must register survivor claw");
+}
+
+async function stampKnownManagedLegacyFixture(artifacts: ArtifactSink): Promise<void> {
+  expect(fs.existsSync(REGISTRY_FILE), `${REGISTRY_FILE} must exist after the old install`).toBe(
+    true,
+  );
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, { fromDockerfile?: string | null; nemoclawVersion?: string | null }>;
+  };
+  const survivor = registry.sandboxes?.[SURVIVOR_SANDBOX];
+  expect(survivor, `old registry must contain ${SURVIVOR_SANDBOX}`).toBeTruthy();
+  const knownManagedSurvivor = survivor as NonNullable<typeof survivor>;
+  expect(knownManagedSurvivor.fromDockerfile ?? null).toBeNull();
+  expect(knownManagedSurvivor.nemoclawVersion ?? null).toBeNull();
+
+  // v0.0.36 predates the managed-image fingerprint. This live fixture has
+  // positive provenance because it just built the sandbox through the real
+  // NemoClaw installer; stamp that test-only evidence so this lane continues
+  // to prove successful gateway recovery. Production still fails closed for
+  // untouched legacy/custom rows, covered by upgrade-sandboxes-recovery.test.
+  const fingerprint = OLD_NEMOCLAW_REF.replace(/^v/, "");
+  knownManagedSurvivor.nemoclawVersion = fingerprint;
+  const temporaryRegistry = `${REGISTRY_FILE}.gateway-upgrade-${process.pid}.tmp`;
+  fs.writeFileSync(temporaryRegistry, `${JSON.stringify(registry, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  fs.renameSync(temporaryRegistry, REGISTRY_FILE);
+  await artifacts.writeJson("legacy-managed-provenance.json", {
+    fingerprint,
+    sandbox: SURVIVOR_SANDBOX,
+    source: `real ${OLD_NEMOCLAW_REF} NemoClaw installer fixture`,
+  });
 }
 
 async function startSurvivorAgentInExistingClaw(host: HostCliClient): Promise<number> {
@@ -526,7 +572,7 @@ async function installCurrentNemoclawUpgrade(
   await runInstallerPayload(
     host,
     `current-${resolvedRef.slice(0, 12)}`,
-    path.join(REPO_ROOT, "scripts", "install.sh"),
+    currentGatewayUpgradeInstallerArgs(path.join(REPO_ROOT, "scripts", "install.sh")),
     currentInstallLog,
     currentEnv,
     redactionValues,
@@ -659,6 +705,7 @@ runLinuxOpenShellGatewayUpgrade(
       boundary: [
         "real old install.sh fetched from v0.0.36",
         "real Docker/OpenShell gateway and OpenClaw sandbox",
+        "test-only positive provenance for the known-managed legacy fixture",
         "current scripts/install.sh gateway upgrade path",
         "sandbox exec /proc process probe",
         "NemoClaw registry and durable workspace restore",
@@ -669,6 +716,9 @@ runLinuxOpenShellGatewayUpgrade(
       survivorSandbox: SURVIVOR_SANDBOX,
     });
 
+    cleanup.add("remove openshell gateway upgrade gateway", async () => {
+      await removeUpgradeGateway(host, "cleanup-gateway");
+    });
     cleanup.add("remove openshell gateway upgrade survivor sandbox", async () => {
       await bash(
         host,
@@ -676,14 +726,11 @@ runLinuxOpenShellGatewayUpgrade(
         { artifactName: "cleanup-survivor-sandbox", timeoutMs: 120_000 },
       );
     });
-    cleanup.add("remove openshell gateway upgrade gateway", async () => {
-      await bash(
-        host,
-        `command -v openshell >/dev/null 2>&1 && openshell gateway remove nemoclaw >/dev/null 2>&1 || true
-rm -f ${shellQuote(PID_FILE)}`,
-        { artifactName: "cleanup-gateway", timeoutMs: 120_000 },
-      );
-    });
+
+    // Vitest retries execute in the same runner process. Tear down any failed
+    // legacy gateway before each attempt so partial containerd layers from a
+    // transient image-import failure cannot consume the next attempt's disk.
+    await removeUpgradeGateway(host, "pre-cleanup-gateway");
 
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: "dummy",
@@ -699,6 +746,7 @@ rm -f ${shellQuote(PID_FILE)}`,
     });
 
     await installOldNemoclawAndClaw(host, artifacts, fake.baseUrl);
+    await stampKnownManagedLegacyFixture(artifacts);
     const survivorPid = await startSurvivorAgentInExistingClaw(host);
     expect(Number.isInteger(survivorPid) && survivorPid > 0).toBe(true);
     await installCurrentNemoclawUpgrade(
@@ -758,7 +806,17 @@ runOpenShellGatewayUpgrade(
       fs.mkdirSync(path.dirname(signLog), { recursive: true });
       writeFakeDarwinUname(fakeBin);
       writeFakeCurrentOpenshell(fakeBin);
-      writeExecutable(path.join(fakeBin, "openshell-gateway"), "#!/usr/bin/env bash\nexit 0\n");
+      writeExecutable(
+        path.join(fakeBin, "openshell-gateway"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openshell-gateway ${CURRENT_OPENSHELL_VERSION}\n'
+  exit 0
+fi
+# allow_all_known_mcp_methods
+exit 0
+`,
+      );
       writeExecutable(path.join(fakeBin, "openshell-driver-vm"), "#!/usr/bin/env bash\nexit 0\n");
       writeExecutable(
         path.join(fakeBin, "codesign"),

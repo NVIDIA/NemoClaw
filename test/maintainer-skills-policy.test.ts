@@ -86,6 +86,36 @@ describe("maintainer skills follow canonical workflow policy", () => {
     ).toBe(true);
   });
 
+  it("records every merged main PR against its ancestry-derived release target", () => {
+    const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
+    const projectWorkflow = read(
+      ".agents/skills/nemoclaw-maintainer-policies/references/project-workflow.md",
+    );
+    const taxonomy = JSON.parse(
+      read(".agents/skills/nemoclaw-maintainer-policies/references/label-taxonomy.json"),
+    ) as {
+      label_families: {
+        release: { application_policy: string; positive_signals: string[] };
+      };
+      quality_rules: { post_merge_release_labeling_allowed: boolean };
+    };
+
+    expect(policy).toContain("After a PR merges to `main`");
+    expect(policy).toContain("earliest containing release");
+    expect(policy).toContain("completed releases tagged within the seven-day retention window");
+    expect(policy).toContain("never removes an existing version label");
+    expect(projectWorkflow).toContain("On open PRs");
+    expect(projectWorkflow).toContain("After a PR merges to `main`");
+    expect(projectWorkflow).toContain("historical release attribution");
+    expect(taxonomy.label_families.release.positive_signals).toContain(
+      "authorized post-merge assignment to a containing release or the next patch release",
+    );
+    expect(taxonomy.label_families.release.application_policy).toContain(
+      "preserve existing version labels",
+    );
+    expect(taxonomy.quality_rules.post_merge_release_labeling_allowed).toBe(true);
+  });
+
   it("requires exact-SHA E2E evidence or itemized maintainer exceptions before tagging", () => {
     const dailyFlow = read(".agents/skills/nemoclaw-maintainer-policies/references/daily-flow.md");
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");

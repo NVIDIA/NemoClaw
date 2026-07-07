@@ -1,25 +1,40 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { coerceAgentInferenceApi, resolveAgentInferenceApi } from "../../../inference/config";
 import type { WebSearchConfig } from "../../../inference/web-search";
-import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
+
+export interface ProviderInferenceSetupOptions {
+  allowToolsIncompatible?: boolean;
+  skipHostInferenceSmoke?: boolean;
+  reuseGatewayCredentialWithoutLocalKey?: boolean;
+  /**
+   * Resolved (agent-coerced) inference API for the selection. Lets the
+   * remote-provider registration pick the gateway surface that matches the
+   * sandbox contract (#6294: openai_compatible agents on
+   * compatible-anthropic-endpoint register type=openai).
+   */
+  preferredInferenceApi?: string | null;
+}
 
 export interface ProviderSelectionResult {
   model: string | null;
   provider: string;
   endpointUrl: string | null;
   credentialEnv: string | null;
-  hermesAuthMethod: string | null;
+  hermesAuthMethod: HermesAuthMethod | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
+  reuseGatewayCredentialWithoutLocalKey?: boolean;
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -30,12 +45,14 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   sandboxName: string | null;
   agent: Agent;
   forceProviderSelection?: boolean;
+  /** Trust the rebuild-preflighted session selection even if its old step marker is incomplete. */
+  authoritativeResumeConfig?: boolean;
   initial: {
     model: string | null;
     provider: string | null;
     endpointUrl: string | null;
     credentialEnv: string | null;
-    hermesAuthMethod: string | null;
+    hermesAuthMethod: HermesAuthMethod | null;
     hermesToolGateways: string[];
     preferredInferenceApi: string | null;
     compatibleEndpointReasoning: string | null;
@@ -46,11 +63,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   env: NodeJS.ProcessEnv;
   constants: {
     hermesProviderName: string;
-    hermesApiKeyAuthMethod: string;
+    hermesApiKeyAuthMethod: HermesAuthMethod;
     hermesApiKeyCredentialEnv: string;
   };
   deps: {
-    normalizeHermesAuthMethod(value: string | null | undefined): string | null;
+    normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null;
     setupNim(
       gpu: Gpu,
       sandboxName: string | null,
@@ -63,9 +80,9 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string,
       endpointUrl: string | null,
       credentialEnv: string | null,
-      hermesAuthMethod: string | null,
+      hermesAuthMethod: HermesAuthMethod | null,
       hermesToolGateways: string[],
-      options?: { allowToolsIncompatible?: boolean; skipHostInferenceSmoke?: boolean },
+      options?: ProviderInferenceSetupOptions,
     ): Promise<ProviderInferenceRetry>;
     startRecordedStep(
       stepName: string,
@@ -78,6 +95,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
+    isResumeProviderSurfaceReady(
+      provider: string | null | undefined,
+      preferredInferenceApi: string | null | undefined,
+      credentialEnv: string | null | undefined,
+      endpointUrl: string | null | undefined,
+    ): boolean;
     recordStateSkipped(
       state: "provider_selection" | "inference",
       metadata?: Record<string, unknown> | null,
@@ -142,7 +165,7 @@ export interface ProviderInferenceStateResult {
   provider: string;
   endpointUrl: string | null;
   credentialEnv: string | null;
-  hermesAuthMethod: string | null;
+  hermesAuthMethod: HermesAuthMethod | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
@@ -214,6 +237,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   sandboxName,
   agent,
   forceProviderSelection: initialForceProviderSelection = false,
+  authoritativeResumeConfig = false,
   initial,
   selectedMessagingChannels,
   env,
@@ -231,13 +255,22 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       ? constants.hermesApiKeyAuthMethod
       : null);
   let hermesToolGateways = initial.hermesToolGateways;
-  let preferredInferenceApi = initial.preferredInferenceApi;
+  // Sessions persisted before #6294/#6289 can carry an API family that the
+  // selected agent cannot safely use. Normalize the seed before the resume
+  // shortcut so the gateway provider is revalidated and, when necessary,
+  // re-registered on the matching protocol surface before sandbox creation.
+  let preferredInferenceApi = resolveAgentInferenceApi(
+    agentName(agent),
+    provider,
+    coerceAgentInferenceApi(agent, initial.preferredInferenceApi),
+  );
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
   let skipHostInferenceSmoke = false;
+  let reuseGatewayCredentialWithoutLocalKey = false;
   const effectiveResume = resume && !fresh;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
@@ -247,7 +280,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     const resumeProviderSelection =
       !forceProviderSelection &&
       effectiveResume &&
-      session?.steps?.provider_selection?.status === "complete" &&
+      (authoritativeResumeConfig || session?.steps?.provider_selection?.status === "complete") &&
       typeof provider === "string" &&
       typeof model === "string";
     let shouldRecordProviderSelection = false;
@@ -255,12 +288,32 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const recovery = await deps.ensureResumeProviderReady(provider, credentialEnv);
       forceInferenceSetup = recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
-      deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
-      await deps.recordStateSkipped("provider_selection", {
-        reason: "resume",
-        provider,
-        model,
-      });
+      // Rebuild may be resuming a legacy session whose step marker was never
+      // completed even though the pre-delete registry selection was validated
+      // and rewritten into the session. Persist that trusted selection so a
+      // later plain `onboard --resume` recovery cannot fall back to ambient or
+      // default provider selection if the recreate fails after this point.
+      shouldRecordProviderSelection = authoritativeResumeConfig;
+      if (preferredInferenceApi !== initial.preferredInferenceApi) {
+        // #6294/#6289 heal: the pre-fix session can leave the gateway provider
+        // registered for a protocol that no longer matches the agent route.
+        // Re-run inference setup so the provider surface is revalidated and
+        // refreshed. Persist the adjusted value only after setup succeeds.
+        forceInferenceSetup = true;
+      }
+      if (
+        !deps.isResumeProviderSurfaceReady(
+          provider,
+          preferredInferenceApi,
+          credentialEnv,
+          endpointUrl,
+        )
+      ) {
+        forceInferenceSetup = true;
+        deps.log(
+          "  [resume] Refreshing the gateway provider to match the required inference surface.",
+        );
+      }
       const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
       // A rebuild recreate may leave `openshell inference get` reporting the
       // same provider/model while the newly created messaging sandbox's
@@ -268,10 +321,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // endpoint. For the OpenClaw+messaging path that later performs a
       // sandbox-side compatible-endpoint smoke, refresh the gateway route in
       // the inference phase instead of trusting the provider/model-only resume
-      // shortcut. If the local key is absent but the gateway provider exists,
-      // setupInference can still re-apply the route with the stored gateway
-      // credential; skip only the host direct smoke that would otherwise probe
-      // unauthenticated.
+      // shortcut. If the local key is absent, force provider selection through
+      // the strict recovered-route checks; only that path can authorize reuse
+      // of the stored gateway credential and suppression of the unauthenticated
+      // host smoke.
       if (
         shouldRefreshCompatibleEndpointRouteForMessaging(
           provider,
@@ -280,14 +333,22 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           agent,
         )
       ) {
+        if (!hydratedCredential) {
+          deps.log(
+            "  [resume] Revalidating recovered compatible-endpoint identity before reusing its gateway credential.",
+          );
+          forceProviderSelection = true;
+          continue;
+        }
         forceInferenceSetup = true;
-        skipHostInferenceSmoke = !hydratedCredential;
-        deps.log(
-          skipHostInferenceSmoke
-            ? "  [resume] Refreshing compatible-endpoint inference route with the stored gateway credential."
-            : "  [resume] Refreshing compatible-endpoint inference route for messaging.",
-        );
+        deps.log("  [resume] Refreshing compatible-endpoint inference route for messaging.");
       }
+      deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
+      await deps.recordStateSkipped("provider_selection", {
+        reason: "resume",
+        provider,
+        model,
+      });
       compatibleEndpointReasoning =
         provider === "compatible-endpoint"
           ? await deps.configureCompatibleEndpointReasoning(compatibleEndpointReasoning)
@@ -333,14 +394,25 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       nimContainer = selection.nimContainer;
       allowToolsIncompatible = selection.allowToolsIncompatible === true;
       skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
+      reuseGatewayCredentialWithoutLocalKey =
+        selection.reuseGatewayCredentialWithoutLocalKey === true;
       shouldRecordProviderSelection = true;
     }
 
+    // Persist a repaired API family only together with a successful inference
+    // step. A failed heal must leave the stale seed in place so resume re-arms.
+    const healAdjustedInferenceApi =
+      resumeProviderSelection && preferredInferenceApi !== initial.preferredInferenceApi;
     const selected = requireSelection(provider, model, deps);
     const selectedProvider = selected.provider;
     const selectedModel = selected.model;
     provider = selectedProvider;
     model = selectedModel;
+    preferredInferenceApi = resolveAgentInferenceApi(
+      agentName(agent),
+      provider,
+      preferredInferenceApi,
+    );
     if (shouldRecordProviderSelection) {
       session = await deps.recordStepComplete(
         "provider_selection",
@@ -351,7 +423,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           credentialEnv,
           hermesAuthMethod,
           hermesToolGateways,
-          preferredInferenceApi,
+          // An authoritative rebuild records route fidelity before inference
+          // setup. Keep the stale marker until the provider surface heal
+          // succeeds so a failed attempt remains armed on the next resume.
+          preferredInferenceApi: healAdjustedInferenceApi
+            ? initial.preferredInferenceApi
+            : preferredInferenceApi,
           compatibleEndpointReasoning,
           nimContainer,
         }),
@@ -376,9 +453,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         try {
           if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
           const confirmedSandboxName = sandboxName;
-          const inferenceOptions = skipHostInferenceSmoke
-            ? { allowToolsIncompatible, skipHostInferenceSmoke }
-            : { allowToolsIncompatible };
+          const inferenceOptions = {
+            allowToolsIncompatible,
+            ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
+            ...(reuseGatewayCredentialWithoutLocalKey
+              ? { reuseGatewayCredentialWithoutLocalKey }
+              : {}),
+            ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
+          };
           await deps.startRecordedStep("inference", { provider, model });
           inferenceResult = await withInferenceTrace(
             confirmedSandboxName,
@@ -495,9 +577,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }
       }
 
-      const inferenceOptions = skipHostInferenceSmoke
-        ? { allowToolsIncompatible, skipHostInferenceSmoke }
-        : { allowToolsIncompatible };
+      const inferenceOptions = {
+        allowToolsIncompatible,
+        ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
+        ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
+        ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
+      };
       await deps.startRecordedStep("inference", { provider, model });
       inferenceResult = await withInferenceTrace(
         confirmedSandboxName,
@@ -538,6 +623,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         compatibleEndpointReasoning,
         nimContainer,
         hermesToolGateways,
+        // The forced #6294/#6289 heal succeeded: the gateway registration now
+        // matches the adjusted route, so the stale session seed can be replaced.
+        ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
       }),
     );
     break;
