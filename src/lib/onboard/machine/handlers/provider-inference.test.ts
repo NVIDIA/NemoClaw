@@ -726,6 +726,42 @@ describe("handleProviderInferenceState", () => {
     );
   });
 
+  it("forces canonical setup for a preflighted provider even if a matching route appears (#6114)", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "custom-model",
+      endpointUrl: "https://inference.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      ensureResumeProviderReady: vi.fn(async () => ({
+        forceInferenceSetup: false,
+        credentialEnv: "COMPATIBLE_API_KEY",
+      })),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      authoritativeResumeConfig: true,
+      forceInferenceSetup: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "custom-model",
+      "compatible-endpoint",
+      "https://inference.example.test/v1",
+      "COMPATIBLE_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false },
+    );
+  });
+
   it("refreshes compatible-endpoint route directly when the host credential is available", async () => {
     const session = createSession({
       provider: "compatible-endpoint",

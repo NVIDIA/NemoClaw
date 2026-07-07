@@ -1671,7 +1671,25 @@ export function validateRebuildRecoveryManifest(
 export function hasPositiveManagedImageEvidence(
   sandbox: Pick<registry.SandboxEntry, "nemoclawVersion">,
 ): boolean {
-  return Boolean(String(sandbox.nemoclawVersion || "").trim());
+  return typeof sandbox.nemoclawVersion === "string" && sandbox.nemoclawVersion.trim().length > 0;
+}
+
+/**
+ * Decide whether prepared recovery may recreate a sandbox with NemoClaw's
+ * managed image. Any recorded custom `--from` image fails closed. Otherwise,
+ * current rows must carry a managed-image fingerprint and a pre-fingerprint
+ * row may proceed only with per-row operator authorization.
+ */
+export function isManagedImageRecoveryAllowed(
+  sandbox: Pick<registry.SandboxEntry, "nemoclawVersion" | "fromDockerfile">,
+  allowLegacyManagedImageRecovery: boolean,
+): boolean {
+  const hasNoCustomImageEvidence =
+    sandbox.fromDockerfile === undefined || sandbox.fromDockerfile === null;
+  return (
+    hasNoCustomImageEvidence &&
+    (hasPositiveManagedImageEvidence(sandbox) || allowLegacyManagedImageRecovery)
+  );
 }
 
 /**

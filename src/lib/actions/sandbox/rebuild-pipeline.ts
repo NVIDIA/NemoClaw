@@ -5,6 +5,7 @@ import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import { BRAVE_API_KEY_ENV, TAVILY_API_KEY_ENV } from "../../inference/web-search";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
 import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-config";
+import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as registry from "../../state/registry";
@@ -24,6 +25,7 @@ import {
   type RebuildSandboxExecutionOptions,
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
+import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
@@ -138,6 +140,7 @@ async function rebuildSandboxUnlocked(
         sandboxEntry,
         recoveryManifest,
         recoveryRegistrySnapshot,
+        opts.allowLegacyManagedImageRecovery === true,
         bail,
       );
       recoveryManifest = preDeleteRecovery.manifest;
@@ -191,13 +194,37 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         relockShieldsIfNeeded,
-        validateAfterMcpPreparation: () =>
-          dcodePreflight.checkAtDeleteEdge(
+        validateAfterMcpPreparation: async () => {
+          const providerReconfigure = recreateOptions.rebuildProviderReconfigure;
+          if (providerReconfigure && !hydrateCredentialEnv(providerReconfigure.credentialEnv)) {
+            return {
+              ok: false,
+              message: `Provider credential ${providerReconfigure.credentialEnv} became unavailable before sandbox deletion.`,
+            };
+          }
+          const providerRegistration = providerReconfigure
+            ? inspectRebuildGatewayProviderRegistration(
+                providerReconfigure.provider,
+                log,
+                "Delete-edge",
+              )
+            : "missing";
+          if (providerReconfigure && providerRegistration !== "missing") {
+            return {
+              ok: false,
+              message:
+                providerRegistration === "registered"
+                  ? `Gateway provider '${providerReconfigure.provider}' changed during rebuild preflight. Retry the rebuild.`
+                  : `Gateway provider '${providerReconfigure.provider}' could not be verified before sandbox deletion.`,
+            };
+          }
+          return dcodePreflight.checkAtDeleteEdge(
             resumeConfig,
             durableConfig.toolDisclosure,
             recoveryRecreate,
             recreateOptions.targetGatewayPort,
-          ),
+          );
+        },
         onDeleted: () => {
           sandboxStillExists = false;
         },

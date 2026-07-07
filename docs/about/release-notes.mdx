@@ -16,6 +16,24 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.75
+
+NemoClaw v0.0.75 upgrades the bundled OpenClaw runtime to `2026.6.10` and improves sandbox upgrade and prepared-backup recovery, custom endpoint inference routing, and local Docker-driver sandbox JWT handling.
+
+- The bundled OpenClaw runtime upgrades to `2026.6.10` with reviewed package pins, fail-closed archive and patch validation, safer same-device pairing repair, and stricter rebuild route and credential recovery.
+  For more information, refer to the [OpenClaw 2026.6.10 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/openclaw-2026.6.10-dependency-review.md).
+- Upgrading an existing install now recovers a previously onboarded sandbox instead of failing when the recreated gateway has not yet reconfigured its inference route.
+  Prepared-backup recovery defers the live route check to authoritative onboarding, which restores and verifies the gateway provider and inference route before sandbox recreation; in-place upgrades recover gateway-orphaned sandboxes, and a same-name `--fresh` re-onboard preserves the newly selected LangChain Deep Agents Code routing.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands) and [Troubleshooting](../reference/troubleshooting).
+- Hermes custom Anthropic-compatible inference now uses the OpenAI frontend, and OpenAI-only agents keep the `/v1` base URL when pointed at an Anthropic-compatible endpoint, so switching a managed sandbox to a compatible endpoint routes and reports the provider and model correctly.
+  For more information, refer to [NemoClaw Inference Options](../inference/inference-options) and [Switch Inference Providers](../inference/switch-inference-providers).
+- Local Docker-driver sandbox JWTs now use OpenShell's non-expiring local contract, which keeps a long-running local sandbox reachable without a manual gateway restart.
+  For more information, refer to [OpenShell 0.0.71 Gateway Authentication Review](../security/openshell-0.0.71-gateway-auth-review).
+- Hermes runtime and managed MCP state reconcile after a runtime change, and Hermes installs accept a pinned base platform digest.
+  For more information, refer to [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) and [NemoClaw CLI Commands Reference](../reference/commands).
+- OpenClaw local CLI pairing restores its previous connection path so a local sandbox reconnects without re-pairing.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+
 ## v0.0.74
 
 NemoClaw v0.0.74 upgrades the OpenShell policy boundary, adds managed MCP and progressive tool disclosure, strengthens the experimental LangChain Deep Agents Code integration, and improves onboarding, local inference, messaging, recovery, and contributor workflows.

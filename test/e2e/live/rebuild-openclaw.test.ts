@@ -10,6 +10,13 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  readJsonFile,
+  readJsonFileOr,
+  restoreFile,
+  snapshotFile,
+  writeJsonFile,
+} from "../fixtures/file-state.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
@@ -89,36 +96,6 @@ function isRetryableOnboardEndpointFailure(result: ShellProbeResult): boolean {
       text,
     )
   );
-}
-
-function readJsonFile<T>(file: string, fallback: T): T {
-  if (!fs.existsSync(file)) return fallback;
-  return JSON.parse(fs.readFileSync(file, "utf8")) as T;
-}
-
-function writeJsonFile(file: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-interface FileSnapshot {
-  exists: boolean;
-  content?: string;
-}
-
-function snapshotFile(file: string): FileSnapshot {
-  return fs.existsSync(file)
-    ? { exists: true, content: fs.readFileSync(file, "utf8") }
-    : { exists: false };
-}
-
-function restoreFile(file: string, snapshot: FileSnapshot): void {
-  if (!snapshot.exists) {
-    fs.rmSync(file, { force: true });
-    return;
-  }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, snapshot.content ?? "", "utf8");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -225,7 +202,7 @@ function seedRegistryAndSession(dashboardPort: number): void {
   // so `nemoclaw <name> rebuild --yes` exercises the user-visible rebuild
   // boundary. Remove this local seeding once a first-class old-version lifecycle
   // fixture/profile exists.
-  const registry = readJsonFile<{
+  const registry = readJsonFileOr<{
     sandboxes?: Record<string, Record<string, unknown>>;
     defaultSandbox?: string;
   }>(REGISTRY_FILE, {});
@@ -252,7 +229,7 @@ function seedRegistryAndSession(dashboardPort: number): void {
   const now = new Date().toISOString();
   const complete = { status: "complete", startedAt: now, completedAt: now, error: null };
   const pending = { status: "pending", startedAt: null, completedAt: null, error: null };
-  const session = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
+  const session = readJsonFileOr<Record<string, unknown>>(SESSION_FILE, {});
   Object.assign(session, {
     sandboxName: SANDBOX_NAME,
     status: "complete",
@@ -279,7 +256,7 @@ function seedRegistryAndSession(dashboardPort: number): void {
 }
 
 function registrySandbox(): Record<string, unknown> {
-  const data = readJsonFile<{ sandboxes?: Record<string, Record<string, unknown>> }>(
+  const data = readJsonFileOr<{ sandboxes?: Record<string, Record<string, unknown>> }>(
     REGISTRY_FILE,
     {},
   );
@@ -304,7 +281,7 @@ function latestRebuildBackupDir(): string {
 function latestRebuildManifest(backupDir: string): Record<string, unknown> {
   const manifestPath = path.join(backupDir, "rebuild-manifest.json");
   expect(fs.existsSync(manifestPath), `backup manifest missing: ${manifestPath}`).toBe(true);
-  return JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+  return readJsonFile<Record<string, unknown>>(manifestPath);
 }
 
 function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): string[] {
@@ -628,7 +605,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     expect(preRebuildConfigHash).toContain("openclaw.json");
 
     seedRegistryAndSession(phase1DashboardPort as number);
-    const sessionAfterSeed = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
+    const sessionAfterSeed = readJsonFileOr<Record<string, unknown>>(SESSION_FILE, {});
     const seededSteps = sessionAfterSeed.steps as Record<string, { status?: string }> | undefined;
     const seededSandbox = registrySandbox();
     await artifacts.writeJson("phase-4-registry-session-summary.json", {
