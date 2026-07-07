@@ -16,24 +16,30 @@ const positional = args.filter((value) => value !== AUDIT_FLAG);
 const distDir = positional[0];
 
 if (!distDir || positional.length > 1) {
-  console.error("Usage: patch-openclaw-whatsapp-qr.js [--audit] <openclaw-dist-dir>");
+  console.error("Usage: patch-openclaw-whatsapp-qr.ts [--audit] <openclaw-dist-dir>");
   process.exit(EXIT_USAGE);
 }
 
-function fail(message) {
+function fail(message: string): never {
   console.error(`ERROR: ${message}`);
   process.exit(EXIT_APPLY_FAILURE);
 }
 
-function listJsFiles(dir) {
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
+type DirentLike = {
+  isFile(): boolean;
+  name: string;
+};
+
+function listJsFiles(dir: string): string[] {
+  return (fs.readdirSync(dir, { withFileTypes: true }) as DirentLike[])
     .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
     .map((entry) => path.join(dir, entry.name));
 }
 
-let distEntries;
-function getDistEntries() {
+type DistEntry = { file: string; source: string };
+
+let distEntries: DistEntry[] | undefined;
+function getDistEntries(): DistEntry[] {
   if (!distEntries) {
     distEntries = listJsFiles(distDir).map((file) => ({
       file,
@@ -43,7 +49,16 @@ function getDistEntries() {
   return distEntries;
 }
 
-function patchCompactQuietZone(source, file) {
+type RecognizerStatus = "already-applied" | "would-apply" | "no-match";
+type PatchStatus = RecognizerStatus | "selector-failed";
+
+type PatchResult = {
+  nextSource: string;
+  status: RecognizerStatus;
+  error?: string;
+};
+
+function patchCompactQuietZone(source: string, file: string): PatchResult {
   if (source.includes("COMPACT_MARGIN_MODULES = 4")) {
     return { nextSource: source, status: "already-applied" };
   }
@@ -61,7 +76,7 @@ function patchCompactQuietZone(source, file) {
   return { nextSource, status: "would-apply" };
 }
 
-function patchCompactScanFallback(source, file) {
+function patchCompactScanFallback(source: string, file: string): PatchResult {
   if (source.includes("nemoclaw: qr scan fallback")) {
     return { nextSource: source, status: "already-applied" };
   }
@@ -83,11 +98,25 @@ function patchCompactScanFallback(source, file) {
   return { nextSource, status: "would-apply" };
 }
 
-const FILES = [
+type Recognizer = {
+  id: string;
+  marker: string;
+  postVerifyError: string;
+  patch: (source: string, file: string) => PatchResult;
+};
+
+type FileSpec = {
+  id: string;
+  label: string;
+  selector: (source: string) => boolean;
+  recognizers: Recognizer[];
+};
+
+const FILES: FileSpec[] = [
   {
     id: "whatsapp-qr",
     label: "WhatsApp pairing QR renderer",
-    selector(source) {
+    selector(source: string) {
       return (
         source.includes("renderCompactTerminalQr") &&
         source.includes("COMPACT_MARGIN_MODULES") &&
@@ -111,7 +140,10 @@ const FILES = [
   },
 ];
 
-function resolveFile(fileSpec, { dryRun }) {
+function resolveFile(
+  fileSpec: FileSpec,
+  { dryRun }: { dryRun: boolean },
+): { file: string | null; error?: string } {
   const entries = getDistEntries();
   const candidates = entries
     .filter((entry) => fileSpec.selector(entry.source))
@@ -124,16 +156,22 @@ function resolveFile(fileSpec, { dryRun }) {
   return { file: candidates[0] };
 }
 
-function processFile(fileSpec, file, { dryRun }) {
+type RecognizerResult = { id: string; status: RecognizerStatus; error?: string };
+
+function processFile(
+  fileSpec: FileSpec,
+  file: string,
+  { dryRun }: { dryRun: boolean },
+): RecognizerResult[] {
   let source = fs.readFileSync(file, "utf8");
   const original = source;
-  const recognizerResults = [];
+  const recognizerResults: RecognizerResult[] = [];
 
   for (const recognizer of fileSpec.recognizers) {
     const result = recognizer.patch(source, file);
     recognizerResults.push({ id: recognizer.id, status: result.status, error: result.error });
     if (result.status === "no-match") {
-      if (!dryRun) fail(result.error);
+      if (!dryRun) fail(result.error ?? recognizer.postVerifyError);
       continue;
     }
     if (result.status === "would-apply") {
@@ -157,19 +195,19 @@ function processFile(fileSpec, file, { dryRun }) {
   return recognizerResults;
 }
 
-function runApplyMode() {
-  const summary = [];
+function runApplyMode(): void {
+  const summary: string[] = [];
   for (const fileSpec of FILES) {
-    const { file } = resolveFile(fileSpec, { dryRun: false });
+    const { file, error } = resolveFile(fileSpec, { dryRun: false });
+    if (!file) fail(error ?? `expected exactly one OpenClaw ${fileSpec.label} file`);
     processFile(fileSpec, file, { dryRun: false });
     summary.push(path.basename(file));
   }
   console.log(`INFO: patched OpenClaw WhatsApp pairing QR in ${summary.join(", ")}`);
 }
 
-function statusBadge(status) {
+function statusBadge(status: PatchStatus): string {
   switch (status) {
-    case "applied":
     case "already-applied":
     case "would-apply":
       return "[OK]  ";
@@ -181,7 +219,7 @@ function statusBadge(status) {
   }
 }
 
-function runAuditMode() {
+function runAuditMode(): void {
   console.log(`patch-openclaw-whatsapp-qr audit: ${distDir}`);
   let totalRecognizers = 0;
   let okRecognizers = 0;

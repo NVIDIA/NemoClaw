@@ -12,7 +12,7 @@ const PATCH_SCRIPT = path.join(
   import.meta.dirname,
   "..",
   "scripts",
-  "patch-openclaw-whatsapp-qr.js",
+  "patch-openclaw-whatsapp-qr.ts",
 );
 
 const QUIET_ZONE_MARKER = "COMPACT_MARGIN_MODULES = 4";
@@ -61,10 +61,14 @@ function makeFixture(opts: { source?: string; omitQrTerminal?: boolean } = {}) {
 }
 
 function runPatch(dist: string, extraArgs: string[] = []) {
-  return spawnSync(process.execPath, [PATCH_SCRIPT, ...extraArgs, dist], {
-    encoding: "utf-8",
-    timeout: 10_000,
-  });
+  return spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", PATCH_SCRIPT, ...extraArgs, dist],
+    {
+      encoding: "utf-8",
+      timeout: 10_000,
+    },
+  );
 }
 
 async function importFresh(file: string) {
