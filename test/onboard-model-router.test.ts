@@ -17,6 +17,10 @@ import {
 import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard/setup-inference.js";
 import { run, runCapture } from "../src/lib/runner";
 import {
+  readRouterLaunchLog,
+  stopTestProcess,
+} from "./support/model-router-process-test-helpers.js";
+import {
   createDirectSetupInferenceHarnessFactory,
   type DirectCommandEntry,
   withProcessEnv,
@@ -72,29 +76,32 @@ function createCommandHarness(options: CommandHarnessOptions = {}) {
 
   fs.mkdirSync(routerDir, { recursive: true });
   fs.writeFileSync(path.join(routerDir, "pyproject.toml"), "[project]\nname = 'model-router'\n");
-  if (options.managedCommand) {
+  const writeManagedCommand = () => {
     fs.mkdirSync(path.dirname(managedCommand), { recursive: true });
     fs.writeFileSync(managedCommand, "#!/usr/bin/env sh\nexit 0\n", { mode: 0o755 });
-  }
-  if (options.installedFingerprint !== undefined) {
+  };
+  options.managedCommand ? writeManagedCommand() : undefined;
+  const writeInstalledFingerprint = (fingerprint: string) => {
     fs.mkdirSync(venvDir, { recursive: true });
-    fs.writeFileSync(fingerprintPath, `${options.installedFingerprint}\n`, { mode: 0o600 });
-  }
+    fs.writeFileSync(fingerprintPath, `${fingerprint}\n`, { mode: 0o600 });
+  };
+  options.installedFingerprint === undefined
+    ? undefined
+    : writeInstalledFingerprint(options.installedFingerprint);
 
   const deps: ModelRouterCommandDeps = {
     run(command) {
       runCalls.push(command);
-      if (command.includes("pip") && command.includes("install")) {
-        fs.mkdirSync(path.dirname(managedCommand), { recursive: true });
-        fs.writeFileSync(managedCommand, "#!/usr/bin/env sh\nexit 0\n", { mode: 0o755 });
-      }
+      command.includes("pip") && command.includes("install") && writeManagedCommand();
       return { status: 0 };
     },
     runCapture(command) {
       runCaptureCalls.push(command);
-      if (command[0] === "git" && command.includes("HEAD")) return MODEL_ROUTER_TEST_SOURCE_SHA;
-      if (command[0] === "sh") return options.pathCommand ?? "";
-      return "";
+      return command[0] === "git" && command.includes("HEAD")
+        ? MODEL_ROUTER_TEST_SOURCE_SHA
+        : command[0] === "sh"
+          ? (options.pathCommand ?? "")
+          : "";
     },
     prepareModelRouterVenv(prepareOptions) {
       prepareCalls.push(prepareOptions);
@@ -127,58 +134,6 @@ function findCommand(commands: DirectCommandEntry[], pattern: RegExp): DirectCom
   const command = commands.find((entry) => pattern.test(entry.command));
   assert.ok(command, JSON.stringify(commands));
   return command;
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function stopTestProcess(pid: number): Promise<void> {
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (!isProcessAlive(pid)) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // Process exited between the final probe and cleanup.
-  }
-}
-
-type RouterLaunchLog = {
-  args: string[];
-  cwd: string;
-  env: Record<string, string | null>;
-  pid: number;
-};
-
-async function readRouterLaunchLog(
-  logPath: string,
-  expectedEntries: number,
-): Promise<RouterLaunchLog[]> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (fs.existsSync(logPath)) {
-      const entries = fs
-        .readFileSync(logPath, "utf8")
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as RouterLaunchLog);
-      if (entries.length >= expectedEntries) return entries;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`Timed out waiting for ${expectedEntries} Model Router launch log entries`);
 }
 
 describe("onboard Model Router setup", () => {
@@ -377,7 +332,7 @@ describe("onboard Model Router setup", () => {
           assert.deepEqual(healthChecks, [port, port]);
           assert.deepEqual(sleepCalls, [2000]);
         } finally {
-          if (pid !== null) await stopTestProcess(pid);
+          await stopTestProcess(pid);
         }
       },
     );
