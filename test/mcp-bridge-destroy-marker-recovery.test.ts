@@ -242,13 +242,20 @@ bridge.removeMcpBridge("deleted-sandbox", "github", { force: true }).then(
 
   it("PRESERVES the prepared marker when the --force removal itself fails (durable retry state)", async () => {
     const home = createTempHome("nemoclaw-force-fail-preserve-");
-    // A committed bridge names an OpenShell provider the mocked gateway cannot
-    // prove, so `--force` collects a residual failure and throws at the end
-    // (registry entry preserved for retry). Because the marker is cleared only
-    // AFTER a successful removal, the prepared marker must survive this failure.
+    // Deterministically fail the removal at the gateway-selection step (before
+    // any provider/openshell work) by stubbing ensureSandboxGatewaySelected to
+    // throw. Because the prepared marker is cleared only AFTER a successful
+    // removal, it must survive this failure — the #6376 blocker was that the
+    // earlier code cleared markers up front and lost the retry state.
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
+const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
+// CJS interop: mcp-bridge-remove calls this via the module object, so the
+// override is observed at call time.
+state.ensureSandboxGatewaySelected = async () => {
+  throw new Error("gateway unavailable (injected)");
+};
 registry.registerSandbox({
   name: "stuck-sandbox",
   agent: "openclaw",
@@ -259,8 +266,7 @@ registry.registerSandbox({
         agent: "openclaw",
         adapter: "mcporter",
         url: "https://mcp.example.test/mcp",
-        providerName: "mcp-github",
-        env: ["MCP_GITHUB_TOKEN"],
+        env: [],
         policyName: "mcp-bridge-github",
         addedAt: "2026-06-01T00:00:00.000Z",
       },
@@ -292,11 +298,11 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
       error?: string;
       mcp: SandboxMcpSnapshot | undefined;
     };
-    // The removal failed (residual resources could not be proven cleaned up) ...
+    // The removal failed ...
     expect(parsed.threw).toBe(true);
+    expect(parsed.error).toContain("gateway unavailable (injected)");
     // ... so the durable prepared retry marker MUST be preserved for a later
-    // `sandbox destroy` or retry (this is the #6376 blocker: the earlier code
-    // cleared markers up front and lost this state on a failed recovery).
+    // `sandbox destroy` or retry.
     expect(parsed.mcp?.destroyPreparedAt).toBe("2026-06-27T01:00:00.000Z");
     // The success log must NOT have printed.
     expect(result.stdout).not.toContain("Cleared incomplete MCP destroy transaction");
