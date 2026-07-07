@@ -266,10 +266,14 @@ If a support workflow asks you to pass the maintained tag explicitly, set `NEMOC
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash
 ```
 
-Before upgrade work, the installer runs `$$nemoclaw backup-all` when the installed CLI supports it.
-After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` before generic onboarding.
-If an existing sandbox is non-Ready, the automatic path requires a validated latest backup whose sandbox and agent identity match the registry and positive evidence that NemoClaw managed the image.
-The installer attempts every eligible recovery, exits with a nonzero status if any recovery fails, and does not continue to generic onboarding after that failure.
+Before upgrade work, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
+If any sandbox is skipped or fails, the installer exits before it changes the gateway.
+After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` to reconcile the existing sandboxes.
+If an existing sandbox is not Ready, the automatic path requires a validated latest backup whose sandbox and agent identity match the registry and positive evidence that NemoClaw managed the image.
+For a listed pre-fingerprint OpenClaw or Hermes registry entry, you can provide that evidence through the installer's explicit managed-image confirmation.
+In a non-interactive run, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
+Recorded custom-image evidence remains blocked from automatic recreation.
+The installer attempts every eligible recovery, exits with a nonzero status if any recovery fails, and skips generic onboarding after successful recovery.
 For manual upgrade flows, create a snapshot first and then run the update or rebuild command you need:
 
 ```bash

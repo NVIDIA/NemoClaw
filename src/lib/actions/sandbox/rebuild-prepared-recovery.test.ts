@@ -37,6 +37,9 @@ describe("prepared rebuild recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.preflightAuthoritativeRebuildTargetSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ deferInferenceRouteUntilOnboard: true }),
+    );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ ignoreError: true }),
@@ -44,6 +47,91 @@ describe("prepared rebuild recovery", () => {
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       recoveryManifest.backupPath,
+    );
+  });
+
+  it("does not defer route validation for an ordinary rebuild (#6114)", async () => {
+    const harness = createRebuildFlowHarness({ applyPreset: () => true });
+
+    await expect(harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).resolves.toBe(
+      undefined,
+    );
+
+    expect(harness.preflightAuthoritativeRebuildTargetSpy).toHaveBeenCalledWith(
+      expect.not.objectContaining({ deferInferenceRouteUntilOnboard: true }),
+    );
+  });
+
+  it("carries confirmed legacy managed-image recovery through the delete edge (#6114)", async () => {
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      sandboxListOutput: "alpha Error",
+      sandboxEntry: { nemoclawVersion: null },
+      managedImageEvidence: false,
+    });
+    const recoveryManifest = makePreparedRecoveryManifest();
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+        allowLegacyManagedImageRecovery: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
+      "alpha",
+      recoveryManifest.backupPath,
+    );
+  });
+
+  it("rejects an ambiguous legacy image without the scoped recovery capability (#6114)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxListOutput: "alpha Error",
+      sandboxEntry: { nemoclawVersion: null },
+      managedImageEvidence: false,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("no NemoClaw-managed image fingerprint");
+
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects recorded custom-image evidence despite the scoped recovery capability (#6114)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxListOutput: "alpha Error",
+      sandboxEntry: {
+        nemoclawVersion: null,
+        fromDockerfile: "/tmp/custom.Dockerfile",
+      },
+      managedImageEvidence: false,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+        allowLegacyManagedImageRecovery: true,
+      }),
+    ).rejects.toThrow("no NemoClaw-managed image fingerprint");
+
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
     );
   });
 

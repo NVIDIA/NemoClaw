@@ -72,6 +72,8 @@ export type OnboardOptions = {
   preparedDcodeRebuild?: import("./prepared-dcode-rebuild").PreparedDcodeRebuildHandoff;
   /** Internal authoritative registry route captured before rebuild deletion. */
   rebuildRegistryInferenceRoute?: import("./rebuild-route-handoff").RebuildRouteHandoff | null;
+  /** Internal one-shot authority to upsert a provider observed missing during rebuild preflight. */
+  rebuildProviderReconfigure?: import("./rebuild-route-handoff").RebuildProviderReconfigureHandoff;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
   resume?: boolean;

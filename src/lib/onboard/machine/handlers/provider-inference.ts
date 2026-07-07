@@ -45,6 +45,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   sandboxName: string | null;
   agent: Agent;
   forceProviderSelection?: boolean;
+  /** Force setup for a provider that authoritative rebuild preflight observed missing. */
+  forceInferenceSetup?: boolean;
   /** Trust the rebuild-preflighted session selection even if its old step marker is incomplete. */
   authoritativeResumeConfig?: boolean;
   initial: {
@@ -237,6 +239,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   sandboxName,
   agent,
   forceProviderSelection: initialForceProviderSelection = false,
+  forceInferenceSetup: initialForceInferenceSetup = false,
   authoritativeResumeConfig = false,
   initial,
   selectedMessagingChannels,
@@ -276,7 +279,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
   while (true) {
-    let forceInferenceSetup = false;
+    let forceInferenceSetup = initialForceInferenceSetup;
     const resumeProviderSelection =
       !forceProviderSelection &&
       effectiveResume &&
@@ -286,7 +289,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     let shouldRecordProviderSelection = false;
     if (resumeProviderSelection) {
       const recovery = await deps.ensureResumeProviderReady(provider, credentialEnv);
-      forceInferenceSetup = recovery.forceInferenceSetup;
+      forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
       // completed even though the pre-delete registry selection was validated
