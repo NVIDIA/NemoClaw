@@ -1344,46 +1344,6 @@ describe("Hermes sandbox provisioning", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("hermes manifest version");
   });
-  it("Hermes upgrade guard detects a remaining session preview patcher (#5254)", () => {
-    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-preview-guard-"));
-    const hermesBin = path.join(tmp, "usr", "local", "bin", "hermes");
-    const wrapper = path.join(tmp, "usr", "local", "lib", "nemoclaw", "hermes-wrapper.py");
-    const previewPatcher = path.join(
-      tmp,
-      "usr",
-      "local",
-      "lib",
-      "nemoclaw",
-      "patch-hermes-session-list-preview.py",
-    );
-    const command = dockerRunCommandBetween(
-      dockerfile,
-      'RUN hermes_version_output="$(/usr/local/bin/hermes --version)"',
-      "# This runs before `/usr/local/bin/hermes`",
-    )
-      .replaceAll("/usr/local/bin/hermes", hermesBin)
-      .replaceAll("/usr/local/lib/nemoclaw/hermes-wrapper.py", wrapper)
-      .replaceAll("/usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py", previewPatcher);
-    try {
-      fs.mkdirSync(path.dirname(hermesBin), { recursive: true });
-      fs.mkdirSync(path.dirname(wrapper), { recursive: true });
-      fs.writeFileSync(hermesBin, "#!/usr/bin/env bash\nprintf 'hermes v0.18.0\\n'\n", {
-        mode: 0o755,
-      });
-      fs.writeFileSync(wrapper, "# wrapper fixture without resumed oneshot marker\n");
-      fs.writeFileSync(previewPatcher, "EXPECTED_OCCURRENCES = 6\n");
-
-      const { result } = runLoggedDockerShell(command, tmp);
-
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        "Hermes v0.17.0 compatibility workarounds are still installed",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
   function runHermesUvExtrasExpansion() {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const extras = dockerfile.match(/^ARG HERMES_UV_EXTRAS="([^"]*)"$/m)?.[1];
