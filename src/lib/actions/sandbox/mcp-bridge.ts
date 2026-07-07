@@ -299,6 +299,11 @@ export async function dispatchMcpBridgeCommand(
     switch (subcommand) {
       case "add": {
         const { probe, rest: addRest } = parseProbeFlags(rest);
+        if (probe === true)
+          throw new McpBridgeError(
+            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--no-probe]",
+            2,
+          );
         const options = parseMcpAddArgs(addRest);
         await addMcpBridge(sandboxName, options);
         console.log(`  MCP server '${options.server}' added to sandbox '${sandboxName}'.`);

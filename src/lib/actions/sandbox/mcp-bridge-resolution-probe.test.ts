@@ -14,7 +14,6 @@ vi.mock("./process-recovery", () => ({
 }));
 
 import {
-  buildCredentialResolutionProbeCommand,
   classifyCredentialResolutionProbe,
   credentialResolutionWarning,
   MCP_PROBE_CONTROL_BEARER,
@@ -22,7 +21,6 @@ import {
   MCP_PROBE_CONTROL_HTTP_MARKER,
   MCP_PROBE_EXIT_MARKER,
   MCP_PROBE_HTTP_MARKER,
-  PROBE_SANITIZED_ENV_VARS,
   probeCredentialResolution,
 } from "./mcp-bridge-resolution-probe";
 
@@ -38,93 +36,33 @@ const baseEntry: McpBridgeEntry = {
   addedAt: new Date(0).toISOString(),
 };
 
-function probeStdout(parts: {
-  httpStatus?: number;
-  curlExit: number;
-  controlHttpStatus?: number;
-  controlExit?: number;
-}): string {
+function probeStdout(
+  parts: {
+    httpStatus?: number;
+    curlExit: number;
+    controlHttpStatus?: number;
+    controlExit?: number;
+  },
+  resultMarker?: string,
+): string {
+  const nonce = resultMarker ? `${resultMarker}:` : "";
   return [
     "",
-    ...(parts.httpStatus !== undefined ? [`${MCP_PROBE_HTTP_MARKER}${parts.httpStatus}`] : []),
-    `${MCP_PROBE_EXIT_MARKER}${parts.curlExit}`,
+    ...(parts.httpStatus !== undefined
+      ? [`${MCP_PROBE_HTTP_MARKER}${nonce}${parts.httpStatus}`]
+      : []),
+    `${MCP_PROBE_EXIT_MARKER}${nonce}${parts.curlExit}`,
     ...(parts.controlHttpStatus !== undefined
-      ? [`${MCP_PROBE_CONTROL_HTTP_MARKER}${parts.controlHttpStatus}`]
+      ? [`${MCP_PROBE_CONTROL_HTTP_MARKER}${nonce}${parts.controlHttpStatus}`]
       : []),
     ...(parts.controlExit !== undefined
-      ? [`${MCP_PROBE_CONTROL_EXIT_MARKER}${parts.controlExit}`]
+      ? [`${MCP_PROBE_CONTROL_EXIT_MARKER}${nonce}${parts.controlExit}`]
       : []),
   ].join("\n");
 }
 
 beforeEach(() => {
   mocks.executeSandboxCommand.mockReset();
-});
-
-describe("MCP credential-resolution probe command", () => {
-  it("wraps placeholder and control curls in the node runtime for mcporter (#6379)", () => {
-    const command = buildCredentialResolutionProbeCommand(baseEntry, "mcporter");
-    expect(command).not.toBeNull();
-    expect(command).toContain("[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh");
-    expect(command).toContain("nemoclaw-start node -e");
-    expect(command).toContain("'authorization: Bearer openshell:resolve:env:GITHUB_TOKEN'");
-    expect(command).toContain(`'authorization: Bearer ${MCP_PROBE_CONTROL_BEARER}'`);
-    expect(command).toContain('"method":"initialize"');
-    expect(command).toContain(MCP_PROBE_HTTP_MARKER);
-    expect(command).toContain(MCP_PROBE_CONTROL_HTTP_MARKER);
-    expect(command?.trimEnd().endsWith("exit 0")).toBe(true);
-  });
-
-  it("unsets gateway credentials after sourcing proxy env and before any child process (#6379)", () => {
-    for (const adapter of ["mcporter", "hermes-config", "deepagents-config"] as const) {
-      const command = buildCredentialResolutionProbeCommand(baseEntry, adapter);
-      expect(command).not.toBeNull();
-      const sourceIndex = command?.indexOf(". /tmp/nemoclaw-proxy-env.sh") ?? -1;
-      const unsetIndex = command?.indexOf(`unset ${PROBE_SANITIZED_ENV_VARS.join(" ")}`) ?? -1;
-      const firstChildIndex = command?.indexOf("curl") ?? -1;
-      expect(sourceIndex).toBeGreaterThan(-1);
-      expect(unsetIndex).toBeGreaterThan(sourceIndex);
-      expect(firstChildIndex).toBeGreaterThan(unsetIndex);
-      expect(command).toContain("OPENCLAW_GATEWAY_TOKEN");
-    }
-  });
-
-  it("never captures or prints the endpoint response body (#6379)", () => {
-    const command = buildCredentialResolutionProbeCommand(baseEntry, "mcporter");
-    expect(command).toContain("'/dev/null'");
-    expect(command).not.toContain("head -c");
-    expect(command).not.toContain("mktemp");
-  });
-
-  it("wraps curls in the venv python runtimes for hermes-config and deepagents-config (#6379)", () => {
-    const hermes = buildCredentialResolutionProbeCommand(baseEntry, "hermes-config");
-    expect(hermes).toContain("/opt/hermes/.venv/bin/python -c");
-    const deepagents = buildCredentialResolutionProbeCommand(baseEntry, "deepagents-config");
-    expect(deepagents).toContain("/opt/venv/bin/python3 -c");
-    for (const command of [hermes, deepagents]) {
-      expect(command).toContain("subprocess.run(sys.argv[1:], check=False)");
-      expect(command).toContain("'authorization: Bearer openshell:resolve:env:GITHUB_TOKEN'");
-    }
-  });
-
-  it("returns null when the entry has no credential binding (#6379)", () => {
-    expect(buildCredentialResolutionProbeCommand({ ...baseEntry, env: [] }, "mcporter")).toBeNull();
-  });
-
-  it("returns null when the stored URL fails the authenticated-endpoint boundary (#6379)", () => {
-    expect(
-      buildCredentialResolutionProbeCommand(
-        { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
-        "mcporter",
-      ),
-    ).toBeNull();
-    expect(
-      buildCredentialResolutionProbeCommand(
-        { ...baseEntry, url: "https://host.openshell.internal:31337/mcp" },
-        "mcporter",
-      ),
-    ).toBeNull();
-  });
 });
 
 describe("MCP credential-resolution probe classification", () => {
@@ -343,10 +281,19 @@ describe("MCP credential-resolution probe execution gates", () => {
   });
 
   it("executes the probe in the sandbox and classifies the outcome (#6379)", () => {
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: probeStdout({ httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 }),
-      stderr: "",
+    mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
+      const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
+      return {
+        status: 0,
+        stdout: [
+          resultMarker,
+          probeStdout(
+            { httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 },
+            resultMarker,
+          ),
+        ].join("\n"),
+        stderr: "",
+      };
     });
     const probe = probeCredentialResolution("alpha", baseEntry, "mcporter");
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });

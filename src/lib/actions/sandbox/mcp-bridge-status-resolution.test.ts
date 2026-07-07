@@ -65,14 +65,17 @@ const executedSandboxCommands = [];
 processRecovery.executeSandboxCommand = (sandboxName, command) => {
   executedSandboxCommands.push(command);
   if (command.includes("NEMOCLAW_MCP_PROBE")) {
+    const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
+    if (!resultMarker) throw new Error("credential probe result marker missing");
     return {
       status: 0,
       stdout: [
+        resultMarker,
         "",
-        "NEMOCLAW_MCP_PROBE_HTTP_CODE=__PROBE_HTTP_STATUS__",
-        "NEMOCLAW_MCP_PROBE_CURL_EXIT=0",
-        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=__PROBE_HTTP_STATUS__",
-        "NEMOCLAW_MCP_CONTROL_CURL_EXIT=0",
+        "NEMOCLAW_MCP_PROBE_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
+        "NEMOCLAW_MCP_PROBE_CURL_EXIT=" + resultMarker + ":0",
+        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
+        "NEMOCLAW_MCP_CONTROL_CURL_EXIT=" + resultMarker + ":0",
       ].join("\n"),
       stderr: "",
     };

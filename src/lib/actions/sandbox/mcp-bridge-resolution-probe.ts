@@ -41,6 +41,12 @@ import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { normalizeMcpServerUrl } from "./mcp-bridge-validation";
 import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
+import {
+  buildSandboxExecMarkedCommand,
+  createSandboxExecMarker,
+  extractSandboxExecCommandStdoutFromStreams,
+} from "./sandbox-exec-output";
+import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 
 export const MCP_PROBE_HTTP_MARKER = "NEMOCLAW_MCP_PROBE_HTTP_CODE=";
 export const MCP_PROBE_EXIT_MARKER = "NEMOCLAW_MCP_PROBE_CURL_EXIT=";
@@ -85,6 +91,28 @@ export interface CredentialResolutionProbe {
   httpStatus?: number;
   controlHttpStatus?: number;
   detail?: string;
+}
+
+export interface CredentialResolutionProbeCommand {
+  command: string;
+  resultMarker: string;
+}
+
+interface ProbeOutputMarkers {
+  controlExit: string;
+  controlHttp: string;
+  placeholderExit: string;
+  placeholderHttp: string;
+}
+
+function probeOutputMarkers(resultMarker?: string): ProbeOutputMarkers {
+  const nonce = resultMarker ? `${resultMarker}:` : "";
+  return {
+    placeholderHttp: `${MCP_PROBE_HTTP_MARKER}${nonce}`,
+    placeholderExit: `${MCP_PROBE_EXIT_MARKER}${nonce}`,
+    controlHttp: `${MCP_PROBE_CONTROL_HTTP_MARKER}${nonce}`,
+    controlExit: `${MCP_PROBE_CONTROL_EXIT_MARKER}${nonce}`,
+  };
 }
 
 // "initialize" is idempotent and the first method allowed by the generated
@@ -156,7 +184,7 @@ function quotedCurlCommand(url: string, authorization: string, httpMarker: strin
 export function buildCredentialResolutionProbeCommand(
   entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
   adapter: AgentMcpAdapter,
-): string | null {
+): CredentialResolutionProbeCommand | null {
   const authorization = authorizationValue(entry);
   if (!authorization) return null;
   // Never probe a persisted URL that no longer satisfies the current
@@ -167,36 +195,56 @@ export function buildCredentialResolutionProbeCommand(
   } catch {
     return null;
   }
-  const placeholderCurl = quotedCurlCommand(entry.url, authorization, MCP_PROBE_HTTP_MARKER);
+  const resultMarker = createSandboxExecMarker();
+  const markers = probeOutputMarkers(resultMarker);
+  const placeholderCurl = quotedCurlCommand(entry.url, authorization, markers.placeholderHttp);
   const controlCurl = quotedCurlCommand(
     entry.url,
     `Bearer ${MCP_PROBE_CONTROL_BEARER}`,
-    MCP_PROBE_CONTROL_HTTP_MARKER,
+    markers.controlHttp,
   );
-  return [
-    // SSH sessions can miss the sandbox proxy environment (#2704).
-    "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh || true",
-    // Must stay between the sourcing above and the first child below.
-    `unset ${PROBE_SANITIZED_ENV_VARS.join(" ")} || true`,
+  const probeBody = [
     runtimeWrappedCommand(adapter, placeholderCurl),
     "rc=$?",
-    `printf '\\n${MCP_PROBE_EXIT_MARKER}%s\\n' "$rc"`,
+    `printf '\\n${markers.placeholderExit}%s\\n' "$rc"`,
     runtimeWrappedCommand(adapter, controlCurl),
     "crc=$?",
-    `printf '\\n${MCP_PROBE_CONTROL_EXIT_MARKER}%s\\n' "$crc"`,
+    `printf '\\n${markers.controlExit}%s\\n' "$crc"`,
     // Always exit 0 so a nonzero SSH status unambiguously means transport
     // failure, never a probe outcome.
     "exit 0",
   ].join("\n");
+  return {
+    resultMarker,
+    command: [
+      // SSH sessions can miss the sandbox proxy environment (#2704). Validate
+      // the cross-user file and suppress source-time output before framing any
+      // probe result, so preamble text cannot impersonate result markers.
+      buildTrustedProxyEnvSourceShell(),
+      // Must stay between the sourcing above and the first child below.
+      `unset ${PROBE_SANITIZED_ENV_VARS.join(" ")} || true`,
+      buildSandboxExecMarkedCommand(probeBody, resultMarker),
+    ].join("\n"),
+  };
 }
 
 function redactedProbeText(text: string, entry: Pick<McpBridgeEntry, "env">): string {
   return redactBridgeSecretsForDisplay(text, entry).trim();
 }
 
-function markerValue(stdout: string, marker: string): number | undefined {
-  const match = stdout.match(new RegExp(`^${marker}([0-9]+)$`, "m"));
-  return match ? Number(match[1]) : undefined;
+interface ProbeMarkerValue {
+  index: number;
+  value: number;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function markerValue(stdout: string, marker: string): ProbeMarkerValue | undefined {
+  const matches = [...stdout.matchAll(new RegExp(`^${escapeRegExp(marker)}([0-9]+)$`, "gm"))];
+  if (matches.length !== 1) return undefined;
+  return { index: matches[0].index, value: Number(matches[0][1]) };
 }
 
 function transportDetail(curlExit: number, stderr: string): string | undefined {
@@ -210,64 +258,86 @@ function transportDetail(curlExit: number, stderr: string): string | undefined {
 export function classifyCredentialResolutionProbe(
   result: SandboxCommandResult | null,
   entry: Pick<McpBridgeEntry, "env">,
+  resultMarker?: string,
 ): CredentialResolutionProbe {
   if (result === null) return { ok: null, detail: "sandbox unreachable" };
   if (result.status !== 0) {
     const detail = redactedProbeText(result.stderr || result.stdout, entry);
     return { ok: null, detail: detail || "probe transport failed" };
   }
-  const placeholderExit = markerValue(result.stdout, MCP_PROBE_EXIT_MARKER);
+  const framedStdout = resultMarker
+    ? extractSandboxExecCommandStdoutFromStreams(
+        { stdout: result.stdout, stderr: result.stderr },
+        resultMarker,
+      )
+    : result.stdout;
+  if (framedStdout === null) {
+    return { ok: null, detail: "probe output missing trusted result frame" };
+  }
+  const markers = probeOutputMarkers(resultMarker);
+  const placeholderExit = markerValue(framedStdout, markers.placeholderExit);
   if (placeholderExit === undefined) {
-    const detail = redactedProbeText(result.stderr || result.stdout, entry);
-    return { ok: null, detail: detail || "probe output missing markers" };
+    return { ok: null, detail: "probe output missing or ambiguous markers" };
   }
-  if (placeholderExit !== 0) {
-    const detail = transportDetail(placeholderExit, result.stderr);
-    return { ok: null, detail: detail ?? `probe curl exited ${placeholderExit}` };
+  if (placeholderExit.value !== 0) {
+    const detail = transportDetail(placeholderExit.value, result.stderr);
+    return { ok: null, detail: detail ?? `probe curl exited ${placeholderExit.value}` };
   }
-  const httpStatus = markerValue(result.stdout, MCP_PROBE_HTTP_MARKER);
+  const httpStatus = markerValue(framedStdout, markers.placeholderHttp);
   if (httpStatus === undefined) return { ok: null, detail: "probe output missing HTTP status" };
-  const controlExit = markerValue(result.stdout, MCP_PROBE_CONTROL_EXIT_MARKER);
+  const controlExit = markerValue(framedStdout, markers.controlExit);
   const controlHttpStatus =
-    controlExit === 0 ? markerValue(result.stdout, MCP_PROBE_CONTROL_HTTP_MARKER) : undefined;
-  if (controlHttpStatus === undefined) {
+    controlExit?.value === 0 ? markerValue(framedStdout, markers.controlHttp) : undefined;
+  if (controlExit === undefined || controlHttpStatus === undefined) {
     return {
       ok: null,
-      httpStatus,
-      detail: `the placeholder probe received HTTP ${httpStatus} but the unresolvable control probe failed, so resolved and unresolved credentials cannot be distinguished`,
+      httpStatus: httpStatus.value,
+      detail: `the placeholder probe received HTTP ${httpStatus.value} but the unresolvable control probe failed, so resolved and unresolved credentials cannot be distinguished`,
     };
   }
-  const shared = { httpStatus, controlHttpStatus };
-  if (httpStatus >= 200 && httpStatus < 300) {
-    if (controlHttpStatus >= 200 && controlHttpStatus < 300) {
+  if (
+    !(
+      httpStatus.index < placeholderExit.index &&
+      placeholderExit.index < controlHttpStatus.index &&
+      controlHttpStatus.index < controlExit.index
+    )
+  ) {
+    return { ok: null, detail: "probe output markers were out of order" };
+  }
+  const shared = {
+    httpStatus: httpStatus.value,
+    controlHttpStatus: controlHttpStatus.value,
+  };
+  if (httpStatus.value >= 200 && httpStatus.value < 300) {
+    if (controlHttpStatus.value >= 200 && controlHttpStatus.value < 300) {
       return {
         ok: null,
         ...shared,
-        detail: `the endpoint accepted both the placeholder probe and an unresolvable control bearer (HTTP ${httpStatus} / ${controlHttpStatus}), so it does not enforce authentication and credential resolution cannot be judged`,
+        detail: `the endpoint accepted both the placeholder probe and an unresolvable control bearer (HTTP ${httpStatus.value} / ${controlHttpStatus.value}), so it does not enforce authentication and credential resolution cannot be judged`,
       };
     }
     return { ok: true, ...shared };
   }
-  if (httpStatus === controlHttpStatus) {
+  if (httpStatus.value === controlHttpStatus.value) {
     // Identical statuses never prove non-rewriting: a correctly rewritten but
     // expired or revoked credential and the bogus control can both draw the
     // same 4xx, and an endpoint can fail both probes the same way. Report the
     // evidence and let the operator rule out the credential.
-    if (httpStatus >= 400 && httpStatus < 500) {
+    if (httpStatus.value >= 400 && httpStatus.value < 500) {
       const validationHypothesis =
-        httpStatus === 400
+        httpStatus.value === 400
           ? ", or with an initialize request this endpoint does not accept (request validation)"
           : "";
       return {
         ok: null,
         ...shared,
-        detail: `the placeholder probe and the unresolvable control probe were rejected identically (HTTP ${httpStatus}); this is consistent with the placeholder being forwarded verbatim, but also with an expired or revoked credential that resolved correctly${validationHypothesis} — verify the stored credential value first`,
+        detail: `the placeholder probe and the unresolvable control probe were rejected identically (HTTP ${httpStatus.value}); this is consistent with the placeholder being forwarded verbatim, but also with an expired or revoked credential that resolved correctly${validationHypothesis} — verify the stored credential value first`,
       };
     }
     return {
       ok: null,
       ...shared,
-      detail: `both probes received HTTP ${httpStatus}; the endpoint failed identically and credential resolution could not be judged`,
+      detail: `both probes received HTTP ${httpStatus.value}; the endpoint failed identically and credential resolution could not be judged`,
     };
   }
   // Differing non-2xx statuses prove nothing either: a broken gateway forwards
@@ -277,7 +347,7 @@ export function classifyCredentialResolutionProbe(
   return {
     ok: null,
     ...shared,
-    detail: `the placeholder probe received HTTP ${httpStatus} and the unresolvable control HTTP ${controlHttpStatus}; differing rejections do not prove resolution because the endpoint may reject two different literal bearers differently — verify the stored credential value and compare against a known-good host`,
+    detail: `the placeholder probe received HTTP ${httpStatus.value} and the unresolvable control HTTP ${controlHttpStatus.value}; differing rejections do not prove resolution because the endpoint may reject two different literal bearers differently — verify the stored credential value and compare against a known-good host`,
   };
 }
 
@@ -314,8 +384,8 @@ export function probeCredentialResolution(
 ): CredentialResolutionProbe {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
   if (entry.addState) return { ok: null, detail: "add transaction incomplete" };
-  const command = buildCredentialResolutionProbeCommand(entry, adapter);
-  if (!command) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
-  const result = executeSandboxCommand(sandboxName, command);
-  return classifyCredentialResolutionProbe(result, entry);
+  const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter);
+  if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
+  const result = executeSandboxCommand(sandboxName, probeCommand.command);
+  return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);
 }
