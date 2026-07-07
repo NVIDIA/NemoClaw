@@ -144,6 +144,17 @@ describe("handleSandboxState", () => {
     const recordStateSkipped = vi.fn(async () => skippedSession);
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: () => ({
+        name: "saved",
+        pendingRouteReservation: true,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        toolDisclosure: "progressive",
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+      }),
       recordStateSkipped,
     });
 
@@ -154,6 +165,9 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
+      pendingRouteReservation: undefined,
+    });
     expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
     expect(recordStateSkipped).toHaveBeenCalledWith("sandbox", {
       reason: "resume",
@@ -228,6 +242,10 @@ describe("handleSandboxState", () => {
       getSandboxReuseState: () => "ready",
       getSandboxRegistryEntry: (name) => ({
         name,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
         nemoclawVersion: "0.1.0",
         toolDisclosure: "progressive",
       }),

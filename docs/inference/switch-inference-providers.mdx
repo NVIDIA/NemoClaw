@@ -41,6 +41,17 @@ If you run `$$nemoclaw inference set` before NemoClaw has a selected sandbox, th
 Run `$$nemoclaw onboard` first, then retry the switch.
 </Note>
 
+<Warning>
+OpenShell currently exposes one inference route per gateway, not one route per sandbox.
+All registered sandboxes on the same gateway must use the same provider and model.
+Custom compatible routes must also use the same endpoint and API family.
+An OpenClaw native-Anthropic route and a Hermes OpenAI-frontend route therefore cannot share a gateway, even when their custom endpoint and model are otherwise identical.
+NemoClaw checks stopped sandboxes because they depend on that route when restarted.
+If a registered same-gateway sandbox lacks durable provider or model metadata, or a custom route lacks durable endpoint or API-family metadata, NemoClaw fails closed until you remove and re-onboard that sandbox with complete route metadata.
+When a route conflicts, onboarding, runtime switching, and connect-time repair exit non-zero before changing the gateway and name the affected sandboxes.
+Align the routes, remove the conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
+</Warning>
+
 <AgentOnly variant="openclaw,hermes">
 
 ## Find the Provider Name
@@ -135,7 +146,11 @@ $$nemoclaw inference set --provider compatible-endpoint --model <model-name>
 $$nemoclaw inference set --provider compatible-anthropic-endpoint --model <model-name>
 ```
 
-To change only the model on a sandbox that is already on this provider, omit `--endpoint-url` — `inference set` reuses the endpoint that onboarding established and does not repoint the gateway route. Any `--endpoint-url` you do pass is always validated by the host-side SSRF guard, so a URL that resolves to a private or internal address is rejected even if it is the same one onboarding recorded; omit the flag to keep the established endpoint. To point the sandbox at a genuinely different endpoint, re-run `$$nemoclaw onboard` with the new endpoint (rebuild reuses the recorded endpoint and cannot change it).
+To change only the model on a sandbox that is already on this provider, omit `--endpoint-url` when its durable registry entry contains both endpoint and API-family metadata.
+`inference set` reuses that recorded route and does not repoint the gateway.
+If the durable metadata is incomplete, NemoClaw fails closed and tells you to re-run onboarding.
+Any `--endpoint-url` you pass is always validated by the host-side SSRF guard, so a URL that resolves to a private or internal address is rejected even if it matches the recorded endpoint.
+To point the sandbox at a different endpoint, re-run `$$nemoclaw onboard` with the new endpoint because rebuild reuses the recorded endpoint and cannot change it.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -204,6 +219,7 @@ $$nemoclaw <sandbox-name> rebuild
 
 Resuming onboarding also detects and repairs a stale route.
 `inference set` can select this provider after it has been registered on the verified OpenAI surface, but it fails before mutation for a legacy Anthropic registration because that command cannot change a gateway provider's protocol type.
+When supplying new custom metadata, Hermes may omit `--inference-api` for this provider because NemoClaw deterministically selects `openai-completions`; an explicit non-OpenAI value is rejected.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
@@ -276,6 +292,7 @@ The error includes a redacted OpenShell detail, lists the registered providers w
 Run `$$nemoclaw onboard` to register the provider, then retry `$$nemoclaw inference set`.
 
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
+`--no-verify` does not bypass the one-route-per-gateway compatibility check.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">

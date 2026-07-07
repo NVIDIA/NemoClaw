@@ -6,16 +6,19 @@ import {
   resolveAgentDefaultCloudModel,
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
+import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
 import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
+import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
 import type {
   NvidiaFeaturedModelSession,
   NvidiaFeaturedModelSessionOptions,
 } from "./nvidia-featured-model-selection";
 import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./provider-host-state";
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
+import { providerNameToOptionKey } from "./provider-recovery";
 import { resolveRequestedProviderSelection } from "./provider-selection";
 import { reportProviderSelectionFailure } from "./provider-selection-failure";
 import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
@@ -34,6 +37,7 @@ export interface SetupNimRemoteProviderConfigEntry {
 }
 
 export interface SetupNimRemoteSelectionArgs {
+  gatewayName: string | null;
   selected: ProviderMenuChoice;
   requestedModel: string | null;
   recoveredFromSandbox: boolean;
@@ -48,6 +52,9 @@ export type SetupNim = (
   agent?: AgentDefinition | null,
   recoverProvider?: boolean,
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff | null,
+  gatewayName?: string | null,
+  assertRouteCompatible?: (route: ProviderInferenceProbeRoute) => GatewayRouteDiscoveryConstraints,
+  canProbeRoute?: (provider: string) => boolean,
 ) => Promise<ProviderSelectionResult>;
 
 export interface SetupNimFlowDeps {
@@ -65,6 +72,8 @@ export interface SetupNimFlowDeps {
   detectInferenceProviderHostState(input: {
     gpu: InferenceProviderHostGpu | null | undefined;
     experimental: boolean;
+    probeOllama?: boolean;
+    probeVllm?: boolean;
   }): InferenceProviderHostState;
   getAgentInferenceProviderOptions(agent: AgentDefinition | null | undefined): string[];
   loadRoutedProfile(): { router?: { enabled?: boolean } } | null | undefined;
@@ -129,12 +138,18 @@ export interface SetupNimFlowDeps {
       hasImage: boolean;
       nonInteractive: boolean;
       promptFn: (question: string) => Promise<string>;
+      beforeInstall?: (modelId: string) => void;
     },
   ): Promise<{ ok: boolean }>;
   handleVllmSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   handleRoutedSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   coerceAgentInferenceApi(
     agent: AgentDefinition | null,
+    preferredInferenceApi: string | null,
+  ): string | null;
+  resolveAgentInferenceApi(
+    agentName: string | null,
+    provider: string,
     preferredInferenceApi: string | null,
   ): string | null;
   clearCompatibleEndpointReasoning(): null;
@@ -175,6 +190,121 @@ function clearReasoningUnlessCompatible(
   return deps.clearCompatibleEndpointReasoning();
 }
 
+function applyGatewayRouteDiscoveryConstraints(
+  state: SetupNimSelectionState,
+  constraints: GatewayRouteDiscoveryConstraints,
+): void {
+  if (!state.model && constraints.requiredModel) {
+    state.model = constraints.requiredModel;
+  }
+  if (!state.endpointUrl && constraints.requiredEndpointUrl) {
+    state.endpointUrl = constraints.requiredEndpointUrl;
+  }
+  if (!state.preferredInferenceApi && constraints.requiredInferenceApi) {
+    state.preferredInferenceApi = constraints.requiredInferenceApi;
+  }
+}
+
+const OLLAMA_PROBE_PROVIDER_KEYS = new Set([
+  "ollama",
+  "install-ollama",
+  "start-windows-ollama",
+  "install-windows-ollama",
+]);
+const VLLM_ROUTE_PROVIDER_KEYS = new Set(["vllm", "install-vllm"]);
+const VLLM_PROBE_PROVIDER_KEYS = new Set(["vllm", "install-vllm"]);
+
+function localProviderProbeIntent(providerKey: string | null): {
+  ollama: boolean;
+  vllm: boolean;
+} {
+  if (!providerKey) return { ollama: true, vllm: true };
+  return {
+    ollama: OLLAMA_PROBE_PROVIDER_KEYS.has(providerKey),
+    vllm: VLLM_PROBE_PROVIDER_KEYS.has(providerKey),
+  };
+}
+
+function localProbeRouteProvider(providerKey: string | null): string | null {
+  if (providerKey && OLLAMA_PROBE_PROVIDER_KEYS.has(providerKey)) return "ollama-local";
+  if (providerKey && VLLM_ROUTE_PROVIDER_KEYS.has(providerKey)) return "vllm-local";
+  return null;
+}
+
+function prepareProviderDiscovery(options: {
+  deps: SetupNimFlowDeps;
+  sandboxName: string | null;
+  recoverProvider: boolean;
+  rebuildRegistryInferenceRoute: RebuildRouteHandoff | null;
+  assertRouteCompatible?: (route: ProviderInferenceProbeRoute) => GatewayRouteDiscoveryConstraints;
+  canProbeRoute?: (provider: string) => boolean;
+}): {
+  requestedProvider: string | null;
+  requestedModel: string | null;
+  recoveredRegistryRoute: RegistryInferenceRoute | null;
+  probeOllama: boolean;
+  probeVllm: boolean;
+} {
+  const {
+    deps,
+    sandboxName,
+    recoverProvider,
+    rebuildRegistryInferenceRoute,
+    assertRouteCompatible,
+    canProbeRoute,
+  } = options;
+  const nonInteractive = deps.isNonInteractive();
+  const requestedProvider = deps.getNonInteractiveProvider();
+  const requestedModel = nonInteractive
+    ? deps.getNonInteractiveModel(requestedProvider || "build")
+    : null;
+  const recoveredRegistryRoute =
+    rebuildRegistryInferenceRoute?.sandboxName === sandboxName &&
+    rebuildRegistryInferenceRoute.route.source === "registry"
+      ? rebuildRegistryInferenceRoute.route
+      : null;
+  const recoveredProbeProvider =
+    nonInteractive && !requestedProvider && recoverProvider
+      ? (recoveredRegistryRoute?.provider ?? deps.readRecordedProvider(sandboxName))
+      : null;
+  const recoveredProbeKey = providerNameToOptionKey(
+    deps.remoteProviderConfig,
+    recoveredProbeProvider,
+    {
+      hasNimContainer:
+        recoveredProbeProvider === "vllm-local" &&
+        Boolean(deps.readRecordedNimContainer(sandboxName)),
+    },
+  );
+  const providerIntentKey =
+    requestedProvider || recoveredProbeKey || (nonInteractive ? "build" : null);
+  const intent = localProviderProbeIntent(providerIntentKey);
+  const guardedProvider = localProbeRouteProvider(providerIntentKey);
+  if (guardedProvider && assertRouteCompatible) {
+    const recoveredModel =
+      recoveredRegistryRoute?.model ??
+      (!requestedProvider && recoverProvider ? deps.readRecordedModel(sandboxName) : null);
+    assertRouteCompatible({
+      provider: guardedProvider,
+      model: requestedModel || recoveredModel,
+      endpointUrl: null,
+      preferredInferenceApi: null,
+      credentialEnv: null,
+    });
+  }
+  const ollamaPreflightPassed =
+    guardedProvider === "ollama-local" && Boolean(assertRouteCompatible);
+  const vllmPreflightPassed = guardedProvider === "vllm-local" && Boolean(assertRouteCompatible);
+  return {
+    requestedProvider,
+    requestedModel,
+    recoveredRegistryRoute,
+    probeOllama:
+      intent.ollama && (ollamaPreflightPassed || (canProbeRoute?.("ollama-local") ?? true)),
+    probeVllm: intent.vllm && (vllmPreflightPassed || (canProbeRoute?.("vllm-local") ?? true)),
+  };
+}
+
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
   overrides: Partial<SetupNimFlowDeps> = {},
@@ -187,6 +317,11 @@ export function createSetupNim(
     agent: AgentDefinition | null = null,
     recoverProvider = true,
     rebuildRegistryInferenceRoute: RebuildRouteHandoff | null = null,
+    gatewayName: string | null = null,
+    assertRouteCompatible?: (
+      route: ProviderInferenceProbeRoute,
+    ) => GatewayRouteDiscoveryConstraints,
+    canProbeRoute?: (provider: string) => boolean,
   ): Promise<ProviderSelectionResult> {
     deps.step(3, 8, "Configuring inference provider");
 
@@ -205,10 +340,60 @@ export function createSetupNim(
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
     });
+    const createSelectionState = (): SetupNimSelectionState => {
+      const state: SetupNimSelectionState = {
+        model,
+        provider,
+        endpointUrl,
+        credentialEnv,
+        hermesAuthMethod,
+        hermesToolGateways,
+        preferredInferenceApi,
+        compatibleEndpointReasoning,
+        nimContainer,
+        allowToolsIncompatible,
+        nvidiaFeaturedModels,
+      };
+      state.assertRouteCompatible = () => {
+        const effectiveInferenceApi = () =>
+          deps.resolveAgentInferenceApi(
+            agent?.name ?? null,
+            state.provider,
+            deps.coerceAgentInferenceApi(agent, state.preferredInferenceApi),
+          );
+        const route = (): ProviderInferenceProbeRoute => ({
+          provider: state.provider,
+          model: typeof state.model === "string" && state.model.trim() ? state.model.trim() : null,
+          endpointUrl: state.endpointUrl,
+          preferredInferenceApi: effectiveInferenceApi(),
+          credentialEnv: state.credentialEnv,
+        });
+        const constraints = assertRouteCompatible?.(route()) ?? {
+          requiredModel: null,
+          requiredEndpointUrl: null,
+          requiredInferenceApi: null,
+        };
+        applyGatewayRouteDiscoveryConstraints(state, constraints);
+        assertRouteCompatible?.(route());
+        return constraints;
+      };
+      return state;
+    };
 
+    const { requestedProvider, requestedModel, recoveredRegistryRoute, probeOllama, probeVllm } =
+      prepareProviderDiscovery({
+        deps,
+        sandboxName,
+        recoverProvider,
+        rebuildRegistryInferenceRoute,
+        assertRouteCompatible,
+        canProbeRoute,
+      });
     const providerHostState = deps.detectInferenceProviderHostState({
       gpu,
       experimental: deps.experimental,
+      probeOllama,
+      probeVllm,
     });
     const {
       hasOllama,
@@ -228,15 +413,6 @@ export function createSetupNim(
       ollamaInstallMenu,
       gpuNimCapable,
     } = providerHostState;
-    const requestedProvider = deps.getNonInteractiveProvider();
-    const requestedModel = deps.isNonInteractive()
-      ? deps.getNonInteractiveModel(requestedProvider || "build")
-      : null;
-    const recoveredRegistryRoute =
-      rebuildRegistryInferenceRoute?.sandboxName === sandboxName &&
-      rebuildRegistryInferenceRoute.route.source === "registry"
-        ? rebuildRegistryInferenceRoute.route
-        : null;
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
 
     const blueprintRouterCfg = deps.loadRoutedProfile();
@@ -277,6 +453,7 @@ export function createSetupNim(
         let selected: ProviderMenuChoice | undefined;
         let recoveredFromSandbox = false;
         let recoveredModel: string | null = null;
+        let preparedVllmState: SetupNimSelectionState | null = null;
         hermesAuthMethod = null;
 
         if (deps.isNonInteractive() || requestedProvider) {
@@ -332,19 +509,7 @@ export function createSetupNim(
         }
 
         if (deps.remoteProviderConfig[selected.key]) {
-          const state: SetupNimSelectionState = {
-            model,
-            provider,
-            endpointUrl,
-            credentialEnv,
-            hermesAuthMethod,
-            hermesToolGateways,
-            preferredInferenceApi,
-            compatibleEndpointReasoning,
-            nimContainer,
-            allowToolsIncompatible,
-            nvidiaFeaturedModels,
-          };
+          const state = createSelectionState();
           const result = await deps.handleRemoteProviderSelection(
             {
               selected,
@@ -352,6 +517,7 @@ export function createSetupNim(
               recoveredFromSandbox,
               recoveredModel,
               sandboxName,
+              gatewayName,
               intendedInferenceApi: resolveValidationInferenceApi(
                 selected.key,
                 deps.remoteProviderConfig[selected.key].providerName,
@@ -376,17 +542,7 @@ export function createSetupNim(
           if (result === "retry-selection") continue selectionLoop;
           break;
         } else if (selected.key === "nim-local") {
-          const state: SetupNimSelectionState = {
-            model,
-            provider,
-            endpointUrl,
-            credentialEnv,
-            hermesAuthMethod,
-            hermesToolGateways,
-            preferredInferenceApi,
-            nimContainer,
-            allowToolsIncompatible,
-          };
+          const state = createSelectionState();
           const result = await deps.handleNimLocalSelection(
             gpu,
             { requestedModel, recoveredFromSandbox, recoveredModel },
@@ -408,17 +564,7 @@ export function createSetupNim(
           if (rejectWindowsHostOllama(selected.key, isWindowsHostOllama)) {
             continue selectionLoop;
           }
-          const state: SetupNimSelectionState = {
-            model,
-            provider,
-            endpointUrl,
-            credentialEnv,
-            hermesAuthMethod,
-            hermesToolGateways,
-            preferredInferenceApi,
-            nimContainer,
-            allowToolsIncompatible,
-          };
+          const state = createSelectionState();
           const result = await deps.handleRunningOllamaSelection(
             gpu,
             requestedModel,
@@ -440,17 +586,7 @@ export function createSetupNim(
           if (rejectWindowsHostOllama(selected.key, true)) {
             continue selectionLoop;
           }
-          const state: SetupNimSelectionState = {
-            model,
-            provider,
-            endpointUrl,
-            credentialEnv,
-            hermesAuthMethod,
-            hermesToolGateways,
-            preferredInferenceApi,
-            nimContainer,
-            allowToolsIncompatible,
-          };
+          const state = createSelectionState();
           const result = await deps.handleWindowsHostOllamaSelection(
             gpu,
             selected.key,
@@ -471,17 +607,7 @@ export function createSetupNim(
           if (result === "retry-selection") continue selectionLoop;
           break;
         } else if (selected.key === "install-ollama") {
-          const state: SetupNimSelectionState = {
-            model,
-            provider,
-            endpointUrl,
-            credentialEnv,
-            hermesAuthMethod,
-            hermesToolGateways,
-            preferredInferenceApi,
-            nimContainer,
-            allowToolsIncompatible,
-          };
+          const state = createSelectionState();
           const result = await deps.handleInstallOllamaSelection(
             gpu,
             requestedModel,
@@ -505,10 +631,20 @@ export function createSetupNim(
             if (deps.isNonInteractive()) deps.exitProcess(1);
             continue selectionLoop;
           }
+          const vllmState = createSelectionState();
+          preparedVllmState = vllmState;
           const result = await deps.installVllm(vllmProfile, {
             hasImage: hasVllmImage,
             nonInteractive: deps.isNonInteractive(),
             promptFn: deps.prompt,
+            beforeInstall: (modelId) => {
+              vllmState.provider = "vllm-local";
+              vllmState.model = modelId;
+              vllmState.endpointUrl = null;
+              vllmState.credentialEnv = null;
+              vllmState.preferredInferenceApi = "openai-completions";
+              vllmState.assertRouteCompatible?.();
+            },
           });
           if (!result.ok) {
             if (deps.isNonInteractive())
@@ -521,17 +657,8 @@ export function createSetupNim(
           };
         }
         if (selected.key === "vllm") {
-          const state: SetupNimSelectionState = {
-            model,
-            provider,
-            endpointUrl,
-            credentialEnv,
-            hermesAuthMethod,
-            hermesToolGateways,
-            preferredInferenceApi,
-            nimContainer,
-            allowToolsIncompatible,
-          };
+          const state = preparedVllmState ?? createSelectionState();
+          state.model = preparedVllmState?.model ?? requestedModel ?? recoveredModel;
           const result = await deps.handleVllmSelection(state);
           ({
             model,
@@ -545,17 +672,7 @@ export function createSetupNim(
           if (result === "retry-selection") continue selectionLoop;
           break;
         } else if (selected.key === "routed") {
-          const state: SetupNimSelectionState = {
-            model,
-            provider,
-            endpointUrl,
-            credentialEnv,
-            hermesAuthMethod,
-            hermesToolGateways,
-            preferredInferenceApi,
-            nimContainer,
-            allowToolsIncompatible,
-          };
+          const state = createSelectionState();
           const result = await deps.handleRoutedSelection(state);
           ({
             model,
@@ -586,7 +703,11 @@ export function createSetupNim(
       credentialEnv,
       hermesAuthMethod,
       hermesToolGateways,
-      preferredInferenceApi: deps.coerceAgentInferenceApi(agent, preferredInferenceApi),
+      preferredInferenceApi: deps.resolveAgentInferenceApi(
+        agent?.name ?? null,
+        provider,
+        deps.coerceAgentInferenceApi(agent, preferredInferenceApi),
+      ),
       compatibleEndpointReasoning,
       nimContainer,
       allowToolsIncompatible,
