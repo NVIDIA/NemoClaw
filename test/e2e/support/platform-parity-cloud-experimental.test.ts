@@ -90,7 +90,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
   });
 
-  it("invokes the live OTLP probe directly through managed Python after collector readiness", () => {
+  it("routes the live OTLP probe through managed Python and the OpenShell proxy", () => {
     const script = fs.readFileSync(
       path.join(
         process.cwd(),
@@ -102,9 +102,15 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toMatch(
       /grep -Fq 'CAPTURE_READY:'[\s\S]*COLLECTOR_PORT}\/health[\s\S]*DECOY_PORT}\/health/,
     );
-    expect(script).toContain("urllib.request.ProxyHandler({})");
+    expect(script).toContain("urllib.request.urlopen(request, timeout=10)");
+    expect(script).not.toContain("urllib.request.ProxyHandler({})");
+    expect(script).not.toContain("os.environ.pop");
     expect(script).toMatch(/\"\$CLI\" \"\$SANDBOX_NAME\" exec -- \\\n\s+\/opt\/venv\/bin\/python3/);
     expect(script).not.toContain("env -u ALL_PROXY");
+    expect(script.match(/--noproxy '\*'/g)).toHaveLength(2);
+    expect(script).toMatch(
+      /run_deterministic_tool_trace\(\)[\s\S]*"\$CLI" "\$SANDBOX_NAME" exec --[\s\S]*\/opt\/venv\/bin\/python3/,
+    );
   });
 
   it("fails required Deep Agents cloud-experimental checks when scripts print SKIP", () => {

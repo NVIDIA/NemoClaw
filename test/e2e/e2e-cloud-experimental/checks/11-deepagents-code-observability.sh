@@ -106,20 +106,12 @@ request_count() {
 
 python_probe_source() {
   cat <<'PY'
-import os
 import sys
 import urllib.request
 
-for name in (
-    "ALL_PROXY",
-    "HTTPS_PROXY",
-    "HTTP_PROXY",
-    "all_proxy",
-    "https_proxy",
-    "http_proxy",
-):
-    os.environ.pop(name, None)
-
+# NemoClaw's exec wrapper sources the managed, credential-free OpenShell proxy
+# route. Keep it intact so this probe exercises the same enforcement path
+# as managed DCode and Relay instead of attempting an unsupported direct socket.
 method, url, body = sys.argv[1:]
 data = body.encode("utf-8") if method != "GET" else None
 request = urllib.request.Request(
@@ -128,9 +120,8 @@ request = urllib.request.Request(
     method=method,
     headers={"content-type": "application/x-protobuf"},
 )
-opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try:
-    with opener.open(request, timeout=10) as response:
+    with urllib.request.urlopen(request, timeout=10) as response:
         print(f"REACHED:{response.status}")
 except Exception as error:
     print(f"FAILED:{type(error).__name__}:{error}")
@@ -217,7 +208,7 @@ openshell sandbox exec --name "$SANDBOX_NAME" -- test -x /usr/bin/curl >/dev/nul
 before_binary="$(request_count)"
 set +e
 binary_output="$("$CLI" "$SANDBOX_NAME" exec -- \
-  /usr/bin/curl --noproxy '*' -fsS --max-time 10 -X POST \
+  /usr/bin/curl -fsS --max-time 10 -X POST \
   -H 'content-type: application/x-protobuf' \
   --data-binary 'NEMOCLAW_OTLP_DENIED_BINARY_PROBE' \
   "http://${COLLECTOR_HOST}:${COLLECTOR_PORT}/v1/traces" 2>&1)"
@@ -291,7 +282,7 @@ PY
 run_deterministic_tool_trace() {
   local encoded
   encoded="$(tool_trace_source | base64 | tr -d '\n')"
-  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+  "$CLI" "$SANDBOX_NAME" exec -- \
     env NEMOCLAW_OBSERVABILITY=1 \
     OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
