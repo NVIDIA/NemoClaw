@@ -5,7 +5,14 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const execSandboxMock = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("../../../src/lib/actions/sandbox/exec", () => ({
+  execSandbox: execSandboxMock,
+}));
+
+import SandboxExecCommand from "../../../src/commands/sandbox/exec.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import {
@@ -32,6 +39,74 @@ function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeR
 }
 
 describe("P0-E cloud-experimental parity guardrails", () => {
+  it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
+    await SandboxExecCommand.run(
+      [
+        "deepagents-sandbox",
+        "--",
+        "env",
+        "-u",
+        "ALL_PROXY",
+        "-u",
+        "HTTPS_PROXY",
+        "-u",
+        "HTTP_PROXY",
+        "-u",
+        "all_proxy",
+        "-u",
+        "https_proxy",
+        "-u",
+        "http_proxy",
+        "/opt/venv/bin/python3",
+        "-I",
+        "-c",
+        "pass",
+      ],
+      process.cwd(),
+    );
+
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "deepagents-sandbox",
+      [
+        "env",
+        "-u",
+        "ALL_PROXY",
+        "-u",
+        "HTTPS_PROXY",
+        "-u",
+        "HTTP_PROXY",
+        "-u",
+        "all_proxy",
+        "-u",
+        "https_proxy",
+        "-u",
+        "http_proxy",
+        "/opt/venv/bin/python3",
+        "-I",
+        "-c",
+        "pass",
+      ],
+      { workdir: undefined, tty: null, timeoutSeconds: undefined },
+    );
+  });
+
+  it("invokes the live OTLP probe directly through managed Python after collector readiness", () => {
+    const script = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      ),
+      "utf8",
+    );
+
+    expect(script).toMatch(
+      /grep -Fq 'CAPTURE_READY:'[\s\S]*COLLECTOR_PORT}\/health[\s\S]*DECOY_PORT}\/health/,
+    );
+    expect(script).toContain("urllib.request.ProxyHandler({})");
+    expect(script).toMatch(/\"\$CLI\" \"\$SANDBOX_NAME\" exec -- \\\n\s+\/opt\/venv\/bin\/python3/);
+    expect(script).not.toContain("env -u ALL_PROXY");
+  });
+
   it("fails required Deep Agents cloud-experimental checks when scripts print SKIP", () => {
     expect(() =>
       assertRequiredCloudExperimentalResult(

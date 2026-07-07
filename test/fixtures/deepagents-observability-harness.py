@@ -355,10 +355,14 @@ class _SensitiveOperationError(RuntimeError):
     pass
 
 
+_HOSTILE_TYPE_NAME_READS = [0]
+
+
 class _HostileCaptureMeta(type):
     def __getattribute__(cls, name: str) -> Any:
         if name == "__name__":
-            raise AssertionError("observability evaluated a hostile type name")
+            _HOSTILE_TYPE_NAME_READS[0] += 1
+            raise AttributeError("hostile type name is intentionally unavailable")
         return super().__getattribute__(name)
 
 
@@ -643,6 +647,8 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
             "token": SECRET,
         },
     )
+    if _HOSTILE_TYPE_NAME_READS[0] != 0:
+        raise AssertionError("observability evaluated a hostile type name")
     oversized_capture = tool_request_guardrail(
         "execute", {f"item_{index}": "y" * 8000 for index in range(10)}
     )

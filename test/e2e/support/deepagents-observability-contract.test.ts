@@ -276,8 +276,10 @@ describe("Deep Agents OTLP trace contract", () => {
   });
 
   it("rejects prototype-sensitive attribute keys and excessive AnyValue nesting", () => {
-    const hostileAttributes = Object.create(null) as Record<string, OtlpAttributeValue>;
-    hostileAttributes.__proto__ = "hostile";
+    const hostileAttributes = Object.fromEntries([["__proto__", "hostile"]]) as Record<
+      string,
+      OtlpAttributeValue
+    >;
     expect(() =>
       decodeExportTraceServiceRequest(
         traceRequest([{ name: "hostile attribute", attributes: hostileAttributes }]),
@@ -380,7 +382,7 @@ describe("bounded private OTLP capture server", () => {
       collectorPort: 0,
       decoyPort: 0,
       maxCaptureBytes: 16,
-      maxCaptureRequests: 3,
+      maxCaptureRequests: 4,
       maxBodyBytes: 16,
     });
     try {
@@ -391,6 +393,16 @@ describe("bounded private OTLP capture server", () => {
           "test",
         ),
       ).toBe(200);
+      const forbiddenHeaderStatus = await request(
+        started.collectorPort,
+        {
+          authorization: "Bearer MUST_NOT_REACH_CAPTURE_METADATA",
+          "content-length": "4",
+          "content-type": "application/x-protobuf",
+        },
+        "test",
+      );
+      expect([400, null]).toContain(forbiddenHeaderStatus);
       const aggregateStatus = await request(
         started.collectorPort,
         { "content-length": "13", "content-type": "application/x-protobuf" },
@@ -408,7 +420,7 @@ describe("bounded private OTLP capture server", () => {
         "test",
       );
       expect([429, null]).toContain(overCountStatus);
-      await waitForMetadata(captureDir, 4);
+      await waitForMetadata(captureDir, 5);
 
       const metadata = fs
         .readdirSync(captureDir)
@@ -416,32 +428,40 @@ describe("bounded private OTLP capture server", () => {
         .sort()
         .map((name) => JSON.parse(fs.readFileSync(path.join(captureDir, name), "utf8")));
       expect(metadata).toMatchObject([
-        { accepted: true, bytes: 4, observedBytes: 4, rejection: null },
+        {
+          accepted: true,
+          contentType: "application/x-protobuf",
+          method: "POST",
+          path: "/v1/traces",
+          rejection: null,
+        },
         {
           accepted: false,
-          bytes: 0,
-          declaredBytes: 13,
+          contentType: null,
+          method: null,
+          path: null,
+          rejection: "forbidden exporter header",
+        },
+        {
+          accepted: false,
           rejection: "aggregate captured bodies exceed bound",
         },
         {
           accepted: false,
-          bytes: 0,
-          declaredBytes: 17,
           rejection: "declared body exceeds capture bound",
         },
         {
           accepted: false,
-          bytes: 0,
-          declaredBytes: 4,
           rejection: "capture request count exceeds bound",
         },
       ]);
+      expect(JSON.stringify(metadata)).not.toContain("MUST_NOT_REACH_CAPTURE_METADATA");
       const bodyFiles = fs
         .readdirSync(captureDir)
         .filter((name) => name.endsWith(".body"))
         .sort();
       expect(bodyFiles.map((name) => fs.statSync(path.join(captureDir, name)).size)).toEqual([
-        4, 0, 0, 0,
+        4, 0, 0, 0, 0,
       ]);
     } finally {
       await started.close();

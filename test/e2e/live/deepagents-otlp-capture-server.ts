@@ -9,15 +9,20 @@ import { pathToFileURL } from "node:url";
 export const DEFAULT_MAX_OTLP_BODY_BYTES = 1_048_576;
 export const DEFAULT_MAX_CAPTURE_BYTES = 16 * 1_048_576;
 export const DEFAULT_MAX_CAPTURE_REQUESTS = 128;
+const OTLP_CONTENT_TYPE = "application/x-protobuf";
+const FORBIDDEN_EXPORTER_HEADERS = new Set([
+  "authorization",
+  "cookie",
+  "grpc-metadata-authorization",
+  "proxy-authorization",
+  "x-api-key",
+]);
 
 export type OtlpCaptureMetadata = {
   accepted: boolean;
-  bytes: number;
-  declaredBytes: number | null;
-  headers: http.IncomingHttpHeaders;
-  method: string | undefined;
-  observedBytes: number;
-  path: string | undefined;
+  contentType: typeof OTLP_CONTENT_TYPE | null;
+  method: "POST" | null;
+  path: "/v1/traces" | null;
   port: number;
   rejection: string | null;
 };
@@ -109,6 +114,30 @@ function numericContentLength(request: IncomingMessage): number | null {
   return Number.isSafeInteger(value) ? value : null;
 }
 
+function captureFilePath(
+  captureDir: string,
+  sequence: number,
+  port: number,
+  extension: "body" | "json",
+): string {
+  if (!Number.isSafeInteger(sequence) || sequence < 1) {
+    throw new Error("capture sequence must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("capture port must be a valid TCP port");
+  }
+  const stem = `${String(sequence).padStart(4, "0")}-${port}`;
+  const target = path.resolve(captureDir, `${stem}.${extension}`);
+  if (path.dirname(target) !== captureDir) {
+    throw new Error("capture file escaped the configured directory");
+  }
+  return target;
+}
+
+function hasForbiddenExporterHeader(request: IncomingMessage): boolean {
+  return Object.keys(request.headers).some((name) => FORBIDDEN_EXPORTER_HEADERS.has(name));
+}
+
 export async function startOtlpCaptureServers(
   options: OtlpCaptureServerOptions,
 ): Promise<StartedOtlpCaptureServers> {
@@ -127,10 +156,12 @@ export async function startOtlpCaptureServers(
   if (!isPrivateBridgeIpv4(options.bindIp, options.allowLoopback === true)) {
     throw new Error(`refusing non-private OTLP capture bind address: ${options.bindIp}`);
   }
-  const captureDir = path.resolve(options.captureDir);
-  if (!fs.statSync(captureDir).isDirectory()) {
-    throw new Error(`OTLP capture path is not a directory: ${captureDir}`);
+  const requestedCaptureDir = path.resolve(options.captureDir);
+  const captureStat = fs.lstatSync(requestedCaptureDir);
+  if (captureStat.isSymbolicLink() || !captureStat.isDirectory()) {
+    throw new Error(`OTLP capture path is not a real directory: ${requestedCaptureDir}`);
   }
+  const captureDir = fs.realpathSync.native(requestedCaptureDir);
 
   let sequence = 0;
   let capturedBytes = 0;
@@ -158,53 +189,56 @@ export async function startOtlpCaptureServers(
         finalized = true;
         reservedBytes -= reservation;
         reservation = 0;
-        if (requestSequence > maxCaptureRequests) {
-          if (requestSequence === maxCaptureRequests + 1) {
-            const stem = `${String(requestSequence).padStart(4, "0")}-${configuredPort(server)}`;
-            const metadata: OtlpCaptureMetadata = {
-              accepted: false,
-              bytes: 0,
-              declaredBytes,
-              headers: request.headers,
-              method: request.method,
-              observedBytes,
-              path: request.url,
-              port: configuredPort(server),
-              rejection: "capture request count exceeds bound",
-            };
-            fs.writeFileSync(path.join(captureDir, `${stem}.body`), Buffer.alloc(0), {
-              mode: 0o600,
-            });
-            fs.writeFileSync(path.join(captureDir, `${stem}.json`), JSON.stringify(metadata), {
-              mode: 0o600,
-            });
-          }
+        if (requestSequence > maxCaptureRequests + 1) {
           writeResponse(response, 429);
           return;
         }
-        const stem = `${String(requestSequence).padStart(4, "0")}-${configuredPort(server)}`;
-        const body = accepted ? Buffer.concat(chunks, observedBytes) : Buffer.alloc(0);
+        const requestLimitExceeded = requestSequence > maxCaptureRequests;
+        const captureAccepted = accepted && !requestLimitExceeded;
+        const body = captureAccepted ? Buffer.concat(chunks, observedBytes) : Buffer.alloc(0);
         capturedBytes += body.length;
+        const port = configuredPort(server);
         const metadata: OtlpCaptureMetadata = {
-          accepted,
-          bytes: body.length,
-          declaredBytes,
-          headers: request.headers,
-          method: request.method,
-          observedBytes,
-          path: request.url,
-          port: configuredPort(server),
-          rejection,
+          accepted: captureAccepted,
+          contentType: captureAccepted ? OTLP_CONTENT_TYPE : null,
+          method: captureAccepted ? "POST" : null,
+          path: captureAccepted ? "/v1/traces" : null,
+          port,
+          rejection: requestLimitExceeded ? "capture request count exceeds bound" : rejection,
         };
-        fs.writeFileSync(path.join(captureDir, `${stem}.body`), body, { mode: 0o600 });
-        fs.writeFileSync(path.join(captureDir, `${stem}.json`), JSON.stringify(metadata), {
+        const bodyPath = captureFilePath(captureDir, requestSequence, port, "body");
+        const metadataPath = captureFilePath(captureDir, requestSequence, port, "json");
+        fs.writeFileSync(bodyPath, body, { flag: "wx", mode: 0o600 });
+        fs.writeFileSync(metadataPath, JSON.stringify(metadata), {
+          flag: "wx",
           mode: 0o600,
         });
-        writeResponse(response, statusCode);
+        writeResponse(response, requestLimitExceeded ? 429 : statusCode);
       };
 
       if (requestSequence > maxCaptureRequests) {
         finalize(false, "capture request count exceeds bound", 429);
+        request.destroy();
+        return;
+      }
+
+      if (request.method !== "POST") {
+        finalize(false, "unexpected request method", 405);
+        request.destroy();
+        return;
+      }
+      if (request.url !== "/v1/traces") {
+        finalize(false, "unexpected request path", 404);
+        request.destroy();
+        return;
+      }
+      if (hasForbiddenExporterHeader(request)) {
+        finalize(false, "forbidden exporter header", 400);
+        request.destroy();
+        return;
+      }
+      if (request.headers["content-type"] !== OTLP_CONTENT_TYPE) {
+        finalize(false, "unexpected content type", 415);
         request.destroy();
         return;
       }

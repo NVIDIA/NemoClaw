@@ -85,9 +85,9 @@ describe("onboard runtime control flow", () => {
           session,
           selectedAgentName: "openclaw",
           routerPort: 4000,
+          note,
         },
         {
-          note,
           stopTrackedModelRouterForAgentChange,
           clearAgentScopedResumeState,
           setOnboardBrandingAgent,

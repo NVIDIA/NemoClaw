@@ -72,9 +72,18 @@ _STATE_CAPTURE_KEYS = {
 logger = logging.getLogger(__name__)
 
 _lifecycle_lock = threading.RLock()
-_initialization_attempted = False
-_active = False
-_subscriber: Any = None
+
+
+class _LifecycleState:
+    """Mutable exporter state guarded by ``_lifecycle_lock``."""
+
+    def __init__(self) -> None:
+        self.initialization_attempted = False
+        self.active = False
+        self.subscriber: Any = None
+
+
+_lifecycle = _LifecycleState()
 
 
 class _CaptureBudget:
@@ -888,14 +897,12 @@ def _new_managed_subscriber(nemo_relay: Any) -> Any:
 
 def shutdown_observability() -> None:
     """Flush and tear down the local exporter without blocking agent shutdown."""
-    global _active, _subscriber  # noqa: PLW0603
-
     with _lifecycle_lock:
-        subscriber = _subscriber
+        subscriber = _lifecycle.subscriber
         if subscriber is None:
             return
-        _subscriber = None
-        _active = False
+        _lifecycle.subscriber = None
+        _lifecycle.active = False
 
     try:
         import nemo_relay
@@ -920,14 +927,12 @@ def shutdown_observability() -> None:
 
 def initialize_observability() -> bool:
     """Enable the fixed bounded-content Relay exporter when explicitly requested."""
-    global _active, _initialization_attempted, _subscriber  # noqa: PLW0603
-
     if not observability_requested():
         return False
     with _lifecycle_lock:
-        if _initialization_attempted:
-            return _active
-        _initialization_attempted = True
+        if _lifecycle.initialization_attempted:
+            return _lifecycle.active
+        _lifecycle.initialization_attempted = True
 
         subscriber: Any = None
         try:
@@ -961,7 +966,7 @@ def initialize_observability() -> bool:
             _deregister_guardrails()
             return False
 
-        _subscriber = subscriber
-        _active = True
+        _lifecycle.subscriber = subscriber
+        _lifecycle.active = True
         atexit.register(shutdown_observability)
         return True

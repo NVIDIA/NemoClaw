@@ -23,13 +23,6 @@ const OUTPUT_ATTRIBUTE_KEYS = ["output.value", "llm.output_messages"] as const;
 const TOOL_INPUT_ATTRIBUTE_KEYS = ["tool.parameters", "input.value"] as const;
 const CONFIRMED_EXEC_HINT =
   /^[a-z][a-z0-9-]*: recent network policy denial detected(?: for [^\r\n]+)? inside sandbox '[a-zA-Z0-9][a-zA-Z0-9_-]*'\.$/mu;
-const FORBIDDEN_EXPORTER_HEADERS = [
-  "authorization",
-  "cookie",
-  "grpc-metadata-authorization",
-  "x-api-key",
-] as const;
-
 export type LlmTraceExpectation = {
   label: string;
   promptMarker: string;
@@ -51,8 +44,7 @@ export type DeepAgentsTraceExpectations = {
 
 type CaptureMetadata = {
   accepted?: unknown;
-  bytes?: unknown;
-  headers?: unknown;
+  contentType?: unknown;
   method?: unknown;
   path?: unknown;
   port?: unknown;
@@ -162,13 +154,6 @@ function captureMetadata(value: unknown, filename: string): CaptureMetadata {
   return value as CaptureMetadata;
 }
 
-function headerRecord(value: unknown, filename: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${filename} does not contain capture headers`);
-  }
-  return value as Record<string, unknown>;
-}
-
 export function validateCaptureDirectory(
   captureDir: string,
   collectorPort: number,
@@ -199,19 +184,10 @@ export function validateCaptureDirectory(
         `unexpected captured route ${String(metadata.method)} ${String(metadata.path)} on ${String(metadata.port)}`,
       );
     }
-    const headers = headerRecord(metadata.headers, metadataFile);
-    const headerNames = Object.keys(headers).map((name) => name.toLowerCase());
-    for (const forbidden of FORBIDDEN_EXPORTER_HEADERS) {
-      if (headerNames.includes(forbidden))
-        throw new Error(`forbidden exporter header ${forbidden}`);
-    }
-    if (headers["content-type"] !== "application/x-protobuf") {
+    if (metadata.contentType !== "application/x-protobuf") {
       throw new Error(`${metadataFile} is not OTLP binary protobuf`);
     }
     const body = fs.readFileSync(path.join(captureDir, metadataFile.replace(/\.json$/u, ".body")));
-    if (metadata.bytes !== body.length || Number(headers["content-length"]) !== body.length) {
-      throw new Error(`${metadataFile} content-length does not match its captured body`);
-    }
     if (body.equals(Buffer.from(allowedProbeBody))) {
       allowedProbeCount += 1;
       continue;

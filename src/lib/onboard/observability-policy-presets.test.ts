@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasDcodeObservabilityDrift,
+  hasRegisteredDcodeObservabilityDrift,
   isInactiveObservabilityPolicyPreset,
   mergeRequiredObservabilityPolicyPresets,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -63,6 +64,10 @@ describe("observability policy presets", () => {
         requestedObservabilityEnabled: false,
       }),
     ).toBe(false);
+    expect(
+      hasRegisteredDcodeObservabilityDrift(true, true, { observabilityEnabled: false }, true),
+    ).toBe(true);
+    expect(hasRegisteredDcodeObservabilityDrift(true, true, null, true)).toBe(false);
   });
 
   it("requires the fixed local OTLP preset only for enabled Deep Agents Code", () => {

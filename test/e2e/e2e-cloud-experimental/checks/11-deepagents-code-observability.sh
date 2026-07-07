@@ -85,10 +85,11 @@ COLLECTOR_PID=$!
 
 collector_ready=0
 for _attempt in $(seq 1 30); do
-  if curl --noproxy '*' -fsS --max-time 1 "http://${OTLP_BIND_IP}:${COLLECTOR_PORT}/health" \
-    >/dev/null \
+  if grep -Fq 'CAPTURE_READY:' "$COLLECTOR_LOG" \
+    && curl --noproxy '*' -fsS --max-time 1 \
+      "http://${OTLP_BIND_IP}:${COLLECTOR_PORT}/health" >/dev/null 2>&1 \
     && curl --noproxy '*' -fsS --max-time 1 "http://${OTLP_BIND_IP}:${DECOY_PORT}/health" \
-      >/dev/null; then
+      >/dev/null 2>&1; then
     collector_ready=1
     break
   fi
@@ -105,8 +106,19 @@ request_count() {
 
 python_probe_source() {
   cat <<'PY'
+import os
 import sys
 import urllib.request
+
+for name in (
+    "ALL_PROXY",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "all_proxy",
+    "https_proxy",
+    "http_proxy",
+):
+    os.environ.pop(name, None)
 
 method, url, body = sys.argv[1:]
 data = body.encode("utf-8") if method != "GET" else None
@@ -116,8 +128,9 @@ request = urllib.request.Request(
     method=method,
     headers={"content-type": "application/x-protobuf"},
 )
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try:
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with opener.open(request, timeout=10) as response:
         print(f"REACHED:{response.status}")
 except Exception as error:
     print(f"FAILED:{type(error).__name__}:{error}")
@@ -132,8 +145,6 @@ sandbox_python_probe() {
   local encoded
   encoded="$(python_probe_source | base64 | tr -d '\n')"
   "$CLI" "$SANDBOX_NAME" exec -- \
-    env -u ALL_PROXY -u HTTPS_PROXY -u HTTP_PROXY -u all_proxy -u https_proxy -u http_proxy \
-    NO_PROXY="$COLLECTOR_HOST" no_proxy="$COLLECTOR_HOST" \
     /opt/venv/bin/python3 -I -c \
     "import base64; exec(compile(base64.b64decode('${encoded}'), '<otlp-policy-probe>', 'exec'))" \
     "$method" "$url" "$body" 2>&1
@@ -206,9 +217,7 @@ openshell sandbox exec --name "$SANDBOX_NAME" -- test -x /usr/bin/curl >/dev/nul
 before_binary="$(request_count)"
 set +e
 binary_output="$("$CLI" "$SANDBOX_NAME" exec -- \
-  env -u ALL_PROXY -u HTTPS_PROXY -u HTTP_PROXY -u all_proxy -u https_proxy -u http_proxy \
-  NO_PROXY="$COLLECTOR_HOST" no_proxy="$COLLECTOR_HOST" \
-  /usr/bin/curl -fsS --max-time 10 -X POST \
+  /usr/bin/curl --noproxy '*' -fsS --max-time 10 -X POST \
   -H 'content-type: application/x-protobuf' \
   --data-binary 'NEMOCLAW_OTLP_DENIED_BINARY_PROBE' \
   "http://${COLLECTOR_HOST}:${COLLECTOR_PORT}/v1/traces" 2>&1)"

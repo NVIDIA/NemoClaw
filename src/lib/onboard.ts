@@ -139,14 +139,8 @@ const {
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const {
-  clearAgentScopedResumeState,
-}: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
-const {
   repairResumeMachineSnapshot,
 }: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
-const {
-  stopTrackedModelRouterForAgentChange,
-}: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
   require("./onboard/bedrock-runtime");
 const {
@@ -2390,13 +2384,12 @@ async function createSandboxWithBaseImageResolution(
     );
     process.exit(1);
   }
-  const observabilityDrift = observabilityPolicy.hasDcodeObservabilityDrift({
+  const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(
     liveExists,
-    managedDcodeAgent: isManagedDcodeAgent,
-    hasRegistryEntry: existingEntry !== null,
-    recordedObservabilityEnabled: existingEntry?.observabilityEnabled,
-    requestedObservabilityEnabled: createIntent?.observabilityEnabled,
-  });
+    isManagedDcodeAgent,
+    existingEntry,
+    createIntent?.observabilityEnabled,
+  );
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -4296,23 +4289,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       canPrompt: !cannotPrompt,
     });
-    const selectedAgentTransition = await runtimeControlFlow.applySelectedAgentTransition(
-      {
-        resume,
-        session,
-        selectedAgentName: agent?.name,
-        routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
-      },
-      {
-        note,
-        stopTrackedModelRouterForAgentChange,
-        clearAgentScopedResumeState,
-        setOnboardBrandingAgent,
-        updateSession: onboardSession.updateSession,
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-      },
-    );
+    const selectedAgentTransition = await runtimeControlFlow.applySelectedAgentTransition({
+      resume,
+      session,
+      selectedAgentName: agent?.name,
+      routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
+      note,
+    });
     session = selectedAgentTransition.session;
     const resumeAgentChanged = selectedAgentTransition.resumeAgentChanged;
     const forceProviderSelectionForAgentChange = resumeAgentChanged;
@@ -4833,7 +4816,7 @@ module.exports = {
   hasStaleGateway,
   getRequestedSandboxNameHint,
   getResumeSandboxConflict,
-  clearAgentScopedResumeState,
+  clearAgentScopedResumeState: runtimeControlFlow.clearAgentScopedResumeState,
   getSandboxReuseState,
   getSandboxStateFromOutputs,
   getPortConflictServiceHints,

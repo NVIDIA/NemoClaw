@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Session } from "../state/onboard-session";
+import { type Session, updateSession } from "../state/onboard-session";
+import { clearAgentScopedResumeState } from "./agent-resume-state";
+import { setOnboardBrandingAgent } from "./branding";
+import { stopTrackedModelRouterForAgentChange } from "./model-router-process";
 import { isDcodeAgent } from "./observability-policy-presets";
 import { formatSandboxAgentName, normalizeSandboxAgentName } from "./sandbox-agent";
 import { applyOnboardToolDisclosureRequest } from "./tool-disclosure-flow";
 import type { OnboardOptions } from "./types";
+
+export { clearAgentScopedResumeState };
 
 export interface RuntimeControlAgentDeps {
   error(message: string): void;
@@ -19,6 +24,8 @@ export interface SelectedAgentTransitionDeps extends RuntimeControlAgentDeps {
   setOnboardBrandingAgent(agentName: string): void;
   updateSession(mutator: (session: Session) => Session | void): Session;
 }
+
+type SelectedAgentTransitionOverrides = Partial<Omit<SelectedAgentTransitionDeps, "note">>;
 
 export function applyOnboardRuntimeControlRequests(
   opts: Pick<OnboardOptions, "toolDisclosure" | "observabilityEnabled">,
@@ -65,9 +72,20 @@ export async function applySelectedAgentTransition(
     session: Session | null;
     selectedAgentName: string | null | undefined;
     routerPort: number;
+    note(message: string): void;
   },
-  deps: SelectedAgentTransitionDeps,
+  overrides: SelectedAgentTransitionOverrides = {},
 ): Promise<{ session: Session; resumeAgentChanged: boolean }> {
+  const deps: SelectedAgentTransitionDeps = {
+    note: input.note,
+    stopTrackedModelRouterForAgentChange,
+    clearAgentScopedResumeState,
+    setOnboardBrandingAgent,
+    updateSession,
+    error: console.error,
+    exitProcess: (code) => process.exit(code),
+    ...overrides,
+  };
   validateSessionAgentObservability(input.session, input.selectedAgentName, deps);
 
   const selectedAgentName = normalizeSandboxAgentName(input.selectedAgentName);

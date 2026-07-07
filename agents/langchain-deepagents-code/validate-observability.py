@@ -289,7 +289,7 @@ async def _exercise_async_boundaries(
     else:
         raise AssertionError("Relay swallowed the control-flow exception")
 
-    if not observability._active:
+    if not observability._lifecycle.active:
         raise AssertionError("observability deactivated while handling callbacks")
 
 
@@ -674,7 +674,7 @@ def main() -> None:
             f"http://127.0.0.1:{collector.server_port}/v1/traces"
         )
         initialized = observability.initialize_observability()
-        if not initialized or observability._subscriber is None:
+        if not initialized or observability._lifecycle.subscriber is None:
             raise AssertionError("real Relay observability failed to initialize")
 
         _assert_callback_manager_boundary(observability)
@@ -688,7 +688,7 @@ def main() -> None:
         _exercise_graph(observability, raw_names["graph"])
 
         nemo_relay.subscribers.flush()
-        observability._subscriber.force_flush()
+        observability._lifecycle.subscriber.force_flush()
         requests, failures = collector.snapshot()
         canary_requests, canary_failures = canary.snapshot()
         if canary_requests or canary_failures:

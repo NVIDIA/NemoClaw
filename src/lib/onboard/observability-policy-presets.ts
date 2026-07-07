@@ -25,6 +25,21 @@ export function hasDcodeObservabilityDrift(options: {
   return options.recordedObservabilityEnabled !== (options.requestedObservabilityEnabled === true);
 }
 
+export function hasRegisteredDcodeObservabilityDrift(
+  liveExists: boolean,
+  managedDcodeAgent: boolean,
+  registryEntry: { observabilityEnabled?: boolean | null } | null,
+  requestedObservabilityEnabled: boolean | null | undefined,
+): boolean {
+  return hasDcodeObservabilityDrift({
+    liveExists,
+    managedDcodeAgent,
+    hasRegistryEntry: registryEntry !== null,
+    recordedObservabilityEnabled: registryEntry?.observabilityEnabled,
+    requestedObservabilityEnabled,
+  });
+}
+
 export function requiredObservabilityPolicyPresets(
   agent: string | null | undefined,
   observabilityEnabled: boolean | null | undefined,
