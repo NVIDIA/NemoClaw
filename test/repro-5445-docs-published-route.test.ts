@@ -38,7 +38,7 @@ describe("docs published-route map derived from docs/index.yml (#5445)", () => {
   });
 
   it("maps the commands source to the published OpenClaw commands route (#5445)", () => {
-    expect(index.sourceToRoutes.get(COMMANDS_SOURCE)).toContain(
+    expect(index.sourceToRoutes.get(COMMANDS_SOURCE)?.map((entry) => entry.route)).toContain(
       "/user-guide/openclaw/reference/commands",
     );
   });

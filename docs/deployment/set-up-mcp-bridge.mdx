@@ -11,6 +11,7 @@ content:
 skill:
   priority: 30
 ---
+import { AgentOnly } from "../_components/AgentGuide";
 
 NemoClaw lets a sandboxed agent use MCP Streamable HTTP servers without copying external service credentials into the sandbox.
 
@@ -139,7 +140,12 @@ This does not expose the raw credential to the sandbox before the request is aut
 
 ## Agent Adapters
 
+<AgentOnly variant="openclaw">
+
 OpenClaw uses `mcporter config add` in the sandbox.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
 
 Hermes writes this managed HTTP entry under `/sandbox/.hermes/config.yaml`:
 
@@ -170,10 +176,14 @@ Success still requires a replacement gateway identity, healthy loopback endpoint
 There is no host listener, persistent control socket, MCP relay, or service for this operation.
 The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.
 
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
 The managed image pins Deep Agents Code `0.1.30` and keeps NemoClaw definitions in `/sandbox/.deepagents/.nemoclaw-mcp.json`.
 The launcher validates canonical HTTPS endpoints and exact OpenShell credential placeholders, then supplies Deep Agents Code with a process-local, integrity-bound snapshot for server starts and restarts.
 It prefers a sealed in-memory file when available; the OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.
 NemoClaw never auto-loads the user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into the managed configuration.
+For upstream Deep Agents Code MCP discovery and trust behavior outside NemoClaw's managed path, refer to [MCP tools](https://docs.langchain.com/oss/python/deepagents/code/mcp-tools).
 
 ```json
 {
@@ -190,6 +200,8 @@ NemoClaw never auto-loads the user-owned `/sandbox/.deepagents/.mcp.json` or pro
 ```
 
 External service credential values such as the value of `GITHUB_MCP_TOKEN` remain in OpenShell provider state, not in sandbox files or NemoClaw's sandbox registry.
+
+</AgentOnly>
 
 ## Operate MCP Servers
 
@@ -301,8 +313,12 @@ NemoClaw checks inspectable installed OpenShell artifacts for the `protocol: mcp
 For image-backed or compressed supervisors without an inspectable host runtime artifact, that onboarding check is provisional.
 Before any credential or provider side effect, the MCP command loads the exact generated policy with `policy set --wait` and exact-matches the effective state; a runtime that rejects `protocol: mcp` therefore fails closed.
 
+<AgentOnly variant="hermes">
+
 If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
 Recovery re-establishes the managed Hermes service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
+
+</AgentOnly>
 
 If a mutating MCP command times out waiting for the per-sandbox lifecycle lock, first confirm that no `mcp add`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for that sandbox is still running, then retry the original command.
 Every mutating command automatically recovers a lock whose local process is provably dead or whose PID now has a different process-start identity, including locks left while stale-lock cleanup was in progress.

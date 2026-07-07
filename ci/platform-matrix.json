@@ -150,19 +150,19 @@
       "name": "OpenClaw",
       "status": "tested",
       "default": true,
-      "notes": "Default agent runtime. Onboard with `$$nemoclaw onboard` (no `--agent` flag required)."
+      "notes": "Default agent runtime. Onboard with `nemoclaw onboard` (no `--agent` flag required)."
     },
     {
       "name": "Hermes",
-      "status": "caveated",
+      "status": "tested",
       "default": false,
-      "notes": "First-class agent with dedicated CLI (`$$nemohermes`), Dockerfile, manifest, docs, and Hermes E2E coverage in `.github/workflows/e2e.yaml` (`hermes-e2e`, `hermes-*`, and Hermes rebuild/switch jobs). Onboard with `$$nemohermes onboard` or pass `--agent hermes` to `$$nemoclaw onboard`. Unlocks the Hermes Provider inference route. Known structural gaps: model-provider compatibility registry is empty (backfilled after failures, see `nemoclaw-blueprint/model-specific-setup/hermes/README.md`); no Hermes-specific unit tests in `nemoclaw/src/`; macOS and WSL CI suites do not differentiate agents. Suitable for evaluation and the documented onboarding paths; production parity with OpenClaw is not yet asserted."
+      "notes": "First-class agent with dedicated CLI (`nemohermes`), Dockerfile, manifest, docs, and Hermes E2E coverage in `.github/workflows/e2e.yaml` (`hermes-e2e`, `hermes-*`, and Hermes rebuild/switch jobs). Onboard with `nemohermes onboard` or `nemoclaw onboard --agent hermes`. Unlocks the Hermes Provider inference route. Known structural gaps: model-provider compatibility registry is empty (backfilled after failures, see `nemoclaw-blueprint/model-specific-setup/hermes/README.md`); no Hermes-specific unit tests in `nemoclaw/src/`; macOS and WSL CI suites do not differentiate agents. Suitable for evaluation and the documented onboarding paths; production parity with OpenClaw is not yet asserted."
     },
     {
       "name": "LangChain Deep Agents Code",
-      "status": "experimental",
+      "status": "tested",
       "default": false,
-      "notes": "Terminal-oriented coding harness (no in-sandbox gateway, no dashboard) built on the Deep Agents SDK; manifest at `agents/langchain-deepagents-code/manifest.yaml` with binary `dcode`. Onboard with `$$nemo-deepagents onboard` or `$$nemoclaw onboard --agent langchain-deepagents-code`, and follow [the quickstart](../get-started/quickstart-langchain-deepagents-code). NemoClaw runs it as a managed harness: unmanaged sandbox/MCP/shell overrides are rejected and credential-bearing proxy URLs are dropped from persisted shell env. Inference routes through OpenShell's `inference.local` endpoint via Deep Agents Code's OpenAI-compatible provider. Live runtime acceptance, broader launch material, and terminal-agent diagnostics are tracked at open issue #4861."
+      "notes": "Terminal-oriented coding harness (no in-sandbox gateway, no dashboard) built on the Deep Agents SDK; manifest at `agents/langchain-deepagents-code/manifest.yaml` with binary `dcode`. Onboard with `nemo-deepagents onboard` or `nemoclaw onboard --agent langchain-deepagents-code`, and follow [the quickstart](/user-guide/deepagents/get-started/quickstart). NemoClaw runs it as a managed harness: unmanaged sandbox/MCP/shell overrides are rejected and credential-bearing proxy URLs are dropped from persisted shell env. Inference routes through OpenShell's `inference.local` endpoint via Deep Agents Code's OpenAI-compatible provider. Live runtime acceptance, broader launch material, and terminal-agent diagnostics are tracked at open issue #4861."
     }
   ],
 
