@@ -12,7 +12,8 @@ import {
 } from "../tool-disclosure";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
-import { isDcodeAgent } from "./observability-policy-presets";
+import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
+import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
@@ -135,7 +136,11 @@ function validateObservabilityAgent(
   agent: string | null,
   deps: ResolveOnboardOptionsDeps,
 ): void {
-  if (requested === true && agent && !isDcodeAgent(agent)) {
+  if (
+    agent &&
+    managedSandboxFeatureIssue(DCODE_OBSERVABILITY_FEATURE, { agent, requested }) ===
+      "unsupported-request"
+  ) {
     fail(deps, "  --observability is supported only with --agent langchain-deepagents-code.");
   }
 }

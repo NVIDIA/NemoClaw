@@ -14,7 +14,16 @@ import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
-import { hasDcodeObservabilityDrift, isDcodeAgent } from "../../observability-policy-presets";
+import {
+  type ManagedSandboxFeatureIssue,
+  managedSandboxFeatureNeedsSessionUpdate,
+  resolveManagedSandboxFeature,
+} from "../../managed-sandbox-feature";
+import {
+  DCODE_OBSERVABILITY_FEATURE,
+  hasDcodeObservabilityDrift,
+  isDcodeAgent,
+} from "../../observability-policy-presets";
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -266,51 +275,15 @@ function mcpRegistryRemovalBlockReason(
 }
 
 function observabilityRequestValidationError(
-  selectedAgent: string | undefined,
-  requested: boolean | null | undefined,
-  session: Session | null,
-  registryEntry: SandboxEntry | null,
+  issue: ManagedSandboxFeatureIssue | null,
 ): string | null {
-  if (isDcodeAgent(selectedAgent)) return null;
-  if (requested === true) {
+  if (issue === "unsupported-request") {
     return "  --observability is supported only with --agent langchain-deepagents-code.";
   }
-  if (
-    requested !== false &&
-    (session?.observabilityEnabled === true || registryEntry?.observabilityEnabled === true)
-  ) {
+  if (issue === "recorded-state-on-unsupported-agent") {
     return "  Recorded observability belongs to the existing Deep Agents Code sandbox. Pass --no-observability explicitly when switching agents.";
   }
   return null;
-}
-
-function resolveObservabilityEnabled(
-  selectedAgent: string | undefined,
-  requested: boolean | null | undefined,
-  resume: boolean,
-  session: Session | null,
-  registryEntry: SandboxEntry | null,
-): boolean {
-  if (!isDcodeAgent(selectedAgent)) return false;
-  if (typeof requested === "boolean") return requested;
-  if (resume && session?.observabilityRequestedExplicitly === true) {
-    return session.observabilityEnabled;
-  }
-  if (typeof registryEntry?.observabilityEnabled === "boolean") {
-    return registryEntry.observabilityEnabled;
-  }
-  return session?.observabilityEnabled === true;
-}
-
-function observabilitySessionNeedsUpdate(
-  session: Session | null,
-  enabled: boolean,
-  requestedExplicitly: boolean,
-): boolean {
-  return (
-    session?.observabilityEnabled !== enabled ||
-    (requestedExplicitly && session?.observabilityRequestedExplicitly !== true)
-  );
 }
 
 class SandboxStateFlow<
@@ -483,31 +456,33 @@ class SandboxStateFlow<
       : null;
     const selectedAgent = (this.options.agent as { name?: string } | null)?.name;
     const requested = this.options.requestedObservabilityEnabled;
-    const validationError = observabilityRequestValidationError(
-      selectedAgent,
+    const resolution = resolveManagedSandboxFeature(DCODE_OBSERVABILITY_FEATURE, {
+      agent: selectedAgent,
       requested,
-      state.session,
-      registryEntry,
-    );
+      resume: this.options.resume,
+      sessionValue: state.session?.observabilityEnabled,
+      sessionRequestedExplicitly: state.session?.observabilityRequestedExplicitly,
+      registryValue: registryEntry?.observabilityEnabled,
+    });
+    const validationError = observabilityRequestValidationError(resolution.issue);
     if (validationError) {
       this.deps.error(validationError);
       return this.deps.exitProcess(1);
     }
-    const requestedExplicitly = typeof requested === "boolean";
-    const enabled = resolveObservabilityEnabled(
-      selectedAgent,
-      requested,
-      this.options.resume,
-      state.session,
-      registryEntry,
-    );
-    if (!observabilitySessionNeedsUpdate(state.session, enabled, requestedExplicitly)) {
+    if (
+      !managedSandboxFeatureNeedsSessionUpdate(
+        DCODE_OBSERVABILITY_FEATURE,
+        state.session?.observabilityEnabled,
+        state.session?.observabilityRequestedExplicitly,
+        resolution,
+      )
+    ) {
       return state;
     }
     const session = this.deps.updateSession((current) => {
-      current.observabilityEnabled = enabled;
+      current.observabilityEnabled = resolution.value;
       current.observabilityRequestedExplicitly =
-        current.observabilityRequestedExplicitly || requestedExplicitly;
+        current.observabilityRequestedExplicitly || resolution.requestedExplicitly;
       return current;
     });
     return { ...state, session };

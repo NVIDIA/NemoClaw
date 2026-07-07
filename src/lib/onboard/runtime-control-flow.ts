@@ -4,8 +4,9 @@
 import { type Session, updateSession } from "../state/onboard-session";
 import { clearAgentScopedResumeState } from "./agent-resume-state";
 import { setOnboardBrandingAgent } from "./branding";
+import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { stopTrackedModelRouterForAgentChange } from "./model-router-process";
-import { isDcodeAgent } from "./observability-policy-presets";
+import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { formatSandboxAgentName, normalizeSandboxAgentName } from "./sandbox-agent";
 import { applyOnboardToolDisclosureRequest } from "./tool-disclosure-flow";
 import type { OnboardOptions } from "./types";
@@ -58,7 +59,12 @@ export function validateSessionAgentObservability(
     exitProcess: (code) => process.exit(code),
   },
 ): void {
-  if (session?.observabilityEnabled && !isDcodeAgent(agentName)) {
+  if (
+    managedSandboxFeatureIssue(DCODE_OBSERVABILITY_FEATURE, {
+      agent: agentName,
+      sessionValue: session?.observabilityEnabled,
+    }) === "recorded-state-on-unsupported-agent"
+  ) {
     deps.error(
       "  Recorded observability belongs to Deep Agents Code. Pass --no-observability explicitly when switching agents.",
     );

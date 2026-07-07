@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type ManagedSandboxFeature,
+  managedSandboxFeatureHasDrift,
+} from "./managed-sandbox-feature";
+
 export const DCODE_AGENT_NAME = "langchain-deepagents-code";
 export const OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET = "observability-otlp-local";
 
@@ -10,6 +15,14 @@ export function isDcodeAgent(agent: string | null | undefined): boolean {
   return typeof agent === "string" && agent.trim().toLowerCase() === DCODE_AGENT_NAME;
 }
 
+export const DCODE_OBSERVABILITY_FEATURE: ManagedSandboxFeature<boolean> = {
+  id: "observability",
+  defaultValue: false,
+  isValue: (value): value is boolean => typeof value === "boolean",
+  isEnabled: (value) => value,
+  supportsAgent: isDcodeAgent,
+};
+
 export function hasDcodeObservabilityDrift(options: {
   liveExists: boolean;
   managedDcodeAgent: boolean;
@@ -17,12 +30,13 @@ export function hasDcodeObservabilityDrift(options: {
   recordedObservabilityEnabled: boolean | null | undefined;
   requestedObservabilityEnabled: boolean | null | undefined;
 }): boolean {
-  if (!options.liveExists || !options.managedDcodeAgent || !options.hasRegistryEntry) return false;
-  // A legacy row without this create-time bit cannot prove whether the live
-  // marker is enabled. Recreate before either enabling or disabling so the
-  // requested state becomes authoritative instead of treating unknown as off.
-  if (typeof options.recordedObservabilityEnabled !== "boolean") return true;
-  return options.recordedObservabilityEnabled !== (options.requestedObservabilityEnabled === true);
+  return managedSandboxFeatureHasDrift(DCODE_OBSERVABILITY_FEATURE, {
+    liveExists: options.liveExists,
+    hasRegistryEntry: options.hasRegistryEntry,
+    agent: options.managedDcodeAgent ? DCODE_AGENT_NAME : null,
+    recordedValue: options.recordedObservabilityEnabled,
+    desiredValue: options.requestedObservabilityEnabled === true,
+  });
 }
 
 export function hasRegisteredDcodeObservabilityDrift(
