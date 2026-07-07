@@ -31,4 +31,6 @@ source. The separate build patch adds only the two `openai:` aliases required
 when NemoClaw passes its managed OpenAI-compatible `ChatOpenAI` instance.
 Remove the source overlay and bootstrap registration when Deep Agents Code pins
 a Deep Agents release containing the merge. Retain the alias bridge only until
-the managed-model resolution tests pass without it.
+the managed-model resolution tests pass without it. The patcher's exact DCode
+and Deep Agents version gates make that dependency bump fail the image build
+until this removal review is completed.

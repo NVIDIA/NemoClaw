@@ -12,6 +12,18 @@ a Deep Agents release containing that merge. Keep the alias bridge until the
 managed ChatOpenAI resolution checks pass without it.
 """
 
+# invalidState: deepagents-code 0.1.30 pins deepagents 0.7.0a3, which lacks the
+# merged Ultra profile, and its managed ChatOpenAI identity matches none of the
+# upstream provider keys.
+# sourceBoundary: Deep Agents owns the upstream profile; NemoClaw owns only the
+# image overlay and managed openai: aliases required by inference.local.
+# whyNotSourceFix: upstream PR #4192 is merged, but upgrading deepagents alone
+# violates deepagents-code 0.1.30's exact dependency pin before the launch.
+# regressionTest: exact hashes, failure-state tests, build-time graph and parser
+# validation, and the typed DCode E2E target cover the temporary boundary.
+# removalCondition: a DCode release pins Deep Agents containing #4192 and both
+# managed ChatOpenAI aliases resolve natively; any pin drift fails this build.
+
 from __future__ import annotations
 
 import hashlib

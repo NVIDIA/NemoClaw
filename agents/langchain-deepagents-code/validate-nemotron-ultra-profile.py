@@ -9,8 +9,12 @@ from collections.abc import Callable, Sequence
 from typing import cast
 
 from deepagents import create_deep_agent
+from deepagents.profiles.harness._nvidia_nemotron_3_ultra import (
+    NemotronTextToolCallParser,
+)
 from deepagents.profiles.harness.harness_profiles import _harness_profile_for_model
 from langchain.agents.middleware.types import AgentMiddleware
+from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 
 EXPECTED_VERSIONS = {
@@ -70,6 +74,31 @@ def validate_profile(model_id: str) -> ChatOpenAI:
     return model
 
 
+def validate_parser_tool_visibility() -> None:
+    cases = (
+        ('{"tool": "bash", "cmd": "echo blocked"}', "execute"),
+        (
+            "<function=write_file><parameter name=file_path>/tmp/x</parameter>"
+            "<parameter name=content>x</parameter></function>",
+            "write_file",
+        ),
+        (
+            "<function=delete><parameter name=file_path>/tmp/x</parameter></function>",
+            "delete",
+        ),
+    )
+    for content, tool_name in cases:
+        message = AIMessage(content=content)
+        blocked = NemotronTextToolCallParser._repair_message(message, {"read_file"})
+        assert blocked.content == content
+        assert blocked.tool_calls == []
+
+        allowed = NemotronTextToolCallParser._repair_message(message, {tool_name})
+        assert allowed.content == ""
+        assert len(allowed.tool_calls) == 1
+        assert allowed.tool_calls[0]["name"] == tool_name
+
+
 def main() -> None:
     for distribution, expected in EXPECTED_VERSIONS.items():
         actual = importlib.metadata.version(distribution)
@@ -78,6 +107,7 @@ def main() -> None:
         )
 
     managed_models = [validate_profile(model_id) for model_id in MANAGED_MODEL_IDS]
+    validate_parser_tool_visibility()
 
     # One graph construction materializes the shared middleware schemas and
     # catches pinned-stack incompatibilities without making an inference request.

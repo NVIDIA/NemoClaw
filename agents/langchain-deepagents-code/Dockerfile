@@ -33,6 +33,9 @@ COPY agents/langchain-deepagents-code/dcode-wrapper.sh /usr/local/lib/nemoclaw/d
 COPY agents/langchain-deepagents-code/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-launcher.sh
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+# The Nemotron overlay patches the Deep Agents SDK profile bootstrap; the
+# managed-runtime patch independently hardens Deep Agents Code entrypoints.
+# Both are exact-version, fail-closed build steps validated together below.
 RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/nemotron-ultra-harness-profile.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/LICENSE.langchain-deepagents /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh \
     && chmod -R a+rX /opt/nemoclaw-blueprint \

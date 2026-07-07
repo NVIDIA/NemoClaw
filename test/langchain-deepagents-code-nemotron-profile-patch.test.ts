@@ -289,6 +289,11 @@ describe("LangChain Deep Agents Code Nemotron Ultra profile patch", () => {
       '"NemotronProgressBudgetMiddleware"',
       '"FinalAnswerGuardMiddleware"',
       "create_deep_agent(model=managed_models[0])",
+      "validate_parser_tool_visibility()",
+      '"execute"',
+      '"write_file"',
+      '"delete"',
+      'blocked = NemotronTextToolCallParser._repair_message(message, {"read_file"})',
     ]) {
       expect(validator).toContain(expected);
     }

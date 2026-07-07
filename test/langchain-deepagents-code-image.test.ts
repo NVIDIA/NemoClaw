@@ -365,11 +365,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "rm -f /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
     );
     expect(dockerfile).toContain("/usr/local/share/licenses/nemoclaw/langchain-deepagents-MIT.txt");
-    expect(
-      dockerfile.indexOf("python3 /opt/nemoclaw-deepagents-code/patch-nemotron-ultra-profile.py"),
-    ).toBeLessThan(
-      dockerfile.indexOf("python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py"),
-    );
     expect(dockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=progressive");
     expect(dockerfile).toContain("NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}");
     expect(dockerfile).toContain("progressive|direct)");
