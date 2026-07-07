@@ -745,14 +745,14 @@ def new_relay_middleware() -> Any:
 
     class BoundedNemoRelayMiddleware(NemoRelayMiddleware):
         def wrap_model_call(self, request: Any, handler: Any) -> Any:
-            request_prepared = False
+            prepared_request: tuple[str, Any] | None = None
             try:
-                model_name, relay_request = _bounded_model_call_request(request)
-                request_prepared = True
+                prepared_request = _bounded_model_call_request(request)
             except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
                 pass
-            if not request_prepared:
+            if prepared_request is None:
                 return handler(request)
+            model_name, relay_request = prepared_request
 
             original_result: Any = _RESULT_UNSET
             callback_started = False
@@ -793,14 +793,14 @@ def new_relay_middleware() -> Any:
             return original_result
 
         async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-            request_prepared = False
+            prepared_request: tuple[str, Any] | None = None
             try:
-                model_name, relay_request = _bounded_model_call_request(request)
-                request_prepared = True
+                prepared_request = _bounded_model_call_request(request)
             except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
                 pass
-            if not request_prepared:
+            if prepared_request is None:
                 return await handler(request)
+            model_name, relay_request = prepared_request
 
             original_result: Any = _RESULT_UNSET
             callback_started = False
@@ -870,14 +870,14 @@ def new_relay_middleware() -> Any:
             return result
 
         def wrap_tool_call(self, request: Any, handler: Any) -> Any:
-            request_prepared = False
+            prepared_call: tuple[Any, Any, Any, Any] | None = None
             try:
-                parent, _codec, tool_name, tool_args = self._prepare_tool_call(request)
-                request_prepared = True
+                prepared_call = self._prepare_tool_call(request)
             except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
                 pass
-            if not request_prepared:
+            if prepared_call is None:
                 return handler(request)
+            parent, _codec, tool_name, tool_args = prepared_call
 
             boundary = _RelayExceptionBoundary()
             original_result: Any = _RESULT_UNSET
@@ -931,14 +931,14 @@ def new_relay_middleware() -> Any:
             return original_result
 
         async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
-            request_prepared = False
+            prepared_call: tuple[Any, Any, Any, Any] | None = None
             try:
-                parent, _codec, tool_name, tool_args = self._prepare_tool_call(request)
-                request_prepared = True
+                prepared_call = self._prepare_tool_call(request)
             except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
                 pass
-            if not request_prepared:
+            if prepared_call is None:
                 return await handler(request)
+            parent, _codec, tool_name, tool_args = prepared_call
 
             boundary = _RelayExceptionBoundary()
             original_result: Any = _RESULT_UNSET
