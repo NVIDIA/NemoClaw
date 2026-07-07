@@ -291,19 +291,19 @@ describe("CLI dispatch", () => {
           argv: ["term"],
           entered: "term",
           command: "Run: openshell term",
-          note: null,
+          notes: [],
         },
         {
           argv: ["policy", "set"],
           entered: "policy set",
           command: "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
-          note: "nemoclaw <sandbox-name> policy-add <preset>",
+          notes: ["nemoclaw <sandbox-name> policy-add <preset>"],
         },
         {
           argv: ["gateway", "stop"],
           entered: "gateway stop",
           command: "Run: openshell gateway stop -g nemoclaw",
-          note: null,
+          notes: [],
         },
       ];
 
@@ -315,7 +315,7 @@ describe("CLI dispatch", () => {
         const output = stderr.join("\n");
         expect(output).toContain(`Unknown nemoclaw command: ${testCase.entered}`);
         expect(output).toContain(testCase.command);
-        if (testCase.note) expect(output).toContain(testCase.note);
+        for (const note of testCase.notes) expect(output).toContain(note);
         expect(output).not.toContain("Try: nemoclaw <sandbox-name> connect");
         expect(exitSpy).toHaveBeenCalledWith(1);
       }
