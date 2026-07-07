@@ -23,9 +23,10 @@ CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
 # Upstream dcode does not expose a stable machine-readable TUI ready marker.
 # Keep this localized heuristic prompt-shaped; do not match banner-only text.
 TUI_READY_PATTERN='(what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help)'
-# NemoClaw configures DCode's model and managed provider before launch, so any
-# upstream first-run screen is a regression that can expose unusable providers.
-TUI_FIRST_RUN_PATTERN='(your name \(optional\)|what should deep agents call you|choose a recommended model)'
+# NemoClaw configures DCode's model and managed provider before launch, so
+# the model picker is a regression. The name prompt is allowed on first run.
+TUI_FIRST_RUN_PATTERN='(choose a recommended model)'
+TUI_NAME_PROMPT_PATTERN='(your name \(optional\)|what should deep agents call you)'
 SENSITIVE_CAPTURE_FILES=()
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
@@ -146,6 +147,7 @@ run_tui_expect() {
     NEMOCLAW_TUI_CAPTURE="$raw_capture_file" \
     NEMOCLAW_TUI_MARKERS="$marker_capture_file" \
     NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN" \
+    NEMOCLAW_TUI_NAME_PROMPT_PATTERN="$TUI_NAME_PROMPT_PATTERN" \
     NEMOCLAW_TUI_READY_PATTERN="$TUI_READY_PATTERN" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
@@ -155,6 +157,7 @@ set sandbox $env(NEMOCLAW_TUI_SANDBOX_NAME)
 set capture $env(NEMOCLAW_TUI_CAPTURE)
 set markers $env(NEMOCLAW_TUI_MARKERS)
 set first_run_pattern $env(NEMOCLAW_TUI_FIRST_RUN_PATTERN)
+set name_prompt_pattern $env(NEMOCLAW_TUI_NAME_PROMPT_PATTERN)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
 log_file -a $capture
 
@@ -170,6 +173,14 @@ set ready_match ""
 expect {
   -nocase -re $ready_pattern {
     set ready_match $expect_out(0,string)
+  }
+  -nocase -re $name_prompt_pattern {
+    append_marker $markers "$expect_out(0,string)"
+    append_marker $markers "NEMOCLAW_TUI_NAME_PROMPT"
+    puts "\nNEMOCLAW_TUI_NAME_PROMPT"
+    # Pinned Deep Agents Code 0.1.30 accepts an empty optional name and continues.
+    send -- "\r"
+    exp_continue
   }
   -nocase -re $first_run_pattern {
     append_marker $markers "$expect_out(0,string)"
