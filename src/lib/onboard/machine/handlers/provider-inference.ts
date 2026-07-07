@@ -281,6 +281,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
   while (true) {
+    // Drop a context window auto-detected by a prior compatible-endpoint pass
+    // before every provider-selection path — fresh, resume, and repair — so a
+    // retry to a different provider/endpoint cannot inherit endpoint A's probed
+    // max_model_len as a bogus user override. Only clears a value this process
+    // auto-detected, never a user override or a legitimately resumed window
+    // (#6177; resume/repair coverage per PR #6293 PRA-3).
+    clearAutoDetectedCompatibleContextWindow(process.env);
     let forceInferenceSetup = initialForceInferenceSetup;
     const resumeProviderSelection =
       !forceProviderSelection &&
@@ -383,10 +390,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
     } else {
       await deps.startRecordedStep("provider_selection");
-      // Drop a context window auto-detected by a prior compatible-endpoint pass
-      // before re-selecting, so retrying to a different provider cannot inherit
-      // endpoint A's probed max_model_len as a bogus user override (#6177).
-      clearAutoDetectedCompatibleContextWindow(process.env);
       const selection = await withProviderSelectionTrace(
         sandboxName,
         (agent as { name?: string } | null)?.name,

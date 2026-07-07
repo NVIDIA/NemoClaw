@@ -47,4 +47,28 @@ describe("handleProviderInferenceState context window", () => {
     expect(setupNim).toHaveBeenCalledTimes(1);
     expect(observed).toEqual([undefined]);
   });
+
+  it("clears the stale auto-detected context window on the resume path too (#6293)", async () => {
+    // Simulate an earlier compatible-endpoint pass auto-detecting a window.
+    await applyCompatibleEndpointContextWindow("https://endpoint-a.example/v1", "model-a", {
+      env: process.env,
+      fetchModels: () => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }),
+      resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
+    });
+    expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+
+    // PRA-3: the clear now runs at the top of the provider-selection loop, so a
+    // resume pass drops the stale auto value just like a fresh selection — it is
+    // no longer gated on the fresh-only branch.
+    const observed: Array<string | undefined> = [];
+    const setupNim = vi.fn(async () => {
+      observed.push(process.env.NEMOCLAW_CONTEXT_WINDOW);
+      return { ...baseSelection };
+    });
+    const { deps } = createDeps({ setupNim });
+    await handleProviderInferenceState({ ...baseOptions(deps), resume: true });
+
+    expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+    expect(observed).toEqual([undefined]);
+  });
 });
