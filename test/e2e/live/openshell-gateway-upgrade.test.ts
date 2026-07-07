@@ -168,6 +168,10 @@ if injection not in text:
     if len(arg_markers) == 1:
         marker = arg_markers[0]
         text = text.replace(marker, marker + "\n" + injection, 1)
+    elif len(arg_markers) > 1:
+        raise SystemExit(
+            f"{path}: found {len(arg_markers)} OpenClaw version ARGs; expected exactly one"
+        )
     else:
         marker = "RUN set -eu; \\\n    MIN_VER=$(grep -m 1 'min_openclaw_version'"
         if marker not in text:
