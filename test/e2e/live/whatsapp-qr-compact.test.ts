@@ -193,34 +193,28 @@ type QrProbeResult = {
   explicitSmall: QrProfile;
 };
 
-function expectProfile(
-  value: Partial<QrProfile> | undefined,
-  label: string,
-  options: { requireQuietEdges?: boolean } = {},
-): QrProfile {
+function expectProfile(value: Partial<QrProfile> | undefined, label: string): QrProfile {
   expect(typeof value?.rows, `${label} rows must be numeric`).toBe("number");
   expect(typeof value?.cols, `${label} cols must be numeric`).toBe("number");
-  if (options.requireQuietEdges) {
-    expect(typeof value?.leftModules, `${label} left quiet zone must be numeric`).toBe("number");
-    expect(typeof value?.rightModules, `${label} right quiet zone must be numeric`).toBe("number");
-    expect(typeof value?.topModules, `${label} top quiet zone must be numeric`).toBe("number");
-    expect(typeof value?.bottomModules, `${label} bottom quiet zone must be numeric`).toBe(
-      "number",
-    );
-  }
   expect(typeof value?.dataImageFallback, `${label} fallback marker must be boolean`).toBe(
     "boolean",
   );
   return value as QrProfile;
 }
 
+function expectCompactProfile(value: Partial<QrProfile> | undefined, label: string): QrProfile {
+  expect(typeof value?.leftModules, `${label} left quiet zone must be numeric`).toBe("number");
+  expect(typeof value?.rightModules, `${label} right quiet zone must be numeric`).toBe("number");
+  expect(typeof value?.topModules, `${label} top quiet zone must be numeric`).toBe("number");
+  expect(typeof value?.bottomModules, `${label} bottom quiet zone must be numeric`).toBe("number");
+  return expectProfile(value, label);
+}
+
 function parseProbeResult(stdout: string, label: string): QrProbeResult {
   const parsed = JSON.parse(stdout.trim()) as Partial<QrProbeResult>;
   return {
     loginDefault: expectProfile(parsed.loginDefault, `${label} loginDefault`),
-    explicitSmall: expectProfile(parsed.explicitSmall, `${label} explicitSmall`, {
-      requireQuietEdges: true,
-    }),
+    explicitSmall: expectCompactProfile(parsed.explicitSmall, `${label} explicitSmall`),
   };
 }
 
