@@ -50,9 +50,7 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 
 function replaceRequired(source: string, target: string, replacement: string): string {
   const parts = source.split(target);
-  if (parts.length !== 2) {
-    throw new Error(`Expected exactly one replacement target: ${target}`);
-  }
+  expect(parts, `Expected exactly one replacement target: ${target}`).toHaveLength(2);
   return `${parts[0]}${replacement}${parts[1]}`;
 }
 
