@@ -12,6 +12,11 @@
 //     actionable error pointing at re-onboard.
 
 import { describe, expect, it, vi } from "vitest";
+import { shellQuote } from "../core/shell-quote";
+// onboard's provider config is the source of truth the local alias map must
+// stay in sync with. Imported here (test only — not into the inference-set hot
+// path) to drive the parity check below. providers.ts is a CJS module.
+import * as onboardProvidersNs from "../onboard/providers";
 import type { ConfigValue } from "../security/credential-filter";
 import {
   INFERENCE_SET_INSTALLER_PROVIDER_ALIASES,
@@ -20,12 +25,7 @@ import {
   runInferenceSet,
 } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
-import { shellQuote } from "../core/shell-quote";
 
-// onboard's provider config is the source of truth the local alias map must
-// stay in sync with. Imported here (test only — not into the inference-set hot
-// path) to drive the parity check below. providers.ts is a CJS module.
-import * as onboardProvidersNs from "../onboard/providers";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const onboardProviders: any =
   (onboardProvidersNs as unknown as { default?: unknown }).default ?? onboardProvidersNs;
@@ -347,12 +347,14 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     expectNoInferenceMutation(deps.calls);
   });
 
-  it("accepts the SAME onboard-established internal endpoint URL without re-running the SSRF guard (#6321)", async () => {
-    // `entry.endpointUrl` is the trusted endpoint onboarding persisted for this
-    // sandbox. Re-supplying that exact internal URL for a model switch must now
-    // succeed (onboard already established this route) — the identity match
-    // bypasses the DNS-pinning guard entirely, so the reporter's same-URL switch
-    // works instead of dead-ending.
+  it("re-supplying the SAME onboard-recorded internal endpoint is rejected with omit-guidance (no bypass) (#6321)", async () => {
+    // The recorded `entry.endpointUrl` is NOT trusted to skip the guard: this
+    // same `inference set` action persists endpointUrl, so a string-equality
+    // bypass would be self-authorizing (a value this command wrote could later
+    // authorize an internal-resolving switch). Re-supplying the exact recorded
+    // internal URL therefore still goes through the DNS-pinning SSRF guard and is
+    // rejected — with actionable guidance to omit --endpoint-url for a model-only
+    // switch on the already-established route (see the guided-path test below).
     const guard = ssrfGuard();
     const deps = createDeps({
       config: {
@@ -371,21 +373,20 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
       rewriteConfigUrlsWithDnsPinning: guard,
     });
 
-    await expect(
-      runInferenceSet(
-        {
-          provider: "compatible-endpoint",
-          model: "nvidia/model-b",
-          // Same internal URL onboarding recorded, even a trailing-slash variant.
-          endpointUrl: "https://inference-api.nvidia.com/v1/",
-          noVerify: true,
-        },
-        deps,
-      ),
-    ).resolves.toBeTruthy();
-    // The already-established endpoint was accepted by canonical identity match,
-    // so the DNS-pinning SSRF guard was never consulted for it.
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+    const attempt = runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "nvidia/model-b",
+        // Same internal URL onboarding recorded, even a trailing-slash variant.
+        endpointUrl: "https://inference-api.nvidia.com/v1/",
+        noVerify: true,
+      },
+      deps,
+    );
+    await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
+    // The guard WAS consulted for the re-supplied URL — no string-equality bypass.
+    expect(guard).toHaveBeenCalled();
+    expectNoInferenceMutation(deps.calls);
   });
 
   it("still blocks a DIFFERENT internal endpoint even on a same-provider sandbox (no blanket exemption) (#6321)", async () => {
