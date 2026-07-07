@@ -238,18 +238,20 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(tuiExpectProgram).not.toContain("set timeout 10");
   });
 
-  it("fails closed when expect installation fallback cannot provide expect", () => {
+  it("fails closed without package-manager operations when expect is unavailable", () => {
     const result = runTuiStartupCheckHelperResult(
       [
-        "command() { case \"$*\" in '-v expect') return 1 ;; '-v sudo'|'-v apt-get') return 0 ;; *) builtin command \"$@\" ;; esac; }",
-        "sudo() { return 42; }",
-        "ensure_expect_available",
+        "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:pending\\n'; }",
+        'command() { if [ "$1" = -v ] && [ "${2:-}" = expect ]; then return 1; fi; builtin command "$@"; }',
+        "main",
       ].join("; "),
-      { GITHUB_ACTIONS: "true" },
     );
 
     expect(result.status).toBe(1);
-    expect(result.stdout).toContain("installing expect");
+    expect(result.stderr).toContain(
+      "expect is required for the Deep Agents Code TUI startup check",
+    );
+    expect(tuiStartupCheckSource).not.toMatch(/\b(?:sudo|apt-get)\b/u);
   });
 
   it("matches the pinned /help readiness response without accepting startup-only text", () => {

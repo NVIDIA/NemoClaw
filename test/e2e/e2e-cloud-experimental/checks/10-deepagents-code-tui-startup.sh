@@ -53,21 +53,10 @@ is_positive_integer() {
 
 ensure_expect_available() {
   # The Deep Agents Code TUI proof is a PTY contract, so expect(1) is a
-  # required test dependency. Source of truth: the E2E workflows install the
-  # `expect` apt package before jobs that can run this check. This fallback
-  # keeps older/manual GitHub-hosted runner invocations aligned instead of
-  # silently skipping the release-gate signal.
-  if command -v expect >/dev/null 2>&1; then
-    return 0
-  fi
-  if [ "${GITHUB_ACTIONS:-}" = "true" ] && command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-    info "expect is not preinstalled; installing expect for the Deep Agents Code TUI PTY check"
-    if sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends expect; then
-      command -v expect >/dev/null 2>&1
-      return $?
-    fi
-  fi
-  return 1
+  # required host dependency. Privileged installation belongs to the reviewed
+  # E2E workflow setup; this PR-controlled check only verifies the prerequisite
+  # and fails closed when manual/older runners do not provide it.
+  command -v expect >/dev/null 2>&1
 }
 
 contains_secret() {
