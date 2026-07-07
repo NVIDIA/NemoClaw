@@ -41,13 +41,15 @@ const { readGatewayProviderMetadata, REMOTE_PROVIDER_CONFIG } =
 
 export type RebuildGatewayProviderRegistration = "registered" | "missing" | "indeterminate";
 
-/** Match OpenShell 0.0.72's typed gRPC absence without accepting transport failures. */
+/** Match OpenShell's rendered gRPC absence without accepting transport failures. */
 function openshellReportsStructuredProviderNotFound(detail: string): boolean {
   const bounded = detail.slice(0, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER);
   return bounded
     .split(/\r?\n/)
     .some((line) =>
-      /\bstatus:\s*NotFound\s*,\s*message:\s*["']provider not found["'](?:\s*,|$)/i.test(line),
+      /\b(?:status:\s*NotFound|code:\s*["']Some requested entity was not found["'])\s*,\s*message:\s*["']provider not found["'](?:\s*,|$)/i.test(
+        line,
+      ),
     );
 }
 

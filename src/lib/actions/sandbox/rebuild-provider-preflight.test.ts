@@ -100,6 +100,16 @@ describe("classifyRebuildGatewayProviderRegistration", () => {
         {
           status: 1,
           stderr:
+            "Error:   × code: 'Some requested entity was not found', message: \"provider not found\"",
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("missing");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr:
             'Error: status: NotFound, message: "provider not found", details: [], metadata: MetadataMap { headers: {} }',
         },
         "compatible-endpoint",
