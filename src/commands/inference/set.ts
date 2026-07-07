@@ -4,8 +4,8 @@
 import { Flags } from "@oclif/core";
 
 import { InferenceSetError, runInferenceSet } from "../../lib/actions/inference-set";
-import { CLI_NAME } from "../../lib/cli/branding";
 import { nonEmptyFlag } from "../../lib/cli/flag-helpers";
+import { inferenceSetRequiredFlagsFailureLines } from "../../lib/cli/inference-set-help";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 // Global inference:set is paired with the sandbox-first sandbox:inference:set
@@ -49,7 +49,7 @@ export default class InferenceSetCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { flags } = await this.parse(InferenceSetCommand);
     if (!flags.provider || !flags.model) {
-      this.printOpenShellRedirect();
+      this.printRequiredFlags();
       return;
     }
     try {
@@ -71,18 +71,9 @@ export default class InferenceSetCommand extends NemoClawCommand {
     }
   }
 
-  private printOpenShellRedirect(): void {
+  private printRequiredFlags(): void {
     this.failWithLines(
-      [
-        `  Unknown ${CLI_NAME} command: inference set`,
-        "",
-        "  This operation belongs to OpenShell.",
-        "  Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
-        `  To also sync the running sandbox config, pass --provider and --model to ${CLI_NAME} inference set.`,
-        "",
-        `  Run '${CLI_NAME} help' for NemoClaw commands.`,
-      ],
-      1,
+      inferenceSetRequiredFlagsFailureLines("inference set", " [--sandbox <name>]"),
     );
   }
 }

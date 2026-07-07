@@ -10,7 +10,7 @@
     "test/nemoclaw-start.test.ts": 4827,
     "test/onboard-messaging.test.ts": 2062,
     "test/onboard-selection.test.ts": 4834,
-    "test/onboard.test.ts": 4057,
+    "test/onboard.test.ts": 4043,
     "test/policies.test.ts": 2279
   }
 }

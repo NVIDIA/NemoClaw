@@ -4018,7 +4018,7 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=${JSON.stringify(helperPath)}`,
-      helperFns,
+      `${extractShellFunction("resolve_mutable_config_normalizer")}\n${helperFns}`,
       fn,
       "recover_openclaw_config_if_empty",
     ]
@@ -4129,7 +4129,7 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      extractShellFunction("normalize_mutable_config_perms").replaceAll("/sandbox", root),
+      `${extractShellFunction("resolve_mutable_config_normalizer")}\n${extractShellFunction("normalize_mutable_config_perms").replaceAll("/sandbox", root)}`,
       "normalize_mutable_config_perms",
     ]
       .filter(Boolean)

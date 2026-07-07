@@ -760,7 +760,7 @@ function maybeEmit(item) {
 }
 
 function agentVariantSourcePath(navPath) {
-  const match = navPath.match(/^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/);
+  const match = navPath.match(/^_build\/agent-variants\/(.+)\.(?:openclaw|hermes|deepagents)\.generated\.mdx$/);
   return match ? `${match[1]}.mdx` : null;
 }
 
