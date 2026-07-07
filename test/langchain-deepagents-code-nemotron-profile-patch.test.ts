@@ -360,24 +360,25 @@ describe("LangChain Deep Agents Code Nemotron Ultra managed aliases", () => {
     }
   });
 
-  it("rejects missing, linked, or drifted native profile source", () => {
-    for (const mode of ["missing", "linked", "drifted"] as const) {
-      const fixture = makePatchFixture();
-      if (mode === "missing") {
-        fs.rmSync(fixture.nativeProfilePath);
-      } else if (mode === "linked") {
-        fs.rmSync(fixture.nativeProfilePath);
-        fs.symlinkSync("/dev/null", fixture.nativeProfilePath);
-      } else {
-        fs.appendFileSync(fixture.nativeProfilePath, "# drift\n", "utf8");
-      }
-      const originalBootstrap = fs.readFileSync(fixture.builtinPath, "utf8");
-      const result = runPatcher(fixture);
+  it.each([
+    ["missing", (profilePath: string) => fs.rmSync(profilePath)],
+    [
+      "linked",
+      (profilePath: string) => {
+        fs.rmSync(profilePath);
+        fs.symlinkSync("/dev/null", profilePath);
+      },
+    ],
+    ["drifted", (profilePath: string) => fs.appendFileSync(profilePath, "# drift\n", "utf8")],
+  ] as const)("rejects %s native profile source", (_label, mutateProfile) => {
+    const fixture = makePatchFixture();
+    mutateProfile(fixture.nativeProfilePath);
+    const originalBootstrap = fs.readFileSync(fixture.builtinPath, "utf8");
+    const result = runPatcher(fixture);
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/native Nemotron profile|trusted regular file/i);
-      expect(fs.readFileSync(fixture.builtinPath, "utf8")).toBe(originalBootstrap);
-    }
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/native Nemotron profile|trusted regular file/i);
+    expect(fs.readFileSync(fixture.builtinPath, "utf8")).toBe(originalBootstrap);
   });
 
   it("rejects drifted and partial bootstrap states without touching native source", () => {
