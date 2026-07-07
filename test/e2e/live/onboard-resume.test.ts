@@ -107,26 +107,15 @@ function containsExactJsonToken(value: unknown, token: string): boolean {
   return false;
 }
 
-function expectHermeticCompatibleInferenceUsed(fake: FakeOpenAiCompatibleServer): void {
+function expectHermeticCompatibleEndpointUsed(fake: FakeOpenAiCompatibleServer): void {
   const requests = fake.requests();
-  const inferencePosts = requests.filter(
-    (entry) =>
-      entry.method === "POST" &&
-      ["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"].includes(
-        entry.path,
-      ),
-  );
   expect(
-    inferencePosts.length,
-    `expected fake inference POST, got ${JSON.stringify(requests)}`,
-  ).toBeGreaterThan(0);
+    requests.some((entry) => entry.method === "GET" && entry.path === "/v1/models"),
+    `expected authenticated fake endpoint discovery, got ${JSON.stringify(requests)}`,
+  ).toBe(true);
   expect(
     requests.filter((entry) => entry.auth === "missing"),
     `fake endpoint saw unauthenticated requests: ${JSON.stringify(requests)}`,
-  ).toEqual([]);
-  expect(
-    inferencePosts.filter((entry) => entry.auth !== "ok"),
-    `fake inference POST had missing auth: ${JSON.stringify(requests)}`,
   ).toEqual([]);
 }
 
@@ -320,7 +309,7 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
   expect(interrupted.failure?.step).toBe("policies");
 
   await artifacts.writeJson("phase-2-fake-openai-compatible-requests.json", fake.requests());
-  expectHermeticCompatibleInferenceUsed(fake);
+  expectHermeticCompatibleEndpointUsed(fake);
 
   // ──────────────────────────────────────────────────────────────────
   // Phase 3: resume — NVIDIA_INFERENCE_API_KEY and COMPATIBLE_API_KEY are

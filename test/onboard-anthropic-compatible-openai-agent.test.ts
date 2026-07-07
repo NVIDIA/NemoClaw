@@ -71,6 +71,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     // The probe must exercise the same /v1 base OpenShell will call at
     // runtime (<OPENAI_BASE_URL> + /v1/chat/completions with /v1 dedup).
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(SURFACE_URL, MODEL, "hub-secret", {
+      pinnedAddresses: ["93.184.216.34"],
       skipResponsesProbe: true,
     });
     const createCommand = harness.commands.find(({ command }) =>

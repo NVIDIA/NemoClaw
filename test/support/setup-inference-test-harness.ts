@@ -318,6 +318,9 @@ export function createDirectSetupInferenceHarnessFactory(
       },
       hydrateCredentialEnv: (envName: string | null | undefined) =>
         envName ? process.env[envName] || null : null,
+      // Direct setup tests use documentation-only hostnames and intentionally
+      // bypass the selection phase that normally supplies validated pins.
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
       promptValidationRecovery: async () => "selection",
       validateLocalProvider: () => ({ ok: true }),
       getLocalProviderHealthCheck: () => null,
