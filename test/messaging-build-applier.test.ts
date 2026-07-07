@@ -614,7 +614,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
-  it("tolerates verbose npm metadata output when installing the Teams plugin", async () => {
+  it("tolerates verbose npm metadata output when installing the Teams plugin (#6389)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-teams-npm-buffer-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     fs.writeFileSync(
