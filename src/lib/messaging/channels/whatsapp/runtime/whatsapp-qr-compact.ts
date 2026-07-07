@@ -31,6 +31,9 @@
 //     left untouched, and a caller that already opts into `small` is a no-op.
 //   * `qrcode-terminal` (has `generate`): force `small: true` as well, so the
 //     fix also covers any agent/path that renders through that package.
+//   * the OpenClaw QR renderer ES module: apply the same quiet-zone and
+//     data:image/png fallback rewrite that scripts/patch-openclaw-whatsapp-qr.ts
+//     used to apply at image build time.
 // The QR text and error-correction level are never altered — only the
 // terminal cell packing — so the rendered code is identical apart from size.
 //
@@ -55,6 +58,60 @@ function markPatched(mod) {
 
 function hasOwn(mod, name) {
   return mod && Object.prototype.hasOwnProperty.call(mod, name);
+}
+
+function isOpenClawQrTerminalRendererSource(source) {
+  return (
+    typeof source === "string" &&
+    source.indexOf("renderCompactTerminalQr") !== -1 &&
+    source.indexOf("COMPACT_MARGIN_MODULES") !== -1 &&
+    source.indexOf("async function renderQrTerminal") !== -1
+  );
+}
+
+function patchOpenClawQrTerminalRendererSource(source) {
+  if (!isOpenClawQrTerminalRendererSource(source)) return source;
+
+  var nextSource = source.replace(
+    /const COMPACT_MARGIN_MODULES = 1;/,
+    "const COMPACT_MARGIN_MODULES = 4;",
+  );
+
+  if (nextSource.indexOf("nemoclaw: qr scan fallback") !== -1) return nextSource;
+
+  var target =
+    "if (opts.small === true) return renderCompactTerminalQr(qrCode.create(text).modules);";
+  if (nextSource.indexOf(target) === -1) return nextSource;
+
+  var replacement =
+    "if (opts.small === true) { const compactQr = renderCompactTerminalQr(qrCode.create(text).modules); " +
+    "try { const scanFallbackDataUrl = await qrCode.toDataURL(text); /* nemoclaw: qr scan fallback */ " +
+    "return `${compactQr}\\nIf this QR will not scan, open this image in a browser: ${scanFallbackDataUrl}`; } " +
+    "catch { return compactQr; } }";
+  return nextSource.replace(target, replacement);
+}
+
+function createOpenClawQrTerminalLoaderSource() {
+  return `
+const isOpenClawQrTerminalRendererSource = ${isOpenClawQrTerminalRendererSource.toString()};
+const patchOpenClawQrTerminalRendererSource = ${patchOpenClawQrTerminalRendererSource.toString()};
+
+function decodeSource(source) {
+  if (typeof source === "string") return source;
+  if (source && typeof Buffer !== "undefined") return Buffer.from(source).toString("utf8");
+  return "";
+}
+
+export async function load(url, context, nextLoad) {
+  const result = await nextLoad(url, context);
+  if (!result || result.format !== "module") return result;
+  const source = decodeSource(result.source);
+  if (!isOpenClawQrTerminalRendererSource(source)) return result;
+  const patched = patchOpenClawQrTerminalRendererSource(source);
+  if (patched === source) return result;
+  return { ...result, source: patched };
+}
+`;
 }
 
 // `qrcode` package main: renderQrTerminal() calls qrcode.toString(text, opts).
@@ -155,10 +212,34 @@ export {
   hasOwn,
   isQrcodePackage,
   isQrcodeTerminalPackage,
+  isOpenClawQrTerminalRendererSource,
+  patchOpenClawQrTerminalRendererSource,
   patchQrcode,
   patchQrcodeTerminal,
   resolvePatchedModule,
 };
+
+function installOpenClawQrTerminalSourceLoader(Module) {
+  if (process.__nemoclawWhatsappQrCompactSourceLoaderInstalled) return;
+  if (!Module || typeof Module.register !== "function") return;
+  try {
+    Object.defineProperty(process, "__nemoclawWhatsappQrCompactSourceLoaderInstalled", {
+      value: true,
+    });
+  } catch (_e) {
+    process.__nemoclawWhatsappQrCompactSourceLoaderInstalled = true;
+  }
+
+  try {
+    var loaderSource = createOpenClawQrTerminalLoaderSource();
+    var loaderUrl =
+      "data:text/javascript;base64," + Buffer.from(loaderSource, "utf8").toString("base64");
+    Module.register(loaderUrl);
+  } catch (_e) {
+    // The qrcode small-mode hook below is still useful even if this Node
+    // runtime cannot register ESM loader hooks.
+  }
+}
 
 // Install the Module._load hook that patches qrcode / qrcode-terminal on load.
 // Guarded so double-require is a no-op. Runs on import (the file is loaded via
@@ -172,6 +253,7 @@ function installWhatsappQrCompactHook() {
   }
 
   var Module = require("module");
+  installOpenClawQrTerminalSourceLoader(Module);
   var origLoad = Module._load;
 
   Module._load = function (request, _parent, _isMain) {

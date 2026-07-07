@@ -146,12 +146,10 @@ COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-opencl
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts
 COPY scripts/patch-openclaw-device-self-approval.ts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
-COPY scripts/patch-openclaw-whatsapp-qr.ts /usr/local/lib/nemoclaw/patch-openclaw-whatsapp-qr.ts
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \
-        /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts \
-        /usr/local/lib/nemoclaw/patch-openclaw-whatsapp-qr.ts
+        /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
 
 # Pre-install the codex-acp package so the embedded ACPx runtime can
 # call the local binary instead of `npx @zed-industries/codex-acp`.
@@ -750,22 +748,6 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue
 # skips cleanly after classifying the compiled selection-*.js shape.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-    /usr/local/lib/node_modules/openclaw/dist
-
-# Patch OpenClaw WhatsApp pairing QR renderer for OpenClaw 2026.6.10.
-#
-# The bundled compact terminal QR renderer emits a 1-module quiet zone,
-# below the 4 modules QR readers need to lock on, so `openclaw channels
-# login --channel whatsapp` produces a pairing code that WhatsApp and
-# third-party scanners cannot decode. This widens the quiet zone to 4
-# modules and adds a data:image/png fallback so pairing still works if
-# a terminal degrades the compact block glyphs.
-#
-# Removal criteria: drop when upstream OpenClaw emits a spec-compliant
-# quiet zone (and/or an image fallback) for the compact terminal QR, or
-# when NemoClaw no longer ships an affected OpenClaw.
-# hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-whatsapp-qr.ts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Set up blueprint for local resolution.

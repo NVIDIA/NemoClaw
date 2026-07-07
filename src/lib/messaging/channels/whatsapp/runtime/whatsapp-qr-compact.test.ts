@@ -12,10 +12,28 @@ import { describe, expect, it, vi } from "vitest";
 import {
   isQrcodePackage,
   isQrcodeTerminalPackage,
+  isOpenClawQrTerminalRendererSource,
+  patchOpenClawQrTerminalRendererSource,
   patchQrcode,
   patchQrcodeTerminal,
 } from "./whatsapp-qr-compact";
 import { makeQrcodeLoadHook } from "./whatsapp-qr-compact-test-helpers";
+
+const OPENCLAW_QR_RENDERER_SOURCE = `
+const COMPACT_MARGIN_MODULES = 1;
+function renderCompactTerminalQr(modules) {
+  return "compact";
+}
+async function renderQrTerminal(input, opts = {}) {
+  const text = normalizeQrText(input);
+  const qrCode = await loadQrCodeRuntime();
+  if (opts.small === true) return renderCompactTerminalQr(qrCode.create(text).modules);
+  return await qrCode.toString(text, {
+    small: false,
+    type: "terminal"
+  });
+}
+`;
 
 // A fake of the `qrcode` package main: has its OWN toString + create().
 function makeQrcodeFake() {
@@ -73,6 +91,30 @@ describe("isQrcodeTerminalPackage (#4522)", () => {
 
   it("does not match the qrcode package (has create)", () => {
     expect(isQrcodeTerminalPackage(makeQrcodeFake())).toBe(false);
+  });
+});
+
+describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
+  it("detects the OpenClaw QR terminal renderer by the old patch selectors", () => {
+    expect(isOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE)).toBe(true);
+    expect(isOpenClawQrTerminalRendererSource("const unrelated = true;")).toBe(false);
+  });
+
+  it("migrates the old build-time quiet-zone and data URL fallback patch", () => {
+    const patched = patchOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE);
+
+    expect(patched).toContain("const COMPACT_MARGIN_MODULES = 4;");
+    expect(patched).toContain("/* nemoclaw: qr scan fallback */");
+    expect(patched).toContain(
+      "If this QR will not scan, open this image in a browser: ${scanFallbackDataUrl}",
+    );
+    expect(patched).toContain("catch { return compactQr; }");
+  });
+
+  it("is idempotent once the source already has the fallback marker", () => {
+    const patched = patchOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE);
+
+    expect(patchOpenClawQrTerminalRendererSource(patched)).toBe(patched);
   });
 });
 

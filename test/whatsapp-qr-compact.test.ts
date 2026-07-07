@@ -45,6 +45,8 @@ function writeFakeModules(root: string): void {
     path.join(qrcodeDir, "index.js"),
     [
       "const calls = [];",
+      "const createCalls = [];",
+      "const dataUrlCalls = [];",
       "module.exports = {",
       "  // qrcode's real signatures: toString(text, [opts], [cb]).",
       "  toString(text, opts, cb) {",
@@ -55,10 +57,47 @@ function writeFakeModules(root: string): void {
       "    return Promise.resolve(out);",
       "  },",
       "  // Presence of create() is how the preload distinguishes qrcode from",
-      "  // qrcode-terminal; it never calls through to it here.",
-      "  create() { return { modules: { size: 0 } }; },",
+      "  // qrcode-terminal. The preload uses it for patched terminal renders.",
+      "  create(text, opts) {",
+      "    createCalls.push(opts || {});",
+      "    return { modules: { size: 2, data: [true, false, false, true] } };",
+      "  },",
+      "  toDataURL(text) {",
+      "    dataUrlCalls.push(text);",
+      "    return Promise.resolve(`data:image/png;base64,STUB(${text})`);",
+      "  },",
       "  __calls: calls,",
+      "  __createCalls: createCalls,",
+      "  __dataUrlCalls: dataUrlCalls,",
       "};",
+    ].join("\n"),
+  );
+
+  fs.writeFileSync(
+    path.join(root, "openclaw-qr-terminal.mjs"),
+    [
+      'const qrCodeRuntimeLoader = { load: async () => (await import("qrcode")).default ?? (await import("qrcode")) };',
+      "async function loadQrCodeRuntime() {",
+      "  return await qrCodeRuntimeLoader.load();",
+      "}",
+      "function normalizeQrText(text) {",
+      "  if (typeof text !== 'string') throw new TypeError('QR text must be a string.');",
+      "  return text;",
+      "}",
+      "const COMPACT_MARGIN_MODULES = 1;",
+      "function renderCompactTerminalQr(modules) {",
+      "  return `compact-margin:${COMPACT_MARGIN_MODULES}:size:${modules.size}`;",
+      "}",
+      "async function renderQrTerminal(input, opts = {}) {",
+      "  const text = normalizeQrText(input);",
+      "  const qrCode = await loadQrCodeRuntime();",
+      "  if (opts.small === true) return renderCompactTerminalQr(qrCode.create(text).modules);",
+      "  return await qrCode.toString(text, {",
+      "    small: false,",
+      "    type: 'terminal'",
+      "  });",
+      "}",
+      "export { renderQrTerminal };",
     ].join("\n"),
   );
 
@@ -138,6 +177,16 @@ result.qrcodeTerminal = term.__calls;
 process.stdout.write(JSON.stringify(result));
 `;
 
+const OPENCLAW_QR_RENDERER_PROBE = `
+const result = {};
+const renderer = await import("./openclaw-qr-terminal.mjs");
+result.compact = await renderer.renderQrTerminal("payload", { small: true });
+const dyn = (await import("qrcode")).default ?? (await import("qrcode"));
+result.qrcodeCreate = dyn.__createCalls;
+result.qrcodeDataUrl = dyn.__dataUrlCalls;
+process.stdout.write(JSON.stringify(result));
+`;
+
 describe("WhatsApp compact-QR preload (qrcode package)", () => {
   const baseline = runProbe(QRCODE_PROBE, { withPreload: false });
   const patched = runProbe(QRCODE_PROBE, { withPreload: true });
@@ -178,6 +227,19 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
   it("also forces small:true on the qrcode-terminal generate() fallback", () => {
     expect(patched.qrcodeTerminal[0]).toEqual({ small: true });
     expect(patched.qrcodeTerminal[1]).toEqual({ small: true });
+  });
+
+  it("patches OpenClaw's compact QR branch with quiet-zone and image fallback", () => {
+    const baselineRenderer = runProbe(OPENCLAW_QR_RENDERER_PROBE, { withPreload: false });
+    const patchedRenderer = runProbe(OPENCLAW_QR_RENDERER_PROBE, { withPreload: true });
+
+    expect(baselineRenderer.compact).toBe("compact-margin:1:size:2");
+    expect(baselineRenderer.qrcodeDataUrl).toEqual([]);
+    expect(patchedRenderer.compact).toContain("compact-margin:4:size:2");
+    expect(patchedRenderer.compact).toContain(
+      "If this QR will not scan, open this image in a browser: data:image/png;base64,STUB(payload)",
+    );
+    expect(patchedRenderer.qrcodeDataUrl).toEqual(["payload"]);
   });
 
   it("is idempotent when the preload is required twice", () => {

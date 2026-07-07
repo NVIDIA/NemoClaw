@@ -101,7 +101,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.ts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.ts"));
-    writeFixture(path.join("scripts", "patch-openclaw-whatsapp-qr.ts"));
   }
 
   function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
@@ -353,9 +352,6 @@ describe("sandbox build context staging", () => {
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.ts")),
       ).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-whatsapp-qr.ts"))).toBe(
-        true,
-      );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "gateway-supervisor.sh"))).toBe(
         true,
