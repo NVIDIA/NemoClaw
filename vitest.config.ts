@@ -140,6 +140,13 @@ export default defineConfig({
         test: {
           name: "e2e-live",
           alias: canonicalOpenShellPolicyAlias,
+          // Register the typed-source require hook in the worker so live suites
+          // can import source modules that resolve siblings via a runtime
+          // `require("../module")` (e.g. inference/ollama-runtime-context.ts).
+          // Use setupFiles rather than NODE_OPTIONS so the hook stays in-process
+          // and never leaks `--require` into the real CLI subprocesses under
+          // test. Mirrors the `cli` project.
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
           // Live targets mutate host, Docker, gateway, and sandbox state. A
           // whole-test retry reuses that state and can hide the first failure

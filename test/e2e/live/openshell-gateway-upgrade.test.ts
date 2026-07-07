@@ -457,39 +457,13 @@ chmod 755 ${shellQuote(oldInstaller)}`,
   });
   expectExitZero(list, "old nemoclaw list");
   expectOutputContains(list, SURVIVOR_SANDBOX, "old NemoClaw install must register survivor claw");
-}
 
-async function stampKnownManagedLegacyFixture(artifacts: ArtifactSink): Promise<void> {
-  expect(fs.existsSync(REGISTRY_FILE), `${REGISTRY_FILE} must exist after the old install`).toBe(
-    true,
-  );
-  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
-    sandboxes?: Record<string, { fromDockerfile?: string | null; nemoclawVersion?: string | null }>;
+  const oldRegistry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, { nemoclawVersion?: unknown; fromDockerfile?: unknown }>;
   };
-  const survivor = registry.sandboxes?.[SURVIVOR_SANDBOX];
-  expect(survivor, `old registry must contain ${SURVIVOR_SANDBOX}`).toBeTruthy();
-  const knownManagedSurvivor = survivor as NonNullable<typeof survivor>;
-  expect(knownManagedSurvivor.fromDockerfile ?? null).toBeNull();
-  expect(knownManagedSurvivor.nemoclawVersion ?? null).toBeNull();
-
-  // v0.0.36 predates the managed-image fingerprint. This live fixture has
-  // positive provenance because it just built the sandbox through the real
-  // NemoClaw installer; stamp that test-only evidence so this lane continues
-  // to prove successful gateway recovery. Production still fails closed for
-  // untouched legacy/custom rows, covered by upgrade-sandboxes-recovery.test.
-  const fingerprint = OLD_NEMOCLAW_REF.replace(/^v/, "");
-  knownManagedSurvivor.nemoclawVersion = fingerprint;
-  const temporaryRegistry = `${REGISTRY_FILE}.gateway-upgrade-${process.pid}.tmp`;
-  fs.writeFileSync(temporaryRegistry, `${JSON.stringify(registry, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  fs.renameSync(temporaryRegistry, REGISTRY_FILE);
-  await artifacts.writeJson("legacy-managed-provenance.json", {
-    fingerprint,
-    sandbox: SURVIVOR_SANDBOX,
-    source: `real ${OLD_NEMOCLAW_REF} NemoClaw installer fixture`,
-  });
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]).toBeDefined();
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.nemoclawVersion).toBeUndefined();
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.fromDockerfile).toBeUndefined();
 }
 
 async function startSurvivorAgentInExistingClaw(host: HostCliClient): Promise<number> {
@@ -557,6 +531,7 @@ async function installCurrentNemoclawUpgrade(
     COMPATIBLE_API_KEY: "dummy",
     GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
     NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
+    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify([SURVIVOR_SANDBOX]),
     NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
     NEMOCLAW_INSTALL_REF: resolvedRef,
     NEMOCLAW_INSTALL_TAG: resolvedRef,
@@ -579,8 +554,9 @@ async function installCurrentNemoclawUpgrade(
   );
 
   const currentLog = fs.readFileSync(currentInstallLog, "utf8");
-  expect(currentLog).toContain("Accepted experimental OpenShell gateway upgrade");
+  expect(currentLog).toContain("Confirmed 1 exact pre-fingerprint sandbox name(s)");
   expect(currentLog).toContain("Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped");
+  expect(currentLog).toContain("Existing sandboxes recovered; skipping generic onboarding");
 
   const openshellVersion = await bash(host, `openshell --version`, {
     artifactName: "current-openshell-version",
@@ -609,7 +585,7 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
 
   const marker = await bash(
     host,
-    `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} -- cat ${shellQuote(SURVIVOR_MARKER_PATH)}`,
+    `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- cat ${shellQuote(SURVIVOR_MARKER_PATH)}`,
     { artifactName: "post-upgrade-survivor-marker", timeoutMs: 60_000 },
   );
   expectExitZero(marker, "read survivor marker after gateway upgrade");
@@ -617,7 +593,7 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
 
   const agentCheck = await bash(
     host,
-    `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} -- sh -lc 'command -v openclaw >/dev/null && test -s /sandbox/.openclaw/openclaw.json && openclaw --version 2>/dev/null'`,
+    `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- sh -lc ${shellQuote("command -v openclaw >/dev/null && test -s /sandbox/.openclaw/openclaw.json && openclaw --version 2>/dev/null")}`,
     { artifactName: "post-upgrade-openclaw-agent", timeoutMs: 60_000 },
   );
   expectExitZero(
@@ -705,7 +681,7 @@ runLinuxOpenShellGatewayUpgrade(
       boundary: [
         "real old install.sh fetched from v0.0.36",
         "real Docker/OpenShell gateway and OpenClaw sandbox",
-        "test-only positive provenance for the known-managed legacy fixture",
+        "exact-name confirmation for the known-managed legacy fixture",
         "current scripts/install.sh gateway upgrade path",
         "sandbox exec /proc process probe",
         "NemoClaw registry and durable workspace restore",
@@ -746,7 +722,6 @@ runLinuxOpenShellGatewayUpgrade(
     });
 
     await installOldNemoclawAndClaw(host, artifacts, fake.baseUrl);
-    await stampKnownManagedLegacyFixture(artifacts);
     const survivorPid = await startSurvivorAgentInExistingClaw(host);
     expect(Number.isInteger(survivorPid) && survivorPid > 0).toBe(true);
     await installCurrentNemoclawUpgrade(

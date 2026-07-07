@@ -26,6 +26,7 @@ export interface CoreOnboardFlowPhaseOptions<
   ResourceProfile = unknown,
 > {
   forceProviderSelection: boolean;
+  forceInferenceSetup?: boolean;
   authoritativeResumeConfig?: boolean;
   env: NodeJS.ProcessEnv;
   constants: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["constants"];
@@ -62,6 +63,7 @@ export function createCoreOnboardFlowPhases<
       sandboxName: context.sandboxName,
       agent: context.agent,
       forceProviderSelection: options.forceProviderSelection,
+      forceInferenceSetup: options.forceInferenceSetup,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       initial: {
         model: context.model,
