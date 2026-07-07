@@ -297,10 +297,22 @@ describe("onboard dashboard helpers", () => {
     expect(urls.some((url) => url.includes(":18789"))).toBe(false);
   });
 
-  it.each([
-    ["NEMOCLAW_DASHBOARD_PORT", 9120],
-    ["--control-ui-port", 9121],
-  ])("prints the effective Hermes dashboard URL selected by %s (#6277)", (source, port) => {
+  it.each<[string, number, () => void]>([
+    [
+      "NEMOCLAW_DASHBOARD_PORT",
+      9120,
+      () => {
+        process.env.NEMOCLAW_DASHBOARD_PORT = "9120";
+      },
+    ],
+    [
+      "--control-ui-port",
+      9121,
+      () => {
+        delete process.env.NEMOCLAW_DASHBOARD_PORT;
+      },
+    ],
+  ])("prints the effective Hermes dashboard URL selected by %s (#6277)", (_source, port, configurePort) => {
     const previousChatUiUrl = process.env.CHAT_UI_URL;
     const previousDashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT;
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -325,11 +337,7 @@ describe("onboard dashboard helpers", () => {
     let output = "";
     try {
       process.env.CHAT_UI_URL = `http://127.0.0.1:${String(port)}`;
-      if (source === "NEMOCLAW_DASHBOARD_PORT") {
-        process.env.NEMOCLAW_DASHBOARD_PORT = String(port);
-      } else {
-        delete process.env.NEMOCLAW_DASHBOARD_PORT;
-      }
+      configurePort();
       helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, loadAgent("hermes"));
       output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
     } finally {
