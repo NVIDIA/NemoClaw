@@ -7,7 +7,11 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -62,6 +66,107 @@ async function cleanup(
   }
 }
 
+async function assertPackagedInitialCliPairing(sandbox: SandboxClient): Promise<void> {
+  const result = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(String.raw`
+set -euo pipefail
+auto_pair_log=/tmp/auto-pair.log
+deadline=$((SECONDS + 30))
+while ! grep -q 'approved initial CLI pairing request=' "$auto_pair_log" 2>/dev/null; do
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    echo "INITIAL_CLI_PAIRING_MARKER_MISSING" >&2
+    cat "$auto_pair_log" >&2 2>/dev/null || true
+    exit 20
+  fi
+  sleep 1
+done
+
+devices_json=/tmp/nemoclaw-6113-devices.json
+devices_err=/tmp/nemoclaw-6113-devices.err
+if ! openclaw devices list --json >"$devices_json" 2>"$devices_err"; then
+  echo "POST_BOOTSTRAP_DEVICES_LIST_FAILED" >&2
+  cat "$devices_err" >&2
+  exit 21
+fi
+
+python3 - "$devices_json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+pending = value.get("pending") or []
+paired = value.get("paired") or []
+if isinstance(pending, dict):
+    pending = list(pending.values())
+if isinstance(paired, dict):
+    paired = list(paired.values())
+if not isinstance(pending, list) or not isinstance(paired, list):
+    raise SystemExit("devices list must expose pending and paired collections")
+if pending:
+    raise SystemExit(f"initial CLI pairing left pending requests: {len(pending)}")
+identity = json.loads(
+    Path("/sandbox/.openclaw/identity/device.json").read_text(encoding="utf-8")
+)
+device_id = str(identity.get("deviceId") or "").strip()
+matches = [
+    device
+    for device in paired
+    if isinstance(device, dict)
+    and str(device.get("deviceId") or "").strip() == device_id
+    and device.get("clientId") == "cli"
+    and device.get("clientMode") == "cli"
+]
+if len(matches) != 1:
+    raise SystemExit(f"expected one paired local CLI device, found {len(matches)}")
+approved = {
+    str(scope).strip()
+    for scope in (matches[0].get("approvedScopes") or matches[0].get("scopes") or [])
+    if str(scope).strip()
+}
+if "operator.pairing" not in approved:
+    raise SystemExit(f"paired local CLI device lacks operator.pairing: {sorted(approved)}")
+PY
+
+gateway_log=/tmp/gateway.log
+before_runs="$(grep -Ec '\[agent\] run [^ ]+ ended with stopReason=' "$gateway_log" 2>/dev/null || true)"
+agent_log=/tmp/nemoclaw-6113-gateway-agent.log
+session_id="nemoclaw-6113-packaged-$(date +%s)-$$"
+if ! openclaw agent --agent main --json --thinking off --session-id "$session_id" \
+  -m 'Use the available tools to inspect the current nodes and briefly report their status.' \
+  >"$agent_log" 2>&1; then
+  echo "PACKAGED_GATEWAY_AGENT_FAILED" >&2
+  cat "$agent_log" >&2
+  exit 22
+fi
+if grep -Eiq 'EMBEDDED FALLBACK|gateway connect failed|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' "$agent_log"; then
+  echo "PACKAGED_GATEWAY_AGENT_FELL_BACK" >&2
+  cat "$agent_log" >&2
+  exit 23
+fi
+if [ ! -s "$agent_log" ]; then
+  echo "PACKAGED_GATEWAY_AGENT_EMPTY" >&2
+  exit 24
+fi
+after_runs="$(grep -Ec '\[agent\] run [^ ]+ ended with stopReason=' "$gateway_log" 2>/dev/null || true)"
+if [ "$after_runs" -le "$before_runs" ]; then
+  echo "PACKAGED_GATEWAY_RUN_NOT_RECORDED before=$before_runs after=$after_runs" >&2
+  cat "$agent_log" >&2
+  exit 25
+fi
+echo "NEMOCLAW_6113_PACKAGED_BOOTSTRAP_OK"
+`),
+    {
+      artifactName: "phase-2-packaged-initial-cli-pairing",
+      env: env(),
+      timeoutMs: 180_000,
+    },
+  );
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(result.stdout).toContain("NEMOCLAW_6113_PACKAGED_BOOTSTRAP_OK");
+}
+
 function publicInstallRef(): string {
   return process.env.NEMOCLAW_PUBLIC_INSTALL_REF || process.env.GITHUB_SHA || "main";
 }
@@ -86,6 +191,8 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     contracts: [
       "public curl installer uses GitHub clone path for the requested ref",
       "sandbox appears healthy after cloud onboarding",
+      "packaged OpenClaw approves the gated initial CLI pairing request",
+      "devices list and a real gateway agent run succeed without embedded fallback",
       "cloud split checks cover inference.local, security leak checks, and Landlock/read-only behavior",
       "cleanup verifies sandbox removal",
     ],
@@ -126,6 +233,8 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(resultText(install)).toContain("Installing NemoClaw from GitHub");
   expect(resultText(install)).toContain("Cloning NemoClaw source");
   if (ref !== "main") expect(resultText(install)).toContain(`Resolved install ref: ${ref}`);
+
+  await assertPackagedInitialCliPairing(sandbox);
 
   const cliProbe = await host.command(
     "bash",
