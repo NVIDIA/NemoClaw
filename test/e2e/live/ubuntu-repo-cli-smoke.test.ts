@@ -10,9 +10,8 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
 
 test("ubuntu repo cli smoke", async ({ artifacts, host }) => {
-  await artifacts.writeJson("target.json", {
+  await artifacts.target.declare({
     id: "ubuntu-repo-cli-smoke",
-    runner: "vitest",
     boundary: "repo-local-cli",
   });
 

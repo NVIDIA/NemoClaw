@@ -4,9 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import YAML from "yaml";
-
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
@@ -17,6 +15,7 @@ import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -74,14 +73,6 @@ const MCP_MUTATION_TIMEOUT_MS: Record<McpAdapter, number> = {
   "hermes-config": 12 * 60_000,
   mcporter: 3 * 60_000,
 };
-
-function resultText(result: ShellProbeResult): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
-function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
-}
 
 function expectExitNonZero(result: ShellProbeResult, label: string, pattern: RegExp): void {
   expect(

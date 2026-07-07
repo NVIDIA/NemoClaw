@@ -3,8 +3,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
@@ -26,10 +26,6 @@ const EXDEV_PATTERNS = [
   /cross-device link not permitted/i,
 ];
 const liveTest = shouldRunLiveE2E() ? test : test.skip;
-
-function resultText(result: { stdout: string; stderr: string }): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function liveEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -161,9 +157,8 @@ liveTest(
   "OpenClaw plugin runtime deps replacement survives cross-filesystem EXDEV layout",
   { timeout: ONBOARD_TIMEOUT_MS + PROBE_TIMEOUT_MS + 5 * 60_000 },
   async ({ artifacts, cleanup, host, sandbox, skip }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "openclaw-plugin-runtime-exdev",
-      runner: "vitest",
       boundary: "fresh-openclaw-sandbox-exec",
       regressionTargets: ["#3513", "#3127"],
       contract: [
@@ -291,7 +286,7 @@ liveTest(
     expect(probeText).toContain("source-side staging failure self-check completed");
     expect(probeText).toContain("runtime deps replacement completed");
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "openclaw-plugin-runtime-exdev",
       onboardExitCode: onboard.exitCode,
       filesystemProbeExitCode: df.exitCode,

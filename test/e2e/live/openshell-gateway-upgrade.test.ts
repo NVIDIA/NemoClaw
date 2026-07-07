@@ -23,6 +23,7 @@ import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -105,10 +106,6 @@ function shellLoginPrefix(): string {
     "fi",
     'export PATH="$HOME/.local/bin:$PATH"',
   ].join("\n");
-}
-
-function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
 }
 
 function expectOutputContains(result: ShellProbeResult, value: string, label: string): void {

@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { shellQuote } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -144,10 +144,6 @@ function expectMockBaselineAuthentication(
   baseline
     ? expect(baseline.requests()).toContainEqual(expectedRequest)
     : expect(baseline).toBeUndefined();
-}
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 function stripAnsi(value: string): string {
@@ -901,9 +897,8 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
   "openclaw-inference-switch: switches route and preserves live OpenClaw behavior",
   { timeout: TEST_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "openclaw-inference-switch",
-      runner: "vitest",
       boundary: "install-sh-openclaw-inference-set-and-live-agent-turn",
       sandboxName: SANDBOX_NAME,
       switchProvider: SWITCH_PROVIDER,
@@ -989,7 +984,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
     );
     const installText = resultText(install);
     if (install.exitCode !== 0 && isExternalProviderValidationFailure(installText)) {
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "openclaw-inference-switch",
         status: "skipped",
         reason: "external-provider-validation-unavailable-before-inference-switch",
@@ -1056,7 +1051,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
 
     const inference = await checkSandboxInference(sandbox, home);
     if (inference !== "ok") {
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "openclaw-inference-switch",
         status: "skipped",
         reason: inference.skipped,
@@ -1067,7 +1062,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
 
     const agentTurn = await checkOpenClawAgentTurn(host, home);
     if (agentTurn !== "ok") {
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "openclaw-inference-switch",
         status: "skipped",
         reason: agentTurn.skipped,
@@ -1083,7 +1078,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
       expect(registryText).not.toContain(`"${SANDBOX_NAME}"`);
     }
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "openclaw-inference-switch",
       status: "passed",
       assertions: {

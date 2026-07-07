@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import {
   type SandboxClient,
   trustedSandboxShellScript,
@@ -55,10 +56,6 @@ const RETRY_SLEEP_MS =
   Number.parseInt(process.env.E2E_SKILL_AGENT_RETRY_SLEEP_SEC ?? "15", 10) * 1_000;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
-
-function resultText(result: { stdout: string; stderr: string }): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -139,9 +136,8 @@ runSkillAgentTest(
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "skill-agent",
-      runner: "vitest",
       boundary: "direct-cli-onboard-sandbox-skill-and-agent-turn",
       contract: [
         "Docker is available before onboarding",
@@ -227,7 +223,7 @@ runSkillAgentTest(
     );
     const onboardText = resultText(onboard);
     if (onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText)) {
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "skill-agent",
         status: "skipped",
         reason: "external-provider-validation-unavailable-before-sandbox-skill-check",
@@ -293,7 +289,7 @@ runSkillAgentTest(
     if (!agentOk) {
       const fixturePresent = await verifySkillFixturePresent(sandbox, SANDBOX_NAME);
       if (shouldSkipExternalAgentVerificationFailure(lastAgentOutput, fixturePresent)) {
-        await artifacts.writeJson("target-result.json", {
+        await artifacts.target.complete({
           id: "skill-agent",
           status: "skipped",
           reason: "external-agent-verification-flake-after-fixture-present",
@@ -310,7 +306,7 @@ runSkillAgentTest(
       `Agent did not return ${VERIFY_PHRASE}; last exit ${lastExitCode}\n${lastAgentOutput.slice(-12_000)}`,
     ).toBe(true);
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "skill-agent",
       status: "passed",
       assertions: {

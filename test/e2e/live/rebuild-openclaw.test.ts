@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -78,14 +79,6 @@ interface GatewayTokenRotationResult {
   hashReferencesConfig: boolean;
   hashChanged: boolean;
   hashValid: boolean;
-}
-
-function resultText(result: ShellProbeResult): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
-function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
 }
 
 function isRetryableOnboardEndpointFailure(result: ShellProbeResult): boolean {

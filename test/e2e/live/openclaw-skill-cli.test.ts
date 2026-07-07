@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { shellQuote } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -36,10 +36,6 @@ const SANDBOX_EXEC_TIMEOUT_MS = 120_000;
 validateSandboxName(SANDBOX_NAME);
 
 const runOpenClawSkillCliTest = shouldRunLiveE2E() ? test : test.skip;
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function isEndpointRateLimited(text: string): boolean {
   return /HTTP 429|rate limit|too many requests/i.test(text);
@@ -139,9 +135,8 @@ runOpenClawSkillCliTest(
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "openclaw-skill-cli",
-      runner: "vitest",
       boundary: "install-sh-onboard-and-openclaw-skills-cli-in-sandbox",
       sandboxName: SANDBOX_NAME,
       contracts: [
@@ -268,7 +263,7 @@ runOpenClawSkillCliTest(
     );
     expect(resultText(check)).toContain(`"${SKILL_ID}"`);
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "openclaw-skill-cli",
       status: "passed",
       sandboxName: SANDBOX_NAME,

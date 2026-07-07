@@ -71,9 +71,8 @@ runDocsValidationTest(
   "docs validation matches CLI help and local documentation links",
   { timeout: BUILD_TIMEOUT_MS + DOCS_CHECK_TIMEOUT_MS * 2 },
   async ({ artifacts, host }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "docs-validation",
-      runner: "vitest",
       boundary: "checkout-local-docs-checks",
       phases: ["cli-docs-parity", "local-markdown-links"],
     });
