@@ -154,7 +154,11 @@ function withMockedDockerExecFileSync<T>(
     calls.push(command);
     const hermesGuardIndex = command.indexOf(HERMES_RUNTIME_CONFIG_GUARD);
     const hermesAction = command[hermesGuardIndex + 1] ?? "";
-    if (hermesAction === "finish-shields-transition") hermesFinished = true;
+    switch (hermesAction) {
+      case "finish-shields-transition":
+        hermesFinished = true;
+        break;
+    }
     const hermesResponse =
       hermesGuardIndex < 0
         ? undefined
@@ -186,30 +190,27 @@ function withMockedDockerExecFileSync<T>(
       const target = command.at(-1);
       switch (target) {
         case "/sandbox":
-          if (options.hermesLockedTransaction) {
-            return hermesFinished ? "1775 root:sandbox\n" : "755 root:root\n";
-          }
-          return "755 sandbox:sandbox\n";
+          return options.hermesLockedTransaction
+            ? hermesFinished
+              ? "1775 root:sandbox\n"
+              : "755 root:root\n"
+            : "755 sandbox:sandbox\n";
         case "/sandbox/.openclaw":
           return "2770 sandbox:sandbox\n";
         case "/sandbox/.hermes":
-          if (options.hermesLockedTransaction) return "755 root:root\n";
-          return "3770 sandbox:sandbox\n";
+          return options.hermesLockedTransaction ? "755 root:root\n" : "3770 sandbox:sandbox\n";
       }
       if (typeof target === "string" && target.startsWith("/sandbox/.hermes/")) {
-        if (options.hermesLockedTransaction) return "444 root:root\n";
-        return "640 sandbox:sandbox\n";
+        return options.hermesLockedTransaction ? "444 root:root\n" : "640 sandbox:sandbox\n";
       }
       return "660 sandbox:sandbox\n";
     }
     if (command[0] === "lsattr") {
-      if (options.hermesLockedTransaction) {
-        return `----i----------------- ${command.at(-1)}\n`;
-      }
-      return `---------------------- ${command.at(-1)}\n`;
+      return `${options.hermesLockedTransaction ? "----i-----------------" : "----------------------"} ${command.at(-1)}\n`;
     }
-    if (command[0] === "sha256sum") {
-      return `${"a".repeat(64)}  ${command.at(-1)}\n`;
+    switch (command[0]) {
+      case "sha256sum":
+        return `${"a".repeat(64)}  ${command.at(-1)}\n`;
     }
     return "";
   });
