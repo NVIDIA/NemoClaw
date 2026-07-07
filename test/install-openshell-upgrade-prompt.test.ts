@@ -37,7 +37,7 @@ function runPreinstallUpgradeGuard(
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(
     path.join(home, ".nemoclaw", "sandboxes.json"),
-    options.registryJson ?? '{"sandboxes":{"alpha":{}}}',
+    options.registryJson ?? '{"sandboxes":{"alpha":{"name":"alpha"}}}',
   );
   const currentCliAvailable = options.currentCliAvailable === false ? "0" : "1";
   const currentBackupSucceeds = options.currentBackupSucceeds === false ? "0" : "1";
@@ -252,7 +252,8 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
       {
         hasOldCli: false,
         openshellVersion: "0.0.44",
-        registryJson: '{"sandboxes":{"alpha":{"nemoclawVersion":null,"fromDockerfile":null}}}',
+        registryJson:
+          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":null,"fromDockerfile":null}}}',
       },
     );
 
@@ -298,6 +299,11 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     ["malformed JSON", "not-json"],
     ["a non-object sandboxes field", '{"sandboxes":[]}'],
     ["a malformed sandbox row", '{"sandboxes":{"alpha":null}}'],
+    ["a sandbox row without a name", '{"sandboxes":{"alpha":{}}}'],
+    [
+      "a sandbox row whose name differs from its registry key",
+      '{"sandboxes":{"alpha":{"name":"beta"}}}',
+    ],
   ])("fails closed when the registry contains %s (#6114)", (_case, registryJson) => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       {

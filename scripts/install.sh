@@ -1697,7 +1697,9 @@ try {
 if (!isRecord(registry) || !isRecord(registry.sandboxes)) process.exit(1);
 
 const entries = Object.entries(registry.sandboxes);
-if (entries.some(([, entry]) => !isRecord(entry))) process.exit(1);
+if (entries.some(([name, entry]) => !name || !isRecord(entry) || entry.name !== name)) {
+  process.exit(1);
+}
 
 if (process.argv[3] === "count") {
   process.stdout.write(String(entries.length));
