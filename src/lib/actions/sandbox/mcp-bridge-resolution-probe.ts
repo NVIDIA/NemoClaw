@@ -267,8 +267,12 @@ export function classifyCredentialResolutionProbe(
 /**
  * Warning for the identical-4xx outcome. Wire evidence alone cannot separate
  * "placeholder forwarded verbatim" from "resolved but expired or revoked
- * credential", so the warning states both and tells the operator which check
- * rules out which.
+ * credential", so the warning states the hypotheses and tells the operator
+ * which check rules out which. For identical 401/403 a confirmed-valid
+ * credential does settle it (a rewritten valid credential cannot draw the
+ * same auth rejection as garbage); for identical 400 it does not, because the
+ * endpoint may reject the probe's initialize request itself regardless of the
+ * bearer, so that warning stays explicitly inconclusive.
  */
 export function credentialResolutionWarning(
   envName: string | undefined,
@@ -279,6 +283,9 @@ export function credentialResolutionWarning(
     return undefined;
   if (probe.httpStatus < 400 || probe.httpStatus >= 500) return undefined;
   const placeholder = envName ? `openshell:resolve:env:${envName}` : "openshell:resolve:env:<KEY>";
+  if (probe.httpStatus === 400) {
+    return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP 400). This is inconclusive even with a valid stored credential — the endpoint may reject the probe's initialize request itself (request validation), the '${placeholder}' placeholder may have been forwarded verbatim, or the credential may be expired or revoked. Rotate the credential with mcp restart if in doubt, and compare mcp status for the same server on a known-good host; if that host verifies, suspect this host's OpenShell placeholder rewrite (see NVIDIA/OpenShell issue 2161).`;
+  }
   return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP ${probe.httpStatus}). If the stored credential is confirmed valid, the OpenShell host is not rewriting the '${placeholder}' placeholder on egress and agent runtimes will hit the same auth failure and skip this MCP server (see NVIDIA/OpenShell issue 2161). Otherwise, rotate the credential with mcp restart and re-run mcp status.`;
 }
 

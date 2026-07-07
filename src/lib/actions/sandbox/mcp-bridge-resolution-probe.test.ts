@@ -355,6 +355,18 @@ describe("MCP credential-resolution warning", () => {
     expect(warning).toContain("OpenShell issue 2161");
   });
 
+  it("keeps the identical-400 warning explicitly inconclusive with the request-validation hypothesis (#6379)", () => {
+    const warning = credentialResolutionWarning("GITHUB_TOKEN", {
+      ok: null,
+      httpStatus: 400,
+      controlHttpStatus: 400,
+    });
+    expect(warning).toContain("inconclusive even with a valid stored credential");
+    expect(warning).toContain("request validation");
+    expect(warning).toContain("known-good host");
+    expect(warning).not.toContain("the OpenShell host is not rewriting");
+  });
+
   it("stays silent for verified, differing, and 5xx outcomes (#6379)", () => {
     expect(
       credentialResolutionWarning("GITHUB_TOKEN", {

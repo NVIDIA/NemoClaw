@@ -26,9 +26,12 @@ afterEach(() => {
 });
 
 // Shared subprocess prelude: a healthy committed bridge whose provider
-// metadata is all-green, with the in-sandbox probe answering HTTP 401 —
-// the exact "status lies while the wire fails" shape from #6379.
-const harnessPrelude = String.raw`
+// metadata is all-green, with the in-sandbox probe answering an identical
+// rejection for the placeholder and control requests — the exact "status lies
+// while the wire fails" shape from #6379. __PROBE_HTTP_STATUS__ is substituted
+// per test so both the 401 (auth-shaped) and 400 (validation-ambiguous)
+// warnings are exercised end-to-end.
+const harnessPreludeTemplate = String.raw`
 const registry = require("./src/lib/state/registry.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const globalActions = require("./src/lib/actions/global.js");
@@ -66,9 +69,9 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
       status: 0,
       stdout: [
         "",
-        "NEMOCLAW_MCP_PROBE_HTTP_CODE=401",
+        "NEMOCLAW_MCP_PROBE_HTTP_CODE=__PROBE_HTTP_STATUS__",
         "NEMOCLAW_MCP_PROBE_CURL_EXIT=0",
-        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=401",
+        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=__PROBE_HTTP_STATUS__",
         "NEMOCLAW_MCP_CONTROL_CURL_EXIT=0",
       ].join("\n"),
       stderr: "",
@@ -103,10 +106,18 @@ console.log = (...parts) => logLines.push(parts.join(" "));
 console.error = (...parts) => errorLines.push(parts.join(" "));
 `;
 
-function runHarness(home: string, body: string): { status: number | null; stdout: string } {
+function runHarness(
+  home: string,
+  body: string,
+  options: { probeHttpStatus?: number } = {},
+): { status: number | null; stdout: string } {
+  const prelude = harnessPreludeTemplate.replaceAll(
+    "__PROBE_HTTP_STATUS__",
+    String(options.probeHttpStatus ?? 401),
+  );
   const script = `
 process.env.HOME = ${JSON.stringify(home)};
-${harnessPrelude}
+${prelude}
 (async () => {
 ${body}
 })().catch((error) => {
@@ -176,6 +187,27 @@ describe("MCP status wire-level credential-resolution probe", () => {
     expect(
       payload.lines.some((line) => line.includes("Credential resolution could not be verified")),
     ).toBe(true);
+  });
+
+  it("keeps the status warning for identical 400 explicitly inconclusive (#6379)", () => {
+    const home = createTempHome("nemoclaw-mcp-resolution-400-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--json"]);
+  const status = JSON.parse(logLines.join("\n"));
+  process.stdout.write(JSON.stringify({ warnings: status.warnings }));
+`,
+      { probeHttpStatus: 400 },
+    );
+    const payload = JSON.parse(stdout) as { warnings: string[] };
+    const warning = payload.warnings.find((line) =>
+      line.includes("Credential resolution could not be verified"),
+    );
+    expect(warning).toBeDefined();
+    expect(warning).toContain("inconclusive even with a valid stored credential");
+    expect(warning).toContain("request validation");
+    expect(warning).not.toContain("the OpenShell host is not rewriting");
   });
 
   it("never probes from bare status or list so multi-server views stay fast (#6379)", () => {
@@ -287,6 +319,29 @@ describe("MCP add post-add credential-resolution probe", () => {
           line.includes("WARNING") && line.includes("Credential resolution could not be verified"),
       ),
     ).toBe(true);
+    expect(payload.exitCode).toBe(0);
+  });
+
+  it("keeps the post-add warning for identical 400 explicitly inconclusive (#6379)", () => {
+    const home = createTempHome("nemoclaw-mcp-resolution-add-400-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const addRestart = require("./src/lib/actions/sandbox/mcp-bridge-add-restart.js");
+  addRestart.addMcpBridge = async () => {};
+  await bridge.dispatchMcpBridgeCommand("alpha", [
+    "add", "github", "--url", "https://api.githubcopilot.com/mcp/", "--env", "GITHUB_TOKEN",
+  ]);
+  process.stdout.write(JSON.stringify({ errorLines, exitCode: process.exitCode ?? 0 }));
+`,
+      { probeHttpStatus: 400 },
+    );
+    const payload = JSON.parse(stdout) as { errorLines: string[]; exitCode: number };
+    const warning = payload.errorLines.find((line) => line.includes("WARNING"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("inconclusive even with a valid stored credential");
+    expect(warning).toContain("request validation");
+    expect(warning).not.toContain("the OpenShell host is not rewriting");
     expect(payload.exitCode).toBe(0);
   });
 

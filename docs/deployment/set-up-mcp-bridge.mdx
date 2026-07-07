@@ -271,7 +271,8 @@ For immediate revocation, revoke the upstream credential first, then run `$$nemo
 ## Troubleshooting
 
 If `mcp status <server>` warns that credential resolution could not be verified because the placeholder probe and the unresolvable control probe were rejected identically, first confirm the stored credential is valid (rotate it with `mcp restart` if in doubt).
-If the credential is confirmed valid — for example the same credential works end-to-end on another host — the identical rejection means the OpenShell gateway on this host is not rewriting the `openshell:resolve:env:KEY` placeholder on egress, and every agent request to that MCP server receives the same authentication failure even while provider presence, attachment, credential readiness, and adapter registration all report healthy.
+For an identical HTTP 401 or 403, a confirmed-valid credential settles it: the OpenShell gateway on this host is not rewriting the `openshell:resolve:env:KEY` placeholder on egress, and every agent request to that MCP server receives the same authentication failure even while provider presence, attachment, credential readiness, and adapter registration all report healthy.
+An identical HTTP 400 stays inconclusive even with a valid credential, because the endpoint may reject the probe's `initialize` request itself; compare `mcp status` for the same server on a known-good host — if that host verifies, suspect this host's placeholder rewrite.
 That is a host-side OpenShell defect rather than a NemoClaw registration problem: verify the OpenShell installation on the host (tracked upstream as OpenShell issue 2161).
 A `credential resolution: unknown` verdict with an endpoint or policy detail means the probe could not reach a judgment; fix the reported endpoint or policy condition and rerun `mcp status <server>`.
 
