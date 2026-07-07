@@ -1,25 +1,31 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Validate the temporary Nemotron 3 Ultra profile overlay in the built image."""
+"""Validate the released Nemotron 3 Ultra profile in the managed image."""
 
 from __future__ import annotations
 
 import importlib.metadata
+import tempfile
 from collections.abc import Callable, Sequence
-from typing import cast
+from pathlib import Path
+from typing import Any, cast
 
 from deepagents import create_deep_agent
+from deepagents.backends import LocalShellBackend
+from deepagents.backends.protocol import ExecuteResponse
 from deepagents.profiles.harness._nvidia_nemotron_3_ultra import (
     NemotronTextToolCallParser,
 )
 from deepagents.profiles.harness.harness_profiles import _harness_profile_for_model
+from deepagents_code.agent import create_cli_agent
 from langchain.agents.middleware.types import AgentMiddleware
-from langchain_core.messages import AIMessage
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 EXPECTED_VERSIONS = {
-    "deepagents-code": "0.1.30",
-    "deepagents": "0.7.0a3",
+    "deepagents-code": "0.1.34",
+    "deepagents": "0.7.0a6",
     "langchain": "1.3.11",
     "langchain-core": "1.4.8",
     "langgraph": "1.2.6",
@@ -43,6 +49,42 @@ EXPECTED_MIDDLEWARE = (
     "EntityResolutionGuardMiddleware",
     "FinalAnswerGuardMiddleware",
 )
+DISPATCH_COMMAND = "printf NEMOCLAW_DISPATCH_OK"
+
+
+class ScriptedManagedModel(FakeMessagesListChatModel):
+    """Expose the managed ChatOpenAI identity while returning fixed messages."""
+
+    model_name: str = MANAGED_MODEL_IDS[0]
+
+    def bind_tools(
+        self, tools: Any, **kwargs: Any
+    ) -> ScriptedManagedModel:
+        del tools, kwargs
+        return self
+
+    def _get_ls_params(self, **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        return {"ls_provider": "openai", "ls_model_name": self.model_name}
+
+
+class RecordingManagedShell(LocalShellBackend):
+    """Record model-dispatched shell calls without executing host commands."""
+
+    def __init__(self, root_dir: Path) -> None:
+        super().__init__(root_dir=root_dir, virtual_mode=False)
+        self.dispatched_commands: list[tuple[str, int | None]] = []
+
+    def execute(
+        self, command: str, *, timeout: int | None = None
+    ) -> ExecuteResponse:
+        if "__DETECT_CONTEXT_EOF__" not in command:
+            self.dispatched_commands.append((command, timeout))
+        return ExecuteResponse(
+            output="NEMOCLAW_DISPATCH_OK\n",
+            exit_code=0,
+            truncated=False,
+        )
 
 
 def make_model(model_id: str) -> ChatOpenAI:
@@ -99,6 +141,78 @@ def validate_parser_tool_visibility() -> None:
         assert allowed.tool_calls[0]["name"] == tool_name
 
 
+def dispatch_execute_once(
+    first_response: AIMessage,
+) -> tuple[tuple[str, int | None], tuple[str, str | None]]:
+    """Run one model-produced execute call through DCode's managed allow-list."""
+    with tempfile.TemporaryDirectory(prefix="nemoclaw-profile-dispatch-") as tmp:
+        backend = RecordingManagedShell(Path(tmp))
+        model = ScriptedManagedModel(
+            responses=[
+                first_response,
+                AIMessage(content="The approved command completed successfully."),
+            ]
+        )
+        graph, _ = create_cli_agent(
+            model,
+            "nemoclaw-profile-validation",
+            sandbox=backend,
+            sandbox_type="nemoclaw-validation",
+            system_prompt="Use the execute tool once, then report the result.",
+            interactive=False,
+            auto_approve=False,
+            interrupt_shell_only=True,
+            shell_allow_list=["printf"],
+            enable_ask_user=False,
+            enable_memory=False,
+            enable_skills=False,
+        )
+        result = graph.invoke(
+            {"messages": [HumanMessage(content="Run the validation command once.")]},
+            context={"auto_approve": False},
+        )
+
+    execute_results = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage) and message.name == "execute"
+    ]
+    assert len(backend.dispatched_commands) == 1
+    assert len(execute_results) == 1
+    tool_result = execute_results[0]
+    assert isinstance(tool_result.content, str)
+    return backend.dispatched_commands[0], (tool_result.content, tool_result.status)
+
+
+def validate_parser_dispatch_parity() -> None:
+    """Prove repaired and native execute calls share the managed dispatcher."""
+    repaired = dispatch_execute_once(
+        AIMessage(
+            content=(
+                '{"tool":"bash","cmd":"'
+                f"{DISPATCH_COMMAND}"
+                '"}'
+            )
+        )
+    )
+    native = dispatch_execute_once(
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "execute",
+                    "args": {"command": DISPATCH_COMMAND},
+                    "id": "native-execute",
+                    "type": "tool_call",
+                }
+            ],
+        )
+    )
+    assert repaired == native
+    assert repaired[0] == (DISPATCH_COMMAND, None)
+    assert repaired[1][1] == "success"
+
+
 def main() -> None:
     for distribution, expected in EXPECTED_VERSIONS.items():
         actual = importlib.metadata.version(distribution)
@@ -108,6 +222,7 @@ def main() -> None:
 
     managed_models = [validate_profile(model_id) for model_id in MANAGED_MODEL_IDS]
     validate_parser_tool_visibility()
+    validate_parser_dispatch_parity()
 
     # One graph construction materializes the shared middleware schemas and
     # catches pinned-stack incompatibilities without making an inference request.

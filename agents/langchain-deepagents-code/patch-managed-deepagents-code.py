@@ -9,7 +9,7 @@
 # and integrity-bound MCP boundaries.
 # sourceBoundary: deepagents-code owns those Python entrypoints; NemoClaw owns the
 # sandbox image posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.30 has no single managed-runtime hook that can
+# whyNotSourceFix: upstream 0.1.34 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
 # build on drift, and direct-module tests execute the patched start/restart paths.
@@ -23,7 +23,7 @@ import importlib.metadata
 import importlib.util
 from pathlib import Path
 
-EXPECTED_DCODE_VERSION = "0.1.30"
+EXPECTED_DCODE_VERSION = "0.1.34"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
 TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
 MIDDLEWARE_MODULE = "progressive_tool_disclosure.py"
@@ -424,7 +424,7 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.30 has no
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.34 has no
 # supported managed progressive-disclosure middleware hook in its agent factory
 # API, and this repository cannot change that third-party package source.
 # Patcher/unit guards plus validate-progressive-tool-disclosure.py cover this
@@ -664,7 +664,7 @@ MCP_CONFIG_LOAD_MARKER = '''    path = Path(config_path)
 
     try:
         with path.open(encoding="utf-8") as file_obj:
-            config = json.load(file_obj)
+            return json.load(file_obj)
 '''
 
 MCP_CONFIG_LOAD_PATCH = '''    from deepagents_code._nemoclaw_managed import (
@@ -675,13 +675,12 @@ MCP_CONFIG_LOAD_PATCH = '''    from deepagents_code._nemoclaw_managed import (
     try:
         managed_payload = managed_mcp_config_bytes(config_path)
         if managed_payload is not None:
-            config = json.loads(managed_payload)
-        else:
-            if not path.exists():
-                error_msg = f"MCP config file not found: {config_path}"
-                raise FileNotFoundError(error_msg)
-            with path.open(encoding="utf-8") as file_obj:
-                config = json.load(file_obj)
+            return json.loads(managed_payload)
+        if not path.exists():
+            error_msg = f"MCP config file not found: {config_path}"
+            raise FileNotFoundError(error_msg)
+        with path.open(encoding="utf-8") as file_obj:
+            return json.load(file_obj)
 '''
 
 MCP_EXPLICIT_CONFIG_MARKER = '''    if explicit_config_path:
@@ -976,16 +975,16 @@ def main() -> None:
         "agent": root / "agent.py",
         "update_check": root / "update_check.py",
         "openai_codex": root / "integrations" / "openai_codex.py",
-        "auth_ui": root / "widgets" / "auth.py",
-        "codex_ui": root / "widgets" / "codex_auth.py",
-        "model_selector": root / "widgets" / "model_selector.py",
-        "approval": root / "widgets" / "approval.py",
-        "server": root / "server.py",
+        "auth_ui": root / "tui" / "widgets" / "auth.py",
+        "codex_ui": root / "tui" / "widgets" / "codex_auth.py",
+        "model_selector": root / "tui" / "widgets" / "model_selector.py",
+        "approval": root / "tui" / "widgets" / "approval.py",
+        "server": root / "client" / "launch" / "server.py",
         "server_config": root / "_server_config.py",
         "mcp_tools": root / "mcp_tools.py",
         "subagents": root / "subagents.py",
         "hooks": root / "hooks.py",
-        "non_interactive": root / "non_interactive.py",
+        "non_interactive": root / "client" / "non_interactive.py",
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
 

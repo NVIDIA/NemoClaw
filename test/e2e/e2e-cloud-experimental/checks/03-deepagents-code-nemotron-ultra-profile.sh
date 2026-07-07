@@ -33,17 +33,27 @@ encode_source() {
 
 profile_contract_source() {
   cat <<'PY'
+import hashlib
+import importlib.metadata
 from pathlib import Path
 import tomllib
 
+from deepagents.profiles.harness import _nvidia_nemotron_3_ultra
 from deepagents.profiles.harness.harness_profiles import _harness_profile_for_model
 from langchain_openai import ChatOpenAI
 
 CONFIG_PATH = Path("/sandbox/.deepagents/config.toml")
-EXPECTED_DEFAULTS = {
-    "openai:nvidia/nemotron-3-ultra-550b-a55b",
-    "openai:nvidia/nvidia/nemotron-3-ultra",
+EXPECTED_VERSIONS = {
+    "deepagents-code": "0.1.34",
+    "deepagents": "0.7.0a6",
 }
+MANAGED_MODEL_IDS = (
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "nvidia/nvidia/nemotron-3-ultra",
+)
+EXPECTED_NATIVE_PROFILE_SHA256 = (
+    "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
+)
 EXPECTED_MIDDLEWARE = [
     "NemotronProgressBudgetMiddleware",
     "NemotronPolicyNudgeMiddleware",
@@ -59,44 +69,65 @@ EXPECTED_MIDDLEWARE = [
     "FinalAnswerGuardMiddleware",
 ]
 
+for distribution, expected in EXPECTED_VERSIONS.items():
+    actual = importlib.metadata.version(distribution)
+    assert actual == expected, (distribution, actual)
+
+native_profile_path = Path(_nvidia_nemotron_3_ultra.__file__)
+native_profile_hash = hashlib.sha256(native_profile_path.read_bytes()).hexdigest()
+assert native_profile_hash == EXPECTED_NATIVE_PROFILE_SHA256, native_profile_hash
+
 config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 default_model = config["models"]["default"]
-assert default_model in EXPECTED_DEFAULTS, default_model
+assert default_model.removeprefix("openai:") in MANAGED_MODEL_IDS, default_model
 
-model_name = default_model.removeprefix("openai:")
 provider = config["models"]["providers"]["openai"]
-assert provider["models"] == [model_name]
+assert provider["models"] == [default_model.removeprefix("openai:")]
 assert provider["api_key_env"] == "DEEPAGENTS_CODE_OPENAI_API_KEY"
 assert provider["base_url"] == "https://inference.local/v1"
 assert provider["enabled"] is True
 assert provider["params"] == {"use_responses_api": False}
 
-model = ChatOpenAI(
-    model=model_name,
-    api_key="nemoclaw-managed-placeholder",
-    base_url=provider["base_url"],
-    use_responses_api=provider["params"]["use_responses_api"],
+
+def make_model(model_id):
+    return ChatOpenAI(
+        model=model_id,
+        api_key="nemoclaw-managed-placeholder",
+        base_url=provider["base_url"],
+        use_responses_api=provider["params"]["use_responses_api"],
+    )
+
+
+def middleware_names(profile):
+    middleware_factory = profile.extra_middleware
+    if callable(middleware_factory):
+        return [type(item).__name__ for item in middleware_factory()]
+    return [type(item).__name__ for item in middleware_factory]
+
+
+for model_id in MANAGED_MODEL_IDS:
+    profile = _harness_profile_for_model(make_model(model_id), None)
+    suffix = profile.system_prompt_suffix
+    assert suffix is not None
+    for marker in ("<approach>", "<grounding>", "<loop_control>", "<state_changes>"):
+        assert marker in suffix, (model_id, marker)
+
+    description_overrides = profile.tool_description_overrides
+    assert set(description_overrides) == {"read_file"}
+    read_file_description = description_overrides["read_file"]
+    for argument in ("file_path", "offset", "limit"):
+        assert argument in read_file_description
+    assert middleware_names(profile) == EXPECTED_MIDDLEWARE, model_id
+
+unrelated = _harness_profile_for_model(make_model("gpt-4.1-mini"), None)
+assert unrelated.system_prompt_suffix is None
+assert middleware_names(unrelated) == []
+
+print(
+    "NEMOCLAW_NEMOTRON_ULTRA_PROFILE_OK:"
+    f"{default_model}:dcode={EXPECTED_VERSIONS['deepagents-code']}:"
+    f"deepagents={EXPECTED_VERSIONS['deepagents']}"
 )
-profile = _harness_profile_for_model(model, None)
-
-suffix = profile.system_prompt_suffix
-assert suffix is not None
-for marker in ("<approach>", "<grounding>", "<loop_control>", "<state_changes>"):
-    assert marker in suffix, marker
-
-description_overrides = profile.tool_description_overrides
-assert set(description_overrides) == {"read_file"}
-read_file_description = description_overrides["read_file"]
-assert "file_path" in read_file_description
-assert "offset" in read_file_description
-assert "limit" in read_file_description
-
-middleware_factory = profile.extra_middleware
-assert callable(middleware_factory)
-actual_middleware = [type(item).__name__ for item in middleware_factory()]
-assert actual_middleware == EXPECTED_MIDDLEWARE, actual_middleware
-
-print(f"NEMOCLAW_NEMOTRON_ULTRA_PROFILE_OK:{default_model}")
 PY
 }
 

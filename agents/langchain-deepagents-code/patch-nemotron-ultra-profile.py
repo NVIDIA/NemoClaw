@@ -1,28 +1,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Backport the Nemotron 3 Ultra harness profile into the pinned Deep Agents.
+"""Register the native Nemotron 3 Ultra profile for NemoClaw model aliases.
 
-The vendored module is byte-for-byte source from langchain-ai/deepagents PR
-#4192 at head 72fd0bba115df5ae35a549f58d3dd564f0bf0592, merged as
-d5a60ece7379c37c81edcef2cd6c2811ddc90c9a. NemoClaw keeps the upstream file
-unchanged and adds only the two managed OpenAI-compatible aliases here.
+Deep Agents 0.7.0a6 ships the profile from langchain-ai/deepagents PR #4192.
+NemoClaw patches only the built-in bootstrap so its two managed OpenAI-compatible
+model identities resolve that official profile too.
 
-Remove the source overlay and bootstrap registration when Deep Agents Code pins
-a Deep Agents release containing that merge. Keep the alias bridge until the
-managed ChatOpenAI resolution checks pass without it.
+Remove this alias bridge when Deep Agents natively recognizes the managed
+OpenAI-compatible aliases.
 """
 
-# invalidState: deepagents-code 0.1.30 pins deepagents 0.7.0a3, which lacks the
-# merged Ultra profile, and its managed ChatOpenAI identity matches none of the
-# upstream provider keys.
-# sourceBoundary: Deep Agents owns the upstream profile; NemoClaw owns only the
-# image overlay and managed openai: aliases required by inference.local.
-# whyNotSourceFix: upstream PR #4192 is merged, but upgrading deepagents alone
-# violates deepagents-code 0.1.30's exact dependency pin before the launch.
-# regressionTest: exact hashes, failure-state tests, build-time graph and parser
-# validation, and the typed DCode E2E target cover the temporary boundary.
-# removalCondition: a DCode release pins Deep Agents containing #4192 and both
-# managed ChatOpenAI aliases resolve natively; any pin drift fails this build.
+# invalidState: the released native profile recognizes NVIDIA and hosted-provider
+# identities, but NemoClaw's managed ChatOpenAI identities use openai: keys.
+# sourceBoundary: Deep Agents owns the native profile and bootstrap; NemoClaw owns
+# only the two openai: aliases required by its inference.local route.
+# whyNotSourceFix: the aliases describe NemoClaw's managed model identity and the
+# released SDK has no supported configuration hook for bootstrap-time aliases.
+# regressionTest: exact wheel source/bootstrap hashes, failure-state tests,
+# build-time graph/dispatch validation, and the typed DCode E2E target cover it.
+# removalCondition: both managed ChatOpenAI aliases resolve the native Ultra
+# profile without this patch; any DCode, Deep Agents, or source drift fails build.
 
 from __future__ import annotations
 
@@ -33,28 +30,25 @@ import os
 from pathlib import Path
 from stat import S_IMODE
 
-EXPECTED_DCODE_VERSION = "0.1.30"
-EXPECTED_DEEPAGENTS_VERSION = "0.7.0a3"
-EXPECTED_SOURCE_SHA256 = (
+EXPECTED_DCODE_VERSION = "0.1.34"
+EXPECTED_DEEPAGENTS_VERSION = "0.7.0a6"
+EXPECTED_NATIVE_PROFILE_SHA256 = (
     "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
 )
 EXPECTED_BOOTSTRAP_SHA256 = (
-    "afe22b56d4d2e9fa6bc804bb4af27f5d47b6cb82d345afecebab74933214f389"
+    "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf"
 )
 EXPECTED_PATCHED_BOOTSTRAP_SHA256 = (
-    "e8da631665bc1a1cb461dc2aab435bf60dc8c297af3832af0923c4c4215bddae"
+    "9d9e817143b330fd45345fcfa8276ea6fe5d6bc5a396f0438b0899a450e4744b"
 )
 
-SOURCE_PATH = Path(__file__).with_name("nemotron-ultra-harness-profile.py")
-PATCH_MARKER = "# NemoClaw Nemotron 3 Ultra profile bridge (deepagents PR #4192)."
+PATCH_MARKER = "# NemoClaw managed OpenAI-compatible Nemotron 3 Ultra aliases."
 CANONICAL_PROFILE_KEY = "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
 MANAGED_PROFILE_KEYS = (
     "openai:nvidia/nemotron-3-ultra-550b-a55b",
     "openai:nvidia/nvidia/nemotron-3-ultra",
 )
 
-HARNESS_IMPORT_ANCHOR = "    _openai_codex,\n"
-HARNESS_IMPORT_PATCH = "    _nvidia_nemotron_3_ultra,\n    _openai_codex,\n"
 REGISTRY_IMPORT_ANCHOR = (
     "from deepagents.profiles.harness.harness_profiles import _HARNESS_PROFILES\n"
 )
@@ -64,8 +58,8 @@ REGISTRY_IMPORT_PATCH = (
     "    _register_harness_profile_impl,\n"
     ")\n"
 )
-REGISTER_ANCHOR = "        _openai_codex.register()\n"
-REGISTER_PATCH = f'''        {PATCH_MARKER}\n        _nvidia_nemotron_3_ultra.register()\n        _nemotron_ultra_profile = _HARNESS_PROFILES[\n            "{CANONICAL_PROFILE_KEY}"\n        ]\n        _register_harness_profile_impl(\n            "{MANAGED_PROFILE_KEYS[0]}", _nemotron_ultra_profile\n        )\n        _register_harness_profile_impl(\n            "{MANAGED_PROFILE_KEYS[1]}", _nemotron_ultra_profile\n        )\n        _openai_codex.register()\n'''
+REGISTER_ANCHOR = "        _nvidia_nemotron_3_ultra.register()\n"
+REGISTER_PATCH = f'''        _nvidia_nemotron_3_ultra.register()\n        {PATCH_MARKER}\n        _nemotron_ultra_profile = _HARNESS_PROFILES[\n            "{CANONICAL_PROFILE_KEY}"\n        ]\n        _register_harness_profile_impl(\n            "{MANAGED_PROFILE_KEYS[0]}", _nemotron_ultra_profile\n        )\n        _register_harness_profile_impl(\n            "{MANAGED_PROFILE_KEYS[1]}", _nemotron_ultra_profile\n        )\n'''
 
 
 def fail(message: str) -> SystemExit:
@@ -108,17 +102,15 @@ def require_regular_file(path: Path, label: str) -> bytes:
 def patched_bootstrap(original: bytes) -> bytes:
     if sha256(original) != EXPECTED_BOOTSTRAP_SHA256:
         raise fail(
-            "deepagents built-in profile bootstrap does not match the reviewed 0.7.0a3 source"
+            "deepagents built-in profile bootstrap does not match the reviewed 0.7.0a6 source"
         )
     text = original.decode("utf-8")
     for label, anchor in (
-        ("harness import", HARNESS_IMPORT_ANCHOR),
         ("harness registry import", REGISTRY_IMPORT_ANCHOR),
         ("harness registration", REGISTER_ANCHOR),
     ):
         if text.count(anchor) != 1:
             raise fail(f"expected exactly one {label} anchor")
-    text = text.replace(HARNESS_IMPORT_ANCHOR, HARNESS_IMPORT_PATCH)
     text = text.replace(REGISTRY_IMPORT_ANCHOR, REGISTRY_IMPORT_PATCH)
     text = text.replace(REGISTER_ANCHOR, REGISTER_PATCH)
     compile(text, "deepagents/profiles/_builtin_profiles.py", "exec")
@@ -147,47 +139,36 @@ def main() -> None:
     require_version("deepagents-code", EXPECTED_DCODE_VERSION)
     require_version("deepagents", EXPECTED_DEEPAGENTS_VERSION)
 
-    source = require_regular_file(SOURCE_PATH, "vendored Nemotron profile source")
-    if sha256(source) != EXPECTED_SOURCE_SHA256:
-        raise fail(
-            "vendored Nemotron profile source hash does not match upstream PR #4192"
-        )
-    compile(source, str(SOURCE_PATH), "exec")
-
     package_root = deepagents_root()
     bootstrap_path = package_root / "profiles" / "_builtin_profiles.py"
-    harness_dir = package_root / "profiles" / "harness"
-    target_path = harness_dir / "_nvidia_nemotron_3_ultra.py"
-    if harness_dir.is_symlink() or not harness_dir.is_dir():
-        raise fail(f"deepagents harness directory is not trusted: {harness_dir}")
+    native_profile_path = (
+        package_root / "profiles" / "harness" / "_nvidia_nemotron_3_ultra.py"
+    )
+    native_profile = require_regular_file(
+        native_profile_path, "native Nemotron profile source"
+    )
+    if sha256(native_profile) != EXPECTED_NATIVE_PROFILE_SHA256:
+        raise fail("native Nemotron profile source does not match Deep Agents 0.7.0a6")
+    compile(native_profile, str(native_profile_path), "exec")
 
     bootstrap = require_regular_file(
         bootstrap_path, "deepagents built-in profile bootstrap"
     )
     bootstrap_hash = sha256(bootstrap)
-    target_exists = target_path.exists() or target_path.is_symlink()
 
-    if bootstrap_hash == EXPECTED_BOOTSTRAP_SHA256 and not target_exists:
+    if bootstrap_hash == EXPECTED_BOOTSTRAP_SHA256:
         updated_bootstrap = patched_bootstrap(bootstrap)
         if sha256(updated_bootstrap) != EXPECTED_PATCHED_BOOTSTRAP_SHA256:
             raise fail("internal patched-bootstrap digest is inconsistent")
-        atomic_write(target_path, source)
         atomic_write(bootstrap_path, updated_bootstrap)
-        print("Patched deepagents 0.7.0a3 with the Nemotron 3 Ultra harness profile.")
+        print("Registered the native Nemotron 3 Ultra profile for managed aliases.")
         return
 
-    if bootstrap_hash == EXPECTED_PATCHED_BOOTSTRAP_SHA256 and target_exists:
-        installed_source = require_regular_file(
-            target_path, "installed Nemotron profile source"
-        )
-        if sha256(installed_source) != EXPECTED_SOURCE_SHA256:
-            raise fail(
-                "installed Nemotron profile source conflicts with the reviewed backport"
-            )
-        print("Nemotron 3 Ultra harness profile patch is already applied.")
+    if bootstrap_hash == EXPECTED_PATCHED_BOOTSTRAP_SHA256:
+        print("Nemotron 3 Ultra managed-alias bridge is already applied.")
         return
 
-    raise fail("partial, conflicting, or drifted Nemotron profile patch state")
+    raise fail("partial, conflicting, or drifted Nemotron profile alias patch state")
 
 
 if __name__ == "__main__":

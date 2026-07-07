@@ -159,11 +159,15 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
     expect(profileCheck).toContain("/opt/venv/bin/python3 -I -");
     expect(profileCheck).toContain("from langchain_openai import ChatOpenAI");
-    expect(profileCheck).toContain("_harness_profile_for_model(model, None)");
-    expect(profileCheck).toContain('"openai:nvidia/nemotron-3-ultra-550b-a55b"');
-    expect(profileCheck).toContain('"openai:nvidia/nvidia/nemotron-3-ultra"');
+    expect(profileCheck).toContain("_harness_profile_for_model(make_model(model_id), None)");
+    expect(profileCheck).toContain('"nvidia/nemotron-3-ultra-550b-a55b"');
+    expect(profileCheck).toContain('"nvidia/nvidia/nemotron-3-ultra"');
+    expect(profileCheck).toContain('"deepagents-code": "0.1.34"');
+    expect(profileCheck).toContain('"deepagents": "0.7.0a6"');
+    expect(profileCheck).toContain("_nvidia_nemotron_3_ultra.__file__");
     expect(profileCheck).toContain('description_overrides["read_file"]');
-    expect(profileCheck).toContain("actual_middleware == EXPECTED_MIDDLEWARE");
+    expect(profileCheck).toContain("middleware_names(profile) == EXPECTED_MIDDLEWARE");
+    expect(profileCheck).toContain('make_model("gpt-4.1-mini")');
     expect(profileCheck).not.toMatch(/\.(?:invoke|ainvoke|stream|astream)\(/);
   });
 
