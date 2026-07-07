@@ -288,7 +288,7 @@ describe("LangChain Deep Agents Code Nemotron Ultra profile patch", () => {
       "_harness_profile_for_model(model, None)",
       '"NemotronProgressBudgetMiddleware"',
       '"FinalAnswerGuardMiddleware"',
-      "create_deep_agent(model=model)",
+      "create_deep_agent(model=managed_models[0])",
     ]) {
       expect(validator).toContain(expected);
     }
@@ -305,6 +305,8 @@ describe("LangChain Deep Agents Code Nemotron Ultra profile patch", () => {
     const firstProfile = fs.readFileSync(fixture.destinationPath, "utf8");
 
     expect(firstProfile).toBe(fs.readFileSync(vendoredProfilePath, "utf8"));
+    expect(fs.statSync(fixture.builtinPath).mode & 0o777).toBe(0o644);
+    expect(fs.statSync(fixture.destinationPath).mode & 0o777).toBe(0o644);
     expect(firstBuiltin).toContain("    _nvidia_nemotron_3_ultra,");
     expect(countOccurrences(firstBuiltin, "    _nvidia_nemotron_3_ultra,")).toBe(1);
     expect(firstBuiltin.indexOf("    _nvidia_nemotron_3_ultra,")).toBeLessThan(

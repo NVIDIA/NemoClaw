@@ -19,6 +19,7 @@ import importlib.metadata
 import importlib.util
 import os
 from pathlib import Path
+from stat import S_IMODE
 
 EXPECTED_DCODE_VERSION = "0.1.30"
 EXPECTED_DEEPAGENTS_VERSION = "0.7.0a3"
@@ -112,13 +113,18 @@ def patched_bootstrap(original: bytes) -> bytes:
     return text.encode("utf-8")
 
 
-def atomic_write(path: Path, data: bytes, mode: int) -> None:
+def atomic_write(path: Path, data: bytes) -> None:
     temporary = path.with_name(f".{path.name}.nemoclaw-tmp")
     if temporary.exists() or temporary.is_symlink():
         raise fail(f"temporary patch path already exists: {temporary}")
     try:
-        temporary.write_bytes(data)
-        os.chmod(temporary, mode)
+        previous_umask = os.umask(0o022)
+        try:
+            temporary.write_bytes(data)
+        finally:
+            os.umask(previous_umask)
+        if S_IMODE(temporary.stat().st_mode) != 0o644:
+            raise fail(f"unexpected temporary patch mode: {temporary}")
         temporary.replace(path)
     finally:
         if temporary.exists() and not temporary.is_symlink():
@@ -153,8 +159,8 @@ def main() -> None:
         updated_bootstrap = patched_bootstrap(bootstrap)
         if sha256(updated_bootstrap) != EXPECTED_PATCHED_BOOTSTRAP_SHA256:
             raise fail("internal patched-bootstrap digest is inconsistent")
-        atomic_write(target_path, source, 0o444)
-        atomic_write(bootstrap_path, updated_bootstrap, 0o444)
+        atomic_write(target_path, source)
+        atomic_write(bootstrap_path, updated_bootstrap)
         print("Patched deepagents 0.7.0a3 with the Nemotron 3 Ultra harness profile.")
         return
 
