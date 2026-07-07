@@ -16,6 +16,7 @@ export interface RebuildRestorePhaseInput {
   backupManifest: RebuildBackupManifest;
   policyPresets: string[];
   customPolicies: NonNullable<RebuildSandboxEntry["customPolicies"]>;
+  reconcileManagedDcodeObservability: boolean;
   log: RebuildLog;
 }
 
@@ -184,7 +185,14 @@ function reconcileFinalManagedObservability(
  * stale recovery, successful presets, and incomplete preset recovery reporting.
  */
 export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): RebuildRestorePhaseResult {
-  const { sandboxName, backupManifest, policyPresets, customPolicies, log } = input;
+  const {
+    sandboxName,
+    backupManifest,
+    policyPresets,
+    customPolicies,
+    reconcileManagedDcodeObservability,
+    log,
+  } = input;
   let restoreSucceeded = true;
   if (backupManifest) {
     console.log("");
@@ -250,6 +258,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
         if (applied) {
           restoredCustomPresets.push(entry.name);
           if (
+            reconcileManagedDcodeObservability &&
             policies
               .parsePresetPolicyKeys(entry.content)
               .includes(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET)
@@ -279,14 +288,21 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
   }
 
   const restoredPresets = uniquePresetNames([...restoredBuiltinPresets, ...restoredCustomPresets]);
-  const finalPolicyState = reconcileFinalManagedObservability(
-    sandboxName,
-    targetManagedObservability,
-    restoredBuiltinPresets,
-    restoredCustomPresets,
-    failedBuiltinPresets,
-    successfulCustomObservabilityContents,
-    log,
-  );
+  const finalPolicyState = reconcileManagedDcodeObservability
+    ? reconcileFinalManagedObservability(
+        sandboxName,
+        targetManagedObservability,
+        restoredBuiltinPresets,
+        restoredCustomPresets,
+        failedBuiltinPresets,
+        successfulCustomObservabilityContents,
+        log,
+      )
+    : {
+        finalBuiltinPresets: uniquePresetNames(restoredBuiltinPresets),
+        finalPresets: restoredPresets,
+        failedPresetRemovals: [],
+        policyPresetReconciliationVerified: true,
+      };
   return { restoreSucceeded, restoredPresets, failedPresets, ...finalPolicyState };
 }

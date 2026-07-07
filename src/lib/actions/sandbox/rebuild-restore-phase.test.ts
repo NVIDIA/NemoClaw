@@ -27,6 +27,7 @@ describe("rebuild policy restore fidelity", () => {
   it("replays custom web-policy names from exact content instead of same-name built-ins", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const parsePresetPolicyKeys = vi.spyOn(policies, "parsePresetPolicyKeys");
     vi.spyOn(sandboxState, "restoreSandboxState").mockReturnValue({
       success: true,
       restoredDirs: [],
@@ -49,6 +50,7 @@ describe("rebuild policy restore fidelity", () => {
       } as never,
       policyPresets: ["npm", "brave", "tavily", "nous-web"],
       customPolicies,
+      reconcileManagedDcodeObservability: false,
       log: vi.fn(),
     });
 
@@ -63,6 +65,8 @@ describe("rebuild policy restore fidelity", () => {
     expect(result.failedPresets).toEqual([]);
     expect(result.finalPresets).toEqual(["npm", "brave", "tavily", "nous-web"]);
     expect(result.policyPresetReconciliationVerified).toBe(true);
+    expect(policies.loadPresetForSandbox).not.toHaveBeenCalled();
+    expect(parsePresetPolicyKeys).not.toHaveBeenCalled();
   });
 
   it("replays captured registry custom policies during stale recovery without a backup", () => {
@@ -87,6 +91,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: [],
       customPolicies,
+      reconcileManagedDcodeObservability: false,
       log: vi.fn(),
     });
 
@@ -119,6 +124,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: [],
       customPolicies: [genuineCustomPolicy, generatedMcpPolicy],
+      reconcileManagedDcodeObservability: false,
       log: vi.fn(),
     });
 
@@ -147,6 +153,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: ["npm"],
       customPolicies: [],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -171,6 +178,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: ["npm"],
       customPolicies: [],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -192,6 +200,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: ["npm", "bad", "throw"],
       customPolicies: [],
+      reconcileManagedDcodeObservability: false,
       log: vi.fn(),
     });
 
@@ -212,6 +221,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
       customPolicies: [],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -232,6 +242,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
       customPolicies: [],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -247,6 +258,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: [],
       customPolicies: [],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -271,6 +283,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: [],
       customPolicies: [customPolicy],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -302,6 +315,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: [],
       customPolicies: [customPolicy],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -335,6 +349,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
       customPolicies: [customPolicy],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -363,6 +378,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: [],
       customPolicies: [customPolicy],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -390,6 +406,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: [],
       customPolicies: [customPolicy],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 
@@ -416,6 +433,7 @@ describe("rebuild policy restore fidelity", () => {
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
       customPolicies: [customPolicy],
+      reconcileManagedDcodeObservability: true,
       log: vi.fn(),
     });
 

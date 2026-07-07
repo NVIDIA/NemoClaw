@@ -38,6 +38,7 @@ describe("rebuild shields relock guard", () => {
     phaseMocks.runPreflight.mockResolvedValue({
       sandboxEntry: { name: "alpha", customPolicies: [] },
       targetConfig: { durableConfig: { webSearchConfig: null } },
+      recreateOptions: { observabilityEnabled: false },
       liveState: { staleRecovery: false, staleRegistrySnapshot: null },
       recoveryManifest: null,
       dcodePreflight: { cleanup: cleanupDcodePreflight },

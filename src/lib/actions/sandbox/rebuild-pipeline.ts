@@ -11,6 +11,7 @@ import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { normalizeRebuildTargetPolicyPresets, runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
+import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
@@ -271,6 +272,7 @@ async function rebuildSandboxUnlocked(
         customPolicies:
           backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
           preservedCustomPolicies,
+        reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
         log,
       });
       await runRebuildPostRestorePhase({
