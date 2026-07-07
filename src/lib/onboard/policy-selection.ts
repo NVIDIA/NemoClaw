@@ -315,9 +315,10 @@ async function setupPoliciesWithSelectionInner(
           customPresetNames,
         )
       : null;
-  // Resume (selectedPresets !== null) keeps the recorded tier so stale
-  // suppressed presets from that tier still get filtered; fresh onboarding
-  // below uses the newly-selected `tierName` from `selectPolicyTier()`.
+  // Resume keeps the recorded tier so stale suppressed presets from that tier
+  // still get filtered. An interrupted create can reach this fresh-selection
+  // branch before presets are recorded, so its persisted tier must also win
+  // over a new prompt or non-interactive default.
   const recordedTierName = options.tierName ?? deps.getRecordedPolicyTier?.(sandboxName) ?? null;
   if (chosen !== null) {
     const knownSelectablePresets = new Set(selectablePresets.map((preset) => preset.name));
@@ -348,7 +349,7 @@ async function setupPoliciesWithSelectionInner(
     return resumeSelection;
   }
 
-  const tierName = await deps.selectPolicyTier();
+  const tierName = recordedTierName ?? (await deps.selectPolicyTier());
   deps.setPolicyTier?.(sandboxName, tierName);
   const suggestions = pruneUnavailablePresets(
     computeSetupPresetSuggestions(deps, tierName, {

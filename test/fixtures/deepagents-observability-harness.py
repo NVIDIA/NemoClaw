@@ -28,6 +28,35 @@ LOG_CLIENT_KEY_SECRET = "NEMOCLAW-OTEL-CLIENT-KEY-CANARY"
 _RELAY_OBSERVED_ERRORS: list[dict[str, Any]] = []
 _RELAY_OBSERVED_MODEL_NAMES: list[str] = []
 _RELAY_OBSERVED_TOOL_NAMES: list[str] = []
+_RELAY_LLM_FAILURE_MODE: list[str | None] = [None]
+_RELAY_TOOL_FAILURE_MODE: list[str | None] = [None]
+
+
+def _validate_relay_json(value: Any) -> None:
+    """Match the native JSON value domain in the pinned nemo-relay 0.4.0."""
+    if value is None or type(value) is bool:
+        return
+    if type(value) is int:
+        if -(1 << 63) <= value <= (1 << 64) - 1:
+            return
+        raise ValueError("Relay JSON integer is out of range")
+    if type(value) is float:
+        return
+    if type(value) is str:
+        value.encode("utf-8", errors="strict")
+        return
+    if type(value) is list:
+        for item in value:
+            _validate_relay_json(item)
+        return
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("Relay JSON object key is not a string")
+            key.encode("utf-8", errors="strict")
+            _validate_relay_json(item)
+        return
+    raise ValueError("Relay JSON value has an unsupported type")
 
 
 class _Guardrails:
@@ -226,11 +255,18 @@ def _relay_wrapped_error(error: Exception) -> _RelayWrappedError:
 
 async def _tool_execute(*, name: str, args: Any, func: Any, **_kwargs: Any) -> Any:
     _RELAY_OBSERVED_TOOL_NAMES.append(name)
+    _validate_relay_json(args)
+    if _RELAY_TOOL_FAILURE_MODE[0] == "before":
+        raise RuntimeError("injected Relay tool failure before callback")
     try:
         result = func(args)
-        return await result if inspect.isawaitable(result) else result
+        result = await result if inspect.isawaitable(result) else result
     except Exception as error:
         raise _relay_wrapped_error(error) from error
+    _validate_relay_json(result)
+    if _RELAY_TOOL_FAILURE_MODE[0] == "after":
+        raise RuntimeError("injected Relay tool failure after callback")
+    return result
 
 
 def _run_sync(awaitable: Any) -> Any:
@@ -252,10 +288,21 @@ class _NemoRelayMiddleware:
     ) -> Any:
         _RELAY_OBSERVED_MODEL_NAMES.append(model_name)
         del codec, response_codec
+        validate_payload = type(request) is _LLMRequest
+        if validate_payload:
+            _validate_relay_json(request.headers)
+            _validate_relay_json(request.content)
+        if _RELAY_LLM_FAILURE_MODE[0] == "before":
+            raise RuntimeError("injected Relay model failure before callback")
         try:
-            return await func(request)
+            result = await func(request)
         except Exception as error:
             raise _relay_wrapped_error(error) from error
+        if validate_payload:
+            _validate_relay_json(result)
+        if _RELAY_LLM_FAILURE_MODE[0] == "after":
+            raise RuntimeError("injected Relay model failure after callback")
+        return result
 
     def wrap_model_call(self, request: Any, handler: Any) -> Any:
         async def call(inner_request: Any) -> Any:
@@ -304,6 +351,8 @@ def _install_stubs(
     _RELAY_OBSERVED_ERRORS.clear()
     _RELAY_OBSERVED_MODEL_NAMES.clear()
     _RELAY_OBSERVED_TOOL_NAMES.clear()
+    _RELAY_LLM_FAILURE_MODE[0] = None
+    _RELAY_TOOL_FAILURE_MODE[0] = None
     guardrails = _Guardrails()
     subscribers = _SubscriberCollection(fail_flush=fail_flush)
     scope = _Scope()
@@ -371,6 +420,7 @@ class _SensitiveOperationError(RuntimeError):
 
 
 _HOSTILE_TYPE_NAME_READS = [0]
+_HOSTILE_EXCEPTION_DISPATCHES = [0]
 
 
 class _HostileCaptureMeta(type):
@@ -394,6 +444,17 @@ class _HostileIdentifier(str):
         raise AssertionError("observability coerced a hostile identifier")
 
 
+class _HostileDispatchError(_SensitiveOperationError):
+    @property
+    def __traceback__(self) -> Any:
+        _HOSTILE_EXCEPTION_DISPATCHES[0] += 1
+        raise _SensitiveOperationError(f"hostile-traceback:{SECRET}")
+
+    def with_traceback(self, _traceback: Any) -> Any:
+        _HOSTILE_EXCEPTION_DISPATCHES[0] += 1
+        raise _SensitiveOperationError(f"hostile-restore:{SECRET}")
+
+
 class _ToolCallRequest:
     def __init__(self, tool_call: dict[str, Any]) -> None:
         self.tool_call = tool_call
@@ -402,12 +463,40 @@ class _ToolCallRequest:
         return _ToolCallRequest(tool_call)
 
 
+class _FailingToolCallRequest:
+    @property
+    def tool_call(self) -> Any:
+        raise RuntimeError("injected tool request-build failure")
+
+
 def _preserved_exception(error: Exception, caught: Exception) -> dict[str, Any]:
     return {
         "same_instance": caught is error,
         "type": type(caught).__name__,
         "message": str(caught),
     }
+
+
+def _exercise_hostile_exception(module: types.ModuleType, middleware: Any) -> dict[str, Any]:
+    explicit_cause = ValueError(f"explicit-cause:{SECRET}")
+    hostile_error = _HostileDispatchError(f"hostile-original:{SECRET}")
+    hostile_error.__cause__ = explicit_cause
+
+    def handler(_request: Any) -> Any:
+        raise hostile_error
+
+    try:
+        middleware.wrap_model_call(object(), handler)
+    except Exception as caught:
+        return {
+            **_preserved_exception(hostile_error, caught),
+            "cause_preserved": BaseException.__getattribute__(
+                caught, "__cause__"
+            )
+            is explicit_cause,
+            "subclass_dispatches": _HOSTILE_EXCEPTION_DISPATCHES[0],
+        }
+    raise AssertionError("hostile application exception did not escape")
 
 
 def _exercise_middleware_errors(module: types.ModuleType) -> dict[str, Any]:
@@ -481,11 +570,327 @@ def _exercise_middleware_errors(module: types.ModuleType) -> dict[str, Any]:
 
     return {
         "preserved": preserved,
+        "hostile": _exercise_hostile_exception(module, middleware),
         "control_flow": control_flow,
         "relay_observed": list(_RELAY_OBSERVED_ERRORS),
         "secret_present_in_relay_errors": SECRET
         in json.dumps(_RELAY_OBSERVED_ERRORS, sort_keys=True),
     }
+
+
+def _exercise_relay_fail_open(module: types.ModuleType) -> dict[str, Any]:
+    middleware = module.new_relay_middleware()
+    cases: dict[str, Any] = {}
+
+    def sync_model_case(mode: str) -> dict[str, Any]:
+        calls = 0
+        expected = object()
+
+        def handler(_request: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            return expected
+
+        _RELAY_LLM_FAILURE_MODE[0] = mode
+        try:
+            result = middleware.wrap_model_call(object(), handler)
+        finally:
+            _RELAY_LLM_FAILURE_MODE[0] = None
+        return {"calls": calls, "same_result": result is expected}
+
+    def sync_tool_case(mode: str) -> dict[str, Any]:
+        calls = 0
+        expected = object()
+        request = _ToolCallRequest({"name": "execute", "args": {"mode": mode}})
+
+        def handler(_request: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            return expected
+
+        _RELAY_TOOL_FAILURE_MODE[0] = mode
+        try:
+            result = middleware.wrap_tool_call(request, handler)
+        finally:
+            _RELAY_TOOL_FAILURE_MODE[0] = None
+        return {"calls": calls, "same_result": result is expected}
+
+    cases["sync_model_before"] = sync_model_case("before")
+    cases["sync_model_after"] = sync_model_case("after")
+    cases["sync_tool_before"] = sync_tool_case("before")
+    cases["sync_tool_after"] = sync_tool_case("after")
+
+    async def exercise_async() -> None:
+        async def model_case(mode: str) -> dict[str, Any]:
+            calls = 0
+            expected = object()
+
+            async def handler(_request: Any) -> Any:
+                nonlocal calls
+                calls += 1
+                return expected
+
+            _RELAY_LLM_FAILURE_MODE[0] = mode
+            try:
+                result = await middleware.awrap_model_call(object(), handler)
+            finally:
+                _RELAY_LLM_FAILURE_MODE[0] = None
+            return {"calls": calls, "same_result": result is expected}
+
+        async def tool_case(mode: str) -> dict[str, Any]:
+            calls = 0
+            expected = object()
+            request = _ToolCallRequest(
+                {"name": "execute", "args": {"mode": mode}}
+            )
+
+            async def handler(_request: Any) -> Any:
+                nonlocal calls
+                calls += 1
+                return expected
+
+            _RELAY_TOOL_FAILURE_MODE[0] = mode
+            try:
+                result = await middleware.awrap_tool_call(request, handler)
+            finally:
+                _RELAY_TOOL_FAILURE_MODE[0] = None
+            return {"calls": calls, "same_result": result is expected}
+
+        cases["async_model_before"] = await model_case("before")
+        cases["async_model_after"] = await model_case("after")
+        cases["async_tool_before"] = await tool_case("before")
+        cases["async_tool_after"] = await tool_case("after")
+
+    asyncio.run(exercise_async())
+
+    original_args = {
+        "huge_negative": -(10**1000),
+        "huge_positive": 10**1000,
+        "lone_surrogate": "before\ud800after",
+    }
+    original_result = {
+        "huge_result": 10**1000,
+        "lone_surrogate_result": "before\udfffafter",
+    }
+    value_calls = 0
+    value_request = _ToolCallRequest({"name": "execute", "args": original_args})
+
+    def value_handler(request: _ToolCallRequest) -> Any:
+        nonlocal value_calls
+        value_calls += 1
+        if request.tool_call["args"] is not original_args:
+            raise AssertionError("observability mutated application tool arguments")
+        return original_result
+
+    value_result = middleware.wrap_tool_call(value_request, value_handler)
+    normalized = module._bounded_capture({**original_args, **original_result})
+    _validate_relay_json(normalized)
+
+    return {
+        "failure_cases": cases,
+        "unsafe_python_values": {
+            "calls": value_calls,
+            "same_result": value_result is original_result,
+            "normalized": normalized,
+        },
+    }
+
+
+def _new_contextual_error(
+    error_type: type[BaseException], label: str
+) -> tuple[BaseException, BaseException, BaseException]:
+    cause = ValueError(f"{label}-cause")
+    context = LookupError(f"{label}-context")
+    error = error_type(f"{label}-application-error")
+    error.__cause__ = cause
+    error.__context__ = context
+    return error, cause, context
+
+
+def _fallback_error_result(
+    *,
+    calls: int,
+    caught: BaseException,
+    expected: BaseException,
+    cause: BaseException,
+    context: BaseException,
+) -> dict[str, Any]:
+    return {
+        "calls": calls,
+        "same_instance": caught is expected,
+        "cause_preserved": BaseException.__cause__.__get__(caught, BaseException)
+        is cause,
+        "context_preserved": BaseException.__context__.__get__(
+            caught, BaseException
+        )
+        is context,
+        "type": type(caught).__name__,
+    }
+
+
+def _exercise_fallback_exception_transparency(
+    module: types.ModuleType,
+) -> dict[str, Any]:
+    middleware = module.new_relay_middleware()
+    results: dict[str, Any] = {}
+
+    def sync_case(
+        name: str,
+        error_type: type[BaseException],
+        invoke: Any,
+    ) -> None:
+        calls = 0
+        error, cause, context = _new_contextual_error(error_type, name)
+
+        def handler(_request: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise error
+
+        try:
+            invoke(handler)
+        except BaseException as caught:
+            results[name] = _fallback_error_result(
+                calls=calls,
+                caught=caught,
+                expected=error,
+                cause=cause,
+                context=context,
+            )
+        else:
+            raise AssertionError(f"{name} application error did not escape")
+
+    original_model_builder = module._bounded_model_call_request
+
+    def failing_model_builder(_request: Any) -> Any:
+        raise RuntimeError("injected model request-build failure")
+
+    module._bounded_model_call_request = failing_model_builder
+    try:
+        sync_case(
+            "sync_model_build",
+            RuntimeError,
+            lambda handler: middleware.wrap_model_call(object(), handler),
+        )
+    finally:
+        module._bounded_model_call_request = original_model_builder
+
+    _RELAY_LLM_FAILURE_MODE[0] = "before"
+    try:
+        sync_case(
+            "sync_model_relay",
+            KeyboardInterrupt,
+            lambda handler: middleware.wrap_model_call(object(), handler),
+        )
+    finally:
+        _RELAY_LLM_FAILURE_MODE[0] = None
+
+    sync_case(
+        "sync_tool_build",
+        SystemExit,
+        lambda handler: middleware.wrap_tool_call(_FailingToolCallRequest(), handler),
+    )
+
+    _RELAY_TOOL_FAILURE_MODE[0] = "before"
+    try:
+        sync_case(
+            "sync_tool_relay",
+            RuntimeError,
+            lambda handler: middleware.wrap_tool_call(
+                _ToolCallRequest({"name": "execute", "args": {}}), handler
+            ),
+        )
+    finally:
+        _RELAY_TOOL_FAILURE_MODE[0] = None
+
+    async def exercise_async() -> None:
+        async def async_case(
+            name: str,
+            error_type: type[BaseException],
+            invoke: Any,
+        ) -> None:
+            calls = 0
+            error, cause, context = _new_contextual_error(error_type, name)
+
+            async def handler(_request: Any) -> Any:
+                nonlocal calls
+                calls += 1
+                raise error
+
+            try:
+                await invoke(handler)
+            except BaseException as caught:
+                results[name] = _fallback_error_result(
+                    calls=calls,
+                    caught=caught,
+                    expected=error,
+                    cause=cause,
+                    context=context,
+                )
+            else:
+                raise AssertionError(f"{name} application error did not escape")
+
+        module._bounded_model_call_request = failing_model_builder
+        try:
+            await async_case(
+                "async_model_build",
+                asyncio.CancelledError,
+                lambda handler: middleware.awrap_model_call(object(), handler),
+            )
+        finally:
+            module._bounded_model_call_request = original_model_builder
+
+        _RELAY_LLM_FAILURE_MODE[0] = "before"
+        try:
+            await async_case(
+                "async_model_relay",
+                RuntimeError,
+                lambda handler: middleware.awrap_model_call(object(), handler),
+            )
+        finally:
+            _RELAY_LLM_FAILURE_MODE[0] = None
+
+        await async_case(
+            "async_tool_build",
+            RuntimeError,
+            lambda handler: middleware.awrap_tool_call(
+                _FailingToolCallRequest(), handler
+            ),
+        )
+
+        _RELAY_TOOL_FAILURE_MODE[0] = "before"
+        try:
+            await async_case(
+                "async_tool_relay",
+                asyncio.CancelledError,
+                lambda handler: middleware.awrap_tool_call(
+                    _ToolCallRequest({"name": "execute", "args": {}}), handler
+                ),
+            )
+        finally:
+            _RELAY_TOOL_FAILURE_MODE[0] = None
+
+    asyncio.run(exercise_async())
+    return results
+
+
+def _exercise_control_flow_suppression(module: types.ModuleType) -> dict[str, Any]:
+    results: dict[str, Any] = {}
+    for name, control_flow in (
+        ("KeyboardInterrupt", KeyboardInterrupt("operator interrupt")),
+        ("SystemExit", SystemExit("process exit")),
+        ("CancelledError", asyncio.CancelledError("task cancellation")),
+    ):
+        boundary = module._RelayExceptionBoundary()
+        boundary.capture(RuntimeError("captured application error"))
+        try:
+            with boundary.suppress_relay_exception():
+                raise control_flow
+        except BaseException as caught:
+            results[name] = caught is control_flow
+        else:
+            raise AssertionError(f"observability swallowed {name}")
+    return results
 
 
 def _exercise_identifier_boundaries(
@@ -716,6 +1121,9 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
     second_middleware = module.new_relay_middleware()
     callback_manager_boundary = _exercise_callback_manager_boundary(module)
     error_boundary = _exercise_middleware_errors(module)
+    relay_fail_open = _exercise_relay_fail_open(module)
+    fallback_exception_transparency = _exercise_fallback_exception_transparency(module)
+    control_flow_suppression = _exercise_control_flow_suppression(module)
     emitted = {
         "request": {"headers": request.headers, "content": request.content},
         "response": response,
@@ -756,6 +1164,9 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
         "middleware_name": first_middleware.name,
         "callback_manager_boundary": callback_manager_boundary,
         "error_boundary": error_boundary,
+        "relay_fail_open": relay_fail_open,
+        "fallback_exception_transparency": fallback_exception_transparency,
+        "control_flow_suppression": control_flow_suppression,
         "identifier_boundaries": identifier_boundaries,
         "flush_calls": subscribers.flush_calls,
         "force_flush_calls": subscriber.force_flush_calls,

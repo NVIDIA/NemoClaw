@@ -29,12 +29,18 @@ export interface SelectedAgentTransitionDeps extends RuntimeControlAgentDeps {
 type SelectedAgentTransitionOverrides = Partial<Omit<SelectedAgentTransitionDeps, "note">>;
 
 export function applyOnboardRuntimeControlRequests(
-  opts: Pick<OnboardOptions, "toolDisclosure" | "observabilityEnabled">,
+  opts: Pick<
+    OnboardOptions,
+    "toolDisclosure" | "observabilityEnabled" | "observabilityRequestedExplicitly"
+  >,
 ) {
+  const observabilityIsExplicit = opts.observabilityRequestedExplicitly !== false;
   return {
     requestedToolDisclosure: applyOnboardToolDisclosureRequest(opts.toolDisclosure),
     requestedObservabilityEnabled:
-      typeof opts.observabilityEnabled === "boolean" ? opts.observabilityEnabled : null,
+      observabilityIsExplicit && typeof opts.observabilityEnabled === "boolean"
+        ? opts.observabilityEnabled
+        : null,
   };
 }
 

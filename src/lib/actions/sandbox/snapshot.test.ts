@@ -121,7 +121,7 @@ const applyPresetContentMock = vi.fn(
 );
 const removePresetMock = vi.fn((_sandbox: string, _preset: string) => true);
 const getPresetContentGatewayStateMock = vi.fn<
-  (_sandbox: string, _content: string) => "match" | "absent" | "drift" | null
+  (_sandbox: string, _content: string, _policyKey?: string) => "match" | "absent" | "drift" | null
 >(() => "absent");
 const builtinObservabilityPolicy =
   "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: host.openshell.internal\n";
@@ -958,6 +958,8 @@ describe("runSandboxSnapshot", () => {
     enabled,
     assignmentPresent,
   }) => {
+    let registeredClone: SandboxRecord | null = null;
+    registerSandboxMock.mockImplementation((entry) => (registeredClone = entry as SandboxRecord));
     vi.stubEnv("NEMOCLAW_OBSERVABILITY", "1");
     getSandboxMock.mockImplementation((name) =>
       name === "alpha"
@@ -970,7 +972,7 @@ describe("runSandboxSnapshot", () => {
             provider: "nvidia-nim",
             model: "nvidia/model-a",
           }
-        : null,
+        : registeredClone,
     );
     captureOpenshellMock.mockImplementation((args) =>
       openshellResponses(args, {
@@ -981,9 +983,7 @@ describe("runSandboxSnapshot", () => {
     parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
     getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
-
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-
     const [createCommandValue, createEnv] = streamSandboxCreateMock.mock.calls[0] ?? [];
     const createCommand = String(createCommandValue ?? "");
     expect(createCommand.includes("'NEMOCLAW_OBSERVABILITY=1'")).toBe(assignmentPresent);
@@ -994,23 +994,25 @@ describe("runSandboxSnapshot", () => {
         observabilityEnabled: enabled,
       }),
     );
+    expect(applyPresetMock).toHaveBeenCalledTimes(enabled ? 1 : 0);
   });
 
-  it("adds built-in OTLP egress when observability was enabled after the snapshot", async () => {
+  it.each([
+    { label: "recorded", policyPresets: ["npm"] },
+    { label: "legacy", policyPresets: undefined },
+  ])("adds built-in OTLP egress for a $label snapshot", async ({ policyPresets }) => {
     getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: true,
       policyTier: "balanced",
     } as never);
-    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: ["npm"] });
+    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets });
     getAppliedPresetsMock.mockReturnValue(["npm"]);
     const { runSandboxSnapshot } = await import("./snapshot");
-
     await runSandboxSnapshot("alpha", { kind: "restore" });
-
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
-    expect(removePresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(removePresetMock).not.toHaveBeenCalled();
   });
 
   it("removes historical built-in OTLP egress when observability was disabled after the snapshot", async () => {
@@ -1255,7 +1257,6 @@ describe("runSandboxSnapshot", () => {
       content === customPolicy.content ? "match" : "drift",
     );
     const { runSandboxSnapshot } = await import("./snapshot");
-
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(applyPresetContentMock).toHaveBeenCalledWith(
@@ -1269,7 +1270,8 @@ describe("runSandboxSnapshot", () => {
     expect(removePresetMock).not.toHaveBeenCalledWith("alpha", customPolicy.name);
     expect(updateSandboxMock).toHaveBeenCalledWith("alpha", { policies: ["npm"] });
     expect(getPresetContentGatewayStateMock).toHaveBeenCalledTimes(1);
-    expect(getPresetContentGatewayStateMock).toHaveBeenCalledWith("alpha", customPolicy.content);
+    expect(getPresetContentGatewayStateMock.mock.calls[0]?.[1]).toBe(customPolicy.content);
+    expect(getPresetContentGatewayStateMock.mock.calls[0]?.[2]).toBe("observability-otlp-local");
   });
 
   it("does not let a failed corp-otel replay suppress stale built-in OTLP cleanup", async () => {
@@ -1309,7 +1311,7 @@ describe("runSandboxSnapshot", () => {
     );
   });
 
-  it("does not substitute built-in OTLP when overlapping custom removal fails", async () => {
+  it("aborts preset reconciliation when custom OTLP ownership is unreadable", async () => {
     const currentCustomPolicy = {
       name: "corp-otel",
       content: "network_policies:\n  observability-otlp-local: {}\n",
@@ -1322,24 +1324,24 @@ describe("runSandboxSnapshot", () => {
       policyTier: "balanced",
     } as never);
     getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
+      ...latestBackupFixture,
       policyPresets: [],
       customPolicies: [],
     });
     getCustomPoliciesMock.mockReturnValue([currentCustomPolicy]);
     removePresetMock.mockReturnValue(false);
     getPresetContentGatewayStateMock.mockImplementation((_sandbox, content) =>
-      content === currentCustomPolicy.content ? "match" : "absent",
+      content === currentCustomPolicy.content ? null : "absent",
     );
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
-
     await runSandboxSnapshot("alpha", { kind: "restore" });
-
     expect(removePresetMock).toHaveBeenCalledWith("alpha", currentCustomPolicy.name);
     expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
+      "leaving live policy presets unchanged",
+    );
   });
-
   it.each([
     "drift",
     null,
@@ -1433,7 +1435,7 @@ describe("runSandboxSnapshot", () => {
       customPolicies: [
         {
           name: "team-egress",
-          content: "allow team.example",
+          content: "network_policies:\n  team-egress: {}\n",
           sourcePath: "/policies/team.yaml",
         },
       ],
@@ -1449,10 +1451,10 @@ describe("runSandboxSnapshot", () => {
     getCustomPoliciesMock.mockReturnValue([
       {
         name: "team-egress",
-        content: "allow team.example",
+        content: "network_policies:\n  team-egress: {}\n",
         sourcePath: "/policies/team.yaml",
       },
-      { name: "old-custom", content: "allow old.example", sourcePath: "/old.yaml" },
+      { name: "old-custom", content: "network_policies:\n  old: {}\n", sourcePath: "/old.yaml" },
     ]);
     removePresetMock.mockImplementation((_sandbox, preset) => preset !== "old-custom");
     const { runSandboxSnapshot } = await import("./snapshot");

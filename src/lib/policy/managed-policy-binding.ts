@@ -39,24 +39,31 @@ export class ManagedPolicyBinding {
     return name.trim().toLowerCase() === this.presetName;
   }
 
-  ownsContent(content: string): boolean {
+  private contentOwnershipState(content: string): boolean | null {
     try {
-      return Object.prototype.hasOwnProperty.call(
-        parseNetworkPolicies(content) ?? {},
-        this.policyKey,
-      );
+      const policies = parseNetworkPolicies(content);
+      return policies === null
+        ? null
+        : Object.prototype.hasOwnProperty.call(policies, this.policyKey);
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  ownsContent(content: string): boolean {
+    return this.contentOwnershipState(content) === true;
   }
 
   inspectContent(
     sandboxName: string,
     content: string,
     runtime: ManagedPolicyBindingRuntime,
+    policyKey?: string,
   ): ManagedPolicyContentState {
     try {
-      return runtime.getPresetContentGatewayState(sandboxName, content);
+      return policyKey === undefined
+        ? runtime.getPresetContentGatewayState(sandboxName, content)
+        : runtime.getPresetContentGatewayState(sandboxName, content, policyKey);
     } catch {
       return null;
     }
@@ -83,10 +90,24 @@ export class ManagedPolicyBinding {
     contents: readonly string[],
     runtime: ManagedPolicyBindingRuntime,
   ): boolean {
-    return contents.some(
-      (content) =>
-        this.ownsContent(content) && this.inspectContent(sandboxName, content, runtime) === "match",
-    );
+    let indeterminate = false;
+    for (const content of contents) {
+      const ownsContent = this.contentOwnershipState(content);
+      if (ownsContent === null) {
+        indeterminate = true;
+        continue;
+      }
+      if (!ownsContent) continue;
+      const state = this.inspectContent(sandboxName, content, runtime, this.policyKey);
+      if (state === "match") return true;
+      if (state === null) indeterminate = true;
+    }
+    if (indeterminate) {
+      throw new Error(
+        `Could not determine live policy ownership for '${this.policyKey}' in sandbox '${sandboxName}'; refusing to reconcile overlapping managed policy content.`,
+      );
+    }
+    return false;
   }
 
   setAttribution(names: readonly string[], enabled: boolean): string[] {

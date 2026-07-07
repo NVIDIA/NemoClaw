@@ -28,6 +28,7 @@ _SCOPE_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_.:/-]+")
 _CAPTURE_KEY_ACRONYM_BOUNDARY = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
 _CAPTURE_KEY_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _CAPTURE_KEY_DELIMITER = re.compile(r"[^A-Za-z0-9]+")
+_UNICODE_SURROGATE = re.compile(r"[\ud800-\udfff]")
 _MAX_SCOPE_NAME_CHARS = 128
 _MAX_CAPTURE_DEPTH = 8
 _MAX_CAPTURE_ITEMS = 50
@@ -36,8 +37,11 @@ _MAX_CAPTURE_STRING_CHARS = 8_000
 _MAX_CAPTURE_AGGREGATE_STRING_CHARS = 50_000
 _MAX_CAPTURE_JSON_CHARS = 50_000
 _MAX_CAPTURE_PREVIEW_CHARS = 16_000
+_MIN_RELAY_JSON_INTEGER = -(1 << 63)
+_MAX_RELAY_JSON_INTEGER = (1 << 64) - 1
 _AMBIENT_OTEL_PREFIX = "OTEL_"
 _REDACTED_VALUE = "<redacted>"
+_OUT_OF_RANGE_INTEGER = "<integer outside Relay JSON range>"
 _UNSAFE_RELAY_SERIALIZATION_TAGS = {
     "__nv_fallback_str__",
     "__nv_pickle__",
@@ -127,9 +131,14 @@ def _bounded_string(value: str, budget: _CaptureBudget | None = None) -> str:
     if budget is not None:
         limit = min(limit, budget.remaining_string_chars)
         budget.remaining_string_chars -= limit
-    if limit == len(value):
-        return value
-    return f"{value[:limit]}...[truncated {len(value) - limit} chars]"
+    bounded = (
+        value
+        if limit == len(value)
+        else f"{value[:limit]}...[truncated {len(value) - limit} chars]"
+    )
+    # Relay's native JSON bridge requires valid UTF-8. Replace unpaired UTF-16
+    # surrogates without rejecting the application value or mutating it in place.
+    return _UNICODE_SURROGATE.sub("\ufffd", bounded)
 
 
 def _redact_capture_key(key: Any) -> bool:
@@ -191,8 +200,12 @@ def _capture_jsonable(
         return {"_omitted_at_depth": _MAX_CAPTURE_DEPTH}
     if not budget.claim_node():
         return {"_truncated_by_budget": True}
-    if value is None or type(value) in (bool, int):
+    if value is None or type(value) is bool:
         return value
+    if type(value) is int:
+        if _MIN_RELAY_JSON_INTEGER <= value <= _MAX_RELAY_JSON_INTEGER:
+            return value
+        return _OUT_OF_RANGE_INTEGER
     if type(value) is float:
         return value if math.isfinite(value) else "<non-finite float>"
     if type(value) is str:
@@ -679,7 +692,7 @@ class _SuppressRelayException:
         error: BaseException | None,
         _traceback: TracebackType | None,
     ) -> bool:
-        return error is not None and self._boundary.has_original
+        return isinstance(error, Exception) and self._boundary.has_original
 
 
 class _RelayExceptionBoundary:
@@ -694,7 +707,11 @@ class _RelayExceptionBoundary:
 
     def capture(self, error: BaseException) -> None:
         if self._original is None:
-            self._original = (error, error.__traceback__)
+            # Bypass attacker-controlled exception-subclass dispatch. A custom
+            # ``__getattribute__`` must not replace the application exception
+            # with a secret-bearing failure that Relay can observe.
+            traceback = BaseException.__traceback__.__get__(error, BaseException)
+            self._original = (error, traceback)
 
     def capture_callback_exception(self) -> _CaptureCallbackException:
         return _CaptureCallbackException(self)
@@ -714,7 +731,10 @@ class _RelayExceptionBoundary:
             raise RuntimeError("NemoClaw Relay exception boundary is empty")
         error, traceback = self._original
         self._original = None
-        raise error.with_traceback(traceback) from None
+        # Call the base implementation directly so an exception subclass cannot
+        # intercept restoration. A plain raise preserves an explicit __cause__.
+        BaseException.with_traceback(error, traceback)
+        raise error
 
 
 def new_relay_middleware() -> Any:
@@ -725,45 +745,97 @@ def new_relay_middleware() -> Any:
 
     class BoundedNemoRelayMiddleware(NemoRelayMiddleware):
         def wrap_model_call(self, request: Any, handler: Any) -> Any:
-            model_name, relay_request = _bounded_model_call_request(request)
+            request_prepared = False
+            try:
+                model_name, relay_request = _bounded_model_call_request(request)
+                request_prepared = True
+            except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
+                pass
+            if not request_prepared:
+                return handler(request)
+
             original_result: Any = _RESULT_UNSET
+            callback_started = False
+            callback_completed = False
 
             async def bounded_call(_relay_request: Any) -> Any:
-                nonlocal original_result
+                nonlocal callback_completed, callback_started, original_result
+                if callback_started:
+                    if callback_completed:
+                        return _bounded_model_call_response(original_result)
+                    return {"content": _opaque_capture_marker(None)}
+                callback_started = True
                 original_result = handler(request)
+                callback_completed = True
                 return _bounded_model_call_response(original_result)
 
-            run_sync(
-                self._llm_execute(
+            invoke_fallback = False
+            try:
+                run_sync(
+                    self._llm_execute(
+                        model_name=model_name,
+                        request=relay_request,
+                        codec=None,
+                        response_codec=None,
+                        func=bounded_call,
+                    )
+                )
+            except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
+                if callback_completed:
+                    return original_result
+                if callback_started:
+                    raise
+                invoke_fallback = True
+            if invoke_fallback:
+                return handler(request)
+            if not callback_completed:
+                return handler(request)
+            return original_result
+
+        async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+            request_prepared = False
+            try:
+                model_name, relay_request = _bounded_model_call_request(request)
+                request_prepared = True
+            except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
+                pass
+            if not request_prepared:
+                return await handler(request)
+
+            original_result: Any = _RESULT_UNSET
+            callback_started = False
+            callback_completed = False
+
+            async def bounded_call(_relay_request: Any) -> Any:
+                nonlocal callback_completed, callback_started, original_result
+                if callback_started:
+                    if callback_completed:
+                        return _bounded_model_call_response(original_result)
+                    return {"content": _opaque_capture_marker(None)}
+                callback_started = True
+                original_result = await handler(request)
+                callback_completed = True
+                return _bounded_model_call_response(original_result)
+
+            invoke_fallback = False
+            try:
+                await self._llm_execute(
                     model_name=model_name,
                     request=relay_request,
                     codec=None,
                     response_codec=None,
                     func=bounded_call,
                 )
-            )
-            if original_result is _RESULT_UNSET:
-                raise RuntimeError("managed model callback did not produce a result")
-            return original_result
-
-        async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-            model_name, relay_request = _bounded_model_call_request(request)
-            original_result: Any = _RESULT_UNSET
-
-            async def bounded_call(_relay_request: Any) -> Any:
-                nonlocal original_result
-                original_result = await handler(request)
-                return _bounded_model_call_response(original_result)
-
-            await self._llm_execute(
-                model_name=model_name,
-                request=relay_request,
-                codec=None,
-                response_codec=None,
-                func=bounded_call,
-            )
-            if original_result is _RESULT_UNSET:
-                raise RuntimeError("managed model callback did not produce a result")
+            except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
+                if callback_completed:
+                    return original_result
+                if callback_started:
+                    raise
+                invoke_fallback = True
+            if invoke_fallback:
+                return await handler(request)
+            if not callback_completed:
+                return await handler(request)
             return original_result
 
         async def _llm_execute(
@@ -798,20 +870,38 @@ def new_relay_middleware() -> Any:
             return result
 
         def wrap_tool_call(self, request: Any, handler: Any) -> Any:
-            parent, _codec, tool_name, tool_args = self._prepare_tool_call(request)
+            request_prepared = False
+            try:
+                parent, _codec, tool_name, tool_args = self._prepare_tool_call(request)
+                request_prepared = True
+            except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
+                pass
+            if not request_prepared:
+                return handler(request)
+
             boundary = _RelayExceptionBoundary()
             original_result: Any = _RESULT_UNSET
+            callback_started = False
+            callback_completed = False
 
             def redacted_call(_args: Any) -> Any:
-                nonlocal original_result
+                nonlocal callback_completed, callback_started, original_result
+                if callback_started:
+                    if callback_completed:
+                        return _bounded_tool_call_response(original_result)
+                    return _opaque_capture_marker(None)
+
                 callback_result: Any = None
                 with boundary.capture_callback_exception():
-                    callback_result = handler(
-                        request.override(tool_call={**request.tool_call, "args": tool_args})
+                    callback_request = request.override(
+                        tool_call={**request.tool_call, "args": tool_args}
                     )
+                    callback_started = True
+                    callback_result = handler(callback_request)
                 if boundary.has_original:
                     boundary.raise_redacted()
                 original_result = callback_result
+                callback_completed = True
                 return _bounded_tool_call_response(callback_result)
 
             async def execute_tool() -> Any:
@@ -822,42 +912,80 @@ def new_relay_middleware() -> Any:
                     handle=parent,
                 )
 
-            with boundary.suppress_relay_exception():
-                run_sync(execute_tool())
-            if boundary.has_original:
-                boundary.restore_original()
-            if original_result is _RESULT_UNSET:
-                raise RuntimeError("managed tool callback did not produce a result")
+            invoke_fallback = False
+            try:
+                with boundary.suppress_relay_exception():
+                    run_sync(execute_tool())
+                if boundary.has_original:
+                    boundary.restore_original()
+            except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
+                if callback_completed:
+                    return original_result
+                if callback_started:
+                    raise
+                invoke_fallback = True
+            if invoke_fallback:
+                return handler(request)
+            if not callback_completed:
+                return handler(request)
             return original_result
 
         async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
-            parent, _codec, tool_name, tool_args = self._prepare_tool_call(request)
+            request_prepared = False
+            try:
+                parent, _codec, tool_name, tool_args = self._prepare_tool_call(request)
+                request_prepared = True
+            except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
+                pass
+            if not request_prepared:
+                return await handler(request)
+
             boundary = _RelayExceptionBoundary()
             original_result: Any = _RESULT_UNSET
+            callback_started = False
+            callback_completed = False
 
             async def redacted_call(_args: Any) -> Any:
-                nonlocal original_result
+                nonlocal callback_completed, callback_started, original_result
+                if callback_started:
+                    if callback_completed:
+                        return _bounded_tool_call_response(original_result)
+                    return _opaque_capture_marker(None)
+
                 callback_result: Any = None
                 with boundary.capture_callback_exception():
-                    callback_result = await handler(
-                        request.override(tool_call={**request.tool_call, "args": tool_args})
+                    callback_request = request.override(
+                        tool_call={**request.tool_call, "args": tool_args}
                     )
+                    callback_started = True
+                    callback_result = await handler(callback_request)
                 if boundary.has_original:
                     boundary.raise_redacted()
                 original_result = callback_result
+                callback_completed = True
                 return _bounded_tool_call_response(callback_result)
 
-            with boundary.suppress_relay_exception():
-                await nemo_relay.tools.execute(
-                    name=_safe_identifier(tool_name, "unknown"),
-                    args=_bounded_capture(tool_args),
-                    func=redacted_call,
-                    handle=parent,
-                )
-            if boundary.has_original:
-                boundary.restore_original()
-            if original_result is _RESULT_UNSET:
-                raise RuntimeError("managed tool callback did not produce a result")
+            invoke_fallback = False
+            try:
+                with boundary.suppress_relay_exception():
+                    await nemo_relay.tools.execute(
+                        name=_safe_identifier(tool_name, "unknown"),
+                        args=_bounded_capture(tool_args),
+                        func=redacted_call,
+                        handle=parent,
+                    )
+                if boundary.has_original:
+                    boundary.restore_original()
+            except Exception:  # noqa: BLE001 - optional instrumentation is fail-open
+                if callback_completed:
+                    return original_result
+                if callback_started:
+                    raise
+                invoke_fallback = True
+            if invoke_fallback:
+                return await handler(request)
+            if not callback_completed:
+                return await handler(request)
             return original_result
 
     return BoundedNemoRelayMiddleware(name="NemoClawObservabilityMiddleware")

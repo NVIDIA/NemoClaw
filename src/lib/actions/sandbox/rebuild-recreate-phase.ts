@@ -111,6 +111,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
         observabilityEnabled: recreateOptions.observabilityEnabled,
+        observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
         wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
         migratedLegacyValueHashes: sessionMatchesSandbox
@@ -151,6 +152,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.endpointUrl = resumeConfig.endpointUrl;
     s.toolDisclosure = rebuildDurableConfig.toolDisclosure;
     s.observabilityEnabled = recreateOptions.observabilityEnabled;
+    s.observabilityRequestedExplicitly = recreateOptions.observabilityRequestedExplicitly;
     return s;
   });
   const sessionAfter = onboardSession.loadSession();
@@ -229,6 +231,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       sandboxName,
       rebuildMcpEntries,
       rebuildDurableConfig.toolDisclosure,
+      {
+        enabled: recreateOptions.observabilityEnabled,
+        requestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
+      },
     );
     if (backupManifest) {
       console.error("    3. Then restore your workspace state:");

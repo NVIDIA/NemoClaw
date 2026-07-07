@@ -102,6 +102,7 @@ export async function prepareRebuildTargetPreflights(args: {
   recreateOptions.toolDisclosure = durableConfig.toolDisclosure;
   recreateOptions.observabilityEnabled =
     requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
+  recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,

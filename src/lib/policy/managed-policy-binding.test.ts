@@ -38,9 +38,30 @@ describe("managed policy binding", () => {
   it("requires matching policy keys and exact live content for custom ownership", () => {
     const deps = runtime(["drift", "match"]);
     expect(binding.hasLiveCustomOwner("alpha", [CONTENT, CONTENT], deps)).toBe(true);
+    expect(deps.getPresetContentGatewayState).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      CONTENT,
+      "managed-key",
+    );
     expect(binding.hasLiveCustomOwner("alpha", ["network_policies:\n  other: {}\n"], deps)).toBe(
       false,
     );
+  });
+
+  it("aborts managed reconciliation when custom ownership is indeterminate", () => {
+    const deps = runtime([null]);
+    expect(() => binding.hasLiveCustomOwner("alpha", [CONTENT], deps)).toThrow(
+      /Could not determine live policy ownership.*refusing to reconcile/,
+    );
+  });
+
+  it("aborts before inspection when registered custom content is malformed", () => {
+    const deps = runtime();
+    expect(() =>
+      binding.hasLiveCustomOwner("alpha", ["network_policies:\n  managed-key: [invalid"], deps),
+    ).toThrow(/Could not determine live policy ownership.*refusing to reconcile/);
+    expect(deps.getPresetContentGatewayState).not.toHaveBeenCalled();
   });
 
   it("loads and inspects managed content without exposing policy read failures", () => {

@@ -115,6 +115,10 @@ describe("rebuildSandbox DCode flow: recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(policyTierSeenDuringOnboard).toBe("restricted");
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityRequestedExplicitly: false }),
+    );
+    expect(harness.session.observabilityRequestedExplicitly).toBe(false);
     expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
@@ -216,9 +220,13 @@ describe("rebuildSandbox DCode flow: recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.onboardSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ observabilityEnabled: expected }),
+      expect.objectContaining({
+        observabilityEnabled: expected,
+        observabilityRequestedExplicitly: true,
+      }),
     );
     expect(harness.session.observabilityEnabled).toBe(expected);
+    expect(harness.session.observabilityRequestedExplicitly).toBe(true);
     const observabilityApplyCalls = harness.applyPresetSpy.mock.calls.filter(
       ([sandboxName, presetName]) =>
         sandboxName === "alpha" && presetName === "observability-otlp-local",

@@ -105,6 +105,8 @@ export type RebuildRecreateOnboardOpts = {
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
+  /** Whether the rebuild command explicitly overrode the recorded observability state. */
+  observabilityRequestedExplicitly: boolean;
   policyTier: string | null;
   baseImageResolutionHint: SandboxBaseImageResolutionMetadata | null;
   noGpu?: true;
@@ -168,6 +170,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     autoYes: args.autoYes,
     toolDisclosure: toolDisclosureOrDefault(args.sb?.toolDisclosure),
     observabilityEnabled: args.sb?.observabilityEnabled === true,
+    observabilityRequestedExplicitly: false,
     policyTier: rawPolicyTier,
     baseImageResolutionHint: args.baseImageResolutionHint ?? null,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),

@@ -166,6 +166,13 @@ describe("managed Deep Agents Code observability", () => {
         same_instance: true,
         relay_observed: true,
       },
+      hostile: {
+        same_instance: true,
+        type: "_HostileDispatchError",
+        message: "hostile-original:NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL",
+        cause_preserved: true,
+        subclass_dispatches: 0,
+      },
       preserved: {
         sync_model: {
           same_instance: true,
@@ -188,13 +195,58 @@ describe("managed Deep Agents Code observability", () => {
           message: "async-tool:NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL",
         },
       },
-      relay_observed: Array.from({ length: 5 }, () => ({
+      relay_observed: Array.from({ length: 6 }, () => ({
         type: "RuntimeError",
         message: "NEMOCLAW_DCODE_OPERATION_FAILED: managed operation failed (details redacted)",
         context_is_none: true,
         cause_is_none: true,
       })),
       secret_present_in_relay_errors: false,
+    });
+    expect(result.relay_fail_open).toEqual({
+      failure_cases: {
+        sync_model_before: { calls: 1, same_result: true },
+        sync_model_after: { calls: 1, same_result: true },
+        sync_tool_before: { calls: 1, same_result: true },
+        sync_tool_after: { calls: 1, same_result: true },
+        async_model_before: { calls: 1, same_result: true },
+        async_model_after: { calls: 1, same_result: true },
+        async_tool_before: { calls: 1, same_result: true },
+        async_tool_after: { calls: 1, same_result: true },
+      },
+      unsafe_python_values: {
+        calls: 1,
+        same_result: true,
+        normalized: {
+          huge_negative: "<integer outside Relay JSON range>",
+          huge_positive: "<integer outside Relay JSON range>",
+          huge_result: "<integer outside Relay JSON range>",
+          lone_surrogate: "before\ufffdafter",
+          lone_surrogate_result: "before\ufffdafter",
+        },
+      },
+    });
+    expect(result.control_flow_suppression).toEqual({
+      KeyboardInterrupt: true,
+      SystemExit: true,
+      CancelledError: true,
+    });
+    const transparentFallback = (type: string) => ({
+      calls: 1,
+      same_instance: true,
+      cause_preserved: true,
+      context_preserved: true,
+      type,
+    });
+    expect(result.fallback_exception_transparency).toEqual({
+      sync_model_build: transparentFallback("RuntimeError"),
+      sync_model_relay: transparentFallback("KeyboardInterrupt"),
+      sync_tool_build: transparentFallback("SystemExit"),
+      sync_tool_relay: transparentFallback("RuntimeError"),
+      async_model_build: transparentFallback("CancelledError"),
+      async_model_relay: transparentFallback("RuntimeError"),
+      async_tool_build: transparentFallback("RuntimeError"),
+      async_tool_relay: transparentFallback("CancelledError"),
     });
     expect(result.flush_calls).toBe(1);
     expect(result.force_flush_calls).toBe(1);

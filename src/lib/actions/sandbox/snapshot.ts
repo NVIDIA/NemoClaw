@@ -581,16 +581,21 @@ function reconcileSnapshotPolicyPresets(
   targetSandbox: string,
   resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>,
 ): void {
-  if (!resolvedSnapshot || !Array.isArray(resolvedSnapshot.policyPresets)) return;
+  if (!resolvedSnapshot) return;
+  const snapshotPolicyPresets = Array.isArray(resolvedSnapshot.policyPresets)
+    ? resolvedSnapshot.policyPresets
+    : null;
+  const hasSnapshotPresetMetadata = snapshotPolicyPresets !== null;
   const snapshotCustomPolicies = Array.isArray(resolvedSnapshot.customPolicies)
     ? resolvedSnapshot.customPolicies
     : [];
   const snapshotCustomPolicyNames = new Set(
     snapshotCustomPolicies.map((entry) => entry.name.trim().toLowerCase()),
   );
-  const snapshotPresets = resolvedSnapshot.policyPresets.filter(
-    (preset) => !snapshotCustomPolicyNames.has(preset.trim().toLowerCase()),
-  );
+  const snapshotPresets =
+    snapshotPolicyPresets?.filter(
+      (preset) => !snapshotCustomPolicyNames.has(preset.trim().toLowerCase()),
+    ) ?? [];
   const targetEntry = registry.getSandbox(targetSandbox);
   // Custom reconciliation runs before this function. Only the registry state
   // that remains after that reconciliation can participate in ownership.
@@ -599,11 +604,20 @@ function reconcileSnapshotPolicyPresets(
     currentCustomPolicies.map((preset) => preset.name.trim().toLowerCase()),
   );
   const customPolicyNames = new Set([...snapshotCustomPolicyNames, ...currentCustomPolicyNames]);
-  const customOwnsObservability = OBSERVABILITY_POLICY_BINDING.hasLiveCustomOwner(
-    targetSandbox,
-    currentCustomPolicies.map((entry) => entry.content),
-    policies,
-  );
+  let customOwnsObservability: boolean;
+  try {
+    customOwnsObservability = OBSERVABILITY_POLICY_BINDING.hasLiveCustomOwner(
+      targetSandbox,
+      currentCustomPolicies.map((entry) => entry.content),
+      policies,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `  Warning: could not verify custom ownership of '${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}' (${detail}); leaving live policy presets unchanged.`,
+    );
+    return;
+  }
   const withoutBuiltinObservability = snapshotPresets.filter(
     (preset) => !OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
   );
@@ -615,13 +629,15 @@ function reconcileSnapshotPolicyPresets(
   // getAppliedPresets includes custom-policy names for display/CLI parity.
   // Built-in preset reconciliation must not remove those; custom policy content
   // is reconciled separately below from registry.getCustomPolicies().
-  const appliedPresetNames = policies.getAppliedPresets(targetSandbox);
-  const currentPresets = [...new Set(appliedPresetNames)].filter((preset: string) => {
-    const normalized = preset.trim().toLowerCase();
-    return (
-      !OBSERVABILITY_POLICY_BINDING.matchesPreset(normalized) && !customPolicyNames.has(normalized)
-    );
-  });
+  const currentPresets = hasSnapshotPresetMetadata
+    ? [...new Set(policies.getAppliedPresets(targetSandbox))].filter((preset: string) => {
+        const normalized = preset.trim().toLowerCase();
+        return (
+          !OBSERVABILITY_POLICY_BINDING.matchesPreset(normalized) &&
+          !customPolicyNames.has(normalized)
+        );
+      })
+    : [];
   const recordedBuiltinObservability = (targetEntry?.policies ?? []).some((preset) =>
     OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
   );
@@ -640,12 +656,15 @@ function reconcileSnapshotPolicyPresets(
   if (customOwnsObservability) {
     setRecordedBuiltinObservability(false);
   }
-  const toRemove = currentPresets.filter(
-    (preset: string) => !withoutBuiltinObservability.includes(preset),
-  );
-  const toAdd = withoutBuiltinObservability.filter(
-    (preset: string) => !currentPresets.includes(preset),
-  );
+  // Legacy snapshots predate generic preset metadata. Leave those unrelated
+  // presets untouched, while still reconciling the managed observability
+  // binding below from the target registry's authoritative enablement state.
+  const toRemove = hasSnapshotPresetMetadata
+    ? currentPresets.filter((preset: string) => !withoutBuiltinObservability.includes(preset))
+    : [];
+  const toAdd = hasSnapshotPresetMetadata
+    ? withoutBuiltinObservability.filter((preset: string) => !currentPresets.includes(preset))
+    : [];
 
   // A same-name custom policy does not own the built-in OTLP entry unless its
   // exact, overlapping content is both registered after custom reconciliation
@@ -1005,7 +1024,8 @@ async function runSnapshotRestoreUnlocked(
     // Reconcile built-in presets after custom content so same-name custom
     // policies are never transiently substituted with a built-in. The current
     // target observability bit and tier override historical built-in OTLP state.
-    // Skip legacy snapshots that predate the `policyPresets` field.
+    // Legacy snapshots skip unrelated generic presets but still reconcile the
+    // managed observability binding from current target state.
     reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
   });
 }

@@ -57,6 +57,8 @@ export interface SandboxCreateIntent {
   readonly recreate: boolean;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
+  /** Present only when the operator explicitly selected observability on or off. */
+  readonly observabilityRequestedExplicitly?: true;
   /** Internal authoritative rebuild tier used before replacement registration completes. */
   readonly policyTier?: string | null;
 }
@@ -89,6 +91,8 @@ export type OnboardOptions = {
   agent?: string | null;
   toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;
   observabilityEnabled?: boolean | null;
+  /** Internal provenance for an authoritative observability value. */
+  observabilityRequestedExplicitly?: boolean;
   /** Internal authoritative rebuild tier; never exposed as an onboard CLI option. */
   policyTier?: string | null;
   controlUiPort?: number | null;

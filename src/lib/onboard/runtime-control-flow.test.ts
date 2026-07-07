@@ -32,6 +32,18 @@ describe("onboard runtime control flow", () => {
     });
   });
 
+  it("keeps an authoritative inherited observability value out of explicit request handling", () => {
+    expect(
+      applyOnboardRuntimeControlRequests({
+        observabilityEnabled: false,
+        observabilityRequestedExplicitly: false,
+      }),
+    ).toEqual({
+      requestedToolDisclosure: null,
+      requestedObservabilityEnabled: null,
+    });
+  });
+
   it("records the selected DCode agent when observability is enabled", () => {
     const session = createSession({ observabilityEnabled: true });
 

@@ -56,6 +56,7 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   autoYes: true,
   toolDisclosure: "progressive",
   observabilityEnabled: true,
+  observabilityRequestedExplicitly: true,
   policyTier: "restricted",
   baseImageResolutionHint: null,
 };
@@ -140,9 +141,32 @@ describe("runRebuildRecreatePhase observability handoff", () => {
     expect(observedAtOnboard).toEqual([true]);
     expect(observedAtCreated).toEqual([true]);
     expect(onboardSession.loadSession()?.observabilityEnabled).toBe(true);
+    expect(onboardSession.loadSession()?.observabilityRequestedExplicitly).toBe(true);
     expect(input.onCreated).toHaveBeenCalledOnce();
     expect(input.registryRollback.restoreForRetry).not.toHaveBeenCalled();
     expect(input.bail).not.toHaveBeenCalled();
+  });
+
+  it("retains inherited observability provenance through inner onboard handoff", async () => {
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      expect(options.observabilityEnabled).toBe(true);
+      expect(options.observabilityRequestedExplicitly).toBe(false);
+      expect(onboardSession.loadSession()?.observabilityRequestedExplicitly).toBe(false);
+    });
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          recreateOptions: {
+            ...recreateOptions,
+            observabilityRequestedExplicitly: false,
+          },
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    expect(onboardSession.loadSession()?.observabilityEnabled).toBe(true);
+    expect(onboardSession.loadSession()?.observabilityRequestedExplicitly).toBe(false);
   });
 
   it("pins the authoritative restricted tier during recreate and restores ambient policy input", async () => {

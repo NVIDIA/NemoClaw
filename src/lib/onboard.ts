@@ -35,6 +35,7 @@ const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onbo
 const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = require("./onboard/tool-disclosure-flow");
 const runtimeControlFlow: typeof import("./onboard/runtime-control-flow") = require("./onboard/runtime-control-flow");
 const observabilityPolicy: typeof import("./onboard/observability-policy-presets") = require("./onboard/observability-policy-presets");
+const observabilityCommandFlag: typeof import("./onboard/observability-command-flag") = require("./onboard/observability-command-flag");
 const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
@@ -2654,11 +2655,15 @@ async function createSandboxWithBaseImageResolution(
     }
 
     if (preservedMcpState) {
+      const explicitObservability = observabilityCommandFlag.explicitObservabilityFlag(
+        createIntent?.observabilityEnabled === true,
+        createIntent?.observabilityRequestedExplicitly === true,
+      );
       console.error(
         `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
       );
       console.error(
-        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}\` so MCP providers and adapter state are preserved transactionally.`,
+        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}${explicitObservability ? ` ${explicitObservability}` : ""}\` so MCP providers and adapter state are preserved transactionally.`,
       );
       process.exit(1);
     }
@@ -2740,6 +2745,7 @@ async function createSandboxWithBaseImageResolution(
   const {
     activeMessagingChannels,
     initialSandboxPolicy,
+    policyTier: resolvedCreatePolicyTier,
     createArgs,
     messagingProviders,
     useDockerGpuPatch,
@@ -3016,7 +3022,7 @@ async function createSandboxWithBaseImageResolution(
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
-          policyTier: createIntent?.policyTier,
+          policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
           plannedMessagingState,

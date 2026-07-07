@@ -113,7 +113,10 @@ describe("handleSandboxState", () => {
   });
 
   it("carries durable observability intent in the sandbox create intent", async () => {
-    const session = createSession({ observabilityEnabled: true });
+    const session = createSession({
+      observabilityEnabled: true,
+      observabilityRequestedExplicitly: true,
+    });
     const { deps, calls } = createDeps({
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
         return mutator(session) ?? session;
@@ -129,6 +132,7 @@ describe("handleSandboxState", () => {
       recreate: false,
       toolDisclosure: "progressive",
       observabilityEnabled: true,
+      observabilityRequestedExplicitly: true,
     });
   });
 
@@ -258,6 +262,7 @@ describe("handleSandboxState", () => {
 
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
       observabilityEnabled: false,
+      observabilityRequestedExplicitly: true,
     });
     expect(session.observabilityEnabled).toBe(false);
     expect(session.observabilityRequestedExplicitly).toBe(true);

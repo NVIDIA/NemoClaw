@@ -40,7 +40,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
 _EXPECTED_RELAY_VERSION = "0.4.0"
 _EXPECTED_LANGGRAPH_VERSION = "1.2.6"
 _EXPECTED_PRODUCTION_ENDPOINT = "http://host.openshell.internal:4318/v1/traces"
-_EXPECTED_REQUEST_COUNT = 9
+_EXPECTED_REQUEST_COUNT = 13
 _EXPECTED_WIRE_HEADERS = {
     "accept",
     "content-length",
@@ -65,6 +65,7 @@ _TRUNCATION_SENTINEL = "MUST_NOT_REACH_RELAY"
 _STABLE_ERROR_CODE = "NEMOCLAW_DCODE_OPERATION_FAILED"
 _CONTROL_CHARACTERS = "\r\n\t\x00\u202e"
 _OVERLONG_IDENTIFIER = "x" * 200
+_HOSTILE_EXCEPTION_DISPATCHES = [0]
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,17 @@ class _HostileMessage:
 
     def __str__(self) -> str:
         raise AssertionError("observability evaluated a hostile message string")
+
+
+class _HostileException(RuntimeError):
+    @property
+    def __traceback__(self) -> Any:
+        _HOSTILE_EXCEPTION_DISPATCHES[0] += 1
+        raise RuntimeError(f"hostile-traceback:{_EXCEPTION_SECRET}")
+
+    def with_traceback(self, _traceback: Any) -> Any:
+        _HOSTILE_EXCEPTION_DISPATCHES[0] += 1
+        raise RuntimeError(f"hostile-restore:{_EXCEPTION_SECRET}")
 
 
 class _CollectorServer(http.server.ThreadingHTTPServer):
@@ -197,7 +209,7 @@ def _assert_original_exception(
 ) -> None:
     if caught is not expected:
         raise AssertionError(f"Relay changed the {handler_name} exception identity")
-    traceback = caught.__traceback__
+    traceback = BaseException.__traceback__.__get__(caught, BaseException)
     frame_names: list[str] = []
     while traceback is not None:
         frame_names.append(traceback.tb_frame.f_code.co_name)
@@ -252,6 +264,27 @@ async def _exercise_async_boundaries(
         _assert_original_exception(caught, async_model_error, "failing_async_model")
     else:
         raise AssertionError("Relay swallowed the async model exception")
+
+    hostile_cause = ValueError(f"hostile-cause:{_EXCEPTION_SECRET}")
+    hostile_error = _HostileException(f"hostile-error:{_EXCEPTION_SECRET}")
+    hostile_error.__cause__ = hostile_cause
+
+    async def hostile_async_model(_request: Any) -> Any:
+        raise hostile_error
+
+    try:
+        await middleware._llm_execute(
+            "hostile-model", request, None, None, hostile_async_model
+        )
+    except RuntimeError as caught:
+        _assert_original_exception(caught, hostile_error, "hostile_async_model")
+        cause = BaseException.__cause__.__get__(caught, BaseException)
+        if cause is not hostile_cause:
+            raise AssertionError("Relay removed the hostile exception cause")
+        if _HOSTILE_EXCEPTION_DISPATCHES[0] != 0:
+            raise AssertionError("observability used hostile exception dispatch")
+    else:
+        raise AssertionError("Relay swallowed the hostile async model exception")
 
     async_request = _tool_request(raw_names["async_tool"])
 
@@ -350,6 +383,131 @@ def _exercise_framework_result_transparency(middleware: Any) -> None:
         raise AssertionError("observability replaced the LangChain ToolMessage")
     if actual_tool_result.artifact is not artifact:
         raise AssertionError("observability mutated the ToolMessage artifact")
+
+
+def _exercise_real_relay_json_domain(middleware: Any) -> None:
+    original_args = {
+        "huge_negative": -(10**1000),
+        "huge_positive": 10**1000,
+        "lone_surrogate": "before\ud800after",
+    }
+    expected_result = {
+        "huge_result": 10**1000,
+        "lone_surrogate_result": "before\udfffafter",
+    }
+    request = ToolCallRequest(
+        tool_call={
+            "name": "relay-json-domain-tool",
+            "args": original_args,
+            "id": "managed-observability-json-domain",
+        },
+        tool=None,
+        state={},
+        runtime=None,
+    )
+    calls = 0
+
+    def handler(inner_request: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if inner_request.tool_call["args"] != original_args:
+            raise AssertionError("observability mutated non-Relay-safe tool arguments")
+        return expected_result
+
+    actual_result = middleware.wrap_tool_call(request, handler)
+    if calls != 1 or actual_result is not expected_result:
+        raise AssertionError("Relay changed a non-Relay-safe application value")
+
+
+def _exercise_relay_failure_transparency(middleware: Any) -> None:
+    request = _tool_request("relay-failure-tool")
+    expected_result = object()
+    original_execute = nemo_relay.tools.execute
+
+    def run_case(mode: str) -> None:
+        calls = 0
+
+        def handler(_request: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            return expected_result
+
+        async def injected_execute(**kwargs: Any) -> Any:
+            if mode == "before":
+                raise RuntimeError("injected Relay failure before callback")
+            await original_execute(**kwargs)
+            raise RuntimeError("injected Relay failure after callback")
+
+        nemo_relay.tools.execute = injected_execute
+        try:
+            actual_result = middleware.wrap_tool_call(request, handler)
+        finally:
+            nemo_relay.tools.execute = original_execute
+        if calls != 1 or actual_result is not expected_result:
+            raise AssertionError(
+                f"Relay {mode}-callback failure changed application execution"
+            )
+
+    run_case("before")
+    run_case("after")
+
+    fallback_cause = ValueError("fallback application cause")
+    fallback_context = LookupError("fallback application context")
+    fallback_error = RuntimeError("fallback application error")
+    fallback_error.__cause__ = fallback_cause
+    fallback_error.__context__ = fallback_context
+    fallback_calls = 0
+
+    def failing_fallback_handler(_request: Any) -> Any:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        raise fallback_error
+
+    async def fail_before_callback(**_kwargs: Any) -> Any:
+        raise RuntimeError("injected Relay failure before callback")
+
+    nemo_relay.tools.execute = fail_before_callback
+    try:
+        try:
+            middleware.wrap_tool_call(request, failing_fallback_handler)
+        except RuntimeError as caught:
+            if caught is not fallback_error or fallback_calls != 1:
+                raise AssertionError("Relay changed the fallback application error")
+            cause = BaseException.__cause__.__get__(caught, BaseException)
+            context = BaseException.__context__.__get__(caught, BaseException)
+            if cause is not fallback_cause or context is not fallback_context:
+                raise AssertionError("Relay contaminated fallback exception chaining")
+        else:
+            raise AssertionError("Relay swallowed the fallback application error")
+    finally:
+        nemo_relay.tools.execute = original_execute
+
+    application_error = RuntimeError(f"relay-control:{_EXCEPTION_SECRET}")
+    control_flow = KeyboardInterrupt("operator interrupt")
+    control_calls = 0
+
+    def interrupted_handler(_request: Any) -> Any:
+        nonlocal control_calls
+        control_calls += 1
+        raise application_error
+
+    async def replace_relay_error_with_control_flow(**kwargs: Any) -> Any:
+        try:
+            return await original_execute(**kwargs)
+        except Exception:
+            raise control_flow
+
+    nemo_relay.tools.execute = replace_relay_error_with_control_flow
+    try:
+        try:
+            middleware.wrap_tool_call(request, interrupted_handler)
+        except KeyboardInterrupt as caught:
+            if caught is not control_flow or control_calls != 1:
+                raise AssertionError("observability changed Relay control flow")
+        else:
+            raise AssertionError("observability swallowed Relay control flow")
+    finally:
+        nemo_relay.tools.execute = original_execute
 
 
 def _assert_capture_traversal_bounds(observability: ModuleType) -> None:
@@ -593,6 +751,15 @@ def _assert_wire_requests(
     for sentinel in captured_content:
         if sentinel.encode() not in bodies:
             raise AssertionError(f"expected captured content {sentinel} is absent from OTLP")
+    relay_json_content = (
+        observability._OUT_OF_RANGE_INTEGER,
+        "before\ufffdafter",
+    )
+    for sentinel in relay_json_content:
+        if sentinel.encode() not in bodies:
+            raise AssertionError(
+                f"normalized Relay JSON content {sentinel} is absent from OTLP"
+            )
 
     excluded = (
         _EXCEPTION_SECRET,
@@ -726,6 +893,8 @@ def main() -> None:
         )
         _exercise_sync_tool(middleware, raw_names["sync_tool"])
         _exercise_framework_result_transparency(middleware)
+        _exercise_real_relay_json_domain(middleware)
+        _exercise_relay_failure_transparency(middleware)
         _exercise_graph(observability, raw_names["graph"])
 
         nemo_relay.subscribers.flush()

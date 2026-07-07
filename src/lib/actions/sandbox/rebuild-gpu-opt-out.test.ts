@@ -173,6 +173,7 @@ describe("buildRebuildRecreateOnboardOpts", () => {
       autoYes: true,
       toolDisclosure: "progressive",
       observabilityEnabled: false,
+      observabilityRequestedExplicitly: false,
     });
   });
 
