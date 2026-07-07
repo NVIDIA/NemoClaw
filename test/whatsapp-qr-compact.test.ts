@@ -229,17 +229,15 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
     expect(patched.qrcodeTerminal[1]).toEqual({ small: true });
   });
 
-  it("patches OpenClaw's compact QR branch with quiet-zone and image fallback", () => {
+  it("does not source-patch an unreviewed OpenClaw-looking renderer", () => {
     const baselineRenderer = runProbe(OPENCLAW_QR_RENDERER_PROBE, { withPreload: false });
     const patchedRenderer = runProbe(OPENCLAW_QR_RENDERER_PROBE, { withPreload: true });
 
     expect(baselineRenderer.compact).toBe("compact-margin:1:size:2");
     expect(baselineRenderer.qrcodeDataUrl).toEqual([]);
-    expect(patchedRenderer.compact).toContain("compact-margin:4:size:2");
-    expect(patchedRenderer.compact).toContain(
-      "If this QR will not scan, open this image in a browser: data:image/png;base64,STUB(payload)",
-    );
-    expect(patchedRenderer.qrcodeDataUrl).toEqual(["payload"]);
+    expect(patchedRenderer.compact).toBe("compact-margin:1:size:2");
+    expect(patchedRenderer.compact).not.toContain("data:image/png");
+    expect(patchedRenderer.qrcodeDataUrl).toEqual([]);
   });
 
   it("is idempotent when the preload is required twice", () => {

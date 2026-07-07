@@ -10,19 +10,38 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createOpenClawQrTerminalLoaderSource,
   isQrcodePackage,
   isQrcodeTerminalPackage,
   isOpenClawQrTerminalRendererSource,
+  isReviewedOpenClawQrTerminalRendererIntegrity,
   patchOpenClawQrTerminalRendererSource,
   patchQrcode,
   patchQrcodeTerminal,
+  REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
 } from "./whatsapp-qr-compact";
 import { makeQrcodeLoadHook } from "./whatsapp-qr-compact-test-helpers";
 
 const OPENCLAW_QR_RENDERER_SOURCE = `
 const COMPACT_MARGIN_MODULES = 1;
+function readModule(modules, x, y) {
+  if (x < 0 || y < 0 || x >= modules.size || y >= modules.size) return false;
+  return Boolean(modules.data[y * modules.size + x]);
+}
+function compactBlock(top, bottom) {
+  if (top && bottom) return "█";
+  if (top) return "▀";
+  if (bottom) return "▄";
+  return " ";
+}
 function renderCompactTerminalQr(modules) {
-  return "compact";
+  const lines = [];
+  for (let y = -1; y < modules.size + COMPACT_MARGIN_MODULES; y += 2) {
+    let line = "";
+    for (let x = -1; x < modules.size + COMPACT_MARGIN_MODULES; x += 1) line += compactBlock(readModule(modules, x, y), readModule(modules, x, y + 1));
+    lines.push(line);
+  }
+  return lines.join("\\n");
 }
 async function renderQrTerminal(input, opts = {}) {
   const text = normalizeQrText(input);
@@ -100,21 +119,52 @@ describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
     expect(isOpenClawQrTerminalRendererSource("const unrelated = true;")).toBe(false);
   });
 
-  it("migrates the old build-time quiet-zone and data URL fallback patch", () => {
+  it("recognizes the reviewed OpenClaw 2026.6.10 renderer integrity", () => {
+    expect(
+      isReviewedOpenClawQrTerminalRendererIntegrity(REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256),
+    ).toBe(true);
+    expect(isReviewedOpenClawQrTerminalRendererIntegrity("0".repeat(64))).toBe(false);
+  });
+
+  it("widens the compact-renderer quiet zone on all four edges", () => {
     const patched = patchOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE);
 
     expect(patched).toContain("const COMPACT_MARGIN_MODULES = 4;");
-    expect(patched).toContain("/* nemoclaw: qr scan fallback */");
     expect(patched).toContain(
-      "If this QR will not scan, open this image in a browser: ${scanFallbackDataUrl}",
+      "for (let y = -COMPACT_MARGIN_MODULES; y < modules.size + COMPACT_MARGIN_MODULES; y += 2)",
     );
-    expect(patched).toContain("catch { return compactQr; }");
+    expect(patched).toContain(
+      "for (let x = -COMPACT_MARGIN_MODULES; x < modules.size + COMPACT_MARGIN_MODULES; x += 1)",
+    );
+    expect(patched).not.toContain("toDataURL");
+    expect(patched).not.toContain("data:image/png");
   });
 
-  it("is idempotent once the source already has the fallback marker", () => {
+  it("fails closed for an unreviewed renderer integrity", () => {
+    expect(patchOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE, "0".repeat(64))).toBe(
+      OPENCLAW_QR_RENDERER_SOURCE,
+    );
+  });
+
+  it("fails closed instead of partially patching when a loop preimage drifts", () => {
+    const drifted = OPENCLAW_QR_RENDERER_SOURCE.replace("let x = -1;", "let x = 0;");
+
+    expect(patchOpenClawQrTerminalRendererSource(drifted)).toBe(drifted);
+  });
+
+  it("is idempotent once the source already has the four-edge quiet-zone patch", () => {
     const patched = patchOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE);
 
     expect(patchOpenClawQrTerminalRendererSource(patched)).toBe(patched);
+  });
+
+  it("loader source computes renderer integrity before applying the source rewrite", () => {
+    const loader = createOpenClawQrTerminalLoaderSource();
+
+    expect(loader).toContain('import { createHash } from "node:crypto";');
+    expect(loader).toContain(REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256);
+    expect(loader).toContain("const integrity = sha256Hex(source);");
+    expect(loader).toContain("patchOpenClawQrTerminalRendererSource(source, integrity)");
   });
 });
 

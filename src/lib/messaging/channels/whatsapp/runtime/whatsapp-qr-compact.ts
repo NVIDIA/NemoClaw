@@ -31,9 +31,9 @@
 //     left untouched, and a caller that already opts into `small` is a no-op.
 //   * `qrcode-terminal` (has `generate`): force `small: true` as well, so the
 //     fix also covers any agent/path that renders through that package.
-//   * the OpenClaw QR renderer ES module: apply the same quiet-zone and
-//     data:image/png fallback rewrite that scripts/patch-openclaw-whatsapp-qr.ts
-//     used to apply at image build time.
+//   * the reviewed OpenClaw QR renderer ES module: widen the compact-renderer
+//     quiet zone on all four edges. This is hash-gated to the reviewed
+//     OpenClaw 2026.6.10 renderer so a drifted upstream bundle fails closed.
 // The QR text and error-correction level are never altered — only the
 // terminal cell packing — so the rendered code is identical apart from size.
 //
@@ -65,35 +65,64 @@ function isOpenClawQrTerminalRendererSource(source) {
     typeof source === "string" &&
     source.indexOf("renderCompactTerminalQr") !== -1 &&
     source.indexOf("COMPACT_MARGIN_MODULES") !== -1 &&
-    source.indexOf("async function renderQrTerminal") !== -1
+    source.indexOf("async function renderQrTerminal") !== -1 &&
+    source.indexOf("if (opts.small === true) return renderCompactTerminalQr") !== -1
   );
 }
 
-function patchOpenClawQrTerminalRendererSource(source) {
+var REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256 =
+  "f74865035a498389fe910b23537a7dffeaee1b05e044999d855b61c96af0ada7";
+
+function isReviewedOpenClawQrTerminalRendererIntegrity(integrity: string | undefined) {
+  return integrity === REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256;
+}
+
+function patchOpenClawQrTerminalRendererSource(source: string, integrity?: string) {
   if (!isOpenClawQrTerminalRendererSource(source)) return source;
+  if (
+    integrity !== undefined &&
+    integrity !== null &&
+    !isReviewedOpenClawQrTerminalRendererIntegrity(integrity)
+  ) {
+    return source;
+  }
 
-  var nextSource = source.replace(
-    /const COMPACT_MARGIN_MODULES = 1;/,
-    "const COMPACT_MARGIN_MODULES = 4;",
-  );
+  var marginFrom = "const COMPACT_MARGIN_MODULES = 1;";
+  var marginTo = "const COMPACT_MARGIN_MODULES = 4;";
+  var yLoopFrom = "for (let y = -1; y < modules.size + COMPACT_MARGIN_MODULES; y += 2)";
+  var yLoopTo =
+    "for (let y = -COMPACT_MARGIN_MODULES; y < modules.size + COMPACT_MARGIN_MODULES; y += 2)";
+  var xLoopFrom = "for (let x = -1; x < modules.size + COMPACT_MARGIN_MODULES; x += 1)";
+  var xLoopTo =
+    "for (let x = -COMPACT_MARGIN_MODULES; x < modules.size + COMPACT_MARGIN_MODULES; x += 1)";
 
-  if (nextSource.indexOf("nemoclaw: qr scan fallback") !== -1) return nextSource;
+  var alreadyPatched =
+    source.indexOf(marginTo) !== -1 &&
+    source.indexOf(yLoopTo) !== -1 &&
+    source.indexOf(xLoopTo) !== -1;
+  if (alreadyPatched) return source;
 
-  var target =
-    "if (opts.small === true) return renderCompactTerminalQr(qrCode.create(text).modules);";
-  if (nextSource.indexOf(target) === -1) return nextSource;
+  var hasExactPreimage =
+    source.indexOf(marginFrom) !== -1 &&
+    source.indexOf(yLoopFrom) !== -1 &&
+    source.indexOf(xLoopFrom) !== -1;
+  if (!hasExactPreimage) return source;
 
-  var replacement =
-    "if (opts.small === true) { const compactQr = renderCompactTerminalQr(qrCode.create(text).modules); " +
-    "try { const scanFallbackDataUrl = await qrCode.toDataURL(text); /* nemoclaw: qr scan fallback */ " +
-    "return `${compactQr}\\nIf this QR will not scan, open this image in a browser: ${scanFallbackDataUrl}`; } " +
-    "catch { return compactQr; } }";
-  return nextSource.replace(target, replacement);
+  return source
+    .replace(marginFrom, marginTo)
+    .replace(yLoopFrom, yLoopTo)
+    .replace(xLoopFrom, xLoopTo);
 }
 
 function createOpenClawQrTerminalLoaderSource() {
   return `
+import { createHash } from "node:crypto";
+
+const REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256 = ${JSON.stringify(
+    REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
+  )};
 const isOpenClawQrTerminalRendererSource = ${isOpenClawQrTerminalRendererSource.toString()};
+const isReviewedOpenClawQrTerminalRendererIntegrity = ${isReviewedOpenClawQrTerminalRendererIntegrity.toString()};
 const patchOpenClawQrTerminalRendererSource = ${patchOpenClawQrTerminalRendererSource.toString()};
 
 function decodeSource(source) {
@@ -102,12 +131,17 @@ function decodeSource(source) {
   return "";
 }
 
+function sha256Hex(source) {
+  return createHash("sha256").update(source).digest("hex");
+}
+
 export async function load(url, context, nextLoad) {
   const result = await nextLoad(url, context);
   if (!result || result.format !== "module") return result;
   const source = decodeSource(result.source);
   if (!isOpenClawQrTerminalRendererSource(source)) return result;
-  const patched = patchOpenClawQrTerminalRendererSource(source);
+  const integrity = sha256Hex(source);
+  const patched = patchOpenClawQrTerminalRendererSource(source, integrity);
   if (patched === source) return result;
   return { ...result, source: patched };
 }
@@ -212,8 +246,11 @@ export {
   hasOwn,
   isQrcodePackage,
   isQrcodeTerminalPackage,
+  isReviewedOpenClawQrTerminalRendererIntegrity,
   isOpenClawQrTerminalRendererSource,
   patchOpenClawQrTerminalRendererSource,
+  REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
+  createOpenClawQrTerminalLoaderSource,
   patchQrcode,
   patchQrcodeTerminal,
   resolvePatchedModule,
