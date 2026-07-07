@@ -30,6 +30,7 @@ export type GatewayRouteConflictReason =
   | "provider-model"
   | "custom-endpoint"
   | "custom-api"
+  | "incomplete-route"
   | "incomplete-custom-route"
   | "invalid-gateway-binding";
 
@@ -114,9 +115,9 @@ function customRouteConflict(
 
 /**
  * Constrain read-only route discovery from durable same-gateway registry peers.
- * Missing model/API fields are allowed only when the gateway has no configured
- * peer, or when every peer supplies one identical value that discovery must
- * subsequently verify with the exact compatibility guard.
+ * Missing requested model/API fields are allowed only when the gateway has no
+ * configured peer, or when every peer supplies one identical value that
+ * discovery must subsequently verify with the exact compatibility guard.
  */
 export function preflightGatewayRouteDiscovery(
   request: Parameters<CurrentGatewayRouteDiscoveryPreflight>[0] & {
@@ -126,26 +127,32 @@ export function preflightGatewayRouteDiscovery(
   const provider = nonEmptyString(request.route.provider);
   if (!provider) throw new Error("Requested gateway inference route requires a provider");
   const peers: SandboxEntry[] = [];
-  const invalidBindings: GatewayRouteConflict[] = [];
+  const discoveryConflicts: GatewayRouteConflict[] = [];
   for (const sandbox of request.sandboxes) {
     if (sandbox.name === request.sandboxName) continue;
     let recordedGatewayName: string;
     try {
       recordedGatewayName = resolveSandboxGatewayName(sandbox);
     } catch {
-      invalidBindings.push({
+      discoveryConflicts.push({
         sandboxName: sandbox.name,
         reason: "invalid-gateway-binding",
         scope: "registered",
       });
       continue;
     }
-    if (recordedGatewayName === request.gatewayName && configuredRoute(sandbox)) {
-      peers.push(sandbox);
+    if (recordedGatewayName !== request.gatewayName) continue;
+    if (configuredRoute(sandbox)) peers.push(sandbox);
+    else {
+      discoveryConflicts.push({
+        sandboxName: sandbox.name,
+        reason: "incomplete-route",
+        scope: "registered",
+      });
     }
   }
   const requestedModel = nonEmptyString(request.route.model);
-  if (invalidBindings.length > 0) {
+  if (discoveryConflicts.length > 0) {
     return {
       ok: false,
       result: {
@@ -153,7 +160,7 @@ export function preflightGatewayRouteDiscovery(
         gatewayName: request.gatewayName,
         sandboxName: request.sandboxName,
         route: { provider, model: requestedModel ?? "model discovery pending" },
-        conflicts: invalidBindings,
+        conflicts: discoveryConflicts,
       },
     };
   }
@@ -204,7 +211,7 @@ export function preflightGatewayRouteDiscovery(
 }
 
 /**
- * Compare a requested route with every configured registry row on the same
+ * Compare a requested route with every durable registry row on the same
  * OpenShell gateway. Registry rows are intentionally used without a live-state
  * filter because stopped sandboxes still depend on the gateway route when they
  * restart. The requested route must already carry the target agent's effective
@@ -254,7 +261,14 @@ export function checkGatewayRouteCompatibility(
     }
     if (recordedGatewayName !== request.gatewayName) continue;
     const recorded = configuredRoute(sandbox);
-    if (!recorded) continue;
+    if (!recorded) {
+      conflicts.push({
+        sandboxName: sandbox.name,
+        reason: "incomplete-route",
+        scope: "registered",
+      });
+      continue;
+    }
 
     if (recorded.provider !== requested.provider || recorded.model !== requested.model) {
       conflicts.push({
@@ -305,12 +319,18 @@ export function formatGatewayRouteConflict(
   const hasIncompleteCustomRoute = result.conflicts.some(
     (conflict) => conflict.reason === "incomplete-custom-route",
   );
+  const hasIncompleteRoute = result.conflicts.some(
+    (conflict) => conflict.reason === "incomplete-route",
+  );
   const hasInvalidGatewayBinding = result.conflicts.some(
     (conflict) => conflict.reason === "invalid-gateway-binding",
   );
   const detail = [
     hasIncompleteCustomRoute
       ? "At least one custom route lacks durable endpoint or API-family metadata, so compatibility cannot be proven; remove and re-onboard that sandbox with complete custom-route metadata."
+      : null,
+    hasIncompleteRoute
+      ? "At least one registered sandbox lacks durable provider or model metadata, so same-gateway compatibility cannot be proven; remove and re-onboard that sandbox with complete route metadata."
       : null,
     hasInvalidGatewayBinding
       ? "At least one registry row has an invalid gateway binding, so gateway separation cannot be proven; restore its known-good gateway binding or remove and re-onboard that sandbox."

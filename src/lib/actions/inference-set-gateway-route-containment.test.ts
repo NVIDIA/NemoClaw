@@ -455,13 +455,10 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("serializes same-gateway mutations and rechecks peers before the second write", async () => {
+  it("serializes same-gateway mutations and rejects a conflicting write", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-lock-"));
     try {
-      const entries = [
-        entry("route-lock-alpha", { provider: null, model: null }),
-        entry("route-lock-beta", { provider: null, model: null }),
-      ];
+      const entries = [entry("route-lock-alpha"), entry("route-lock-beta")];
       const deps = createDeps({
         config: { agents: { defaults: { model: {} } } },
         entries,
@@ -498,7 +495,10 @@ describe("runtime shared gateway route containment", () => {
           ([args]) => args[0] === "inference" && args[1] === "set",
         ),
       ).toHaveLength(1);
-      expect(entries.filter((candidate) => candidate.provider && candidate.model)).toHaveLength(1);
+      expect(entries).toEqual([
+        expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+        expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+      ]);
       expect(deps.calls.withGatewayRouteMutationLock).toHaveBeenCalledTimes(2);
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true });

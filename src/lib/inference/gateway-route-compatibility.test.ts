@@ -117,12 +117,22 @@ describe("shared gateway inference route compatibility", () => {
         conflicts: [{ sandboxName: "unknown-gateway", reason: "invalid-gateway-binding" }],
       },
     });
+    expect(
+      discover(discoveryRoute("nvidia-prod"), [
+        sandbox("recovered-live", { provider: null, model: null }),
+      ]),
+    ).toMatchObject({
+      ok: false,
+      result: {
+        conflicts: [{ sandboxName: "recovered-live", reason: "incomplete-route" }],
+      },
+    });
   });
 
   it("allows identical routes and ignores the target sandbox itself (#6315)", () => {
     expect(
       check(route("nvidia-prod", "nvidia/model-a"), [
-        sandbox("target", { provider: "anthropic-prod", model: "claude-old" }),
+        sandbox("target", { provider: null, model: null }),
         sandbox("stopped-peer"),
       ]),
     ).toEqual({ ok: true });
@@ -146,6 +156,8 @@ describe("shared gateway inference route compatibility", () => {
         sandbox("other-gateway", {
           gatewayName: "nemoclaw-9090",
           gatewayPort: 9090,
+          provider: null,
+          model: null,
         }),
       ]),
     ).toEqual({ ok: true });
@@ -319,13 +331,28 @@ describe("shared gateway inference route compatibility", () => {
     );
   });
 
-  it("skips registry rows without a complete provider and model (#6315)", () => {
-    expect(
-      check(route("nvidia-prod", "nvidia/model-a"), [
-        sandbox("empty", { provider: null, model: null }),
-        sandbox("provider-only", { model: null }),
-      ]),
-    ).toEqual({ ok: true });
+  it.each([
+    ["provider and model", null, null],
+    ["model", "nvidia-prod", null],
+    ["provider", null, "nvidia/model-a"],
+  ] as const)("fails closed when a same-gateway registry row lacks %s metadata (#6315)", (_missing, provider, model) => {
+    const result = check(route("nvidia-prod", "nvidia/model-a"), [
+      sandbox("recovered-live", { provider, model }),
+    ]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      conflicts: [
+        {
+          sandboxName: "recovered-live",
+          reason: "incomplete-route",
+          scope: "registered",
+        },
+      ],
+    });
+    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
+      "lacks durable provider or model metadata",
+    );
   });
 
   it("fails closed when a registry row has an invalid gateway binding (#6315)", () => {

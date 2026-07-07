@@ -33,6 +33,7 @@ All registered sandboxes on the same gateway must use the same provider and mode
 Custom compatible routes must also use the same endpoint and API family.
 An OpenClaw native-Anthropic route and a Hermes OpenAI-frontend route therefore cannot share a gateway, even when their custom endpoint and model are otherwise identical.
 NemoClaw checks stopped sandboxes because they depend on that route when restarted.
+If a registered same-gateway sandbox lacks durable provider or model metadata, NemoClaw fails closed until you remove and re-onboard that sandbox with complete route metadata.
 When a route conflicts, onboarding, runtime switching, and connect-time repair exit non-zero before changing the gateway and name the affected sandboxes.
 Align the routes, remove the conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
 </Warning>

@@ -3,6 +3,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { runInferenceSet } from "./actions/inference-set.js";
+import { createDeps } from "./actions/inference-set.test-support.js";
 import type { SandboxEntry } from "./state/registry.js";
 
 interface MockRegistryState {
@@ -260,5 +262,45 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     expect(mockRegistryState.sandboxes.alpha).toBeDefined();
     expect(mockRegistryState.sandboxes.beta).toBeUndefined();
     expect(mockRegistryState.defaultSandbox).toBeNull();
+  });
+
+  it("blocks route mutation after seeded recovery persists a live row without route metadata (#6315)", async () => {
+    mockRegistryState.sandboxes.gamma = gammaEntry([]);
+    mockRegistryState.defaultSandbox = "gamma";
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([
+      { name: "recovered-live", phase: "Ready" },
+    ]);
+
+    await recoverRegistryEntries({ requestedSandboxName: "missing-sandbox" });
+    expect(mockRegistryState.sandboxes["recovered-live"]).toMatchObject({
+      gatewayName: "nemoclaw",
+      provider: null,
+      model: null,
+    });
+
+    const deps = createDeps({
+      config: {},
+      entries: Object.values(mockRegistryState.sandboxes),
+      defaultSandbox: "gamma",
+    });
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "gamma" },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/recovered-live.*lacks durable provider or model metadata/s),
+      exitCode: 2,
+    });
+
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 });
