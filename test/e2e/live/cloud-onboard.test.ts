@@ -94,6 +94,11 @@ if ! (
   cat /tmp/nemoclaw-6113-device-remove.err >&2
   exit 20
 fi
+rm -f /sandbox/.openclaw/identity/device-auth.json
+if [ -e /sandbox/.openclaw/identity/device-auth.json ]; then
+  echo "LOCAL_DEVICE_AUTH_RESET_FAILED" >&2
+  exit 21
+fi
 
 devices_json=/tmp/nemoclaw-6113-devices.json
 devices_err=/tmp/nemoclaw-6113-devices.err
@@ -110,7 +115,7 @@ while :; do
   if [ "$attempt" -ge 30 ]; then
     echo "INITIAL_CLI_PAIRING_MARKER_MISSING" >&2
     cat "$auto_pair_log" >&2 2>/dev/null || true
-    exit 21
+    exit 22
   fi
   attempt=$((attempt + 1))
   sleep 1
@@ -124,7 +129,7 @@ while ! (
   if [ "$attempt" -ge 10 ]; then
     echo "POST_BOOTSTRAP_DEVICES_LIST_FAILED" >&2
     cat "$devices_err" >&2
-    exit 22
+    exit 23
   fi
   attempt=$((attempt + 1))
   sleep 1
@@ -178,22 +183,22 @@ if ! openclaw agent --agent main --json --thinking off --session-id "$session_id
   >"$agent_log" 2>&1; then
   echo "PACKAGED_GATEWAY_AGENT_FAILED" >&2
   cat "$agent_log" >&2
-  exit 23
+  exit 24
 fi
 if grep -Eiq 'EMBEDDED FALLBACK|gateway connect failed|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' "$agent_log"; then
   echo "PACKAGED_GATEWAY_AGENT_FELL_BACK" >&2
   cat "$agent_log" >&2
-  exit 24
+  exit 25
 fi
 if [ ! -s "$agent_log" ]; then
   echo "PACKAGED_GATEWAY_AGENT_EMPTY" >&2
-  exit 25
+  exit 26
 fi
 after_runs="$(grep -Ec '\[agent\] run [^ ]+ ended with stopReason=' "$gateway_log" 2>/dev/null || true)"
 if [ "$after_runs" -le "$before_runs" ]; then
   echo "PACKAGED_GATEWAY_RUN_NOT_RECORDED before=$before_runs after=$after_runs" >&2
   cat "$agent_log" >&2
-  exit 26
+  exit 27
 fi
 echo "NEMOCLAW_6113_PACKAGED_BOOTSTRAP_OK"
 `),
