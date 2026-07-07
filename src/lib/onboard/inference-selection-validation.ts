@@ -127,12 +127,16 @@ export function createInferenceSelectionValidationHelpers(
     endpointUrl: string,
     credentialEnv: string | null,
     helpUrl: string | null,
-  ): Promise<EndpointValidationResult | null> {
+  ): Promise<{ blocked: EndpointValidationResult } | { pinnedAddresses?: string[] }> {
     // Always run the SSRF preflight. It defaults to the real dns/promises
     // resolver; tests inject deps.resolveEndpointHost. No env-gated bypass — an
     // ambient VITEST flag must never disable SSRF enforcement (cv review, #6293).
     const preflight = await assertEndpointResolvesPublic(endpointUrl, deps.resolveEndpointHost);
-    if (preflight.ok) return null;
+    // On success, carry the validated address set forward so the probe pins its
+    // connection (curl --resolve) to a checked address; a second DNS lookup at
+    // the probe could otherwise rebind to a private/internal address after this
+    // public preflight (TOCTOU — cv review, #6293).
+    if (preflight.ok) return { pinnedAddresses: preflight.addresses };
     const syntheticProbe = {
       ok: false as const,
       message: preflight.reason,
@@ -160,7 +164,7 @@ export function createInferenceSelectionValidationHelpers(
       console.log("  Please choose a provider/model again.");
       console.log("");
     }
-    return { ok: false, retry };
+    return { blocked: { ok: false, retry } };
   }
 
   async function validateOpenAiLikeSelection(
@@ -244,8 +248,14 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
-    const blocked = await preflightCustomEndpointOrFail(label, endpointUrl, credentialEnv, helpUrl);
-    if (blocked) return blocked;
+    const preflight = await preflightCustomEndpointOrFail(
+      label,
+      endpointUrl,
+      credentialEnv,
+      helpUrl,
+    );
+    if ("blocked" in preflight) return preflight.blocked;
+    const { pinnedAddresses } = preflight;
     const apiKey = resolveCredential(credentialEnv);
     const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
     // Reasoning-only compatible endpoints often reject Responses, tool-call, and streaming probes.
@@ -254,6 +264,7 @@ export function createInferenceSelectionValidationHelpers(
       skipResponsesProbe:
         reasoningEnabled || shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
       probeStreaming: !reasoningEnabled,
+      pinnedAddresses,
     });
     if (probe.ok) {
       if (probe.note) {
@@ -292,8 +303,14 @@ export function createInferenceSelectionValidationHelpers(
       intendedApi?: "anthropic-messages" | "openai-completions";
     } = {},
   ): Promise<EndpointValidationResult> {
-    const blocked = await preflightCustomEndpointOrFail(label, endpointUrl, credentialEnv, helpUrl);
-    if (blocked) return blocked;
+    const preflight = await preflightCustomEndpointOrFail(
+      label,
+      endpointUrl,
+      credentialEnv,
+      helpUrl,
+    );
+    if ("blocked" in preflight) return preflight.blocked;
+    const { pinnedAddresses } = preflight;
     const apiKey = resolveCredential(credentialEnv);
     const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
     const intendedApi = options.intendedApi ?? "anthropic-messages";
@@ -307,12 +324,13 @@ export function createInferenceSelectionValidationHelpers(
             getCompatibleAnthropicOpenAiSurfaceBaseUrl(endpointUrl),
             model,
             apiKey,
-            { skipResponsesProbe: true },
+            { skipResponsesProbe: true, pinnedAddresses },
           )
         : runAnthropicProbe(endpointUrl, model, apiKey, {
             // Reasoning-only compatible endpoints often reject streaming probes,
             // so mirror the custom OpenAI-compatible path and skip streaming.
             probeStreaming: !reasoningEnabled,
+            pinnedAddresses,
           });
     if (probe.ok) {
       if (probe.note) {

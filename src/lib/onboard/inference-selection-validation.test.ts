@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
@@ -80,6 +83,7 @@ describe("inference selection validation", () => {
           requireResponsesToolCalling: false,
           skipResponsesProbe: true,
           probeStreaming: false,
+          pinnedAddresses: ["93.184.216.34"],
         },
       );
     } finally {
@@ -199,7 +203,7 @@ describe("inference selection validation", () => {
         "https://compatible.example",
         "nvidia/nemotron-3-super-v3",
         "test-key",
-        { probeStreaming: true },
+        { probeStreaming: true, pinnedAddresses: ["93.184.216.34"] },
       );
     } finally {
       log.mockRestore();
@@ -250,7 +254,7 @@ describe("inference selection validation", () => {
         "https://compatible.example/v1",
         "nvidia/nemotron-3-super-v3",
         "test-key",
-        { skipResponsesProbe: true },
+        { skipResponsesProbe: true, pinnedAddresses: ["93.184.216.34"] },
       );
       expect(probeAnthropicEndpoint).not.toHaveBeenCalled();
     } finally {
@@ -286,11 +290,94 @@ describe("inference selection validation", () => {
         "https://compatible.example",
         "reasoning-model",
         "test-key",
-        { probeStreaming: false },
+        { probeStreaming: false, pinnedAddresses: ["93.184.216.34"] },
       );
     } finally {
       log.mockRestore();
       vi.unstubAllEnvs();
+    }
+  });
+
+  it("pins the probe connection to the preflight-validated address against DNS rebinding (#6293)", async () => {
+    // Orchestration proof: the SSRF preflight validates the endpoint host to a
+    // PUBLIC address, then the probe must connect to exactly that address via
+    // curl --resolve. The injected resolver would hand back a PRIVATE address on
+    // a second lookup (a rebind), so if the probe re-resolved the name instead of
+    // pinning, it would reach 10.0.0.5. Asserting the real probe's curl argv
+    // carries --resolve <host>:<port>:93.184.216.34 proves the connection is
+    // pinned to the validated public IP and cannot be rebound.
+    vi.stubEnv("NEMOCLAW_REASONING", "yes");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pin-orchestration-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const argsPath = path.join(tmpDir, "args.txt");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$@" > "${argsPath}"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    let resolveCall = 0;
+    const resolveEndpointHost = vi.fn(async () => {
+      resolveCall += 1;
+      // First lookup (the preflight) returns a public address; a hypothetical
+      // second lookup would rebind to a private address.
+      return resolveCall === 1
+        ? [{ address: "93.184.216.34", family: 4 }]
+        : [{ address: "10.0.0.5", family: 4 }];
+    });
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      // Use the real probeOpenAiLikeEndpoint (no injection) so the full
+      // preflight → pinnedAddresses → curl --resolve chain is exercised.
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost,
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomOpenAiLikeSelection(
+          "Custom endpoint",
+          "https://public-name.example/v1",
+          "model-a",
+          "COMPATIBLE_API_KEY",
+        ),
+      ).resolves.toEqual({ ok: true, api: "openai-completions" });
+
+      const recordedArgs = fs.readFileSync(argsPath, "utf8").split("\n");
+      const resolveIdx = recordedArgs.indexOf("--resolve");
+      expect(resolveIdx).toBeGreaterThanOrEqual(0);
+      expect(recordedArgs[resolveIdx + 1]).toBe("public-name.example:443:93.184.216.34");
+      // The rebound private address must never appear in the pin.
+      expect(recordedArgs.join("\n")).not.toContain("10.0.0.5");
+    } finally {
+      process.env.PATH = originalPath;
+      log.mockRestore();
+      vi.unstubAllEnvs();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 

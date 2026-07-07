@@ -60,7 +60,17 @@ const CURL_SAFE_FLAG_OPTIONS = new Set([
 // genuinely need to follow redirects from a fixed, hardcoded host (e.g. the
 // Ollama manifest probe) must opt in via CurlProbeArgOptions.allowRedirects.
 const CURL_REDIRECT_FLAG_OPTIONS = new Set(["-L", "-sfL", "--location"]);
-const CURL_SAFE_VALUE_OPTIONS = new Set(["--connect-timeout", "--max-time", "-X", "--request"]);
+// `--resolve <host:port:addr>` pins the connection to an address the SSRF
+// preflight already validated as public, closing the DNS-rebinding/TOCTOU
+// window before a privileged onboarding probe curl (#6293). It carries no
+// secret and reads no file, so it is a safe value-bearing option.
+const CURL_SAFE_VALUE_OPTIONS = new Set([
+  "--connect-timeout",
+  "--max-time",
+  "-X",
+  "--request",
+  "--resolve",
+]);
 const CURL_FORBIDDEN_MULTI_TRANSFER_OPTIONS = new Set(["--next"]);
 const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-H", "-X"]);
 

@@ -39,7 +39,7 @@ describe("compatible-endpoint context window", () => {
     const { env, messages } = await apply({ fetchModels });
 
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
-    expect(fetchModels).toHaveBeenCalledWith("https://endpoint.example/v1", "");
+    expect(fetchModels).toHaveBeenCalledWith("https://endpoint.example/v1", "", ["93.184.216.34"]);
     expect(messages.some((m) => m.includes("65536"))).toBe(true);
   });
 
@@ -51,7 +51,9 @@ describe("compatible-endpoint context window", () => {
       resolveCredential: (name) => (name === "COMPATIBLE_API_KEY" ? "secret-key" : null),
     });
 
-    expect(fetchModels).toHaveBeenCalledWith("https://endpoint.example/v1", "secret-key");
+    expect(fetchModels).toHaveBeenCalledWith("https://endpoint.example/v1", "secret-key", [
+      "93.184.216.34",
+    ]);
   });
 
   it("picks the exact model entry from a multi-model gateway response (#6177)", async () => {

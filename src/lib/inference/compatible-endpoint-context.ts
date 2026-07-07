@@ -5,7 +5,11 @@ import { createOpenAiLikeAuthConfig } from "../adapters/http/auth-config";
 import { runCurlProbe } from "../adapters/http/probe";
 import { getCredential } from "../credentials/store";
 import { isLoopbackHostname, isPrivateHostname } from "../private-networks";
-import { assertEndpointResolvesPublic, type EndpointDnsLookupFn } from "./endpoint-ssrf-preflight";
+import {
+  assertEndpointResolvesPublic,
+  buildResolvePinArgs,
+  type EndpointDnsLookupFn,
+} from "./endpoint-ssrf-preflight";
 import {
   hasExplicitContextWindow,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
@@ -59,6 +63,12 @@ function isPrivateEndpoint(endpointUrl: string): boolean {
 export type CompatibleEndpointModelsFetcher = (
   endpointUrl: string,
   apiKey: string,
+  /**
+   * SSRF-preflight-validated address(es) to pin the fetch curl to via
+   * `--resolve` (TOCTOU/DNS-rebinding defense, #6293). Optional so injected test
+   * fakes can ignore it.
+   */
+  pinnedAddresses?: string[],
 ) => unknown | null;
 
 export interface ApplyCompatibleEndpointContextWindowOptions {
@@ -102,13 +112,18 @@ export interface ApplyCompatibleEndpointContextWindowOptions {
  * separately, not via a raw private-LAN URL. This fetcher therefore only ever
  * sees an already-validated, routable endpoint URL.
  */
-export function fetchCompatibleEndpointModels(endpointUrl: string, apiKey: string): unknown | null {
+export function fetchCompatibleEndpointModels(
+  endpointUrl: string,
+  apiKey: string,
+  pinnedAddresses?: string[],
+): unknown | null {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
   const authConfig = createOpenAiLikeAuthConfig(apiKey || "");
   try {
     const result = runCurlProbe(
       [
         "-sS",
+        ...buildResolvePinArgs(`${baseUrl}/models`, pinnedAddresses),
         "--connect-timeout",
         "10",
         "--max-time",
@@ -278,7 +293,14 @@ export async function applyCompatibleEndpointContextWindow(
   const apiKey =
     options.apiKey ?? (options.credentialEnv ? resolveCredential(options.credentialEnv) : "") ?? "";
 
-  const models = (fetchModels ?? fetchCompatibleEndpointModels)(endpointUrl, apiKey);
+  // Pin the /v1/models fetch to the address(es) the preflight just validated so
+  // a second DNS lookup in the fetch curl cannot rebind the host to a private
+  // address after the public preflight passed (TOCTOU — cv review, #6293).
+  const models = (fetchModels ?? fetchCompatibleEndpointModels)(
+    endpointUrl,
+    apiKey,
+    preflight.addresses,
+  );
   if (models === null || models === undefined) {
     logger.warn(
       "  ⚠ Could not read the endpoint's /v1/models max_model_len; using the default context " +

@@ -34,6 +34,7 @@ const {
 } = require("./onboard-host-docker-internal");
 const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
 const { isPrivateHostname, isLoopbackHostname } = require("../private-networks");
+const { buildResolvePinArgs } = require("./endpoint-ssrf-preflight");
 const {
   executeProbeWithHttpRetry,
   isProbeTimeout,
@@ -290,6 +291,7 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
     const result = runCurlProbe(
       [
         "-sS",
+        ...buildResolvePinArgs(`${baseUrl}/responses`, options.pinnedAddresses),
         ...getValidationProbeCurlArgs(),
         "-H",
         "Content-Type: application/json",
@@ -349,6 +351,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     const timingArgs = options.timingArgs ?? getChatCompletionsProbeTimingArgs(model);
     const args = [
       "-sS",
+      ...buildResolvePinArgs(`${baseUrl}/chat/completions`, options.pinnedAddresses),
       ...timingArgs,
       "-H",
       "Content-Type: application/json",
@@ -524,13 +527,15 @@ export function getChatCompletionsProbeCurlArgs(opts: {
   model: string;
   url: string;
   isWsl?: boolean;
+  pinnedAddresses?: readonly string[];
 }) {
-  const { credentialArgs, authHeader, model, url, isWsl: isWslOverride } = opts;
+  const { credentialArgs, authHeader, model, url, isWsl: isWslOverride, pinnedAddresses } = opts;
   const platformOptions = typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
   const timingArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
   const credSlice = credentialArgs ?? authHeader ?? [];
   return [
     "-sS",
+    ...buildResolvePinArgs(url, pinnedAddresses),
     ...timingArgs,
     "-H",
     "Content-Type: application/json",
@@ -547,12 +552,14 @@ function runChatCompletionsProbe({
   url,
   isWsl: isWslOverride,
   trustedConfigFiles,
+  pinnedAddresses,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
     credentialArgs,
     model,
     url,
     isWsl: isWslOverride,
+    pinnedAddresses,
   });
   const probeOpts = { timeoutMs: getProbeProcessTimeoutMs(args) };
   if (trustedConfigFiles && trustedConfigFiles.length > 0) {
@@ -581,6 +588,7 @@ function runDoubledTimeoutChatCompletionsRetry({
   const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
   const buildRetryArgs = () => [
     "-sS",
+    ...buildResolvePinArgs(`${baseUrl}/chat/completions`, options.pinnedAddresses),
     ...doubledArgs,
     "-H",
     "Content-Type: application/json",
@@ -594,6 +602,7 @@ function runDoubledTimeoutChatCompletionsRetry({
       ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
           authMode: options.authMode,
           timingArgs: doubledArgs,
+          pinnedAddresses: options.pinnedAddresses,
         })
       : (() => {
           const retryArgs = buildRetryArgs();
@@ -686,6 +695,10 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   }
 
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  // Pin every probe curl to the SSRF-preflight-validated address(es) the caller
+  // captured, so a second DNS lookup here cannot rebind the hostname to a
+  // private/internal address after the public preflight (TOCTOU — cv, #6293).
+  const pinnedAddresses = options.pinnedAddresses;
   let authConfig;
   try {
     authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
@@ -695,7 +708,10 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
             name: "Responses API with tool calling",
             api: "openai-responses",
             execute: () =>
-              probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
+              probeResponsesToolCalling(endpointUrl, model, apiKey, {
+                authMode: options.authMode,
+                pinnedAddresses,
+              }),
           }
         : {
             name: "Responses API",
@@ -704,6 +720,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               runCurlProbe(
                 [
                   "-sS",
+                  ...buildResolvePinArgs(`${baseUrl}/responses`, pinnedAddresses),
                   ...getValidationProbeCurlArgs(),
                   "-H",
                   "Content-Type: application/json",
@@ -726,6 +743,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         options.requireChatCompletionsToolCalling === true
           ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
               authMode: options.authMode,
+              pinnedAddresses,
             })
           : runChatCompletionsProbe({
               credentialArgs: authConfig.args,
@@ -733,6 +751,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               url: `${baseUrl}/chat/completions`,
               isWsl: options.isWsl,
               trustedConfigFiles: authConfig.trustedConfigFiles,
+              pinnedAddresses,
             }),
     };
 
@@ -765,6 +784,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           const streamResult = runStreamingEventProbe(
             [
               "-sS",
+              ...buildResolvePinArgs(`${baseUrl}/responses`, pinnedAddresses),
               ...getValidationProbeCurlArgs(),
               "-H",
               "Content-Type: application/json",

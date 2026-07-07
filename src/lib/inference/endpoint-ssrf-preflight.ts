@@ -16,6 +16,15 @@ export interface EndpointSsrfPreflightResult {
   ok: boolean;
   /** Human-readable reason, present only when `ok === false`. */
   reason?: string;
+  /**
+   * Validated public addresses the endpoint host resolved to, for connection
+   * pinning (curl `--resolve`) so a subsequent probe cannot re-resolve the name
+   * to a rebound private/internal address (TOCTOU). Present only when
+   * `ok === true` and pinning applies — resolved public names and public IP
+   * literals. Absent for an explicit-loopback host (already local; no rebind
+   * surface) so callers connect normally.
+   */
+  addresses?: string[];
 }
 
 /**
@@ -61,7 +70,7 @@ export async function assertEndpointResolvesPublic(
   // A public IP literal needs no DNS resolution.
   const bare =
     hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  if (isIP(bare)) return { ok: true };
+  if (isIP(bare)) return { ok: true, addresses: [bare] };
 
   let addresses: Array<{ address: string; family?: number }>;
   try {
@@ -83,5 +92,46 @@ export async function assertEndpointResolvesPublic(
       };
     }
   }
-  return { ok: true };
+  return { ok: true, addresses: addresses.map(({ address }) => address) };
+}
+
+/**
+ * Build curl `--resolve <host>:<port>:<addr>` arguments that pin a probe's
+ * connection to the address(es) `assertEndpointResolvesPublic` already
+ * validated, while leaving the request URL (and therefore its Host header / TLS
+ * SNI) untouched. This closes the DNS-rebinding / TOCTOU window between the SSRF
+ * preflight and the privileged host-side probe curl: without pinning, curl would
+ * re-resolve the hostname and a second lookup could return a rebound
+ * private/internal address after the public preflight passed (cv review, #6293).
+ *
+ * `host` is the URL hostname (IPv6 brackets stripped, as curl `--resolve`
+ * expects a bare address); `port` is the explicit URL port or the scheme default
+ * (443 for https, 80 for http). Returns `[]` when there are no pinned addresses
+ * (explicit-loopback endpoints, or callers that never ran the preflight) so the
+ * probe connects normally, and `[]` on an unparseable URL.
+ */
+export function buildResolvePinArgs(
+  targetUrl: string,
+  pinnedAddresses?: readonly string[] | null,
+): string[] {
+  if (!pinnedAddresses || pinnedAddresses.length === 0) return [];
+  let host: string;
+  let port: string;
+  try {
+    const url = new URL(String(targetUrl));
+    host =
+      url.hostname.startsWith("[") && url.hostname.endsWith("]")
+        ? url.hostname.slice(1, -1)
+        : url.hostname;
+    port = url.port || (url.protocol === "https:" ? "443" : "80");
+  } catch {
+    return [];
+  }
+  if (!host) return [];
+  const args: string[] = [];
+  for (const address of pinnedAddresses) {
+    if (!address) continue;
+    args.push("--resolve", `${host}:${port}:${address}`);
+  }
+  return args;
 }
