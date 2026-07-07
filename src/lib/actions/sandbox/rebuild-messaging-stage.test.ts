@@ -10,6 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as defs from "../../agent/defs";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import type { SandboxEntry } from "../../state/registry";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
 
 const emptyStoredMessagingPlan = {
@@ -25,7 +27,7 @@ const emptyStoredMessagingPlan = {
   buildSteps: [],
   stateUpdates: [],
   healthChecks: [],
-};
+} satisfies SandboxMessagingPlan;
 
 describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () => {
   afterEach(() => {
@@ -33,9 +35,9 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
   });
 
   it("emits the skip message for any agent whose name is not supported by channel manifests", async () => {
-    const loadAgentSpy = vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "future-non-messaging-agent",
-    });
+    const loadAgentSpy = vi
+      .spyOn(defs, "loadAgent")
+      .mockReturnValue({ name: "future-non-messaging-agent" } as never);
     const clearPlanEnvSpy = vi.spyOn(MessagingSetupApplier, "clearPlanEnv");
 
     const messages: string[] = [];
@@ -56,9 +58,7 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
   });
 
   it("stages an explicit empty rebuild plan so token-backed channels are not rediscovered", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "openclaw",
-    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue({ name: "openclaw" } as never);
     const clearPlanEnvSpy = vi.spyOn(MessagingSetupApplier, "clearPlanEnv");
     const writePlanEnvSpy = vi
       .spyOn(MessagingSetupApplier, "writePlanToEnv")
@@ -87,9 +87,7 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
   });
 
   it("stages a plan for a known agent using channel-manifest supported channels", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "openclaw",
-    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue({ name: "openclaw" } as never);
     const clearPlanEnvSpy = vi.spyOn(MessagingSetupApplier, "clearPlanEnv");
     const writePlanEnvSpy = vi.spyOn(MessagingSetupApplier, "writePlanToEnv");
 
@@ -124,7 +122,7 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
           healthChecks: [],
         },
       },
-    };
+    } satisfies SandboxEntry;
 
     const messages: string[] = [];
     const result = await stageMessagingManifestPlanForRebuild(
