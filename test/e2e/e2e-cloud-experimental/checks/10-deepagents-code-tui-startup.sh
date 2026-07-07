@@ -162,6 +162,18 @@ proc append_marker {markers marker} {
   close $fh
 }
 
+proc submit_help {markers} {
+  # Slash autocomplete initially highlights /agents. Type at human cadence so
+  # DCode 0.1.34 filters to the exact /help entry before Enter submits it.
+  foreach char [split "/help" ""] {
+    send -- $char
+    after 150
+  }
+  after 500
+  send -- "\r"
+  append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
+}
+
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
 
@@ -180,8 +192,7 @@ if {$expect_name_prompt eq "1"} {
       after 500
       send -- "\r"
       after 500
-      send -- "/help\r"
-      append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
+      submit_help $markers
     }
     -nocase -re $first_run_pattern {
       append_marker $markers "$expect_out(0,string)"
@@ -205,8 +216,7 @@ if {$expect_name_prompt eq "1"} {
 } else {
   append_marker $markers "NEMOCLAW_TUI_NO_NAME_PROMPT"
   after 1000
-  send -- "/help\r"
-  append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
+  submit_help $markers
 }
 
 set ready_match ""
