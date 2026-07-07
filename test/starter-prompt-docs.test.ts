@@ -24,7 +24,7 @@ const localCredentialFormSource = path.join(
   "local-credential-form.html",
 );
 const localCredentialFormUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/local-credential-form.html";
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/38841524718af118ab31b9aec5967ebe7a9bfe8e/docs/resources/local-credential-form.html";
 const starterPromptPages = [
   "docs/index.mdx",
   "docs/get-started/quickstart.mdx",
@@ -79,6 +79,8 @@ describe("starter prompt docs CTA", () => {
     const formSource = fs.readFileSync(localCredentialFormSource, "utf8");
 
     expect(promptSource).toContain(localCredentialFormUrl);
+    expect(localCredentialFormUrl).toMatch(/\/[0-9a-f]{40}\//);
+    expect(localCredentialFormUrl).not.toContain("/main/");
     expect(promptSource).toContain("Do not generate, rewrite, or redesign credential-form HTML.");
     expect(promptSource).toContain("serve it from a helper bound to \\`127.0.0.1\\`");
     expect(promptSource).toContain("?fields=NVIDIA_INFERENCE_API_KEY:secret");
