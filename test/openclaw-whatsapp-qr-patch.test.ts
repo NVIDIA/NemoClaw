@@ -54,9 +54,9 @@ function makeFixture(opts: { source?: string; omitQrTerminal?: boolean } = {}) {
   fs.mkdirSync(dist, { recursive: true });
   fs.writeFileSync(path.join(dist, "unrelated-runtime.js"), "export const noop = true;\n");
   const qrTerminalPath = path.join(dist, "qr-terminal-fixture.js");
-  if (!opts.omitQrTerminal) {
+  const shouldWriteQrTerminal = !opts.omitQrTerminal;
+  shouldWriteQrTerminal &&
     fs.writeFileSync(qrTerminalPath, opts.source ?? qrTerminalFixtureSource());
-  }
   return { root, dist, qrTerminalPath };
 }
 
