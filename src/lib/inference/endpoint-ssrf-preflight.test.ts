@@ -73,4 +73,19 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     const result = await assertEndpointResolvesPublic("not a url", resolverTo("93.184.216.34"));
     expect(result.ok).toBe(false);
   });
+
+  it.each([
+    "https://inference.local/v1",
+    "http://host.openshell.internal:8000/v1",
+    "http://host.docker.internal:11434/v1",
+    "http://host.containers.internal:11434/v1",
+  ])("exempts the OpenShell-managed alias %s without resolving or pinning (#6293)", async (endpointUrl) => {
+    const lookup = vi.fn<EndpointDnsLookupFn>();
+    const result = await assertEndpointResolvesPublic(endpointUrl, lookup);
+    expect(result.ok).toBe(true);
+    // Managed aliases connect normally through the OpenShell proxy — no
+    // --resolve pinning (no addresses) and no DNS lookup.
+    expect(result.addresses).toBeUndefined();
+    expect(lookup).not.toHaveBeenCalled();
+  });
 });

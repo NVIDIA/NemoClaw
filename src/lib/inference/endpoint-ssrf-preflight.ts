@@ -12,6 +12,35 @@ export type EndpointDnsLookupFn = (
   options: { all: true },
 ) => Promise<Array<{ address: string; family?: number }>>;
 
+/**
+ * NemoClaw's own OpenShell-managed infrastructure hostnames. These resolve to
+ * the host loopback or the OpenShell L7 proxy *by design* (see
+ * `subprocess-env` `withLocalNoProxy` and `verify-deployment` for
+ * `inference.local`), so — unlike an arbitrary user-supplied public name — they
+ * are trusted aliases, not attacker-controlled names subject to DNS rebinding.
+ * They are exempt from the public-resolution requirement (like explicit
+ * loopback) and connect normally without `--resolve` pinning. This mirrors the
+ * MCP URL-target allowlist (`isOpenShellMcpHostAlias`), additionally covering
+ * `inference.local` — the managed sandbox inference route a compatible endpoint
+ * legitimately targets (#6293).
+ */
+const OPENSHELL_MANAGED_HOSTS = new Set([
+  "inference.local",
+  "host.openshell.internal",
+  "host.docker.internal",
+  "host.containers.internal",
+]);
+
+/** True when `hostname` is a NemoClaw OpenShell-managed infrastructure alias. */
+export function isOpenShellManagedHost(hostname: string): boolean {
+  const normalised = (
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname
+  )
+    .replace(/\.$/, "")
+    .toLowerCase();
+  return OPENSHELL_MANAGED_HOSTS.has(normalised);
+}
+
 export interface EndpointSsrfPreflightResult {
   ok: boolean;
   /** Human-readable reason, present only when `ok === false`. */
@@ -61,6 +90,13 @@ export async function assertEndpointResolvesPublic(
 
   // An explicit loopback host is a legitimate local inference server.
   if (isLoopbackHostname(hostname)) return { ok: true };
+
+  // NemoClaw's own OpenShell-managed aliases (inference.local, host.*.internal)
+  // resolve to the managed proxy/loopback by design and are trusted, not
+  // rebinding surfaces. Exempt like loopback — connect normally (no pinning) —
+  // and exempt BEFORE isPrivateHostname, which would otherwise reject their
+  // reserved .local/.internal suffixes (#6293).
+  if (isOpenShellManagedHost(hostname)) return { ok: true };
 
   // A literal private IP or reserved private name is refused without resolving.
   if (isPrivateHostname(hostname)) {
