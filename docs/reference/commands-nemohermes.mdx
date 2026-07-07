@@ -2147,12 +2147,12 @@ These controls affect leveled logger output; they do not suppress command result
 
 | Variable | Accepted values | Effect |
 |----------|-----------------|--------|
-| `NEMOCLAW_LOG_LEVEL` | `error`, `warn`, `info`, or `debug` (case-insensitive; surrounding whitespace is ignored) | Sets the logging threshold. A valid value takes precedence over the other debug environment variables. An invalid, blank, or unset value falls through to the lower-priority selectors. |
+| `NEMOCLAW_LOG_LEVEL` | `error`, `warn`, `info`, or `debug` (case-insensitive; surrounding whitespace is ignored) | Sets the logging threshold. A valid value takes precedence over `NEMOCLAW_DEBUG`. An invalid, blank, or unset value falls through to `NEMOCLAW_DEBUG`. |
 | `NEMOCLAW_DEBUG` | `1`, `true`, `y`, or `yes` (case-insensitive) | Enables `debug` logging when `NEMOCLAW_LOG_LEVEL` does not contain a valid value. |
-| `DEBUG` | Comma- or whitespace-separated namespace selectors with optional `*` wildcards and `-` exclusions | Enables `debug` logging when a selector matches the NemoClaw namespace and neither of the higher-priority variables selects a level. For example, `DEBUG=nemoclaw` and `DEBUG=*` enable NemoClaw logging, while a matching exclusion such as `-nemoclaw` disables it. |
 
-The environment precedence is `NEMOCLAW_LOG_LEVEL`, then `NEMOCLAW_DEBUG`, then `DEBUG`, followed by the default `info` level.
+The environment precedence is `NEMOCLAW_LOG_LEVEL`, then `NEMOCLAW_DEBUG`, followed by the default `info` level.
 The `error` level prints errors only, `warn` also prints warnings, `info` also prints informational messages, and `debug` prints all levels with timestamps.
+Use these NemoClaw-specific variables instead of the generic `DEBUG` variable. `DEBUG` is not a NemoClaw logger control and can enable dependency diagnostics that include raw command arguments.
 
 Commands whose parser owns the base logging options also accept the hidden long-form `--debug` and `--quiet` flags, even though these options do not appear in command help.
 The flags are mutually exclusive.

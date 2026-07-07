@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { redact, redactForLog, redactUrl } from "./redact.js";
+import { redact, redactForLog, redactFull, redactLogSequence, redactUrl } from "./redact.js";
 
 describe("URL redaction", () => {
   it.each([
@@ -115,24 +115,138 @@ describe("redactForLog", () => {
     });
   });
 
-  it("redacts opaque credentials under auth, cookie, and spaced API-key fields", () => {
+  it("uses canonical credential fields for opaque structured values without false positives", () => {
     expect(
       redactForLog({
         auth: "opaque-auth-secret",
-        cookie: "session=opaque-cookie-secret",
+        API_SERVER_KEY: "opaque-server-key",
+        NEMOCLAW_PROVIDER_KEY: "opaque-provider-key",
+        privateKey: "opaque-private-key",
+        sessionKey: "opaque-session-key",
         setCookie: "session=opaque-set-cookie-secret",
         "API Key": "opaque-api-secret",
-        headers: { proxyAuth: "Basic opaque-basic-secret" },
+        headers: {
+          "Proxy-Authorization": "Basic opaque-basic-secret",
+          Cookie: "session=opaque-cookie-secret",
+        },
+        secretValue: "opaque-secret-value",
+        tokenValue: "opaque-token-value",
+        passwordValue: "opaque-password-value",
+        publicKey: "safe public key",
+        PUBLIC_KEY: "safe uppercase public key",
         author: "safe author",
+        oauth: "safe auth method",
       }),
     ).toEqual({
       auth: "<REDACTED>",
-      cookie: "<REDACTED>",
+      API_SERVER_KEY: "<REDACTED>",
+      NEMOCLAW_PROVIDER_KEY: "<REDACTED>",
+      privateKey: "<REDACTED>",
+      sessionKey: "<REDACTED>",
       setCookie: "<REDACTED>",
       "API Key": "<REDACTED>",
-      headers: { proxyAuth: "<REDACTED>" },
+      headers: {
+        "Proxy-Authorization": "<REDACTED>",
+        Cookie: "<REDACTED>",
+      },
+      secretValue: "<REDACTED>",
+      tokenValue: "<REDACTED>",
+      passwordValue: "<REDACTED>",
+      publicKey: "safe public key",
+      PUBLIC_KEY: "safe uppercase public key",
       author: "safe author",
+      oauth: "safe auth method",
     });
+  });
+
+  it("redacts opaque CLI values by sequence and inline flag context", () => {
+    expect(
+      redactForLog({
+        argv: [
+          "--password",
+          "opaque-password",
+          "--api-key",
+          "opaque-api-key",
+          "--private-key=opaque-inline-private-key",
+          "--session-key",
+          "opaque-session-key",
+          "--password",
+          "-opaque-leading-dash",
+          "--api-key",
+          "--opaque-leading-double-dash",
+          "--public-key",
+          "safe-public-key",
+          "--author",
+          "safe-author",
+          "--password",
+          "--verbose",
+          "safe-tail",
+        ],
+      }),
+    ).toEqual({
+      argv: [
+        "--password",
+        "<REDACTED>",
+        "--api-key",
+        "<REDACTED>",
+        "--private-key=<REDACTED>",
+        "--session-key",
+        "<REDACTED>",
+        "--password",
+        "<REDACTED>",
+        "--api-key",
+        "<REDACTED>",
+        "--public-key",
+        "safe-public-key",
+        "--author",
+        "safe-author",
+        "--password",
+        "<REDACTED>",
+        "safe-tail",
+      ],
+    });
+
+    expect(
+      redactLogSequence([
+        "OPENAI_API_KEY",
+        "opaque-env-value",
+        "NEMOCLAW_PROVIDER_KEY",
+        "-opaque-leading-dash-value",
+        "author",
+        "safe-author",
+      ]),
+    ).toEqual([
+      "OPENAI_API_KEY",
+      "<REDACTED>",
+      "NEMOCLAW_PROVIDER_KEY",
+      "<REDACTED>",
+      "author",
+      "safe-author",
+    ]);
+  });
+
+  it("redacts Basic, Digest, proxy-auth, and cookie text without matching safe labels", () => {
+    const text = [
+      "Authorization: Basic opaque-basic-value",
+      "Proxy-Authorization: Digest username=opaque-user, response=opaque-response",
+      "Cookie: session=opaque-cookie-value",
+      "Set-Cookie: session=opaque-set-cookie-value; HttpOnly",
+      'headers={"Authorization":"Basic opaque-json-value"}',
+      "author: safe-author",
+    ].join("\n");
+
+    const result = redactFull(text);
+    for (const secret of [
+      "opaque-basic-value",
+      "opaque-user",
+      "opaque-response",
+      "opaque-cookie-value",
+      "opaque-set-cookie-value",
+      "opaque-json-value",
+    ]) {
+      expect(result).not.toContain(secret);
+    }
+    expect(result).toContain("author: safe-author");
   });
 
   it("redacts known secret patterns inside otherwise safe strings", () => {

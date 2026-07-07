@@ -51,37 +51,20 @@ describe("Logger", () => {
     expect(log.level).toBe("debug");
   });
 
-  it.each([
-    "*",
-    "nemoclaw",
-    "foo,*nemoclaw*",
-    "foo nemoclaw*",
-  ])("enables debug when DEBUG selector %s includes the NemoClaw namespace", async (value) => {
-    vi.stubEnv("DEBUG", value);
-    const { log } = await freshLogger();
-    expect(log.level).toBe("debug");
-  });
-
-  it.each([
-    "notnemoclaw",
-    "foo",
-    "*,-nemoclaw",
-    "*nemoclaw*,-nemoclaw*",
-  ])("does not enable debug when DEBUG selector %s excludes the NemoClaw namespace", async (value) => {
-    vi.stubEnv("DEBUG", value);
+  it("does not treat the framework DEBUG variable as a NemoClaw logging control", async () => {
+    vi.stubEnv("DEBUG", "*");
     const { log } = await freshLogger();
     expect(log.level).toBe("info");
   });
 
-  it("gives a valid NEMOCLAW_LOG_LEVEL precedence over debug selectors", async () => {
+  it("gives a valid NEMOCLAW_LOG_LEVEL precedence over NEMOCLAW_DEBUG", async () => {
     vi.stubEnv("NEMOCLAW_LOG_LEVEL", "error");
     vi.stubEnv("NEMOCLAW_DEBUG", "true");
-    vi.stubEnv("DEBUG", "*");
     const { log } = await freshLogger();
     expect(log.level).toBe("error");
   });
 
-  it("falls through an invalid NEMOCLAW_LOG_LEVEL to debug selectors", async () => {
+  it("falls through an invalid NEMOCLAW_LOG_LEVEL to NEMOCLAW_DEBUG", async () => {
     vi.stubEnv("NEMOCLAW_LOG_LEVEL", "verbose");
     vi.stubEnv("NEMOCLAW_DEBUG", "true");
     const { log } = await freshLogger();
@@ -154,11 +137,37 @@ describe("Logger", () => {
     const { log } = await freshLogger();
     log.setDebug(true);
     log.debug(`token=${secret}`, { authorization: `Bearer ${secret}` });
+    log.debug("Authorization: Basic opaque-basic-header");
+    log.debug("Proxy-Authorization: Digest username=opaque-user, response=opaque-response");
+    log.debug("Cookie: session=opaque-cookie-header");
+    log.debug("Set-Cookie: session=opaque-set-cookie-header; HttpOnly");
+    log.debug("OPENAI_API_KEY", "opaque-split-env-value");
+    log.debug("NEMOCLAW_PROVIDER_KEY", "-opaque-leading-dash-value");
+    log.debug("author", "safe author argument");
     log.debugObject(`context ${secret}`, {
       apiKey: secret,
       auth: "opaque-auth-secret",
-      cookie: "session=opaque-cookie-secret",
+      API_SERVER_KEY: "opaque-server-key",
+      NEMOCLAW_PROVIDER_KEY: "opaque-provider-key",
+      privateKey: "opaque-private-key",
+      sessionKey: "opaque-session-key",
       "API Key": "opaque-api-secret",
+      headers: {
+        "Proxy-Authorization": "Basic opaque-basic-secret",
+        Cookie: "session=opaque-cookie-secret",
+      },
+      publicKey: "safe public key",
+      author: "safe author",
+      argv: [
+        "--password",
+        "opaque-cli-password",
+        "--api-key",
+        "opaque-cli-api-key",
+        "--public-key",
+        "safe CLI public key",
+        "--author",
+        "safe CLI author",
+      ],
       nested: { message: `Bearer ${secret}` },
       url: "https://user:password@example.test/path?access_token=raw-token",
     });
@@ -166,8 +175,27 @@ describe("Logger", () => {
     expect(output()).not.toContain("user:password");
     expect(output()).not.toContain("raw-token");
     expect(output()).not.toContain("opaque-auth-secret");
+    expect(output()).not.toContain("opaque-server-key");
+    expect(output()).not.toContain("opaque-provider-key");
+    expect(output()).not.toContain("opaque-private-key");
+    expect(output()).not.toContain("opaque-session-key");
+    expect(output()).not.toContain("opaque-basic-secret");
+    expect(output()).not.toContain("opaque-basic-header");
+    expect(output()).not.toContain("opaque-user");
+    expect(output()).not.toContain("opaque-response");
     expect(output()).not.toContain("opaque-cookie-secret");
+    expect(output()).not.toContain("opaque-cookie-header");
+    expect(output()).not.toContain("opaque-set-cookie-header");
     expect(output()).not.toContain("opaque-api-secret");
+    expect(output()).not.toContain("opaque-split-env-value");
+    expect(output()).not.toContain("opaque-leading-dash-value");
+    expect(output()).not.toContain("opaque-cli-password");
+    expect(output()).not.toContain("opaque-cli-api-key");
+    expect(output()).toContain("safe public key");
+    expect(output()).toContain("safe author");
+    expect(output()).toContain("safe author argument");
+    expect(output()).toContain("safe CLI public key");
+    expect(output()).toContain("safe CLI author");
     expect(output()).toContain("<REDACTED>");
   });
 

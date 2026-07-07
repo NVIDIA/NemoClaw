@@ -19,6 +19,7 @@ import type { StdioOptions } from "node:child_process";
  */
 
 import { listMessagingCredentialMetadata } from "../messaging/channels";
+import { isCredentialField } from "./credential-filter";
 import { SECRET_BLOCK_PATTERNS, SECRET_PATTERNS, TOKEN_PREFIX_PATTERNS } from "./secret-patterns";
 
 const SENSITIVE_ENV_ASSIGNMENT_KEYS = [
@@ -178,6 +179,18 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
     /((?:"|')?(?:api[_-]?key|token|secret|password|credential)(?:"|')?\s*[:=]\s*(?:"|')?)[^"',}\s]+((?:"|')?)/gi,
     "$1<REDACTED>$2",
   ],
+  [
+    /("(?:authorization|proxy-authorization|cookie|set-cookie)"\s*:\s*")((?:(?:basic|bearer|digest)\s+)?)(?:\\.|[^"\\])*"/gi,
+    '$1$2<REDACTED>"',
+  ],
+  [
+    /('(?:authorization|proxy-authorization|cookie|set-cookie)'\s*:\s*')((?:(?:basic|bearer|digest)\s+)?)(?:\\.|[^'\\])*'/gi,
+    "$1$2<REDACTED>'",
+  ],
+  [
+    /(\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*)((?:(?:basic|bearer|digest)\s+)?)[^\r\n]*/gi,
+    "$1$2<REDACTED>",
+  ],
   ...TOKEN_PREFIX_PATTERNS.map((p): [RegExp, string] => [
     new RegExp(p.source, p.flags),
     "<REDACTED>",
@@ -245,6 +258,7 @@ export function redactUrl(value: unknown): string | null {
 }
 
 function isSensitiveKey(key: string): boolean {
+  if (isCredentialField(key)) return true;
   if (/(?:api[\s_-]?key|token|secret|password|credential|authorization|bearer)/i.test(key)) {
     return true;
   }
@@ -256,13 +270,46 @@ function isSensitiveKey(key: string): boolean {
   return words.includes("auth") || words.includes("cookie");
 }
 
+function credentialFlagKey(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const flag = /^--?([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(value.trim());
+  return flag && isSensitiveKey(flag[1]) ? flag[1] : null;
+}
+
+function credentialContextKey(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const flag = credentialFlagKey(value);
+  if (flag) return flag;
+  const candidate = value.trim().replace(/[:=]$/, "").trim();
+  return candidate && isSensitiveKey(candidate) ? candidate : null;
+}
+
+/** Redact opaque values whose credential context is carried by the previous argument. */
+export function redactLogSequence(values: readonly unknown[]): unknown[] {
+  return values.map((value, index) =>
+    index > 0 && credentialContextKey(values[index - 1]) !== null ? "<REDACTED>" : value,
+  );
+}
+
+function redactInlineCredentialFlag(value: string): string {
+  const match = /^(--?)([A-Za-z0-9][A-Za-z0-9._-]*)=(.*)$/s.exec(value);
+  if (!match || !isSensitiveKey(match[2])) return redactFull(value);
+  return `${match[1]}${match[2]}=<REDACTED>`;
+}
+
 export function redactForLog(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
-  if (typeof value === "string") return redactFull(value);
+  if (typeof value === "string") return redactInlineCredentialFlag(value);
   if (value === null || typeof value !== "object") return value;
   if (seen.has(value)) return "[Circular]";
   seen.add(value);
 
-  if (Array.isArray(value)) return value.map((entry) => redactForLog(entry, seen));
+  if (Array.isArray(value)) {
+    return value.map((entry, index) =>
+      index > 0 && credentialFlagKey(value[index - 1]) !== null
+        ? "<REDACTED>"
+        : redactForLog(entry, seen),
+    );
+  }
 
   const redacted: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redact, redactForLog } from "../security/redact";
+import { redact, redactForLog, redactLogSequence } from "../security/redact";
 
 /**
  * Centralized logger for NemoClaw CLI.
@@ -37,27 +37,11 @@ const LEVEL_RANK: Record<LogLevel, number> = {
 const TRUE_ENV_VALUES = new Set(["1", "true", "y", "yes"]);
 const UNSERIALIZABLE = "[unserializable]";
 
-function wildcardMatches(pattern: string, value: string): boolean {
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
-  return new RegExp(`^${escaped}$`, "i").test(value);
-}
-
-function debugNamespaceEnabled(value: string | undefined): boolean {
-  if (!value) return false;
-  const selectors = value.split(/[\s,]+/).filter(Boolean);
-  const matches = (selector: string): boolean => wildcardMatches(selector, "nemoclaw");
-  if (selectors.some((selector) => selector.startsWith("-") && matches(selector.slice(1)))) {
-    return false;
-  }
-  return selectors.some((selector) => !selector.startsWith("-") && matches(selector));
-}
-
 function resolveLevel(): LogLevel {
   const env = process.env.NEMOCLAW_LOG_LEVEL?.trim().toLowerCase();
   if (env === "error" || env === "warn" || env === "info" || env === "debug") return env;
   const debugEnv = process.env.NEMOCLAW_DEBUG?.trim().toLowerCase();
   if (debugEnv && TRUE_ENV_VALUES.has(debugEnv)) return "debug";
-  if (debugNamespaceEnabled(process.env.DEBUG)) return "debug";
   return "info";
 }
 
@@ -203,7 +187,8 @@ class Logger {
 
   private write(level: LogLevel, message: string, args: unknown[]): void {
     if (!this.shouldLog(level)) return;
-    const parts = [this.prefix(level) + safeText(message), ...args.map(safeText)].join(" ");
+    const [safeMessage, ...safeArgs] = redactLogSequence([message, ...args]).map(safeText);
+    const parts = [this.prefix(level) + safeMessage, ...safeArgs].join(" ");
     this.emit(`${parts}\n`);
   }
 
@@ -226,7 +211,8 @@ class Logger {
   /** Log a redacted structured value without allowing serialization errors to escape. */
   debugObject(label: string, obj: unknown): void {
     if (!this.shouldLog("debug")) return;
-    this.emit(`${this.prefix("debug")}${safeText(label)}: ${safeSerialize(obj)}\n`);
+    const [safeLabel, safeObject] = redactLogSequence([label, obj]);
+    this.emit(`${this.prefix("debug")}${safeText(safeLabel)}: ${safeSerialize(safeObject)}\n`);
   }
 }
 
