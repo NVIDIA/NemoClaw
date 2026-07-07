@@ -329,8 +329,20 @@ describe("runInferenceSet Hermes routing", () => {
     const deps = createDeps({
       config,
       entries: [
-        { name: "alpha", agent: "openclaw" },
-        { name: "hermes-one", agent: "hermes" },
+        {
+          name: "alpha",
+          agent: "openclaw",
+          gatewayName: "nemoclaw-9090",
+          gatewayPort: 9090,
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+        },
+        {
+          name: "hermes-one",
+          agent: "hermes",
+          provider: "hermes-provider",
+          model: "z-ai/glm-5.1",
+        },
       ],
       defaultSandbox: "alpha",
       requestedAgent: "hermes",
