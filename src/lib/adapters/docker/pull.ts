@@ -12,7 +12,7 @@ export function dockerPull(imageRef: string, opts: DockerRunOptions = {}): Docke
   return dockerRun(["pull", imageRef], opts);
 }
 
-export const DEFAULT_DOCKER_PULL_STALL_TIMEOUT_MS = 120 * 1000;
+export const DEFAULT_DOCKER_PULL_STALL_TIMEOUT_MS = 15 * 60 * 1000;
 export const DEFAULT_DOCKER_PULL_MAX_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 const DOCKER_PULL_OUTPUT_TAIL_LINES = 200;
 const DOCKER_PULL_PROGRESS_STATE_LIMIT = 512;

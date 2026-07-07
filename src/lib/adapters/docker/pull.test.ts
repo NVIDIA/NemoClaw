@@ -107,6 +107,26 @@ describe("docker pull progress watchdog", () => {
     });
   });
 
+  it("does not kill a quiet large-image pull after the old 120s idle window", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const pull = dockerPullWithProgressWatchdog("example/image:latest", {
+      suppressOutput: true,
+      spawnImpl: () => child,
+    });
+
+    child.stderr.emit("data", Buffer.from("abc123def: Pull complete\n"));
+    await vi.advanceTimersByTimeAsync(121_000);
+    expect(child.kill).not.toHaveBeenCalled();
+
+    child.emit("close", 0, null);
+    await expect(pull).resolves.toMatchObject({
+      status: 0,
+      timedOut: false,
+      timeoutKind: null,
+    });
+  });
+
   it("kills a pull when output repeats without forward progress", async () => {
     vi.useFakeTimers();
     const child = new FakeChild();
