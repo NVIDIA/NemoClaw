@@ -63,9 +63,9 @@ nemoclaw onboard --agent deepagents
 nemoclaw onboard --agent langchain
 ```
 
-The onboard wizard asks for an inference provider, model, any required credential, sandbox name, optional Tavily web search, and policy tier before it prints the review summary.
+The onboard wizard asks for an inference provider, model, any required credential, sandbox name, and policy tier before it prints the review summary.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
-The default Deep Agents sandbox name is `deepagents`.
+The default Deep Agents sandbox name is `deepagents-code`.
 Use a distinct sandbox name, such as `my-deepagents`, so you can run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
 For provider-specific prompts, refer to [Inference Options](../inference/inference-options).
 
@@ -159,15 +159,16 @@ The managed `.deepagents/.nemoclaw-mcp.json` projection is also excluded because
 Service credentials remain in OpenShell provider state.
 It also does not preserve `hooks.json`; executable Deep Agents Code hooks are disabled in the managed harness.
 If `.deepagents/.state/auth.json` contains upstream credentials, or `.deepagents/.state/chatgpt-auth.json` exists, the managed Deep Agents Code launch paths refuse to start until that credential state is removed.
-Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, and prepares the replacement from the recorded provider, model, reasoning, and web search settings with a pinned base and fingerprinted context.
+Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, and prepares the replacement from the recorded provider, model, policy, and build inputs with a pinned base and fingerprinted context.
 Initial failures stop before backup.
 After backup, NemoClaw rechecks the target, route, and retained build inputs before changing MCP state, then checks again after MCP preparation and before stopping inference or deleting the old sandbox.
 If the final check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
 Rebuild also preserves the standalone Deep Agents Code `tavily` preset and replays recorded custom policies from their exact stored content.
 
-## Optional Web Search
+## Optional Tavily Egress
 
-Deep Agents Code can reach Tavily web search once you register a Tavily credential with the OpenShell gateway on the host.
+Deep Agents Code does not currently have a NemoClaw-managed web-search feature.
+If your project code or a manually configured tool needs Tavily, opt the sandbox Python egress path into Tavily explicitly.
 Register the raw key only with the OpenShell gateway on the host, not inside the sandbox, in `.env`, or in Deep Agents config files.
 The gateway injects it at egress instead.
 The managed Deep Agents Code entry points reject credential-shaped process environment values, disable project `.env` and global `/sandbox/.deepagents/.env` loading, and block upstream `/auth`, `/connect`, startup/onboarding credential prompts, model-selector credential prompts, notification-service key prompts, and ChatGPT OAuth.
@@ -176,7 +177,7 @@ Use NemoClaw-managed credential paths when support is available instead of stori
 NemoClaw does not enable Tavily or LangSmith by default for this harness.
 The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
 
-To enable Tavily for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
+To allow Tavily egress for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
 The policy preset is a per-sandbox managed-Python opt-in, but provider registration is gateway-wide: `tavily-search` attaches to every sandbox that you build or rebuild afterward.
 
 ```bash

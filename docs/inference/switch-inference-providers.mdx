@@ -264,6 +264,8 @@ Run `$$nemoclaw onboard` to register the provider, then retry `$$nemoclaw infere
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 </AgentOnly>
 
+<AgentOnly variant="openclaw,hermes">
+
 ## Tune Model Metadata
 
 The sandbox image bakes model metadata (context window, max output tokens, reasoning mode, and accepted input modalities) into `openclaw.json` at build time.
@@ -295,6 +297,8 @@ export NEMOCLAW_AGENT_HEARTBEAT_EVERY=0m
 $$nemoclaw onboard
 ```
 
+</AgentOnly>
+
 <AgentOnly variant="openclaw">
 
 `NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into `agents.defaults.timeoutSeconds`.
@@ -310,14 +314,6 @@ Rebuild the sandbox with `$$nemoclaw onboard` to apply a new value.
 Increase it for slow local inference, such as CPU-only Ollama or vLLM on modest hardware.
 Direct in-sandbox edits are not the supported or durable way to change NemoClaw-managed defaults.
 Rebuild the sandbox with `$$nemoclaw onboard` to apply a new value.
-
-</AgentOnly>
-<AgentOnly variant="deepagents">
-
-`NEMOCLAW_AGENT_TIMEOUT` controls the request timeout baked into the Deep Agents sandbox image.
-Increase it for slow local inference, such as CPU-only Ollama or vLLM on modest hardware.
-Direct edits to `/sandbox/.deepagents/config.toml` are not the supported or durable way to change NemoClaw-managed defaults.
-Recreate the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox` to apply a new value.
 
 </AgentOnly>
 
@@ -341,12 +337,16 @@ Recreate the sandbox with `$$nemoclaw onboard --fresh --name <sandbox-name> --re
 
 </AgentOnly>
 
+<AgentOnly variant="openclaw,hermes">
+
 These variables are build-time settings.
 If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:
 
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
+
+</AgentOnly>
 
 ## Verify the Active Model
 

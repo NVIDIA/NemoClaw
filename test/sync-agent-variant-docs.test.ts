@@ -90,7 +90,7 @@ The gateway state path is \`~/.local/state/nemoclaw\`.
     );
     expect(rendered).toContain("URL=$(nemo-deepagents my-assistant status --json)");
     expect(rendered).toContain("[policy-add](#nemo-deepagents-name-policy-add)");
-    expect(rendered).toContain("`nemo-deepagents onboard --agent langchain-deepagents-code`");
+    expect(rendered).toContain("`nemoclaw onboard --agent langchain-deepagents-code`");
     expect(rendered).toContain("`ghcr.io/nvidia/nemoclaw/sandbox-base:latest`");
     expect(rendered).toContain("`~/.local/state/nemoclaw`");
     expect(rendered).not.toContain("ghcr.io/nvidia/nemo-deepagents/sandbox-base");

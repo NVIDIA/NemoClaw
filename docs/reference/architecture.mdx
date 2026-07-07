@@ -238,7 +238,13 @@ flowchart LR
 
 ## Sandbox Environment
 
+<AgentOnly variant="openclaw,hermes">
 Normal NemoClaw onboarding builds from the [`ghcr.io/nvidia/nemoclaw/sandbox-base`](https://github.com/NVIDIA/NemoClaw/pkgs/container/nemoclaw%2Fsandbox-base) base image and layers the NemoClaw runtime Dockerfile on top.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Deep Agents onboarding builds from the agent-specific `agents/langchain-deepagents-code/Dockerfile.base` image and layers the managed Deep Agents runtime Dockerfile on top.
+That base installs Node, Python, shell tools, and the hash-locked `deepagents-code` package needed by the terminal harness.
+</AgentOnly>
 <AgentOnly variant="openclaw">
 The direct blueprint runner still carries a pinned OpenShell Community OpenClaw image for legacy `openshell sandbox create --from` compatibility.
 </AgentOnly>
@@ -260,7 +266,9 @@ Inside the sandbox:
 - NemoClaw writes generated Deep Agents configuration into the sandbox, then leaves interactive and headless execution to `dcode`.
 - Deep Agents is a terminal runtime, so there is no long-running dashboard or gateway health surface inside the sandbox.
 </AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 - The image includes common runtime compatibility helpers such as Homebrew and a `python` to `python3` symlink for tools that still invoke `python`.
+</AgentOnly>
 
 ## Inference Routing
 

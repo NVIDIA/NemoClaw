@@ -445,6 +445,10 @@ function transformNemoclawCliInvocations(body: string, variant: AgentVariant): s
 
 const PROTECTED_LITERALS = [
   ["nemoclaw onboard --agent hermes", "__NEMOCLAW_ONBOARD_AGENT_HERMES__"],
+  [
+    "nemoclaw onboard --agent langchain-deepagents-code",
+    "__NEMOCLAW_ONBOARD_AGENT_LANGCHAIN_DEEPAGENTS_CODE__",
+  ],
 ] as const;
 
 function protectNonAliasableLiterals(body: string): string {
