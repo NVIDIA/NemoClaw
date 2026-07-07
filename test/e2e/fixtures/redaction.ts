@@ -66,6 +66,9 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
   /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/g,
   // Tavily
   /tvly-[A-Za-z0-9_-]{10,}/g,
+  // LangSmith (personal access tokens: lsv2_pt_<hash>; service keys: lsv2_sk_<hash>)
+  // Match every underscore-delimited segment so redaction cannot expose a key tail.
+  /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/g,
 ];
 
 export const CONTEXT_PATTERNS: RegExp[] = [
@@ -143,6 +146,8 @@ const FIXTURE_ENV_ALLOWLIST: ReadonlySet<string> = new Set([
   "NEMOCLAW_NON_INTERACTIVE",
   "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
   "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+  "NEMOCLAW_OPENSHELL_CHANNEL",
+  "NEMOCLAW_TRACE_DIR",
 ]);
 
 const FIXTURE_ENV_PREFIXES: readonly string[] = ["E2E_", "NEMOCLAW_LOG_"];

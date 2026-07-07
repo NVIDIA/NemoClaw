@@ -6,11 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
   backupSandboxState: vi.fn(),
-  detectOpenShellStateRpcPreflightIssue: vi.fn().mockReturnValue(null),
-  detectOpenShellStateRpcResultIssue: vi.fn().mockReturnValue(null),
-  printOpenShellStateRpcIssue: vi.fn(),
-  captureSandboxListWithGatewayRecovery: vi.fn(),
-  printSandboxListFailureWithRecoveryContext: vi.fn(),
+  captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
   parseReadySandboxNames: vi.fn(),
   dockerListImagesFormat: vi.fn().mockReturnValue(""),
   dockerRmi: vi.fn(),
@@ -24,14 +20,8 @@ vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
   BackupResult: {},
 }));
-vi.mock("../adapters/openshell/gateway-drift", () => ({
-  detectOpenShellStateRpcPreflightIssue: mocks.detectOpenShellStateRpcPreflightIssue,
-  detectOpenShellStateRpcResultIssue: mocks.detectOpenShellStateRpcResultIssue,
-  printOpenShellStateRpcIssue: mocks.printOpenShellStateRpcIssue,
-}));
 vi.mock("../openshell-sandbox-list", () => ({
-  captureSandboxListWithGatewayRecovery: mocks.captureSandboxListWithGatewayRecovery,
-  printSandboxListFailureWithRecoveryContext: mocks.printSandboxListFailureWithRecoveryContext,
+  captureSandboxListWithGatewayPreflightOrExit: mocks.captureSandboxListWithGatewayPreflightOrExit,
 }));
 vi.mock("../runtime-recovery", () => ({
   parseReadySandboxNames: mocks.parseReadySandboxNames,
@@ -54,15 +44,92 @@ vi.mock("../domain/maintenance/images", () => ({
   parseSandboxImageRows: vi.fn().mockReturnValue([]),
 }));
 
-import { backupAll } from "./maintenance";
+import { backupAll, shouldSkipUnreachableSandboxBackup } from "./maintenance";
 
 describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-good\nsb-bad\n" },
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-good\nsb-bad\n",
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good", "sb-bad"]));
+  });
+
+  it("returns before gateway preflight when no sandboxes are registered", async () => {
+    mocks.listSandboxes.mockReturnValue({ sandboxes: [], defaultSandbox: null });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
+    expect(mocks.backupSandboxState).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("No sandboxes registered");
+    logSpy.mockRestore();
+  });
+
+  it("passes the backup action context to gateway preflight", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledWith({
+      action: "backing up registered sandboxes",
+      command: "nemoclaw backup-all",
+    });
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    logSpy.mockRestore();
+  });
+
+  it("does not back up when gateway preflight exits", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }],
+      defaultSandbox: null,
+    });
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockRejectedValueOnce(
+      new Error("process.exit(1)"),
+    );
+
+    await expect(backupAll()).rejects.toThrow("process.exit(1)");
+
+    expect(mocks.backupSandboxState).not.toHaveBeenCalled();
+  });
+
+  it("backs up only sandboxes reported Ready by OpenShell", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(mocks.backupSandboxState).toHaveBeenCalledOnce();
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("Skipping 'sb-stopped' (not running)");
+    logSpy.mockRestore();
   });
 
   it("continues backup loop when backupSandboxState throws for one sandbox", async () => {
@@ -101,8 +168,9 @@ describe("backupAll", () => {
       defaultSandbox: null,
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-bad\n" },
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
     });
 
     mocks.backupSandboxState.mockImplementation(() => {
@@ -131,8 +199,9 @@ describe("backupAll", () => {
       defaultSandbox: null,
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-bad\n" },
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
     });
 
     mocks.backupSandboxState.mockImplementation(() => {
@@ -153,8 +222,9 @@ describe("backupAll", () => {
       defaultSandbox: null,
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-bad\n" },
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
     });
 
     mocks.backupSandboxState.mockImplementation(() => {
@@ -176,8 +246,9 @@ describe("backupAll", () => {
       defaultSandbox: null,
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-bad\n" },
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
     });
 
     mocks.backupSandboxState.mockImplementation(() => {
@@ -185,5 +256,97 @@ describe("backupAll", () => {
     });
 
     await expect(backupAll()).rejects.toThrow(/binary/);
+  });
+
+  it("skips a running but SSH-unreachable sandbox when NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-bad" }, { name: "sb-good" }],
+      defaultSandbox: null,
+    });
+    mocks.backupSandboxState.mockImplementation((name: string) =>
+      name === "sb-bad"
+        ? {
+            success: false,
+            unreachable: true,
+            backedUpDirs: [],
+            failedDirs: ["memories"],
+            backedUpFiles: [],
+            failedFiles: [],
+          }
+        : {
+            success: true,
+            backedUpDirs: ["dir1"],
+            failedDirs: [],
+            backedUpFiles: [],
+            failedFiles: [],
+            manifest: { backupPath: "/backups/sb-good/timestamp" },
+          },
+    );
+
+    process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await backupAll();
+
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("Skipped 'sb-bad'");
+    expect(output).toContain("1 backed up, 0 failed, 1 skipped");
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+    logSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it("fails with actionable guidance when a running sandbox is unreachable and the skip flag is unset", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-bad" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
+    });
+    mocks.backupSandboxState.mockImplementation(() => ({
+      success: false,
+      unreachable: true,
+      backedUpDirs: [],
+      failedDirs: ["memories"],
+      backedUpFiles: [],
+      failedFiles: [],
+    }));
+
+    delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    const errorOutput = errorSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(errorOutput).toContain("NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1");
+
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+});
+
+describe("shouldSkipUnreachableSandboxBackup", () => {
+  it("is true only for exactly '1'", () => {
+    expect(
+      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "1" }),
+    ).toBe(true);
+    expect(
+      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "0" }),
+    ).toBe(false);
+    expect(
+      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "true" }),
+    ).toBe(false);
+    expect(shouldSkipUnreachableSandboxBackup({})).toBe(false);
   });
 });

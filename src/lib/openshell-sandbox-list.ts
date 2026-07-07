@@ -1,12 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { detectOpenShellStateRpcResultIssue } from "./adapters/openshell/gateway-drift";
 import { stripAnsi } from "./adapters/openshell/client";
+import {
+  detectOpenShellStateRpcPreflightIssue,
+  detectOpenShellStateRpcResultIssue,
+  printOpenShellStateRpcIssue,
+} from "./adapters/openshell/gateway-drift";
 import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 
 type SandboxListResult = ReturnType<typeof captureOpenshell>;
+
+export type SandboxListPreflightContext = {
+  action: string;
+  command: string;
+};
 
 export type SandboxListRecoveryResult = {
   result: SandboxListResult;
@@ -55,6 +64,28 @@ export async function captureSandboxListWithGatewayRecovery(
     recoveryAttempted: true,
     recoverySucceeded: true,
   };
+}
+
+export async function captureSandboxListWithGatewayPreflightOrExit(
+  context: SandboxListPreflightContext,
+): Promise<SandboxListResult> {
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
+  if (preflightIssue) {
+    printOpenShellStateRpcIssue(preflightIssue, context);
+    process.exit(1);
+  }
+
+  const recovery = await captureSandboxListWithGatewayRecovery();
+  const resultIssue = detectOpenShellStateRpcResultIssue(recovery.result);
+  if (resultIssue) {
+    printOpenShellStateRpcIssue(resultIssue, context);
+    process.exit(1);
+  }
+  if (recovery.result.status !== 0) {
+    printSandboxListFailureWithRecoveryContext(recovery);
+    process.exit(recovery.result.status || 1);
+  }
+  return recovery.result;
 }
 
 export function printSandboxListFailureWithRecoveryContext(

@@ -808,6 +808,9 @@ def lock_recovery_baseline(
                 BASELINE_NAME, dir_fd=root_fd, follow_symlinks=False
             )
         except FileNotFoundError:
+            # Expected before the first successful post-override capture. There
+            # is no recovery source to lock yet, and normal startup must remain
+            # quiet; capture mode creates the baseline through a fresh inode.
             before = None
 
         if before is not None:

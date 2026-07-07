@@ -76,30 +76,27 @@ describe("buildRecomputeSandboxConfigHashScript", () => {
 });
 
 describe("selectDirectSandboxContainer", () => {
-  it("returns the exact direct sandbox container when present", () => {
-    const selected = selectDirectSandboxContainer(
-      "demo",
-      "openshell-demo\nopenshell-demo-helper\n",
-      ["demo"],
-    );
+  it("returns the immutable id for an exact direct sandbox container", () => {
+    const selected = selectDirectSandboxContainer("demo", "exact-id\topenshell-demo\n", ["demo"]);
 
-    expect(selected).toBe("openshell-demo");
+    expect(selected).toBe("exact-id");
   });
 
-  it("falls back to the generated direct sandbox container prefix", () => {
-    const selected = selectDirectSandboxContainer(
+  it("returns the immutable id for a generated direct sandbox container", () => {
+    const selected = selectDirectSandboxContainer("demo", "generated-id\topenshell-demo-abc123\n", [
       "demo",
-      "openshell-other\nopenshell-demo-abc123\n",
-      ["demo"],
-    );
+    ]);
 
-    expect(selected).toBe("openshell-demo-abc123");
+    expect(selected).toBe("generated-id");
   });
 
-  it("does not select a prefix-collision container owned by a longer sandbox name", () => {
-    expect(
-      selectDirectSandboxContainer("demo", "openshell-demo-child\n", ["demo", "demo-child"]),
-    ).toBeNull();
+  it("rejects a prefix-collision container owned by a longer sandbox name", () => {
+    expect(() =>
+      selectDirectSandboxContainer("demo", "child-id\topenshell-demo-child\n", [
+        "demo",
+        "demo-child",
+      ]),
+    ).toThrow(/labels and names disagree.*refusing lifecycle execution/);
   });
 });
 
@@ -513,11 +510,20 @@ describe("config set helpers", () => {
       );
     });
 
-    it("preserves HTTPS hostnames after DNS validation", async () => {
+    it("fails closed for DNS-backed HTTPS hostname URLs", async () => {
       const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
-      await expect(rewriteConfigUrlsWithDnsPinning("https://example.com/v1", lookup)).resolves.toBe(
-        "https://example.com/v1",
-      );
+      await expect(
+        rewriteConfigUrlsWithDnsPinning("https://example.com/v1", lookup),
+      ).rejects.toThrow(/DNS-backed HTTPS URLs are not supported/);
+    });
+
+    it("preserves HTTPS IP-literal URLs without DNS lookup", async () => {
+      const lookup = async () => {
+        throw new Error("lookup should not run for IP literals");
+      };
+      await expect(
+        rewriteConfigUrlsWithDnsPinning("https://93.184.216.34/v1", lookup),
+      ).resolves.toBe("https://93.184.216.34/v1");
     });
 
     it("recursively rewrites nested HTTP URLs and leaves non-URLs unchanged", async () => {
@@ -526,7 +532,6 @@ describe("config set helpers", () => {
         rewriteConfigUrlsWithDnsPinning(
           {
             primary: "http://api.example.com/v1",
-            secure: "https://secure.example.com/v1",
             label: "production",
             fallbacks: ["http://backup.example.com/v2"],
           },
@@ -534,7 +539,6 @@ describe("config set helpers", () => {
         ),
       ).resolves.toEqual({
         primary: "http://93.184.216.34/v1",
-        secure: "https://secure.example.com/v1",
         label: "production",
         fallbacks: ["http://93.184.216.34/v2"],
       });

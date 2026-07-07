@@ -10,21 +10,22 @@ import { readYaml, type WorkflowJob } from "./helpers/e2e-workflow-contract";
 const e2eWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(".github/workflows/e2e.yaml");
 
 describe("release gate workflow resource contracts", () => {
-  it("serializes hosted agent proofs after peak hosted lifecycle jobs", () => {
+  it("starts hosted agent proofs in the first wave after matrix generation", () => {
     const fullJob = e2eWorkflow.jobs["full-e2e"];
     const tuiJob = e2eWorkflow.jobs["openclaw-tui-chat-correlation"];
-    const peakDependencies = ["generate-matrix", "token-rotation", "channels-stop-start"];
 
-    expect(fullJob.needs).toEqual(expect.arrayContaining(peakDependencies));
-    expect(fullJob.needs).toHaveLength(peakDependencies.length);
-    expect(fullJob.if).toContain("always()");
+    expect(fullJob.needs).toBe("generate-matrix");
+    expect(fullJob.if).not.toContain("always()");
     expect(fullJob.if).toContain(",full-e2e,");
-    const tuiDependencies = [...peakDependencies, "full-e2e"];
-    expect(tuiJob.needs).toEqual(expect.arrayContaining(tuiDependencies));
-    expect(tuiJob.needs).toHaveLength(tuiDependencies.length);
-    expect(tuiJob.if).toContain("always()");
+    const fullE2ERun = fullJob.steps?.find(
+      (step) => step.name === "Run full-e2e live Vitest test",
+    )?.run;
+    expect(fullE2ERun).toMatch(/npx vitest run --project e2e-live[\s\S]*full-e2e\.test\.ts/u);
+    expect(fullE2ERun).not.toContain("onboard-progress-budget.test.ts");
+    expect(fullE2ERun?.match(/npx vitest run --project e2e-live/gu)).toHaveLength(1);
+    expect(tuiJob.needs).toBe("generate-matrix");
+    expect(tuiJob.if).not.toContain("always()");
     expect(tuiJob.if).toContain(",openclaw-tui-chat-correlation,");
-    for (const dependency of tuiDependencies) expect(e2eWorkflow.jobs).toHaveProperty(dependency);
   });
 
   it("budgets cold Ollama pulls in the consolidated GPU lane", () => {

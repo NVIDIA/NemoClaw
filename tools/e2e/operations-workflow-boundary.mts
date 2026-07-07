@@ -232,8 +232,16 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   if (checkout.with?.["persist-credentials"] !== false) {
     errors.push("scorecard checkout must disable persisted credentials");
   }
-  if (checkout.with?.["sparse-checkout"] !== "scripts/scorecard") {
-    errors.push("scorecard checkout must be limited to scripts/scorecard");
+  const sparseCheckout = String(checkout.with?.["sparse-checkout"] ?? "")
+    .split(/\r?\n/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (
+    sparseCheckout.length !== 2 ||
+    !sparseCheckout.includes("ci/onboard-performance-budget.json") ||
+    !sparseCheckout.includes("scripts/scorecard")
+  ) {
+    errors.push("scorecard checkout must be limited to scorecard builders and budget config");
   }
 
   const generate = findStep(job, "Generate E2E scorecard");
@@ -242,6 +250,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   for (const fragment of [
     "scripts/scorecard/analyze-trace-timing.ts",
     "traceTiming.buildTraceTimingResult",
+    "buildTraceTimingResult({ github, context, core })",
+    "budgetWarningMessage",
+    "core.warning(budgetWarningMessage)",
     "scripts/scorecard/summarize-jobs.ts",
     "scorecardJobs.isSelectiveDispatch",
     "scorecardJobs.loadWorkflowRunJobs",
@@ -320,12 +331,23 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
   const script = sanitize.run ?? "";
   for (const fragment of [
+    'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"',
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
     "scripts/e2e/sanitize-trace-timing.py",
     '"${NEMOCLAW_TRACE_DIR}"',
     '"${E2E_ARTIFACT_DIR}"',
   ]) {
     if (!script.includes(fragment))
       errors.push(`cloud-onboard trace sanitizer must retain ${fragment}`);
+  }
+  const sourceGuardIndex = script.indexOf('[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]');
+  const sanitizeCommandIndex = script.indexOf("python3 scripts/e2e/sanitize-trace-timing.py");
+  if (
+    sourceGuardIndex === -1 ||
+    sanitizeCommandIndex === -1 ||
+    sourceGuardIndex > sanitizeCommandIndex
+  ) {
+    errors.push("cloud-onboard trace sanitizer must verify source path before reading traces");
   }
   const steps = job.steps ?? [];
   const configureIndex = steps.findIndex(

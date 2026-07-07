@@ -13,7 +13,7 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
-import type { WebSearchConfig } from "../inference/web-search";
+import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
@@ -25,6 +25,12 @@ import {
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
+import {
+  assignSafeToolDisclosureUpdate,
+  normalizeSessionToolDisclosure,
+  preserveInvalidSessionToolDisclosure,
+  type ToolDisclosure,
+} from "./onboard-session-tool-disclosure";
 import {
   LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
   RECORD_ONLY_STEP_MUTATION_OPTIONS,
@@ -53,6 +59,8 @@ const STEP_STATES: readonly StepStatus[] = [
   "skipped",
 ];
 const VALID_STEP_STATES: ReadonlySet<string> = new Set(STEP_STATES);
+
+export { hasInvalidSessionToolDisclosure } from "./onboard-session-tool-disclosure";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -105,6 +113,8 @@ export interface Session {
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
+  /** Selected preference, retained even when a model-specific safeguard downgrades it. */
+  toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
@@ -175,6 +185,7 @@ export interface SessionUpdates {
   routerPid?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
+  toolDisclosure?: ToolDisclosure;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
@@ -202,6 +213,7 @@ export interface DebugSessionSummary {
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
+  toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
@@ -279,7 +291,8 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
 }
 
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
-  return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
+  if (!isObject(value) || value.fetchEnabled !== true) return null;
+  return normalizeWebSearchConfig(value as Partial<WebSearchConfig>);
 }
 
 function parseTelegramConfig(value: unknown): TelegramConfig | null {
@@ -454,8 +467,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
-    webSearchConfig:
-      overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
+    webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
+    toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
@@ -474,6 +487,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       createMachineSnapshot("init", startedAt),
     steps,
   };
+  preserveInvalidSessionToolDisclosure(overrides, session);
   return session;
 }
 
@@ -498,6 +512,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
@@ -523,6 +538,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   }
 
   normalized.machine = parseMachineSnapshot(data.machine) ?? inferMachineSnapshot(normalized);
+  preserveInvalidSessionToolDisclosure(data, normalized);
 
   return normalized;
 }
@@ -987,10 +1003,13 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.routerCredentialHash = updates.routerCredentialHash;
   }
   if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
-    safe.webSearchConfig = { fetchEnabled: true };
+    safe.webSearchConfig = normalizeWebSearchConfig(
+      updates.webSearchConfig as Partial<WebSearchConfig>,
+    );
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }
+  assignSafeToolDisclosureUpdate(safe, updates.toolDisclosure);
   if (updates.hermesToolGateways === null) {
     safe.hermesToolGateways = null;
   } else if (Array.isArray(updates.hermesToolGateways)) {
@@ -1284,6 +1303,7 @@ export function summarizeForDebug(
     preferredInferenceApi: session.preferredInferenceApi,
     compatibleEndpointReasoning: session.compatibleEndpointReasoning,
     nimContainer: session.nimContainer,
+    toolDisclosure: session.toolDisclosure,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,

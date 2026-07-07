@@ -4,8 +4,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
-import { inferenceSelectionRegistryFields } from "../inference/selection";
 import type { InferenceSelection } from "../inference/selection";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
+import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import {
   applyAddExtraProvider,
@@ -14,7 +15,13 @@ import {
   normalizeExtraProviders,
   readExtraProviders,
 } from "./extra-providers";
+import {
+  normalizeSandboxMcpState,
+  type SandboxMcpState,
+  serializeSandboxMcpStateForDisk,
+} from "./registry-mcp";
 import type { SandboxMessagingState } from "./registry-messaging";
+import * as reversibleRemoval from "./registry-reversible-removal";
 
 export {
   getSandboxEntryDisplayInference,
@@ -23,6 +30,7 @@ export {
   type SandboxEntryInference,
 } from "./registry-entry-view";
 
+import type { WebSearchProvider } from "../inference/web-search";
 import {
   cloneSandboxMessagingState,
   getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
@@ -30,6 +38,8 @@ import {
   serializeSandboxMessagingStateForDisk,
   setChannelDisabled as setRegistryChannelDisabled,
 } from "./registry-messaging";
+
+export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
 
 export {
   getConfiguredMessagingChannelsFromEntry,
@@ -42,6 +52,8 @@ export {
 export interface CustomPolicyEntry {
   name: string;
   content: string;
+  /** Desired content reserved before a crash-safe generated-policy transition. */
+  pendingContent?: string;
   sourcePath?: string;
   appliedAt?: string;
 }
@@ -85,6 +97,11 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // policy step never finished — so re-onboard knows whether `policies`
   // represents a final selection it can carry forward. See #4621.
   policyPresetsFinalized?: boolean;
+  webSearchEnabled?: boolean;
+  /** Selected disclosure preference; model compatibility safeguards may downgrade runtime behavior. */
+  toolDisclosure?: ToolDisclosure;
+  /** Durable provider identity for enabled managed web search. */
+  webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
@@ -94,8 +111,11 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // (`--from`) sandboxes are intentionally left without a fingerprint so they
   // are never auto-rebuilt onto the default image (#5026).
   nemoclawVersion?: string | null;
+  fromDockerfile?: string | null;
+  hermesAuthMethod?: "oauth" | "api_key" | null;
   imageTag?: string | null;
   messaging?: SandboxMessagingState;
+  mcp?: SandboxMcpState;
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
@@ -113,8 +133,11 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;
   defaultSandbox: string | null;
+  defaultSelectionRevision?: number;
   extraProviders?: string[];
 }
+
+export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
 export const REGISTRY_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "sandboxes.json");
 export const LOCK_DIR = `${REGISTRY_FILE}.lock`;
@@ -122,7 +145,6 @@ export const LOCK_OWNER = path.join(LOCK_DIR, "owner");
 export const LOCK_STALE_MS = 10_000;
 export const LOCK_RETRY_MS = 100;
 export const LOCK_MAX_RETRIES = 120;
-
 /** kill(pid, 0) liveness probe. EPERM means the pid exists but is owned by
  * another user, which still counts as alive. */
 function isProcessAlive(pid: number): boolean {
@@ -334,6 +356,9 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
   const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
+    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
+      data.defaultSelectionRevision,
+    ),
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
         name,
@@ -349,6 +374,9 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
   const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
+    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
+      data.defaultSelectionRevision,
+    ),
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
         name,
@@ -377,11 +405,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
-  if (!messaging) {
-    const { messaging: _messaging, ...rest } = entry;
-    return rest;
-  }
-  return { ...entry, messaging };
+  const mcp = normalizeSandboxMcpState(entry.mcp);
+  const { messaging: _messaging, mcp: _mcp, ...rest } = entry;
+  return {
+    ...rest,
+    ...(messaging ? { messaging } : {}),
+    ...(mcp ? { mcp } : {}),
+  };
 }
 
 /**
@@ -403,11 +433,13 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     livePhase?: string | null;
   };
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
-  if (!messaging) {
-    const { messaging: _messaging, ...rest } = durable;
-    return rest;
-  }
-  return { ...durable, messaging };
+  const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
+  const { messaging: _messaging, mcp: _mcp, ...rest } = durable;
+  return {
+    ...rest,
+    ...(messaging ? { messaging } : {}),
+    ...(mcp ? { mcp } : {}),
+  };
 }
 
 export function getSandbox(name: string): SandboxEntry | null {
@@ -441,6 +473,16 @@ export function registerSandbox(entry: SandboxEntry): void {
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
+      webSearchEnabled:
+        typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
+      // Preserve absence on reconstructed legacy rows. Only a freshly built
+      // sandbox registration may claim the new progressive default.
+      toolDisclosure: normalizeToolDisclosure(entry.toolDisclosure) ?? undefined,
+      webSearchProvider:
+        entry.webSearchEnabled === true &&
+        (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")
+          ? entry.webSearchProvider
+          : null,
       // policyPresetsFinalized is intentionally not set here: registration means
       // the policy step has not completed for this entry. It is stamped only by
       // the post-policy registry write (see policy-preset-persistence), so a
@@ -449,8 +491,14 @@ export function registerSandbox(entry: SandboxEntry): void {
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
       nemoclawVersion: entry.nemoclawVersion || null,
+      fromDockerfile: entry.fromDockerfile || null,
+      hermesAuthMethod:
+        entry.hermesAuthMethod === "oauth" || entry.hermesAuthMethod === "api_key"
+          ? entry.hermesAuthMethod
+          : null,
       imageTag: entry.imageTag || null,
       messaging: cloneSandboxMessagingState(entry.messaging),
+      mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]
@@ -463,10 +511,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
     };
-    if (!data.defaultSandbox) {
-      data.defaultSandbox = entry.name;
-    }
-    save(data);
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name));
   });
 }
 
@@ -483,47 +528,43 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
   });
 }
 
-export function removeSandbox(name: string): boolean {
+/** Atomically capture and remove one registry row for a reversible lifecycle operation. */
+export function removeSandboxWithReceipt(name: string): SandboxRemovalReceipt | null {
   return withLock(() => {
-    const data = load();
-    if (!data.sandboxes[name]) return false;
-    delete data.sandboxes[name];
-    if (data.defaultSandbox === name) {
-      const remaining = Object.keys(data.sandboxes);
-      data.defaultSandbox = remaining.length > 0 ? remaining[0] || null : null;
-    }
-    save(data);
-    return true;
+    const result = reversibleRemoval.removeSandboxFromRegistry(load(), name);
+    if (!result.receipt) return null;
+    save(result.registry);
+    return result.receipt;
   });
 }
 
-/**
- * Restore a previously-removed sandbox entry verbatim under the registry lock,
- * preserving every field exactly (unlike `registerSandbox`, which rebuilds a
- * fresh entry from known fields). Used to roll back a failed stale-sandbox
- * rebuild recovery (#4497): the entry was removed before the recreate, and on
- * failure it must come back intact. Operates on the CURRENT registry (it does
- * not clobber other sandboxes' entries another command added during the rebuild
- * window).
- *
- * `reclaimDefault` undoes the default-pointer move the original `removeSandbox`
- * performed: when this sandbox was the default, `removeSandbox` reassigned
- * `defaultSandbox` to another remaining sandbox (or null), so the rollback puts
- * it back. This is best-effort "undo my operation" — a deliberate default change
- * by a concurrent command during the rebuild window is an inherent race and may
- * be overwritten.
- */
+export function removeSandbox(name: string): boolean {
+  return removeSandboxWithReceipt(name) !== null;
+}
+
+/** Restore a captured row and reclaim its default only while its revision still matches. */
 export function restoreSandboxEntry(
   entry: SandboxEntry,
-  options: { reclaimDefault?: string | null } = {},
+  options: {
+    defaultTransition?: {
+      readonly from: string | null;
+      readonly to: string;
+      readonly expectedRevision: number;
+    };
+  } = {},
 ): void {
   withLock(() => {
-    const data = load();
-    data.sandboxes[entry.name] = entry;
-    if (options.reclaimDefault && data.defaultSandbox !== options.reclaimDefault) {
-      data.defaultSandbox = options.reclaimDefault;
-    }
-    save(data);
+    save(reversibleRemoval.restoreSandboxEntryInRegistry(load(), entry, options.defaultTransition));
+  });
+}
+
+/** Restore a removed entry unless a recreate already registered its replacement. */
+export function restoreSandboxEntryIfMissing(receipt: SandboxRemovalReceipt): boolean {
+  return withLock(() => {
+    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(load(), receipt);
+    if (!result.restored) return false;
+    save(result.registry);
+    return result.restored;
   });
 }
 
@@ -537,18 +578,15 @@ export function listSandboxes(): { sandboxes: SandboxEntry[]; defaultSandbox: st
 
 export function setDefault(name: string): boolean {
   return withLock(() => {
-    const data = load();
-    if (!data.sandboxes[name]) return false;
-    data.defaultSandbox = name;
-    save(data);
+    const registry = reversibleRemoval.setDefaultInRegistry(load(), name);
+    if (!registry) return false;
+    save(registry);
     return true;
   });
 }
 
 export function clearAll(): void {
-  withLock(() => {
-    save({ sandboxes: {}, defaultSandbox: null });
-  });
+  withLock(() => save(reversibleRemoval.clearRegistry(load())));
 }
 
 export function listExtraProviders(): string[] {

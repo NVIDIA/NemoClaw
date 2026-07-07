@@ -11,9 +11,9 @@ export default class SandboxChannelsStatusCommand extends NemoClawCommand {
   static id = "sandbox:channels:status";
   static strict = true;
   static enableJsonFlag = true;
-  static summary = "Inspect a messaging channel's runtime diagnostics";
+  static summary = "Inspect messaging channel status";
   static description =
-    "Report channel-specific runtime diagnostics — for WhatsApp, separately reports QR/session state, Noise WebSocket state, inbound event delivery, and policy coverage so a paired-but-idle channel does not appear healthy.";
+    "Report configured messaging channels, policy coverage, and non-secret rendered config comparisons in the compact summary and non-WhatsApp detail views. Pass --channel whatsapp for the deeper WhatsApp QR/session and inbound-delivery probe.";
   static usage = ["<name> [--channel <channel>] [--json]"];
   static examples = [
     "<%= config.bin %> sandbox channels status alpha --channel whatsapp",
@@ -24,7 +24,7 @@ export default class SandboxChannelsStatusCommand extends NemoClawCommand {
   };
   static flags = {
     channel: Flags.string({
-      description: "Messaging channel to inspect (defaults to whatsapp when registered)",
+      description: "Messaging channel to inspect in detail",
       required: false,
     }),
   };

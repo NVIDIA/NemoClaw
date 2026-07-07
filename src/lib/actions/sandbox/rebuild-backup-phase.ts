@@ -1,0 +1,113 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { type WebSearchConfig, webSearchProviderForConfig } from "../../inference/web-search";
+import type { SandboxMessagingPlan } from "../../messaging";
+import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
+import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-selection";
+import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
+
+export type RebuildBackupManifest = Exclude<
+  ReturnType<typeof backupSandboxStateForRebuild>,
+  undefined
+>;
+
+export interface RebuildBackupPhaseInput {
+  sandboxName: string;
+  sandboxEntry: RebuildSandboxEntry;
+  staleRecovery: boolean;
+  preparedRecoveryManifest: RebuildBackupManifest;
+  messagingPlan: SandboxMessagingPlan | null;
+  webSearchConfig: WebSearchConfig | null;
+  log: RebuildLog;
+  bail: RebuildBail;
+  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
+}
+
+export interface RebuildBackupPhaseResult {
+  backupManifest: RebuildBackupManifest;
+  policyPresets: string[];
+  sessionPolicyPresets: string[] | null;
+}
+
+/** Align built-in web-search egress with the durable provider selection. */
+export function normalizeRebuildWebSearchPolicyPresets(
+  presets: readonly string[],
+  sandboxEntry: RebuildSandboxEntry,
+  webSearchConfig: WebSearchConfig | null,
+): string[] {
+  const customPresetNames = new Set(
+    (sandboxEntry.customPolicies ?? []).map((policy) => policy.name),
+  );
+  const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
+  const preserveStandaloneDcodeTavily =
+    selectedProvider === null && sandboxEntry.agent === "langchain-deepagents-code";
+  const normalized = presets.filter((name) => {
+    // Exact custom content is replayed from backupManifest.customPolicies.
+    // Never substitute a same-name built-in during onboard or restore.
+    if (customPresetNames.has(name)) return false;
+    if (preserveStandaloneDcodeTavily && name === "tavily") return true;
+    return !isStaleBuiltinWebSearchPolicyPreset(name, {
+      webSearchConfig,
+      customPresetNames,
+    });
+  });
+  if (
+    selectedProvider &&
+    !customPresetNames.has(selectedProvider) &&
+    !normalized.includes(selectedProvider)
+  ) {
+    normalized.push(selectedProvider);
+  }
+  return [...new Set(normalized)];
+}
+
+export function runRebuildBackupPhase(
+  input: RebuildBackupPhaseInput,
+): RebuildBackupPhaseResult | null {
+  const backupManifest =
+    input.preparedRecoveryManifest ??
+    backupSandboxStateForRebuild(
+      input.sandboxName,
+      input.sandboxEntry,
+      input.staleRecovery,
+      input.log,
+      input.relockShieldsIfNeeded,
+      input.bail,
+    );
+  if (backupManifest === undefined) return null;
+
+  const registryPolicyPresets = Array.isArray(input.sandboxEntry.policies)
+    ? input.sandboxEntry.policies.filter(
+        (value: unknown): value is string => typeof value === "string",
+      )
+    : [];
+  const disabledChannels = [...(input.messagingPlan?.disabledChannels ?? [])];
+  const enabledChannelIds = (input.messagingPlan?.channels ?? [])
+    .filter((channel) => !channel.disabled)
+    .map((channel) => channel.channelId);
+  const mergedPolicyPresets = mergeRebuildMessagingPolicyPresets(
+    backupManifest?.policyPresets,
+    registryPolicyPresets,
+    enabledChannelIds,
+    disabledChannels,
+  );
+  const policyPresets = normalizeRebuildWebSearchPolicyPresets(
+    mergedPolicyPresets,
+    input.sandboxEntry,
+    input.webSearchConfig,
+  );
+  const sessionPolicyPresets = resolveRecreatePolicyPresets(
+    policyPresets,
+    input.sandboxEntry.policyPresetsFinalized === true,
+    // Rebuild now replays exact custom policy content after recreate, so the
+    // built-in selection can independently preserve an intentional empty set.
+    false,
+    {},
+    true,
+  ).policyPresets;
+
+  return { backupManifest, policyPresets, sessionPolicyPresets };
+}

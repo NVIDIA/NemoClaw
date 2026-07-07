@@ -231,6 +231,11 @@ case "${1:-}" in
 esac
 NEMOCLAW_CMD=("$@")
 
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Force this
+# after self-wrapper normalization so injected or inherited values cannot make
+# OpenClaw processes probe an impossible credential source.
+export AWS_EC2_METADATA_DISABLED=true
+
 # Marker file the Docker HEALTHCHECK reads to decide whether an in-container
 # gateway liveness check is meaningful. Its presence means this container has
 # entered the OpenClaw gateway launch path (standalone deployments and the #3975
@@ -2397,11 +2402,10 @@ def load_approval_policy(path):
     return (
         module.approval_request_decision,
         module.gateway_approval_env,
-        getattr(module, 'recover_failed_scope_approval', None),
     )
 
 
-approval_request_decision, gateway_approval_env, recover_failed_scope_approval = load_approval_policy(APPROVAL_POLICY_FILE)
+approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -2479,22 +2483,22 @@ APPROVED = 0
 SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
-# (the gateway stores connectParams.client.id verbatim). This allowlist
-# is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
-# timeout reduction, and token cleanup for a more comprehensive fix.
+# (the gateway stores connectParams.client.id verbatim). The policy requires
+# an explicit known clientId and never trusts an allowlisted mode by itself.
+# This remains defense-in-depth, not a trust boundary. PR #690 adds one-shot
+# exit, timeout reduction, and token cleanup for a more comprehensive fix.
 # The approval_request_decision helper is shared with connect-time approvals.
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
-# Workaround boundary (NemoClaw#4462): OpenClaw owns the gateway/device
-# approval semantics. In OpenClaw 2026.5.x, a gateway-pinned
-# `openclaw devices approve <scope-upgrade>` can request the upgraded scopes
-# for its own connection and return the same pending-scope error it is trying
-# to resolve. List calls must stay gateway-pinned so we inspect the live
-# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL,
-# OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN to use OpenClaw's local
-# pairing fallback. Remove this when OpenClaw approve can complete scope
-# upgrades through the gateway using only operator.pairing.
+# Workaround boundary (NemoClaw#4462): list calls stay gateway-pinned so the
+# watcher inspects live state. Approval calls drop the gateway env triplet so
+# OpenClaw resolves its local loopback gateway and device token. The reviewed
+# 2026.6.10 dist patch requests only operator.pairing for a complete bounded
+# CLI self-upgrade and forces the existing local-only stored-device-auth path
+# so a shared token reloaded from config cannot win authentication. The gateway
+# then validates and commits in OpenClaw's canonical locked pairing writer.
+# Remove both pieces when upstream supports that flow.
 def run(*args, strip_gateway_env=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
@@ -2608,19 +2612,6 @@ while time.time() < DEADLINE:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
-            elif callable(recover_failed_scope_approval):
-                recovered = recover_failed_scope_approval(
-                    request_id,
-                    os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
-                    aerr or aout or '',
-                    device,
-                )
-                if recovered:
-                    HANDLED.add(request_id)
-                    APPROVED += 1
-                    print(f'[auto-pair] recovered failed approve request={request_id} client={client_id} mode={client_mode}')
-                elif aout or aerr:
-                    print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
         # Drop previously-bumped requestIds that the gateway no longer reports
@@ -2895,6 +2886,7 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+export AWS_EC2_METADATA_DISABLED="true"
 export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
@@ -2979,169 +2971,18 @@ _nemoclaw_messaging_connect_node_options() {
   printf '%s' "$_nemoclaw_options"
 }
 openclaw() {
-  # NemoClaw#4462: keep user-initiated device approval usable from an
-  # interactive sandbox shell until upstream OpenClaw can approve scope
-  # upgrades through the gateway without requesting the upgraded scopes for
-  # the approval command itself. Approval calls temporarily drop the gateway
-  # URL/port/token; other commands keep the full gateway environment.
+  # NemoClaw#4462: approval calls temporarily drop the gateway URL/port/token
+  # so OpenClaw resolves the local loopback gateway and device token. The
+  # reviewed 2026.6.10 compatibility patch then performs bounded same-device
+  # scope upgrades in the gateway's canonical locked pairing writer. This
+  # wrapper never reads or writes pending.json/paired.json.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
-    _nemoclaw_approve_request_id="${3:-}"
-    _nemoclaw_approve_state_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
-    _nemoclaw_approve_before=""
-    if [ -n "$_nemoclaw_approve_request_id" ] && command -v python3 >/dev/null 2>&1; then
-      _nemoclaw_approve_before="$(NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" python3 - <<'PYAPPROVEBEFORE' 2>/dev/null || true
-import json
-import os
-from pathlib import Path
-
-root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
-request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
-try:
-    pending = json.loads((root / "pending.json").read_text(encoding="utf-8"))
-except Exception:
-    pending = {}
-if not isinstance(pending, dict):
-    pending = {}
-request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
-if request:
-    print(json.dumps({
-        "requestId": request_id,
-        "deviceId": request.get("deviceId"),
-        "scopes": request.get("scopes") or request.get("requestedScopes") or [],
-    }, sort_keys=True))
-PYAPPROVEBEFORE
-)"
-    fi
     _nemoclaw_approve_errexit=0
     case $- in *e*) _nemoclaw_approve_errexit=1 ;; esac
     set +e
-    _nemoclaw_approve_output="$(unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" 2>&1)"
+    (unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@")
     _nemoclaw_approve_rc=$?
     if [ "$_nemoclaw_approve_errexit" = "1" ]; then set -e; else set +e; fi
-    if [ "$_nemoclaw_approve_rc" -eq 0 ]; then
-      printf '%s\n' "$_nemoclaw_approve_output"
-      return 0
-    fi
-    if [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
-      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" NEMOCLAW_APPROVE_OUTPUT="$_nemoclaw_approve_output" python3 - <<'PYAPPROVEAFTER'; then
-import json
-import os
-import re
-from pathlib import Path
-
-request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
-root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
-try:
-    before = json.loads(os.environ.get("NEMOCLAW_APPROVE_BEFORE") or "{}")
-except Exception:
-    before = {}
-approve_output = os.environ.get("NEMOCLAW_APPROVE_OUTPUT") or ""
-
-def load(name):
-    try:
-        value = json.loads((root / name).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return value if isinstance(value, dict) else {}
-
-def save(name, value):
-    path = root / name
-    tmp = path.with_name(f".{path.name}.tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
-
-def norm(value):
-    return str(value or "").strip()
-
-def scope_set(entry, key="scopes"):
-    return {norm(scope) for scope in (entry.get(key) or []) if norm(scope)}
-
-def output_mentions_request_id(value):
-    request = norm(value)
-    return bool(request and re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", approve_output))
-
-def is_scope_upgrade_approval_compat_failure(output):
-    text = norm(output).lower()
-    return "scope upgrade pending approval" in text and (
-        "gatewayclientrequesterror" in text or "gateway" in text
-    )
-
-requested = scope_set(before)
-device_id = norm(before.get("deviceId"))
-pending = load("pending.json")
-paired = load("paired.json")
-original_pending_key = None
-for key, item in pending.items():
-    if isinstance(item, dict) and item.get("requestId") == request_id:
-        original_pending_key = key
-        break
-still_pending = original_pending_key is not None
-paired_entry = paired.get(device_id) if device_id else None
-paired_scopes = scope_set(paired_entry or {}, "approvedScopes") | scope_set(paired_entry or {})
-# Compatibility boundary: treat a nonzero approve as success only when OpenClaw
-# already removed the pending request and persisted the requested paired scopes.
-if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(paired_scopes):
-    print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": sorted(requested), "compatibility": "openclaw-approve-applied-after-nonzero"}, sort_keys=True))
-    raise SystemExit(0)
-
-# Compatibility boundary: repair only the local OpenClaw device state after a
-# failed approve leaves behind exactly one same-device admin-shaped replacement
-# request. Some OpenClaw failures only surface opaque gateway text, so the state
-# files are the source of truth; stderr is only used as an exact disambiguator
-# when it carries a replacement request ID. Remove this once OpenClaw stops
-# replacing operator.write approvals with admin-shaped pending requests or
-# exposes a supported approval repair API.
-allowed = {"operator.pairing", "operator.read", "operator.write"}
-if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes:
-    raise SystemExit(1)
-replacement_allowed = allowed | {"operator.admin"}
-candidates = []
-mentioned = []
-for key, item in pending.items():
-    item_scopes = scope_set(item) if isinstance(item, dict) else set()
-    if (isinstance(item, dict) and norm(item.get("requestId")) != request_id and norm(item.get("deviceId")) == device_id and
-            "operator.admin" in item_scopes and requested.issubset(item_scopes) and item_scopes.issubset(replacement_allowed)):
-        candidates.append((key, item))
-        if output_mentions_request_id(item.get("requestId")):
-            mentioned.append((key, item))
-compatibility = "openclaw-approve-recovered-replacement"
-if len(mentioned) == 1:
-    replacement_key, replacement = mentioned[0]
-elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
-    replacement_key, replacement = candidates[0]
-elif still_pending and not candidates and is_scope_upgrade_approval_compat_failure(approve_output):
-    replacement_key = original_pending_key
-    compatibility = "openclaw-approve-recovered-original"
-else:
-    raise SystemExit(1)
-approved = set(paired_scopes) | requested
-if "operator.write" in approved:
-    approved.add("operator.read")
-if {"operator.read", "operator.write"} & approved:
-    approved.add("operator.pairing")
-if not approved.issubset(allowed):
-    raise SystemExit(1)
-approved_list = [scope for scope in ("operator.pairing", "operator.read", "operator.write") if scope in approved]
-paired_entry["scopes"] = approved_list
-paired_entry["approvedScopes"] = approved_list
-token = paired_entry.get("tokens", {}).get("operator")
-if isinstance(token, dict):
-    token["scopes"] = approved_list
-pending.pop(request_id, None)
-pending.pop(replacement_key, None)
-paired[device_id] = paired_entry
-save("pending.json", pending)
-save("paired.json", paired)
-print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": approved_list, "compatibility": compatibility}, sort_keys=True))
-raise SystemExit(0)
-PYAPPROVEAFTER
-        return 0
-      fi
-    fi
-    printf '%s\n' "$_nemoclaw_approve_output"
     return "$_nemoclaw_approve_rc"
   fi
   case "$1" in
@@ -3326,6 +3167,99 @@ PYAPPROVEAFTER
   return "$_nemoclaw_oc_status"
 }
 # nemoclaw-configure-guard end
+# nemoclaw-policy-denial-hint begin
+# #5978: outbound network is denied-by-default and enforced by the OpenShell L7
+# proxy. From inside the sandbox, generic CLIs (curl, git, wget, python, …) see
+# a policy denial only as the opaque protocol error
+# "CONNECT tunnel failed, response 403" — with no pointer to the detailed
+# allow/deny reason, which lives in the NemoClaw logs. Surface a one-line
+# breadcrumb when a human first lands in an interactive connect shell so a later
+# 403 is recognisable and actionable.
+#
+# This deliberately does NOT wrap or alter curl/git/wget: wrapping them to scan
+# stderr turns their stderr into a pipe, which makes the tools treat it as a
+# non-TTY and silently drop progress meters and colour — a worse regression than
+# the missing breadcrumb. The hint is therefore tool-agnostic informational
+# output that leaves every tool's stdout/stderr/TTY behaviour and exit code
+# byte-for-byte unchanged, and covers every connect path that sources this file.
+# Shown once per top-level interactive TTY session; suppress with
+# NEMOCLAW_NO_POLICY_HINT=1.
+#
+# Source-of-truth: the 403 itself is emitted by the OpenShell L7 egress proxy,
+# which lives in a separate codebase/release cycle, so the denial response
+# cannot be made self-describing from this repo. This proactive breadcrumb is
+# the NemoClaw-owned surface that points at the denial reason in the logs.
+# Regression coverage: test/repro-5978-policy-denial-hint.test.ts. Removal
+# condition: drop this stanza once the OpenShell proxy returns a structured,
+# actionable denial (naming the rule / a logs pointer) at the tunnel-failure
+# site, at which point the breadcrumb is redundant.
+#
+# Accepted contract (#5978, maintainer-agreed on PR #6018): the supported
+# behavior is this proactive connect-shell reminder. It does NOT make the
+# denial-time curl/git/wget error itself denial-adjacent — that is intentional,
+# given the source boundary above — so the tool error stays unchanged.
+_nemoclaw_policy_denial_hint_label() {
+  # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
+  # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
+  # interpolated into a copyable `nemoclaw … logs` command, so allowlist it
+  # rather than merely stripping: only render it when it is a valid sandbox name.
+  # This mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts with a lowercase letter,
+  # then lowercase alphanumerics/hyphens, no trailing hyphen. Anything else
+  # (digit-leading labels, control characters, ANSI escapes, shell
+  # metacharacters, whitespace) falls back to a placeholder the user resolves
+  # with `nemoclaw list`. Shell `case` globs match newlines as ordinary
+  # characters, so an embedded newline is rejected by the metacharacter class.
+  #
+  # Evaluate the ranges under the C locale so [a-z0-9-] stays ASCII and is not
+  # widened by the caller's LC_COLLATE/LC_CTYPE (e.g. a locale that folds
+  # additional code points into [a-z]). Safe to set unconditionally: this helper
+  # is only ever called inside $(…) command substitution (a subshell), so the
+  # assignment cannot leak into the interactive shell.
+  LC_ALL=C
+  # Allowlist pattern mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (RFC-1123 label: /^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63). Keep them in sync.
+  case "${OPENSHELL_SANDBOX:-}" in
+    "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
+    [!a-z]* | *- | *[!a-z0-9-]*) printf '<name>' ;;
+    *)
+      if [ "${#OPENSHELL_SANDBOX}" -le 63 ]; then
+        printf '%s' "$OPENSHELL_SANDBOX"
+      else
+        printf '<name>'
+      fi
+      ;;
+  esac
+}
+_nemoclaw_policy_denial_hint_text() {
+  {
+    printf '  Note: this sandbox restricts outbound network access by policy.\n'
+    printf "  Blocked requests fail with 'CONNECT tunnel failed, response 403'.\n"
+    printf '  See which rule denied a request:  nemoclaw %s logs --tail 50\n' \
+      "$(_nemoclaw_policy_denial_hint_label)"
+  } >&2
+}
+_nemoclaw_maybe_policy_denial_hint() {
+  # Once per shell process: a login shell can source this file through more than
+  # one system-wide hook (the login-profile hook and the interactive-bash hook;
+  # #2704), so guard against printing twice. Not exported, so it neither leaks
+  # into child processes nor suppresses sibling connect sessions.
+  [ -n "${_NEMOCLAW_POLICY_HINT_SHOWN:-}" ] && return 0
+  # Suppressed by the user.
+  case "${NEMOCLAW_NO_POLICY_HINT:-}" in 1 | true | TRUE | yes | YES) return 0 ;; esac
+  # Interactive human shells only — never automation (`bash -c`, scripts).
+  case $- in *i*) ;; *) return 0 ;; esac
+  # Real terminal on stderr (where the hint is written).
+  [ -t 2 ] || return 0
+  # Top-level connect shell only — don't repeat in every subshell/pane.
+  [ "${SHLVL:-1}" -le 1 ] || return 0
+  # Nothing is proxied (no egress restriction) ⇒ nothing to explain.
+  [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ] || return 0
+  _NEMOCLAW_POLICY_HINT_SHOWN=1
+  _nemoclaw_policy_denial_hint_text
+}
+_nemoclaw_maybe_policy_denial_hint
+# nemoclaw-policy-denial-hint end
 GUARDENVEOF
     # Global sandbox safety net for connect sessions — must be first.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""

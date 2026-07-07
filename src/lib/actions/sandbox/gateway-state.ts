@@ -13,7 +13,7 @@ import {
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
 import { gatewayNamePattern, getSandboxTargetGatewayName } from "./gateway-target";
 
-const { pruneKnownHostsEntries } = require("../../onboard") as {
+const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
 
@@ -35,11 +35,11 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
-  recoverDockerDriverSandbox,
   type DockerDriverRecoveryResult,
+  recoverDockerDriverSandbox,
 } from "../../onboard/docker-driver-sandbox-recovery";
+import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 
 export type SandboxGatewayState = {
   state: string;

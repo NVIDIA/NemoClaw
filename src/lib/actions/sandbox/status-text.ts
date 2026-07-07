@@ -185,7 +185,7 @@ function printActiveSessions(sandboxName: string): void {
 }
 
 function printShieldsPosture(sandboxName: string): void {
-  const posture = shields.getShieldsPosture(sandboxName, true);
+  const posture = shields.getShieldsPosture(sandboxName, false);
   if (posture.mode === "locked") return;
   const detail =
     posture.mode === "mutable_default"
@@ -238,6 +238,7 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   if (!sb) return { exitCode: null };
 
   console.log("");
+  console.log(`  Sandbox-scoped status for '${sb.name}':`);
   console.log(`  Sandbox: ${sb.name}`);
   console.log(`    Model:    ${currentModel}`);
   console.log(`    Provider: ${currentProvider}`);

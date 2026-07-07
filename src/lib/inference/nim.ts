@@ -510,7 +510,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
-          ...(platform === "jetson" ? { computeConstrained: true } : {}),
+          // The proof-passed Windows-ARM N1X iGPU is memory-shared like Jetson
+          // and cannot serve a computeIntensive model in-loop, so tag it
+          // computeConstrained to exclude those Ollama bootstrap models (#3707).
+          ...(platform === "jetson" || wslDockerDesktopGpuProofPassed
+            ? { computeConstrained: true }
+            : {}),
           ...(wslDockerDesktopGpuProofPassed ? { wslDockerDesktopGpuProofPassed: true } : {}),
         };
       }

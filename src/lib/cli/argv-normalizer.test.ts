@@ -81,6 +81,18 @@ describe("normalizeArgv", () => {
       actionArgs: ["--help"],
       connectHelpRequested: true,
     });
+    expect(
+      normalizeArgv(["alpha", "--help"], {
+        globalCommands,
+        isSandboxConnectFlag: isConnectFlag,
+      }),
+    ).toMatchObject({
+      kind: "sandbox",
+      sandboxName: "alpha",
+      action: "connect",
+      actionArgs: ["--help"],
+      connectHelpRequested: true,
+    });
   });
 });
 

@@ -267,7 +267,7 @@ RUN_SHIELDS_TEST(
 
     const install = await installedShellCommand(
       host,
-      `cd ${JSON.stringify(REPO_ROOT)} && bash install.sh --non-interactive`,
+      `cd ${JSON.stringify(REPO_ROOT)} && bash install.sh --non-interactive --fresh`,
       {
         artifactName: "phase-1-install-shields-config",
         env: commandEnv({

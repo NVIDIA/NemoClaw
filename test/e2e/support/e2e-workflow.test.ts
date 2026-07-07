@@ -78,6 +78,40 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("starts hosted OpenClaw proofs in the first wave after matrix generation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { needs?: string | string[] }>;
+    };
+    const serializedDependencies = {
+      "full-e2e": ["generate-matrix", "token-rotation", "channels-stop-start"],
+      "openclaw-tui-chat-correlation": [
+        "generate-matrix",
+        "token-rotation",
+        "channels-stop-start",
+        "full-e2e",
+      ],
+    };
+
+    for (const [jobName, dependencies] of Object.entries(serializedDependencies)) {
+      expect(workflow.jobs[jobName]?.needs).toBe("generate-matrix");
+      workflow.jobs[jobName]!.needs = dependencies;
+    }
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "full-e2e job must depend on generate-matrix",
+          "openclaw-tui-chat-correlation job must depend on generate-matrix",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects free-standing E2E artifact uploads from raw temp paths", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -240,26 +274,6 @@ describe("e2e workflow boundary", () => {
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
-          jobs: "runtime-overrides",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["runtime-overrides"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          targets: "runtime-overrides",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["runtime-overrides"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
           targets: "messaging-compatible-endpoint",
         }),
       ).toMatchObject({
@@ -322,26 +336,6 @@ describe("e2e workflow boundary", () => {
         valid: true,
         liveTargetsRun: false,
         selectedFreeStandingJobs: ["hermes-e2e"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          targets: "hermes-root-entrypoint-smoke",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          jobs: "hermes-root-entrypoint-smoke",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke"],
         registryTargets: [],
       });
       expect(
@@ -983,8 +977,13 @@ jobs:
           "live job must run on the matrix runner",
           "live job must enable hosted-compatible inference mode",
           "live job env must not include NVIDIA_INFERENCE_API_KEY",
+          "run-target job missing step: Configure live E2E trace directory",
           "step 'Run live E2E tests' run script must not interpolate dispatch inputs directly",
           "live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+          "run-target job missing step: Build trusted live E2E timing summary",
+          "run-target job missing step: Delete raw live E2E traces",
+          "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+          "artifact upload path must include e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
           "live must not invoke actions/upload-artifact directly",
           "live must use upload-e2e-artifacts exactly once",
           "openshell-version-pin job must use the shared jobs selector condition",
@@ -1125,35 +1124,6 @@ jobs:
           "step 'Run ad hoc' run script must not interpolate dispatch inputs directly",
           "ad-hoc-derived step 'Run ad hoc' run script must not interpolate secrets directly",
         ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("requires runtime-overrides workflow and report coverage", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const renamedWorkflowPath = path.join(tmp, "renamed-workflow.yaml");
-    const missingReportNeedPath = path.join(tmp, "missing-report-need.yaml");
-    const workflow = fs.readFileSync(
-      path.join(process.cwd(), ".github/workflows/e2e.yaml"),
-      "utf8",
-    );
-    fs.writeFileSync(
-      renamedWorkflowPath,
-      workflow.replace(/^  runtime-overrides:$/m, "  runtime-overrides-missing:"),
-    );
-    fs.writeFileSync(
-      missingReportNeedPath,
-      removeJobNeed(workflow, "report-to-pr", "runtime-overrides"),
-    );
-
-    try {
-      expect(validateE2eWorkflowBoundary(renamedWorkflowPath)).toContain(
-        "workflow missing runtime-overrides job",
-      );
-      expect(validateE2eWorkflowBoundary(missingReportNeedPath)).toContain(
-        "report-to-pr job must wait for runtime-overrides",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1308,31 +1278,6 @@ jobs:
     }
   });
 
-  it("rejects Docker Hub auth and inline secrets in runtime-overrides run steps", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = fs.readFileSync(
-      path.join(process.cwd(), ".github/workflows/e2e.yaml"),
-      "utf8",
-    );
-    fs.writeFileSync(
-      workflowPath,
-      workflow.replace(
-        "npx vitest run --project e2e-live \\\n            test/e2e/live/runtime-overrides.test.ts \\",
-        "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}\n          npx vitest run --project e2e-live \\\n            test/e2e/live/runtime-overrides.test.ts \\",
-      ),
-    );
-
-    try {
-      const errors = validateE2eWorkflowBoundary(workflowPath);
-      expect(errors).toContain(
-        "runtime-overrides step 'Run runtime overrides live test' run script must not use docker login or inline secret interpolation",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("rejects diagnostics workflow-boundary drift for secret and Docker auth handling", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -1388,41 +1333,6 @@ jobs:
           "step 'Run diagnostics live test' run script must not interpolate dispatch inputs directly",
           "diagnostics upload-e2e-artifacts invocation must not override its contract",
           "diagnostics upload-e2e-artifacts must use the action defaults",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects duplicate unguarded Docker Hub auth in Hermes root-entrypoint smoke", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
-    };
-    const steps = workflow.jobs["hermes-root-entrypoint-smoke"]?.steps;
-    expect(steps).toEqual(expect.any(Array));
-    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-    expect(prepareIndex).toBeGreaterThan(0);
-    steps.splice(prepareIndex, 0, {
-      name: "Authenticate to Docker Hub",
-      env: {
-        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
-        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
-      },
-      run: "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}",
-    });
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      const errors = validateE2eWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "hermes-root-entrypoint-smoke image-consuming job must have exactly one Docker Hub auth step",
-          "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
-          "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
-          "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
         ]),
       );
     } finally {

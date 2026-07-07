@@ -8,6 +8,7 @@ import path from "node:path";
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_RELEVANT_LOG_LINES = 120;
+const MAX_GATEWAY_TAIL_LINES = 240;
 
 export type SandboxCreateFailureDiagnostics = {
   dir: string;
@@ -16,6 +17,7 @@ export type SandboxCreateFailureDiagnostics = {
   stateDir: string | null;
   consoleOutput: string | null;
   copiedConsoleOutput: string | null;
+  gatewayTailPath: string | null;
   backupPath: string | null;
   summaryLines: string[];
 };
@@ -171,6 +173,10 @@ export function collectSandboxCreateFailureDiagnostics(
   const block = rawLines ? findLatestSandboxBlock(rawLines, sandboxName) : [];
   const sandboxId = getLatestSandboxId(block, sandboxName);
   const relevantLines = filterRelevantLines(block, sandboxName, sandboxId);
+  const gatewayTailLines =
+    rawLines && relevantLines.length === 0
+      ? rawLines.filter((line) => line.trim()).slice(-MAX_GATEWAY_TAIL_LINES)
+      : [];
   const stateDir = latestFieldValue(relevantLines, "state_dir");
   const consoleOutput =
     latestFieldValue(relevantLines, "console_output") ??
@@ -191,11 +197,17 @@ export function collectSandboxCreateFailureDiagnostics(
       },
     );
   }
+  const gatewayTailPath =
+    gatewayTailLines.length > 0 ? path.join(dir, "openshell-gateway-tail.log") : null;
+  if (gatewayTailPath) {
+    fs.writeFileSync(gatewayTailPath, `${gatewayTailLines.join("\n")}\n`, { mode: 0o600 });
+  }
   const summaryLines = [
     `created_at=${now.toISOString()}`,
     `sandbox_name=${sandboxName}`,
     `sandbox_id=${sandboxId ?? "unknown"}`,
     `gateway_log=${gatewayLogPath ?? "not-found"}`,
+    `gateway_tail=${gatewayTailPath ?? "not-written"}`,
     `state_dir=${stateDir ?? "unknown"}`,
     `console_output=${consoleOutput ?? "unknown"}`,
     `copied_console_output=${copiedConsoleOutput ?? "not-copied"}`,
@@ -216,7 +228,28 @@ export function collectSandboxCreateFailureDiagnostics(
     stateDir,
     consoleOutput,
     copiedConsoleOutput,
+    gatewayTailPath,
     backupPath,
-    summaryLines: relevantLines.slice(-8),
+    summaryLines: relevantLines.length > 0 ? relevantLines.slice(-8) : gatewayTailLines.slice(-8),
   };
+}
+
+export function printSandboxCreateFailureDiagnostics(
+  sandboxName: string,
+  options: SandboxCreateFailureDiagnosticOptions = {},
+): SandboxCreateFailureDiagnostics | null {
+  const diagnostics = collectSandboxCreateFailureDiagnostics(sandboxName, options);
+  if (!diagnostics) return null;
+
+  console.error(`  Diagnostics saved: ${diagnostics.dir}`);
+  if (diagnostics.summaryLines.length > 0) {
+    console.error("  Recent OpenShell gateway failure:");
+    for (const line of diagnostics.summaryLines) {
+      console.error(`    ${line}`);
+    }
+  }
+  if (diagnostics.backupPath) {
+    console.error(`  State backup retained: ${diagnostics.backupPath}`);
+  }
+  return diagnostics;
 }

@@ -488,7 +488,7 @@ current_pid="$$"
 for p in /proc/[0-9]*; do
   pid=$(basename "$p")
   [ "$pid" = "$current_pid" ] && continue
-  cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true)
+  cmd=$( { tr "\000" " " < "$p/cmdline"; } 2>/dev/null || true)
   case "$cmd" in *"$decode_needle"*) echo PROCESS_DECODE_PROXY ;; esac
 done`,
     [],

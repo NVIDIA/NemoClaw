@@ -186,12 +186,14 @@ function runConfigHashCheck(
   label: string,
   env: Record<string, string> = {},
 ): string {
+  // Keep the one-shot container alive long enough for its tiny fd3 marker to
+  // drain through Docker attach; the JSON capture above is naturally larger.
   const result = runContainer(
     dockerLog,
     image,
     `${label} config hash check`,
     env,
-    'cd /sandbox/.openclaw && if sha256sum -c .config-hash --status; then printf "OK\\n" >&3; else printf "FAIL\\n" >&3; fi',
+    'cd /sandbox/.openclaw && if sha256sum -c .config-hash --status; then printf "OK\\n" >&3; else printf "FAIL\\n" >&3; fi; sleep 0.1',
   );
   expect(result.status, resultText(result)).toBe(0);
   return result.stdout.trim();

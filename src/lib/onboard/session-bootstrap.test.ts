@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../state/onboard-session";
-import { prepareOnboardSession, type OnboardSessionBootstrapDeps } from "./session-bootstrap";
 import type { ResumeConfigConflict } from "./resume-config";
+import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
 
 class ExitError extends Error {
   constructor(readonly code: number) {
@@ -71,6 +71,7 @@ describe("prepareOnboardSession", () => {
         requestedSandboxName: null,
         cannotPrompt: false,
         nonInteractive: true,
+        requestedToolDisclosure: "direct",
       },
       deps,
     );
@@ -79,7 +80,24 @@ describe("prepareOnboardSession", () => {
     expect(result.fromDockerfile).toBe("/abs/Dockerfile.custom");
     expect(result.session?.mode).toBe("non-interactive");
     expect(result.session?.metadata.fromDockerfile).toBe("/abs/Dockerfile.custom");
+    expect(result.session?.toolDisclosure).toBe("direct");
     expect(getSession()?.sessionId).not.toBe("old-session");
+  });
+
+  it("defaults a fresh session to progressive disclosure", async () => {
+    const { deps } = createDeps();
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: false,
+        nonInteractive: false,
+      },
+      deps,
+    );
+    expect(result.session?.toolDisclosure).toBe("progressive");
   });
 
   it("resumes an existing session and falls back to the recorded Dockerfile", async () => {

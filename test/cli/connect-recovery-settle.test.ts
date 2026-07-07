@@ -14,6 +14,12 @@ import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./helpers";
 
+const DECODE_SANDBOX_EXEC_COMMAND_LINES = [
+  "decode_sandbox_exec_cmd() {",
+  `  ${JSON.stringify(process.execPath)} -e "const s=process.argv[1]||'';const m=s.match(/printf '%s' '([A-Za-z0-9+/=]+)' \\| base64 -d \\| sh/);process.stdout.write(m?Buffer.from(m[1],'base64').toString('utf8'):s);" "$1"`,
+  "}",
+];
+
 describe("CLI dispatch", () => {
   it("fails probe-only when the authenticated settle probe detects a listener wedge (#4710)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-wedge-"));
@@ -28,6 +34,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        ...DECODE_SANDBOX_EXEC_COMMAND_LINES,
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         `ready_count_file=${JSON.stringify(readyCountFile)}`,
@@ -43,6 +50,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  cmd="$(decode_sandbox_exec_cmd "$cmd")"',
         '  case "$cmd" in',
         '    *"OPENCLAW="*)',
         '      echo recovered > "$state_file"',
@@ -83,11 +91,11 @@ describe("CLI dispatch", () => {
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'docker %s\\n\' "$*" >> "$marker_file"',
         'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
-        'if [ "$1" = "ps" ] && [ "$2" = "--format" ]; then',
-        "  echo openshell-alpha",
+        'if [ "$1" = "ps" ]; then',
+        "  printf 'container-id\\topenshell-alpha\\n'",
         "  exit 0",
         "fi",
-        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root openshell-alpha /usr/local/bin/nemoclaw-gateway-control recover "* ]]; then',
+        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root container-id /usr/local/bin/nemoclaw-gateway-control recover "* ]]; then',
         '  nonce="${!#}"',
         '  case "$nonce" in *[!0-9a-f]*|"") exit 64 ;; esac',
         '  [ "${#nonce}" -eq 64 ] || exit 64',
@@ -95,7 +103,7 @@ describe("CLI dispatch", () => {
         "  echo 'GATEWAY_PID=123'",
         "  exit 0",
         "fi",
-        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root openshell-alpha /usr/local/bin/nemoclaw-gateway-control probe "* ]]; then',
+        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root container-id /usr/local/bin/nemoclaw-gateway-control probe "* ]]; then',
         '  nonce="${!#}"',
         '  case "$nonce" in *[!0-9a-f]*|"") exit 64 ;; esac',
         '  [ "${#nonce}" -eq 64 ] || exit 64',
@@ -123,10 +131,10 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("config change requires gateway restart (plugins.installs)");
     const calls = fs.readFileSync(markerFile, "utf8");
     expect(calls).toMatch(
-      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control recover [0-9a-f]{64}$/m,
+      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root container-id \/usr\/local\/bin\/nemoclaw-gateway-control recover [0-9a-f]{64}$/m,
     );
     expect(calls).toMatch(
-      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control probe [0-9a-f]{64}$/m,
+      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root container-id \/usr\/local\/bin\/nemoclaw-gateway-control probe [0-9a-f]{64}$/m,
     );
     expect(calls).toContain("--env LD_PRELOAD=");
     expect(calls).toContain("--env PYTHONPATH=");

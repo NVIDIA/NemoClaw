@@ -127,9 +127,10 @@ describe("docker-driver-gateway-launch", () => {
   });
 
   it("uses the host binary as the drift binary outside compatibility mode", () => {
-    withTempBinaries(({ dir, gatewayBin }) => {
+    withTempBinaries(({ dir, gatewayBin, sandboxBin }) => {
       const identity = buildDockerDriverGatewayRuntimeIdentity({
         gatewayBin,
+        sandboxBin,
         stateDir: dir,
         platform: "linux",
         env: {},
@@ -140,6 +141,7 @@ describe("docker-driver-gateway-launch", () => {
 
       expect(identity.launch?.mode).toBe("host");
       expect(identity.driftGatewayBin).toBe(gatewayBin);
+      expect(identity.desiredEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(sandboxBin);
       expect(identity.desiredEnv.OPENSHELL_GATEWAY_CONFIG).toBe(
         path.join(dir, "openshell-gateway.toml"),
       );

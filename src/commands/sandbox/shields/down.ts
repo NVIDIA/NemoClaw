@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
-import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
-
 import { shieldsTimeoutDurationFlag } from "../../../lib/cli/duration-flags";
-import * as shields from "../../../lib/shields/index";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
+import * as shields from "../../../lib/shields/index";
+import { withSandboxMutationLock } from "../../../lib/state/mcp-lifecycle-lock";
 
 export default class ShieldsDownCommand extends NemoClawCommand {
   static id = "sandbox:shields:down";
@@ -24,10 +24,13 @@ export default class ShieldsDownCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(ShieldsDownCommand);
-    shields.shieldsDown(args.sandboxName, {
-      timeout: flags.timeout ?? null,
-      reason: flags.reason ?? null,
-      policy: flags.policy ?? "permissive",
-    });
+    await withSandboxMutationLock(args.sandboxName, () =>
+      shields.shieldsDown(args.sandboxName, {
+        timeout: flags.timeout ?? null,
+        reason: flags.reason ?? null,
+        policy: flags.policy ?? "permissive",
+        throwOnError: true,
+      }),
+    );
   }
 }

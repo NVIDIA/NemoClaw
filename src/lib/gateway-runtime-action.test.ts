@@ -78,6 +78,43 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
       expect(result.activeGateway).toBe("nemoclaw");
     });
 
+    it.each([
+      {
+        label: "failed gateway metadata under a connected foreign gateway",
+        status: "Gateway: openshell\nStatus: Connected\n",
+        gatewayInfo: "No gateway metadata found",
+        gatewayInfoStatus: 1,
+        expected: "connected_other",
+      },
+      {
+        label: "empty lifecycle output",
+        status: "",
+        gatewayInfo: "",
+        gatewayInfoStatus: 0,
+        expected: "missing_named",
+      },
+      {
+        label: "malformed lifecycle output",
+        status: "??? garbage output ???",
+        gatewayInfo: "garbage gateway info",
+        gatewayInfoStatus: 0,
+        expected: "missing_named",
+      },
+    ])("classifies $label conservatively as $expected", ({
+      status,
+      gatewayInfo,
+      gatewayInfoStatus,
+      expected,
+    }) => {
+      captureSpy
+        .mockReturnValueOnce({ status: 0, output: status })
+        .mockReturnValueOnce({ status: gatewayInfoStatus, output: gatewayInfo });
+
+      const result = gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw");
+
+      expect(result.state).toBe(expected);
+    });
+
     it("keeps probes fatal by default, but still captures stderr (ignoreError falsy)", () => {
       captureSpy.mockReturnValue({ status: 0, output: "Status: Connected\nGateway: nemoclaw\n" });
 

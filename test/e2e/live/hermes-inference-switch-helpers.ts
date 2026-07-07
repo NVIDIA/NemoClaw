@@ -15,28 +15,30 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import {
+  inferenceResponseModel,
   inferenceSetAttemptCount,
   runInferenceSetWithRetry,
 } from "../fixtures/inference-switch-retry.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_MODEL,
+  PUBLIC_NVIDIA_SWITCH_PROVIDER,
+} from "./public-nvidia-switch-provider.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-inference-switch";
 validateSandboxName(SANDBOX_NAME);
 const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
-const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
 export const SWITCH_PROVIDER =
-  process.env.NEMOCLAW_SWITCH_PROVIDER ??
-  (USE_COMPATIBLE_HOSTED ? "compatible-endpoint" : "nvidia-prod");
-export const SWITCH_MODEL =
-  process.env.NEMOCLAW_SWITCH_MODEL ??
-  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : "nvidia/nemotron-3-super-120b-a12b");
+  process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
+export const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
-const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 
@@ -51,6 +53,28 @@ export function mockAnthropicEndpointUrl(
 ): string {
   const host = runtimeEnv.NEMOCLAW_SWITCH_MOCK_HOST ?? "host.openshell.internal";
   return `http://${host}:${port}`;
+}
+
+export function mockAnthropicSwitchEnabled(runtimeEnv: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    (runtimeEnv.NEMOCLAW_SWITCH_PROVIDER ?? SWITCH_PROVIDER) === "compatible-anthropic-endpoint" &&
+    (runtimeEnv.NEMOCLAW_SWITCH_INFERENCE_API ?? SWITCH_API) === "anthropic-messages" &&
+    runtimeEnv.NEMOCLAW_SWITCH_MOCK_ANTHROPIC === "1"
+  );
+}
+
+export function expectAuthenticatedBaselineRequest(
+  baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
+  model: string,
+): void {
+  if (!baseline) return;
+  expect(baseline.requests()).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      model,
+      path: "/v1/chat/completions",
+    }),
+  );
 }
 
 export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
@@ -108,6 +132,13 @@ export function parseHermesModelBlock(text: string): Record<string, string> {
   return model;
 }
 
+export function parseInferenceRoute(text: string): { provider: string; model: string } {
+  const plain = stripAnsi(text);
+  const provider = plain.match(/^\s*Provider:\s*(.*?)\s*$/mu)?.[1]?.trim() ?? "";
+  const model = plain.match(/^\s*Model:\s*(.*?)\s*$/mu)?.[1]?.trim() ?? "";
+  return { provider, model };
+}
+
 export function chatContent(raw: string): string {
   const parsed = JSON.parse(raw) as {
     choices?: Array<{ message?: Record<string, unknown> }>;
@@ -126,6 +157,7 @@ export function chatContent(raw: string): string {
 export async function runHermesPongWithRetry(options: {
   attempts?: number;
   delay?: (milliseconds: number) => Promise<void>;
+  expectedModel: string;
   run: (attempt: number) => Promise<ShellProbeResult>;
 }): Promise<ShellProbeResult> {
   const attempts = options.attempts ?? 3;
@@ -138,7 +170,9 @@ export async function runHermesPongWithRetry(options: {
     let pong = false;
     if (last.exitCode === 0) {
       try {
-        pong = /PONG/iu.test(chatContent(last.stdout));
+        pong =
+          inferenceResponseModel(last.stdout) === options.expectedModel &&
+          /PONG/iu.test(chatContent(last.stdout));
       } catch {}
     }
     if (pong || attempt === attempts) return last;
@@ -286,7 +320,7 @@ export async function ensureCompatibleAnthropicSwitchProvider(
 ): Promise<string | null> {
   if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint" || SWITCH_API !== "anthropic-messages")
     return null;
-  const mock = SWITCH_MOCK_ANTHROPIC === "1" ? await startMockAnthropicProvider() : undefined;
+  const mock = mockAnthropicSwitchEnabled() ? await startMockAnthropicProvider() : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "";
   const compatibleKey = process.env.COMPATIBLE_ANTHROPIC_API_KEY ?? "test-compatible-anthropic-key";
@@ -322,6 +356,7 @@ export async function ensureCompatibleAnthropicSwitchProvider(
 export async function installHermes(
   host: HostCliClient,
   apiKey: string,
+  installEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
@@ -331,7 +366,7 @@ export async function installHermes(
       {
         artifactName: attempt === 1 ? "install-hermes" : `install-hermes-attempt-${attempt}`,
         cwd: REPO_ROOT,
-        env: env(apiKey),
+        env: env(apiKey, installEnv),
         redactionValues: [apiKey],
         timeoutMs: 25 * 60_000,
       },
@@ -350,7 +385,7 @@ export async function installHermes(
 
 export async function runHermesInferenceSetWithRetry(
   host: HostCliClient,
-  apiKey: string,
+  redactionValues: string[],
   compatibleMetadataArgs: string[],
   options: { attempts?: number; delay?: (milliseconds: number) => Promise<void> } = {},
 ): Promise<ShellProbeResult> {
@@ -373,8 +408,8 @@ export async function runHermesInferenceSetWithRetry(
         artifactName: verify
           ? `hermes-inference-set-${attempt}`
           : "hermes-inference-set-no-verify-after-transient-failures",
-        env: env(apiKey),
-        redactionValues: [apiKey],
+        env: env(),
+        redactionValues,
         timeoutMs: 180_000,
       }),
   });

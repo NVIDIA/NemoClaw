@@ -9,7 +9,7 @@
 //   npx tsx scripts/validate-configs.ts              # validate all known config files
 //   npx tsx scripts/validate-configs.ts --file <config> --schema <schema>  # validate one file
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv/dist/2020.js";
@@ -55,6 +55,10 @@ function discoverTargets(): ConfigTarget[] {
     {
       schema: "schemas/router-pool-config.schema.json",
       files: ["nemoclaw-blueprint/router/pool-config.yaml"],
+    },
+    {
+      schema: "schemas/onboard-config.schema.json",
+      files: ["ci/onboard-performance-budget.json"],
     },
   ];
 
@@ -107,24 +111,46 @@ function discoverTargets(): ConfigTarget[] {
 
   // Discover all preset YAML files dynamically.
   const presetsDir = join(REPO_ROOT, "nemoclaw-blueprint/policies/presets");
+  const presetFiles: string[] = [];
   try {
-    const presetFiles = readdirSync(presetsDir)
-      .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
-      .map((f) => `nemoclaw-blueprint/policies/presets/${f}`);
-    if (presetFiles.length > 0) {
-      targets.push({
-        schema: "schemas/policy-preset.schema.json",
-        files: presetFiles,
-      });
-    } else {
-      console.warn(
-        "WARN: presets directory exists but contains no .yaml/.yml files — no preset validation performed",
-      );
-    }
+    presetFiles.push(
+      ...readdirSync(presetsDir)
+        .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
+        .map((f) => `nemoclaw-blueprint/policies/presets/${f}`),
+    );
   } catch (err) {
     const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
     if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
     // presets directory may not exist — not an error
+  }
+
+  const channelPoliciesDir = join(REPO_ROOT, "src/lib/messaging/channels");
+  try {
+    const walkChannelPolicies = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walkChannelPolicies(abs);
+        } else if (entry.isFile() && /\.ya?ml$/.test(entry.name)) {
+          const repoPath = pathRelativeToRepo(abs);
+          if (/(^|\/)policy\/[^/]+\.ya?ml$/.test(repoPath)) presetFiles.push(repoPath);
+        }
+      }
+    };
+    walkChannelPolicies(channelPoliciesDir);
+  } catch (err) {
+    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+    // channel policy directories may not exist — not an error
+  }
+
+  if (presetFiles.length > 0) {
+    targets.push({
+      schema: "schemas/policy-preset.schema.json",
+      files: presetFiles.sort(),
+    });
+  } else {
+    console.warn("WARN: no preset .yaml/.yml files discovered — no preset validation performed");
   }
 
   return targets;
@@ -373,11 +399,11 @@ function main(): void {
 // Export for unit tests without re-running main().
 export {
   DANGEROUS_HOSTS,
-  ROUTER_API_BASE_HOST_ALLOWLIST,
-  isDangerousHost,
+  discoverTargets,
   findDangerousHosts,
   findDangerousRouterApiBases,
-  discoverTargets,
+  isDangerousHost,
+  ROUTER_API_BASE_HOST_ALLOWLIST,
 };
 
 // Only run main() when invoked directly (skip on test `import`).

@@ -26,6 +26,7 @@ export interface CoreOnboardFlowPhaseOptions<
   ResourceProfile = unknown,
 > {
   forceProviderSelection: boolean;
+  authoritativeResumeConfig?: boolean;
   env: NodeJS.ProcessEnv;
   constants: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["constants"];
   providerDeps: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["deps"];
@@ -61,6 +62,7 @@ export function createCoreOnboardFlowPhases<
       sandboxName: context.sandboxName,
       agent: context.agent,
       forceProviderSelection: options.forceProviderSelection,
+      authoritativeResumeConfig: options.authoritativeResumeConfig,
       initial: {
         model: context.model,
         provider: context.provider,
@@ -102,11 +104,14 @@ export function createCoreOnboardFlowPhases<
     const sandboxStateResult = await handleSandboxState({
       resume: context.resume,
       fresh: context.fresh,
+      authoritativeResumeConfig: options.authoritativeResumeConfig,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
       session: context.session,
       sandboxName: context.sandboxName,
       model: context.model,
       provider: context.provider,
+      endpointUrl: context.endpointUrl,
+      credentialEnv: context.credentialEnv,
       nimContainer: context.nimContainer,
       webSearchConfig: context.webSearchConfig,
       selectedMessagingChannels: context.selectedMessagingChannels,
@@ -116,8 +121,10 @@ export function createCoreOnboardFlowPhases<
       preferredInferenceApi: context.preferredInferenceApi,
       sandboxGpuConfig: context.sandboxGpuConfig,
       hermesToolGateways: context.hermesToolGateways,
+      hermesAuthMethod: context.hermesAuthMethod,
       controlUiPort: options.sandbox.controlUiPort,
       rootDir: options.sandbox.rootDir,
+      env: options.env,
       deps: options.sandboxDeps,
     });
 
@@ -126,6 +133,8 @@ export function createCoreOnboardFlowPhases<
         session: sandboxStateResult.session,
         sandboxName: sandboxStateResult.sandboxName,
         webSearchConfig: sandboxStateResult.webSearchConfig,
+        webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
+        hermesToolGateways: sandboxStateResult.hermesToolGateways,
         selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
         webSearchSupported: sandboxStateResult.webSearchSupported,
       }),

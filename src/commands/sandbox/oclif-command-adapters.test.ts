@@ -118,13 +118,17 @@ describe("sandbox oclif command adapters", () => {
     try {
       await ConnectCliCommand.run(["alpha", "--probe-only"], rootDir);
       await DestroyCliCommand.run(["alpha", "--yes"], rootDir);
-      await RebuildCliCommand.run(["alpha", "--force", "--verbose"], rootDir);
+      await RebuildCliCommand.run(
+        ["alpha", "--force", "--verbose", "--tool-disclosure", "direct"],
+        rootDir,
+      );
       await GatewayRestartCliCommand.run(["alpha", "--quiet"], rootDir);
 
       expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
       expect(mocks.destroySandbox).toHaveBeenCalledWith("alpha", { force: false, yes: true });
       expect(mocks.rebuildSandbox).toHaveBeenCalledWith("alpha", {
         force: true,
+        toolDisclosure: "direct",
         verbose: true,
         yes: false,
       });
@@ -135,6 +139,28 @@ describe("sandbox oclif command adapters", () => {
       } else {
         process.env.NEMOCLAW_CLEANUP_GATEWAY = originalCleanupGatewayEnv;
       }
+    }
+  });
+
+  it("rejects the removed connect permission bypass before dispatch", async () => {
+    const previousExitCode = process.exitCode;
+    const lines: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    process.exitCode = undefined;
+
+    try {
+      await ConnectCliCommand.run(["alpha", "--dangerously-skip-permissions"], rootDir);
+
+      expect(lines.join("\n")).toContain(
+        "--dangerously-skip-permissions was removed; use shields commands instead.",
+      );
+      expect(process.exitCode).toBe(1);
+      expect(mocks.connectSandbox).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      process.exitCode = previousExitCode;
     }
   });
 
@@ -203,6 +229,7 @@ describe("sandbox oclif command adapters", () => {
     expect(RecoverCliCommand.summary).not.toMatch(/^Restart\b/);
     expect(RebuildCliCommand.id).toBe("sandbox:rebuild");
     expect(usage(RebuildCliCommand)).toContain("[--yes|-y|--force]");
+    expect(usage(RebuildCliCommand)).toContain("[--tool-disclosure <progressive|direct>]");
     expect(SandboxPolicyListCommand.id).toBe("sandbox:policy:list");
     expect(SandboxChannelsListCommand.id).toBe("sandbox:channels:list");
     expect(SandboxConfigGetCommand.id).toBe("sandbox:config:get");
@@ -260,8 +287,9 @@ describe("sandbox oclif command adapters", () => {
       timeout: "5m",
       reason: "debugging",
       policy: "permissive",
+      throwOnError: true,
     });
-    expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha");
+    expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha", { throwOnError: true });
     expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha");
   });
 

@@ -50,6 +50,7 @@ describe("setupNim selection state helpers", () => {
       nimContainer: null,
       allowToolsIncompatible: false,
       skipHostInferenceSmoke: false,
+      reuseGatewayCredentialWithoutLocalKey: false,
     });
   });
 

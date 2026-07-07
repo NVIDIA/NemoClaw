@@ -61,6 +61,7 @@ let getSandboxMock: MockInstance;
 let getAppliedPresetsMock: MockInstance;
 let selectFromListMock: MockInstance;
 let selectForRemovalMock: MockInstance;
+let loadPresetForSandboxMock: MockInstance;
 let applyPresetMock: MockInstance;
 let removePresetMock: MockInstance;
 
@@ -113,6 +114,12 @@ beforeEach(() => {
     const presetName = String(name);
     return `network_policies:\n  ${presetName}:\n    host: ${presetName}.example.com\n`;
   });
+  loadPresetForSandboxMock = vi
+    .spyOn(policies, "loadPresetForSandbox")
+    .mockImplementation((_sandboxName: unknown, name: unknown) => {
+      const presetName = String(name);
+      return `network_policies:\n  ${presetName}:\n    host: ${presetName}.example.com\n`;
+    });
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 });
@@ -225,6 +232,30 @@ describe("addSandboxPolicy", () => {
 
     expect(printedText()).toContain("Unknown preset 'openclaw-pricing'.");
     expect(printedText()).toContain("Valid presets: npm, pypi, discord, nous-web, nous-code");
+    expect(applyPresetMock).not.toHaveBeenCalled();
+  });
+
+  it("treats messaging channel policy presets unavailable to terminal-runtime agents as unknown before preview or prompt", async () => {
+    arrangeSandbox("langchain-deepagents-code");
+    vi.spyOn(policies, "listPresets").mockReturnValue([
+      { name: "npm", description: "npm and Yarn registry access" },
+      { name: "pypi", description: "Python Package Index access" },
+      { name: "tavily", description: "Tavily Search API access" },
+    ]);
+
+    await expect(
+      captureExit(() => addSandboxPolicy("test-sandbox", { preset: "telegram", yes: true })),
+    ).resolves.toBe(1);
+
+    const output = printedText();
+    expect(output).toContain("Unknown preset 'telegram'.");
+    expect(output).toContain("Valid presets: npm, pypi, tavily");
+    expect(output).not.toContain("not supported for agent");
+    expect(output).not.toContain("Channels supported by agent");
+    expect(output).not.toContain("Preset not found");
+    expect(output).not.toContain("Endpoints that would be opened");
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 
