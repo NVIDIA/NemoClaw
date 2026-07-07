@@ -77,7 +77,7 @@ function validateActionMutation(mutate: (action: MutableAction) => void): string
 }
 
 describe("upload-e2e-artifacts workflow boundary", () => {
-  it("binds one canonical uploader to all 73 E2E execution jobs", () => {
+  it("binds one canonical uploader to every E2E execution job", () => {
     expect(validateUploadE2eArtifactsAction()).toEqual([]);
     expect(validateUploadE2eArtifactsInvocations(readWorkflow())).toEqual([]);
   });
