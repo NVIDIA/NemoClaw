@@ -673,7 +673,7 @@ runLinuxOpenShellGatewayUpgrade(
       id: "openshell-gateway-upgrade",
       runner: "vitest",
       boundary: [
-        "real old install.sh fetched from v0.0.36",
+        `real old install.sh fetched from ${OLD_NEMOCLAW_REF}`,
         "real Docker/OpenShell gateway and OpenClaw sandbox",
         "exact-name confirmation for the known-managed legacy fixture",
         "current scripts/install.sh gateway upgrade path",
@@ -682,6 +682,8 @@ runLinuxOpenShellGatewayUpgrade(
       ],
       oldNemoclawRef: OLD_NEMOCLAW_REF,
       oldOpenShellVersion: OLD_OPENSHELL_VERSION,
+      oldOpenClawVersion: OLD_OPENCLAW_VERSION,
+      oldSandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
       currentOpenShellVersion: CURRENT_OPENSHELL_VERSION,
       survivorSandbox: SURVIVOR_SANDBOX,
     });
