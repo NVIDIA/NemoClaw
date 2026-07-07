@@ -215,32 +215,121 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
 
   it("clears the prepared marker after removing the final committed bridge (#6376)", () => {
     const home = createTempHome("nemoclaw-force-final-bridge-");
-    const script = `
+    const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
-const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
-const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const globalActions = require("./src/lib/actions/global.js");
+const policies = require("./src/lib/policy/index.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const expectedId = "11111111-2222-4333-8444-555555555555";
+const providerName = "stuck-sandbox-mcp-github";
+let providerExists = true;
+let attached = true;
+let policyState = "match";
+const events = [];
+const commands = [];
 state.ensureSandboxGatewaySelected = async () => {};
-adapters.assertAgentMcpConfigMutationAllowed = () => {};
-adapters.assertAgentMcpTeardownRuntimeCapability = () => {};
-adapters.unregisterAgentAdapter = () => "removed";
-policy.assertGeneratedPolicyMutationSafe = () => {};
-policy.removeGeneratedPolicy = () => {};
+globalActions.runOpenshellProviderCommand = (args) => {
+  const command = args.join(" ");
+  commands.push(command);
+  if (args[0] === "provider" && args[1] === "get") {
+    events.push(providerExists ? "provider:get:present" : "provider:get:absent");
+    return providerExists
+      ? {
+          status: 0,
+          stdout: "Id: " + expectedId + "\nType: generic\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+          stderr: "",
+        }
+      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+  }
+  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    events.push(attached ? "provider:list:attached" : "provider:list:detached");
+    return {
+      status: 0,
+      stdout: attached
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + providerName + " generic 1 0\n"
+        : "No providers attached to sandbox stuck-sandbox.\n",
+      stderr: "",
+    };
+  }
+  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
+    events.push("provider:detach");
+    attached = false;
+    return {
+      status: 0,
+      stdout: "Detached provider " + providerName + " from sandbox stuck-sandbox.",
+      stderr: "",
+    };
+  }
+  if (args[0] === "provider" && args[1] === "delete") {
+    events.push("provider:delete");
+    providerExists = false;
+    return { status: 0, stdout: "deleted", stderr: "" };
+  }
+  throw new Error("unexpected OpenShell provider command: " + command);
+};
+processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+  if (!command.includes('spawnSync("mcporter", ["config", "remove"')) {
+    throw new Error("unexpected sandbox command: " + command);
+  }
+  events.push("adapter:remove");
+  return { status: 0, stdout: "", stderr: "" };
+};
+processRecovery.executeSandboxExecCommand = (_sandboxName, command) => {
+  const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] ?? "";
+  const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
+  const expectedProof = '[ -z "' + '$' + '{EXPECTED_TOKEN+x}" ]';
+  if (!proof.includes(expectedProof)) {
+    throw new Error("unexpected fresh-exec credential proof: " + proof);
+  }
+  events.push("credential:revoked");
+  return { status: 0, stdout: "", stderr: "" };
+};
+policies.getPresetContentGatewayState = () => policyState;
+policies.removePreset = () => {
+  events.push("policy:remove");
+  policyState = "absent";
+  return true;
+};
+const entry = {
+  server: "github",
+  agent: "openclaw",
+  adapter: "mcporter",
+  url: "https://mcp.example.test/mcp",
+  env: ["EXPECTED_TOKEN"],
+  providerName,
+  providerId: expectedId,
+  policyName: "mcp-bridge-github",
+  addedAt: "2026-06-01T00:00:00.000Z",
+};
 registry.registerSandbox({
   name: "stuck-sandbox",
   agent: "openclaw",
   mcp: {
-    bridges: { github: ${GITHUB_BRIDGE} },
+    bridges: { github: entry },
     managedServerNames: ["github"],
     destroyPreparedAt: "2026-06-27T01:00:00.000Z",
   },
+});
+registry.addCustomPolicy("stuck-sandbox", {
+  name: entry.policyName,
+  content: "network_policies: {}",
+  sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
   () => {
     const after = registry.getSandbox("stuck-sandbox");
-    process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({ mcp: after && after.mcp }));
+    process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({
+      mcp: after && after.mcp,
+      customPolicies: after && after.customPolicies || [],
+      events,
+      commands,
+      providerExists,
+      attached,
+      policyState,
+    }));
     process.exit(0);
   },
   (error) => {
@@ -250,17 +339,54 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
 );
 `;
     const result = runNodeScript(home, script);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Removed MCP server 'github'");
-    expect(result.stdout).toContain("Cleared incomplete MCP destroy transaction");
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const removedLog = result.stdout.indexOf("Removed MCP server 'github'");
+    const clearedLog = result.stdout.indexOf("Cleared incomplete MCP destroy transaction");
+    expect(removedLog).toBeGreaterThanOrEqual(0);
+    expect(clearedLog).toBeGreaterThan(removedLog);
+    expect(result.stderr).not.toContain("MCP force cleanup warnings");
     const jsonMarker = "<<REPRO_JSON>>";
     const parsed = JSON.parse(
       result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
-    ) as { mcp: SandboxMcpSnapshot | undefined };
+    ) as {
+      mcp: SandboxMcpSnapshot | undefined;
+      customPolicies: unknown[];
+      events: string[];
+      commands: string[];
+      providerExists: boolean;
+      attached: boolean;
+      policyState: string;
+    };
+    expect(parsed.attached).toBe(false);
+    expect(parsed.providerExists).toBe(false);
+    expect(parsed.policyState).toBe("absent");
+    expect(parsed.customPolicies).toEqual([]);
     expect(parsed.mcp?.bridges).toEqual({});
     expect(parsed.mcp?.managedServerNames).toEqual(["github"]);
     expect(parsed.mcp?.destroyPreparedAt).toBeUndefined();
     expect(parsed.mcp?.destroyPendingAt).toBeUndefined();
+
+    const initialProviderInspection = parsed.events.indexOf("provider:get:present");
+    const adapterRemoval = parsed.events.indexOf("adapter:remove");
+    const providerDetach = parsed.events.indexOf("provider:detach");
+    const credentialRevocation = parsed.events.indexOf("credential:revoked");
+    const policyRemoval = parsed.events.indexOf("policy:remove");
+    const providerDelete = parsed.events.indexOf("provider:delete");
+    expect(initialProviderInspection).toBeGreaterThanOrEqual(0);
+    expect(adapterRemoval).toBeGreaterThan(initialProviderInspection);
+    expect(providerDetach).toBeGreaterThan(adapterRemoval);
+    expect(credentialRevocation).toBeGreaterThan(providerDetach);
+    expect(policyRemoval).toBeGreaterThan(credentialRevocation);
+    expect(providerDelete).toBeGreaterThan(policyRemoval);
+    expect(
+      parsed.events
+        .slice(policyRemoval + 1, providerDelete)
+        .filter((event) => event === "provider:get:present"),
+    ).toHaveLength(2);
+    expect(parsed.events.slice(providerDelete + 1)).toContain("provider:get:absent");
+    expect(
+      parsed.commands.filter((command) => command === "provider get stuck-sandbox-mcp-github"),
+    ).toHaveLength(5);
   });
 
   it("does NOT clear the prepared marker on a wrong-server --force no-op (other entries remain)", async () => {
