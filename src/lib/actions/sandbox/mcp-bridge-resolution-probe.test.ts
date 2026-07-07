@@ -36,6 +36,12 @@ const baseEntry: McpBridgeEntry = {
   addedAt: new Date(0).toISOString(),
 };
 
+const readyProbe = {
+  policyGatewayPresent: true,
+  providerAttached: true,
+  providerCredentialReady: true,
+} as const;
+
 function probeStdout(
   parts: {
     httpStatus?: number;
@@ -254,8 +260,25 @@ describe("MCP credential-resolution probe classification", () => {
 });
 
 describe("MCP credential-resolution probe execution gates", () => {
+  it("fails closed before sandbox traffic unless policy and provider readiness are all true (#6379)", () => {
+    const cases = [
+      [{ ...readyProbe, policyGatewayPresent: false }, "effective gateway policy"],
+      [{ ...readyProbe, policyGatewayPresent: null }, "could not be inspected"],
+      [{ ...readyProbe, providerAttached: false }, "not attached"],
+      [{ ...readyProbe, providerAttached: null }, "attachment could not be inspected"],
+      [{ ...readyProbe, providerCredentialReady: false }, "does not match"],
+    ] as const;
+
+    for (const [readiness, expectedDetail] of cases) {
+      const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readiness);
+      expect(probe).toMatchObject({ ok: null });
+      expect(probe.detail).toContain(expectedDetail);
+    }
+    expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
+  });
+
   it("skips without contacting the sandbox when the adapter is not declared (#6379)", () => {
-    const probe = probeCredentialResolution("alpha", baseEntry, undefined);
+    const probe = probeCredentialResolution("alpha", baseEntry, undefined, readyProbe);
     expect(probe).toEqual({ ok: null, detail: "MCP adapter is not declared" });
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
@@ -265,6 +288,7 @@ describe("MCP credential-resolution probe execution gates", () => {
       "alpha",
       { ...baseEntry, addState: "preflighted" },
       "mcporter",
+      readyProbe,
     );
     expect(probe).toEqual({ ok: null, detail: "add transaction incomplete" });
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
@@ -275,6 +299,7 @@ describe("MCP credential-resolution probe execution gates", () => {
       "alpha",
       { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
       "mcporter",
+      readyProbe,
     );
     expect(probe).toEqual({ ok: null, detail: "no credential binding or safe endpoint to probe" });
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
@@ -295,7 +320,7 @@ describe("MCP credential-resolution probe execution gates", () => {
         stderr: "",
       };
     });
-    const probe = probeCredentialResolution("alpha", baseEntry, "mcporter");
+    const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readyProbe);
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
     expect(mocks.executeSandboxCommand).toHaveBeenCalledTimes(1);
     const [, command] = mocks.executeSandboxCommand.mock.calls[0];

@@ -32,6 +32,20 @@
  * authenticated-endpoint boundary, so a persisted legacy, private-alias, or
  * plain-HTTP URL is never sent a header that the gateway could rewrite into a
  * live credential.
+ *
+ * Source-boundary note:
+ * - invalidState: provider metadata is healthy while OpenShell forwards the
+ *   literal placeholder instead of resolving it.
+ * - sourceBoundary: OpenShell owns provider attachment/rewrite behavior;
+ *   NemoClaw owns this bounded diagnostic and its fail-closed prerequisites.
+ * - whyNotSourceFix: supported OpenShell versions expose neither a
+ *   resolution-or-deny guarantee nor an adequate machine-readable signal.
+ * - regressionTest: mcp-bridge-resolution-probe.test.ts pins classification
+ *   and central no-send gates; mcp-bridge-status-resolution.test.ts pins status
+ *   and post-add policy/provider prerequisites.
+ * - removalCondition: remove or replace this probe only when every supported
+ *   OpenShell version guarantees resolution-or-deny before egress or exposes a
+ *   reviewed signal for the exact attached provider revision and generated route.
  */
 
 import type { AgentMcpAdapter } from "../../agent/defs";
@@ -39,6 +53,10 @@ import { shellQuote } from "../../core/shell-quote";
 import type { McpBridgeEntry } from "../../state/registry";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import {
+  type CredentialResolutionProbeReadiness,
+  credentialResolutionReadinessSkipDetail,
+} from "./mcp-bridge-resolution-readiness";
 import { normalizeMcpServerUrl } from "./mcp-bridge-validation";
 import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
 import {
@@ -381,11 +399,14 @@ export function probeCredentialResolution(
   sandboxName: string,
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter | undefined,
+  readiness: CredentialResolutionProbeReadiness,
 ): CredentialResolutionProbe {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
   if (entry.addState) return { ok: null, detail: "add transaction incomplete" };
   const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter);
   if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
+  const readinessSkipDetail = credentialResolutionReadinessSkipDetail(readiness);
+  if (readinessSkipDetail) return { ok: null, detail: readinessSkipDetail };
   const result = executeSandboxCommand(sandboxName, probeCommand.command);
   return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);
 }

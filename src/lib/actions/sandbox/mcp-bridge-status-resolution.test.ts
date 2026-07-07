@@ -43,15 +43,23 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
+let providerAttachmentState = "attached";
+let providerCredentialKey = "GITHUB_TOKEN";
 globalActions.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 4\nCredential keys: GITHUB_TOKEN\n",
+      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 4\nCredential keys: " + providerCredentialKey + "\n",
       stderr: "",
     };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    if (providerAttachmentState === "unknown") {
+      return { status: 1, stdout: "", stderr: "attachment inspection failed" };
+    }
+    if (providerAttachmentState === "absent") {
+      return { status: 0, stdout: "No providers attached to sandbox alpha\n", stderr: "" };
+    }
     return {
       status: 0,
       stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github generic 1 0\n",
@@ -60,7 +68,8 @@ globalActions.runOpenshellProviderCommand = (args) => {
   }
   throw new Error("Unexpected OpenShell call: " + args.join(" "));
 };
-policies.getPresetContentGatewayState = () => "match";
+let activePolicyState = "match";
+policies.getPresetContentGatewayState = () => activePolicyState;
 const executedSandboxCommands = [];
 processRecovery.executeSandboxCommand = (sandboxName, command) => {
   executedSandboxCommands.push(command);
@@ -172,6 +181,74 @@ describe("MCP status wire-level credential-resolution probe", () => {
       ),
     ).toBe(true);
     expect(payload.exitCode).toBe(0);
+  });
+
+  it("skips status probe traffic until exact policy and provider readiness are verified (#6379)", () => {
+    const home = createTempHome("nemoclaw-mcp-resolution-readiness-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const outcomes = [];
+  for (const policyState of ["absent", "drift", null]) {
+    activePolicyState = policyState;
+    providerAttachmentState = "attached";
+    providerCredentialKey = "GITHUB_TOKEN";
+    executedSandboxCommands.length = 0;
+    const [status] = await bridge.statusMcpBridge("alpha", "github", {
+      probeCredentialResolution: true,
+    });
+    outcomes.push({
+      case: "policy:" + String(policyState),
+      gatewayPresent: status.policy.gatewayPresent,
+      resolution: status.provider.credentialResolution,
+      probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
+    });
+  }
+  activePolicyState = "match";
+  for (const attachmentState of ["absent", "unknown"]) {
+    providerAttachmentState = attachmentState;
+    providerCredentialKey = "GITHUB_TOKEN";
+    executedSandboxCommands.length = 0;
+    const [status] = await bridge.statusMcpBridge("alpha", "github", {
+      probeCredentialResolution: true,
+    });
+    outcomes.push({
+      case: "attachment:" + attachmentState,
+      resolution: status.provider.credentialResolution,
+      probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
+    });
+  }
+  providerAttachmentState = "attached";
+  providerCredentialKey = "WRONG_TOKEN";
+  executedSandboxCommands.length = 0;
+  const [wrongProvider] = await bridge.statusMcpBridge("alpha", "github", {
+    probeCredentialResolution: true,
+  });
+  outcomes.push({
+    case: "provider:wrong-shape",
+    resolution: wrongProvider.provider.credentialResolution,
+    probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
+  });
+  process.stdout.write(JSON.stringify(outcomes));
+`,
+    );
+    const outcomes = JSON.parse(stdout) as Array<{
+      case: string;
+      gatewayPresent?: boolean | null;
+      resolution: { ok: boolean | null; detail?: string };
+      probed: boolean;
+    }>;
+    expect(outcomes).toHaveLength(6);
+    expect(outcomes.map((outcome) => outcome.gatewayPresent).slice(0, 3)).toEqual([
+      false,
+      false,
+      null,
+    ]);
+    for (const outcome of outcomes) {
+      expect(outcome.probed, outcome.case).toBe(false);
+      expect(outcome.resolution.ok, outcome.case).toBeNull();
+      expect(outcome.resolution.detail, outcome.case).toContain("probe skipped");
+    }
   });
 
   it("renders the identical-rejection probe in the human-readable status output (#6379)", () => {
@@ -323,6 +400,47 @@ describe("MCP add post-add credential-resolution probe", () => {
       ),
     ).toBe(true);
     expect(payload.exitCode).toBe(0);
+  });
+
+  it("skips post-add probe traffic when policy verification is absent, drifted, or unknown (#6379)", () => {
+    const home = createTempHome("nemoclaw-mcp-resolution-add-policy-gate-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const addRestart = require("./src/lib/actions/sandbox/mcp-bridge-add-restart.js");
+  addRestart.addMcpBridge = async () => {};
+  const outcomes = [];
+  for (const policyState of ["absent", "drift", null]) {
+    activePolicyState = policyState;
+    executedSandboxCommands.length = 0;
+    logLines.length = 0;
+    errorLines.length = 0;
+    await bridge.dispatchMcpBridgeCommand("alpha", [
+      "add", "github", "--url", "https://api.githubcopilot.com/mcp/", "--env", "GITHUB_TOKEN",
+    ]);
+    outcomes.push({
+      policyState,
+      probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
+      output: [...logLines, ...errorLines].join("\n"),
+      exitCode: process.exitCode ?? 0,
+    });
+  }
+  process.stdout.write(JSON.stringify(outcomes));
+`,
+    );
+    const outcomes = JSON.parse(stdout) as Array<{
+      policyState: "absent" | "drift" | null;
+      probed: boolean;
+      output: string;
+      exitCode: number;
+    }>;
+    expect(outcomes).toHaveLength(3);
+    for (const outcome of outcomes) {
+      expect(outcome.probed, String(outcome.policyState)).toBe(false);
+      expect(outcome.output).toContain("Credential resolution probe was inconclusive");
+      expect(outcome.output).toContain("probe skipped");
+      expect(outcome.exitCode).toBe(0);
+    }
   });
 
   it("keeps the post-add warning for identical 400 explicitly inconclusive (#6379)", () => {

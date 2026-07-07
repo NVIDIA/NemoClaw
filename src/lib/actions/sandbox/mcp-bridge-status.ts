@@ -187,6 +187,7 @@ export async function statusMcpBridge(
   return entries.map(([name, entry]) => {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
+    const policyPresence = getPolicyPresence(sandboxName, entry);
     const hasCredentialBinding =
       !!entry &&
       Array.isArray(entry.env) &&
@@ -230,7 +231,11 @@ export async function statusMcpBridge(
               detail:
                 "probe skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
             }
-          : probeCredentialResolution(sandboxName, entry, support.adapter)
+          : probeCredentialResolution(sandboxName, entry, support.adapter, {
+              policyGatewayPresent: policyPresence,
+              providerAttached: attached,
+              providerCredentialReady,
+            })
         : undefined;
     const resolutionWarning = credentialResolution
       ? credentialResolutionWarning(entry?.env[0], credentialResolution)
@@ -263,7 +268,7 @@ export async function statusMcpBridge(
       policy: {
         name: entry?.policyName,
         registryPresent: !!registeredPolicy,
-        gatewayPresent: getPolicyPresence(sandboxName, entry),
+        gatewayPresent: policyPresence,
       },
       adapter: unsafeCredentialMayBeAttached
         ? {

@@ -4,9 +4,9 @@
 import type { McpBridgeEntry } from "../../state/registry";
 import { addMcpBridge as addMcpBridgeLifecycle } from "./mcp-bridge-add-restart";
 import {
-  isAgentMcpAdapter,
   type McpBridgeAddOptions,
   McpBridgeError,
+  type McpBridgeStatus,
 } from "./mcp-bridge-contracts";
 import {
   finalizeMcpBridgesAfterSandboxDelete as finalizeMcpBridgesAfterSandboxDeleteLifecycle,
@@ -23,12 +23,9 @@ import {
 } from "./mcp-bridge-rebuild";
 import { removeMcpBridge as removeMcpBridgeLifecycle } from "./mcp-bridge-remove";
 import { renderMcpBridgeList, renderMcpBridgeStatus } from "./mcp-bridge-render";
-import {
-  credentialResolutionWarning,
-  probeCredentialResolution,
-} from "./mcp-bridge-resolution-probe";
+import { credentialResolutionWarning } from "./mcp-bridge-resolution-probe";
 import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
-import { bridgeState, getSandboxAgent, getSandboxOrThrow } from "./mcp-bridge-state";
+import { getSandboxAgent, getSandboxOrThrow } from "./mcp-bridge-state";
 import { buildJsonSummary, statusMcpBridge } from "./mcp-bridge-status";
 import { parseMcpAddArgs } from "./mcp-bridge-validation";
 
@@ -198,15 +195,26 @@ function parseProbeFlags(args: string[]): { probe?: boolean; rest: string[] } {
  * nonzero exit here would break scripted adds mid-remediation; `mcp status
  * <server>` remains the authoritative recheck.
  */
-function reportAddCredentialResolution(sandboxName: string, server: string): void {
-  const sandbox = getSandboxOrThrow(sandboxName);
-  const entry = bridgeState(sandbox)[server];
-  if (!entry) return;
-  const adapter = isAgentMcpAdapter(entry.adapter)
-    ? entry.adapter
-    : getSandboxAgent(sandbox).mcpCapability.adapter;
-  const probe = probeCredentialResolution(sandboxName, entry, adapter);
-  const warning = credentialResolutionWarning(entry.env[0], probe);
+async function reportAddCredentialResolution(sandboxName: string, server: string): Promise<void> {
+  let probe: McpBridgeStatus["provider"]["credentialResolution"];
+  let credentialEnvName: string | undefined;
+  try {
+    const [status] = await statusMcpBridge(sandboxName, server, {
+      probeCredentialResolution: true,
+    });
+    probe = status?.provider.credentialResolution;
+    credentialEnvName = status?.env.names[0];
+  } catch {
+    console.log(
+      "  Credential resolution probe was inconclusive: post-add readiness inspection failed; run mcp status for this server to retry.",
+    );
+    return;
+  }
+  if (!probe) {
+    console.log("  Credential resolution probe was inconclusive: post-add status unavailable.");
+    return;
+  }
+  const warning = credentialResolutionWarning(credentialEnvName, probe);
   if (probe.ok === true) {
     console.log(
       `  Credential resolution verified on the wire (HTTP ${probe.httpStatus})${probe.detail ? `: ${probe.detail}` : "."}`,
@@ -262,7 +270,7 @@ FLAGS
 
 FLAGS
   --json      Emit MCP server status as JSON
-  --probe     Force the wire-level credential-resolution probe for every server
+  --probe     Request the wire-level credential-resolution probe for every server
   --no-probe  Skip the probe (it defaults on only when a single server is named)`);
       return;
     case "restart":
@@ -307,7 +315,7 @@ export async function dispatchMcpBridgeCommand(
         const options = parseMcpAddArgs(addRest);
         await addMcpBridge(sandboxName, options);
         console.log(`  MCP server '${options.server}' added to sandbox '${sandboxName}'.`);
-        if (probe !== false) reportAddCredentialResolution(sandboxName, options.server);
+        if (probe !== false) await reportAddCredentialResolution(sandboxName, options.server);
         return;
       }
       case "list": {
