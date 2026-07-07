@@ -30,6 +30,19 @@ import * as onboardProvidersNs from "../onboard/providers";
 const onboardProviders: any =
   (onboardProvidersNs as unknown as { default?: unknown }).default ?? onboardProvidersNs;
 
+// PRA-2: after a security rejection, `inference set` must not have applied any
+// persistence or gateway side effect. Assert every mutation / side-effect dep is
+// untouched (readers such as readSandboxConfig are allowed).
+function expectNoInferenceMutation(calls: ReturnType<typeof createDeps>["calls"]): void {
+  expect(calls.captureOpenshell).not.toHaveBeenCalled();
+  expect(calls.updateSandbox).not.toHaveBeenCalled();
+  expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
+  expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+  expect(calls.updateSession).not.toHaveBeenCalled();
+  expect(calls.appendAuditEntry).not.toHaveBeenCalled();
+  expect(calls.restartSandboxGateway).not.toHaveBeenCalled();
+}
+
 describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)", () => {
   it("maps the installer name onboard uses to its OpenShell provider name", () => {
     expect(normalizeInferenceSetProvider("anthropicCompatible")).toBe(
@@ -299,9 +312,8 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     await expect(attempt).rejects.toThrow(/already configured for 'compatible-endpoint'/);
     await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
     // PRA-2 regression: the SSRF rejection happens before any persistence, so no
-    // sandbox/config mutation is left half-applied after the guard fires.
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    // sandbox/config mutation or gateway side effect is left half-applied.
+    expectNoInferenceMutation(deps.calls);
   });
 
   it("keeps the SSRF guard AND guides on the anthropicCompatible provider family (#6321)", async () => {
@@ -332,7 +344,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     await expect(attempt).rejects.toThrow(/endpoint-url is not allowed:/);
     await expect(attempt).rejects.toThrow(/already configured for 'compatible-anthropic-endpoint'/);
     await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expectNoInferenceMutation(deps.calls);
   });
 
   it("switches the model WITHOUT --endpoint-url on a same-provider sandbox (the guided path works, guard never runs)", async () => {
