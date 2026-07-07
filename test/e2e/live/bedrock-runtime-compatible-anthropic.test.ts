@@ -24,7 +24,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import {
   projectRawOutputForArtifact,
@@ -45,9 +45,7 @@ import {
 
 const require = createRequire(import.meta.url);
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
+const DIST_ENTRYPOINT = CLI_DIST_ENTRYPOINT;
 const BEDROCK_HOSTNAME = "bedrock-runtime.us-east-1.amazonaws.com";
 const BEDROCK_MOCK_PORT = Number(process.env.NEMOCLAW_BEDROCK_RUNTIME_MOCK_PORT ?? "18147");
 const BEDROCK_ADAPTER_PORT = 11436;
@@ -58,7 +56,6 @@ const COMPATIBLE_KEY =
   process.env.NEMOCLAW_BEDROCK_RUNTIME_FAKE_KEY ?? "fake-pasted-bedrock-runtime-key-e2e";
 const AGENT = process.env.NEMOCLAW_AGENT ?? "openclaw";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-bedrock-${AGENT}`;
-const RUN_BEDROCK_TEST = shouldRunLiveE2E() ? test : test.skip;
 const ONBOARD_TIMEOUT_MS = 30 * 60_000;
 const TEST_TIMEOUT_MS = 60 * 60_000;
 const SANDBOX_TIMEOUT_MS = 180_000;
@@ -1206,162 +1203,160 @@ async function assertNoBedrockLeaks(options: {
   expect(leaks).toEqual([]);
 }
 
-RUN_BEDROCK_TEST(
-  "bedrock runtime compatible Anthropic endpoint routes through managed inference.local",
-  { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    assertAgent(AGENT);
-    validateSandboxName(SANDBOX_NAME);
+test("bedrock runtime compatible Anthropic endpoint routes through managed inference.local", {
+  timeout: TEST_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  assertAgent(AGENT);
+  validateSandboxName(SANDBOX_NAME);
 
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-runtime-home-"));
-    const hostsBackupDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-hosts-"));
-    const hostsBackup = path.join(hostsBackupDir, "hosts");
-    let mock: MockBedrockRuntime | undefined;
-    let onboarding: RawRunResult | undefined;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-runtime-home-"));
+  const hostsBackupDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-hosts-"));
+  const hostsBackup = path.join(hostsBackupDir, "hosts");
+  let mock: MockBedrockRuntime | undefined;
+  let onboarding: RawRunResult | undefined;
 
-    cleanup.add(`remove Bedrock Runtime test home ${home}`, () =>
-      fs.rmSync(home, { recursive: true, force: true }),
-    );
-    cleanup.add(`destroy Bedrock Runtime sandbox ${SANDBOX_NAME}`, () =>
-      cleanupSandboxState(host, home),
-    );
-    cleanup.add("restore /etc/hosts after Bedrock Runtime mapping", () =>
-      restoreHostsFile(host, hostsBackup, hostsBackupDir, home),
-    );
-    cleanup.add("stop Bedrock Runtime adapter", () => stopBedrockAdapterBestEffort(home));
-    cleanup.add("stop fake Bedrock Runtime endpoint", async () => {
-      if (mock) await mock.close();
-    });
-    cleanup.add("write fake Bedrock Runtime log", async () => {
-      if (mock) {
-        await artifacts.writeText(
-          "fake-bedrock-runtime.log",
-          secrets.redact(mock.logs.join("\n"), [COMPATIBLE_KEY]),
-        );
-      }
-    });
+  cleanup.add(`remove Bedrock Runtime test home ${home}`, () =>
+    fs.rmSync(home, { recursive: true, force: true }),
+  );
+  cleanup.add(`destroy Bedrock Runtime sandbox ${SANDBOX_NAME}`, () =>
+    cleanupSandboxState(host, home),
+  );
+  cleanup.add("restore /etc/hosts after Bedrock Runtime mapping", () =>
+    restoreHostsFile(host, hostsBackup, hostsBackupDir, home),
+  );
+  cleanup.add("stop Bedrock Runtime adapter", () => stopBedrockAdapterBestEffort(home));
+  cleanup.add("stop fake Bedrock Runtime endpoint", async () => {
+    if (mock) await mock.close();
+  });
+  cleanup.add("write fake Bedrock Runtime log", async () => {
+    if (mock) {
+      await artifacts.writeText(
+        "fake-bedrock-runtime.log",
+        secrets.redact(mock.logs.join("\n"), [COMPATIBLE_KEY]),
+      );
+    }
+  });
 
-    await artifacts.target.declare({
-      id: "bedrock-runtime-compatible-anthropic",
-      refs: ["#3767", "#5098"],
-      agent: AGENT,
-      sandboxName: SANDBOX_NAME,
-      boundary: "host-bedrock-mock-source-cli-onboard-and-sandbox-exec",
-      contracts: [
-        "Docker, python3, source CLI, and OpenShell are available",
-        "bedrock-runtime.us-east-1.amazonaws.com maps to the host fake endpoint",
-        "non-interactive anthropicCompatible onboarding selects compatible-anthropic-endpoint",
-        "OpenShell owns the hidden Bedrock adapter token while sandbox config uses inference.local",
-        "OpenClaw and Hermes runtime paths return PONG through inference.local",
-        "fake Bedrock Runtime endpoint observes authenticated Converse traffic",
-        "adapter host log records safe request breadcrumbs",
-        "sandbox configs, env, proc, and host logs contain no Bedrock token or hostname leaks",
-      ],
-    });
+  await artifacts.target.declare({
+    id: "bedrock-runtime-compatible-anthropic",
+    refs: ["#3767", "#5098"],
+    agent: AGENT,
+    sandboxName: SANDBOX_NAME,
+    boundary: "host-bedrock-mock-source-cli-onboard-and-sandbox-exec",
+    contracts: [
+      "Docker, python3, source CLI, and OpenShell are available",
+      "bedrock-runtime.us-east-1.amazonaws.com maps to the host fake endpoint",
+      "non-interactive anthropicCompatible onboarding selects compatible-anthropic-endpoint",
+      "OpenShell owns the hidden Bedrock adapter token while sandbox config uses inference.local",
+      "OpenClaw and Hermes runtime paths return PONG through inference.local",
+      "fake Bedrock Runtime endpoint observes authenticated Converse traffic",
+      "adapter host log records safe request breadcrumbs",
+      "sandbox configs, env, proc, and host logs contain no Bedrock token or hostname leaks",
+    ],
+  });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-bedrock-runtime",
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info-bedrock-runtime",
+    env: testEnv(home),
+    timeoutMs: 30_000,
+  });
+  if (docker.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(
+        `Docker is required for Bedrock Runtime compatible Anthropic E2E: ${resultText(docker)}`,
+      );
+    }
+    skip("Docker is required for Bedrock Runtime compatible Anthropic E2E");
+  }
+  expectExitZero(
+    await host.command("python3", ["--version"], {
+      artifactName: "prereq-python-version-bedrock-runtime",
       env: testEnv(home),
       timeoutMs: 30_000,
-    });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(
-          `Docker is required for Bedrock Runtime compatible Anthropic E2E: ${resultText(docker)}`,
-        );
-      }
-      skip("Docker is required for Bedrock Runtime compatible Anthropic E2E");
-    }
-    expectExitZero(
-      await host.command("python3", ["--version"], {
-        artifactName: "prereq-python-version-bedrock-runtime",
-        env: testEnv(home),
-        timeoutMs: 30_000,
-      }),
-      "python3 is available",
-    );
+    }),
+    "python3 is available",
+  );
 
-    await prepareSourceCliAndOpenShell(host, home);
-    await mapBedrockHostToLoopback(host, home, hostsBackup, skip);
-    mock = await startFakeBedrockRuntimeMock({
-      port: BEDROCK_MOCK_PORT,
-      expectedBearer: COMPATIBLE_KEY,
-      expectedModel: BEDROCK_MODEL,
-    });
+  await prepareSourceCliAndOpenShell(host, home);
+  await mapBedrockHostToLoopback(host, home, hostsBackup, skip);
+  mock = await startFakeBedrockRuntimeMock({
+    port: BEDROCK_MOCK_PORT,
+    expectedBearer: COMPATIBLE_KEY,
+    expectedModel: BEDROCK_MODEL,
+  });
 
-    await cleanupSandboxState(host, home);
-    onboarding = await runRawCommand(
-      "node",
-      [
-        CLI_ENTRYPOINT,
-        "onboard",
-        "--fresh",
-        "--non-interactive",
-        "--yes-i-accept-third-party-software",
-      ],
-      {
-        artifactName: `onboard-bedrock-runtime-${AGENT}`,
-        artifacts,
-        env: onboardEnv(home, AGENT),
-        redactionValues: [COMPATIBLE_KEY],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      },
-    );
-    await skipPreContractEndpointValidationRateLimit({
+  await cleanupSandboxState(host, home);
+  onboarding = await runRawCommand(
+    "node",
+    [
+      CLI_ENTRYPOINT,
+      "onboard",
+      "--fresh",
+      "--non-interactive",
+      "--yes-i-accept-third-party-software",
+    ],
+    {
+      artifactName: `onboard-bedrock-runtime-${AGENT}`,
       artifacts,
-      mock,
-      onboarding,
-      skip,
-    });
-    expect(onboarding.exitCode, redactedResultText(onboarding)).toBe(0);
+      env: onboardEnv(home, AGENT),
+      redactionValues: [COMPATIBLE_KEY],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  await skipPreContractEndpointValidationRateLimit({
+    artifacts,
+    mock,
+    onboarding,
+    skip,
+  });
+  expect(onboarding.exitCode, redactedResultText(onboarding)).toBe(0);
 
-    await assertOnboardIdentity(home, AGENT);
-    await assertAdapterHealth(host, home);
-    await assertOpenShellProviderRoute(host, home);
-    if (AGENT === "hermes") {
-      await assertHermesConfig(sandbox, home);
-    } else {
-      await assertOpenClawConfig(sandbox, home);
-    }
+  await assertOnboardIdentity(home, AGENT);
+  await assertAdapterHealth(host, home);
+  await assertOpenShellProviderRoute(host, home);
+  if (AGENT === "hermes") {
+    await assertHermesConfig(sandbox, home);
+  } else {
+    await assertOpenClawConfig(sandbox, home);
+  }
 
-    await assertSandboxInference(sandbox, home);
-    if (AGENT === "hermes") {
-      await assertHermesApiChat(sandbox, home);
-    } else {
-      await assertOpenClawAgentTurn(sandbox, home);
-    }
+  await assertSandboxInference(sandbox, home);
+  if (AGENT === "hermes") {
+    await assertHermesApiChat(sandbox, home);
+  } else {
+    await assertOpenClawAgentTurn(sandbox, home);
+  }
 
+  expect(
+    mock.converseCount,
+    "fake Bedrock Runtime endpoint observed authenticated Converse traffic",
+  ).toBeGreaterThanOrEqual(1);
+  if (AGENT === "openclaw") {
     expect(
-      mock.converseCount,
-      "fake Bedrock Runtime endpoint observed authenticated Converse traffic",
+      mock.streamCount,
+      "fake Bedrock Runtime endpoint observed authenticated ConverseStream traffic",
     ).toBeGreaterThanOrEqual(1);
-    if (AGENT === "openclaw") {
-      expect(
-        mock.streamCount,
-        "fake Bedrock Runtime endpoint observed authenticated ConverseStream traffic",
-      ).toBeGreaterThanOrEqual(1);
-    }
-    assertAdapterLogBreadcrumbs(home, AGENT);
-    await assertNoBedrockLeaks({
-      artifacts,
-      home,
-      mock,
-      onboarding,
-      sandbox,
-      redact: (text, extraValues) => secrets.redact(text, extraValues),
-    });
+  }
+  assertAdapterLogBreadcrumbs(home, AGENT);
+  await assertNoBedrockLeaks({
+    artifacts,
+    home,
+    mock,
+    onboarding,
+    sandbox,
+    redact: (text, extraValues) => secrets.redact(text, extraValues),
+  });
 
-    await artifacts.target.complete({
-      id: "bedrock-runtime-compatible-anthropic",
-      agent: AGENT,
-      assertions: {
-        onboardCompleted: onboarding.exitCode === 0,
-        providerIdentity: "compatible-anthropic-endpoint",
-        adapterHealthy: true,
-        converseRequests: mock.converseCount,
-        converseStreamRequests: mock.streamCount,
-        leakScanPassed: true,
-      },
-    });
-  },
-);
+  await artifacts.target.complete({
+    id: "bedrock-runtime-compatible-anthropic",
+    agent: AGENT,
+    assertions: {
+      onboardCompleted: onboarding.exitCode === 0,
+      providerIdentity: "compatible-anthropic-endpoint",
+      adapterHealthy: true,
+      converseRequests: mock.converseCount,
+      converseStreamRequests: mock.streamCount,
+      leakScanPassed: true,
+    },
+  });
+});

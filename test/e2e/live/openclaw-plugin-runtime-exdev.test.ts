@@ -3,19 +3,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
+
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
 // the contract as a simple live test: onboard a fresh OpenClaw sandbox
 // from the repo Dockerfile, capture the sandbox filesystem layout, then run a
 // focused in-sandbox Node replacement probe that guards #3513/#3127's EXDEV
 // cross-device runtime-deps failure mode. No registry, no ledger, no shared helper.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-plugin-exdev";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
@@ -25,7 +24,6 @@ const EXDEV_PATTERNS = [
   /EXDEV: cross-device link not permitted/i,
   /cross-device link not permitted/i,
 ];
-const liveTest = shouldRunLiveE2E() ? test : test.skip;
 
 function liveEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -153,152 +151,150 @@ const runtimeDepsReplacementProbe = trustedSandboxShellScript(
   `printf '%s' '${Buffer.from(runtimeDepsReplacementProbeSource).toString("base64")}' | base64 -d > /tmp/nemoclaw-exdev-guard.sh && sh /tmp/nemoclaw-exdev-guard.sh`,
 );
 
-liveTest(
-  "OpenClaw plugin runtime deps replacement survives cross-filesystem EXDEV layout",
-  { timeout: ONBOARD_TIMEOUT_MS + PROBE_TIMEOUT_MS + 5 * 60_000 },
-  async ({ artifacts, cleanup, host, sandbox, skip }) => {
-    await artifacts.target.declare({
-      id: "openclaw-plugin-runtime-exdev",
-      boundary: "fresh-openclaw-sandbox-exec",
-      regressionTargets: ["#3513", "#3127"],
-      contract: [
-        "fresh OpenClaw sandbox onboards from the checkout Dockerfile",
-        "sandbox proves /dev/shm and plugin-runtime-deps are distinct devices",
-        "legacy source-side staging fails with EXDEV across the same /dev/shm to plugin-runtime-deps boundary",
-        "OpenClaw-style target-side plugin runtime-deps replacement completes without EXDEV",
-      ],
-    });
+test("OpenClaw plugin runtime deps replacement survives cross-filesystem EXDEV layout", {
+  timeout: ONBOARD_TIMEOUT_MS + PROBE_TIMEOUT_MS + 5 * 60_000,
+}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  await artifacts.target.declare({
+    id: "openclaw-plugin-runtime-exdev",
+    boundary: "fresh-openclaw-sandbox-exec",
+    regressionTargets: ["#3513", "#3127"],
+    contract: [
+      "fresh OpenClaw sandbox onboards from the checkout Dockerfile",
+      "sandbox proves /dev/shm and plugin-runtime-deps are distinct devices",
+      "legacy source-side staging fails with EXDEV across the same /dev/shm to plugin-runtime-deps boundary",
+      "OpenClaw-style target-side plugin runtime-deps replacement completes without EXDEV",
+    ],
+  });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-openclaw-plugin-exdev",
-      env: liveEnv(),
-      timeoutMs: 30_000,
-    });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(
-          `Docker is required for the OpenClaw plugin EXDEV live guard: ${resultText(docker)}`,
-        );
-      }
-      skip("Docker is required for the OpenClaw plugin EXDEV live guard");
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info-openclaw-plugin-exdev",
+    env: liveEnv(),
+    timeoutMs: 30_000,
+  });
+  if (docker.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(
+        `Docker is required for the OpenClaw plugin EXDEV live guard: ${resultText(docker)}`,
+      );
     }
+    skip("Docker is required for the OpenClaw plugin EXDEV live guard");
+  }
 
-    expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "bin/nemoclaw.js missing — run npm run build:cli before this live target",
-    ).toBe(true);
+  expect(
+    fs.existsSync(CLI_ENTRYPOINT),
+    "bin/nemoclaw.js missing — run npm run build:cli before this live target",
+  ).toBe(true);
 
-    cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-      const cleanupEnv = liveEnv();
-      await ignoreCleanupError(() =>
-        host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-          artifactName: "cleanup-nemoclaw-destroy-openclaw-plugin-exdev",
-          env: cleanupEnv,
-          timeoutMs: 120_000,
-        }),
-      );
-      await ignoreCleanupError(() =>
-        sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-          artifactName: "cleanup-openshell-delete-openclaw-plugin-exdev",
-          env: cleanupEnv,
-          timeoutMs: 60_000,
-        }),
-      );
-    });
-
+  cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
+    const cleanupEnv = liveEnv();
     await ignoreCleanupError(() =>
       host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "pre-cleanup-nemoclaw-destroy-openclaw-plugin-exdev",
-        env: liveEnv(),
+        artifactName: "cleanup-nemoclaw-destroy-openclaw-plugin-exdev",
+        env: cleanupEnv,
         timeoutMs: 120_000,
       }),
     );
     await ignoreCleanupError(() =>
       sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-        artifactName: "pre-cleanup-openshell-delete-openclaw-plugin-exdev",
-        env: liveEnv(),
+        artifactName: "cleanup-openshell-delete-openclaw-plugin-exdev",
+        env: cleanupEnv,
         timeoutMs: 60_000,
       }),
     );
+  });
 
-    const restorePolicies = patchPoliciesForDevShm();
-    cleanup.add("restore EXDEV policy fixture edits", restorePolicies);
-
-    const onboard = await host.command(
-      "node",
-      [
-        CLI_ENTRYPOINT,
-        "onboard",
-        "--fresh",
-        "--non-interactive",
-        "--yes-i-accept-third-party-software",
-        "--agent",
-        "openclaw",
-        "--from",
-        path.join(REPO_ROOT, "Dockerfile"),
-      ],
-      {
-        artifactName: "openclaw-plugin-exdev-onboard",
-        env: liveEnv({
-          COMPATIBLE_API_KEY: "nemoclaw-exdev-dummy-key",
-          NEMOCLAW_ENDPOINT_URL: "http://host.openshell.internal:65535/v1",
-          NEMOCLAW_MODEL: "nemoclaw-exdev-probe",
-          NEMOCLAW_PROVIDER_KEY: "nemoclaw-exdev-dummy-key",
-          NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-          NEMOCLAW_POLICY_MODE: "skip",
-          NEMOCLAW_PREFERRED_API: "openai-completions",
-          NEMOCLAW_PROVIDER: "custom",
-        }),
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      },
-    );
-    const onboardText = resultText(onboard);
-    expect(onboard.exitCode, onboardText).toBe(0);
-    expect(onboardText).toMatch(/Creating sandbox|Sandbox '.+' created/);
-
-    const df = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(
-        "df -PT / /tmp /dev/shm /sandbox /sandbox/.openclaw/plugin-runtime-deps",
-      ),
-      {
-        artifactName: "openclaw-plugin-exdev-filesystem-layout",
-        env: liveEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    await artifacts.writeText("filesystem-layout.txt", resultText(df));
-    expect(df.exitCode, resultText(df)).toBe(0);
-    expect(resultText(df)).toContain("/dev/shm");
-
-    const probe = await sandbox.execShell(SANDBOX_NAME, runtimeDepsReplacementProbe, {
-      artifactName: "openclaw-plugin-exdev-runtime-deps-replacement",
+  await ignoreCleanupError(() =>
+    host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+      artifactName: "pre-cleanup-nemoclaw-destroy-openclaw-plugin-exdev",
       env: liveEnv(),
-      timeoutMs: PROBE_TIMEOUT_MS,
-    });
-    const probeText = resultText(probe);
-    expect(
-      EXDEV_PATTERNS.some((pattern) => pattern.test(probeText)),
-      probeText,
-    ).toBe(false);
-    expect(probe.exitCode, probeText).toBe(0);
-    expect(probeText).toMatch(/source_device=\d+ target_device=\d+/);
-    expect(probeText).toContain("source-side staging failure self-check completed");
-    expect(probeText).toContain("runtime deps replacement completed");
+      timeoutMs: 120_000,
+    }),
+  );
+  await ignoreCleanupError(() =>
+    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+      artifactName: "pre-cleanup-openshell-delete-openclaw-plugin-exdev",
+      env: liveEnv(),
+      timeoutMs: 60_000,
+    }),
+  );
 
-    await artifacts.target.complete({
-      id: "openclaw-plugin-runtime-exdev",
-      onboardExitCode: onboard.exitCode,
-      filesystemProbeExitCode: df.exitCode,
-      runtimeDepsProbeExitCode: probe.exitCode,
-      assertions: {
-        distinctDevices: /source_device=\d+ target_device=\d+/.test(probeText),
-        sourceSideExdevSelfCheck: probeText.includes(
-          "source-side staging failure self-check completed",
-        ),
-        noExdevSignature: !EXDEV_PATTERNS.some((pattern) => pattern.test(probeText)),
-        successMarker: probeText.includes("runtime deps replacement completed"),
-      },
-    });
-  },
-);
+  const restorePolicies = patchPoliciesForDevShm();
+  cleanup.add("restore EXDEV policy fixture edits", restorePolicies);
+
+  const onboard = await host.command(
+    "node",
+    [
+      CLI_ENTRYPOINT,
+      "onboard",
+      "--fresh",
+      "--non-interactive",
+      "--yes-i-accept-third-party-software",
+      "--agent",
+      "openclaw",
+      "--from",
+      path.join(REPO_ROOT, "Dockerfile"),
+    ],
+    {
+      artifactName: "openclaw-plugin-exdev-onboard",
+      env: liveEnv({
+        COMPATIBLE_API_KEY: "nemoclaw-exdev-dummy-key",
+        NEMOCLAW_ENDPOINT_URL: "http://host.openshell.internal:65535/v1",
+        NEMOCLAW_MODEL: "nemoclaw-exdev-probe",
+        NEMOCLAW_PROVIDER_KEY: "nemoclaw-exdev-dummy-key",
+        NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+        NEMOCLAW_POLICY_MODE: "skip",
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_PROVIDER: "custom",
+      }),
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  const onboardText = resultText(onboard);
+  expect(onboard.exitCode, onboardText).toBe(0);
+  expect(onboardText).toMatch(/Creating sandbox|Sandbox '.+' created/);
+
+  const df = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      "df -PT / /tmp /dev/shm /sandbox /sandbox/.openclaw/plugin-runtime-deps",
+    ),
+    {
+      artifactName: "openclaw-plugin-exdev-filesystem-layout",
+      env: liveEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  await artifacts.writeText("filesystem-layout.txt", resultText(df));
+  expect(df.exitCode, resultText(df)).toBe(0);
+  expect(resultText(df)).toContain("/dev/shm");
+
+  const probe = await sandbox.execShell(SANDBOX_NAME, runtimeDepsReplacementProbe, {
+    artifactName: "openclaw-plugin-exdev-runtime-deps-replacement",
+    env: liveEnv(),
+    timeoutMs: PROBE_TIMEOUT_MS,
+  });
+  const probeText = resultText(probe);
+  expect(
+    EXDEV_PATTERNS.some((pattern) => pattern.test(probeText)),
+    probeText,
+  ).toBe(false);
+  expect(probe.exitCode, probeText).toBe(0);
+  expect(probeText).toMatch(/source_device=\d+ target_device=\d+/);
+  expect(probeText).toContain("source-side staging failure self-check completed");
+  expect(probeText).toContain("runtime deps replacement completed");
+
+  await artifacts.target.complete({
+    id: "openclaw-plugin-runtime-exdev",
+    onboardExitCode: onboard.exitCode,
+    filesystemProbeExitCode: df.exitCode,
+    runtimeDepsProbeExitCode: probe.exitCode,
+    assertions: {
+      distinctDevices: /source_device=\d+ target_device=\d+/.test(probeText),
+      sourceSideExdevSelfCheck: probeText.includes(
+        "source-side staging failure self-check completed",
+      ),
+      noExdevSignature: !EXDEV_PATTERNS.some((pattern) => pattern.test(probeText)),
+      successMarker: probeText.includes("runtime deps replacement completed"),
+    },
+  });
+});

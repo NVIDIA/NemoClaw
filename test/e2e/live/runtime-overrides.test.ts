@@ -5,17 +5,15 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // Docker-image/entrypoint boundary: build the NemoClaw sandbox image, start
 // short-lived containers through the real ENTRYPOINT, then read the patched
 // /sandbox/.openclaw/openclaw.json and .config-hash from inside the container.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const TEST_TIMEOUT_MS = 45 * 60 * 1000;
 const DOCKER_BUFFER_BYTES = 20 * 1024 * 1024;
 const DOCKER_REQUIRED_MESSAGE = "Docker is required for runtime override coverage";
-
-const runtimeOverridesTest = process.env.NEMOCLAW_RUN_LIVE_E2E === "1" ? test : test.skip;
 
 type CommandResult = {
   status: number | null;
@@ -235,7 +233,7 @@ function buildImage(dockerLog: string[], image: string): void {
   expect(build.status, spawnResultText(build)).toBe(0);
 }
 
-runtimeOverridesTest(
+test(
   "runtime config overrides patch OpenClaw config through the Docker entrypoint",
   testTimeoutOptions(TEST_TIMEOUT_MS),
   async ({ artifacts, secrets, skip }) => {

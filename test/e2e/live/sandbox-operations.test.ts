@@ -33,7 +33,6 @@ const SANDBOX_A = "e2e-sbx-a";
 const SANDBOX_B = "e2e-sbx-b";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
-const liveTest = process.env.NEMOCLAW_RUN_LIVE_E2E === "1" ? test : test.skip;
 
 type CleanupRegistry = { add(name: string, run: () => Promise<void> | void): void };
 
@@ -589,7 +588,7 @@ async function assertGatewayRecovery(
   return recoveryOutcome;
 }
 
-liveTest(
+test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   async ({ artifacts, cleanup, docker, environment, host, sandbox, secrets }) => {
     const hosted = requireHostedInferenceConfig(secrets);

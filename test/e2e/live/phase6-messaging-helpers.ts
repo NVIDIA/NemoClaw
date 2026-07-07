@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   assertExitZero as expectExitZero,
@@ -17,13 +15,13 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isNvidiaEndpointRateLimitFailure } from "./messaging-providers-helpers.ts";
 
-export { expectExitZero, resultText };
+export { expectExitZero, REPO_ROOT, resultText };
 
-export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-export const CLI = process.env.NEMOCLAW_CLI_BIN ?? path.join(REPO_ROOT, "bin", "nemoclaw.js");
+export const CLI = process.env.NEMOCLAW_CLI_BIN ?? CLI_ENTRYPOINT;
 
 export const INSTALL_TIMEOUT_MS = 45 * 60_000;
 export const COMMAND_TIMEOUT_MS = 120_000;

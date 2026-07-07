@@ -18,7 +18,7 @@ import {
   snapshotFile,
   writeJsonFile,
 } from "../fixtures/file-state.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { buildRebuildHermesChildEnv } from "./rebuild-hermes-env.ts";
@@ -31,7 +31,6 @@ import { buildRebuildHermesChildEnv } from "./rebuild-hermes-env.ts";
 // prompt, and `Y` confirmation) are outside this shell-lane migration.
 // Vitest.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml");
 const OLD_HERMES_VERSION = "v2026.5.16";
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
@@ -340,437 +339,431 @@ function registrySandbox(): Record<string, unknown> {
   return sandbox as Record<string, unknown>;
 }
 
-test.skipIf(!shouldRunLiveE2E())(
-  STALE_BASE_REBUILD
-    ? "rebuild-hermes: stale base cache is refreshed while Hermes state survives rebuild"
-    : "rebuild-hermes: old Hermes sandbox rebuild preserves messaging state and upgrades runtime",
-  { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    const redactionValues = [apiKey, DISCORD_FAKE_TOKEN];
-    const expectedVersion = expectedHermesVersion();
+test(STALE_BASE_REBUILD
+  ? "rebuild-hermes: stale base cache is refreshed while Hermes state survives rebuild"
+  : "rebuild-hermes: old Hermes sandbox rebuild preserves messaging state and upgrades runtime", {
+  timeout: LIVE_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, secrets, skip }) => {
+  const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+  const redactionValues = [apiKey, DISCORD_FAKE_TOKEN];
+  const expectedVersion = expectedHermesVersion();
 
-    const registrySnapshot = snapshotFile(REGISTRY_FILE);
-    const sessionSnapshot = snapshotFile(SESSION_FILE);
-    const sandboxBackupRoot = path.join(BACKUP_ROOT, SANDBOX_NAME);
-    cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
-      restoreFile(REGISTRY_FILE, registrySnapshot);
-      restoreFile(SESSION_FILE, sessionSnapshot);
-      fs.rmSync(sandboxBackupRoot, { recursive: true, force: true });
-    });
-    cleanup.add(`destroy Hermes rebuild resources for ${SANDBOX_NAME}`, async () => {
-      await cleanupHermesResources(host, apiKey, "cleanup-hermes-rebuild-resources");
-    });
+  const registrySnapshot = snapshotFile(REGISTRY_FILE);
+  const sessionSnapshot = snapshotFile(SESSION_FILE);
+  const sandboxBackupRoot = path.join(BACKUP_ROOT, SANDBOX_NAME);
+  cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
+    restoreFile(REGISTRY_FILE, registrySnapshot);
+    restoreFile(SESSION_FILE, sessionSnapshot);
+    fs.rmSync(sandboxBackupRoot, { recursive: true, force: true });
+  });
+  cleanup.add(`destroy Hermes rebuild resources for ${SANDBOX_NAME}`, async () => {
+    await cleanupHermesResources(host, apiKey, "cleanup-hermes-rebuild-resources");
+  });
 
-    await artifacts.writeJson("contract.json", {
-      staleBaseMode: STALE_BASE_REBUILD,
-      sandboxName: SANDBOX_NAME,
-      oldHermesVersion: OLD_HERMES_VERSION,
-      expectedHermesVersion: expectedVersion,
-      markerFile: MARKER_FILE,
-      preservedBoundaries: [
-        "bash install.sh --non-interactive",
-        "docker build agents/hermes/Dockerfile.base for old/current Hermes base images",
-        "openshell provider create/update and sandbox create/exec/list",
-        "curated local ~/.nemoclaw registry and onboard-session rebuild metadata",
-        "real nemoclaw <sandbox> rebuild --yes --verbose",
-        "Hermes .env/config.yaml messaging placeholder preservation",
-        "backup credential leak scan under ~/.nemoclaw/rebuild-backups",
-      ],
-      outOfScope: [
-        "interactive ./bin/nemoclaw.js onboard --agent hermes reproduction path",
-        "interactive hermes rebuild modal prompt and Y confirmation",
-      ],
-    });
+  await artifacts.writeJson("contract.json", {
+    staleBaseMode: STALE_BASE_REBUILD,
+    sandboxName: SANDBOX_NAME,
+    oldHermesVersion: OLD_HERMES_VERSION,
+    expectedHermesVersion: expectedVersion,
+    markerFile: MARKER_FILE,
+    preservedBoundaries: [
+      "bash install.sh --non-interactive",
+      "docker build agents/hermes/Dockerfile.base for old/current Hermes base images",
+      "openshell provider create/update and sandbox create/exec/list",
+      "curated local ~/.nemoclaw registry and onboard-session rebuild metadata",
+      "real nemoclaw <sandbox> rebuild --yes --verbose",
+      "Hermes .env/config.yaml messaging placeholder preservation",
+      "backup credential leak scan under ~/.nemoclaw/rebuild-backups",
+    ],
+    outOfScope: [
+      "interactive ./bin/nemoclaw.js onboard --agent hermes reproduction path",
+      "interactive hermes rebuild modal prompt and Y confirmation",
+    ],
+  });
 
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    switch (dockerInfo.exitCode === 0) {
-      case false:
-        switch (process.env.GITHUB_ACTIONS === "true") {
-          case true:
-            throw new Error(
-              `Docker is required for rebuild-hermes live coverage: ${resultText(dockerInfo)}`,
-            );
-          default:
-            skip("Docker is required for rebuild-hermes live coverage");
-        }
-    }
+  const dockerInfo = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  switch (dockerInfo.exitCode === 0) {
+    case false:
+      switch (process.env.GITHUB_ACTIONS === "true") {
+        case true:
+          throw new Error(
+            `Docker is required for rebuild-hermes live coverage: ${resultText(dockerInfo)}`,
+          );
+        default:
+          skip("Docker is required for rebuild-hermes live coverage");
+      }
+  }
 
-    await cleanupHermesResources(host, apiKey, "pre-cleanup-hermes-rebuild-resources");
+  await cleanupHermesResources(host, apiKey, "pre-cleanup-hermes-rebuild-resources");
 
-    const install = await host.command("bash", ["install.sh", "--non-interactive"], {
-      artifactName: "phase-1-install-hermes",
-      cwd: REPO_ROOT,
-      env: testEnv(apiKey),
-      redactionValues,
-      timeoutMs: INSTALL_TIMEOUT_MS,
-    });
-    expectExitZero(install, "NemoClaw install.sh");
+  const install = await host.command("bash", ["install.sh", "--non-interactive"], {
+    artifactName: "phase-1-install-hermes",
+    cwd: REPO_ROOT,
+    env: testEnv(apiKey),
+    redactionValues,
+    timeoutMs: INSTALL_TIMEOUT_MS,
+  });
+  expectExitZero(install, "NemoClaw install.sh");
 
-    const cliProbe = await host.command(
-      "bash",
-      ["-lc", "command -v nemoclaw && command -v openshell && nemoclaw --help >/dev/null"],
-      {
-        artifactName: "phase-1-cli-probe",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
-    expectExitZero(cliProbe, "NemoClaw/OpenShell installed by install.sh");
-
-    const gatewayProbe = await host.command("openshell", ["gateway", "info", "-g", "nemoclaw"], {
-      artifactName: "phase-1-gateway-probe",
+  const cliProbe = await host.command(
+    "bash",
+    ["-lc", "command -v nemoclaw && command -v openshell && nemoclaw --help >/dev/null"],
+    {
+      artifactName: "phase-1-cli-probe",
       env: testEnv(apiKey),
       redactionValues,
       timeoutMs: 30_000,
-    });
-    expectExitZero(gatewayProbe, "NemoClaw install must leave a reusable 'nemoclaw' gateway");
+    },
+  );
+  expectExitZero(cliProbe, "NemoClaw/OpenShell installed by install.sh");
 
-    const phase1DashboardPort = registrySandbox().dashboardPort;
-    expect(
-      typeof phase1DashboardPort === "number" &&
-        Number.isInteger(phase1DashboardPort) &&
-        phase1DashboardPort > 0 &&
-        phase1DashboardPort <= 65535,
-      "initial Hermes onboard must persist the dashboard port used by authoritative rebuild",
-    ).toBe(true);
+  const gatewayProbe = await host.command("openshell", ["gateway", "info", "-g", "nemoclaw"], {
+    artifactName: "phase-1-gateway-probe",
+    env: testEnv(apiKey),
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(gatewayProbe, "NemoClaw install must leave a reusable 'nemoclaw' gateway");
 
-    const deleteCurrentSandbox = await host.command(
-      "openshell",
-      ["sandbox", "delete", SANDBOX_NAME],
-      {
-        artifactName: "phase-1-delete-current-sandbox",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      },
-    );
-    deleteCurrentSandbox.exitCode === 0 ||
-      (await artifacts.writeText(
-        "phase-1-delete-current-sandbox-note.txt",
-        resultText(deleteCurrentSandbox),
-      ));
-    await host.command("openshell", ["forward", "stop", "8642"], {
-      artifactName: "phase-1-stop-hermes-forward",
+  const phase1DashboardPort = registrySandbox().dashboardPort;
+  expect(
+    typeof phase1DashboardPort === "number" &&
+      Number.isInteger(phase1DashboardPort) &&
+      phase1DashboardPort > 0 &&
+      phase1DashboardPort <= 65535,
+    "initial Hermes onboard must persist the dashboard port used by authoritative rebuild",
+  ).toBe(true);
+
+  const deleteCurrentSandbox = await host.command(
+    "openshell",
+    ["sandbox", "delete", SANDBOX_NAME],
+    {
+      artifactName: "phase-1-delete-current-sandbox",
       env: testEnv(apiKey),
       redactionValues,
       timeoutMs: OPENSHELL_TIMEOUT_MS,
-    });
+    },
+  );
+  deleteCurrentSandbox.exitCode === 0 ||
+    (await artifacts.writeText(
+      "phase-1-delete-current-sandbox-note.txt",
+      resultText(deleteCurrentSandbox),
+    ));
+  await host.command("openshell", ["forward", "stop", "8642"], {
+    artifactName: "phase-1-stop-hermes-forward",
+    env: testEnv(apiKey),
+    redactionValues,
+    timeoutMs: OPENSHELL_TIMEOUT_MS,
+  });
 
-    const buildOldBase = await host.command(
-      "docker",
-      [
-        "build",
-        "--build-arg",
-        `HERMES_VERSION=${OLD_HERMES_VERSION}`,
-        "--build-arg",
-        `HERMES_SEMVER=${OLD_HERMES_SEMVER}`,
-        "--build-arg",
-        `HERMES_TARBALL_SHA256=${OLD_HERMES_TARBALL_SHA256}`,
-        "--build-arg",
-        `HERMES_NPM_INTEGRITY=${OLD_HERMES_NPM_INTEGRITY}`,
-        "--build-arg",
-        "HERMES_UV_EXTRAS=messaging mcp",
-        "-f",
-        path.join(REPO_ROOT, "agents", "hermes", "Dockerfile.base"),
-        "-t",
-        OLD_BASE_TAG,
-        REPO_ROOT,
-      ],
-      {
-        artifactName: "phase-2-docker-build-old-hermes-base",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(buildOldBase, `docker build old Hermes base ${OLD_HERMES_VERSION}`);
+  const buildOldBase = await host.command(
+    "docker",
+    [
+      "build",
+      "--build-arg",
+      `HERMES_VERSION=${OLD_HERMES_VERSION}`,
+      "--build-arg",
+      `HERMES_SEMVER=${OLD_HERMES_SEMVER}`,
+      "--build-arg",
+      `HERMES_TARBALL_SHA256=${OLD_HERMES_TARBALL_SHA256}`,
+      "--build-arg",
+      `HERMES_NPM_INTEGRITY=${OLD_HERMES_NPM_INTEGRITY}`,
+      "--build-arg",
+      "HERMES_UV_EXTRAS=messaging mcp",
+      "-f",
+      path.join(REPO_ROOT, "agents", "hermes", "Dockerfile.base"),
+      "-t",
+      OLD_BASE_TAG,
+      REPO_ROOT,
+    ],
+    {
+      artifactName: "phase-2-docker-build-old-hermes-base",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(buildOldBase, `docker build old Hermes base ${OLD_HERMES_VERSION}`);
 
-    switch (STALE_BASE_REBUILD) {
-      case true: {
-        const tagOldAsCurrent = await host.command(
-          "docker",
-          ["tag", OLD_BASE_TAG, CURRENT_BASE_TAG],
-          {
-            artifactName: "phase-2-tag-old-base-as-current-cache",
-            env: testEnv(apiKey),
-            redactionValues,
-            timeoutMs: OPENSHELL_TIMEOUT_MS,
-          },
-        );
-        expectExitZero(tagOldAsCurrent, "tag old Hermes base as current cache");
-        break;
-      }
-    }
-
-    const oldDockerfileDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-hermes-"));
-    const oldDockerfile = path.join(oldDockerfileDir, "Dockerfile");
-    fs.writeFileSync(oldDockerfile, oldHermesDockerfile(), "utf8");
-    try {
-      const provider = await host.command(
-        "bash",
-        [
-          "-lc",
-          [
-            "set -euo pipefail",
-            'openshell provider create --name "$DISCORD_PROVIDER" --type generic --credential DISCORD_BOT_TOKEN ||',
-            '  openshell provider update "$DISCORD_PROVIDER" --credential DISCORD_BOT_TOKEN',
-          ].join("\n"),
-        ],
+  switch (STALE_BASE_REBUILD) {
+    case true: {
+      const tagOldAsCurrent = await host.command(
+        "docker",
+        ["tag", OLD_BASE_TAG, CURRENT_BASE_TAG],
         {
-          artifactName: "phase-3-discord-provider-create-or-update",
-          env: testEnv(apiKey, {
-            DISCORD_BOT_TOKEN: DISCORD_FAKE_TOKEN,
-            DISCORD_PROVIDER: `${SANDBOX_NAME}-discord-bridge`,
-          }),
+          artifactName: "phase-2-tag-old-base-as-current-cache",
+          env: testEnv(apiKey),
           redactionValues,
           timeoutMs: OPENSHELL_TIMEOUT_MS,
         },
       );
-      expectExitZero(provider, "OpenShell Discord provider create/update");
+      expectExitZero(tagOldAsCurrent, "tag old Hermes base as current cache");
+      break;
+    }
+  }
 
-      const createOldSandbox = await host.command(
-        "openshell",
+  const oldDockerfileDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-hermes-"));
+  const oldDockerfile = path.join(oldDockerfileDir, "Dockerfile");
+  fs.writeFileSync(oldDockerfile, oldHermesDockerfile(), "utf8");
+  try {
+    const provider = await host.command(
+      "bash",
+      [
+        "-lc",
         [
-          "sandbox",
-          "create",
-          "--name",
-          SANDBOX_NAME,
-          "--from",
-          oldDockerfile,
-          "--gateway",
-          "nemoclaw",
-          "--provider",
-          `${SANDBOX_NAME}-discord-bridge`,
-          "--no-tty",
-          "--",
-          "true",
+          "set -euo pipefail",
+          'openshell provider create --name "$DISCORD_PROVIDER" --type generic --credential DISCORD_BOT_TOKEN ||',
+          '  openshell provider update "$DISCORD_PROVIDER" --credential DISCORD_BOT_TOKEN',
+        ].join("\n"),
+      ],
+      {
+        artifactName: "phase-3-discord-provider-create-or-update",
+        env: testEnv(apiKey, {
+          DISCORD_BOT_TOKEN: DISCORD_FAKE_TOKEN,
+          DISCORD_PROVIDER: `${SANDBOX_NAME}-discord-bridge`,
+        }),
+        redactionValues,
+        timeoutMs: OPENSHELL_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(provider, "OpenShell Discord provider create/update");
+
+    const createOldSandbox = await host.command(
+      "openshell",
+      [
+        "sandbox",
+        "create",
+        "--name",
+        SANDBOX_NAME,
+        "--from",
+        oldDockerfile,
+        "--gateway",
+        "nemoclaw",
+        "--provider",
+        `${SANDBOX_NAME}-discord-bridge`,
+        "--no-tty",
+        "--",
+        "true",
+      ],
+      {
+        artifactName: "phase-3-create-old-hermes-sandbox",
+        env: testEnv(apiKey),
+        redactionValues,
+        timeoutMs: SANDBOX_CREATE_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(createOldSandbox, "create old Hermes sandbox");
+  } finally {
+    fs.rmSync(oldDockerfileDir, { recursive: true, force: true });
+  }
+  await waitForSandboxReady(host, apiKey);
+
+  const writeMarker = await host.command(
+    "openshell",
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      SANDBOX_NAME,
+      "--",
+      "sh",
+      "-c",
+      `mkdir -p /sandbox/.hermes/memories && printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(MARKER_FILE)}`,
+    ],
+    {
+      artifactName: "phase-4-write-hermes-marker",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(writeMarker, "write Hermes marker");
+
+  const preEnv = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
+    {
+      artifactName: "phase-4-read-pre-rebuild-env",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(preEnv, "read pre-rebuild Hermes .env");
+  expect(preEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
+
+  const preConfig = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/config.yaml"],
+    {
+      artifactName: "phase-4-read-pre-rebuild-config",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(preConfig, "read pre-rebuild Hermes config.yaml");
+  expect(preConfig.stdout).toContain("discord:");
+
+  const sessionSummary = seedRegistryAndSession(phase1DashboardPort as number);
+  const seededRegistry = registrySandbox();
+  await artifacts.writeJson("phase-4-registry-session-summary.json", {
+    registryVersion: seededRegistry.agentVersion,
+    dashboardPort: seededRegistry.dashboardPort,
+    registryInference: {
+      provider: seededRegistry.provider,
+      endpointUrl: seededRegistry.endpointUrl,
+      credentialEnv: seededRegistry.credentialEnv,
+      preferredInferenceApi: seededRegistry.preferredInferenceApi,
+    },
+    session: sessionSummary,
+  });
+
+  switch (STALE_BASE_REBUILD) {
+    case false: {
+      const buildCurrentBase = await host.command(
+        "docker",
+        [
+          "build",
+          "-f",
+          path.join(REPO_ROOT, "agents", "hermes", "Dockerfile.base"),
+          "-t",
+          CURRENT_BASE_TAG,
+          REPO_ROOT,
         ],
         {
-          artifactName: "phase-3-create-old-hermes-sandbox",
+          artifactName: "phase-5-docker-build-current-hermes-base",
           env: testEnv(apiKey),
           redactionValues,
-          timeoutMs: SANDBOX_CREATE_TIMEOUT_MS,
+          timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
         },
       );
-      expectExitZero(createOldSandbox, "create old Hermes sandbox");
-    } finally {
-      fs.rmSync(oldDockerfileDir, { recursive: true, force: true });
+      expectExitZero(buildCurrentBase, "docker build current Hermes base image");
+      break;
     }
-    await waitForSandboxReady(host, apiKey);
+    case true:
+      await artifacts.writeText(
+        "phase-5-stale-base-note.txt",
+        `Left ${CURRENT_BASE_TAG} pointing at ${OLD_HERMES_VERSION}; rebuild must refresh the base cache.\n`,
+      );
+  }
 
-    const writeMarker = await host.command(
-      "openshell",
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        SANDBOX_NAME,
-        "--",
-        "sh",
-        "-c",
-        `mkdir -p /sandbox/.hermes/memories && printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(MARKER_FILE)}`,
-      ],
-      {
-        artifactName: "phase-4-write-hermes-marker",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(writeMarker, "write Hermes marker");
+  const rebuild = await host.command("nemoclaw", [SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
+    artifactName: "phase-6-nemoclaw-rebuild-hermes",
+    env: testEnv(apiKey, { NEMOCLAW_REBUILD_VERBOSE: "1" }),
+    redactionValues,
+    timeoutMs: REBUILD_TIMEOUT_MS,
+  });
+  expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
 
-    const preEnv = await host.command(
-      "openshell",
-      ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
-      {
-        artifactName: "phase-4-read-pre-rebuild-env",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(preEnv, "read pre-rebuild Hermes .env");
-    expect(preEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
+  const restoredMarker = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", MARKER_FILE],
+    {
+      artifactName: "phase-7-read-marker-after-rebuild",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(restoredMarker, "read Hermes marker after rebuild");
+  expect(restoredMarker.stdout).toBe(MARKER_CONTENT);
 
-    const preConfig = await host.command(
-      "openshell",
-      ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/config.yaml"],
-      {
-        artifactName: "phase-4-read-pre-rebuild-config",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(preConfig, "read pre-rebuild Hermes config.yaml");
-    expect(preConfig.stdout).toContain("discord:");
+  const hermesVersion = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "hermes", "--version"],
+    {
+      artifactName: "phase-7-hermes-version-after-rebuild",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(hermesVersion, "Hermes version after rebuild");
+  expect(resultText(hermesVersion)).not.toContain(OLD_HERMES_REGISTRY_VERSION);
+  const hermesVersionText = resultText(hermesVersion);
+  const actualHermesVersion = hermesVersionText.match(/v(\d+\.\d+\.\d+)/)?.[1];
+  expectEqual(
+    actualHermesVersion,
+    expectedVersion,
+    `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
+  );
 
-    const sessionSummary = seedRegistryAndSession(phase1DashboardPort as number);
-    const seededRegistry = registrySandbox();
-    await artifacts.writeJson("phase-4-registry-session-summary.json", {
-      registryVersion: seededRegistry.agentVersion,
-      dashboardPort: seededRegistry.dashboardPort,
-      registryInference: {
-        provider: seededRegistry.provider,
-        endpointUrl: seededRegistry.endpointUrl,
-        credentialEnv: seededRegistry.credentialEnv,
-        preferredInferenceApi: seededRegistry.preferredInferenceApi,
-      },
-      session: sessionSummary,
-    });
+  const restoredEnv = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
+    {
+      artifactName: "phase-7-read-env-after-rebuild",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(restoredEnv, "read Hermes .env after rebuild");
+  expect(restoredEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
 
-    switch (STALE_BASE_REBUILD) {
-      case false: {
-        const buildCurrentBase = await host.command(
-          "docker",
-          [
-            "build",
-            "-f",
-            path.join(REPO_ROOT, "agents", "hermes", "Dockerfile.base"),
-            "-t",
-            CURRENT_BASE_TAG,
-            REPO_ROOT,
-          ],
-          {
-            artifactName: "phase-5-docker-build-current-hermes-base",
-            env: testEnv(apiKey),
-            redactionValues,
-            timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
-          },
-        );
-        expectExitZero(buildCurrentBase, "docker build current Hermes base image");
-        break;
-      }
-      case true:
-        await artifacts.writeText(
-          "phase-5-stale-base-note.txt",
-          `Left ${CURRENT_BASE_TAG} pointing at ${OLD_HERMES_VERSION}; rebuild must refresh the base cache.\n`,
-        );
-    }
+  const restoredConfig = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/config.yaml"],
+    {
+      artifactName: "phase-7-read-config-after-rebuild",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(restoredConfig, "read Hermes config.yaml after rebuild");
+  expect(restoredConfig.stdout).toContain("discord:");
 
-    const rebuild = await host.command(
-      "nemoclaw",
-      [SANDBOX_NAME, "rebuild", "--yes", "--verbose"],
-      {
-        artifactName: "phase-6-nemoclaw-rebuild-hermes",
-        env: testEnv(apiKey, { NEMOCLAW_REBUILD_VERBOSE: "1" }),
-        redactionValues,
-        timeoutMs: REBUILD_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
+  const updatedRegistryVersion = registryVersion();
+  expect(updatedRegistryVersion).toEqual(expect.any(String));
+  expect(updatedRegistryVersion).not.toBe(OLD_HERMES_REGISTRY_VERSION);
 
-    const restoredMarker = await host.command(
-      "openshell",
-      ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", MARKER_FILE],
-      {
-        artifactName: "phase-7-read-marker-after-rebuild",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(restoredMarker, "read Hermes marker after rebuild");
-    expect(restoredMarker.stdout).toBe(MARKER_CONTENT);
+  const inferencePayload = JSON.stringify({
+    model: HOSTED_MODEL,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    max_tokens: 100,
+  });
+  const inference = await host.command(
+    "openshell",
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      SANDBOX_NAME,
+      "--",
+      "sh",
+      "-lc",
+      `curl -s --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d ${shellQuote(inferencePayload)}`,
+    ],
+    {
+      artifactName: "phase-7-inference-after-rebuild",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: 90_000,
+    },
+  );
+  await artifacts.writeJson("phase-7-inference-summary.json", {
+    exitCode: inference.exitCode,
+    pong: /PONG/i.test(resultText(inference)),
+    note: /PONG/i.test(resultText(inference))
+      ? "Inference returned PONG after rebuild."
+      : "Inference check is non-fatal, matching the former shell lane's external API tolerance.",
+  });
 
-    const hermesVersion = await host.command(
-      "openshell",
-      ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "hermes", "--version"],
-      {
-        artifactName: "phase-7-hermes-version-after-rebuild",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(hermesVersion, "Hermes version after rebuild");
-    expect(resultText(hermesVersion)).not.toContain(OLD_HERMES_REGISTRY_VERSION);
-    const hermesVersionText = resultText(hermesVersion);
-    const actualHermesVersion = hermesVersionText.match(/v(\d+\.\d+\.\d+)/)?.[1];
-    expectEqual(
-      actualHermesVersion,
-      expectedVersion,
-      `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
-    );
-
-    const restoredEnv = await host.command(
-      "openshell",
-      ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
-      {
-        artifactName: "phase-7-read-env-after-rebuild",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(restoredEnv, "read Hermes .env after rebuild");
-    expect(restoredEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
-
-    const restoredConfig = await host.command(
-      "openshell",
-      ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/config.yaml"],
-      {
-        artifactName: "phase-7-read-config-after-rebuild",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(restoredConfig, "read Hermes config.yaml after rebuild");
-    expect(restoredConfig.stdout).toContain("discord:");
-
-    const updatedRegistryVersion = registryVersion();
-    expect(updatedRegistryVersion).toEqual(expect.any(String));
-    expect(updatedRegistryVersion).not.toBe(OLD_HERMES_REGISTRY_VERSION);
-
-    const inferencePayload = JSON.stringify({
-      model: HOSTED_MODEL,
-      messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-      max_tokens: 100,
-    });
-    const inference = await host.command(
-      "openshell",
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        SANDBOX_NAME,
-        "--",
-        "sh",
-        "-lc",
-        `curl -s --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d ${shellQuote(inferencePayload)}`,
-      ],
-      {
-        artifactName: "phase-7-inference-after-rebuild",
-        env: testEnv(apiKey),
-        redactionValues,
-        timeoutMs: 90_000,
-      },
-    );
-    await artifacts.writeJson("phase-7-inference-summary.json", {
-      exitCode: inference.exitCode,
-      pong: /PONG/i.test(resultText(inference)),
-      note: /PONG/i.test(resultText(inference))
-        ? "Inference returned PONG after rebuild."
-        : "Inference check is non-fatal, matching the former shell lane's external API tolerance.",
-    });
-
-    expect(fs.existsSync(sandboxBackupRoot), `Backup directory missing: ${sandboxBackupRoot}`).toBe(
-      true,
-    );
-    const leaks = listCredentialLeakPaths(sandboxBackupRoot, {
-      extraSecrets: [apiKey, DISCORD_FAKE_TOKEN],
-    });
-    await artifacts.writeJson("phase-7-backup-credential-scan.json", {
-      backupRoot: sandboxBackupRoot,
-      leaks,
-    });
-    expect(leaks, "backup files must not contain credential-shaped values").toEqual([]);
-  },
-);
+  expect(fs.existsSync(sandboxBackupRoot), `Backup directory missing: ${sandboxBackupRoot}`).toBe(
+    true,
+  );
+  const leaks = listCredentialLeakPaths(sandboxBackupRoot, {
+    extraSecrets: [apiKey, DISCORD_FAKE_TOKEN],
+  });
+  await artifacts.writeJson("phase-7-backup-credential-scan.json", {
+    backupRoot: sandboxBackupRoot,
+    leaks,
+  });
+  expect(leaks, "backup files must not contain credential-shaped values").toEqual([]);
+});
