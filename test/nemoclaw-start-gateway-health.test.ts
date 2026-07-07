@@ -168,8 +168,6 @@ function runWatchdog(opts: {
     `printf '%s' ${JSON.stringify(opts.cmdline ?? "openclaw-gateway")} >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/cmdline`,
     `write_proc_stat "$FAKE_GATEWAY_PID" "$$" "$FAKE_GATEWAY_START" >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/stat`,
     watchdogFunctions(wedgeLogFile),
-    // The watchdog itself is outside the fake proc fixture. Its launch
-    // identity is irrelevant to these gateway-target tests.
     'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
     'record_gateway_pid "$FAKE_GATEWAY_PID" "$FAKE_GATEWAY_START"',
     "start_gateway_serving_watchdog",
