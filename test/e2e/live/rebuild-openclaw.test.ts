@@ -18,7 +18,7 @@ import {
   snapshotFile,
   writeJsonFile,
 } from "../fixtures/file-state.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
 
@@ -29,8 +29,6 @@ import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.t
 //
 // Simplicity boundary: no new registry, fixture family, or migration ledger.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const OLD_OPENCLAW_VERSION = "2026.3.11";
 const MARKER_FILE = "/sandbox/.openclaw/workspace/rebuild-marker.txt";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -313,9 +311,10 @@ function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): 
   return leaks;
 }
 
-// Gate this live test on NEMOCLAW_RUN_LIVE_E2E=1. Accidental cli-test-shard
-// discovery must not build Docker images, mutate ~/.nemoclaw, or call NVIDIA.
-test.skipIf(!shouldRunLiveE2E())(
+// The e2e-live Vitest project owns the NEMOCLAW_RUN_LIVE_E2E collection gate.
+// Accidental cli-test-shard discovery must not build Docker images, mutate
+// ~/.nemoclaw, or call NVIDIA.
+test(
   "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and rotates gateway token",
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");

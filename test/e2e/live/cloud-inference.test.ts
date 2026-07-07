@@ -20,7 +20,7 @@ import { type SandboxClient, validateSandboxName } from "../fixtures/clients/san
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildPreContractExternalProviderSkipEvidence,
@@ -28,8 +28,6 @@ import {
   type PreContractExternalProviderFailure,
 } from "./cloud-inference-provider-skip.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const REPO_SKILL_VALIDATOR = path.join(
   REPO_ROOT,
   "test",
@@ -214,7 +212,7 @@ async function expectLiveChatPong(
   throw new Error(`Live chat failed after ${MAX_ATTEMPTS} attempt(s): ${lastFailure}`);
 }
 
-test.skipIf(!shouldRunLiveE2E())(
+test(
   "cloud inference: inference.local chat and OpenClaw skill filesystem validate",
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const hosted = requireHostedInferenceConfig(secrets);

@@ -6,7 +6,7 @@
  * inference output parsing. All functions are pure.
  */
 
-import { shouldSkipResponsesProbe } from "../validation";
+import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
 import { DEFAULT_OLLAMA_MODEL } from "./local";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
@@ -67,6 +67,15 @@ export const OLLAMA_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 export const VLLM_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_VLLM_LOCAL_TOKEN";
 export const MANAGED_PROVIDER_ID = "inference";
 export { DEFAULT_OLLAMA_MODEL };
+
+/** Resolve an agent-owned NVIDIA Endpoints default without changing shared defaults. */
+export function resolveAgentDefaultCloudModel(agent: unknown): string {
+  const configured = (agent as { inference?: { default_model?: unknown } } | null | undefined)
+    ?.inference?.default_model;
+  return typeof configured === "string" && isSafeModelId(configured.trim())
+    ? configured.trim()
+    : DEFAULT_CLOUD_MODEL;
+}
 
 export interface ProviderSelectionConfig {
   endpointType: string;

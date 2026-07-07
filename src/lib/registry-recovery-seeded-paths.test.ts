@@ -3,6 +3,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { runInferenceSet } from "./actions/inference-set.js";
+import { createDeps } from "./actions/inference-set.test-support.js";
 import type { SandboxEntry } from "./state/registry.js";
 
 interface MockRegistryState {
@@ -70,8 +72,8 @@ import { loadSession } from "./state/onboard-session.js";
 
 const gammaEntry = (policies: string[]): SandboxEntry => ({
   name: "gamma",
-  provider: "existing-provider",
-  model: "existing-model",
+  provider: "nvidia-prod",
+  model: "nvidia/nemotron-3-super-120b-a12b",
   gpuEnabled: false,
   policies,
 });
@@ -128,6 +130,61 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     ]);
     expect(mockRegistryState.sandboxes.alpha?.policies).toEqual(["pypi"]);
     expect(mockRegistryState.defaultSandbox).toBe("gamma");
+  });
+
+  it("fails closed instead of restoring a conflicting session route", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockRegistryState.sandboxes.gamma = {
+      ...gammaEntry([]),
+      provider: "existing-provider",
+      model: "existing-model",
+    };
+    mockRegistryState.defaultSandbox = "gamma";
+    vi.mocked(loadSession).mockReturnValue(completedSession("alpha", []));
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.recoveredFromSession).toBe(false);
+    expect(mockRegistryState.sandboxes.alpha).toBeUndefined();
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("gamma");
+  });
+
+  it("keeps an existing route identity atomic when session metadata is stale", async () => {
+    mockRegistryState.sandboxes.alpha = {
+      name: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      endpointUrl: null,
+      credentialEnv: "NVIDIA_API_KEY",
+      preferredInferenceApi: null,
+      gpuEnabled: false,
+      policies: [],
+    };
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-ultra",
+      endpointUrl: "https://historical.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      policyPresets: [],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+
+    await recoverRegistryEntries({ requestedSandboxName: "missing-sandbox" });
+
+    expect(mockRegistryState.sandboxes.alpha).toMatchObject({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      endpointUrl: null,
+      credentialEnv: "NVIDIA_API_KEY",
+      preferredInferenceApi: null,
+    });
   });
 
   it("skips invalid session and live sandbox names during seeded recovery", async () => {
@@ -205,5 +262,45 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     expect(mockRegistryState.sandboxes.alpha).toBeDefined();
     expect(mockRegistryState.sandboxes.beta).toBeUndefined();
     expect(mockRegistryState.defaultSandbox).toBeNull();
+  });
+
+  it("blocks route mutation after seeded recovery persists a live row without route metadata (#6315)", async () => {
+    mockRegistryState.sandboxes.gamma = gammaEntry([]);
+    mockRegistryState.defaultSandbox = "gamma";
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([
+      { name: "recovered-live", phase: "Ready" },
+    ]);
+
+    await recoverRegistryEntries({ requestedSandboxName: "missing-sandbox" });
+    expect(mockRegistryState.sandboxes["recovered-live"]).toMatchObject({
+      gatewayName: "nemoclaw",
+      provider: null,
+      model: null,
+    });
+
+    const deps = createDeps({
+      config: {},
+      entries: Object.values(mockRegistryState.sandboxes),
+      defaultSandbox: "gamma",
+    });
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "gamma" },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/recovered-live.*lacks durable provider or model metadata/s),
+      exitCode: 2,
+    });
+
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 });

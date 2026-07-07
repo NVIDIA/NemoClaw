@@ -2043,6 +2043,49 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  hermes-shields-config:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-shields-config,') || contains(format(',{0},', inputs.targets), ',hermes-shields-config,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "hermes-shields-config"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-shields-config
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: hermes
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes-shields
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Run Hermes shields-config live regression
+        # This hermetic regression uses a local OpenAI-compatible endpoint and
+        # proves two complete down/up cycles on a fresh non-root Hermes sandbox.
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-live \
+            test/e2e/live/hermes-shields-config.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes shields-config artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   rebuild-openclaw:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',rebuild-openclaw,') || contains(format(',{0},', inputs.targets), ',rebuild-openclaw,') }}
@@ -4594,6 +4637,7 @@ jobs:
         network-policy,
         common-egress-agent,
         shields-config,
+        hermes-shields-config,
         rebuild-openclaw,
         rebuild-hermes,
         rebuild-hermes-stale-base,

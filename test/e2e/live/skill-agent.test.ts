@@ -13,7 +13,6 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   agentSectionContainsToken,
   isAgentVerificationFailClosed,
@@ -21,13 +20,12 @@ import {
   shouldSkipExternalAgentVerificationFailure,
   VERIFY_PHRASE,
 } from "../support/skill-agent-classifiers.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
 // Keep this as a direct live test: the the contract is skill fixture
 // injection into a real OpenClaw sandbox plus an agent turn that must read
 // hands off to this live target.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const ADD_SKILL_SCRIPT = path.join(
   REPO_ROOT,
   "test",
@@ -104,9 +102,7 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-const runSkillAgentTest = shouldRunLiveE2E() ? test : test.skip;
-
-runSkillAgentTest(
+test(
   "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     expect(
