@@ -158,6 +158,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const dockerfile = readAgentFile("Dockerfile");
 
     expect(dockerfile).toContain("ARG BASE_IMAGE\n");
+    expect(dockerfile).toContain("ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
     expect(dockerfile).toContain("chown root:root /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chmod 1755 /sandbox/.nemoclaw");
@@ -392,6 +393,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(managedRuntime).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
+    expect(patcher).toContain("def should_run_onboarding(state_dir=None) -> bool:");
     expect(managedRuntime).toContain("if not servers:\n        return None");
     expect(managedRuntime).toContain("or descriptor != _MANAGED_MCP_FD");
     expect(patcher).toContain("def discover_mcp_configs(");
@@ -589,11 +591,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "unable to probe sandbox",
       "unexpected sandbox probe output",
       "cd /sandbox; dcode",
-      'NEMOCLAW_TUI_ONBOARDING_PATTERN="$TUI_ONBOARDING_PATTERN"',
-      "-nocase -re $onboarding_pattern",
-      'append_marker $markers "NEMOCLAW_TUI_ONBOARDING_SKIPPED"',
-      'send -- "\\033"',
-      "if {$saw_onboarding}",
+      'NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN"',
+      "-nocase -re $first_run_pattern",
+      'append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"',
+      "choose a recommended model",
+      "exit 24",
       'send -- "\\003"\nafter 250\ncatch {send -- "\\003"}',
       'append_marker $markers "$expect_out(0,string)"',
       'append_marker $markers "NEMOCLAW_TUI_READY"',

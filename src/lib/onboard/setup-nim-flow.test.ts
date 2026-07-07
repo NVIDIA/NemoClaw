@@ -134,6 +134,33 @@ afterEach(() => {
 });
 
 describe("createSetupNim", () => {
+  it("passes the Deep Agents manifest default to NVIDIA model selection", async () => {
+    const ultra = "nvidia/nemotron-3-ultra-550b-a55b";
+    const createNvidiaFeaturedModelSession = vi.fn<
+      SetupNimFlowDeps["createNvidiaFeaturedModelSession"]
+    >(() => ({ select: async () => unexpected("featured model selection") }));
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.model = ultra;
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({ createNvidiaFeaturedModelSession, handleRemoteProviderSelection }),
+    );
+    const dcodeAgent = {
+      name: "langchain-deepagents-code",
+      inference: { default_model: ultra },
+    } as AgentDefinition;
+
+    await setupNim(null, null, dcodeAgent);
+
+    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({ defaultModel: ultra });
+  });
+
   it("announces detected Ollama but still prompts and defaults to NVIDIA Endpoints (#6245)", async () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "");
     const step = vi.fn();
