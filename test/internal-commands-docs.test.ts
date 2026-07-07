@@ -31,6 +31,7 @@ import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
 const commandsSource = readFileSync(path.join(repoRoot, "docs/reference/commands.mdx"), "utf8");
+const commandsSourcePath = path.join(repoRoot, "docs/reference/commands.mdx");
 
 /** User-facing command references, one per agent CLI variant. */
 const references = [
@@ -43,16 +44,27 @@ const references = [
     name: "commands.hermes.generated.mdx",
     binary: "nemohermes",
     text: renderAgentVariantPage(commandsSource, "hermes", {
-      sourcePath: path.join(repoRoot, "docs/reference/commands.mdx"),
+      sourcePath: commandsSourcePath,
     }),
   },
   {
     name: "commands.deepagents.generated.mdx",
     binary: "nemo-deepagents",
     text: renderAgentVariantPage(commandsSource, "deepagents", {
-      sourcePath: path.join(repoRoot, "docs/reference/commands.mdx"),
+      sourcePath: commandsSourcePath,
     }),
   },
+];
+
+const renderedCommandReferences = [
+  {
+    name: "commands.openclaw.generated.mdx",
+    binary: "nemoclaw",
+    text: renderAgentVariantPage(commandsSource, "openclaw", {
+      sourcePath: commandsSourcePath,
+    }),
+  },
+  ...references.slice(1),
 ];
 
 /** Hidden `internal:*` command IDs from the generated oclif manifest. */
@@ -95,5 +107,36 @@ describe("internal command documentation (#3782)", () => {
     const headingPrefix = `### \`${binary} internal`;
     const offendingHeadings = text.split("\n").filter((line) => line.startsWith(headingPrefix));
     expect(offendingHeadings).toEqual([]);
+  });
+});
+
+describe("exec command documentation", () => {
+  function execSections(text: string, binary: string): string[] {
+    const lines = text.split("\n");
+    const sections: string[] = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      if (lines[index] !== `### \`${binary} <name> exec\``) continue;
+      const nextHeading = lines.findIndex(
+        (line, offset) => offset > index && line.startsWith("### "),
+      );
+      sections.push(lines.slice(index, nextHeading === -1 ? undefined : nextHeading).join("\n"));
+    }
+    return sections;
+  }
+
+  it.each(
+    renderedCommandReferences,
+  )("documents multiline argument rejection in every exec section for $name", ({
+    text,
+    binary,
+  }) => {
+    const sections = execSections(text, binary);
+    expect(sections.length, `${binary} exec sections`).toBeGreaterThanOrEqual(2);
+    for (const section of sections) {
+      expect(section).toContain("newline or carriage return");
+      expect(section).toContain("cmd1; cmd2");
+      expect(section).toContain(`${binary} <name> exec --stdin -- bash`);
+      expect(section).toContain(`${binary} <name> exec -- bash <script-path>`);
+    }
   });
 });
