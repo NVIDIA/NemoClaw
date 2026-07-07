@@ -30,9 +30,8 @@ test.skipIf(!shouldRunLiveE2E())(
     const inferenceKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const redactionValues = [braveKey, inferenceKey];
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "brave-search",
-      runner: "vitest",
       boundary:
         "source CLI onboard + OpenShell policy/config + in-sandbox OpenClaw/Brave API calls",
       sandboxName: SANDBOX_NAME,

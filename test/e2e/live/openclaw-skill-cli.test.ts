@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { shellQuote } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -15,6 +15,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -36,10 +37,6 @@ validateSandboxName(SANDBOX_NAME);
 
 const runOpenClawSkillCliTest = shouldRunLiveE2E() ? test : test.skip;
 
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 function isEndpointRateLimited(text: string): boolean {
   return /HTTP 429|rate limit|too many requests/i.test(text);
 }
@@ -52,18 +49,7 @@ function singleLineSandboxScript(script: string) {
 }
 
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const base = buildAvailabilityProbeEnv();
-  return {
-    ...base,
-    HOME: home,
-    PATH: [path.join(home, ".local", "bin"), path.join(home, ".npm-global", "bin"), base.PATH]
-      .filter(Boolean)
-      .join(":"),
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-    ...extra,
-  };
+  return testHomeEnvironment(home, extra);
 }
 
 async function bestEffort(run: () => Promise<unknown>): Promise<void> {
@@ -149,9 +135,8 @@ runOpenClawSkillCliTest(
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "openclaw-skill-cli",
-      runner: "vitest",
       boundary: "install-sh-onboard-and-openclaw-skills-cli-in-sandbox",
       sandboxName: SANDBOX_NAME,
       contracts: [
@@ -278,7 +263,7 @@ runOpenClawSkillCliTest(
     );
     expect(resultText(check)).toContain(`"${SKILL_ID}"`);
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "openclaw-skill-cli",
       status: "passed",
       sandboxName: SANDBOX_NAME,

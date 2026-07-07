@@ -12,10 +12,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -35,10 +36,6 @@ type RawCommandResult = {
   stderr: string;
   error?: Error;
 };
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function rawResultText(result: Pick<RawCommandResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -73,19 +70,12 @@ function runRawNodeCliForLeakAssertion(
 }
 
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const base = buildAvailabilityProbeEnv();
-  return {
-    ...base,
-    HOME: home,
-    PATH: [path.join(home, ".local", "bin"), base.PATH].filter(Boolean).join(":"),
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+  return testHomeEnvironment(home, {
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     ...extra,
-  };
+  });
 }
 
 async function bestEffort(run: () => Promise<unknown>): Promise<void> {
@@ -137,9 +127,8 @@ runDiagnosticsTest(
 
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "diagnostics",
-      runner: "vitest",
       boundary: "debug-archive-install-sh-docker-openshell-sandbox-exec-credentials",
       sandboxName: SANDBOX_NAME,
       contracts: [
@@ -413,7 +402,7 @@ runDiagnosticsTest(
       });
     }
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "diagnostics",
       sandboxName: SANDBOX_NAME,
       model: hosted.model,

@@ -68,9 +68,8 @@ for (const target of listTargets()) {
         throw new Error(`target '${target.id}' is missing expectedStateId`);
       }
 
-      await artifacts.writeJson("target.json", {
+      await artifacts.target.declare({
         id: target.id,
-        runner: "vitest",
         boundary: "typed-registry",
         pendingRuntimeSuites: support.pendingRuntimeSuites,
       });
@@ -125,7 +124,7 @@ for (const target of listTargets()) {
         secrets,
       });
 
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: target.id,
         expectedStateId: validation.state.id,
         probes: validation.probes.map((probe) => probe.id),

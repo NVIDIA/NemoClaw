@@ -204,7 +204,7 @@ test.skipIf(!shouldRunLiveE2E())(
     });
     const redactions = redactionValues(apiKey);
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "telegram-injection",
       boundary:
         "install.sh OpenClaw sandbox + OpenShell sandbox exec and ssh-config stdin paths + process table and validateName probes",

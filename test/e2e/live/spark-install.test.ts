@@ -75,7 +75,7 @@ liveTest(
   "spark install path: standard non-interactive install leaves NemoClaw and OpenShell usable",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, secrets }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "spark-install",
       sandboxName: SANDBOX_NAME,
       contracts: [

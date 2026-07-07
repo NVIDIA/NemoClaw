@@ -488,9 +488,8 @@ test(
   async ({ artifacts, environment, onboard, sandbox, secrets }) => {
     secrets.required("NVIDIA_INFERENCE_API_KEY");
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "openclaw-tui-chat-correlation",
-      runner: "vitest",
       boundary: "openclaw-gateway-websocket",
       issues: ["#2603", "#3145"],
       ownerIssue: "#4347",

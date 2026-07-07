@@ -320,9 +320,8 @@ runSessionsAgentsCliTest(
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "sessions-agents-cli",
-      runner: "vitest",
       boundary: "host-cli-openclaw-sessions-agents-gateway",
       sandboxName: SANDBOX_NAME,
       contracts: [

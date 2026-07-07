@@ -7,10 +7,11 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { shellQuote } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { exportHermesSession, hermesLastActive } from "../fixtures/hermes-session.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_MODEL,
   requireHostedInferenceConfig,
@@ -22,12 +23,6 @@ import {
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-
-// This is intentionally a direct live Vitest test, not a new registry layer:
-// the contract is the real installer/onboard/runtime boundary for Hermes.
-// Vitest owns artifacts, cleanup, redaction, and timeouts while still spawning
-// `bash install.sh --non-interactive --fresh`, `nemoclaw`, `openshell`, sandbox exec,
-// direct NVIDIA Endpoints curl, and inference.local probes.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
@@ -55,10 +50,6 @@ interface OpenAiChoiceLike {
 
 interface OpenAiChatLike {
   choices?: OpenAiChoiceLike[];
-}
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 function truthyEnv(value: string | undefined): boolean {
@@ -183,6 +174,16 @@ function stripAnsi(value: string): string {
   return value.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g, "");
 }
 
+function hermesSessionIds(output: string): Set<string> {
+  return new Set(output.match(/\b[0-9]{8}_[0-9]{6}_[a-zA-Z0-9]+\b/g) ?? []);
+}
+
+function onlyNewHermesSessionId(before: Set<string>, after: Set<string>): string {
+  const created = [...after].filter((id) => !before.has(id));
+  expect(created).toHaveLength(1);
+  return created[0];
+}
+
 function forwardListHasRunningPort(output: string, sandboxName: string, port: string): boolean {
   return output
     .split("\n")
@@ -244,9 +245,8 @@ test.skipIf(!shouldRunLiveE2E())(
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "hermes-e2e",
-      runner: "vitest",
       boundary: "install.sh --non-interactive --fresh + Hermes sandbox runtime",
       sandboxName: SANDBOX_NAME,
       dashboardEnabled: hermesDashboardE2eEnabled(),
@@ -448,6 +448,89 @@ test.skipIf(!shouldRunLiveE2E())(
     );
     expect(configProbe.exitCode, resultText(configProbe)).toBe(0);
     expect(configProbe.stdout).toContain("OK");
+
+    const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 6 * 60_000) => {
+      const result = await sandbox.exec(SANDBOX_NAME, ["hermes", ...args], {
+        artifactName,
+        env: commandEnv(),
+        redactionValues,
+        timeoutMs,
+      });
+      expect(result.exitCode, resultText(result)).toBe(0);
+      return resultText(result);
+    };
+    const listHermesSessionsText = (artifactName: string) =>
+      runHermesCli(["sessions", "list"], artifactName, 60_000);
+    const listHermesSessions = async (artifactName: string) =>
+      hermesSessionIds(await listHermesSessionsText(artifactName));
+    const sessionLastActive = (id: string, artifactName: string) =>
+      hermesLastActive(sandbox, SANDBOX_NAME, id, artifactName);
+    const expectNoNewHermesSessions = async (
+      before: Set<string>,
+      beforeActivityArtifact: string,
+      expectedSessionId: string,
+      expectedRowToken: string,
+      args: string[],
+      runArtifact: string,
+      afterArtifact: string,
+    ) => {
+      const beforeActivity = await sessionLastActive(expectedSessionId, beforeActivityArtifact);
+      await runHermesCli(args, runArtifact);
+      const afterText = await listHermesSessionsText(afterArtifact);
+      const after = hermesSessionIds(afterText);
+      expect([...after].filter((id) => !before.has(id))).toEqual([]);
+      expect(after.has(expectedSessionId), stripAnsi(afterText)).toBe(true);
+      const row = stripAnsi(afterText)
+        .split("\n")
+        .find((line) => line.includes(expectedSessionId));
+      expect(row, stripAnsi(afterText)).toContain(expectedRowToken);
+      expect(
+        await sessionLastActive(expectedSessionId, `${afterArtifact}-metadata`),
+      ).toBeGreaterThan(beforeActivity);
+    };
+
+    const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
+    const beforeSeedSessions = await listHermesSessions("phase-4-issue-5254-sessions-before-seed");
+    const seedPrompt = `Remember this exact token: ${issue5254Marker}. Reply with acknowledged.`;
+    await runHermesCli(["-z", seedPrompt], "phase-4-issue-5254-seed-oneshot");
+    const seedSessionId = onlyNewHermesSessionId(
+      beforeSeedSessions,
+      await listHermesSessions("phase-4-issue-5254-sessions-after-seed"),
+    );
+    const resumePrompt = `N5254_${Date.now().toString(36)}_RESUME`;
+    await expectNoNewHermesSessions(
+      await listHermesSessions("phase-4-issue-5254-sessions-before-resume"),
+      "phase-4-issue-5254-session-before-resume-metadata",
+      seedSessionId,
+      resumePrompt,
+      ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
+      "phase-4-issue-5254-resume-oneshot",
+      "phase-4-issue-5254-sessions-after-resume",
+    );
+    const continuePrompt = `N5254_${Date.now().toString(36)}_CONTINUE`;
+    await expectNoNewHermesSessions(
+      await listHermesSessions("phase-4-issue-5254-sessions-before-continue"),
+      "phase-4-issue-5254-session-before-continue-metadata",
+      seedSessionId,
+      continuePrompt,
+      ["-c", seedSessionId, "-z", continuePrompt],
+      "phase-4-issue-5254-continue-oneshot",
+      "phase-4-issue-5254-sessions-after-continue",
+    );
+    const exportPath = `/tmp/nemoclaw-issue-5254-${issue5254Marker}.jsonl`;
+    await exportHermesSession(
+      sandbox,
+      SANDBOX_NAME,
+      seedSessionId,
+      exportPath,
+      [seedPrompt, resumePrompt, continuePrompt],
+      {
+        artifactName: "phase-4-issue-5254-export-session",
+        env: commandEnv(),
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
 
     if (hermesDashboardE2eEnabled()) {
       const entry = registryEntry(SANDBOX_NAME);
@@ -1394,7 +1477,7 @@ test.skipIf(!shouldRunLiveE2E())(
       ).toBeUndefined();
     }
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "hermes-e2e",
       assertions: {
         installShNonInteractiveHermes: true,

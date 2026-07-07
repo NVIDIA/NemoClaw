@@ -4,8 +4,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -34,10 +34,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     OPENSHELL_GATEWAY: "nemoclaw",
     ...extra,
   };
-}
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 async function nemoclaw(
@@ -112,7 +108,7 @@ liveTest(
   "onboard repair resumes missing sandbox and rejects conflicting resume inputs",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, skip }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "onboard-repair",
       sandboxName: SANDBOX_NAME,
       otherSandboxName: OTHER_SANDBOX_NAME,
@@ -228,6 +224,6 @@ liveTest(
 
     await cleanup(host, sandbox);
     expect(fs.existsSync(SESSION_FILE)).toBe(false);
-    await artifacts.writeJson("target-result.json", { id: "onboard-repair", status: "passed" });
+    await artifacts.target.complete({ id: "onboard-repair", status: "passed" });
   },
 );

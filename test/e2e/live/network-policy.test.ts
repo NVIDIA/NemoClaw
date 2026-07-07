@@ -426,9 +426,8 @@ RUN_NETWORK_POLICY_TEST(
   "network-policy: restricted sandbox enforces live allow/deny policy probes",
   { timeout: TEST_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "network-policy",
-      runner: "vitest",
       boundary: "live-sandbox-network-policy",
       contracts: [
         "deny-by-default egress",
@@ -933,7 +932,7 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
     });
     expect(text(npmPing)).toContain("NPM_OK");
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "network-policy",
       sandboxName: SANDBOX_NAME,
       assertions: {

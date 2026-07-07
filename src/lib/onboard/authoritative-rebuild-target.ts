@@ -5,6 +5,7 @@ import { findDashboardForwardOwner } from "./dashboard-port";
 import { resolveGatewayName } from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
+import { validateRebuildProviderReconfigureHandoff } from "./rebuild-route-handoff";
 import type { OnboardOptions } from "./types";
 
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
@@ -19,6 +20,7 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort"
 > & {
   authoritativeResumeConfig: true;
+  /** Internal prepared-backup recovery defers route repair to authoritative onboard. */
   deferInferenceRouteUntilOnboard?: true;
   model: string;
   provider: string;
@@ -68,6 +70,53 @@ export type AuthoritativeRebuildTarget = {
   targetGatewayName: string;
   controlUiPort: number | null;
 };
+
+/** Validate the one-shot authority to reconstruct a provider during a locked rebuild resume. */
+function validateRebuildHandoff(
+  opts: OnboardOptions,
+  target: {
+    sandboxName: string | null;
+    provider: string | null;
+    model: string | null;
+    credentialEnv: string | null;
+    endpointUrl: string | null;
+  },
+): boolean {
+  const handoff = opts.rebuildProviderReconfigure;
+  if (!handoff) return false;
+  if (
+    opts.authoritativeResumeConfig !== true ||
+    opts.resume !== true ||
+    opts.recreateSandbox !== true ||
+    opts.onboardLockAlreadyHeld !== true ||
+    !target.sandboxName ||
+    !target.provider ||
+    !target.model ||
+    !target.credentialEnv
+  ) {
+    throw new Error(
+      "Prepared provider reconfiguration requires an authoritative locked rebuild resume.",
+    );
+  }
+  return validateRebuildProviderReconfigureHandoff(handoff, {
+    sandboxName: target.sandboxName,
+    provider: target.provider,
+    model: target.model,
+    credentialEnv: target.credentialEnv,
+    endpointUrl: target.endpointUrl,
+  });
+}
+
+/** Derive the provider-phase authority from one validated rebuild handoff. */
+export function rebuildProviderFlowOptions(
+  opts: OnboardOptions,
+  target: Parameters<typeof validateRebuildHandoff>[1],
+): { authoritativeResumeConfig: boolean; forceInferenceSetup: boolean } {
+  return {
+    authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+    forceInferenceSetup: validateRebuildHandoff(opts, target),
+  };
+}
 
 export type AuthoritativeRebuildTargetDeps = {
   runFatalRuntimePreflight(): unknown;

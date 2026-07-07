@@ -363,7 +363,7 @@ test.skipIf(!shouldRunLiveE2E())(
     const env = commandEnv(apiKey);
     const redactionValues = redactions(apiKey);
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "hermes-discord",
       boundary:
         "install.sh --non-interactive Hermes sandbox + Discord config + OpenShell provider rewrite + sandbox leak probes + rebuild credential reuse",
@@ -749,7 +749,7 @@ done`,
       expect(registryProbe.stdout.trim()).toBe("ABSENT");
     })();
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "hermes-discord",
       assertions: {
         dockerAndNonInteractivePrereqs: true,

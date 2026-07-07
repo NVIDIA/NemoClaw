@@ -191,9 +191,13 @@ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 When existing sandboxes were created with OpenShell earlier than `0.0.37`, the installer prompts before running the new automatic gateway upgrade path.
-For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the installer to back up registered sandbox state, retire the old gateway, install the current supported OpenShell release, and restore state during onboarding.
-The automatic path is disabled if the existing `nemohermes` CLI does not advertise `backup-all`; preserve sandbox state manually before retiring the old gateway in that case.
-To perform those steps manually, run `nemohermes backup-all`, retire the old gateway registration with `openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy` (both verbs are tried so the right one runs on either OpenShell release), stop any remaining privileged host gateway with `sudo pkill -f openshell-gateway`, then rerun the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
+For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the installer to prepare the current CLI without replacing OpenShell, back up every registered sandbox with the current state manifest, retire the old gateway, install the supported OpenShell release, and recover the existing sandboxes.
+If any registered sandbox cannot be backed up, the installer aborts before it changes the gateway.
+When the registry contains a pre-fingerprint OpenClaw or Hermes entry with no recorded custom-image evidence, an interactive install asks you to confirm that the listed sandbox used a NemoClaw-managed image.
+For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after verifying every named sandbox used a managed image.
+The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
+After successful recovery, the installer skips generic onboarding.
+For a manually prepared upgrade, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after preserving every registered sandbox and retiring the old gateway.
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
@@ -1593,6 +1597,9 @@ nemohermes upgrade-sandboxes [--check] [--auto] [--yes|-y]
 
 Each rebuild reuses the same workspace backup-and-restore flow as `nemohermes <name> rebuild`, so workspace files survive the upgrade.
 If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.
+During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup.
+That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry.
+Recorded custom-image evidence remains blocked from automatic recreation.
 
 ### `nemohermes backup-all`
 
@@ -1603,13 +1610,14 @@ Sandboxes that are not running are skipped.
 nemohermes backup-all
 ```
 
-The installer calls `backup-all` automatically before onboarding to protect against data loss during OpenShell upgrades.
+Before an OpenShell upgrade, the installer prepares the current release CLI and uses it to run `backup-all` in strict mode.
+Strict mode requires every registered sandbox to produce a fresh backup and aborts before gateway changes if any sandbox is skipped or fails.
 
 A running sandbox whose in-sandbox SSH endpoint does not answer fails its backup and aborts the run.
-Set `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` (exactly — other values like `true`, `yes`, or `0` are not accepted) to skip such sandboxes and continue the upgrade.
-When the installer invokes `backup-all` before an OpenShell upgrade, skipped sandboxes are automatically restored from their latest validated backup during post-upgrade onboarding.
-Standalone `nemohermes backup-all` invocations only skip the failure — they do not schedule a subsequent restore.
-Any uncommitted state since the last successful backup will be lost.
+For a standalone `nemohermes backup-all` run, set `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` exactly to skip such sandboxes instead of failing.
+Other values such as `true`, `yes`, or `0` are not accepted.
+This variable does not weaken the installer's strict pre-upgrade requirement.
+A skipped sandbox's uncommitted state is not included in its last successful backup.
 
 ### `nemohermes <name> snapshot create`
 
@@ -2369,10 +2377,11 @@ The following flags change defaults for commands that manage existing sandboxes.
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `nemohermes <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
+| `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` | Exact JSON array of sandbox names | Confirms to the installer that the exact listed set of pre-fingerprint OpenClaw or Hermes sandboxes used NemoClaw-managed images, allowing recovery onto the current managed image. The normalized names must exactly match the installer's printed array. Set it only after verifying every named sandbox. Recorded custom-image evidence remains blocked. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemohermes <name> connect` and `nemohermes <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
 | `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Allows advanced immutable-config verification to trust the current on-disk bytes for older or partial content baselines. Use only after you have rebuilt or manually inspected the sandbox state and accepted that the baseline is operator-approved. |
 | `NEMOCLAW_SHIELDS_SETTLE_MS` | milliseconds (default `750`, clamped to `0` to `10000`) | Settle window NemoClaw waits after re-applying a config lockdown (during shields auto-restore and `nemohermes <name> shields up` drift remediation) before re-confirming the lock still holds. Detects when an in-sandbox reconciler changes config file permissions after lockdown and re-applies the lock; if NemoClaw cannot re-confirm the lock within the retry budget, shields stay down. This narrows the window in which a reconciler can revert permissions rather than eliminating it. The best-effort `chattr +i` immutable bit remains the only fully durable lock. Raise it on hosts where the gateway settles slowly. |
-| `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP` | Exactly `1` to opt in (`true`, `yes`, `0` are not accepted) | Applies to the installer's automatic pre-upgrade `nemohermes backup-all` and to manual `nemohermes backup-all` runs. Skips running sandboxes whose in-sandbox SSH endpoint does not answer so the upgrade proceeds instead of aborting. Skipped sandboxes are restored from their latest validated backup during the installer's post-upgrade onboarding; any uncommitted state since that backup is lost. Standalone `nemohermes backup-all` invocations only skip the failure — they do not schedule a subsequent restore. |
+| `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP` | Exactly `1` to opt in (`true`, `yes`, `0` are not accepted) | Applies to standalone `nemohermes backup-all` runs. Skips running sandboxes whose in-sandbox SSH endpoint does not answer. It does not relax the installer's strict pre-upgrade backup, which still aborts if any registered sandbox is skipped or fails. Any uncommitted state since the last successful backup is not included in the skipped backup. |
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `nemohermes uninstall` and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) under `~/.nemoclaw/`. Equivalent to passing the `--destroy-user-data` flag; the global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 ### Legacy `nemohermes setup`

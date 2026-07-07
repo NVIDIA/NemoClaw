@@ -75,7 +75,7 @@ NemoClaw neither displays nor accepts an unsafe `NEMOCLAW_MODEL` value as the ma
 | OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
 | Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. NemoClaw uses `/v1/chat/completions` at runtime by default; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` for proxies that implement it, such as some llama.cpp builds. The wizard prompts for a base URL and model name. The adapter is validated against OpenRouter (refer to the status table above); behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations such as LocalAI or llama.cpp may vary. When you enable Telegram messaging, onboarding also runs a bounded sandbox-side smoke check through `https://inference.local/v1/chat/completions`. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
-| Other Anthropic-compatible endpoint | Routes to any server that implements the Anthropic Messages API (`/v1/messages`). The adapter is validated against AWS Bedrock (refer to the status table above); behavior on other Anthropic-compatible proxies and gateways may vary. The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
+| Other Anthropic-compatible endpoint | Routes agents that support Anthropic Messages, including OpenClaw, to `/v1/messages`. For Hermes and agents that only support OpenAI-compatible inference, NemoClaw instead requires `/v1/chat/completions`, which is the surface it validates and uses at runtime. The adapter is validated against AWS Bedrock (refer to the status table above); behavior on other Anthropic-compatible proxies and gateways may vary. The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
 | Google Gemini | Routes to Google's OpenAI-compatible chat-completions endpoint. NemoClaw skips the Responses-API probe because Gemini does not support `/v1/responses`. Set `GEMINI_API_KEY`. | `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
 | Hermes Provider | Routes Hermes Agent through the host OpenShell provider registered by NemoClaw when onboarding Hermes Agent. | Curated Hermes Provider models such as `moonshotai/kimi-k2.6`, `openai/gpt-5.4-mini`, and `z-ai/glm-5.1`. |
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](use-local-inference). |
@@ -243,7 +243,7 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 | NVIDIA Endpoints | Validates through `/v1/chat/completions` only; NemoClaw skips the `/v1/responses` probe because NVIDIA Build does not expose `/v1/responses` (returns 404 for every model). |
 | Google Gemini | Validates through Gemini's OpenAI-compatible chat-completions path only; NemoClaw skips the `/v1/responses` probe because Gemini does not support the Responses API. |
 | Other OpenAI-compatible endpoint | Tries `/v1/responses` first with a tool-calling probe; falls back to `/v1/chat/completions`. Selected runtime API defaults to `/v1/chat/completions`; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
-| Anthropic-compatible | Tries `/v1/messages`. |
+| Other Anthropic-compatible endpoint | For agents that support Anthropic Messages, including OpenClaw, tries `/v1/messages` with a non-streaming request, then repeats the request with `stream: true` and validates the SSE event sequence. Set `NEMOCLAW_REASONING=true` to skip the streaming check for reasoning-only endpoints. For Hermes and OpenAI-compatible-only agents, validates `/v1/chat/completions`, the surface used by the managed OpenAI frontend. |
 | NVIDIA Endpoints (manual model entry) | Validates the model name against the catalog API. |
 | Compatible endpoints | Sends a real inference request because many proxies do not expose a `/models` endpoint. For OpenAI-compatible endpoints, the probe tries `/v1/responses` first then falls back to `/v1/chat/completions`; the selected runtime API defaults to `/v1/chat/completions`. Set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
 | Local NVIDIA NIM | Validates through `/v1/chat/completions` only; NemoClaw skips the `/v1/responses` probe (same as NVIDIA Endpoints). |
@@ -342,15 +342,25 @@ Refer to [Switch Inference Models](switch-inference-providers) for more informat
 
 ## Anthropic-Compatible Server
 
-If your local server implements the Anthropic Messages API (`/v1/messages`), choose **Other Anthropic-compatible endpoint** during onboarding instead.
+Choose **Other Anthropic-compatible endpoint** during onboarding to configure a custom base URL with `COMPATIBLE_ANTHROPIC_API_KEY`.
 
 ```bash
 $$nemoclaw onboard
 ```
 
+<AgentOnly variant="openclaw">
+NemoClaw validates the endpoint by sending a non-streaming `/v1/messages` request, then a `stream: true` request to the same path.
+The streaming check requires a well-formed SSE event sequence (exactly one `message_start`, at least one `content_block_delta`, and a `message_stop`).
+Endpoints and gateways whose non-streaming responses work but whose streaming layer is malformed fail validation during onboarding instead of failing later at runtime inside the sandbox.
+Refer to [Onboarding fails with duplicate Anthropic message_start events](../reference/troubleshooting#onboarding-fails-with-duplicate-anthropic-message_start-events) if the streaming check fails.
+Set `NEMOCLAW_REASONING=true` to skip the streaming check when the endpoint serves a reasoning-only model.
+Agent runs still use the streaming path, so skipping the check moves any streaming defect to runtime.
+</AgentOnly>
+
 <AgentOnly variant="hermes">
 For `compatible-anthropic-endpoint`, Hermes uses the managed OpenAI Chat Completions frontend at `https://inference.local/v1`.
-During onboarding, NemoClaw verifies that the endpoint also serves `/v1/chat/completions`, then registers that surface with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
+During provider selection, NemoClaw validates `/v1/chat/completions` instead of probing the unused native Anthropic SSE path.
+Inference setup verifies the same path again, then registers that surface with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
 The route retains `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
 This avoids duplicate Anthropic SSE `message_start` events.
 If the endpoint only serves Anthropic Messages, onboarding stops with guidance instead of creating a Hermes sandbox with an unroutable or broken streaming path.

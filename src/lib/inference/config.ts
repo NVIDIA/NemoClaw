@@ -109,6 +109,19 @@ export function resolveAgentInferenceApi(
     : preferredInferenceApi;
 }
 
+/**
+ * Return the OpenAI-compatible base used when a custom Anthropic endpoint is
+ * routed through the managed Chat Completions frontend. Anthropic endpoint
+ * normalization intentionally strips a trailing `/v1`; OpenShell's OpenAI
+ * provider appends `/chat/completions`, so restore `/v1` exactly once here.
+ */
+export function getCompatibleAnthropicOpenAiSurfaceBaseUrl(
+  endpointUrl: string | null | undefined,
+): string {
+  const trimmed = String(endpointUrl ?? "").replace(/\/+$/, "");
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
+}
+
 export function getProviderSelectionConfig(
   provider: string,
   model?: string,
@@ -298,6 +311,20 @@ export function coerceAgentInferenceApi(
     return "openai-completions";
   }
   return preferredInferenceApi;
+}
+
+/** Resolve the runtime API after applying both agent capability and provider overrides. */
+export function resolveAgentProviderInferenceApi(
+  agentName: string | null | undefined,
+  agent: unknown,
+  provider: string | null | undefined,
+  preferredInferenceApi: string | null,
+): string | null {
+  return resolveAgentInferenceApi(
+    agentName,
+    provider,
+    coerceAgentInferenceApi(agent, preferredInferenceApi),
+  );
 }
 
 export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {

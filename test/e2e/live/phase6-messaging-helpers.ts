@@ -4,7 +4,11 @@
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { shellQuote } from "../fixtures/clients/command.ts";
+import {
+  assertExitZero as expectExitZero,
+  resultText,
+  shellQuote,
+} from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -16,6 +20,8 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isNvidiaEndpointRateLimitFailure } from "./messaging-providers-helpers.ts";
 
+export { expectExitZero, resultText };
+
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 export const CLI = process.env.NEMOCLAW_CLI_BIN ?? path.join(REPO_ROOT, "bin", "nemoclaw.js");
 
@@ -26,10 +32,6 @@ export type AgentKind = "openclaw" | "hermes";
 
 export function stripAnsi(value: string): string {
   return value.replace(/\u001b\[[0-9;]*m/g, "");
-}
-
-export function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 export { shellQuote };
@@ -70,10 +72,6 @@ export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   } catch {
     // Cleanup and diagnostics must not hide primary test failures.
   }
-}
-
-export function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label}\n${resultText(result)}`).toBe(0);
 }
 
 export async function precleanSandbox(

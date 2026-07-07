@@ -1212,6 +1212,30 @@ Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone.
 It patches the config at container startup but does not update the Dockerfile ARG baked into the image.
 A fresh `$$nemoclaw onboard` is the reliable fix.
 
+### Onboarding fails with duplicate Anthropic message_start events
+
+Validation for an OpenClaw **Other Anthropic-compatible endpoint** selection ends with an error like:
+
+```text
+Anthropic Messages API (streaming): duplicate message_start
+```
+
+For OpenClaw custom Anthropic routes, NemoClaw sends a `stream: true` request to `/v1/messages` and validates the SSE event sequence (exactly one `message_start`, at least one `content_block_delta`, and a `message_stop`).
+This error means the streaming layer on the endpoint or gateway is malformed even though its non-streaming responses are valid.
+A working non-streaming response does not imply that streaming works.
+Some inference gateways proxy plain requests correctly but corrupt the SSE stream, for example by emitting `message_start` twice for one request.
+OpenClaw uses the streaming path, so without this check the defect would first surface inside the sandbox as a runtime failure.
+
+Hermes and OpenAI-compatible-only agents use the endpoint's `/v1/chat/completions` surface for custom Anthropic selections instead.
+Current onboarding validates that surface and does not reject those agents because of a malformed native `/v1/messages` stream they will not use.
+An older Hermes sandbox that still uses native Anthropic Messages can report that no final response was produced; re-run onboarding to select and validate the managed Chat Completions route.
+
+Fix the streaming layer on the endpoint or gateway, or onboard with a different Anthropic-compatible endpoint.
+The official Anthropic provider does not run this check and is not affected.
+If an OpenClaw sandbox created by an older release fails at runtime with an empty final response on an Anthropic-compatible endpoint, re-run `$$nemoclaw onboard` so the streaming check can diagnose the endpoint.
+If the endpoint serves a reasoning-only model, set `NEMOCLAW_REASONING=true` to skip the streaming check.
+Streaming defects then surface at runtime instead of during onboarding.
+
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
 This is expected behavior.
