@@ -14,7 +14,7 @@ const modulePath = path.join(
 );
 const harnessPath = path.join(repoRoot, "test", "fixtures", "deepagents-observability-harness.py");
 
-function runScenario(scenario: "privacy" | "outage" | "construction") {
+function runScenario(scenario: "privacy" | "outage" | "construction" | "logging") {
   const result = spawnSync("python3", [harnessPath, scenario, modulePath], {
     encoding: "utf8",
     env: { PATH: process.env.PATH },
@@ -222,5 +222,23 @@ describe("managed Deep Agents Code observability", () => {
       shutdown_calls: 0,
       guardrails_deregistered: 4,
     });
+  });
+
+  it("does not log ambient OTEL values when observability initialization fails", () => {
+    const result = runScenario("logging");
+    const logs = String(result.logs);
+
+    expect(result).toMatchObject({
+      initialized: false,
+      ambient_environment_restored: true,
+      shutdown_calls: 1,
+      guardrails_deregistered: 4,
+    });
+    expect(logs).toContain(
+      "WARNING:Managed observability could not be initialized; continuing without tracing",
+    );
+    expect(logs).not.toMatch(
+      /NEMOCLAW-OTEL-(HEADER|CERTIFICATE|CLIENT-KEY)-CANARY|RuntimeError|Traceback|registration failed/,
+    );
   });
 });

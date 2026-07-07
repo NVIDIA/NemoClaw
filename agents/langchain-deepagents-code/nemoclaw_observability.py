@@ -487,7 +487,7 @@ class _MetadataOnlyGraphCallbacks:
                 handle=parent,
             )
         except Exception:  # noqa: BLE001 - observability must not fail agent work
-            logger.debug("NeMo Relay scope start failed", exc_info=True)
+            logger.debug("NeMo Relay scope start failed")
             return
         with self._nemoclaw_scope_lock:
             self._nemoclaw_scope_handles[run_id] = handle
@@ -528,7 +528,7 @@ class _MetadataOnlyGraphCallbacks:
                 },
             )
         except Exception:  # noqa: BLE001 - observability must not fail agent work
-            logger.debug("NeMo Relay scope end failed", exc_info=True)
+            logger.debug("NeMo Relay scope end failed")
 
     def on_interrupt(self, _event: Any) -> None:
         """Record an interrupt mark without its potentially sensitive payload."""
@@ -548,7 +548,7 @@ class _MetadataOnlyGraphCallbacks:
                 metadata={"integration": "langgraph"},
             )
         except Exception:  # noqa: BLE001 - observability must not fail agent work
-            logger.debug("NeMo Relay graph mark failed", exc_info=True)
+            logger.debug("NeMo Relay graph mark failed")
 
 
 def new_metadata_only_callback_handler() -> Any:
@@ -872,7 +872,7 @@ def _deregister_guardrails() -> None:
         nemo_relay.guardrails.deregister_tool_sanitize_request(_GUARDRAIL_NAME)
         nemo_relay.guardrails.deregister_tool_sanitize_response(_GUARDRAIL_NAME)
     except Exception:  # noqa: BLE001 - best-effort cleanup
-        logger.debug("NeMo Relay guardrail cleanup failed", exc_info=True)
+        logger.debug("NeMo Relay guardrail cleanup failed")
 
 
 def _new_managed_subscriber(nemo_relay: Any) -> Any:
@@ -914,19 +914,19 @@ def shutdown_observability() -> None:
 
         nemo_relay.subscribers.flush()
     except Exception:  # noqa: BLE001 - shutdown remains fail-open
-        logger.debug("NeMo Relay subscriber flush failed", exc_info=True)
+        logger.debug("NeMo Relay subscriber flush failed")
     try:
         subscriber.force_flush()
     except Exception:  # noqa: BLE001 - bounded exporter failure is non-fatal
-        logger.debug("NeMo Relay OTLP force-flush failed", exc_info=True)
+        logger.debug("NeMo Relay OTLP force-flush failed")
     try:
         subscriber.deregister(_SUBSCRIBER_NAME)
     except Exception:  # noqa: BLE001 - best-effort cleanup
-        logger.debug("NeMo Relay subscriber deregistration failed", exc_info=True)
+        logger.debug("NeMo Relay subscriber deregistration failed")
     try:
         subscriber.shutdown()
     except Exception:  # noqa: BLE001 - best-effort cleanup
-        logger.debug("NeMo Relay subscriber shutdown failed", exc_info=True)
+        logger.debug("NeMo Relay subscriber shutdown failed")
     _deregister_guardrails()
 
 
@@ -960,14 +960,13 @@ def initialize_observability() -> bool:
             subscriber.register(_SUBSCRIBER_NAME)
         except Exception:  # noqa: BLE001 - tracing setup must not stop the agent
             logger.warning(
-                "Managed observability could not be initialized; continuing without tracing",
-                exc_info=True,
+                "Managed observability could not be initialized; continuing without tracing"
             )
             if subscriber is not None:
                 try:
                     subscriber.shutdown()
                 except Exception:  # noqa: BLE001 - best-effort rollback
-                    logger.debug("NeMo Relay rollback failed", exc_info=True)
+                    logger.debug("NeMo Relay rollback failed")
             _deregister_guardrails()
             return False
 

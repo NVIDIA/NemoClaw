@@ -7,7 +7,9 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import inspect
+import io
 import json
+import logging
 import os
 import sys
 import types
@@ -20,6 +22,9 @@ DROPPED_MODEL_SETTINGS = "NEMOCLAW-DROPPED-MODEL-SETTINGS"
 DROPPED_RESPONSE_FORMAT = "NEMOCLAW-DROPPED-RESPONSE-FORMAT"
 DROPPED_TOOL_SCHEMA = "NEMOCLAW-DROPPED-TOOL-SCHEMA"
 UNSAFE_RELAY_FALLBACK = "NEMOCLAW-UNSAFE-RELAY-FALLBACK"
+LOG_HEADER_SECRET = "NEMOCLAW-OTEL-HEADER-CANARY"
+LOG_CERTIFICATE_SECRET = "NEMOCLAW-OTEL-CERTIFICATE-CANARY"
+LOG_CLIENT_KEY_SECRET = "NEMOCLAW-OTEL-CLIENT-KEY-CANARY"
 _RELAY_OBSERVED_ERRORS: list[dict[str, Any]] = []
 _RELAY_OBSERVED_MODEL_NAMES: list[str] = []
 _RELAY_OBSERVED_TOOL_NAMES: list[str] = []
@@ -103,6 +108,7 @@ class _OpenInferenceSubscriber:
     instances: list[_OpenInferenceSubscriber] = []
     fail_force_flush = False
     fail_construct = False
+    fail_register = False
 
     def __init__(self, config: _OpenInferenceConfig) -> None:
         if self.fail_construct:
@@ -115,6 +121,13 @@ class _OpenInferenceSubscriber:
         self.instances.append(self)
 
     def register(self, name: str) -> None:
+        if self.fail_register:
+            raise RuntimeError(
+                "subscriber registration failed: "
+                f"{os.environ.get('OTEL_EXPORTER_OTLP_HEADERS', '')}|"
+                f"{os.environ.get('OTEL_EXPORTER_OTLP_CERTIFICATE', '')}|"
+                f"{os.environ.get('OTEL_EXPORTER_OTLP_CLIENT_KEY', '')}"
+            )
         self.registered.append(name)
 
     def force_flush(self) -> None:
@@ -286,6 +299,7 @@ def _install_stubs(
     fail_flush: bool = False,
     fail_force_flush: bool = False,
     fail_construct: bool = False,
+    fail_register: bool = False,
 ) -> tuple[types.ModuleType, _Guardrails, _SubscriberCollection, _Scope]:
     _RELAY_OBSERVED_ERRORS.clear()
     _RELAY_OBSERVED_MODEL_NAMES.clear()
@@ -296,6 +310,7 @@ def _install_stubs(
     _OpenInferenceSubscriber.instances = []
     _OpenInferenceSubscriber.fail_force_flush = fail_force_flush
     _OpenInferenceSubscriber.fail_construct = fail_construct
+    _OpenInferenceSubscriber.fail_register = fail_register
 
     relay = types.ModuleType("nemo_relay")
     relay.LLMRequest = _LLMRequest
@@ -776,9 +791,45 @@ def _outage_scenario(path: Path, *, fail_construct: bool = False) -> dict[str, A
     }
 
 
+def _logging_failure_scenario(path: Path) -> dict[str, Any]:
+    ambient_otel = {
+        "OTEL_EXPORTER_OTLP_HEADERS": f"authorization={LOG_HEADER_SECRET}",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": f"/nonexistent/{LOG_CERTIFICATE_SECRET}/ca.pem",
+        "OTEL_EXPORTER_OTLP_CLIENT_KEY": f"/nonexistent/{LOG_CLIENT_KEY_SECRET}/client.key",
+    }
+    os.environ.update(ambient_otel)
+    _, guardrails, _, _ = _install_stubs(fail_register=True)
+    module = _load_module(path)
+    os.environ["NEMOCLAW_OBSERVABILITY"] = "1"
+    log_output = io.StringIO()
+    handler = logging.StreamHandler(log_output)
+    handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+    module.logger.setLevel(logging.DEBUG)
+    module.logger.addHandler(handler)
+    module.logger.propagate = False
+    try:
+        initialized = module.initialize_observability()
+    finally:
+        module.logger.removeHandler(handler)
+        handler.close()
+
+    subscriber = _OpenInferenceSubscriber.instances[0]
+    return {
+        "initialized": initialized,
+        "logs": log_output.getvalue(),
+        "ambient_environment_restored": all(
+            os.environ.get(name) == value for name, value in ambient_otel.items()
+        ),
+        "shutdown_calls": subscriber.shutdown_calls,
+        "guardrails_deregistered": len(guardrails.deregistered),
+    }
+
+
 def main() -> None:
     if len(sys.argv) != 3:
-        raise SystemExit("usage: harness.py <privacy|outage|construction> <module>")
+        raise SystemExit(
+            "usage: harness.py <privacy|outage|construction|logging> <module>"
+        )
     scenario, raw_path = sys.argv[1:]
     path = Path(raw_path)
     if scenario == "privacy":
@@ -787,6 +838,8 @@ def main() -> None:
         result = _outage_scenario(path)
     elif scenario == "construction":
         result = _outage_scenario(path, fail_construct=True)
+    elif scenario == "logging":
+        result = _logging_failure_scenario(path)
     else:
         raise SystemExit(f"unknown scenario: {scenario}")
     print(json.dumps(result, sort_keys=True))
