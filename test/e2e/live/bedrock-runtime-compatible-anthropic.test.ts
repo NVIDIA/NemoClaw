@@ -173,11 +173,10 @@ function createBedrockTlsFixture(home: string): { cert: Buffer; key: Buffer; cer
     ],
     { encoding: "utf8" },
   );
-  if (generated.status !== 0) {
-    throw new Error(
-      `failed to generate Bedrock TLS fixture: ${generated.stderr || generated.error}`,
-    );
-  }
+  expect(
+    generated.status,
+    `failed to generate Bedrock TLS fixture: ${generated.stderr || generated.error}`,
+  ).toBe(0);
   return {
     cert: fs.readFileSync(certPath),
     key: fs.readFileSync(keyPath),
