@@ -301,12 +301,18 @@ function credentialFlagKey(value: unknown): string | null {
   return flag && isSensitiveKey(flag[1]) ? flag[1] : null;
 }
 
+const CREDENTIAL_CONTEXT_LABEL_PATTERN =
+  /^(?:tokens?|secrets?|passwords?|passphrases?|credentials?|auth|authorization|bearer|cookies?|set[ _-]*cookie|proxy[ _-]*(?:auth|authorization)|(?:api|access|refresh|client|bearer|auth|private|signing|session|bot|app|resolved)[ _-]*(?:tokens?|keys?|secrets?|passwords?))$/i;
+
 function credentialContextKey(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const flag = credentialFlagKey(value);
   if (flag) return flag;
   const candidate = value.trim().replace(/[:=]$/, "").trim();
-  return candidate && isSensitiveKey(candidate) ? candidate : null;
+  return candidate &&
+    (isCredentialField(candidate) || CREDENTIAL_CONTEXT_LABEL_PATTERN.test(candidate))
+    ? candidate
+    : null;
 }
 
 /** Redact opaque values whose credential context is carried by the previous argument. */

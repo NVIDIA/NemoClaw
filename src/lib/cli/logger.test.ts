@@ -85,6 +85,15 @@ describe("Logger", () => {
     expect(output()).toContain("visible debug");
   });
 
+  it("keeps diagnostic arguments after prose that mentions credentials", async () => {
+    const { log } = await freshLogger();
+    log.setDebug(true);
+    log.debug("Failed to refresh token, retrying", { attempt: 3 });
+    log.debugObject("Token refresh failed", { attempt: 4 });
+    expect(output()).toContain('"attempt": 3');
+    expect(output()).toContain('"attempt": 4');
+  });
+
   it("quiet mode suppresses info and still shows warnings", async () => {
     const { log } = await freshLogger();
     log.setQuiet(true);
