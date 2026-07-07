@@ -188,7 +188,7 @@ const OLLAMA_PROBE_PROVIDER_KEYS = new Set([
   "install-windows-ollama",
 ]);
 const VLLM_ROUTE_PROVIDER_KEYS = new Set(["vllm", "install-vllm"]);
-const VLLM_PROBE_PROVIDER_KEYS = new Set(["vllm"]);
+const VLLM_PROBE_PROVIDER_KEYS = new Set(["vllm", "install-vllm"]);
 
 function localProviderProbeIntent(providerKey: string | null): {
   ollama: boolean;

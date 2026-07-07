@@ -81,6 +81,10 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   deps: {
     checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
     preflightGatewayRouteDiscovery: CurrentGatewayRouteDiscoveryPreflight;
+    withGatewayRouteMutationLock<T>(
+      gatewayName: string,
+      operation: () => Promise<T> | T,
+    ): Promise<T>;
     normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null;
     setupNim(
       gpu: Gpu,
@@ -563,23 +567,31 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         break;
       }
       if (deps.isRoutedInferenceProvider(provider)) {
-        try {
-          await deps.reconcileModelRouter();
-        } catch (err) {
-          deps.error(
-            `  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          deps.exitProcess(1);
-        }
         // #4564: re-upsert the gateway provider with the sandbox-facing
         // endpoint so a stale localhost base URL recorded by an earlier run is
         // repaired on resume instead of surviving and breaking inference.local.
-        const reupserted = deps.reupsertRoutedProvider(
-          gatewayName,
-          provider,
-          endpointUrl,
-          credentialEnv,
-        );
+        const reupserted = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
+          assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl,
+            preferredInferenceApi,
+          });
+          try {
+            await deps.reconcileModelRouter();
+          } catch (err) {
+            deps.error(
+              `  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            deps.exitProcess(1);
+          }
+          return deps.reupsertRoutedProvider(
+            gatewayName,
+            selectedProvider,
+            endpointUrl,
+            credentialEnv,
+          );
+        });
         if (!reupserted.ok) {
           deps.error(
             `  ${reupserted.message ?? "Failed to update the routed inference provider."}`,

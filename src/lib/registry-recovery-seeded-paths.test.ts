@@ -70,8 +70,8 @@ import { loadSession } from "./state/onboard-session.js";
 
 const gammaEntry = (policies: string[]): SandboxEntry => ({
   name: "gamma",
-  provider: "existing-provider",
-  model: "existing-model",
+  provider: "nvidia-prod",
+  model: "nvidia/nemotron-3-super-120b-a12b",
   gpuEnabled: false,
   policies,
 });
@@ -128,6 +128,24 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     ]);
     expect(mockRegistryState.sandboxes.alpha?.policies).toEqual(["pypi"]);
     expect(mockRegistryState.defaultSandbox).toBe("gamma");
+  });
+
+  it("fails closed instead of restoring a conflicting session route", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockRegistryState.sandboxes.gamma = {
+      ...gammaEntry([]),
+      provider: "existing-provider",
+      model: "existing-model",
+    };
+    mockRegistryState.defaultSandbox = "gamma";
+    vi.mocked(loadSession).mockReturnValue(completedSession("alpha", []));
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.recoveredFromSession).toBe(false);
+    expect(mockRegistryState.sandboxes.alpha).toBeUndefined();
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("gamma");
   });
 
   it("skips invalid session and live sandbox names during seeded recovery", async () => {

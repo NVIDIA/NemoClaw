@@ -282,7 +282,13 @@ describe("shared gateway inference route compatibility", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      conflicts: [{ sandboxName: "legacy-custom", reason: "incomplete-custom-route" }],
+      conflicts: [
+        {
+          sandboxName: "legacy-custom",
+          reason: "incomplete-custom-route",
+          scope: "registered",
+        },
+      ],
     });
     expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
       "remove and re-onboard that sandbox with complete custom-route metadata",

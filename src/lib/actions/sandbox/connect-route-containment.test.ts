@@ -121,6 +121,100 @@ describe("connect route containment", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("rechecks peers after waiting for the shared gateway route lock", async () => {
+    let releaseLock!: () => void;
+    const released = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    let reportLockEntered!: () => void;
+    const lockEntered = new Promise<void>((resolve) => {
+      reportLockEntered = resolve;
+    });
+    const alpha = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      provider: "nvidia-prod",
+      model: "nvidia/model-a",
+    } as const;
+    const harness = createConnectHarness({
+      registryEntry: alpha,
+      registryEntries: [alpha, { ...alpha, name: "peer" }],
+      withGatewayRouteMutationLock: async (_gatewayName, operation) => {
+        reportLockEntered();
+        await released;
+        return await operation();
+      },
+    });
+
+    const connect = harness.connectSandbox("alpha", { probeOnly: true });
+    await lockEntered;
+    const peer = harness.registryEntries.find((candidate) => candidate.name === "peer");
+    expect(peer).toBeDefined();
+    Object.assign(peer!, { provider: "anthropic-prod", model: "claude-new" });
+    releaseLock();
+
+    await expect(connect).rejects.toThrow("process.exit(1)");
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
+      "nemoclaw",
+      expect.any(Function),
+    );
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledOnce();
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
+      ["inference", "get", "-g", "nemoclaw"],
+      { ignoreError: true, timeout: 15_000 },
+    );
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("aborts before route reads or repairs when the target changes gateways while waiting", async () => {
+    let releaseLock!: () => void;
+    const released = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    let reportLockEntered!: () => void;
+    const lockEntered = new Promise<void>((resolve) => {
+      reportLockEntered = resolve;
+    });
+    const alpha = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      provider: "nvidia-prod",
+      model: "nvidia/model-a",
+    } as const;
+    const harness = createConnectHarness({
+      registryEntry: alpha,
+      registryEntries: [alpha],
+      withGatewayRouteMutationLock: async (_gatewayName, operation) => {
+        reportLockEntered();
+        await released;
+        return await operation();
+      },
+    });
+
+    const connect = harness.connectSandbox("alpha", { probeOnly: true });
+    await lockEntered;
+    Object.assign(harness.registryEntries[0], {
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+    });
+    releaseLock();
+
+    await expect(connect).rejects.toThrow("process.exit(1)");
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
+    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("changed OpenShell gateways while waiting"),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("exits before managed route reads or repairs when an endpoint override is ambient", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.example.test");
     const harness = createConnectHarness({
@@ -152,6 +246,26 @@ describe("connect route containment", () => {
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(errorOutput).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("rejects a pending onboarding reservation before liveness or route work", async () => {
+    const harness = createConnectHarness({
+      registryEntry: {
+        name: "alpha",
+        pendingRouteReservation: true,
+        gatewayName: "nemoclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(output).toContain("still being created by onboarding");
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
   });
 
   it("exits before repairing a lone incomplete legacy custom route (#6315)", async () => {

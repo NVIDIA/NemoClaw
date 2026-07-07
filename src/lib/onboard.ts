@@ -346,6 +346,8 @@ const {
 const registry: typeof import("./state/registry") = require("./state/registry");
 const sandboxMutationLock: typeof import("./state/mcp-lifecycle-lock") =
   require("./state/mcp-lifecycle-lock");
+const gatewayRouteMutationLock: typeof import("./inference/gateway-route-mutation-lock") =
+  require("./inference/gateway-route-mutation-lock");
 const { resolveSandboxImageTagFromCreateOutput } =
   require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
@@ -3758,6 +3760,8 @@ const setupNim = setupNimFlow.createSetupNim(getSetupNimDeps());
 function getSetupInferenceDeps(): SetupInferenceDeps {
   return {
     checkGatewayRouteCompatibility,
+    withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
+    withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
     step,
     getGatewayName: () => GATEWAY_NAME,
     runOpenshell,
@@ -3765,7 +3769,7 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
     isNonInteractive,
-    updateSandbox: registry.updateSandbox,
+    updateSandbox: registry.reserveSandboxInferenceRoute,
     hermesProviderAuth,
     getHermesToolGatewayBroker,
     providerExistsInGateway,
@@ -4461,6 +4465,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         providerDeps: {
           checkGatewayRouteCompatibility,
           preflightGatewayRouteDiscovery,
+          withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
           normalizeHermesAuthMethod,
           setupNim: (g, s, a, recover, gateway, assertRouteCompatible, canProbeRoute) =>
             setupNim(
@@ -4527,6 +4532,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           rootDir: ROOT,
         },
         sandboxDeps: {
+          checkGatewayRouteCompatibility,
+          withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
           resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
           agentSupportsWebSearch,
           agentSupportsWebSearchProvider,

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import type { ConfigObject } from "../security/credential-filter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
@@ -49,6 +53,26 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pending onboarding route reservation before any mutation", async () => {
+    const deps = createDeps({
+      config: {},
+      entries: [entry("alpha", { pendingRouteReservation: true })],
+      defaultSandbox: "alpha",
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "alpha" },
+        deps,
+      ),
+    ).rejects.toThrow("still being created by onboarding");
+
+    expect(deps.calls.prepareRunOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("rejects a same-gateway conflict before OpenShell, config, or registry mutation (#6315)", async () => {
@@ -179,6 +203,39 @@ describe("runtime shared gateway route containment", () => {
     ).rejects.toThrow("late-peer");
 
     expect(listSandboxes).toHaveBeenCalledTimes(2);
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).toHaveBeenCalledOnce();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rechecks a DNS-normalized endpoint before route mutation (#6315)", async () => {
+    const customRoute = {
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "http://public.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    } as const;
+    const deps = createDeps({
+      config: {},
+      entries: [entry("alpha", customRoute), entry("custom-peer", customRoute)],
+      defaultSandbox: "alpha",
+      rewriteConfigUrlsWithDnsPinning: async (value) =>
+        typeof value === "string" ? "http://203.0.113.10/v1" : value,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          ...customRoute,
+          sandboxName: "alpha",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("custom-peer");
+
     expect(deps.calls.rewriteConfigUrlsWithDnsPinning).toHaveBeenCalledOnce();
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
@@ -318,5 +375,55 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("serializes same-gateway mutations and rechecks peers before the second write", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-lock-"));
+    try {
+      const entries = [
+        entry("route-lock-alpha", { provider: null, model: null }),
+        entry("route-lock-beta", { provider: null, model: null }),
+      ];
+      const deps = createDeps({
+        config: { agents: { defaults: { model: {} } } },
+        entries,
+        withGatewayRouteMutationLock: (gatewayName, operation) =>
+          withGatewayRouteMutationLock(gatewayName, operation, {
+            stateDir,
+            pollIntervalMs: 1,
+            timeoutMs: 5_000,
+          }),
+      });
+      deps.calls.updateSandbox.mockImplementation(
+        (sandboxName: string, updates: Partial<SandboxEntry>) => {
+          const target = entries.find((candidate) => candidate.name === sandboxName);
+          expect(target).toBeDefined();
+          Object.assign(target!, updates);
+          return true;
+        },
+      );
+
+      const results = await Promise.allSettled([
+        runInferenceSet(
+          { provider: "nvidia-prod", model: "nvidia/model-a", sandboxName: entries[0].name },
+          deps,
+        ),
+        runInferenceSet(
+          { provider: "anthropic-prod", model: "claude-new", sandboxName: entries[1].name },
+          deps,
+        ),
+      ]);
+
+      expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+      expect(
+        deps.calls.captureOpenshell.mock.calls.filter(
+          ([args]) => args[0] === "inference" && args[1] === "set",
+        ),
+      ).toHaveLength(1);
+      expect(entries.filter((candidate) => candidate.provider && candidate.model)).toHaveLength(1);
+      expect(deps.calls.withGatewayRouteMutationLock).toHaveBeenCalledTimes(2);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
   });
 });

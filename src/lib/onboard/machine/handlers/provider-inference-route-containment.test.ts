@@ -73,6 +73,7 @@ function createDeps() {
   const deps: Options["deps"] = {
     checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
     preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
+    withGatewayRouteMutationLock: async (_gatewayName, operation) => await operation(),
     normalizeHermesAuthMethod: () => null,
     setupNim: calls.setupNim,
     setupInference: calls.setupInference,
@@ -229,6 +230,35 @@ describe("provider route containment", () => {
     expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
+  it("rechecks routed repair after waiting for the gateway lock", async () => {
+    const session = createSession({ provider: "nvidia-router", model: "router/model" });
+    session.steps.provider_selection.status = "complete";
+    const { calls, deps } = createDeps();
+    let releaseLock!: () => void;
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    let reportLockEntered!: () => void;
+    const lockEntered = new Promise<void>((resolve) => {
+      reportLockEntered = resolve;
+    });
+    deps.withGatewayRouteMutationLock = async (_gatewayName, operation) => {
+      reportLockEntered();
+      await lockReleased;
+      return await operation();
+    };
+
+    const repair = handleProviderInferenceState(resumeOptions(deps, session));
+    await lockEntered;
+    rejectRoute(calls, "nvidia-router", "router/model");
+    releaseLock();
+
+    await expect(repair).rejects.toThrow("exit 1");
+    expect(calls.reconcileRouter).not.toHaveBeenCalled();
+    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("blocks compatible-endpoint messaging refresh before endpoint or gateway work", async () => {

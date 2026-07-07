@@ -13,8 +13,10 @@ import {
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
+import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import {
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
@@ -53,14 +55,14 @@ import {
 } from "./inference-set-gateway-restart";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
 import {
+  applyOpenClawAnthropicReplyBudget,
+  readOpenClawPrimaryReplyBudget,
+} from "./inference-set-reply-budget";
+import {
   finalizeInferenceSetRoute,
   prepareInferenceSetRoute,
   type RegistryInferenceMetadata,
 } from "./inference-set-route-containment";
-import {
-  applyOpenClawAnthropicReplyBudget,
-  readOpenClawPrimaryReplyBudget,
-} from "./inference-set-reply-budget";
 
 export { normalizeCustomEndpointUrl } from "./inference-set-route-containment";
 export { InferenceSetError };
@@ -118,6 +120,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
   isSandboxConfigMutable: (sandboxName: string) => boolean;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
+  withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
 }
 
 const SUPPORTED_PROVIDER_NAMES = [
@@ -159,6 +162,7 @@ function defaultDeps(): InferenceSetDeps {
     ensureLocalProviderReachable,
     resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning,
+    withGatewayRouteMutationLock,
     restartSandboxGateway: defaultInferenceGatewayRestart,
     isSandboxConfigMutable: (sandboxName) => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
@@ -186,6 +190,15 @@ function normalizeSandboxAgent(agentName: string | null | undefined): string {
   return (trimmed || "openclaw").toLowerCase();
 }
 
+function assertSandboxRouteReservationComplete(entry: SandboxEntry): void {
+  if (entry.pendingRouteReservation === true) {
+    throw new InferenceSetError(
+      `Sandbox '${entry.name}' is still being created by onboarding. Wait for onboarding to finish or remove the incomplete sandbox before changing inference.`,
+      2,
+    );
+  }
+}
+
 function resolveTargetSandbox(
   sandboxName: string | null | undefined,
   deps: Pick<
@@ -199,6 +212,7 @@ function resolveTargetSandbox(
     if (!entry) {
       throw new InferenceSetError(`Sandbox '${explicitName}' is not registered.`, 2);
     }
+    assertSandboxRouteReservationComplete(entry);
     return {
       sandboxName: explicitName,
       entry,
@@ -209,7 +223,10 @@ function resolveTargetSandbox(
   if (normalizeSandboxAgent(deps.getRequestedAgent()) === "hermes") {
     const hermesSandboxes = deps
       .listSandboxes()
-      .sandboxes.filter((entry) => normalizeSandboxAgent(entry.agent) === "hermes");
+      .sandboxes.filter(
+        (entry) =>
+          entry.pendingRouteReservation !== true && normalizeSandboxAgent(entry.agent) === "hermes",
+      );
     if (hermesSandboxes.length === 1) {
       const entry = hermesSandboxes[0];
       return { sandboxName: entry.name, entry, agentName: "hermes" };
@@ -240,6 +257,7 @@ function resolveTargetSandbox(
   if (!entry) {
     throw new InferenceSetError(`Sandbox '${targetName}' is not registered.`, 2);
   }
+  assertSandboxRouteReservationComplete(entry);
   return { sandboxName: targetName, entry, agentName: normalizeSandboxAgent(entry.agent) };
 }
 
@@ -461,7 +479,8 @@ function assertHermesCompatibleAnthropicOpenAiProvider(
 
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
-  deps: InferenceSetDeps = defaultDeps(),
+  deps: InferenceSetDeps,
+  expectedGatewayName: string,
 ): Promise<InferenceMutation<InferenceSetResult>> {
   const provider = trimRequired(options.provider, "provider");
   const model = trimRequired(options.model, "model");
@@ -537,6 +556,13 @@ async function runInferenceSetWithoutHostLock(
     session: routeSession,
     sandboxes: routeSandboxes,
   });
+  if (preparedRoute.gatewayName !== expectedGatewayName) {
+    throw new InferenceSetError(
+      `Sandbox '${sandboxName}' moved from OpenShell gateway '${expectedGatewayName}' to ` +
+        `'${preparedRoute.gatewayName}' while waiting for the route mutation lock. Retry the command.`,
+      2,
+    );
+  }
 
   const target = deps.resolveAgentConfig(sandboxName);
   const targetAgent = normalizeSandboxAgent(target.agentName);
@@ -780,10 +806,16 @@ export async function runInferenceSet(
   const selected = resolveTargetSandbox(options.sandboxName, deps);
   deps.prepareRunOpenshell();
   return withSandboxMutationLock(selected.sandboxName, async () => {
-    const mutation = await withTimerBoundShieldsMutationLockAsync(
-      selected.sandboxName,
-      "inference set",
-      () => runInferenceSetWithoutHostLock({ ...options, sandboxName: selected.sandboxName }, deps),
+    const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
+    const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
+    const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
+      withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>
+        runInferenceSetWithoutHostLock(
+          { ...options, sandboxName: selected.sandboxName },
+          deps,
+          gatewayName,
+        ),
+      ),
     );
     // Release the config transition lock before the managed restart reacquires
     // it, but retain the outer sandbox lifecycle lock so another process cannot

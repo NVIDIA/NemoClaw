@@ -133,7 +133,11 @@ export function preflightGatewayRouteDiscovery(
     try {
       recordedGatewayName = resolveSandboxGatewayName(sandbox);
     } catch {
-      invalidBindings.push({ sandboxName: sandbox.name, reason: "invalid-gateway-binding" });
+      invalidBindings.push({
+        sandboxName: sandbox.name,
+        reason: "invalid-gateway-binding",
+        scope: "registered",
+      });
       continue;
     }
     if (recordedGatewayName === request.gatewayName && configuredRoute(sandbox)) {
@@ -175,6 +179,7 @@ export function preflightGatewayRouteDiscovery(
         conflicts: peers.map((sandbox) => ({
           sandboxName: sandbox.name,
           reason: "provider-model" as const,
+          scope: "registered" as const,
         })),
       },
     };
@@ -240,7 +245,11 @@ export function checkGatewayRouteCompatibility(
     try {
       recordedGatewayName = resolveSandboxGatewayName(sandbox);
     } catch {
-      conflicts.push({ sandboxName: sandbox.name, reason: "invalid-gateway-binding" });
+      conflicts.push({
+        sandboxName: sandbox.name,
+        reason: "invalid-gateway-binding",
+        scope: "registered",
+      });
       continue;
     }
     if (recordedGatewayName !== request.gatewayName) continue;
@@ -248,12 +257,16 @@ export function checkGatewayRouteCompatibility(
     if (!recorded) continue;
 
     if (recorded.provider !== requested.provider || recorded.model !== requested.model) {
-      conflicts.push({ sandboxName: sandbox.name, reason: "provider-model" });
+      conflicts.push({
+        sandboxName: sandbox.name,
+        reason: "provider-model",
+        scope: "registered",
+      });
       continue;
     }
     if (CUSTOM_ROUTE_PROVIDERS.has(requested.provider)) {
       const reason = customRouteConflict(requested.provider, request.route, sandbox);
-      if (reason) conflicts.push({ sandboxName: sandbox.name, reason });
+      if (reason) conflicts.push({ sandboxName: sandbox.name, reason, scope: "registered" });
     }
   }
 

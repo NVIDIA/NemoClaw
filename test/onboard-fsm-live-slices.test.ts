@@ -120,6 +120,7 @@ function probeEnvironment(tmpDir: string): NodeJS.ProcessEnv {
     HOME: tmpDir,
     TMPDIR: tmpDir,
     PATH: process.env.PATH || "/usr/bin:/bin",
+    NEMOCLAW_OPENSHELL_BIN: process.execPath,
     NODE_ENV: "test",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_SANDBOX_NAME: "fsm-sandbox",

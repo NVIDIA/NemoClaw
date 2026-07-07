@@ -4,15 +4,23 @@
 import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { captureOpenshell } from "./adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { GATEWAY_PORT } from "./core/ports";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "./gateway-runtime-action";
+import {
+  checkGatewayRouteCompatibility,
+  formatGatewayRouteConflict,
+} from "./inference/gateway-route-compatibility";
+import { withGatewayRouteMutationLock } from "./inference/gateway-route-mutation-lock";
+import { resolveGatewayName, resolveSandboxGatewayName } from "./onboard/gateway-binding";
 import { validateName } from "./runner";
 import { parseLiveSandboxEntries } from "./runtime-recovery";
 import * as onboardSession from "./state/onboard-session";
 import type { SandboxEntry } from "./state/registry";
 import * as registry from "./state/registry";
+import { getSandboxEntryInference } from "./state/registry-entry-view";
 
 /**
  * #5714: a sandbox surfaced display-only by unseeded `nemoclaw list` recovery.
@@ -72,7 +80,11 @@ function buildRecoveredSandboxEntry(
  * merging into an existing one. Returns true only when a new entry was created.
  * Invalid sandbox names are skipped (returns false).
  */
-function upsertRecoveredSandbox(name: string, metadata: RecoveredSandboxMetadata = {}) {
+function upsertRecoveredSandbox(
+  name: string,
+  metadata: RecoveredSandboxMetadata = {},
+  gatewayName = resolveGatewayName(GATEWAY_PORT),
+) {
   let validName;
   try {
     validName = validateName(name, "sandbox name");
@@ -80,8 +92,34 @@ function upsertRecoveredSandbox(name: string, metadata: RecoveredSandboxMetadata
     return false;
   }
 
-  const entry = buildRecoveredSandboxEntry(validName, metadata);
-  if (registry.getSandbox(validName)) {
+  const existing = registry.getSandbox(validName);
+  if (existing && resolveSandboxGatewayName(existing) !== gatewayName) return false;
+  const recovered = buildRecoveredSandboxEntry(validName, metadata);
+  const entry = {
+    ...recovered,
+    provider: existing?.provider ?? recovered.provider ?? null,
+    model: existing?.model ?? recovered.model ?? null,
+    endpointUrl: existing?.endpointUrl ?? null,
+    credentialEnv: existing?.credentialEnv ?? null,
+    preferredInferenceApi: existing?.preferredInferenceApi ?? null,
+    gatewayName: existing?.gatewayName ?? gatewayName,
+  };
+  const inference = getSandboxEntryInference(entry);
+  if (inference.kind === "configured") {
+    const compatibility = checkGatewayRouteCompatibility({
+      gatewayName,
+      sandboxName: validName,
+      route: entry,
+      sandboxes: registry.listSandboxes().sandboxes,
+    });
+    if (!compatibility.ok) {
+      console.warn(
+        `  Skipping unsafe registry recovery: ${formatGatewayRouteConflict(compatibility)}`,
+      );
+      return false;
+    }
+  }
+  if (existing) {
     registry.updateSandbox(validName, entry);
     return false;
   }
@@ -149,6 +187,7 @@ function seedRecoveryMetadata(
   current: { sandboxes: SandboxEntry[] },
   session: Session | null,
   requestedSandboxName: string | null,
+  gatewayName = resolveGatewayName(GATEWAY_PORT),
 ) {
   const metadataByName = new Map<string, RecoveredSandboxMetadata>(
     current.sandboxes.map((sandbox: SandboxEntry) => [sandbox.name, sandbox]),
@@ -180,6 +219,7 @@ function seedRecoveryMetadata(
     recoveredFromSession = upsertRecoveredSandbox(
       session.sandboxName,
       metadataByName.get(session.sandboxName),
+      gatewayName,
     );
   }
   return { metadataByName, recoveredFromSession };
@@ -239,7 +279,10 @@ interface LiveGatewayRecovery {
  */
 async function recoverRegistryFromLiveGateway(
   metadataByName: Map<string, RecoveredSandboxMetadata>,
-  { readOnly = false }: { readOnly?: boolean } = {},
+  {
+    readOnly = false,
+    gatewayName = resolveGatewayName(GATEWAY_PORT),
+  }: { readOnly?: boolean; gatewayName?: string } = {},
 ): Promise<LiveGatewayRecovery> {
   if (!resolveOpenshell()) {
     return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
@@ -290,7 +333,7 @@ async function recoverRegistryFromLiveGateway(
       recoveredFromGateway += 1;
       continue;
     }
-    if (upsertRecoveredSandbox(name, metadata)) {
+    if (upsertRecoveredSandbox(name, metadata, gatewayName)) {
       recoveredFromGateway += 1;
     }
   }
@@ -327,19 +370,13 @@ function applyRecoveredDefault(
  * live sandboxes as display-only entries without persisting them. Returns the
  * registry listing plus `recoveredFromSession`/`recoveredFromGateway` markers.
  */
-export async function recoverRegistryEntries({
-  requestedSandboxName = null,
-}: {
-  requestedSandboxName?: string | null;
-} = {}) {
-  const current = registry.listSandboxes();
-  const session = onboardSession.loadSession();
-  const recoveryCheck = shouldRecoverRegistryEntries(current, session, requestedSandboxName);
-  if (!recoveryCheck.shouldRecover) {
-    return { ...current, recoveredFromSession: false, recoveredFromGateway: 0 };
-  }
-
-  const seeded = seedRecoveryMetadata(current, session, requestedSandboxName);
+async function recoverRegistryEntriesFromSnapshot(
+  current: ReturnType<typeof registry.listSandboxes>,
+  session: Session | null,
+  requestedSandboxName: string | null,
+  gatewayName: string,
+) {
+  const seeded = seedRecoveryMetadata(current, session, requestedSandboxName, gatewayName);
   // A seed is any signal that the user expects a specific sandbox to exist:
   // existing registry entries, a *confirmed* onboard session, or an explicit
   // requested name. With a seed we allow active gateway recovery (which may
@@ -357,6 +394,7 @@ export async function recoverRegistryEntries({
     current.sandboxes.length > 0 || hasConfirmedSession || Boolean(requestedSandboxName);
   const gateway = await recoverRegistryFromLiveGateway(seeded.metadataByName, {
     readOnly: !hasRecoverySeed,
+    gatewayName,
   });
   const recovered = applyRecoveredDefault(current.defaultSandbox, requestedSandboxName, session);
   // Merge display-only (ephemeral) live-gateway sandboxes that were not
@@ -373,4 +411,42 @@ export async function recoverRegistryEntries({
     recoveredFromSession: seeded.recoveredFromSession,
     recoveredFromGateway: gateway.recoveredFromGateway,
   };
+}
+
+export async function recoverRegistryEntries({
+  requestedSandboxName = null,
+}: {
+  requestedSandboxName?: string | null;
+} = {}) {
+  const current = registry.listSandboxes();
+  const session = onboardSession.loadSession();
+  const recoveryCheck = shouldRecoverRegistryEntries(current, session, requestedSandboxName);
+  if (!recoveryCheck.shouldRecover) {
+    return { ...current, recoveredFromSession: false, recoveredFromGateway: 0 };
+  }
+
+  const hasConfirmedSession = isSessionSandboxConfirmed(session) && Boolean(session?.sandboxName);
+  const hasRecoverySeed =
+    current.sandboxes.length > 0 || hasConfirmedSession || Boolean(requestedSandboxName);
+  const gatewayName = resolveGatewayName(GATEWAY_PORT);
+  if (!hasRecoverySeed) {
+    return recoverRegistryEntriesFromSnapshot(current, session, requestedSandboxName, gatewayName);
+  }
+  return withGatewayRouteMutationLock(gatewayName, async () => {
+    const lockedCurrent = registry.listSandboxes();
+    const lockedSession = onboardSession.loadSession();
+    const lockedCheck = shouldRecoverRegistryEntries(
+      lockedCurrent,
+      lockedSession,
+      requestedSandboxName,
+    );
+    return lockedCheck.shouldRecover
+      ? recoverRegistryEntriesFromSnapshot(
+          lockedCurrent,
+          lockedSession,
+          requestedSandboxName,
+          gatewayName,
+        )
+      : { ...lockedCurrent, recoveredFromSession: false, recoveredFromGateway: 0 };
+  });
 }

@@ -558,7 +558,7 @@ describe("createSetupNim", () => {
       gpu: null,
       experimental: false,
       probeOllama: false,
-      probeVllm: false,
+      probeVllm: true,
     });
     expect(routeGuard).toHaveBeenCalledWith({
       provider: "vllm-local",

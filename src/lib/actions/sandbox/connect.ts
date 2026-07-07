@@ -24,6 +24,7 @@ import {
   sanitizeRouteValueForDisplay,
 } from "../../inference/config";
 import { GatewayRouteConflictError } from "../../inference/gateway-route-compatibility";
+import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
@@ -224,15 +225,16 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
-function runSandboxConnectProbe(sandboxName: string): void {
+async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) {
+    const routeResult = await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
     runTerminalAgentConnectProbe({
       agent,
       agentName,
       capture: captureOpenshell,
-      ensureInferenceRoute: (name, options) => ensureSandboxInferenceRoute(name, agent, options),
+      ensureInferenceRoute: () => routeResult,
       sandboxName,
     });
     return;
@@ -264,7 +266,7 @@ function runSandboxConnectProbe(sandboxName: string): void {
     );
   }
   if (processCheck.wasRunning) {
-    ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
@@ -279,13 +281,13 @@ function runSandboxConnectProbe(sandboxName: string): void {
     return;
   }
   if (processCheck.recovered) {
-    ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     runConnectAutoPairApprovalPass(sandboxName);
     console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
     return;
   }
-  ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+  await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
@@ -704,7 +706,7 @@ function resetManagedInferenceRoute(
   );
 }
 
-function ensureSandboxInferenceRoute(
+function ensureSandboxInferenceRouteUnlocked(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   { quiet = false }: { quiet?: boolean } = {},
@@ -794,12 +796,38 @@ function ensureSandboxInferenceRoute(
   }
 }
 
-function ensureSandboxInferenceRouteOrExit(
+async function ensureSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   { quiet = false }: { quiet?: boolean } = {},
-): SandboxEntry | null {
-  const result = ensureSandboxInferenceRoute(sandboxName, agent, { quiet });
+): Promise<SandboxInferenceRouteEnsureResult> {
+  const snapshot = registry.getSandbox(sandboxName);
+  if (!snapshot) return { sandbox: null, routeHealthy: null };
+  if (registry.getSandboxEntryInference(snapshot).kind !== "configured")
+    return { sandbox: snapshot, routeHealthy: null };
+  const gatewayName = resolveSandboxGatewayName(snapshot);
+  return withGatewayRouteMutationLock(gatewayName, () => {
+    const lockedSnapshot = registry.getSandbox(sandboxName);
+    if (
+      lockedSnapshot &&
+      registry.getSandboxEntryInference(lockedSnapshot).kind === "configured" &&
+      resolveSandboxGatewayName(lockedSnapshot) !== gatewayName
+    ) {
+      console.error(
+        `  Error: sandbox '${sandboxName}' changed OpenShell gateways while waiting to verify its inference route. Retry the command.`,
+      );
+      process.exit(1);
+    }
+    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
+  });
+}
+
+async function ensureSandboxInferenceRouteOrExit(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+  { quiet = false }: { quiet?: boolean } = {},
+): Promise<SandboxEntry | null> {
+  const result = await ensureSandboxInferenceRoute(sandboxName, agent, { quiet });
   if (result.routeHealthy === false) {
     process.exit(1);
   }
@@ -884,6 +912,11 @@ export async function connectSandbox(
   try {
     assertNoOpenShellGatewayEndpointOverride();
     const registered = registry.getSandbox(sandboxName);
+    if (registered?.pendingRouteReservation === true) {
+      throw new Error(
+        `Sandbox '${sandboxName}' is still being created by onboarding. Wait for onboarding to finish or remove the incomplete sandbox before connecting.`,
+      );
+    }
     if (registered && registry.getSandboxEntryInference(registered).kind === "configured") {
       const gatewayName = resolveSandboxGatewayName(registered);
       assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
@@ -917,7 +950,7 @@ export async function connectSandbox(
   }
 
   if (probeOnly) {
-    return runSandboxConnectProbe(sandboxName);
+    return await runSandboxConnectProbe(sandboxName);
   }
 
   // Version staleness check — warn but don't block
@@ -1081,7 +1114,7 @@ export async function connectSandbox(
   // cluster-wide inference.local route may still point at the other provider.
   // After the sandbox is Ready, verify and recover the route before SSH.
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  sb = ensureSandboxInferenceRouteOrExit(sandboxName, agent);
+  sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
   maybeEnsureHermesToolGatewayBroker(sb);
 
   // ── Auto-pair late scope-upgrade approval (#4263) ───────────────

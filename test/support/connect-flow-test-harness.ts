@@ -10,6 +10,8 @@ import type { SecretBoundaryRefusalReason } from "../../src/lib/actions/sandbox/
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 type ConnectSandbox = typeof import("../../src/lib/actions/sandbox/connect")["connectSandbox"];
+type GatewayRouteMutationLock =
+  typeof import("../../src/lib/inference/gateway-route-mutation-lock")["withGatewayRouteMutationLock"];
 
 export const requireDist = createRequire(import.meta.url);
 export const connectModulePath = "../../src/lib/actions/sandbox/connect.js";
@@ -29,10 +31,12 @@ export type ConnectHarness = {
   errorSpy: MockInstance;
   logSpy: MockInstance;
   preflightVllmSpy: MockInstance;
+  registryEntries: SandboxEntry[];
   runAutoPairSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
+  withGatewayRouteMutationLockSpy: MockInstance;
 };
 
 export type ConnectHarnessOptions = {
@@ -58,6 +62,7 @@ export type ConnectHarnessOptions = {
   spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;
   sttyThrows?: boolean;
+  withGatewayRouteMutationLock?: GatewayRouteMutationLock;
 };
 
 function throwSttyFailure(): never {
@@ -99,6 +104,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     "../../src/lib/actions/sandbox/gateway-failure-classifier.js",
   );
   const ollamaProxy = requireDist("../../src/lib/inference/ollama/proxy.js");
+  const gatewayRouteMutationLock = requireDist(
+    "../../src/lib/inference/gateway-route-mutation-lock.js",
+  );
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
   const registry = requireDist("../../src/lib/state/registry.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
@@ -136,6 +144,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       return { status: 0, output: "" };
     });
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockReturnValue({ status: 0 });
+  const withGatewayRouteMutationLockSpy = vi
+    .spyOn(gatewayRouteMutationLock, "withGatewayRouteMutationLock")
+    .mockImplementation(
+      (options.withGatewayRouteMutationLock ??
+        (async (_gatewayName: string, operation: () => Promise<unknown> | unknown) =>
+          await operation())) as never,
+    );
   const runSetupDnsProxySpy = vi.spyOn(dns, "runSetupDnsProxy").mockReturnValue({ exitCode: 0 });
   const applyVmDnsMonkeypatchSpy = vi
     .spyOn(vmDnsMonkeypatch, "applyOpenShellVmDnsMonkeypatch")
@@ -206,9 +221,11 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     errorSpy,
     logSpy,
     preflightVllmSpy,
+    registryEntries,
     runAutoPairSpy,
     runOpenshellSpy,
     runSetupDnsProxySpy,
     spawnSyncSpy,
+    withGatewayRouteMutationLockSpy,
   };
 }

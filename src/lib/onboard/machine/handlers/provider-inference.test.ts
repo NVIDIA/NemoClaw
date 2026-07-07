@@ -97,6 +97,10 @@ function createDeps(
     deps: {
       checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
       preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
+      withGatewayRouteMutationLock: async <T>(
+        _gatewayName: string,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
       normalizeHermesAuthMethod: (value: string | null | undefined) =>
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: calls.setupNim,

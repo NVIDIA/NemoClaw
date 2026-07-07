@@ -106,6 +106,7 @@ export function createCoreOnboardFlowPhases<
     const sandboxStateResult = await handleSandboxState({
       resume: context.resume,
       fresh: context.fresh,
+      gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
       session: context.session,

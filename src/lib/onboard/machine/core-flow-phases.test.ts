@@ -91,6 +91,10 @@ function createPhases(
         requiredEndpointUrl: null,
         requiredInferenceApi: null,
       }),
+      withGatewayRouteMutationLock: async <T>(
+        _gatewayName: string,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
       normalizeHermesAuthMethod: (value) =>
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: vi.fn(async () => ({
@@ -170,7 +174,17 @@ function createPhases(
       getDcodeSelectionDrift: () => ({ changed: false, unknown: false }),
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],
-      getSandboxRegistryEntry: () => null,
+      getSandboxRegistryEntry: () => ({
+        name: "my-sandbox",
+        provider: "nim",
+        model: "nvidia/test",
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        preferredInferenceApi: "chat",
+        gatewayName: "nemoclaw",
+        gpuEnabled: false,
+        policies: [],
+      }),
       normalizeHermesToolGatewaySelections: (value) => (Array.isArray(value) ? value : []),
       stringSetsEqual: (left, right) =>
         left.length === right.length && left.every((item) => right.includes(item)),
@@ -205,6 +219,11 @@ function createPhases(
         throw new Error(`exit ${code}`);
       }) as (code: number) => never,
       ...overrides.sandboxDeps,
+      checkGatewayRouteCompatibility:
+        overrides.sandboxDeps?.checkGatewayRouteCompatibility ?? (() => ({ ok: true })),
+      withGatewayRouteMutationLock:
+        overrides.sandboxDeps?.withGatewayRouteMutationLock ??
+        (async <T>(_gatewayName: string, operation: () => Promise<T> | T) => await operation()),
     },
   });
 }
@@ -294,6 +313,19 @@ describe("core onboard flow phases", () => {
         })),
         isInferenceRouteReady: (_gatewayName, _provider, _model) => true,
         setupInference,
+      },
+      sandboxDeps: {
+        getSandboxRegistryEntry: () => ({
+          name: "my-sandbox",
+          provider: "hermes",
+          model: "nvidia/test",
+          endpointUrl: null,
+          credentialEnv: "HERMES_API_KEY",
+          preferredInferenceApi: null,
+          gatewayName: "nemoclaw",
+          gpuEnabled: false,
+          policies: [],
+        }),
       },
     });
     const session = createSession({
