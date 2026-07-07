@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
   checkAgentVersion: vi.fn(),
   classifyUpgradeableSandboxes: vi.fn(),
+  getLatestBackup: vi.fn(),
   getVersion: vi.fn(),
   listSandboxes: vi.fn(),
   parseLiveSandboxEntries: vi.fn(),
@@ -38,7 +39,7 @@ vi.mock("../runtime-recovery", () => ({
 }));
 vi.mock("../sandbox/version", () => ({ checkAgentVersion: mocks.checkAgentVersion }));
 vi.mock("../state/registry", () => ({ listSandboxes: mocks.listSandboxes }));
-vi.mock("../state/sandbox", () => ({}));
+vi.mock("../state/sandbox", () => ({ getLatestBackup: mocks.getLatestBackup }));
 vi.mock("./sandbox/rebuild", () => ({ rebuildSandbox: mocks.rebuildSandbox }));
 
 import { upgradeSandboxes } from "./upgrade-sandboxes";
@@ -78,15 +79,18 @@ describe("upgrade-sandboxes gateway preflight adapter (#6237)", () => {
     expect(logSpy.mock.calls.flat().join("\n")).toContain("No sandboxes found");
   });
 
-  it("passes upgrade context and the successful Ready set into classification", async () => {
+  it("passes the selected gateway and successful Ready set into classification", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await upgradeSandboxes({ check: true });
 
-    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledWith({
-      action: "checking sandbox upgrade state",
-      command: "nemoclaw upgrade-sandboxes",
-    });
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledWith(
+      {
+        action: "checking sandbox upgrade state",
+        command: "nemoclaw upgrade-sandboxes",
+      },
+      { gatewayName: "nemoclaw" },
+    );
     expect(mocks.classifyUpgradeableSandboxes).toHaveBeenCalledWith(
       [{ name: "alpha", provider: "nvidia-prod", model: "nemotron" }],
       new Set(["alpha"]),
@@ -96,7 +100,8 @@ describe("upgrade-sandboxes gateway preflight adapter (#6237)", () => {
     expect(logSpy.mock.calls.flat().join("\n")).toContain("All sandboxes are up to date");
   });
 
-  it("does not classify or rebuild when gateway preflight exits", async () => {
+  it("does not classify, assess backups, or rebuild when gateway proof exits", async () => {
+    vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
     mocks.captureSandboxListWithGatewayPreflightOrExit.mockRejectedValueOnce(
       new Error("process.exit(1)"),
     );
@@ -104,6 +109,7 @@ describe("upgrade-sandboxes gateway preflight adapter (#6237)", () => {
     await expect(upgradeSandboxes({ check: true })).rejects.toThrow("process.exit(1)");
 
     expect(mocks.classifyUpgradeableSandboxes).not.toHaveBeenCalled();
+    expect(mocks.getLatestBackup).not.toHaveBeenCalled();
     expect(mocks.rebuildSandbox).not.toHaveBeenCalled();
   });
 });

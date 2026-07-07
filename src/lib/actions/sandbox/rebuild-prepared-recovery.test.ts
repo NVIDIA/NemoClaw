@@ -37,6 +37,9 @@ describe("prepared rebuild recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.preflightAuthoritativeRebuildTargetSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ deferInferenceRouteUntilOnboard: true }),
+    );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ ignoreError: true }),

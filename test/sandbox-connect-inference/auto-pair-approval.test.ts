@@ -414,7 +414,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
   );
 
   it(
-    "approve timeout matches the watcher (10s), list keeps 2s, and stays within the outer cap",
+    "approve timeout matches the watcher, cold list gets 5s, and both stay within the outer cap",
     testTimeoutOptions(20_000),
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
@@ -443,9 +443,9 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(script).toContain(`MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}`);
 
       // Approve budget matches the in-sandbox watcher RUN_TIMEOUT_SECS = 10;
-      // list budget is 2s.
+      // list budget covers a cold OpenClaw 2026.6.10 CLI load.
       expect(CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S).toBe(10);
-      expect(CONNECT_AUTO_PAIR_LIST_TIMEOUT_S).toBe(2);
+      expect(CONNECT_AUTO_PAIR_LIST_TIMEOUT_S).toBe(5);
 
       // Budget invariant: the inner worst case (list + approve × MAX_APPROVALS)
       // must stay STRICTLY below the outer spawnSync cap. The outer timer starts

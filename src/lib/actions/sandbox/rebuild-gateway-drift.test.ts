@@ -316,8 +316,22 @@ describe("rebuild gateway drift preflight", () => {
       "Failed to query running sandboxes from OpenShell.",
     );
 
-    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledTimes(2);
-    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw" });
+    const listRecoveryCalls = recoverNamedGatewayRuntimeSpy.mock.calls.filter(
+      ([options]) => options.recoverableStates !== undefined,
+    );
+    expect(listRecoveryCalls).toEqual([
+      [
+        {
+          gatewayName: "nemoclaw",
+          recoverableStates: [
+            "missing_named",
+            "named_unhealthy",
+            "named_unreachable",
+            "connected_other",
+          ],
+        },
+      ],
+    ]);
     expect(captureOpenshellSpy).toHaveBeenCalledTimes(1);
   });
 });
