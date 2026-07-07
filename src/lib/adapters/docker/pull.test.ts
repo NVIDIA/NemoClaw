@@ -107,7 +107,7 @@ describe("docker pull progress watchdog", () => {
     });
   });
 
-  it("does not kill a quiet large-image pull after the old 120s idle window", async () => {
+  it("allows quiet pull finalization within the 15 minute stall timeout", async () => {
     vi.useFakeTimers();
     const child = new FakeChild();
     const pull = dockerPullWithProgressWatchdog("example/image:latest", {
@@ -125,6 +125,25 @@ describe("docker pull progress watchdog", () => {
       timedOut: false,
       timeoutKind: null,
     });
+  });
+
+  it("kills a quiet pull after the default 15 minute stall timeout", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const pull = dockerPullWithProgressWatchdog("example/image:latest", {
+      suppressOutput: true,
+      spawnImpl: () => child,
+    });
+
+    child.stderr.emit("data", Buffer.from("abc123def: Pull complete\n"));
+    await vi.advanceTimersByTimeAsync(16 * 60_000);
+
+    await expect(pull).resolves.toMatchObject({
+      status: 124,
+      timedOut: true,
+      timeoutKind: "stall",
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("kills a pull when output repeats without forward progress", async () => {
