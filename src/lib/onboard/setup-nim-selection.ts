@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+
+export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+
 export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
 
 export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
@@ -15,6 +19,8 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
   skipHostInferenceSmoke?: boolean;
+  reuseGatewayCredentialWithoutLocalKey?: boolean;
+  nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
 };
 
 export type CloudFallbackConfig = {
@@ -39,10 +45,35 @@ export function applyCloudFallbackSelection(
   state.nimContainer = null;
   state.allowToolsIncompatible = false;
   state.skipHostInferenceSmoke = false;
+  state.reuseGatewayCredentialWithoutLocalKey = false;
 }
 
 export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {
   state.nimContainer = null;
+}
+
+type CompatibleEndpointKind = "openai" | "anthropic";
+
+export async function resolveCompatibleEndpointInput(args: {
+  kind: CompatibleEndpointKind;
+  envUrl: string | null | undefined;
+  recoveredEndpointUrl: string | null | undefined;
+  nonInteractive: boolean;
+  prompt: (message: string) => Promise<string>;
+}): Promise<string> {
+  const envUrl = (args.envUrl || "").trim();
+  const recoveredUrl = (args.recoveredEndpointUrl || "").trim();
+  const defaultEndpointUrl = envUrl || recoveredUrl;
+  if (args.nonInteractive) return defaultEndpointUrl;
+  return (
+    (await args.prompt(
+      defaultEndpointUrl
+        ? `  ${args.kind === "openai" ? "OpenAI" : "Anthropic"}-compatible base URL [${defaultEndpointUrl}]: `
+        : args.kind === "openai"
+          ? "  OpenAI-compatible base URL (e.g., https://openrouter.ai): "
+          : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
+    )) || defaultEndpointUrl
+  );
 }
 
 type ProviderChoice = {
@@ -95,6 +126,9 @@ type RemoteModelValidatorDeps = {
     model: string,
     credentialEnv: string,
     helpUrl: string | null,
+    options?: {
+      intendedApi?: "anthropic-messages" | "openai-completions";
+    },
   ) => Promise<ValidationResult>;
   validateAnthropicSelectionWithRetryMessage: (
     label: string,
@@ -125,6 +159,7 @@ type ValidateSelectedRemoteModelArgs = {
   remoteConfig: RemoteProviderConfig;
   state: SetupNimSelectionState;
   selectedCredentialEnv: string;
+  intendedInferenceApi?: string | null;
 };
 
 function shouldRetryModel(validation: ValidationResult): boolean {
@@ -134,6 +169,13 @@ function shouldRetryModel(validation: ValidationResult): boolean {
       validation.retry === "retry" ||
       validation.retry === "model")
   );
+}
+
+function requireCustomAnthropicRuntimeApi(
+  value: string | null,
+): "anthropic-messages" | "openai-completions" {
+  if (value === "anthropic-messages" || value === "openai-completions") return value;
+  throw new Error(`Unsupported custom Anthropic runtime API: ${String(value)}`);
 }
 
 export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
@@ -147,6 +189,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
       remoteConfig,
       state,
       selectedCredentialEnv,
+      intendedInferenceApi = "anthropic-messages",
     }) => {
       const selectedModel = deps.requireValue(
         deps.isBackToSelection(state.model) ? null : state.model,
@@ -195,12 +238,14 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
       }
 
       if (selected.key === "anthropicCompatible") {
+        const intendedApi = requireCustomAnthropicRuntimeApi(intendedInferenceApi);
         const validation = await deps.validateCustomAnthropicSelection(
           remoteConfig.label,
           state.endpointUrl || deps.ANTHROPIC_ENDPOINT_URL,
           selectedModel,
           selectedCredentialEnv,
           remoteConfig.helpUrl,
+          { intendedApi },
         );
         if (validation.ok) {
           state.preferredInferenceApi = validation.api;

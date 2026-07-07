@@ -18,7 +18,7 @@ Use after a candidate passes selection. Classify the environment, prompt for pro
 
 **CPU vs GPU:** GPU if any of these signals are present, else CPU.
 
-- Labels: `Platform: GB10`, `Platform: DGX Spark`.
+- Labels: `platform: gb10`, `platform: dgx-spark`.
 - Body keywords (whole-word, case-insensitive): `nvidia-smi`, `cuda`, `H100`, `A100`, `L40S`, `L4`, `T4`, `GB10`, `DGX`, `vllm`, `tensorrt`. Match as whole words — `inference` and `model serving` are too noisy (e.g. `models.providers.inference.baseUrl` is a config path on CPU bugs, not a GPU need) and intentionally excluded.
 
 CPU default keeps cost low. Only escalate to GPU when the reproducer needs one.
@@ -38,10 +38,10 @@ Most bugs are `functional`. The other three classes need verification harnesses 
 
 | Detection signal | Provider |
 |---|---|
-| `Provider: NVIDIA` label, body mentions `NVIDIA NIM`, `build.nvidia.com`, `nvapi-...`, `NVIDIA_API_KEY`, or `NEMOCLAW_PROVIDER=build` | `nim` |
-| `Provider: Gemini` label, body mentions `Gemini`, `gemini-flash`, `gemini-pro`, `GEMINI_API_KEY` | `gemini` |
-| `Provider: Anthropic` / `Provider: AWS` (Bedrock) labels or matching keywords | `anthropic`/`bedrock` |
-| `Provider: Ollama`, body mentions `ollama` or `NEMOCLAW_PROVIDER=ollama`, or no provider mentioned at all | `ollama` (default) |
+| `provider: nvidia` label, body mentions `NVIDIA NIM`, `build.nvidia.com`, `nvapi-...`, `NVIDIA_API_KEY`, or `NEMOCLAW_PROVIDER=build` | `nim` |
+| Body mentions `Gemini`, `gemini-flash`, `gemini-pro`, or `GEMINI_API_KEY` | `gemini` |
+| `provider: anthropic` label or body keywords for Anthropic or AWS Bedrock | `anthropic`/`bedrock` |
+| `provider: ollama`, body mentions `ollama` or `NEMOCLAW_PROVIDER=ollama`, or no provider is mentioned | `ollama` (default) |
 
 Set `BUG_PROVIDER=<provider>`.
 
@@ -74,8 +74,9 @@ to verify faithfully. Three options:
      verdict will be capped because we're not exercising the real provider's code
      path.
 
-  3. Skip this issue. Mark `verify-inconclusive` with the reason "requires <provider>
-     API key — not provided in this run."
+  3. Skip this issue. Select the `verify-inconclusive` verdict with the reason
+     "requires <provider> API key — not provided in this run," then request
+     approval for the proposed comment and durable verdict marker.
 
 Choose 1, 2, or 3:
 ```
@@ -177,8 +178,11 @@ if [ -z "$GH_IDENTITY" ]; then
 fi
 echo "gh identity: @$GH_IDENTITY — comments posted by this run will appear under this handle"
 
-# gh 'project' scope — Step 10 moves fixed-on-latest issues to "Needs Review" on Project 199. Warn if missing.
-gh auth status 2>&1 | grep -q "'project'" || echo "[verify-stale] WARN gh missing 'project' scope — Step 10 tracker move will skip. Fix: run 'gh auth refresh -h github.com -s project' in a real terminal."
+# gh 'project' scope — candidate selection reads Project fields and Step 10 may update them.
+gh auth status 2>&1 | grep -q "'project'" || {
+  echo "ERROR: gh is missing 'project' scope. Run 'gh auth refresh -h github.com -s project' in a real terminal, then re-run this skill."
+  exit 1
+}
 
 # Brev auth — short-circuit only after the auth check, not before.
 # When auth fails, give the user a directive recipe (the browser-flow path is
@@ -205,19 +209,6 @@ MSG
   exit 1
 }
 
-# Repo labels exist — Step 8.5 / Step 10 can't apply a label that doesn't exist. Check
-# canonical label names against the live repo so a mismatch fails fast (issue #2168 hit this:
-# spec called the label `wontfix`, but the actual repo label is `status: wont-fix`).
-EXPECTED_LABELS=("fixed-on-latest" "verify-inconclusive" "status: wont-fix")
-LIVE_LABELS=$(gh label list --repo NVIDIA/NemoClaw --limit 200 --json name --jq '.[].name')
-for label in "${EXPECTED_LABELS[@]}"; do
-  printf '%s\n' "$LIVE_LABELS" | grep -Fxq "$label" || {
-    echo "ERROR: expected label not on repo: '$label'"
-    echo "       create it with: gh label create '$label' --repo NVIDIA/NemoClaw"
-    exit 1
-  }
-done
-
 # Install URL reachable — fails fast instead of mid-Brev-run if the host is down or the URL changed.
 # The default is the public Akamai-hosted entry (301-redirects to the actual installer). The
 # `nemoclaw.nvidia.com` host that earlier drafts pointed to is NVIDIA-internal and does not
@@ -241,7 +232,7 @@ For pure-CLI reproducers (no sandbox state, no GPU, no integration tokens), try 
 **Predicate** — local-first applies if **all** of these hold:
 
 - Reproducer is a sequence of `nemoclaw <args>` invocations only. No `docker`, `kubectl`, `curl`, `npm`, networking setup, or filesystem fixtures.
-- Issue has no `Sandbox`-only or `Docker` label and no GPU signal from Step 5.
+- Issue has no `area: sandbox` or `platform: container` label and no GPU signal from Step 5.
 - `which nemoclaw` resolves on the maintainer's machine and `nemoclaw --version` reports a build at or past `$LATEST` (a build between `$LATEST` and `$LATEST+main` is fine — these only differ by unmerged WIP).
 - Maintainer is on Linux or macOS. Windows local repros are out of scope (per Step 3 platform skip rules).
 

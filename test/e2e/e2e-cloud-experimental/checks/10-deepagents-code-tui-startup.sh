@@ -18,16 +18,14 @@ PREFIX="10-deepagents-code-tui-startup"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
-SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b)'
+SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
 CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
 # Upstream dcode does not expose a stable machine-readable TUI ready marker.
 # Keep this localized heuristic prompt-shaped; do not match banner-only text.
 TUI_READY_PATTERN='(what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help)'
-# New dcode homes enter a first-run modal before the coding prompt. Match only
-# the pinned upstream name screen so Expect can take its documented skip path.
-# deepagents-code 0.1.12 has no non-interactive first-run switch for its name screen.
-# Remove this compatibility path once the pinned TUI exposes a stable skip or ready contract.
-TUI_ONBOARDING_PATTERN='(your name \(optional\)|what should deep agents call you)'
+# NemoClaw configures DCode's model and managed provider before launch, so any
+# upstream first-run screen is a regression that can expose unusable providers.
+TUI_FIRST_RUN_PATTERN='(your name \(optional\)|what should deep agents call you|choose a recommended model)'
 SENSITIVE_CAPTURE_FILES=()
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
@@ -147,7 +145,7 @@ run_tui_expect() {
   env \
     NEMOCLAW_TUI_CAPTURE="$raw_capture_file" \
     NEMOCLAW_TUI_MARKERS="$marker_capture_file" \
-    NEMOCLAW_TUI_ONBOARDING_PATTERN="$TUI_ONBOARDING_PATTERN" \
+    NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN" \
     NEMOCLAW_TUI_READY_PATTERN="$TUI_READY_PATTERN" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
@@ -156,7 +154,7 @@ set timeout $env(NEMOCLAW_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_TUI_SANDBOX_NAME)
 set capture $env(NEMOCLAW_TUI_CAPTURE)
 set markers $env(NEMOCLAW_TUI_MARKERS)
-set onboarding_pattern $env(NEMOCLAW_TUI_ONBOARDING_PATTERN)
+set first_run_pattern $env(NEMOCLAW_TUI_FIRST_RUN_PATTERN)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
 log_file -a $capture
 
@@ -168,18 +166,17 @@ proc append_marker {markers marker} {
 
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
-set saw_onboarding 0
 set ready_match ""
 expect {
   -nocase -re $ready_pattern {
     set ready_match $expect_out(0,string)
   }
-  -nocase -re $onboarding_pattern {
+  -nocase -re $first_run_pattern {
     append_marker $markers "$expect_out(0,string)"
-    append_marker $markers "NEMOCLAW_TUI_ONBOARDING_SKIPPED"
-    puts "\nNEMOCLAW_TUI_ONBOARDING_SKIPPED"
-    send -- "\033"
-    set saw_onboarding 1
+    append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+    puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+    send -- "\003"
+    exit 24
   }
   timeout {
     append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
@@ -191,25 +188,6 @@ expect {
     append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
     puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
     exit 21
-  }
-}
-
-if {$saw_onboarding} {
-  expect {
-    -nocase -re $ready_pattern {
-      set ready_match $expect_out(0,string)
-    }
-    timeout {
-      append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
-      puts "\nNEMOCLAW_TUI_TIMEOUT"
-      send -- "\003"
-      exit 20
-    }
-    eof {
-      append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
-      puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
-      exit 21
-    }
   }
 }
 
@@ -262,7 +240,7 @@ print_sanitized_capture_excerpt() {
 assert_clean_exit_code() {
   local plain_capture_file="$1"
   local exit_code
-  exit_code="$(sed -n 's/.*NEMOCLAW_TUI_EXIT_CAPTURED:\([0-9]\+\).*/\1/p' "$plain_capture_file" | tail -n1)"
+  exit_code="$(sed -n 's/.*NEMOCLAW_TUI_EXIT_CAPTURED:\([0-9][0-9]*\).*/\1/p' "$plain_capture_file" | tail -n1)"
   if [ -z "$exit_code" ]; then
     fail_test "TUI capture did not include an exit-status marker"
     return

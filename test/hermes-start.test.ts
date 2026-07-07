@@ -8,6 +8,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { shellQuote } from "../src/lib/core/shell-quote";
+import {
+  bashPrintfQ,
+  extractShellFunction as extractShellFunctionFromSource,
+} from "./support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
@@ -20,31 +24,6 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
 const GENERATED_API_SERVER_KEY = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
-
-function bashPrintfQ(value: string): string {
-  const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
-    encoding: "utf-8",
-    timeout: 5000,
-    env: process.env,
-  });
-  if (result.status !== 0) {
-    throw new Error(`bash printf %q failed: ${result.stderr}`);
-  }
-  return result.stdout;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function extractShellFunctionFromSource(src: string, name: string): string {
-  const escapedName = escapeRegExp(name);
-  const match = src.match(new RegExp(`${escapedName}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) {
-    throw new Error(`Expected ${name} in agents/hermes/start.sh`);
-  }
-  return `${name}() {${match[1]}\n}`;
-}
 
 function extractRuntimeShellEnvBlock(src: string): string {
   const start = src.indexOf("write_runtime_shell_env() {");
@@ -192,6 +171,12 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      // A harmless single-element no-op prefix. It must not be an empty array:
+      // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
+      // `set -u`, aborting the harness before the validator runs. It also must
+      // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
+      // `command` builtin execs the validator unchanged on every platform.
+      '_HERMES_BOUNDARY_TIMEOUT=(command); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
@@ -220,6 +205,12 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      // A harmless single-element no-op prefix. It must not be an empty array:
+      // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
+      // `set -u`, aborting the harness before the validator runs. It also must
+      // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
+      // `command` builtin execs the validator unchanged on every platform.
+      '_HERMES_BOUNDARY_TIMEOUT=(command); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_runtime_env_secret_boundary",
@@ -328,6 +319,7 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       "refresh_hermes_runtime_config_hashes() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
+      "prepare_hermes_nonroot_runtime() { retry_tirith_marker_if_needed; }",
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
@@ -416,6 +408,7 @@ function runHermesSandboxInitPreludeWithFakePath() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-init-path-"));
   const fakeBin = path.join(tmpDir, "bin");
   const fakeInit = path.join(tmpDir, "sandbox-init.sh");
+  const fakeSupervisor = path.join(tmpDir, "gateway-supervisor.sh");
   const marker = path.join(tmpDir, "dirname-called");
   const sourcePathLog = path.join(tmpDir, "source-path.log");
   const scriptPath = path.join(tmpDir, "run.sh");
@@ -433,6 +426,7 @@ function runHermesSandboxInitPreludeWithFakePath() {
       "harden_resource_limits() { :; }",
     ].join("\n"),
   );
+  fs.writeFileSync(fakeSupervisor, "# supervisor fixture\n");
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const start = src.indexOf(
@@ -441,7 +435,8 @@ function runHermesSandboxInitPreludeWithFakePath() {
   const end = src.indexOf("\nif [ -d /opt/hermes/hermes_cli/web_dist ];", start);
   const prelude = src
     .slice(start, end)
-    .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit);
+    .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit)
+    .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", fakeSupervisor);
 
   fs.writeFileSync(
     scriptPath,
@@ -493,6 +488,7 @@ function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
   const pidDir = path.join(procRoot, String(pid));
   fs.mkdirSync(pidDir, { recursive: true });
   fs.writeFileSync(path.join(pidDir, "cmdline"), Buffer.from(`${argv.join("\0")}\0`));
+  fs.writeFileSync(path.join(pidDir, "status"), "Name:\tfixture\nUid:\t1000\t1000\t1000\t1000\n");
 }
 
 function lstatIfPresent(entry: string): fs.Stats | null {
@@ -753,7 +749,7 @@ function runRuntimeShellEnvBootstrap() {
     const result = spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 5000,
-      env: process.env,
+      env: { ...process.env, AWS_EC2_METADATA_DISABLED: "false" },
     });
     const envFileContent = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf-8") : "";
     const envFileMode = fs.existsSync(envFile)
@@ -798,6 +794,7 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
+    expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
     expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
@@ -1010,6 +1007,8 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).toBe("");
   });
 
+  // PATH-shadow regression lives in test/hermes-start-path-shadow.test.ts.
+
   it("rejects raw secret-shaped values without printing the value", () => {
     const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesEnvSecretBoundary({
@@ -1020,6 +1019,49 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).toContain("raw secret-shaped values");
     expect(result.stderr).toContain("DEVTEST_API_TOKEN (line 1)");
     expect(result.stderr).not.toContain(rawToken);
+  });
+
+  it("checks the .env secret boundary before MCP integrity", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          "set -euo pipefail",
+          'trace() { printf "%s\\n" "$1"; }',
+          "verify_config_integrity_if_locked() { trace integrity; }",
+          "validate_hermes_env_secret_boundary() { trace env-boundary; }",
+          "inspect_hermes_mcp_integrity() { trace mcp-integrity; }",
+          "ensure_hermes_runtime_api_server_key() { trace api-key; }",
+          "apply_shields_up_runtime_env() { trace shields-env; }",
+          "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
+          "refresh_hermes_provider_placeholders() { trace placeholders; }",
+          "refresh_hermes_runtime_config_hashes() { trace hashes; }",
+          "configure_messaging_channels() { trace channels; }",
+          "retry_tirith_marker_if_needed() { trace tirith; }",
+          extractShellFunctionFromSource(source, "prepare_hermes_nonroot_runtime"),
+          "HERMES_DIR=/sandbox/.hermes; prepare_hermes_nonroot_runtime",
+        ].join("\n"),
+      ],
+      { encoding: "utf-8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "integrity",
+      "env-boundary",
+      "mcp-integrity",
+      "api-key",
+      "shields-env",
+      "env-boundary",
+      "runtime-boundary",
+      "placeholders",
+      "hashes",
+      "mcp-integrity",
+      "channels",
+      "tirith",
+    ]);
   });
 
   it("rejects bare API-named raw values without printing the value", () => {

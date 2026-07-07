@@ -15,6 +15,7 @@ const {
 } = require("../inference/config");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
+const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -212,8 +213,8 @@ function getEffectiveProviderName(providerKey) {
 
 // ── Non-interactive helpers ──────────────────────────────────────
 
-function getNonInteractiveProvider() {
-  stageHostedInferenceSourceSecretEnv();
+function getNonInteractiveProvider(allowHostedInferenceStaging = true) {
+  if (allowHostedInferenceStaging) stageHostedInferenceSourceSecretEnv();
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
   const normalized = NON_INTERACTIVE_PROVIDER_ALIASES[providerKey] || providerKey;
@@ -303,13 +304,14 @@ function getNonInteractiveModel(providerKey) {
 }
 
 // No default for nonInteractive — onboard.ts wrapper supplies isNonInteractive().
-function getRequestedProviderHint(nonInteractive) {
-  return nonInteractive ? getNonInteractiveProvider() : null;
+function getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging = true) {
+  return nonInteractive ? getNonInteractiveProvider(allowHostedInferenceStaging) : null;
 }
 
-function getRequestedModelHint(nonInteractive) {
+function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = true) {
   if (!nonInteractive) return null;
-  const providerKey = getRequestedProviderHint(nonInteractive) || "cloud";
+  const providerKey =
+    getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging) || "cloud";
   return getNonInteractiveModel(providerKey);
 }
 
@@ -499,6 +501,7 @@ module.exports = {
   buildProviderArgs,
   upsertProvider,
   providerExistsInGateway,
+  readGatewayProviderMetadata,
   upsertMessagingProviders,
   getSandboxInferenceConfig,
 };

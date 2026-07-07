@@ -28,7 +28,6 @@ export const discordManifest = {
       kind: "config",
       required: false,
       envKey: "DISCORD_SERVER_ID",
-      envAliases: ["DISCORD_SERVER_IDS"],
       statePath: "discordGuilds.serverId",
       prompt: {
         label: "Discord Server ID (for guild workspace access)",
@@ -55,7 +54,6 @@ export const discordManifest = {
       kind: "config",
       required: false,
       envKey: "DISCORD_USER_ID",
-      envAliases: ["DISCORD_ALLOWED_IDS"],
       statePath: "discordGuilds.userIds",
       promptWhenInput: "serverId",
       prompt: {
@@ -196,28 +194,16 @@ export const discordManifest = {
       manager: "openclaw-plugin",
       spec: "npm:@openclaw/discord@{{openclaw.version}}",
       pin: true,
+      integrityByVersion: {
+        "2026.6.10":
+          "sha512-NKp/j00l+rk5PC0Lv/0fOIiiQJ1c/OpG9471zqXUDKQie6pQ1Fi9KUZUouyoTMmfLh/n4S0CkEMqrON40eBKXA==",
+      },
+      tarballUrlByVersion: {
+        "2026.6.10": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.6.10.tgz",
+      },
       required: true,
     },
   ],
-  state: {
-    persist: {
-      discordGuilds: ["serverId", "requireMention", "userId"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "discordGuilds.serverId",
-        env: "DISCORD_SERVER_ID",
-      },
-      {
-        statePath: "discordGuilds.requireMention",
-        env: "DISCORD_REQUIRE_MENTION",
-      },
-      {
-        statePath: "discordGuilds.userIds",
-        env: "DISCORD_USER_ID",
-      },
-    ],
-  },
   hooks: [
     {
       id: "discord-openclaw-bridge-health",

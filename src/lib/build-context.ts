@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CLI_NAME } from "./cli/branding";
+import { noteOnboardResumeHintShown } from "./onboard/resume-hint";
 
 import { classifySandboxCreateFailure, planSandboxCreateRecovery } from "./validation";
 
@@ -100,6 +101,9 @@ export function printSandboxCreateRecoveryHints(
     createArgs?: readonly string[];
   } = {},
 ): void {
+  // Every branch below prints tailored `--resume` recovery guidance, so suppress
+  // the generic incomplete-exit backstop (#6003).
+  noteOnboardResumeHintShown();
   const failure = classifySandboxCreateFailure(output);
   if (failure.kind === "image_upload_container_missing") {
     const { arm64ImageRefWorkaround } = planSandboxCreateRecovery(failure, { platform, arch });
@@ -216,6 +220,21 @@ export function printSandboxCreateRecoveryHints(
     console.error(`    ${CLI_NAME} onboard --no-gpu`);
     console.error("    NEMOCLAW_SANDBOX_GPU=0  (env var, applies to subsequent runs)");
     console.error(`  Recovery: ${CLI_NAME} onboard --resume --no-gpu`);
+    return;
+  }
+  if (failure.kind === "plugin_install_network_denied") {
+    console.error("  Hint: The sandbox Docker build failed at the OpenClaw plugin-install step.");
+    console.error(
+      "        Could not reach ClawHub or the npm registry — your sandbox network policy",
+    );
+    console.error(
+      "        may be blocking outbound plugin-install access. Check whether an active",
+    );
+    console.error("        preset allows egress to the npm registry and ClawHub, or disable the");
+    console.error(
+      "        feature that requires this plugin (e.g. NEMOCLAW_WEB_SEARCH_ENABLED=0).",
+    );
+    console.error(`  Recovery: ${CLI_NAME} onboard --resume`);
     return;
   }
   console.error(`  Recovery: ${CLI_NAME} onboard --resume`);

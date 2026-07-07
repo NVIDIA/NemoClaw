@@ -73,6 +73,9 @@ npm run docs:preview:watch
 ```
 
 The preview watcher uses the current Git branch name as the Fern preview ID and watches the `docs/` and `fern/` directories.
+By default, it publishes to the `nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw` Fern docs instance.
+Set `FERN_STAGING_INSTANCE` to a `<hostname>/<path>` value when you need to target a different Fern docs instance.
+The watcher rejects blank or malformed overrides before it starts Fern.
 
 Fern `.mdx` pages are the canonical docs source.
 Fern publishes Markdown routes for AI agents from the same source pages.
@@ -114,9 +117,12 @@ Commit and push normally so the Git hooks run, then run:
 npm run docs
 ```
 
-Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
-If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD` before opening the PR.
-Run targeted tests only when the change also touches code, generated behavior, or runtime behavior.
+Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
+If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run check:diff` once to reproduce those checks before opening the PR.
+The command uses `origin/main`, so refresh it with `git fetch origin main` first.
+Run targeted tests once per relevant change set only when the change also touches code, generated behavior, or runtime behavior; rerun after later edits or hook autofixes that can affect it.
+Reserve `npm test` for broad runtime or test-harness changes.
+Reserve `npm run check` for repo-wide validation or coverage-baseline changes.
 
 ## Writing Conventions
 
