@@ -196,7 +196,7 @@ nemo-deepagents <sandbox-name> snapshot create --name before-change
 ```
 
 If you upgrade from a release that persisted LangSmith environment values, rebuild each existing Deep Agents Code sandbox so its image includes the corrected `start.sh`.
-If an existing sandbox displays **Choose a Recommended Model**, rebuild it so its image includes the managed startup behavior.
+If an existing sandbox displays `Choose a Recommended Model`, rebuild it so its image includes the managed startup behavior.
 
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.
 If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime.

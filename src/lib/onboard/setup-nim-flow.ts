@@ -203,6 +203,7 @@ export function createSetupNim(
     let reuseGatewayCredential = false;
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
+      writeLine: deps.log,
     });
 
     const providerHostState = deps.detectInferenceProviderHostState({
