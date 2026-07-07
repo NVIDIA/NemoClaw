@@ -226,6 +226,19 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
     await expect(attempt).rejects.toThrow(`--name ${shellQuote(name)} --fresh`);
     // The bare, unquoted name must not sit directly after --name.
     await expect(attempt).rejects.not.toThrow(`--name ${name} --fresh`);
+
+    // PRA-2: validateName blocks metacharacter names before this hint, so the
+    // shellQuote layer is defense-in-depth. Assert it keeps spaces, quotes, ';',
+    // '$()' and backticks inside a single quoted argument that a shell cannot
+    // break out of.
+    for (const meta of ["a b", "a'b", "a;b", "a$(id)", "a`id`"]) {
+      const quoted = shellQuote(meta);
+      expect(quoted.startsWith("'")).toBe(true);
+      expect(quoted.endsWith("'")).toBe(true);
+      // After removing the only legal break-out escape ('\''), no bare single
+      // quote remains — nothing can terminate the quoted argument early.
+      expect(quoted.slice(1, -1).replaceAll("'\\''", "")).not.toContain("'");
+    }
   });
 });
 
@@ -285,6 +298,41 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     // ... but the message now guides toward the working same-provider path.
     await expect(attempt).rejects.toThrow(/already configured for 'compatible-endpoint'/);
     await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
+    // PRA-2 regression: the SSRF rejection happens before any persistence, so no
+    // sandbox/config mutation is left half-applied after the guard fires.
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("keeps the SSRF guard AND guides on the anthropicCompatible provider family (#6321)", async () => {
+    // The reporter's exact provider family: the same-URL switch on
+    // compatible-anthropic-endpoint (reached via the anthropicCompatible alias)
+    // must still hit the guard and receive the omit-flag guidance.
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/anthropic/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-anthropic-endpoint",
+        model: "anthropic/model-a",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      },
+      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
+    });
+    const attempt = runInferenceSet(
+      {
+        provider: "anthropicCompatible",
+        model: "anthropic/model-b",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        noVerify: true,
+      },
+      deps,
+    );
+    await expect(attempt).rejects.toThrow(/endpoint-url is not allowed:/);
+    await expect(attempt).rejects.toThrow(/already configured for 'compatible-anthropic-endpoint'/);
+    await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("switches the model WITHOUT --endpoint-url on a same-provider sandbox (the guided path works, guard never runs)", async () => {

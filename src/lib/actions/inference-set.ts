@@ -676,6 +676,26 @@ async function explicitCustomProviderMetadata(
     // — a missing URL ("endpoint-url is required ...") or a malformed one — would
     // read as contradictory advice ("required ... omit --endpoint-url"), so leave
     // those untouched.
+    //
+    // invalidState: operator re-supplies the same internal-resolving endpoint URL
+    //   onboarding already accepted, only wanting a model switch, and the SSRF
+    //   guard dead-ends the command with no next step.
+    // sourceBoundary: NemoClaw owns the host-side inference-set UX; the SSRF guard
+    //   (rewriteConfigUrlsWithDnsPinning) is a security boundary and is NOT relaxed
+    //   here — this only rewrites the error into actionable guidance.
+    // whyNotSourceFix: the ideal fix (accept the *same* URL onboarding established
+    //   while still rejecting different internal endpoints) needs a durable,
+    //   host-trusted per-sandbox endpoint identity. That does not exist today:
+    //   the endpoint is not persisted on the sandbox registry entry, the onboard
+    //   session is overwritten by the next onboard, and OpenShell does not expose
+    //   the gateway provider's registered base URL. Matching on an untrusted value
+    //   would weaken SSRF, so guidance is the safe scope for #6321.
+    // regressionTest: inference-set-provider-alias.test.ts — "keeps the SSRF guard
+    //   AND adds an actionable hint …" and the guidance/no-mutation cases.
+    // removalCondition: replace this guidance with a real same-endpoint match when
+    //   NemoClaw/OpenShell persists or exposes a trusted per-sandbox endpoint
+    //   identity that proves an explicit URL is unchanged from onboarding while
+    //   still rejecting different private/internal endpoints (tracked separately).
     if (
       sandboxAlreadyOnProvider &&
       error instanceof InferenceSetError &&
