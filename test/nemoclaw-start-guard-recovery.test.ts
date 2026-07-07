@@ -43,14 +43,18 @@ function runRecoveryHarness({
   const eventLog = path.join(tmpDir, "events.log");
   const gatewayLog = path.join(tmpDir, "gateway.log");
   let sensitiveTarget: string | undefined;
-  if (gatewayLogKind === "regular") {
-    fs.writeFileSync(gatewayLog, "", { mode: 0o644 });
-  } else if (gatewayLogKind === "symlink") {
-    sensitiveTarget = path.join(tmpDir, "sensitive.log");
-    fs.writeFileSync(sensitiveTarget, "do-not-touch\n", { mode: 0o600 });
-    fs.symlinkSync(sensitiveTarget, gatewayLog);
-  } else {
-    fs.mkdirSync(gatewayLog);
+  switch (gatewayLogKind) {
+    case "regular":
+      fs.writeFileSync(gatewayLog, "", { mode: 0o644 });
+      break;
+    case "symlink":
+      sensitiveTarget = path.join(tmpDir, "sensitive.log");
+      fs.writeFileSync(sensitiveTarget, "do-not-touch\n", { mode: 0o600 });
+      fs.symlinkSync(sensitiveTarget, gatewayLog);
+      break;
+    case "directory":
+      fs.mkdirSync(gatewayLog);
+      break;
   }
   const sources = {
     safety: path.join(tmpDir, "source-safety.js"),
@@ -237,6 +241,7 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-warn-"));
     const gatewayLog = path.join(tmpDir, "gateway.log");
     try {
+      fs.writeFileSync(gatewayLog, "", { mode: 0o644 });
       const script = [
         "set -uo pipefail",
         `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
@@ -249,6 +254,7 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
         "verify_messaging_runtime_secret_scans() { return 0; }",
         "write_runtime_shell_env() { return 0; }",
         "validate_nemoclaw_tmp_permissions() { return 0; }",
+        extractShellFunction(source, "append_openclaw_gateway_log_line"),
         extractShellFunction(source, "restore_openclaw_runtime_guard_chain"),
         "rc=0; restore_openclaw_runtime_guard_chain || rc=$?",
         'printf "rc:%s\\n" "$rc"',
