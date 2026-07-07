@@ -50,6 +50,7 @@ export async function prepareRebuildTargetPreflights(args: {
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
   requestedObservabilityEnabled?: boolean;
+  preparedBackupRecovery?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
@@ -60,6 +61,7 @@ export async function prepareRebuildTargetPreflights(args: {
     autoYes,
     requestedToolDisclosure,
     requestedObservabilityEnabled,
+    preparedBackupRecovery,
     log,
     bail,
   } = args;
@@ -126,7 +128,13 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   });
   if (
-    !(await preflightAuthoritativeOnboardRuntime(sandboxName, resumeConfig, recreateOptions, bail))
+    !(await preflightAuthoritativeOnboardRuntime(
+      sandboxName,
+      resumeConfig,
+      recreateOptions,
+      bail,
+      preparedBackupRecovery ? { deferInferenceRouteUntilOnboard: true } : {},
+    ))
   ) {
     return null;
   }
@@ -153,7 +161,10 @@ export async function prepareRebuildTargetPreflights(args: {
       recreateOptions,
       log,
       bail,
-      { skipImagePreflight: rebuildsDcodeSandbox },
+      {
+        allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
+        skipImagePreflight: rebuildsDcodeSandbox,
+      },
     );
   } finally {
     restoreBaseImageOverride();

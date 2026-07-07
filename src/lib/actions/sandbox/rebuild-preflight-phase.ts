@@ -149,6 +149,7 @@ export async function runRebuildPreflightPhase(
         autoYes: true,
         requestedToolDisclosure,
         requestedObservabilityEnabled,
+        preparedBackupRecovery: recoveryManifest !== null,
         log,
         bail,
       });
