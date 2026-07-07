@@ -13,8 +13,17 @@ export interface PolicyGetResult {
   yaml: string;
 }
 
+/** Read the round-trippable OpenShell base policy and strip its metadata header. */
 export function getSandboxPolicy(sandboxName: string): PolicyGetResult {
   assertOpenshellResolvable();
-  const raw = runCapture(buildPolicyGetCommand(sandboxName));
+  let raw: string;
+  try {
+    raw = runCapture(buildPolicyGetCommand(sandboxName));
+  } catch (cause) {
+    const detail = cause instanceof Error ? ` ${cause.message}` : "";
+    throw new Error(`Failed to retrieve base policy for sandbox '${sandboxName}'.${detail}`, {
+      cause,
+    });
+  }
   return { raw, yaml: raw ? parseCurrentPolicy(raw) : "" };
 }

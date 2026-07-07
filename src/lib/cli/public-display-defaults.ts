@@ -341,6 +341,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
     },
   ],
+  "sandbox:policy:get": [
+    {
+      group: "Policy Presets",
+      order: 16,
+      description: "Export round-trippable base policy YAML",
+      flags: "[--raw]",
+    },
+  ],
   "sandbox:policy:add": [
     {
       group: "Policy Presets",

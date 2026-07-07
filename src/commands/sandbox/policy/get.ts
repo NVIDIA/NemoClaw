@@ -10,9 +10,9 @@ import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 export default class SandboxPolicyGetCommand extends NemoClawCommand {
   static id = "sandbox:policy:get";
   static strict = true;
-  static summary = "Get the active sandbox policy YAML";
+  static summary = "Export the round-trippable sandbox base policy";
   static description =
-    "Retrieve the active policy for a sandbox. By default, outputs clean YAML suitable for piping to policy set. Use --raw for the full openshell output including metadata.";
+    "Retrieve the OpenShell base policy for a sandbox. By default, strips the OpenShell metadata header and outputs YAML suitable for review, editing, and policy set. Use --raw to emit the unparsed --base response.";
   static usage = ["<name> [--raw]"];
   static examples = [
     "<%= config.bin %> sandbox policy get alpha",
@@ -23,7 +23,7 @@ export default class SandboxPolicyGetCommand extends NemoClawCommand {
   };
   static flags = {
     raw: Flags.boolean({
-      description: "Output the raw openshell response including metadata header.",
+      description: "Output the unparsed OpenShell --base response, including its metadata header",
       default: false,
     }),
   };
@@ -34,7 +34,7 @@ export default class SandboxPolicyGetCommand extends NemoClawCommand {
     const { raw, yaml } = getSandboxPolicy(args.sandboxName);
 
     if (!raw) {
-      this.error("Failed to retrieve policy from sandbox.");
+      this.error("Failed to retrieve base policy from sandbox.");
     }
 
     if (flags.raw) {
@@ -43,7 +43,7 @@ export default class SandboxPolicyGetCommand extends NemoClawCommand {
     }
 
     if (!yaml) {
-      this.error("Failed to parse policy YAML from sandbox output.");
+      this.error("Failed to parse base policy YAML from sandbox output.");
     }
 
     this.log(yaml);

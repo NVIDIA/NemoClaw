@@ -1,67 +1,106 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-const mocks = vi.hoisted(() => ({
-  assertOpenshellResolvable: vi.fn(),
-  buildPolicyGetCommand: vi.fn((_name: string) => ["openshell", "policy", "get", "--full", _name]),
-  parseCurrentPolicy: vi.fn((_raw: string) => ""),
-  runCapture: vi.fn(() => ""),
-}));
-
-vi.mock("../../policy/index", () => ({
-  assertOpenshellResolvable: mocks.assertOpenshellResolvable,
-  buildPolicyGetCommand: mocks.buildPolicyGetCommand,
-  parseCurrentPolicy: mocks.parseCurrentPolicy,
-}));
-vi.mock("../../runner", () => ({ runCapture: mocks.runCapture }));
+import { afterEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import { getSandboxPolicy } from "./policy-get";
 
+type FakeOpenShell = {
+  argsPath: string;
+  output: string;
+};
+
+const tempDirs: string[] = [];
+
+function createFakeOpenShell(output: string, exitCode = 0): FakeOpenShell {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-get-"));
+  tempDirs.push(tempDir);
+  const argsPath = path.join(tempDir, "args.txt");
+  const outputPath = path.join(tempDir, "output.txt");
+  const executablePath = path.join(tempDir, "openshell");
+  fs.writeFileSync(outputPath, output);
+  fs.writeFileSync(
+    executablePath,
+    [
+      "#!/bin/sh",
+      `printf '%s\\n' "$*" >${JSON.stringify(argsPath)}`,
+      `cat ${JSON.stringify(outputPath)}`,
+      `exit ${exitCode}`,
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", executablePath);
+  return { argsPath, output };
+}
+
 describe("getSandboxPolicy", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    for (const tempDir of tempDirs.splice(0)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
-  it("returns raw and parsed YAML", () => {
-    const rawOutput =
-      "Version: 1\nHash: abc\nStatus: active\n---\nversion: 1\nnetwork_policies: []";
-    mocks.runCapture.mockReturnValue(rawOutput);
-    mocks.parseCurrentPolicy.mockReturnValue("version: 1\nnetwork_policies: []");
+  it("reads --base and strips OpenShell metadata into round-trippable YAML (#6052)", () => {
+    const yaml = [
+      "version: 1",
+      "filesystem_policy:",
+      "  read_only: []",
+      "network_policies: {}",
+    ].join("\n");
+    const fake = createFakeOpenShell(
+      [
+        "Version: 1",
+        "Hash: sha256:abc",
+        "Status: active",
+        "Active: 1",
+        "Created: 2026-07-01T00:00:00Z",
+        "Loaded: 2026-07-01T00:00:01Z",
+        "---",
+        yaml,
+        "",
+      ].join("\n"),
+    );
 
     const result = getSandboxPolicy("alpha");
 
-    expect(mocks.assertOpenshellResolvable).toHaveBeenCalled();
-    expect(mocks.buildPolicyGetCommand).toHaveBeenCalledWith("alpha");
-    expect(mocks.runCapture).toHaveBeenCalledWith([
-      "openshell",
-      "policy",
-      "get",
-      "--full",
-      "alpha",
-    ]);
-    expect(result.raw).toBe(rawOutput);
-    expect(result.yaml).toBe("version: 1\nnetwork_policies: []");
+    expect(fs.readFileSync(fake.argsPath, "utf8").trim()).toBe("policy get --base alpha");
+    expect(result.raw).toBe(fake.output.trim());
+    expect(result.yaml).toBe(yaml);
+    expect(YAML.parse(result.yaml)).toEqual({
+      version: 1,
+      filesystem_policy: { read_only: [] },
+      network_policies: {},
+    });
   });
 
-  it("returns empty yaml when runCapture returns empty", () => {
-    mocks.runCapture.mockReturnValue("");
+  it("returns empty output when OpenShell succeeds without a policy", () => {
+    const fake = createFakeOpenShell("");
 
-    const result = getSandboxPolicy("alpha");
-
-    expect(result.raw).toBe("");
-    expect(result.yaml).toBe("");
-    expect(mocks.parseCurrentPolicy).not.toHaveBeenCalled();
+    expect(getSandboxPolicy("alpha")).toEqual({ raw: "", yaml: "" });
+    expect(fs.readFileSync(fake.argsPath, "utf8").trim()).toBe("policy get --base alpha");
   });
 
-  it("returns empty yaml when parseCurrentPolicy fails", () => {
-    mocks.runCapture.mockReturnValue("some garbage");
-    mocks.parseCurrentPolicy.mockReturnValue("");
+  it("preserves unparsed output while rejecting malformed policy YAML", () => {
+    const fake = createFakeOpenShell("Version: 1\nHash: sha256:abc\nStatus: active\n");
 
-    const result = getSandboxPolicy("alpha");
+    expect(getSandboxPolicy("alpha")).toEqual({
+      raw: fake.output.trim(),
+      yaml: "",
+    });
+  });
 
-    expect(result.raw).toBe("some garbage");
-    expect(result.yaml).toBe("");
+  it("adds sandbox context when the OpenShell subprocess fails", () => {
+    const fake = createFakeOpenShell("gateway unavailable\n", 42);
+
+    expect(() => getSandboxPolicy("alpha")).toThrow(
+      /Failed to retrieve base policy for sandbox 'alpha'\. Command failed with status 42/,
+    );
+    expect(fs.readFileSync(fake.argsPath, "utf8").trim()).toBe("policy get --base alpha");
   });
 });

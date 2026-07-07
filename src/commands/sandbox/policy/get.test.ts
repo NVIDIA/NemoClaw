@@ -20,7 +20,7 @@ describe("sandbox:policy:get command", () => {
     vi.clearAllMocks();
   });
 
-  it("outputs parsed YAML by default", async () => {
+  it("outputs parsed base-policy YAML by default", async () => {
     mocks.getSandboxPolicy.mockReturnValue({
       raw: "Version: 1\nHash: abc\nStatus: active\n---\nversion: 1\nnetwork_policies: []",
       yaml: "version: 1\nnetwork_policies: []",
@@ -33,7 +33,7 @@ describe("sandbox:policy:get command", () => {
     expect(logSpy).toHaveBeenCalledWith("version: 1\nnetwork_policies: []");
   });
 
-  it("outputs raw content with --raw flag", async () => {
+  it("outputs the unparsed base-policy response with --raw", async () => {
     const rawOutput =
       "Version: 1\nHash: abc\nStatus: active\n---\nversion: 1\nnetwork_policies: []";
     mocks.getSandboxPolicy.mockReturnValue({
@@ -47,19 +47,29 @@ describe("sandbox:policy:get command", () => {
     expect(logSpy).toHaveBeenCalledWith(rawOutput);
   });
 
-  it("exits with error when policy cannot be retrieved", async () => {
+  it("exits with error when the base policy is empty", async () => {
     mocks.getSandboxPolicy.mockReturnValue({ raw: "", yaml: "" });
 
     await expect(SandboxPolicyGetCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      /Failed to retrieve policy/,
+      /Failed to retrieve base policy/,
     );
   });
 
-  it("exits with error when policy YAML cannot be parsed", async () => {
+  it("exits with error when base-policy YAML cannot be parsed", async () => {
     mocks.getSandboxPolicy.mockReturnValue({ raw: "some output", yaml: "" });
 
     await expect(SandboxPolicyGetCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      /Failed to parse policy YAML/,
+      /Failed to parse base policy YAML/,
+    );
+  });
+
+  it("propagates OpenShell retrieval failures", async () => {
+    mocks.getSandboxPolicy.mockImplementationOnce(() => {
+      throw new Error("Failed to retrieve base policy for sandbox 'alpha'.");
+    });
+
+    await expect(SandboxPolicyGetCommand.run(["alpha"], rootDir)).rejects.toThrow(
+      /Failed to retrieve base policy for sandbox 'alpha'/,
     );
   });
 });

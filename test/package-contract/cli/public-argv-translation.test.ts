@@ -90,6 +90,7 @@ describe("public route/display separation", () => {
       "sandbox:hosts:remove",
       "sandbox:policy:add",
       "sandbox:policy:explain",
+      "sandbox:policy:get",
       "sandbox:policy:list",
       "sandbox:policy:remove",
     ]);
@@ -157,6 +158,11 @@ describe("translatePublicSandboxArgv", () => {
       translatePublicSandboxArgv("alpha", "policy-add", ["--from-file"]),
       "sandbox:policy:add",
       ["alpha", "--from-file"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "policy-get", ["--raw"]),
+      "sandbox:policy:get",
+      ["alpha", "--raw"],
     );
     expectNative(
       translatePublicSandboxArgv("alpha", "gateway-token", ["--quiet"]),
