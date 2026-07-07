@@ -703,10 +703,19 @@ The exit code is the remote command's exit code.
 
 </AgentOnly>
 
+By default, NemoClaw inherits caller stdin only when it is a terminal.
+Non-terminal or unavailable stdin is closed so SSH, CI, and other one-shot commands cannot wait on an inherited pipe.
+Pass `--stdin` to forward an intentional pipe, or `--no-stdin` to close terminal stdin explicitly.
+
+```bash
+printf 'hello\n' | $$nemoclaw my-assistant exec --stdin -- cat
+ssh dgx-spark '$$nemoclaw my-assistant exec --no-stdin -- pwd'
+```
+
 The OpenShell exec endpoint rejects any command argument (the values after `--`) that contains a newline or carriage return, so multi-line commands such as a `bash` heredoc cannot be passed through `exec`.
 NemoClaw detects this before dispatch, names the offending argument position, and exits with status `2` instead of surfacing the lower-level OpenShell `InvalidArgument` error.
 Join the statements with semicolons (`$$nemoclaw <name> exec -- bash -lc "cmd1; cmd2"`).
-Pipe the script into the sandbox shell over stdin (`printf 'cmd1\ncmd2\n' | $$nemoclaw <name> exec -- bash`).
+Pipe the script into the sandbox shell over stdin (`printf 'cmd1\ncmd2\n' | $$nemoclaw <name> exec --stdin -- bash`).
 Or write the script to a file in the sandbox and run it (`$$nemoclaw <name> exec -- bash <script-path>`).
 
 | Flag | Description |
@@ -714,6 +723,7 @@ Or write the script to a file in the sandbox and run it (`$$nemoclaw <name> exec
 | `--workdir <dir>` | Working directory inside the sandbox. The directory is checked before the command runs; if it does not exist, NemoClaw reports `error: --workdir: <dir> does not exist inside the sandbox` and exits with status `1` without invoking the inner command. |
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
+| `--stdin` / `--no-stdin` | Force caller stdin forwarding or closure (default: inherit terminal stdin; close non-terminal or unavailable stdin). |
 
 ### `$$nemoclaw <name> agent`
 
@@ -1083,14 +1093,19 @@ The command exits with the remote command's exit code.
 </AgentOnly>
 
 ```bash
-$$nemoclaw my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
+$$nemoclaw my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]
 ```
+
+By default, NemoClaw inherits caller stdin only when it is a terminal.
+Non-terminal or unavailable stdin is closed so SSH, CI, and other one-shot commands cannot wait on an inherited pipe.
+Pass `--stdin` to forward an intentional pipe, or `--no-stdin` to close terminal stdin explicitly.
 
 | Flag | Description |
 |------|-------------|
 | `--workdir <dir>` | Set the working directory inside the sandbox. The directory is checked before the command runs; if it does not exist, NemoClaw reports `error: --workdir: <dir> does not exist inside the sandbox` and exits with status `1` without invoking the inner command. |
 | `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection |
 | `--timeout <s>` | Timeout in seconds. Use `0` for no timeout |
+| `--stdin`, `--no-stdin` | Force caller stdin forwarding or closure (default: inherit terminal stdin; close non-terminal or unavailable stdin). |
 
 ### `$$nemoclaw <name> logs`
 
