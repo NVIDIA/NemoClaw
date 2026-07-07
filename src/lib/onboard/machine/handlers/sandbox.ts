@@ -265,6 +265,54 @@ function mcpRegistryRemovalBlockReason(
   return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
 }
 
+function observabilityRequestValidationError(
+  selectedAgent: string | undefined,
+  requested: boolean | null | undefined,
+  session: Session | null,
+  registryEntry: SandboxEntry | null,
+): string | null {
+  if (isDcodeAgent(selectedAgent)) return null;
+  if (requested === true) {
+    return "  --observability is supported only with --agent langchain-deepagents-code.";
+  }
+  if (
+    requested !== false &&
+    (session?.observabilityEnabled === true || registryEntry?.observabilityEnabled === true)
+  ) {
+    return "  Recorded observability belongs to the existing Deep Agents Code sandbox. Pass --no-observability explicitly when switching agents.";
+  }
+  return null;
+}
+
+function resolveObservabilityEnabled(
+  selectedAgent: string | undefined,
+  requested: boolean | null | undefined,
+  resume: boolean,
+  session: Session | null,
+  registryEntry: SandboxEntry | null,
+): boolean {
+  if (!isDcodeAgent(selectedAgent)) return false;
+  if (typeof requested === "boolean") return requested;
+  if (resume && session?.observabilityRequestedExplicitly === true) {
+    return session.observabilityEnabled;
+  }
+  if (typeof registryEntry?.observabilityEnabled === "boolean") {
+    return registryEntry.observabilityEnabled;
+  }
+  return session?.observabilityEnabled === true;
+}
+
+function observabilitySessionNeedsUpdate(
+  session: Session | null,
+  enabled: boolean,
+  requestedExplicitly: boolean,
+): boolean {
+  return (
+    session?.observabilityEnabled !== enabled ||
+    (requestedExplicitly && session?.observabilityRequestedExplicitly !== true)
+  );
+}
+
 class SandboxStateFlow<
   Gpu,
   Agent,
@@ -435,32 +483,31 @@ class SandboxStateFlow<
       : null;
     const selectedAgent = (this.options.agent as { name?: string } | null)?.name;
     const requested = this.options.requestedObservabilityEnabled;
-    if (!isDcodeAgent(selectedAgent) && requested === true) {
-      this.deps.error(
-        "  --observability is supported only with --agent langchain-deepagents-code.",
-      );
+    const validationError = observabilityRequestValidationError(
+      selectedAgent,
+      requested,
+      state.session,
+      registryEntry,
+    );
+    if (validationError) {
+      this.deps.error(validationError);
       return this.deps.exitProcess(1);
     }
-    if (
-      !isDcodeAgent(selectedAgent) &&
-      typeof requested !== "boolean" &&
-      registryEntry?.observabilityEnabled === true
-    ) {
-      this.deps.error(
-        "  Recorded observability belongs to the existing Deep Agents Code sandbox. Pass --no-observability explicitly when switching agents.",
-      );
-      return this.deps.exitProcess(1);
+    const requestedExplicitly = typeof requested === "boolean";
+    const enabled = resolveObservabilityEnabled(
+      selectedAgent,
+      requested,
+      this.options.resume,
+      state.session,
+      registryEntry,
+    );
+    if (!observabilitySessionNeedsUpdate(state.session, enabled, requestedExplicitly)) {
+      return state;
     }
-    const enabled =
-      isDcodeAgent(selectedAgent) &&
-      (typeof requested === "boolean"
-        ? requested
-        : typeof registryEntry?.observabilityEnabled === "boolean"
-          ? registryEntry.observabilityEnabled
-          : state.session?.observabilityEnabled === true);
-    if (state.session?.observabilityEnabled === enabled) return state;
     const session = this.deps.updateSession((current) => {
       current.observabilityEnabled = enabled;
+      current.observabilityRequestedExplicitly =
+        current.observabilityRequestedExplicitly || requestedExplicitly;
       return current;
     });
     return { ...state, session };

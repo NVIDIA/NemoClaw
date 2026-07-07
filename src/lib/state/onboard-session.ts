@@ -117,6 +117,8 @@ export interface Session {
   toolDisclosure: ToolDisclosure;
   /** Enables credential-free OTLP trace export to NemoClaw's fixed local collector boundary. */
   observabilityEnabled: boolean;
+  /** True when observability was explicitly enabled or disabled for this resumable run. */
+  observabilityRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
@@ -218,6 +220,7 @@ export interface DebugSessionSummary {
   nimContainer: string | null;
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
+  observabilityRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
@@ -474,6 +477,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     observabilityEnabled: overrides.observabilityEnabled === true,
+    observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
@@ -519,6 +523,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     observabilityEnabled: data.observabilityEnabled === true,
+    observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
@@ -1314,6 +1319,7 @@ export function summarizeForDebug(
     nimContainer: session.nimContainer,
     toolDisclosure: session.toolDisclosure,
     observabilityEnabled: session.observabilityEnabled,
+    observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,

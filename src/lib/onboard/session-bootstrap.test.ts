@@ -83,6 +83,7 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.metadata.fromDockerfile).toBe("/abs/Dockerfile.custom");
     expect(result.session?.toolDisclosure).toBe("direct");
     expect(result.session?.observabilityEnabled).toBe(true);
+    expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
   });
 
@@ -101,6 +102,7 @@ describe("prepareOnboardSession", () => {
     );
     expect(result.session?.toolDisclosure).toBe("progressive");
     expect(result.session?.observabilityEnabled).toBe(false);
+    expect(result.session?.observabilityRequestedExplicitly).toBe(false);
   });
 
   it("resumes an existing session and falls back to the recorded Dockerfile", async () => {
@@ -115,6 +117,7 @@ describe("prepareOnboardSession", () => {
       sandboxName: "demo",
       status: "failed",
       observabilityEnabled: true,
+      observabilityRequestedExplicitly: true,
       steps: {
         ...createSession().steps,
         sandbox: completeSandboxStep(),
@@ -140,15 +143,22 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.failure).toBeNull();
     expect(result.session?.status).toBe("in_progress");
     expect(result.session?.observabilityEnabled).toBe(true);
+    expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(deps.repairResumeMachineSnapshot).toHaveBeenCalledWith(initial);
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
   });
 
-  it("records an explicit observability opt-out while resuming", async () => {
+  it.each([
+    { recorded: true, requested: false },
+    { recorded: false, requested: true },
+  ])("records an explicit observability request while resuming", async ({
+    recorded,
+    requested,
+  }) => {
     const { deps } = createDeps(
       createSession({
         sandboxName: "demo",
-        observabilityEnabled: true,
+        observabilityEnabled: recorded,
         status: "failed",
       }),
     );
@@ -161,12 +171,13 @@ describe("prepareOnboardSession", () => {
         requestedSandboxName: null,
         cannotPrompt: false,
         nonInteractive: false,
-        requestedObservabilityEnabled: false,
+        requestedObservabilityEnabled: requested,
       },
       deps,
     );
 
-    expect(result.session?.observabilityEnabled).toBe(false);
+    expect(result.session?.observabilityEnabled).toBe(requested);
+    expect(result.session?.observabilityRequestedExplicitly).toBe(true);
   });
 
   it("records and reports resume conflicts before exiting", async () => {

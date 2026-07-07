@@ -171,6 +171,7 @@ async function prepareResumeSession(
     deps.repairResumeMachineSnapshot(current);
     if (typeof input.requestedObservabilityEnabled === "boolean") {
       current.observabilityEnabled = input.requestedObservabilityEnabled;
+      current.observabilityRequestedExplicitly = true;
     }
     current.mode = mode(input.nonInteractive);
     current.failure = null;
@@ -197,6 +198,7 @@ function prepareFreshSession(
       mode: mode(input.nonInteractive),
       toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
       observabilityEnabled: input.requestedObservabilityEnabled === true,
+      observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
     }),
   );
