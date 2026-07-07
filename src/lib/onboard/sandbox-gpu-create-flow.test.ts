@@ -432,15 +432,12 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
       nativeGpuAttachmentState: "absent",
       containerId: "container-a",
     });
-    let patchNumber = 0;
-    mocks.createDockerGpuSandboxCreatePatch.mockImplementation(() => {
-      const patch = createPatch();
-      patchNumber += 1;
-      if (patchNumber === 2) {
-        patch.verifyGpuOrExit.mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
-      }
-      return patch;
-    });
+    const nativePatch = createPatch();
+    const compatibilityPatch = createPatch();
+    compatibilityPatch.verifyGpuOrExit.mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
+    mocks.createDockerGpuSandboxCreatePatch
+      .mockReturnValueOnce(nativePatch)
+      .mockReturnValueOnce(compatibilityPatch);
 
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow(
       "Sandbox GPU proof returned failed status",
