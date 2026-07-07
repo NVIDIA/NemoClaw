@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   type FakeOpenAiCompatibleServer,
@@ -115,12 +115,12 @@ function expectHermeticCompatibleEndpointUsed(
   expect(
     requests.some(
       (entry) =>
-        entry.method === "GET" &&
-        entry.path === "/v1/models" &&
+        entry.method === "POST" &&
+        entry.path === "/v1/chat/completions" &&
         entry.authorizationSent === true &&
         entry.auth === "ok",
     ),
-    `expected authenticated fake endpoint discovery, got ${JSON.stringify(requests)}`,
+    `expected authenticated fake endpoint inference, got ${JSON.stringify(requests)}`,
   ).toBe(true);
 }
 
@@ -306,6 +306,32 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
     timeoutMs: 30_000,
   });
   expect(sandboxAfterInterrupt.exitCode, sandboxAfterInterrupt.stderr).toBe(0);
+
+  // Exercise the configured route through the sandbox. The OpenShell gateway
+  // must inject the stored compatible-endpoint credential upstream; this POST
+  // is the positive auth proof and is deliberately newer than fixture startup
+  // and the direct readiness fetch excluded by onboardingRequestOffset.
+  const inferenceAfterInterrupt = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
+        {
+          model: FAKE_COMPATIBLE_MODEL,
+          messages: [{ role: "user", content: "reply with OK" }],
+          max_tokens: 8,
+        },
+      )}'`,
+    ),
+    {
+      artifactName: "phase-2-authenticated-inference-post",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  expect(
+    inferenceAfterInterrupt.exitCode,
+    `${inferenceAfterInterrupt.stdout}\n${inferenceAfterInterrupt.stderr}`,
+  ).toBe(0);
 
   // Assertion: session-file-present.
   expect(fs.existsSync(SESSION_FILE)).toBe(true);

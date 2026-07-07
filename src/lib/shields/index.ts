@@ -1998,7 +1998,12 @@ function lockAgentConfigUnderMutationLock(
 
     const { issues } = verifyShieldsLockState(sandboxName, target, {
       verifyChattr: chattrSucceeded,
-      verifyParentProtection: target.agentName === "hermes" || openClawProtocol,
+      // A sealed Hermes transaction deliberately keeps /sandbox frozen as
+      // root:root 0755 until finish publishes the prepared sticky/group
+      // parent metadata. Verify the recursively locked tree while rollback is
+      // still available, then verify the parent after the final commit below.
+      verifyParentProtection:
+        (target.agentName === "hermes" && transaction === null) || openClawProtocol,
       exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
       assertLegacyLayout: assertNoLegacyStateLayout,
     });
@@ -2007,6 +2012,16 @@ function lockAgentConfigUnderMutationLock(
     const fileHashes = captureSealHashes(sandboxName, filesToLock);
     if (transaction) {
       finishHermesConfigShields(sandboxName, target, transaction.token);
+      transaction = null;
+      const committed = verifyShieldsLockState(sandboxName, target, {
+        verifyChattr: chattrSucceeded,
+        verifyParentProtection: true,
+        exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+        assertLegacyLayout: assertNoLegacyStateLayout,
+      });
+      if (committed.issues.length > 0) {
+        throw new Error(`Config not locked: ${committed.issues.join(", ")}`);
+      }
     }
     return { chattrApplied: chattrSucceeded, fileHashes };
   } catch (error) {

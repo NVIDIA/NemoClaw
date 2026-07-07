@@ -38,7 +38,12 @@ function writeHash(
   envPath: string,
   env: string,
 ): void {
-  fs.writeFileSync(hashPath, `${digest(config)}  ${configPath}\n${digest(env)}  ${envPath}\n`);
+  const mcpDigest = digest("{}");
+  fs.writeFileSync(
+    hashPath,
+    `${digest(config)}  ${configPath}\n${digest(env)}  ${envPath}\n` +
+      `# nemoclaw-hermes-mcp-state-v1 intended=${mcpDigest} applied=${mcpDigest}\n`,
+  );
 }
 
 function createFixture(): IntegrityFixture {
