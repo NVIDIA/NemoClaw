@@ -148,7 +148,7 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "  " })).toBe(false);
   });
 
-  it("allows legacy managed-image recovery only with per-row authority and no custom image", () => {
+  it("allows legacy managed-image recovery only with per-row authority and no custom image (#6114)", () => {
     expect(
       sandboxState.isManagedImageRecoveryAllowed(
         { nemoclawVersion: "0.0.71", fromDockerfile: undefined },
