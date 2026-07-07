@@ -139,6 +139,95 @@ describe("rebuild gateway drift preflight", () => {
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      recordedGateway: "nemoclaw",
+      recordedPort: 8080,
+      activeGateway: "other-gw",
+    },
+    {
+      recordedGateway: "nemoclaw-9000",
+      recordedPort: 9000,
+      activeGateway: "nemoclaw",
+    },
+  ])("refuses stale recovery when '$activeGateway' is active instead of recorded gateway '$recordedGateway' (#4497)", async ({
+    recordedGateway,
+    recordedPort,
+    activeGateway,
+  }) => {
+    detectPreflightIssueSpy.mockReturnValue(null);
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      name: "alpha",
+      provider: "ollama-local",
+      model: "nvidia/nemotron",
+      policies: [],
+      nimContainer: null,
+      agent: null,
+      nemoclawVersion: "0.1.0",
+      dashboardPort: 18789,
+      gatewayName: recordedGateway,
+      gatewayPort: recordedPort,
+    } as never);
+    const openshellResults: Record<string, { status: number; output: string }> = {
+      "sandbox list": { status: 0, output: "" },
+      "sandbox get": {
+        status: 1,
+        output: "Error:   × Not Found: sandbox not found",
+      },
+    };
+    captureOpenshellSpy.mockImplementation(
+      (args: string[]) => openshellResults[args.slice(0, 2).join(" ")] ?? { status: 0, output: "" },
+    );
+    const getNamedGatewayLifecycleStateSpy = vi
+      .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
+      .mockReturnValue({
+        state: "connected_other",
+        activeGateway,
+        status: `Gateway: ${activeGateway}\nStatus: Connected`,
+      } as never);
+    const backupSandboxStateSpy = vi
+      .spyOn(requireDist("../../state/sandbox.js"), "backupSandboxState")
+      .mockImplementation(() => {
+        throw new Error("unexpected backup");
+      });
+    const removeSandboxRegistryEntrySpy = vi
+      .spyOn(requireDist("./destroy.js"), "removeSandboxRegistryEntryWithReceipt")
+      .mockImplementation(() => {
+        throw new Error("unexpected registry removal");
+      });
+    const onboardSpy = vi
+      .spyOn(requireDist("../../onboard.js"), "onboard")
+      .mockImplementation(async () => {
+        throw new Error("unexpected onboard");
+      });
+    spies.push(
+      getNamedGatewayLifecycleStateSpy,
+      backupSandboxStateSpy,
+      removeSandboxRegistryEntrySpy,
+      onboardSpy,
+    );
+
+    await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
+      "Could not confirm live state",
+    );
+
+    const output = errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("NOT been removed");
+    expect(output).toContain(`openshell gateway select ${recordedGateway}`);
+    expect(getNamedGatewayLifecycleStateSpy).toHaveBeenCalledWith(recordedGateway);
+    expect(runOpenshellSpy).toHaveBeenCalledWith(
+      ["gateway", "select", recordedGateway],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
+    expect(onboardSpy).not.toHaveBeenCalled();
+  });
+
   it("recovers the named gateway and retries the liveness query before entering stale recovery", async () => {
     detectPreflightIssueSpy.mockReturnValue(null);
     // First `sandbox list` fails (gateway down) and triggers recovery; the retry
