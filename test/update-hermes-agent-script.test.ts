@@ -55,7 +55,7 @@ function writeExecutable(file: string, body: string) {
 }
 
 describe("scripts/update-hermes-agent.sh", () => {
-  it("keeps the final #5254 workaround-removal guard tied to the installed Hermes version", () => {
+  it("keeps the final workaround-removal guard tied to the installed Hermes version (#5254)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const guardStart = dockerfile.indexOf(
       "installed Hermes ${hermes_semver} but Hermes v0.17.0 compatibility workarounds",

@@ -224,6 +224,7 @@ RUN printf '%s  %s\n' \
 COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
+# hadolint ignore=DL4006
 RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
     && hermes_semver="$(printf '%s\n' "$hermes_version_output" | sed -n 's/.*v\([0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*\).*/\1/p; s/^\([0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*\)$/\1/p' | head -1)" \
     && if [ -z "$hermes_semver" ]; then \
