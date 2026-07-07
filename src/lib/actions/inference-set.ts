@@ -682,15 +682,31 @@ async function explicitCustomProviderMetadata(
   //   invalidState (the reporter's bug): re-supplying the same internal-resolving
   //     URL onboarding accepted trips the host DNS-pinning SSRF guard and
   //     dead-ends the command, even though onboard already established that route.
-  //   sourceBoundary: the trusted baseline is `entry.endpointUrl`, persisted into
-  //     the host-owned sandbox registry at onboard time (5b001aa5f) and passed in
-  //     as trustedEndpointUrl only when the sandbox is already on this provider.
-  //     It is host-written, not sandbox-controllable.
+  //   sourceBoundary / trust: the SSRF guard exists to stop the UNTRUSTED sandbox
+  //     agent from steering the host at an internal service. The trusted baseline
+  //     `entry.endpointUrl` lives in the host-owned sandbox registry
+  //     (~/.nemoclaw/sandboxes.json), which the sandbox cannot write, and is
+  //     populated ONLY by host-side onboarding/rebuild for custom-compatible
+  //     providers (onboard.ts / rebuild-*.ts persist it via
+  //     inferenceSelectionRegistryFields; provider-recovery only re-reads the
+  //     already-persisted value — no sandbox-reachable input ever sets it). It is
+  //     passed in as trustedEndpointUrl only when the sandbox is already on this
+  //     provider. Accepted risk: a host-level attacker who can rewrite that
+  //     registry file is already outside this guard's threat model (they could
+  //     invoke `inference set` with any argument directly), so no additional
+  //     provenance marker is warranted here.
   //   fix: when the supplied --endpoint-url canonically equals that trusted
   //     endpoint, use it without the DNS guard — re-validating an unchanged,
   //     already-established route adds no protection. Any other URL (including a
   //     different internal one) still goes through the full guard below, so SSRF
   //     protection for genuinely new endpoints is unchanged.
+  //   regressionTest: inference-set-provider-alias.test.ts — "accepts the SAME
+  //     onboard-established internal endpoint URL …" and "still blocks a DIFFERENT
+  //     internal endpoint …".
+  //   removalCondition: revisit if the registry ever becomes writable from a
+  //     sandbox-reachable path, or if endpointUrl gains a non-onboarding writer
+  //     for custom-compatible providers — then a provenance marker would be
+  //     required before trusting it here.
   let endpointUrl: string;
   const trustedMatch = matchesTrustedEndpoint(options.endpointUrl, trustedEndpointUrl);
   if (trustedMatch) {
