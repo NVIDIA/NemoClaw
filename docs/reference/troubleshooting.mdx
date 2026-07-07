@@ -1366,6 +1366,8 @@ $$nemoclaw <sandbox> doctor --fix
 
 `$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
 Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step.
+For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that exact posture under the expected sandbox-owned parent.
+Other root-owned layouts, links, mounts, and ambiguous metadata fail closed so startup cannot mistake a shields-locked or unsafe tree for mutable drift.
 If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
 Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
 
