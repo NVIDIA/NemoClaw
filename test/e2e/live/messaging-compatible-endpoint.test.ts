@@ -26,7 +26,6 @@ import {
   readRequestBody,
   writeSseBody as sseResponse,
 } from "../fixtures/http-protocol.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {

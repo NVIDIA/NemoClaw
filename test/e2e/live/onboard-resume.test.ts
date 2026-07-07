@@ -14,7 +14,6 @@ import {
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
 import { discoverHostAddress } from "../fixtures/host-address.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 // Disruption-recovery contract — regression for #446.
