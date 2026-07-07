@@ -636,14 +636,14 @@ try {
       expect(result.stdout).not.toContain("PSVersion:");
       expect(result.stdout).not.toContain("Benutzername:");
       expect(result.stdout).not.toContain("Computer:");
-      expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+      expect(result.stdout).not.toContain("EXAMPLE\\bootstrap-user");
       expect(result.stdout).not.toContain("TEST-HOST");
       expect(result.stdout).not.toContain("$statusPath = 'status-file'");
       expect(result.stdout).not.toContain("$transcriptStarted = $false");
       expect(result.stdout).not.toContain("Start-Transcript");
       expect(result.stdout).not.toContain("WriteAllText");
       expect(result.stdout).not.toContain(
-        "& 'C:\\\\WINDOWS\\\\System32\\\\wsl.exe' --install -d 'Ubuntu-24.04'",
+        "& 'C:\\WINDOWS\\System32\\wsl.exe' --install -d 'Ubuntu-24.04'",
       );
       expect(result.stdout).not.toContain("Transcript started, output file is");
       expect(result.stdout).not.toContain("Status file is");
@@ -678,7 +678,7 @@ Convert-WslInstallLogForDisplay -Log $log
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
-      expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+      expect(result.stdout).not.toContain("EXAMPLE\\bootstrap-user");
       expect(result.stdout).not.toContain("TEST-HOST");
     },
   );
@@ -703,7 +703,7 @@ Convert-WslInstallLogForDisplay -Log $log
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
-      expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+      expect(result.stdout).not.toContain("EXAMPLE\\bootstrap-user");
       expect(result.stdout).not.toContain("TEST-HOST");
       expect(result.stdout).not.toContain("C:\\Users\\example\\install.log");
     },
@@ -735,7 +735,7 @@ Convert-WslInstallLogForDisplay -Log $log
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("[PowerShell transcript metadata redacted.]");
       expect(result.stdout).toContain("Useful WSL output");
-      expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+      expect(result.stdout).not.toContain("EXAMPLE\\bootstrap-user");
       expect(result.stdout).not.toContain("TEST-HOST");
       expect(result.stdout).not.toContain("Windows PowerShell transcript");
     },
