@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import { NemoClawCommand, type CommandExitResult } from "./nemoclaw-oclif-command";
+import { log } from "./logger";
+import { type CommandExitResult, NemoClawCommand } from "./nemoclaw-oclif-command";
 
 class TestCommand extends NemoClawCommand {
   static id = "test";
@@ -25,6 +25,15 @@ class TestCommand extends NemoClawCommand {
   }
 }
 
+class ParsingTestCommand extends NemoClawCommand {
+  static id = "parsing-test";
+  static flags = {};
+
+  public async run(): Promise<void> {
+    await this.parse(ParsingTestCommand);
+  }
+}
+
 function makeCommand(): TestCommand {
   return Object.create(TestCommand.prototype) as TestCommand;
 }
@@ -32,6 +41,8 @@ function makeCommand(): TestCommand {
 describe("NemoClawCommand", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    log.configure();
     process.exitCode = undefined;
   });
 
@@ -67,5 +78,26 @@ describe("NemoClawCommand", () => {
     expect(log).toHaveBeenCalledWith(
       JSON.stringify({ provider: "build", apiKey: "<REDACTED>" }, null, 2),
     );
+  });
+
+  it("applies host logging flags from oclif parser output", async () => {
+    const configure = vi.spyOn(log, "configure").mockImplementation(() => undefined);
+
+    await ParsingTestCommand.run(["--quiet"], process.cwd());
+    await ParsingTestCommand.run(["--debug"], process.cwd());
+
+    expect(configure).toHaveBeenCalledWith({ debug: false, quiet: true });
+    expect(configure).toHaveBeenCalledWith({ debug: true, quiet: false });
+  });
+
+  it("keeps NEMOCLAW_LOG_LEVEL precedence unless a CLI flag overrides it", async () => {
+    vi.stubEnv("NEMOCLAW_LOG_LEVEL", "error");
+    vi.stubEnv("NEMOCLAW_DEBUG", "true");
+
+    await ParsingTestCommand.run([], process.cwd());
+    expect(log.level).toBe("error");
+
+    await ParsingTestCommand.run(["--debug"], process.cwd());
+    expect(log.level).toBe("debug");
   });
 });

@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
-
-import { log } from "./logger";
+import { Command, Flags, type Interfaces } from "@oclif/core";
 import { redactForLog } from "../security/redact";
+import { log } from "./logger";
 
 export type CommandExitResult = {
   exitCode?: number | null;
@@ -27,7 +26,6 @@ export abstract class NemoClawCommand extends Command {
     // NEMOCLAW_LOG_LEVEL/NEMOCLAW_DEBUG; the flags remain as a convenience.
     debug: Flags.boolean({
       description: "Enable debug output (equivalent to NEMOCLAW_LOG_LEVEL=debug)",
-      env: "NEMOCLAW_DEBUG",
       default: false,
       hidden: true,
       exclusive: ["quiet"],
@@ -40,16 +38,35 @@ export abstract class NemoClawCommand extends Command {
     }),
   };
 
-  async init(): Promise<void> {
+  protected override async init(): Promise<void> {
     await super.init();
-    // Configure logging from raw argv rather than this.parse(): an early
-    // parse would trigger oclif's default help on --help and preempt the
-    // custom help of passthrough commands (e.g. `<name> agent`). The flags
-    // are still declared in baseFlags so each command's own parse accepts
-    // them and enforces the exclusive constraint. Debug wins when both
-    // appear here; the command's parse rejects that combination anyway.
-    if (this.argv.includes("--quiet")) log.setQuiet(true);
-    if (this.argv.includes("--debug")) log.setDebug(true);
+    // Every invocation starts from the current environment. Raw-argv
+    // passthrough commands intentionally stop here: only environment-based
+    // logging configuration applies to them.
+    log.configure({ debug: false, quiet: false });
+  }
+
+  protected override async parse<
+    F extends Interfaces.OutputFlags<Interfaces.FlagInput>,
+    B extends Interfaces.OutputFlags<Interfaces.FlagInput>,
+    A extends Interfaces.OutputArgs<Interfaces.ArgInput>,
+  >(
+    options?: Interfaces.Input<F, B, A>,
+    argv?: string[],
+  ): Promise<Interfaces.ParserOutput<F, B, A>> {
+    const parsed = await super.parse(options, argv);
+
+    // Logging flags belong to the host only when a command invokes oclif's
+    // parser. Commands that deliberately consume raw argv (for example
+    // `sandbox agent` and `uninstall`) must forward similarly named flags
+    // without changing host logging. Using parser output also honors `--`:
+    // downstream flags after the boundary never acquire host meaning.
+    log.configure({
+      debug: parsed.flags.debug === true,
+      quiet: parsed.flags.quiet === true,
+    });
+
+    return parsed;
   }
 
   protected logJson(json: unknown): void {

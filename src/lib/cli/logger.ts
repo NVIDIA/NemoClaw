@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { redact, redactForLog } from "../security/redact";
+
 /**
  * Centralized logger for NemoClaw CLI.
  *
@@ -8,16 +10,22 @@
  *   error < warn < info < debug
  *
  * Default level: info (errors, warnings, and info messages shown).
- * Quiet mode:    warn (only warnings and errors shown).
+ * Quiet mode:    at most warn (only warnings and errors shown).
  * Debug mode:    debug (all messages shown with timestamps).
  *
  * Configure via:
  *   NEMOCLAW_LOG_LEVEL=debug nemoclaw ...
- *   nemoclaw ... --debug         (shorthand for debug level)
- *   nemoclaw ... -q / --quiet    (suppresses info, shows warn+error)
+ *   NEMOCLAW_DEBUG=1 nemoclaw ...
+ *   nemoclaw ... --debug
+ *   nemoclaw ... --quiet
  */
 
 export type LogLevel = "error" | "warn" | "info" | "debug";
+
+export type LoggerConfig = {
+  debug?: boolean;
+  quiet?: boolean;
+};
 
 const LEVEL_RANK: Record<LogLevel, number> = {
   error: 0,
@@ -26,46 +34,150 @@ const LEVEL_RANK: Record<LogLevel, number> = {
   debug: 3,
 };
 
+const TRUE_ENV_VALUES = new Set(["1", "true", "y", "yes"]);
+const UNSERIALIZABLE = "[unserializable]";
+
+function wildcardMatches(pattern: string, value: string): boolean {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
+  return new RegExp(`^${escaped}$`, "i").test(value);
+}
+
+function debugNamespaceEnabled(value: string | undefined): boolean {
+  if (!value) return false;
+  const selectors = value.split(/[\s,]+/).filter(Boolean);
+  const matches = (selector: string): boolean => wildcardMatches(selector, "nemoclaw");
+  if (selectors.some((selector) => selector.startsWith("-") && matches(selector.slice(1)))) {
+    return false;
+  }
+  return selectors.some((selector) => !selector.startsWith("-") && matches(selector));
+}
+
 function resolveLevel(): LogLevel {
-  const env = process.env.NEMOCLAW_LOG_LEVEL?.toLowerCase();
+  const env = process.env.NEMOCLAW_LOG_LEVEL?.trim().toLowerCase();
   if (env === "error" || env === "warn" || env === "info" || env === "debug") return env;
-  if (process.env.NEMOCLAW_DEBUG === "1" || process.env.DEBUG?.includes("nemoclaw")) return "debug";
+  const debugEnv = process.env.NEMOCLAW_DEBUG?.trim().toLowerCase();
+  if (debugEnv && TRUE_ENV_VALUES.has(debugEnv)) return "debug";
+  if (debugNamespaceEnabled(process.env.DEBUG)) return "debug";
   return "info";
 }
 
+function normalizeForSerialization(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value === "string" || typeof value === "number") return value;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "undefined") return "[undefined]";
+  if (typeof value === "symbol" || typeof value === "function") return String(value);
+
+  try {
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+
+    if (value instanceof Error) {
+      const normalized: Record<string, unknown> = {
+        name: value.name,
+        message: value.message,
+      };
+      if (value.stack) normalized.stack = value.stack;
+      if (value.cause !== undefined) {
+        normalized.cause = normalizeForSerialization(value.cause, seen);
+      }
+      for (const [key, entry] of Object.entries(value)) {
+        normalized[key] = normalizeForSerialization(entry, seen);
+      }
+      return normalized;
+    }
+
+    if (value instanceof Date) {
+      return Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
+    }
+    if (value instanceof RegExp || value instanceof URL) return String(value);
+    if (Buffer.isBuffer(value)) return `[Buffer ${value.length} bytes]`;
+    if (ArrayBuffer.isView(value)) {
+      return `[${value.constructor.name} ${value.byteLength} bytes]`;
+    }
+    if (value instanceof ArrayBuffer) return `[ArrayBuffer ${value.byteLength} bytes]`;
+    if (value instanceof Map) {
+      const entries: Record<string, unknown> = {};
+      for (const [key, entry] of value.entries()) {
+        entries[String(key)] = normalizeForSerialization(entry, seen);
+      }
+      return entries;
+    }
+    if (value instanceof Set) {
+      return [...value].map((entry) => normalizeForSerialization(entry, seen));
+    }
+    if (Array.isArray(value)) {
+      return value.map((entry) => normalizeForSerialization(entry, seen));
+    }
+
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, normalizeForSerialization(entry, seen)]),
+    );
+  } catch {
+    return UNSERIALIZABLE;
+  }
+}
+
+function safeSerialize(value: unknown): string {
+  try {
+    const normalized = normalizeForSerialization(value);
+    const serialized = JSON.stringify(redactForLog(normalized), null, 2);
+    return serialized ? redact(serialized) : JSON.stringify(UNSERIALIZABLE);
+  } catch {
+    return JSON.stringify(UNSERIALIZABLE);
+  }
+}
+
+function safeText(value: unknown): string {
+  try {
+    if (typeof value === "string") return redact(String(redactForLog(value)));
+    if (value === null || typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    if (typeof value === "bigint") return value.toString();
+    if (typeof value === "undefined") return "undefined";
+    return safeSerialize(value);
+  } catch {
+    return UNSERIALIZABLE;
+  }
+}
+
 class Logger {
-  private _level: LogLevel;
-  private _quiet: boolean;
-  private _timestamps: boolean;
+  private _level: LogLevel = "info";
+  private _quiet = false;
+  private _debug = false;
 
   constructor() {
-    this._level = resolveLevel();
-    this._quiet = false;
-    this._timestamps = this._level === "debug";
+    this.configure();
   }
 
   get level(): LogLevel {
+    if (this._debug) return "debug";
+    if (this._quiet && LEVEL_RANK[this._level] > LEVEL_RANK.warn) return "warn";
     return this._level;
+  }
+
+  /** Reset to environment defaults, then apply command-line overrides. */
+  configure(config: LoggerConfig = {}): void {
+    this._level = resolveLevel();
+    this._quiet = config.quiet === true;
+    this._debug = config.debug === true;
   }
 
   setLevel(level: LogLevel): void {
     this._level = level;
-    this._timestamps = level === "debug";
   }
 
   setQuiet(quiet: boolean): void {
     this._quiet = quiet;
-    if (quiet && LEVEL_RANK[this._level] > LEVEL_RANK["warn"]) {
-      this._level = "warn";
-    }
   }
 
   setDebug(debug: boolean): void {
-    if (debug) this.setLevel("debug");
+    this._debug = debug;
   }
 
   isDebug(): boolean {
-    return this._level === "debug";
+    return this.level === "debug";
   }
 
   isQuiet(): boolean {
@@ -73,44 +185,48 @@ class Logger {
   }
 
   private shouldLog(level: LogLevel): boolean {
-    return LEVEL_RANK[level] <= LEVEL_RANK[this._level];
+    return LEVEL_RANK[level] <= LEVEL_RANK[this.level];
   }
 
   private prefix(level: LogLevel): string {
-    if (!this._timestamps) return "";
-    const ts = new Date().toISOString();
-    return `[${ts}] [${level.toUpperCase()}] `;
+    if (!this.isDebug()) return "";
+    return `[${new Date().toISOString()}] [${level.toUpperCase()}] `;
+  }
+
+  private emit(line: string): void {
+    try {
+      process.stderr.write(line);
+    } catch {
+      // A diagnostic sink must not turn an otherwise successful command into a failure.
+    }
+  }
+
+  private write(level: LogLevel, message: string, args: unknown[]): void {
+    if (!this.shouldLog(level)) return;
+    const parts = [this.prefix(level) + safeText(message), ...args.map(safeText)].join(" ");
+    this.emit(`${parts}\n`);
   }
 
   error(message: string, ...args: unknown[]): void {
-    if (!this.shouldLog("error")) return;
-    const parts = [this.prefix("error") + message, ...args.map(String)].join(" ");
-    process.stderr.write(parts + "\n");
+    this.write("error", message, args);
   }
 
   warn(message: string, ...args: unknown[]): void {
-    if (!this.shouldLog("warn")) return;
-    const parts = [this.prefix("warn") + message, ...args.map(String)].join(" ");
-    process.stderr.write(parts + "\n");
+    this.write("warn", message, args);
   }
 
   info(message: string, ...args: unknown[]): void {
-    if (!this.shouldLog("info")) return;
-    const parts = [this.prefix("info") + message, ...args.map(String)].join(" ");
-    process.stderr.write(parts + "\n");
+    this.write("info", message, args);
   }
 
   debug(message: string, ...args: unknown[]): void {
-    if (!this.shouldLog("debug")) return;
-    const parts = [this.prefix("debug") + message, ...args.map(String)].join(" ");
-    process.stderr.write(parts + "\n");
+    this.write("debug", message, args);
   }
 
-  /** Log a structured object at debug level. Redacts nothing — call only with safe data. */
+  /** Log a redacted structured value without allowing serialization errors to escape. */
   debugObject(label: string, obj: unknown): void {
     if (!this.shouldLog("debug")) return;
-    const ts = this._timestamps ? `[${new Date().toISOString()}] [DEBUG] ` : "";
-    process.stderr.write(`${ts}${label}: ${JSON.stringify(obj, null, 2)}\n`);
+    this.emit(`${this.prefix("debug")}${safeText(label)}: ${safeSerialize(obj)}\n`);
   }
 }
 

@@ -115,6 +115,26 @@ describe("redactForLog", () => {
     });
   });
 
+  it("redacts opaque credentials under auth, cookie, and spaced API-key fields", () => {
+    expect(
+      redactForLog({
+        auth: "opaque-auth-secret",
+        cookie: "session=opaque-cookie-secret",
+        setCookie: "session=opaque-set-cookie-secret",
+        "API Key": "opaque-api-secret",
+        headers: { proxyAuth: "Basic opaque-basic-secret" },
+        author: "safe author",
+      }),
+    ).toEqual({
+      auth: "<REDACTED>",
+      cookie: "<REDACTED>",
+      setCookie: "<REDACTED>",
+      "API Key": "<REDACTED>",
+      headers: { proxyAuth: "<REDACTED>" },
+      author: "safe author",
+    });
+  });
+
   it("redacts known secret patterns inside otherwise safe strings", () => {
     const result = redactForLog({
       message: "upstream returned Authorization: Bearer abcdefghijklmnop",

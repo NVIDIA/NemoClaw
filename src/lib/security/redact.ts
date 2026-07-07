@@ -245,7 +245,15 @@ export function redactUrl(value: unknown): string | null {
 }
 
 function isSensitiveKey(key: string): boolean {
-  return /(?:api[_-]?key|token|secret|password|credential|authorization|bearer)/i.test(key);
+  if (/(?:api[\s_-]?key|token|secret|password|credential|authorization|bearer)/i.test(key)) {
+    return true;
+  }
+  const words = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  return words.includes("auth") || words.includes("cookie");
 }
 
 export function redactForLog(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
