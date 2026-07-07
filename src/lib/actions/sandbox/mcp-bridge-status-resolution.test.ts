@@ -113,7 +113,7 @@ ${body}
     encoding: "utf8",
     env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
   });
-  if (result.status !== 0) throw new Error(`harness failed: ${result.stderr}`);
+  expect(result.status, `harness failed: ${result.stderr}`).toBe(0);
   return { status: result.status, stdout: result.stdout };
 }
 

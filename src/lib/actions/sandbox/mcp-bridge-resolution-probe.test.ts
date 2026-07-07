@@ -35,11 +35,12 @@ const baseEntry: McpBridgeEntry = {
 };
 
 function probeStdout(parts: { httpStatus?: number; curlExit: number; body?: string }): string {
-  const lines = [""];
-  if (parts.httpStatus !== undefined) lines.push(`${MCP_PROBE_HTTP_MARKER}${parts.httpStatus}`);
-  lines.push(`${MCP_PROBE_EXIT_MARKER}${parts.curlExit}`);
-  if (parts.body !== undefined) lines.push(parts.body);
-  return lines.join("\n");
+  return [
+    "",
+    ...(parts.httpStatus !== undefined ? [`${MCP_PROBE_HTTP_MARKER}${parts.httpStatus}`] : []),
+    `${MCP_PROBE_EXIT_MARKER}${parts.curlExit}`,
+    ...(parts.body !== undefined ? [parts.body] : []),
+  ].join("\n");
 }
 
 beforeEach(() => {
