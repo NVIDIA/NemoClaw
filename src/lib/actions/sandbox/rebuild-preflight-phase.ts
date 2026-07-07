@@ -148,8 +148,7 @@ export async function runRebuildPreflightPhase(
         // a missing gateway provider and route during recreate. The exact
         // endpoint, credential, image, and registry checks still run before
         // deletion; ordinary rebuilds continue to require the live bindings.
-        allowGatewayProviderReconfigure: recoveryManifest !== null,
-        allowInferenceRouteReconfigure: recoveryManifest !== null,
+        preparedBackupRecovery: recoveryManifest !== null,
         log,
         bail,
       });

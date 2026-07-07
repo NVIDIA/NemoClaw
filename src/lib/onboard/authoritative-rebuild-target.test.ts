@@ -121,13 +121,19 @@ describe("authoritative rebuild target preflight", () => {
     ).rejects.toThrow("inference route does not match");
   });
 
-  it("allows a prepared recovery to repair a mismatched route during recreate (#6114)", async () => {
+  it("defers route validation for prepared recovery until authoritative onboard (#6114)", async () => {
+    const targetDeps = deps({ inferenceRouteReady: vi.fn(() => false) });
+
     await expect(
       preflightAuthoritativeRebuildTarget(
-        { ...target, allowInferenceRouteReconfigure: true },
-        deps({ inferenceRouteReady: vi.fn(() => false) }),
+        { ...target, deferInferenceRouteUntilOnboard: true },
+        targetDeps,
       ),
     ).resolves.toBeUndefined();
+
+    expect(targetDeps.inferenceRouteReady).not.toHaveBeenCalled();
+    expect(targetDeps.runFatalRuntimePreflight).toHaveBeenCalledOnce();
+    expect(targetDeps.ensureOpenshell).toHaveBeenCalledOnce();
   });
 
   it("rejects a dashboard forward owned by another sandbox", async () => {

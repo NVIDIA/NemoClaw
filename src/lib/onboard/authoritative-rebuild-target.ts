@@ -19,8 +19,8 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort"
 > & {
   authoritativeResumeConfig: true;
-  /** Internal prepared-backup recovery may repair the selected route during recreate. */
-  allowInferenceRouteReconfigure?: boolean;
+  /** Internal prepared-backup recovery defers route repair to authoritative onboard. */
+  deferInferenceRouteUntilOnboard?: true;
   model: string;
   provider: string;
   sandboxName: string;
@@ -62,7 +62,7 @@ export function resolveAuthoritativeOnboardGatewayBinding(
 }
 
 export type AuthoritativeRebuildTarget = {
-  allowInferenceRouteReconfigure?: boolean;
+  deferInferenceRouteUntilOnboard?: true;
   sandboxName: string;
   provider: string;
   model: string;
@@ -93,9 +93,13 @@ export async function preflightAuthoritativeRebuildTarget(
   try {
     deps.runFatalRuntimePreflight();
     deps.ensureOpenshell();
+    // Prepared-backup recovery can run after the installer has replaced a
+    // legacy gateway. That fresh gateway has no inference route to validate
+    // yet; authoritative onboarding configures and verifies the pinned route
+    // before recreating the sandbox. Normal rebuilds must still match here.
     if (
-      !deps.inferenceRouteReady(target.provider, target.model) &&
-      target.allowInferenceRouteReconfigure !== true
+      target.deferInferenceRouteUntilOnboard !== true &&
+      !deps.inferenceRouteReady(target.provider, target.model)
     ) {
       fail(
         `OpenShell inference route does not match provider '${target.provider}' and model '${target.model}'.`,

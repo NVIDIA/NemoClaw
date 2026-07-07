@@ -72,7 +72,7 @@ export async function preflightRebuildTargetRuntime(
   log: RebuildLog,
   bail: RebuildBail,
   options: {
-    allowGatewayProviderReconfigure?: boolean;
+    allowMissingGatewayProviderWithHostCredential?: boolean;
     skipImagePreflight?: boolean;
   } = {},
 ): Promise<RebuildTargetRuntimePreflightResult> {
@@ -195,7 +195,8 @@ export async function preflightRebuildTargetRuntime(
         log,
         bail,
         {
-          allowGatewayProviderReconfigure: options.allowGatewayProviderReconfigure,
+          allowMissingGatewayProviderWithHostCredential:
+            options.allowMissingGatewayProviderWithHostCredential,
           onGatewayProviderReconfigureRequired: () => {
             requiresGatewayProviderReconfigure = true;
           },
@@ -221,12 +222,12 @@ export async function preflightAuthoritativeOnboardRuntime(
   resumeConfig: RebuildResumeConfig,
   recreateOptions: RebuildRecreateOnboardOpts,
   bail: RebuildBail,
-  options: { allowInferenceRouteReconfigure?: boolean } = {},
+  options: { deferInferenceRouteUntilOnboard?: true } = {},
 ): Promise<boolean> {
   try {
     await rebuildOnboardDependencies.preflightAuthoritativeRebuildTarget({
       ...recreateOptions,
-      allowInferenceRouteReconfigure: options.allowInferenceRouteReconfigure,
+      ...options,
       model: resumeConfig.model,
       provider: resumeConfig.provider,
       sandboxName,

@@ -5,7 +5,7 @@ import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 
 type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts & {
-  allowInferenceRouteReconfigure?: boolean;
+  deferInferenceRouteUntilOnboard?: true;
   model: string;
   provider: string;
   sandboxName: string;

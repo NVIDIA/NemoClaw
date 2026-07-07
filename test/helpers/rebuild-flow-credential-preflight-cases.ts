@@ -162,7 +162,7 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
         },
         hydrateCredentialEnv: () => "host-provider-key",
         runOpenshell: providerRuntime([]),
-        staleRecovery: true,
+        sandboxListOutput: "alpha Error",
       });
       configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
         endpointUrl: "https://inference.example.test/v1",

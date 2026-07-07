@@ -37,6 +37,9 @@ describe("prepared rebuild recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.preflightAuthoritativeRebuildTargetSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ deferInferenceRouteUntilOnboard: true }),
+    );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ ignoreError: true }),
@@ -45,12 +48,9 @@ describe("prepared rebuild recovery", () => {
       "alpha",
       recoveryManifest.backupPath,
     );
-    expect(harness.preflightAuthoritativeRebuildTargetSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ allowInferenceRouteReconfigure: true }),
-    );
   });
 
-  it("does not authorize route reconfiguration for an ordinary rebuild (#6114)", async () => {
+  it("does not defer route validation for an ordinary rebuild (#6114)", async () => {
     const harness = createRebuildFlowHarness({ applyPreset: () => true });
 
     await expect(harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).resolves.toBe(
@@ -58,7 +58,7 @@ describe("prepared rebuild recovery", () => {
     );
 
     expect(harness.preflightAuthoritativeRebuildTargetSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ allowInferenceRouteReconfigure: false }),
+      expect.not.objectContaining({ deferInferenceRouteUntilOnboard: true }),
     );
   });
 

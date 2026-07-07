@@ -32,7 +32,7 @@ export type RebuildBail = (message: string, code?: number) => never;
 export type RebuildLog = (message: string) => void;
 export type RebuildCredentialPreflightOptions = {
   /** A validated prepared recovery may rebuild a missing provider from an exported host key. */
-  allowGatewayProviderReconfigure?: boolean;
+  allowMissingGatewayProviderWithHostCredential?: boolean;
   onGatewayProviderReconfigureRequired?: (provider: string, credentialEnv: string) => void;
 };
 
@@ -179,7 +179,7 @@ export function preflightRebuildCredentials(
   );
   if (
     !checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
-      allowProviderReconfigure: options.allowGatewayProviderReconfigure,
+      allowProviderReconfigure: options.allowMissingGatewayProviderWithHostCredential,
       hostCredentialAvailable: Boolean(credentialValue),
       onProviderReconfigureRequired: options.onGatewayProviderReconfigureRequired,
     })

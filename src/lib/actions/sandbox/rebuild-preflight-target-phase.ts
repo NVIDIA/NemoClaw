@@ -51,8 +51,7 @@ export async function prepareRebuildTargetPreflights(args: {
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
   allowLegacyManagedImageRecovery?: boolean;
-  allowGatewayProviderReconfigure?: boolean;
-  allowInferenceRouteReconfigure?: boolean;
+  preparedBackupRecovery?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
@@ -63,8 +62,7 @@ export async function prepareRebuildTargetPreflights(args: {
     autoYes,
     requestedToolDisclosure,
     allowLegacyManagedImageRecovery,
-    allowGatewayProviderReconfigure,
-    allowInferenceRouteReconfigure,
+    preparedBackupRecovery,
     log,
     bail,
   } = args;
@@ -130,9 +128,13 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   });
   if (
-    !(await preflightAuthoritativeOnboardRuntime(sandboxName, resumeConfig, recreateOptions, bail, {
-      allowInferenceRouteReconfigure,
-    }))
+    !(await preflightAuthoritativeOnboardRuntime(
+      sandboxName,
+      resumeConfig,
+      recreateOptions,
+      bail,
+      preparedBackupRecovery ? { deferInferenceRouteUntilOnboard: true } : {},
+    ))
   ) {
     return null;
   }
@@ -160,7 +162,7 @@ export async function prepareRebuildTargetPreflights(args: {
       log,
       bail,
       {
-        allowGatewayProviderReconfigure,
+        allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
         skipImagePreflight: rebuildsDcodeSandbox,
       },
     );
