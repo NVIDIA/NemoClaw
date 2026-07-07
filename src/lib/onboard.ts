@@ -4504,6 +4504,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               status: r.result.status,
             };
           },
+          reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
           registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
           promptValidatedSandboxName,
           assessHost,

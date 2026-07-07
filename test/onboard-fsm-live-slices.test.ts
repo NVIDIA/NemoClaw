@@ -115,12 +115,18 @@ function assertFreshDistArtifacts(): void {
   );
 }
 
+function writeSuccessfulOpenShell(tmpDir: string): string {
+  const openshellPath = path.join(tmpDir, "openshell");
+  fs.writeFileSync(openshellPath, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  return openshellPath;
+}
+
 function probeEnvironment(tmpDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: tmpDir,
     TMPDIR: tmpDir,
     PATH: process.env.PATH || "/usr/bin:/bin",
-    NEMOCLAW_OPENSHELL_BIN: process.execPath,
+    NEMOCLAW_OPENSHELL_BIN: writeSuccessfulOpenShell(tmpDir),
     NODE_ENV: "test",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_SANDBOX_NAME: "fsm-sandbox",

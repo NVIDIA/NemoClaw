@@ -99,6 +99,7 @@ function createDeps() {
     isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
     reconcileModelRouter: calls.reconcileRouter,
     reupsertRoutedProvider: calls.reupsertRoutedProvider,
+    reserveSandboxInferenceRoute: vi.fn(() => true),
     registryUpdateSandbox: calls.updateSandbox,
     promptValidatedSandboxName: vi.fn(async () => "target-sandbox"),
     assessHost: () => ({ cpus: 8 }),

@@ -82,6 +82,7 @@ function createDeps(
         endpointUrl: "http://host.openshell.internal:4000/v1",
       }),
     ),
+    reserveRoute: vi.fn(() => true),
     updateSandbox: vi.fn(),
     promptName: vi.fn(async () => "my-assistant"),
     promptYesNo: vi.fn(async () => true),
@@ -125,6 +126,7 @@ function createDeps(
       isRoutedInferenceProvider: (provider: string) => provider === "nvidia-router",
       reconcileModelRouter: calls.reconcileRouter,
       reupsertRoutedProvider: calls.reupsertRoutedProvider,
+      reserveSandboxInferenceRoute: calls.reserveRoute,
       registryUpdateSandbox: calls.updateSandbox,
       promptValidatedSandboxName: calls.promptName,
       assessHost: () => ({ cpus: 8 }),
@@ -533,6 +535,35 @@ describe("handleProviderInferenceState", () => {
       endpointUrl: "https://compatible.example.test/v1",
       preferredInferenceApi: "openai-completions",
     });
+    expect(calls.reserveRoute).toHaveBeenCalledWith("mcp-rebuild", {
+      provider: "compatible-endpoint",
+      model: "mock/mcp-bridge",
+      endpointUrl: "https://compatible.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+    });
+  });
+
+  it("stops an authoritative rebuild before inference state when route persistence throws", async () => {
+    const session = createSession({ provider: "openai-api", model: "gpt-test" });
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+    calls.reserveRoute.mockImplementation(() => {
+      throw new Error("registry save failed");
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        authoritativeResumeConfig: true,
+        sandboxName: "failed-rebuild",
+      }),
+    ).rejects.toThrow("registry save failed");
+
+    expect(calls.skipped).not.toHaveBeenCalledWith("inference", expect.anything());
+    expect(calls.recordSkip).not.toHaveBeenCalledWith("inference", expect.anything());
+    expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.anything());
   });
 
   it("clears non-NVIDIA provider credentials when inference setup fails", async () => {
@@ -1030,6 +1061,7 @@ describe("handleProviderInferenceState", () => {
     });
 
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
   });
 
   // #5974 instance 5: the Model Router Python preflight (`prepareModelRouterVenv`)
@@ -1090,6 +1122,63 @@ describe("handleProviderInferenceState", () => {
     );
     expect(calls.setupInference).not.toHaveBeenCalled();
     expect(result.endpointUrl).toBe("http://host.openshell.internal:4000/v1");
+  });
+
+  it("reserves an authoritative routed repair inside the same gateway lock", async () => {
+    const session = createSession({
+      provider: "nvidia-router",
+      model: "router/model",
+      endpointUrl: "http://localhost:4000/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    });
+    session.steps.provider_selection.status = "complete";
+    let insideGatewayLock = false;
+    const gatewayLocks: string[] = [];
+    const withGatewayRouteMutationLock: ProviderInferenceStateOptions<
+      Gpu,
+      Agent,
+      Host
+    >["deps"]["withGatewayRouteMutationLock"] = async (gatewayName, operation) => {
+      gatewayLocks.push(gatewayName);
+      insideGatewayLock = true;
+      try {
+        return await operation();
+      } finally {
+        insideGatewayLock = false;
+      }
+    };
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      withGatewayRouteMutationLock,
+    });
+    calls.reconcileRouter.mockImplementation(async () => {
+      expect(insideGatewayLock).toBe(true);
+    });
+    calls.reupsertRoutedProvider.mockImplementation(() => {
+      expect(insideGatewayLock).toBe(true);
+      return { ok: true, endpointUrl: "http://host.openshell.internal:4000/v1" };
+    });
+    calls.reserveRoute.mockImplementation(() => {
+      expect(insideGatewayLock).toBe(true);
+      return true;
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      authoritativeResumeConfig: true,
+      sandboxName: "router-rebuild",
+    });
+
+    expect(gatewayLocks).toEqual(["nemoclaw"]);
+    expect(calls.reserveRoute).toHaveBeenCalledWith("router-rebuild", {
+      provider: "nvidia-router",
+      model: "router/model",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: null,
+      gatewayName: "nemoclaw",
+    });
   });
 
   it("aborts resume when re-upserting the routed provider fails (#4564)", async () => {

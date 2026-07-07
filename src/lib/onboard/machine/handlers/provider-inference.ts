@@ -157,6 +157,17 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       endpointUrl: string | null,
       credentialEnv: string | null,
     ): { ok: boolean; endpointUrl: string; message?: string; status?: number };
+    reserveSandboxInferenceRoute(
+      sandboxName: string,
+      route: {
+        provider: string;
+        model: string;
+        endpointUrl: string | null;
+        credentialEnv: string | null;
+        preferredInferenceApi: string | null;
+        gatewayName: string;
+      },
+    ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     assessHost(): Host;
@@ -566,11 +577,16 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         );
         break;
       }
-      if (deps.isRoutedInferenceProvider(provider)) {
+      const authoritativeReservationName = authoritativeResumeConfig
+        ? (sandboxName ?? (await deps.promptValidatedSandboxName(agent)))
+        : null;
+      if (authoritativeReservationName) sandboxName = authoritativeReservationName;
+      const routedInferenceProvider = deps.isRoutedInferenceProvider(provider);
+      if (routedInferenceProvider) {
         // #4564: re-upsert the gateway provider with the sandbox-facing
         // endpoint so a stale localhost base URL recorded by an earlier run is
         // repaired on resume instead of surviving and breaking inference.local.
-        const reupserted = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
+        const routedRepair = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
           assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
             provider: selectedProvider,
             model: selectedModel,
@@ -585,20 +601,63 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             );
             deps.exitProcess(1);
           }
-          return deps.reupsertRoutedProvider(
+          const reupserted = deps.reupsertRoutedProvider(
             gatewayName,
             selectedProvider,
             endpointUrl,
             credentialEnv,
           );
+          const reserved =
+            reupserted.ok && authoritativeReservationName
+              ? deps.reserveSandboxInferenceRoute(authoritativeReservationName, {
+                  provider: selectedProvider,
+                  model: selectedModel,
+                  endpointUrl: reupserted.endpointUrl,
+                  credentialEnv,
+                  preferredInferenceApi,
+                  gatewayName,
+                })
+              : null;
+          return { reupserted, reserved };
         });
+        const { reupserted, reserved } = routedRepair;
         if (!reupserted.ok) {
           deps.error(
             `  ${reupserted.message ?? "Failed to update the routed inference provider."}`,
           );
           deps.exitProcess(reupserted.status ?? 1);
         }
+        if (reserved === false) {
+          deps.error(
+            `  Failed to reserve inference route for sandbox '${authoritativeReservationName}'.`,
+          );
+          deps.exitProcess(1);
+        }
         endpointUrl = reupserted.endpointUrl;
+      }
+      if (authoritativeReservationName && !routedInferenceProvider) {
+        const reserved = await deps.withGatewayRouteMutationLock(gatewayName, () => {
+          assertProviderInferenceRouteCompatible(deps, gatewayName, authoritativeReservationName, {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl,
+            preferredInferenceApi,
+          });
+          return deps.reserveSandboxInferenceRoute(authoritativeReservationName, {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl,
+            credentialEnv,
+            preferredInferenceApi,
+            gatewayName,
+          });
+        });
+        if (!reserved) {
+          deps.error(
+            `  Failed to reserve inference route for sandbox '${authoritativeReservationName}'.`,
+          );
+          deps.exitProcess(1);
+        }
       }
       deps.skippedStepMessage("inference", `${provider} / ${model}`);
       await deps.recordStateSkipped("inference", {

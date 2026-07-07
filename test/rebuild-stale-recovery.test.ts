@@ -53,12 +53,14 @@ function createStaleFixture(
     liveListIncludesSandbox?: boolean;
     foreignGatewayActive?: boolean;
     gatewayName?: string | null;
+    failSandboxCreate?: boolean;
   } = {},
 ) {
   const {
     liveListIncludesSandbox = false,
     foreignGatewayActive = false,
     gatewayName = null,
+    failSandboxCreate = false,
   } = opts;
   const sandboxName = "my-assistant";
   const provider = "nvidia-prod";
@@ -159,6 +161,7 @@ const livenessProbeMarker = ${JSON.stringify(livenessProbeMarker)};
 if (a[0]==="-V" || a[0]==="--version")       { process.stdout.write("openshell 0.0.72\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { fs.writeFileSync(livenessProbeMarker, "1"); ${listBody} }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="create" && ${JSON.stringify(failSandboxCreate)}) { process.stderr.write("injected sandbox create failure\\n"); process.exit(1); }
 if (a[0]==="sandbox" && a[1]==="get")        { process.stderr.write("Error:   × Not Found: sandbox not found\\n"); process.exit(1); }
 if (a[0]==="status")                         { if (fs.existsSync(livenessProbeMarker)) { ${lateDriftStatus} } ${healthyTargetStatus} }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway Info\\n\\nGateway: ${targetGatewayName}\\nGateway endpoint: https://127.0.0.1:${targetGatewayPort}/\\n"); process.exit(0); }
@@ -331,11 +334,11 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
 
   it("preserves the registry entry when the recovery recreate fails", { timeout: 90_000 }, () => {
     // Stale recovery removes the registry entry before the recreate (the
-    // recreate re-adds it on success). The fixture's onboard --resume cannot
-    // complete, so the recreate fails — the entry must be restored so the
+    // recreate re-adds it on success). Inject a sandbox-create failure so the
+    // recreate fails — the entry must be restored so the
     // recommended `rebuild --yes` stays retryable instead of failing at
     // dispatch with "not found in registry" (#4497).
-    const f = createStaleFixture({ liveListIncludesSandbox: false });
+    const f = createStaleFixture({ liveListIncludesSandbox: false, failSandboxCreate: true });
     const result = runRebuild(f);
     const output = (result.stderr || "") + (result.stdout || "");
 

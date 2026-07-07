@@ -142,6 +142,7 @@ function createPhases(
         ok: true,
         endpointUrl: "https://example.test/v1",
       }),
+      reserveSandboxInferenceRoute: vi.fn(() => true),
       registryUpdateSandbox: vi.fn(),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       assessHost: () => ({ memoryGb: 64 }),
