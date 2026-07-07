@@ -176,6 +176,8 @@ exit 2
   }, 40_000);
 
   it.each([
+    ["mismatched embedded requestId", { requestId: "request-2" }],
+    ["missing embedded requestId", { requestId: "" }],
     ["mismatched public key", { publicKey: "wrong" }],
     ["non-cli client id", { clientId: "browser" }],
     ["non-cli client mode", { clientMode: "webchat" }],
@@ -619,6 +621,91 @@ exit 2
         "[auto-pair] initial CLI approve failed request=request-1: gateway restarting",
       );
       expect(run.stdout).toContain("[auto-pair] approved initial CLI pairing request=request-1");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 40_000);
+
+  it("drops a permanently-failing gated approve to slow-mode instead of 1s-looping to the deadline (#6113)", () => {
+    // cv #6330 item 2: the fast->slow transition must be reached even when the
+    // gated list/approve path keeps failing and `continue`s. With a near-zero
+    // FAST_DEADLINE the first iteration must emit the slow-mode transition
+    // (proving the check runs before the failure `continue`), and the watcher
+    // must exit within the short deadline rather than busy-polling at 1s.
+    // (`_env_seconds` rejects a literal 0 as non-positive, so use a tiny value.)
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-permfail-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const stateDir = path.join(tmpDir, "state");
+    const devicesDir = path.join(stateDir, "devices");
+    const identityDir = path.join(stateDir, "identity");
+    const pendingFile = path.join(devicesDir, "pending.json");
+    fs.mkdirSync(devicesDir, { recursive: true });
+    fs.mkdirSync(identityDir, { recursive: true });
+    const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
+    const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
+    fs.writeFileSync(
+      path.join(identityDir, "device.json"),
+      JSON.stringify({
+        deviceId,
+        publicKeyPem:
+          "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAy3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8=\n-----END PUBLIC KEY-----\n",
+      }),
+    );
+    fs.writeFileSync(
+      pendingFile,
+      JSON.stringify({
+        "request-1": {
+          requestId: "request-1",
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.pairing"],
+          ts: 100,
+        },
+      }),
+    );
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  printf '%s\\n' '{"ok":false,"error":{"reason":"pairing required: device is not approved yet (requestId: request-1)"}}'
+  exit 1
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  echo "gateway permanently unavailable" >&2
+  exit 1
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          OPENCLAW_STATE_DIR: stateDir,
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.01",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 30_000,
+      });
+
+      expect(run.status).toBe(0);
+      // The transition fired on the permanently-failing gated path (loop-top check).
+      expect(run.stdout).toContain(
+        "[auto-pair] fast-mode deadline reached; switching to slow-mode",
+      );
+      expect(run.stdout).toContain(
+        "[auto-pair] initial CLI approve failed request=request-1: gateway permanently unavailable",
+      );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

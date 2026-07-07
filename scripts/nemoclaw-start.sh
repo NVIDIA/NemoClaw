@@ -2573,6 +2573,12 @@ def initial_cli_request_is_allowlisted(request_id):
         request = pending.get(request_id)
         if not isinstance(request, dict):
             return False
+        # The map key is the authoritative request id. Reject a record whose
+        # embedded requestId is missing or disagrees with its key, so a
+        # malformed/tampered pending.json cannot approve a mismatched request.
+        # (PR #6330 review, cv item 3.)
+        if str(request.get('requestId', '') or '').strip() != str(request_id).strip():
+            return False
         device_id = str(identity.get('deviceId', '') or '').strip()
         public_key = _identity_public_key(identity)
         if not device_id or not public_key:
@@ -2776,6 +2782,16 @@ def sleep_for_next_poll(default_seconds, productive=True):
 
 
 while time.time() < DEADLINE:
+    # Fast-to-slow transition is checked at the TOP of every iteration — before
+    # any list/approve-failure `continue` below — so a permanently failing gated
+    # list/approve (or a sticky pending request) cannot hold the watcher in 1s
+    # polling for the full DEADLINE window; after FAST_DEADLINE it drops to
+    # SLOW_INTERVAL. Preventing that long-timeline re-creation of the
+    # NemoClaw#2484 connect-handler pile-up is exactly the point.
+    # (PR #6330 review, cv item 2.)
+    if not SLOW_MODE and time.time() >= FAST_DEADLINE:
+        SLOW_MODE = True
+        print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
         initial_request_id = pairing_required_request_id(out, err)
@@ -2808,16 +2824,6 @@ while time.time() < DEADLINE:
     pending = data.get('pending') or []
     paired = data.get('paired') or []
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
-
-    # Fast-deadline transition is checked here, BEFORE the pending-branch
-    # `continue`, so that a sticky pending request (rejected unknown client
-    # added to HANDLED, or a permanent approve failure) cannot hold the
-    # watcher in 1s polling for the full DEADLINE window — that would
-    # re-create the NemoClaw#2484 connect-handler pile-up on a much longer
-    # timeline.
-    if not SLOW_MODE and time.time() >= FAST_DEADLINE:
-        SLOW_MODE = True
-        print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
 
     if pending:
         QUIET_POLLS = 0
