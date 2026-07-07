@@ -2,14 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
-import { resolveAgentProviderInferenceApi } from "../inference/config";
+import {
+  resolveAgentDefaultCloudModel,
+  resolveAgentProviderInferenceApi,
+} from "../inference/config";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
 import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
-import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+import type {
+  NvidiaFeaturedModelSession,
+  NvidiaFeaturedModelSessionOptions,
+} from "./nvidia-featured-model-selection";
 import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./provider-host-state";
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
 import { providerNameToOptionKey } from "./provider-recovery";
@@ -60,7 +66,9 @@ export interface SetupNimFlowDeps {
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
   getNonInteractiveModel(providerKey: string): string | null;
-  createNvidiaFeaturedModelSession(): NvidiaFeaturedModelSession;
+  createNvidiaFeaturedModelSession(
+    options?: NvidiaFeaturedModelSessionOptions,
+  ): NvidiaFeaturedModelSession;
   detectInferenceProviderHostState(input: {
     gpu: InferenceProviderHostGpu | null | undefined;
     experimental: boolean;
@@ -328,7 +336,10 @@ export function createSetupNim(
     let compatibleEndpointReasoning: string | null = null;
     let allowToolsIncompatible = false;
     let reuseGatewayCredential = false;
-    const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession();
+    const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
+      defaultModel: resolveAgentDefaultCloudModel(agent),
+      writeLine: deps.log,
+    });
     const createSelectionState = (): SetupNimSelectionState => {
       const state: SetupNimSelectionState = {
         model,

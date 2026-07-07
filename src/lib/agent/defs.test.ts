@@ -125,6 +125,7 @@ describe("agent definitions", () => {
       format: "toml",
     });
     expect(deepAgentsCode.inference?.provider_type).toBe("openai_compatible");
+    expect(deepAgentsCode.inference?.default_model).toBe("nvidia/nemotron-3-ultra-550b-a55b");
     expect(deepAgentsCode.mcpCapability).toEqual({
       support: "bridge",
       adapter: "deepagents-config",
@@ -295,6 +296,24 @@ describe("agent definitions", () => {
     );
 
     expect(() => loadAgent(agentName)).toThrow(/inference\.provider_type/);
+  });
+
+  it.each([
+    "42",
+    '"bad model"',
+  ])("rejects invalid inference default models in manifests (%s)", (defaultModel) => {
+    const agentName = `invalid-inference-default-model-${String(Date.now())}-${defaultModel.length}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Inference Default",
+        "inference:",
+        `  default_model: ${defaultModel}`,
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/inference\.default_model/);
   });
 
   it("rejects invalid MCP bridge adapter declarations in manifests", () => {

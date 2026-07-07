@@ -136,6 +136,97 @@ afterEach(() => {
 });
 
 describe("createSetupNim", () => {
+  it("passes the Deep Agents manifest default to NVIDIA model selection", async () => {
+    const ultra = "nvidia/nemotron-3-ultra-550b-a55b";
+    const log = vi.fn();
+    const createNvidiaFeaturedModelSession = vi.fn<
+      SetupNimFlowDeps["createNvidiaFeaturedModelSession"]
+    >(() => ({ select: async () => unexpected("featured model selection") }));
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.model = ultra;
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({ createNvidiaFeaturedModelSession, handleRemoteProviderSelection, log }),
+    );
+    const dcodeAgent = {
+      name: "langchain-deepagents-code",
+      inference: { default_model: ultra },
+    } as AgentDefinition;
+
+    await setupNim(null, null, dcodeAgent);
+
+    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
+      defaultModel: ultra,
+      writeLine: log,
+    });
+  });
+
+  it("lets a same-gateway route constraint override the Deep Agents default before probing", async () => {
+    const ultra = "nvidia/nemotron-3-ultra-550b-a55b";
+    const sharedModel = "nvidia/nemotron-3-super-120b-a12b";
+    const providerProbe = vi.fn();
+    const select = vi.fn(async (requestedModel: string | null) => requestedModel ?? ultra);
+    const createNvidiaFeaturedModelSession = vi.fn<
+      SetupNimFlowDeps["createNvidiaFeaturedModelSession"]
+    >(() => ({ select }));
+    const routeGuard = vi.fn((route: { model: string | null }) => ({
+      requiredModel: route.model ? null : sharedModel,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    }));
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.provider = "nvidia-prod";
+        state.model = null;
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        state.assertRouteCompatible?.();
+        state.model = await state.nvidiaFeaturedModels!.select(
+          typeof state.model === "string" ? state.model : null,
+          null,
+          true,
+        );
+        state.assertRouteCompatible?.();
+        providerProbe(state.model);
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "build",
+        createNvidiaFeaturedModelSession,
+        handleRemoteProviderSelection,
+      }),
+    );
+    const dcodeAgent = {
+      name: "langchain-deepagents-code",
+      inference: { default_model: ultra },
+    } as AgentDefinition;
+
+    const result = await setupNim(null, "dcode", dcodeAgent, true, null, "nemoclaw", routeGuard);
+
+    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
+      defaultModel: ultra,
+      writeLine: expect.any(Function),
+    });
+    expect(select).toHaveBeenCalledWith(sharedModel, null, true);
+    expect(routeGuard.mock.calls[0]?.[0]).toMatchObject({ model: null });
+    expect(routeGuard.mock.calls.slice(1).map(([route]) => route.model)).toEqual([
+      sharedModel,
+      sharedModel,
+      sharedModel,
+    ]);
+    expect(providerProbe).toHaveBeenCalledWith(sharedModel);
+    expect(result.model).toBe(sharedModel);
+  });
+
   it("announces detected Ollama but still prompts and defaults to NVIDIA Endpoints (#6245)", async () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "");
     const step = vi.fn();

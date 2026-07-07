@@ -167,6 +167,10 @@ class CodexAuthScreen:
 class ModelSelectorScreen:
     def _select_with_auth_check(self, model_spec, provider): pass
 `,
+  "onboarding.py": `from __future__ import annotations
+
+def should_run_onboarding(state_dir=None): return True
+`,
   "widgets/approval.py": `from __future__ import annotations
 
 class ApprovalMenu:
