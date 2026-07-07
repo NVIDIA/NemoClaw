@@ -10,8 +10,18 @@ import { describe, expect, it, vi } from "vitest";
 import { createSession } from "../../../state/onboard-session";
 import { patchStagedDockerfile } from "../../dockerfile-patch";
 import { clearCompatibleEndpointReasoning } from "../../reasoning-mode";
-import { handleProviderInferenceState } from "./provider-inference";
-import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+import {
+  handleProviderInferenceState,
+  type ProviderInferenceStateOptions,
+} from "./provider-inference";
+import {
+  type Agent,
+  baseOptions,
+  baseSelection,
+  createDeps,
+  type Gpu,
+  type Host,
+} from "./provider-inference.test-support";
 
 describe("handleProviderInferenceState", () => {
   it("runs provider selection and inference setup on a fresh flow", async () => {
