@@ -4,18 +4,12 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-type RebuildModule = typeof import("./rebuild");
-
-const requireDist = createRequire(import.meta.url);
-const { buildRefreshMutableOpenClawConfigHashCommand } = requireDist(
-  "./rebuild.js",
-) as RebuildModule;
+import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash-command";
 
 function sha256Hex(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");

@@ -6,28 +6,11 @@
 // channel manifests, so a non-messaging sandbox rebuild cannot
 // carry messaging-plan state into the Dockerfile patch step.
 //
-// Loaded through the shared source require hook because the rebuild graph uses
-// runtime CommonJS dependencies that must share one cache for test spies.
-
-import { createRequire } from "node:module";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const requireSource = createRequire(import.meta.url);
-const D = (p: string) => requireSource(`../../${p}`);
-
-const defs = D("agent/defs.js");
-const messaging = D("messaging/index.js") as {
-  MessagingSetupApplier: { clearPlanEnv: () => void; writePlanToEnv: (plan: unknown) => void };
-};
-const { stageMessagingManifestPlanForRebuild } = D("actions/sandbox/rebuild.js") as {
-  stageMessagingManifestPlanForRebuild: (
-    sandboxName: string,
-    sandboxEntry: unknown,
-    rebuildAgent: string | null,
-    log: (msg: string) => void,
-  ) => Promise<unknown>;
-};
+import * as defs from "../../agent/defs";
+import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
+import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
 
 const emptyStoredMessagingPlan = {
   schemaVersion: 1,
@@ -53,7 +36,7 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
     const loadAgentSpy = vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "future-non-messaging-agent",
     });
-    const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
+    const clearPlanEnvSpy = vi.spyOn(MessagingSetupApplier, "clearPlanEnv");
 
     const messages: string[] = [];
     const result = await stageMessagingManifestPlanForRebuild(
@@ -76,9 +59,9 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "openclaw",
     });
-    const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
+    const clearPlanEnvSpy = vi.spyOn(MessagingSetupApplier, "clearPlanEnv");
     const writePlanEnvSpy = vi
-      .spyOn(messaging.MessagingSetupApplier, "writePlanToEnv")
+      .spyOn(MessagingSetupApplier, "writePlanToEnv")
       .mockImplementation(() => undefined);
 
     const messages: string[] = [];
@@ -107,8 +90,8 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "openclaw",
     });
-    const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
-    const writePlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "writePlanToEnv");
+    const clearPlanEnvSpy = vi.spyOn(MessagingSetupApplier, "clearPlanEnv");
+    const writePlanEnvSpy = vi.spyOn(MessagingSetupApplier, "writePlanToEnv");
 
     const sandboxEntryWithStoredPlan = {
       name: "openclaw-sandbox",
