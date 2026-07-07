@@ -461,7 +461,7 @@ describe("nemoclaw-start mutable config startup ordering", () => {
 });
 
 describe("nemoclaw-start mutable config seal classification", () => {
-  it("reports a non-root mutable directory as indeterminate", () => {
+  it("reports a non-root mutable directory as indeterminate (#6300)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-mutable-"));
     const configDir = path.join(root, ".openclaw");
     fs.mkdirSync(configDir, 0o2770);
@@ -473,7 +473,7 @@ describe("nemoclaw-start mutable config seal classification", () => {
     }
   });
 
-  it("requires both fixed files to match the exact root-owned sealed posture", () => {
+  it("requires both fixed files to match the exact root-owned sealed posture (#6300)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-owner-"));
     const configDir = path.join(root, ".openclaw");
     fs.mkdirSync(configDir, 0o755);
@@ -492,7 +492,7 @@ describe("nemoclaw-start mutable config seal classification", () => {
     }
   });
 
-  it("reports a missing config directory as indeterminate", () => {
+  it("reports a missing config directory as indeterminate (#6300)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-missing-"));
     try {
       expect(runClassify(path.join(root, ".openclaw")).stdout).toContain("rc=2");
@@ -501,7 +501,7 @@ describe("nemoclaw-start mutable config seal classification", () => {
     }
   });
 
-  it("reports a symlinked config directory as indeterminate", () => {
+  it("reports a symlinked config directory as indeterminate (#6300)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-symlink-"));
     const realDir = path.join(root, "real");
     const linkDir = path.join(root, ".openclaw");
