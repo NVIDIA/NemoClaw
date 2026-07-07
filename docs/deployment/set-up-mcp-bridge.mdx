@@ -207,6 +207,13 @@ The `env.missing` field is an array of recorded host variable names that are cur
 An existing valid provider can remain ready when that host variable is unset because OpenShell retains the credential.
 The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
 
+Provider presence, attachment, and credential-key checks read OpenShell metadata only; they cannot prove that OpenShell actually rewrites the `openshell:resolve:env:KEY` placeholder when a request leaves the sandbox.
+`mcp status <server>` therefore also runs a wire-level credential-resolution probe by default: it sends one idempotent MCP `initialize` request from inside the sandbox, wrapped in the adapter runtime so the generated `protocol: mcp` policy applies, carrying the placeholder authorization header exactly as agent traffic does.
+The verdict appears as `provider.credentialResolution` in JSON (`ok` true, false, or null with an optional `httpStatus` and redacted `detail`) and as a `credential resolution:` line in text output.
+`mcp add` runs the same probe once after the add commits and prints a warning on failure without failing the add.
+Pass `--no-probe` to skip the probe, or `--probe` to force it for every server in the multi-server status form; the bare `mcp list` and `mcp status` forms never probe so they stay fast.
+An HTTP 2xx verdict proves end-to-end resolution; HTTP 400, 401, or 403 means the upstream rejected the request on the same path agents use; endpoint outages, policy denials, timeouts, and unreachable sandboxes report `ok: null` so an endpoint problem is never blamed on the host's credential rewrite.
+
 ### Rotate a Credential
 
 Export the replacement value under the same host environment name used by `mcp add`, then restart that managed server:
@@ -258,6 +265,10 @@ Removing a server blocks new requests and reconnects, but it does not terminate 
 For immediate revocation, revoke the upstream credential first, then run `$$nemoclaw <sandbox> rebuild --yes` or destroy the sandbox to terminate an already-open response or SSE stream.
 
 ## Troubleshooting
+
+If `mcp status <server>` reports `credential resolution: FAILED` while provider presence, attachment, credential readiness, and adapter registration are all healthy, the OpenShell gateway on this host is not rewriting the `openshell:resolve:env:KEY` placeholder on egress, and every agent request to that MCP server receives the same authentication failure.
+This is a host-side OpenShell defect rather than a NemoClaw registration problem: verify the OpenShell installation on the host, and compare against a known-good host if one is available (tracked upstream as OpenShell issue 2161).
+A `credential resolution: unknown` verdict with an endpoint or policy detail means the probe could not reach a judgment; fix the reported endpoint or policy condition and rerun `mcp status <server>`.
 
 If `restart` reports a missing provider and the original credential is not registered in OpenShell, export the same variable name used during `add` and retry.
 

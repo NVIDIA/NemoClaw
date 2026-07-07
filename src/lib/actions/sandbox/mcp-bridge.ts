@@ -3,7 +3,11 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 import { addMcpBridge as addMcpBridgeLifecycle } from "./mcp-bridge-add-restart";
-import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
+import {
+  isAgentMcpAdapter,
+  type McpBridgeAddOptions,
+  McpBridgeError,
+} from "./mcp-bridge-contracts";
 import {
   finalizeMcpBridgesAfterSandboxDelete as finalizeMcpBridgesAfterSandboxDeleteLifecycle,
   prepareMcpBridgesForAbsentSandboxDestroy as prepareMcpBridgesForAbsentSandboxDestroyLifecycle,
@@ -19,8 +23,12 @@ import {
 } from "./mcp-bridge-rebuild";
 import { removeMcpBridge as removeMcpBridgeLifecycle } from "./mcp-bridge-remove";
 import { renderMcpBridgeList, renderMcpBridgeStatus } from "./mcp-bridge-render";
+import {
+  credentialResolutionFailureWarning,
+  probeCredentialResolution,
+} from "./mcp-bridge-resolution-probe";
 import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
-import { getSandboxAgent, getSandboxOrThrow } from "./mcp-bridge-state";
+import { bridgeState, getSandboxAgent, getSandboxOrThrow } from "./mcp-bridge-state";
 import { buildJsonSummary, statusMcpBridge } from "./mcp-bridge-status";
 import { parseMcpAddArgs } from "./mcp-bridge-validation";
 
@@ -176,6 +184,41 @@ function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {
   };
 }
 
+function parseProbeFlags(args: string[]): { probe?: boolean; rest: string[] } {
+  if (args.includes("--probe") && args.includes("--no-probe")) {
+    throw new McpBridgeError("Pass at most one of --probe / --no-probe.", 2);
+  }
+  const probe = args.includes("--probe") ? true : args.includes("--no-probe") ? false : undefined;
+  return { probe, rest: args.filter((arg) => arg !== "--probe" && arg !== "--no-probe") };
+}
+
+/**
+ * Post-add wire probe (#6379). Reports only — the add transaction committed
+ * durably and a resolution failure is a host-side OpenShell defect, so a
+ * nonzero exit here would break scripted adds mid-remediation; `mcp status
+ * <server>` remains the authoritative recheck.
+ */
+function reportAddCredentialResolution(sandboxName: string, server: string): void {
+  const sandbox = getSandboxOrThrow(sandboxName);
+  const entry = bridgeState(sandbox)[server];
+  if (!entry) return;
+  const adapter = isAgentMcpAdapter(entry.adapter)
+    ? entry.adapter
+    : getSandboxAgent(sandbox).mcpCapability.adapter;
+  const probe = probeCredentialResolution(sandboxName, entry, adapter);
+  if (probe.ok === true) {
+    console.log(`  Credential resolution verified on the wire (HTTP ${probe.httpStatus}).`);
+  } else if (probe.ok === false) {
+    console.error(
+      `  WARNING: ${credentialResolutionFailureWarning(entry.env[0], probe.httpStatus)}`,
+    );
+  } else {
+    console.log(
+      `  Credential resolution probe was inconclusive${probe.detail ? `: ${probe.detail}` : "."}`,
+    );
+  }
+}
+
 function requireNoExtraArgs(args: string[], usage: string): void {
   if (args.length > 0) throw new McpBridgeError(usage, 2);
 }
@@ -198,6 +241,7 @@ function renderMcpHelp(subcommand: string): void {
 FLAGS
   --url URL        MCP Streamable HTTP endpoint
   --env KEY        Required host credential reference registered with OpenShell
+  --no-probe       Skip the post-add wire-level credential-resolution probe
 
 SECURITY
   Credentials are registered as an OpenShell provider and appear inside the
@@ -213,10 +257,12 @@ FLAGS
       return;
     case "status":
       console.log(`USAGE
-  nemoclaw <name> mcp status [server] [--json]
+  nemoclaw <name> mcp status [server] [--json] [--probe|--no-probe]
 
 FLAGS
-  --json  Emit MCP server status as JSON`);
+  --json      Emit MCP server status as JSON
+  --probe     Force the wire-level credential-resolution probe for every server
+  --no-probe  Skip the probe (it defaults on only when a single server is named)`);
       return;
     case "restart":
       console.log(`USAGE
@@ -251,9 +297,11 @@ export async function dispatchMcpBridgeCommand(
     }
     switch (subcommand) {
       case "add": {
-        const options = parseMcpAddArgs(rest);
+        const { probe, rest: addRest } = parseProbeFlags(rest);
+        const options = parseMcpAddArgs(addRest);
         await addMcpBridge(sandboxName, options);
         console.log(`  MCP server '${options.server}' added to sandbox '${sandboxName}'.`);
+        if (probe !== false) reportAddCredentialResolution(sandboxName, options.server);
         return;
       }
       case "list": {
@@ -268,14 +316,17 @@ export async function dispatchMcpBridgeCommand(
         return;
       }
       case "status": {
-        const { json, rest: statusRest } = parseJsonFlag(rest);
+        const { json, rest: statusJsonRest } = parseJsonFlag(rest);
+        const { probe, rest: statusRest } = parseProbeFlags(statusJsonRest);
         const server = requireAtMostOneArg(
           statusRest,
-          "Usage: nemoclaw <sandbox> mcp status [server] [--json]",
+          "Usage: nemoclaw <sandbox> mcp status [server] [--json] [--probe|--no-probe]",
         );
         const sandbox = getSandboxOrThrow(sandboxName);
         const agent = getSandboxAgent(sandbox);
-        const statuses = await statusMcpBridge(sandboxName, server);
+        const statuses = await statusMcpBridge(sandboxName, server, {
+          probeCredentialResolution: probe ?? server !== undefined,
+        });
         if (json) {
           console.log(
             JSON.stringify(

@@ -22,6 +22,10 @@ import {
   providerShapeDetail,
 } from "./mcp-bridge-provider";
 import {
+  credentialResolutionFailureWarning,
+  probeCredentialResolution,
+} from "./mcp-bridge-resolution-probe";
+import {
   bridgeState,
   ensureSandboxGatewaySelected,
   getSandboxAgent,
@@ -117,9 +121,19 @@ function getAdapterRegistration(
   };
 }
 
+export interface McpBridgeStatusOptions {
+  /**
+   * Run the wire-level credential-resolution probe for each entry (#6379).
+   * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
+   * the dispatch layer enables it only where the operator asked for it.
+   */
+  probeCredentialResolution?: boolean;
+}
+
 export async function statusMcpBridge(
   sandboxName: string,
   server?: string,
+  options: McpBridgeStatusOptions = {},
 ): Promise<McpBridgeStatus[]> {
   validateSandboxName(sandboxName);
   if (server !== undefined) validateMcpServerName(server);
@@ -208,6 +222,21 @@ export async function statusMcpBridge(
     }
     const unsafeCredentialMayBeAttached =
       !!credentialWarning && !!entry?.providerName && attached !== false;
+    const credentialResolution =
+      options.probeCredentialResolution && entry
+        ? unsafeCredentialMayBeAttached
+          ? {
+              ok: null,
+              detail:
+                "probe skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
+            }
+          : probeCredentialResolution(sandboxName, entry, support.adapter)
+        : undefined;
+    if (credentialResolution?.ok === false) {
+      warnings.push(
+        credentialResolutionFailureWarning(entry?.env[0], credentialResolution.httpStatus),
+      );
+    }
     return {
       server: name,
       agent: entry?.agent ?? agent.name,
@@ -230,6 +259,7 @@ export async function statusMcpBridge(
         attached,
         credentialReady: entry ? providerCredentialReady : null,
         ...(providerDetail ? { detail: providerDetail } : {}),
+        ...(credentialResolution ? { credentialResolution } : {}),
       },
       policy: {
         name: entry?.policyName,
