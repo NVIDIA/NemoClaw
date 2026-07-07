@@ -11,6 +11,7 @@ import {
   MCP_BRIDGE_POLICY_SOURCE,
   McpBridgeError,
 } from "./mcp-bridge-contracts";
+import { validateSandboxName } from "./mcp-bridge-validation";
 
 export function nowIso(): string {
   return new Date().toISOString();
@@ -139,8 +140,29 @@ export function assertMcpDestroyNotPending(sandbox: SandboxEntry): void {
  *
  * Returns whether the marker was actually cleared, so callers can log
  * accurately (no-op vs. cleared).
+ *
+ * Product contract (#6376), intentionally narrow:
+ *   invalidState: a crash/abort mid-destroy leaves durable `destroyPreparedAt`
+ *     and/or `destroyPendingAt` markers that fail every MCP command and rebuild.
+ *   sourceBoundary: the markers are host-owned registry state; the sandbox does
+ *     not write them. `destroyPreparedAt` = sandbox still exists (recoverable);
+ *     `destroyPendingAt` = OpenShell already deleted the sandbox (not
+ *     recoverable in place — global provider/policy cleanup is still owed).
+ *   sourceFixConstraint: there is no safe non-destructive reconciliation for the
+ *     pending/both-marker live state, so this helper refuses it rather than
+ *     guess. Prepared-only markers are recoverable with `mcp remove --force`;
+ *     pending/both-marker state must finish `nemoclaw <name> destroy`.
+ *   regressionTest: mcp-bridge-destroy-marker-recovery.test.ts (phase-aware
+ *     clear/refuse, clear-only-after-proven-recovery, preserve-on-failure) and
+ *     mcp-destroy-lifecycle.test.ts (phase-aware guard message).
+ *   removalCondition: revisit if a safe pending-phase reconciliation is designed
+ *     (proving the still-owed provider/policy cleanup is complete) — then this
+ *     refusal could be relaxed.
  */
 export function clearMcpDestroyMarkers(sandboxName: string): boolean {
+  // Validate the name before any registry read/update — this helper mutates
+  // durable state and must not trust an unvalidated identifier.
+  validateSandboxName(sandboxName);
   const sandbox = registry.getSandbox(sandboxName);
   const mcpState = sandbox?.mcp;
   if (!mcpState?.destroyPreparedAt && !mcpState?.destroyPendingAt) return false;

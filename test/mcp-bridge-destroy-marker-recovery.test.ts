@@ -199,6 +199,49 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
     expect(parsed.mcp?.destroyPendingAt).toBeUndefined();
   });
 
+  it("does NOT clear the prepared marker on a wrong-server --force no-op (other entries remain)", async () => {
+    const home = createTempHome("nemoclaw-force-wrong-server-");
+    // PRA-2: `--force` removing a server that is NOT registered (while other
+    // entries exist) is a no-op, not a proven recovery. The prepared marker must
+    // survive — clearing it here would drop the retry state on a mistyped name.
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+registry.registerSandbox({
+  name: "stuck-sandbox",
+  agent: "openclaw",
+  mcp: {
+    bridges: { github: ${GITHUB_BRIDGE} },
+    managedServerNames: ["github"],
+    destroyPreparedAt: "2026-06-27T01:00:00.000Z",
+  },
+});
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+bridge.removeMcpBridge("stuck-sandbox", "not-registered", { force: true }).then(
+  () => {
+    const after = registry.getSandbox("stuck-sandbox");
+    process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({ ok: true, mcp: after && after.mcp }));
+    process.exit(0);
+  },
+  (error) => {
+    process.stderr.write(String(error && error.message || error));
+    process.exit(1);
+  },
+);
+`;
+    const result = runNodeScript(home, script);
+    expect(result.status).toBe(0);
+    const jsonMarker = "<<REPRO_JSON>>";
+    const parsed = JSON.parse(
+      result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
+    ) as { ok: boolean; mcp: SandboxMcpSnapshot | undefined };
+    expect(parsed.ok).toBe(true);
+    // The no-op did not clear the durable retry marker ...
+    expect(parsed.mcp?.destroyPreparedAt).toBe("2026-06-27T01:00:00.000Z");
+    // ... and the recovery log must NOT have printed.
+    expect(result.stdout).not.toContain("Cleared incomplete MCP destroy transaction");
+  });
+
   it("REFUSES --force on a pending destroy (sandbox already deleted) and preserves the marker", async () => {
     const home = createTempHome("nemoclaw-force-pending-refuse-");
     const script = `
