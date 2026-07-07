@@ -79,7 +79,8 @@ This agent-specific default does not change the shared Nemotron 3 Super default 
 NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
 Deep Agents Code reaches `inference.local` through the managed OpenShell L7 proxy rather than direct sandbox DNS.
 The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
-Managed interactive sessions skip Deep Agents Code's upstream first-run onboarding and model picker, then open the TUI with the model selected during NemoClaw onboarding.
+Managed interactive sessions keep Deep Agents Code's optional first-run name prompt, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
+Press Enter at the name prompt to continue without setting a name.
 
 ## Choose the Default Sandbox
 
