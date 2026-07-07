@@ -549,6 +549,27 @@ function normalizeEndpointUrlShape(value: string): { url: URL; normalized: strin
   };
 }
 
+// Canonical equality of an operator-supplied endpoint URL against the trusted,
+// onboard-established endpoint recorded for this sandbox. Both are shape-normalized
+// (no DNS resolution) so trivial formatting differences (trailing slash, query,
+// fragment) don't matter, while a credentialed or non-http(s) URL — or the
+// absence of a trusted baseline — is never a match and falls through to the full
+// SSRF guard. Returns the normalized supplied URL on match, else null.
+function matchesTrustedEndpoint(
+  suppliedUrl: string | null | undefined,
+  trustedEndpointUrl: string | null,
+): string | null {
+  const supplied = typeof suppliedUrl === "string" ? suppliedUrl.trim() : "";
+  if (!supplied || !trustedEndpointUrl) return null;
+  try {
+    const suppliedShape = normalizeEndpointUrlShape(supplied);
+    const trustedShape = normalizeEndpointUrlShape(trustedEndpointUrl);
+    return suppliedShape.normalized === trustedShape.normalized ? suppliedShape.normalized : null;
+  } catch {
+    return null;
+  }
+}
+
 // Message prefix for the SSRF/DNS-pinning rejection thrown below. Kept as a
 // shared constant so the catch in explicitCustomProviderMetadata can recognise
 // exactly this case (and only this case) when it appends switch-model guidance.
@@ -639,6 +660,7 @@ async function explicitCustomProviderMetadata(
   options: InferenceSetOptions,
   rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
   sandboxAlreadyOnProvider: boolean,
+  trustedEndpointUrl: string | null,
 ): Promise<RegistryInferenceMetadata | null> {
   if (!hasExplicitCustomMetadata(options)) return null;
   if (!isCustomCompatibleProvider(provider)) {
@@ -653,64 +675,53 @@ async function explicitCustomProviderMetadata(
   // trust guarantee. Treat these explicit flags as the durable metadata source
   // for this switch, after URL and credential-env validation, instead of
   // borrowing from an unrelated onboard session or global OpenShell provider.
+  //
+  // #6321 facet 2 — accept the endpoint onboarding already established for THIS
+  // sandbox without re-running the SSRF guard, while still rejecting any different
+  // (including different internal) endpoint.
+  //   invalidState (the reporter's bug): re-supplying the same internal-resolving
+  //     URL onboarding accepted trips the host DNS-pinning SSRF guard and
+  //     dead-ends the command, even though onboard already established that route.
+  //   sourceBoundary: the trusted baseline is `entry.endpointUrl`, persisted into
+  //     the host-owned sandbox registry at onboard time (5b001aa5f) and passed in
+  //     as trustedEndpointUrl only when the sandbox is already on this provider.
+  //     It is host-written, not sandbox-controllable.
+  //   fix: when the supplied --endpoint-url canonically equals that trusted
+  //     endpoint, use it without the DNS guard — re-validating an unchanged,
+  //     already-established route adds no protection. Any other URL (including a
+  //     different internal one) still goes through the full guard below, so SSRF
+  //     protection for genuinely new endpoints is unchanged.
   let endpointUrl: string;
-  try {
-    endpointUrl = await normalizeCustomEndpointUrl(options.endpointUrl, rewriteUrlWithDnsPinning);
-  } catch (error) {
-    // #6321 facet 2 — guidance, not relaxation. The SSRF guard correctly
-    // blocks an endpoint that resolves to an internal/RFC1918 address; do NOT
-    // weaken it. But when the sandbox is ALREADY on this provider, the caller
-    // almost always only wants to switch the model — which does not require
-    // --endpoint-url at all (the OpenShell gateway keeps the endpoint onboard
-    // registered; `inference set` never repoints it). onboard establishes that
-    // route without this host-side guard, so re-supplying the same internal URL
-    // here just trips a guard that changes nothing. Turn the dead-end into an
-    // actionable path: tell the operator to drop --endpoint-url for a
-    // same-provider model switch. Genuinely changing to a different endpoint
-    // still (correctly) goes through onboarding, where the operator supplies the
-    // new endpoint and it is reviewed against the intended provider setup.
-    // (rebuild has no endpoint flag and reuses the recorded endpoint/session
-    // state, so it cannot point the sandbox at a different endpoint.)
-    // Only augment the SSRF/DNS-pinning rejection (the `endpoint-url is not
-    // allowed: ...` case). Other InferenceSetErrors from normalizeCustomEndpointUrl
-    // — a missing URL ("endpoint-url is required ...") or a malformed one — would
-    // read as contradictory advice ("required ... omit --endpoint-url"), so leave
-    // those untouched.
-    //
-    // invalidState: operator re-supplies the same internal-resolving endpoint URL
-    //   onboarding already accepted, only wanting a model switch, and the SSRF
-    //   guard dead-ends the command with no next step.
-    // sourceBoundary: NemoClaw owns the host-side inference-set UX; the SSRF guard
-    //   (rewriteConfigUrlsWithDnsPinning) is a security boundary and is NOT relaxed
-    //   here — this only rewrites the error into actionable guidance.
-    // whyNotSourceFix: the ideal fix (accept the *same* URL onboarding established
-    //   while still rejecting different internal endpoints) needs a durable,
-    //   host-trusted per-sandbox endpoint identity. That does not exist today:
-    //   the endpoint is not persisted on the sandbox registry entry, the onboard
-    //   session is overwritten by the next onboard, and OpenShell does not expose
-    //   the gateway provider's registered base URL. Matching on an untrusted value
-    //   would weaken SSRF, so guidance is the safe scope for #6321.
-    // regressionTest: inference-set-provider-alias.test.ts — "keeps the SSRF guard
-    //   AND adds an actionable hint …" and the guidance/no-mutation cases.
-    // removalCondition: replace this guidance with a real same-endpoint match when
-    //   NemoClaw/OpenShell persists or exposes a trusted per-sandbox endpoint
-    //   identity that proves an explicit URL is unchanged from onboarding while
-    //   still rejecting different private/internal endpoints (tracked separately).
-    if (
-      sandboxAlreadyOnProvider &&
-      error instanceof InferenceSetError &&
-      error.message.startsWith(ENDPOINT_URL_NOT_ALLOWED_PREFIX)
-    ) {
-      throw new InferenceSetError(
-        `${error.message} This sandbox is already configured for '${provider}'. ` +
-          `To switch only the model, omit --endpoint-url — inference set reuses the endpoint ` +
-          `onboarding already established (the gateway route is not changed by inference set). ` +
-          `To point the sandbox at a different endpoint, re-run onboarding with the new endpoint ` +
-          `(rebuild reuses the recorded endpoint and cannot change it).`,
-        error.exitCode,
-      );
+  const trustedMatch = matchesTrustedEndpoint(options.endpointUrl, trustedEndpointUrl);
+  if (trustedMatch) {
+    endpointUrl = trustedMatch;
+  } else {
+    try {
+      endpointUrl = await normalizeCustomEndpointUrl(options.endpointUrl, rewriteUrlWithDnsPinning);
+    } catch (error) {
+      // The supplied endpoint is NOT the one onboarding established for this
+      // sandbox (or none is recorded). Keep the SSRF guard authoritative; when
+      // the sandbox is already on this provider, turn the dead-end into guidance:
+      // omit --endpoint-url to reuse the established endpoint for a model-only
+      // switch. Only augment the SSRF/DNS-pinning rejection (the `endpoint-url is
+      // not allowed: ...` case); a missing URL ("endpoint-url is required ...") or
+      // a malformed one would read as contradictory advice, so leave those alone.
+      if (
+        sandboxAlreadyOnProvider &&
+        error instanceof InferenceSetError &&
+        error.message.startsWith(ENDPOINT_URL_NOT_ALLOWED_PREFIX)
+      ) {
+        throw new InferenceSetError(
+          `${error.message} This sandbox is already configured for '${provider}'. ` +
+            `To switch only the model, omit --endpoint-url — inference set reuses the endpoint ` +
+            `onboarding already established (the gateway route is not changed by inference set). ` +
+            `To point the sandbox at a different endpoint, re-run onboarding with the new endpoint ` +
+            `(rebuild reuses the recorded endpoint and cannot change it).`,
+          error.exitCode,
+        );
+      }
+      throw error;
     }
-    throw error;
   }
   return {
     endpointUrl,
@@ -828,6 +839,7 @@ async function runInferenceSetWithoutHostLock(
     );
   }
   const session = deps.loadSession();
+  const sandboxAlreadyOnProvider = entry.provider === provider;
   const explicitMetadata = await explicitCustomProviderMetadata(
     provider,
     options,
@@ -835,7 +847,11 @@ async function runInferenceSetWithoutHostLock(
     // #6321 facet 2: when the sandbox is already on this provider, an
     // SSRF-blocked --endpoint-url gets an actionable "omit it to switch model"
     // hint instead of a dead-end (see explicitCustomProviderMetadata).
-    entry.provider === provider,
+    sandboxAlreadyOnProvider,
+    // Trusted, onboard-established endpoint for this sandbox (host-owned registry).
+    // Only meaningful when the sandbox is already on this provider; a provider
+    // switch must re-establish its own endpoint through onboarding.
+    sandboxAlreadyOnProvider ? (entry.endpointUrl ?? null) : null,
   );
   const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
   if (

@@ -347,6 +347,81 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     expectNoInferenceMutation(deps.calls);
   });
 
+  it("accepts the SAME onboard-established internal endpoint URL without re-running the SSRF guard (#6321)", async () => {
+    // `entry.endpointUrl` is the trusted endpoint onboarding persisted for this
+    // sandbox. Re-supplying that exact internal URL for a model switch must now
+    // succeed (onboard already established this route) — the identity match
+    // bypasses the DNS-pinning guard entirely, so the reporter's same-URL switch
+    // works instead of dead-ending.
+    const guard = ssrfGuard();
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      rewriteConfigUrlsWithDnsPinning: guard,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "nvidia/model-b",
+          // Same internal URL onboarding recorded, even a trailing-slash variant.
+          endpointUrl: "https://inference-api.nvidia.com/v1/",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).resolves.toBeTruthy();
+    // The already-established endpoint was accepted by canonical identity match,
+    // so the DNS-pinning SSRF guard was never consulted for it.
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+  });
+
+  it("still blocks a DIFFERENT internal endpoint even on a same-provider sandbox (no blanket exemption) (#6321)", async () => {
+    // The identity match is exact: `entry.endpointUrl` is inference-api.nvidia.com,
+    // but the operator supplies a *different* internal URL. That is not the
+    // established endpoint, so the SSRF guard must still block it — the fix does
+    // not hand the sandbox a way to reach arbitrary internal services.
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
+    });
+
+    const attempt = runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "nvidia/model-b",
+        endpointUrl: "https://10.0.0.5/v1",
+        noVerify: true,
+      },
+      deps,
+    );
+    await expect(attempt).rejects.toThrow(
+      /endpoint-url is not allowed:.*private\/internal address/,
+    );
+    expectNoInferenceMutation(deps.calls);
+  });
+
   it("switches the model WITHOUT --endpoint-url on a same-provider sandbox (the guided path works, guard never runs)", async () => {
     // Proves the hint's advice is real: dropping --endpoint-url reuses the
     // established route and the model switch succeeds without touching the guard.

@@ -104,7 +104,7 @@ $$nemoclaw inference set --provider compatible-endpoint --model <model-name>
 $$nemoclaw inference set --provider compatible-anthropic-endpoint --model <model-name>
 ```
 
-To change only the model on a sandbox that is already on this provider, omit `--endpoint-url`. `inference set` reuses the endpoint that onboarding established and does not repoint the gateway route, so re-supplying the original URL is unnecessary — and if that URL resolves to an internal address, the host-side SSRF guard blocks it. When that happens the command explains that dropping `--endpoint-url` performs the model-only switch. To point the sandbox at a genuinely different endpoint, re-run `$$nemoclaw onboard` with the new endpoint (rebuild reuses the recorded endpoint and cannot change it).
+To change only the model on a sandbox that is already on this provider, you can omit `--endpoint-url` — `inference set` reuses the endpoint that onboarding established and does not repoint the gateway route. You may also re-supply that exact endpoint: `inference set` recognizes the URL onboarding recorded for this sandbox and accepts it even when it resolves to an internal address, because onboarding already established that route. A **different** endpoint that resolves to a private or internal address is still rejected by the host-side SSRF guard; to point the sandbox at a genuinely different endpoint, re-run `$$nemoclaw onboard` with the new endpoint (rebuild reuses the recorded endpoint and cannot change it).
 
 <AgentOnly variant="hermes">
 
