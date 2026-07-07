@@ -18,7 +18,7 @@ For more detailed release notes, refer to the [NemoClaw GitHub announcements](ht
 
 ## v0.0.75
 
-NemoClaw v0.0.75 hardens sandbox upgrade and prepared-backup recovery, custom endpoint inference routing, and local gateway credential handling, alongside a large test-performance effort that shortens the suite without changing runtime behavior.
+NemoClaw v0.0.75 hardens sandbox upgrade and prepared-backup recovery, custom endpoint inference routing, and local gateway credential handling.
 
 - Upgrading an existing install now recovers a previously onboarded sandbox instead of failing when the recreated gateway has not yet reconfigured its inference route.
   Prepared-backup recovery restores gateway state before the rebuild and defers the live route check to onboarding, in-place upgrades recover gateway-orphaned sandboxes, and a same-name `--fresh` re-onboard preserves the newly selected LangChain Deep Agents Code routing.
