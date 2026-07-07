@@ -667,8 +667,10 @@ async function explicitCustomProviderMetadata(
     // here just trips a guard that changes nothing. Turn the dead-end into an
     // actionable path: tell the operator to drop --endpoint-url for a
     // same-provider model switch. Genuinely changing to a different endpoint
-    // still (correctly) goes through onboard/rebuild, where the change is
-    // reviewed against the intended provider setup.
+    // still (correctly) goes through onboarding, where the operator supplies the
+    // new endpoint and it is reviewed against the intended provider setup.
+    // (rebuild has no endpoint flag and reuses the recorded endpoint/session
+    // state, so it cannot point the sandbox at a different endpoint.)
     // Only augment the SSRF/DNS-pinning rejection (the `endpoint-url is not
     // allowed: ...` case). Other InferenceSetErrors from normalizeCustomEndpointUrl
     // — a missing URL ("endpoint-url is required ...") or a malformed one — would
@@ -683,7 +685,8 @@ async function explicitCustomProviderMetadata(
         `${error.message} This sandbox is already configured for '${provider}'. ` +
           `To switch only the model, omit --endpoint-url — inference set reuses the endpoint ` +
           `onboarding already established (the gateway route is not changed by inference set). ` +
-          `To point the sandbox at a different endpoint, re-run onboarding or rebuild.`,
+          `To point the sandbox at a different endpoint, re-run onboarding with the new endpoint ` +
+          `(rebuild reuses the recorded endpoint and cannot change it).`,
         error.exitCode,
       );
     }

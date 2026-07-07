@@ -20,6 +20,7 @@ import {
   runInferenceSet,
 } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
+import { shellQuote } from "../core/shell-quote";
 
 // onboard's provider config is the source of truth the local alias map must
 // stay in sync with. Imported here (test only — not into the inference-set hot
@@ -121,6 +122,48 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
       runInferenceSet({ provider: "totally-made-up", model: "nvidia/model-a" }, deps),
     ).rejects.toThrow(/Unsupported provider 'totally-made-up'/);
   });
+
+  it("hands OpenShell the exact `compatible-anthropic-endpoint` name, never the `anthropicCompatible` alias (#6321)", async () => {
+    // The alias must be normalized on the host before any gateway call — the
+    // OpenShell provider registry only knows the canonical name, so the installer
+    // alias must never reach the `openshell inference set` argv.
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/anthropic/model-a" } } },
+        models: { providers: { inference: { api: "anthropic-messages", models: [] } } },
+      },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-anthropic-endpoint",
+        model: "anthropic/model-a",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      },
+      session: baseSession({
+        provider: "compatible-anthropic-endpoint",
+        model: "anthropic/model-a",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "anthropicCompatible", model: "anthropic/model-b", noVerify: true },
+        deps,
+      ),
+    ).resolves.toBeTruthy();
+
+    const openshellArgs = deps.calls.captureOpenshell.mock.calls
+      .map((call) => call[0])
+      .flat()
+      .map(String);
+    expect(openshellArgs).toContain("compatible-anthropic-endpoint");
+    expect(openshellArgs).not.toContain("anthropicCompatible");
+  });
 });
 
 describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
@@ -158,6 +201,30 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
         deps,
       ),
     ).rejects.toThrow(/supports OpenClaw and Hermes sandboxes; 'spark-sb' uses 'spark'\.$/);
+  });
+
+  it("shell-quotes the sandbox name in the dcode re-onboard hint (#6321)", async () => {
+    // The hint embeds the sandbox name inside a copy-pasteable `onboard` command.
+    // validateName currently restricts names to a metacharacter-free shape, so
+    // shellQuote is defense-in-depth: it must still wrap the name so the command
+    // stays safe if a name ever reaches this path unvalidated or the name policy
+    // loosens. Lock in that the wrapper is applied (single-quoted form present),
+    // not raw interpolation.
+    const name = "dcode-sb";
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: { name, agent: "langchain-deepagents-code" },
+    });
+    const error = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-a", sandboxName: name },
+      deps,
+    ).catch((caught: unknown) => caught as Error);
+
+    // shellQuote always single-quotes, so the hint carries the quoted form.
+    expect(shellQuote(name)).toBe("'dcode-sb'");
+    expect(error.message).toContain(`--name ${shellQuote(name)} --fresh`);
+    // The bare, unquoted name must not sit directly after --name.
+    expect(error.message).not.toContain(`--name ${name} --fresh`);
   });
 });
 
