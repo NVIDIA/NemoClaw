@@ -59,6 +59,21 @@ export const MCP_PROBE_CONTROL_BEARER = "nemoclaw-mcp-probe-control-unresolvable
 // timeout instead of an ambiguous SSH failure.
 const PROBE_CURL_MAX_TIME_SECONDS = 6;
 
+/**
+ * Sourcing /tmp/nemoclaw-proxy-env.sh can export the OpenClaw gateway
+ * credentials and break-glass toggles alongside the proxy variables the probe
+ * actually needs. These are unset immediately after sourcing, before the
+ * first child process, so neither the adapter runtime nor curl inherits them
+ * (same sanitize set nemoclaw-start uses for un-managed openclaw children).
+ */
+export const PROBE_SANITIZED_ENV_VARS = [
+  "OPENCLAW_GATEWAY_URL",
+  "OPENCLAW_GATEWAY_PORT",
+  "OPENCLAW_GATEWAY_TOKEN",
+  "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
+  "NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
+] as const;
+
 export interface CredentialResolutionProbe {
   /**
    * true = placeholder resolved on the wire; null = inconclusive or skipped
@@ -161,6 +176,8 @@ export function buildCredentialResolutionProbeCommand(
   return [
     // SSH sessions can miss the sandbox proxy environment (#2704).
     "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh || true",
+    // Must stay between the sourcing above and the first child below.
+    `unset ${PROBE_SANITIZED_ENV_VARS.join(" ")} || true`,
     runtimeWrappedCommand(adapter, placeholderCurl),
     "rc=$?",
     `printf '\\n${MCP_PROBE_EXIT_MARKER}%s\\n' "$rc"`,

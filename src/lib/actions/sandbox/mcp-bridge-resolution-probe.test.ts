@@ -22,6 +22,7 @@ import {
   MCP_PROBE_CONTROL_HTTP_MARKER,
   MCP_PROBE_EXIT_MARKER,
   MCP_PROBE_HTTP_MARKER,
+  PROBE_SANITIZED_ENV_VARS,
   probeCredentialResolution,
 } from "./mcp-bridge-resolution-probe";
 
@@ -72,6 +73,20 @@ describe("MCP credential-resolution probe command", () => {
     expect(command).toContain(MCP_PROBE_HTTP_MARKER);
     expect(command).toContain(MCP_PROBE_CONTROL_HTTP_MARKER);
     expect(command?.trimEnd().endsWith("exit 0")).toBe(true);
+  });
+
+  it("unsets gateway credentials after sourcing proxy env and before any child process (#6379)", () => {
+    for (const adapter of ["mcporter", "hermes-config", "deepagents-config"] as const) {
+      const command = buildCredentialResolutionProbeCommand(baseEntry, adapter);
+      expect(command).not.toBeNull();
+      const sourceIndex = command?.indexOf(". /tmp/nemoclaw-proxy-env.sh") ?? -1;
+      const unsetIndex = command?.indexOf(`unset ${PROBE_SANITIZED_ENV_VARS.join(" ")}`) ?? -1;
+      const firstChildIndex = command?.indexOf("curl") ?? -1;
+      expect(sourceIndex).toBeGreaterThan(-1);
+      expect(unsetIndex).toBeGreaterThan(sourceIndex);
+      expect(firstChildIndex).toBeGreaterThan(unsetIndex);
+      expect(command).toContain("OPENCLAW_GATEWAY_TOKEN");
+    }
   });
 
   it("never captures or prints the endpoint response body (#6379)", () => {
