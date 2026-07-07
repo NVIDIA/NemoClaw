@@ -34,7 +34,6 @@ const inferenceInputCapability = require("./onboard/inference-input-capability")
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
 const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = require("./onboard/tool-disclosure-flow");
 const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
-const rebuildRouteHandoff: typeof import("./onboard/rebuild-route-handoff") = require("./onboard/rebuild-route-handoff");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
   abortNonInteractive,
@@ -4082,41 +4081,6 @@ async function preflightAuthoritativeRebuildTarget(
   }
 }
 
-function validateProviderReconfigureHandoff(
-  opts: OnboardOptions,
-  target: {
-    sandboxName: string | null;
-    provider: string | null;
-    model: string | null;
-    credentialEnv: string | null;
-    endpointUrl: string | null;
-  },
-): boolean {
-  const handoff = opts.rebuildProviderReconfigure;
-  if (!handoff) return false;
-  if (
-    opts.authoritativeResumeConfig !== true ||
-    opts.resume !== true ||
-    opts.recreateSandbox !== true ||
-    opts.onboardLockAlreadyHeld !== true ||
-    !target.sandboxName ||
-    !target.provider ||
-    !target.model ||
-    !target.credentialEnv
-  ) {
-    throw new Error(
-      "Prepared provider reconfiguration requires an authoritative locked rebuild resume.",
-    );
-  }
-  return rebuildRouteHandoff.validateRebuildProviderReconfigureHandoff(handoff, {
-    sandboxName: target.sandboxName,
-    provider: target.provider,
-    model: target.model,
-    credentialEnv: target.credentialEnv,
-    endpointUrl: target.endpointUrl,
-  });
-}
-
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.withNonInteractiveEnvironment(runOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
@@ -4483,8 +4447,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       process.exit(1);
     }
 
-    type CoreOnboardFlowContext = InitialOnboardFlowContext;
-    const coreFlowContext: CoreOnboardFlowContext = {
+    const coreFlowContext: InitialOnboardFlowContext = {
       ...initialContext,
       session,
       sandboxName,
@@ -4495,10 +4458,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
 
     const [providerInferencePhase, sandboxPhase] =
-      createCoreOnboardFlowPhases<CoreOnboardFlowContext>({
+      createCoreOnboardFlowPhases<InitialOnboardFlowContext>({
         forceProviderSelection: forceProviderSelectionForAgentChange,
-        forceInferenceSetup: validateProviderReconfigureHandoff(opts, coreFlowContext),
-        authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+        ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
         env: process.env,
         constants: {
           hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
@@ -4636,7 +4598,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
     const webSearchSupported = coreContext.webSearchSupported;
 
-    const finalFlowContext: CoreOnboardFlowContext = {
+    const finalFlowContext: InitialOnboardFlowContext = {
       ...coreContext,
       session,
       sandboxName,
@@ -4654,7 +4616,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     let liveFinalFlowContext = finalFlowContext;
 
     const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
-      CoreOnboardFlowContext,
+      InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,
       import("./verify-deployment").VerifyDeploymentResult
     >({
