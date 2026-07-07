@@ -14,6 +14,7 @@ import {
 import { shouldApplyDockerGpuPatch } from "./docker-gpu-route-patch-adapter";
 
 const GPU_CONFIG = { sandboxGpuEnabled: true };
+const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 
 describe("Docker GPU route rendering", () => {
   it.each([
@@ -90,10 +91,10 @@ describe("Docker GPU route rendering", () => {
     const args = ["--from", "/tmp/build/Dockerfile", "--gpu", "--policy", "/tmp/native.yaml"];
     expect(
       renderCompatibilityFallbackCreateArgs(args, {
-        imageRef: "openshell/sandbox-from:123",
+        imageRef: IMAGE_ID,
         compatibilityPolicyPath: "/tmp/compatibility.yaml",
       }),
-    ).toEqual(["--from", "openshell/sandbox-from:123", "--policy", "/tmp/compatibility.yaml"]);
+    ).toEqual(["--from", IMAGE_ID, "--policy", "/tmp/compatibility.yaml"]);
     expect(
       renderCompatibilityFallbackCreateArgs(args, {
         allowUnbuiltSource: true,

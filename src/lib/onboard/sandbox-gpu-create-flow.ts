@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { extractBuiltImageRef, printSandboxCreateRecoveryHints } from "../build-context";
+import { printSandboxCreateRecoveryHints } from "../build-context";
+import { getSandboxDeleteOutcome } from "../domain/sandbox/destroy";
 import { type StreamSandboxCreateResult, streamSandboxCreate } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
 import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
@@ -18,11 +19,17 @@ import {
   createDockerGpuSandboxCreatePatch,
   type DockerGpuSandboxCreatePatch,
 } from "./docker-gpu-sandbox-create";
-import { queryOpenShellDockerSandboxImage } from "./openshell-docker-sandbox-containers";
+import {
+  isImmutableDockerImageId,
+  type OpenShellDockerSandboxRuntimeSnapshotQuery,
+  queryOpenShellDockerSandboxContainers,
+  queryOpenShellDockerSandboxRuntimeSnapshot,
+} from "./openshell-docker-sandbox-containers";
 import { printSandboxCreateFailureDiagnostics } from "./sandbox-create-failure";
 import { renderSandboxCreateCommand } from "./sandbox-create-launch";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
 import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
@@ -68,22 +75,27 @@ export interface SandboxGpuCreateFlowResult {
   dockerGpuCreatePatch: DockerGpuSandboxCreatePatch;
   route: SelectedDockerGpuRoute;
   firstCreateOutput: string;
-  selectedCreateImageRef: string | null;
+  /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
+  registryImageRef: string | null;
 }
 
 /**
  * Automatic native GPU compatibility fallback source-of-truth boundary:
  *
- * - Invalid state: native OpenShell GPU injection is explicitly rejected, a
- *   readiness diagnostic identifies GPU device initialization as the cause,
- *   or a completed CUDA proof returns `failed`.
- * - Source boundary: OpenShell owns native injection; this flow consumes its
- *   create/readiness evidence and NemoClaw's structured CUDA proof.
+ * - Invalid state: OpenShell rejects `--gpu` before create progress, the exact
+ *   labeled container records a host runtime GPU-injection error, or a
+ *   structured driver proof is corroborated by host configuration showing
+ *   that the exact native container has no GPU attachment.
+ * - Source boundary: fallback never trusts free-form build/list output or the
+ *   image-controlled proof by itself. Sandbox proof remains diagnostic and
+ *   fails closed without host corroboration; immutable image identity, runtime
+ *   state, and device attachment come from Docker.
  * - Source-fix constraint: supported OpenShell/Docker combinations cannot be
  *   upgraded atomically, so the existing compatibility path remains required.
- * - Regression tests: sandbox-gpu-create-attempt.test.ts covers strict failure
- *   classification, non-GPU exclusions, safe cleanup, and the one-retry limit;
- *   the live Hermes GPU workflow proves native success and fallback.
+ * - Regression tests: sandbox-gpu-create-failure-classification.test.ts and
+ *   sandbox-gpu-fallback-orchestration.test.ts cover strict classification,
+ *   non-GPU exclusions, safe cleanup, and the one-retry limit; the live Hermes
+ *   GPU workflow proves native success and fallback after a real native create.
  * - Existing error boundary: build, upload, TLS, provider, policy, generic
  *   readiness, and refused-cleanup failures retain onboarding's established
  *   `process.exit` paths. The caller registers process-exit cleanup for its
@@ -106,8 +118,19 @@ export async function runSandboxGpuCreateFlow(
 ): Promise<SandboxGpuCreateFlowResult> {
   let firstCreateOutput = "";
   let compatibilityCommand: string | null = null;
-  let selectedCreateImageRef: string | null = input.prebuild.imageRef;
+  let registryImageRef: string | null = input.prebuild.imageRef;
   let allowUnbuiltCompatibilitySource = false;
+  let nativeRuntimeSnapshot: Extract<
+    OpenShellDockerSandboxRuntimeSnapshotQuery,
+    { ok: true }
+  > | null = null;
+  const nativeFallbackBaseline =
+    input.initialGpuRoute === "native" && input.gpuRoutePlan === "native-with-fallback"
+      ? queryOpenShellDockerSandboxContainers(input.sandboxName)
+      : null;
+  const nativeFallbackHasCleanBaseline =
+    nativeFallbackBaseline?.ok === true && nativeFallbackBaseline.ids.length === 0;
+  const inspectNativeRuntime = () => queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
 
   const runGpuCreateAttempt = async (route: SelectedDockerGpuRoute) => {
     const compatibility = route === "compatibility";
@@ -157,7 +180,26 @@ export async function runSandboxGpuCreateFlow(
       } else if (
         route === "native" &&
         input.gpuRoutePlan === "native-with-fallback" &&
-        sandboxGpuCreateAttempt.isNativeGpuCreateRoutingFailure(createResult.output)
+        nativeFallbackHasCleanBaseline &&
+        (() => {
+          if (
+            sandboxGpuCreateAttempt.isNativeGpuCreateRoutingFailure(createResult.output, {
+              sawProgress: createResult.sawProgress,
+            })
+          ) {
+            allowUnbuiltCompatibilitySource = input.prebuild.imageRef === null;
+            return true;
+          }
+          const snapshot = inspectNativeRuntime();
+          if (
+            snapshot.ok &&
+            sandboxGpuCreateAttempt.isTrustedNativeGpuRuntimeError(snapshot.stateError)
+          ) {
+            nativeRuntimeSnapshot = snapshot;
+            return true;
+          }
+          return false;
+        })()
       ) {
         return {
           ok: false,
@@ -200,16 +242,19 @@ export async function runSandboxGpuCreateFlow(
         input.sandboxReadyTimeoutSecs,
       );
       const canClassifyNativeReadiness =
-        route === "native" && input.gpuRoutePlan === "native-with-fallback";
-      const readinessEvidence = canClassifyNativeReadiness
-        ? deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true })
-        : "";
+        route === "native" &&
+        input.gpuRoutePlan === "native-with-fallback" &&
+        nativeFallbackHasCleanBaseline;
+      const runtimeSnapshot = canClassifyNativeReadiness ? inspectNativeRuntime() : null;
       if (
         canClassifyNativeReadiness &&
-        sandboxGpuCreateAttempt.isNativeGpuReadinessRoutingFailure(
-          `${readiness.failurePhase ?? ""}\n${readinessEvidence}`,
-        )
+        runtimeSnapshot?.ok &&
+        sandboxGpuCreateAttempt.isNativeGpuReadinessRoutingFailure({
+          failurePhase: readiness.failurePhase,
+          runtimeError: runtimeSnapshot.stateError,
+        })
       ) {
+        nativeRuntimeSnapshot = runtimeSnapshot;
         return {
           ok: false,
           route,
@@ -224,17 +269,31 @@ export async function runSandboxGpuCreateFlow(
         backupPath: input.restoreBackupPath,
       });
       if (compatibility) dockerGpuCreatePatch.printReadinessFailureIfEnabled();
-      else
-        deps.runOpenshell(["sandbox", "delete", input.sandboxName], {
+      else {
+        const deletion = deps.runOpenshell(["sandbox", "delete", input.sandboxName], {
           ignoreError: true,
+          suppressOutput: true,
         });
-      console.error(`  Retry: ${cliName()} onboard`);
+        const { alreadyGone } = getSandboxDeleteOutcome({
+          status: deletion.status ?? null,
+          stdout: String(deletion.stdout ?? ""),
+          stderr: String(deletion.stderr ?? ""),
+        });
+        if (Number(deletion.status ?? 1) !== 0 && !alreadyGone) {
+          console.error("  The failed sandbox could not be removed automatically.");
+          console.error(`  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`);
+        } else {
+          console.error(`  Retry: ${cliName()} onboard`);
+        }
+      }
       process.exit(1);
     }
     if (input.sandboxGpuConfig.sandboxGpuEnabled) {
       const deferNativeProofFailure =
-        route === "native" && input.gpuRoutePlan === "native-with-fallback";
-      const proof = dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(
+        route === "native" &&
+        input.gpuRoutePlan === "native-with-fallback" &&
+        nativeFallbackHasCleanBaseline;
+      const proof: SandboxGpuProofResult = dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(
         input.sandboxGpuConfig,
         {
           sandboxName: input.sandboxName,
@@ -250,21 +309,34 @@ export async function runSandboxGpuCreateFlow(
           log: console.log,
         },
       );
-      // A returned `failed` result proves CUDA reached the driver but could not
-      // initialize it. Thrown proof errors mean the exec/policy/runtime path did
-      // not produce a structured GPU result, so they propagate without retry.
-      if (
-        route === "native" &&
-        input.gpuRoutePlan === "native-with-fallback" &&
-        sandboxGpuCreateAttempt.isHardNativeGpuProofFailure(proof)
-      ) {
-        return {
-          ok: false,
-          route,
-          stage: "gpu-proof",
-          error: new Error("Native OpenShell GPU CUDA proof failed."),
-          fallbackEligible: true,
-        } as const;
+      if (deferNativeProofFailure && proof.status === "failed") {
+        if (sandboxGpuPreflight.isExplicitNvidiaSmiDriverProofFailure(proof)) {
+          const snapshot = inspectNativeRuntime();
+          if (snapshot.ok && snapshot.nativeGpuAttachmentState === "absent") {
+            nativeRuntimeSnapshot = snapshot;
+            return {
+              ok: false,
+              route,
+              stage: "gpu-proof",
+              error: new Error(
+                "Native OpenShell GPU proof failed and the host confirms no GPU attachment.",
+              ),
+              fallbackEligible: true,
+            } as const;
+          }
+        }
+        console.error("");
+        console.error("  Native sandbox GPU proof failed.");
+        console.error(
+          "  Sandbox-reported GPU output without corroborating host evidence cannot authorize a less-confined compatibility retry.",
+        );
+        console.error(
+          "  To explicitly select the compatibility route, clean up the sandbox and retry with NEMOCLAW_DOCKER_GPU_PATCH=1.",
+        );
+        process.exit(1);
+      }
+      if (proof.status === "failed") {
+        throw new Error("Sandbox GPU proof returned failed status.");
       }
     }
     return {
@@ -295,7 +367,33 @@ export async function runSandboxGpuCreateFlow(
           runOpenshell: deps.runOpenshell,
           sleep: deps.sleep,
         }),
-      prepareCompatibilityAttempt: async (failure) => {
+      prepareCompatibilityAttempt: async () => {
+        if (!input.compatibilityPolicyPath) {
+          throw new Error("Compatibility retry policy was not materialized.");
+        }
+        const prebuildImageId = input.prebuild.imageId;
+        const imageId =
+          nativeRuntimeSnapshot?.imageId ??
+          (prebuildImageId && isImmutableDockerImageId(prebuildImageId)
+            ? prebuildImageId.toLowerCase()
+            : null);
+        if (
+          !registryImageRef &&
+          nativeRuntimeSnapshot?.bookkeepingImageRef &&
+          !isImmutableDockerImageId(nativeRuntimeSnapshot.bookkeepingImageRef)
+        ) {
+          registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
+        }
+        const compatibilityArgs = renderCompatibilityFallbackCreateArgs(input.prebuild.createArgs, {
+          imageRef: imageId,
+          allowUnbuiltSource: allowUnbuiltCompatibilitySource,
+          compatibilityPolicyPath: input.compatibilityPolicyPath,
+        });
+        compatibilityCommand = renderSandboxCreateCommand(
+          compatibilityArgs,
+          input.sandboxStartupCommand,
+          deps.openshellShellCommand,
+        );
         await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
           input.provider,
           input.sandboxGpuConfig,
@@ -305,30 +403,6 @@ export async function runSandboxGpuCreateFlow(
             gatewayPort: input.gatewayPort,
             log: console.log,
           },
-        );
-        const containerImage = queryOpenShellDockerSandboxImage(input.sandboxName);
-        const imageRef =
-          input.prebuild.imageRef ??
-          extractBuiltImageRef(firstCreateOutput) ??
-          (containerImage.ok ? containerImage.imageRef : null);
-        selectedCreateImageRef = imageRef;
-        allowUnbuiltCompatibilitySource =
-          failure.stage === "create" &&
-          sandboxGpuCreateAttempt.isNativeGpuCreatePreBuildRejection(firstCreateOutput);
-      },
-      activateCompatibilityAttempt: () => {
-        if (!input.compatibilityPolicyPath) {
-          throw new Error("Compatibility retry policy was not materialized.");
-        }
-        const compatibilityArgs = renderCompatibilityFallbackCreateArgs(input.prebuild.createArgs, {
-          imageRef: selectedCreateImageRef,
-          allowUnbuiltSource: allowUnbuiltCompatibilitySource,
-          compatibilityPolicyPath: input.compatibilityPolicyPath,
-        });
-        compatibilityCommand = renderSandboxCreateCommand(
-          compatibilityArgs,
-          input.sandboxStartupCommand,
-          deps.openshellShellCommand,
         );
         input.sandboxGpuConfig.sandboxGpuProof = null;
       },
@@ -354,6 +428,6 @@ export async function runSandboxGpuCreateFlow(
     ...gpuCreateOutcome.value,
     route: gpuCreateOutcome.route,
     firstCreateOutput,
-    selectedCreateImageRef,
+    registryImageRef,
   };
 }

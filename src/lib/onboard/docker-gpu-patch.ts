@@ -76,13 +76,14 @@ export type {
 } from "./docker-gpu-patch-types";
 export {
   findOpenShellDockerSandboxContainerIds,
+  isImmutableDockerImageId,
   OPENSHELL_MANAGED_BY_LABEL,
   OPENSHELL_MANAGED_BY_VALUE,
   OPENSHELL_SANDBOX_NAME_LABEL,
   type OpenShellDockerSandboxContainerQuery,
-  type OpenShellDockerSandboxImageQuery,
+  type OpenShellDockerSandboxRuntimeSnapshotQuery,
   queryOpenShellDockerSandboxContainers,
-  queryOpenShellDockerSandboxImage,
+  queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "./openshell-docker-sandbox-containers";
 
 export type { DockerGpuSupervisorReconnectDeps };

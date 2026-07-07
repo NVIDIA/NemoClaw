@@ -17,6 +17,7 @@ describe("Hermes E2E workflow boundary", () => {
     gpuJob["runs-on"] = "ubuntu-latest";
     gpuJob.if = "${{ always() }}";
     gpuJob.strategy["fail-fast"] = true;
+    gpuJob.strategy["max-parallel"] = 2;
     gpuJob.strategy.matrix.scenario = ["native"];
     gpuJob.env.E2E_ARTIFACT_DIR = "e2e-artifacts/shared";
     gpuJob.env.E2E_HERMES_GPU_STARTUP_SCENARIO = "native";
@@ -57,10 +58,11 @@ describe("Hermes E2E workflow boundary", () => {
           "hermes-gpu-startup job must run on the native RTX PRO 6000 GPU runner",
           "hermes-gpu-startup job must remain explicit-only behind generate-matrix",
           "hermes-gpu-startup strategy must keep fail-fast disabled",
-          "hermes-gpu-startup matrix must run exactly the native and fallback scenarios",
+          "hermes-gpu-startup strategy must serialize GPU scenarios",
+          "hermes-gpu-startup matrix must run exactly the native, fallback, and compatibility-only scenarios",
           "hermes-gpu-startup job must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}",
           "hermes-gpu-startup job must set E2E_HERMES_GPU_STARTUP_SCENARIO=${{ matrix.scenario }}",
-          "hermes-gpu-startup job must leave NEMOCLAW_DOCKER_GPU_PATCH unset to exercise auto routing",
+          "hermes-gpu-startup job must leave NEMOCLAW_DOCKER_GPU_PATCH unset so the scenario harness owns route selection",
           "hermes-gpu-startup job env must not expose NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
           "hermes-gpu-startup job env must not consume repository secrets",
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not expose COMPATIBLE_API_KEY",

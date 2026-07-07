@@ -1708,8 +1708,9 @@ jobs:
     timeout-minutes: 75
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
-        scenario: [native, fallback]
+        scenario: [native, fallback, compatibility-only]
     env:
       E2E_JOB: "1"
       E2E_DEFAULT_ENABLED: "0"

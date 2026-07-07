@@ -650,8 +650,8 @@ On Windows or WSL hosts, some systems report a placeholder display adapter name 
 NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
-Jetson hosts can still run NemoClaw, but sandbox GPU passthrough is not supported there.
-If onboarding reports that sandbox GPU passthrough is unavailable on Jetson, rerun onboarding without `--sandbox-gpu`.
+Jetson/Tegra hosts support sandbox GPU passthrough through the compatibility route.
+Onboarding detects those hosts separately and propagates the supplementary groups required for `/dev/nvmap` and `/dev/nvhost-*`; if that path fails, follow the Jetson/Tegra compatibility guidance below instead of treating a missing `nvidia-smi` result as a placeholder adapter.
 
 ### Colima socket not detected (macOS)
 
@@ -2150,7 +2150,7 @@ The automatic route depends on the host environment. Identify the matching path 
 
 | Symptom | Route or stage | Recovery |
 | --- | --- | --- |
-| Native `--gpu` is rejected, GPU initialization fails during readiness, or the CUDA proof fails | Ordinary Linux native attempt | In automatic mode, wait for the one safe compatibility retry. Use `NEMOCLAW_DOCKER_GPU_PATCH=1` to select compatibility before creation, or `=0` to require native-only behavior. |
+| Native `--gpu` is rejected, host runtime evidence identifies GPU injection failure, or an explicit driver proof fails and host configuration confirms no GPU attachment | Ordinary Linux native attempt | In automatic mode, wait for the one safe compatibility retry. Use `NEMOCLAW_DOCKER_GPU_PATCH=1` to select compatibility before creation, or `=0` to require native-only behavior. |
 | `Cleanup could not be proven safe` | Native-to-compatibility handoff | Run the printed sandbox deletion command, verify both the gateway row and labeled Docker containers are absent, then rerun onboarding. |
 | The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics, repair the NVIDIA Container Toolkit/CDI configuration, clean up the failed sandbox, and rerun onboarding. |
 | A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
@@ -2158,7 +2158,8 @@ The automatic route depends on the host environment. Identify the matching path 
 #### Ordinary native Linux: native with one safe fallback
 
 Automatic GPU onboarding first uses native OpenShell GPU injection.
-If sandbox creation is rejected for native GPU routing, readiness diagnostics identify GPU injection or device initialization as the cause, or the completed CUDA proof returns a hard failure, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-labeled Docker container remains, and retries exactly once through the compatibility path.
+If sandbox creation rejects the native GPU flag before progress, the exact labeled container records a host runtime GPU-injection error, or an explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-labeled Docker container remains, and retries exactly once through the compatibility path.
+Free-form build/list text and sandbox-reported CUDA output do not authorize the broader retry. Without corroborating host evidence, onboarding fails closed and directs the operator to clean up and explicitly select compatibility with `NEMOCLAW_DOCKER_GPU_PATCH=1`.
 Before that retry, NemoClaw warns that the legacy GPU compatibility envelope recreates the OpenShell-managed Docker container and may relax container confinement compared with native injection; set `NEMOCLAW_DOCKER_GPU_PATCH=0` to require native-only behavior instead.
 Specifically, compatibility recreation adds `SYS_PTRACE`, adds `apparmor=unconfined` when the original container has no AppArmor option, and uses a compatibility policy that makes `/proc` writable for the NVIDIA runtime's process-name initialization. These broader settings are why onboarding warns before the swap and retains a native-only opt-out.
 NemoClaw verifies cleanup with two stable checks (sandbox absent from gateway list and no labeled containers) before retrying through the compatibility path.

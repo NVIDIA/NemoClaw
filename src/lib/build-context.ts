@@ -56,7 +56,10 @@ export function extractBuiltImageRef(output = ""): string | null {
   const patterns = [/^Successfully tagged\s+(\S+)/im, /^\s*Built image\s+(\S+)/im];
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match?.[1]) return match[1];
+    const candidate = match?.[1];
+    // Docker image IDs are valid create inputs but are not repository tags.
+    // Persisting one as registry `imageTag` breaks tag-based destroy/GC logic.
+    if (candidate && !/^sha256:[0-9a-f]{64}$/i.test(candidate)) return candidate;
   }
   return null;
 }

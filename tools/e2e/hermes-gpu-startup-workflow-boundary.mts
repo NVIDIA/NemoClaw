@@ -67,13 +67,19 @@ export function validateHermesGpuStartupWorkflowBoundary(
   if (strategy["fail-fast"] !== false) {
     errors.push(`${JOB_NAME} strategy must keep fail-fast disabled`);
   }
+  if (strategy["max-parallel"] !== 1) {
+    errors.push(`${JOB_NAME} strategy must serialize GPU scenarios`);
+  }
   if (
     !Array.isArray(matrix.scenario) ||
-    matrix.scenario.length !== 2 ||
+    matrix.scenario.length !== 3 ||
     matrix.scenario[0] !== "native" ||
-    matrix.scenario[1] !== "fallback"
+    matrix.scenario[1] !== "fallback" ||
+    matrix.scenario[2] !== "compatibility-only"
   ) {
-    errors.push(`${JOB_NAME} matrix must run exactly the native and fallback scenarios`);
+    errors.push(
+      `${JOB_NAME} matrix must run exactly the native, fallback, and compatibility-only scenarios`,
+    );
   }
 
   const jobEnv = asRecord(job.env);
@@ -96,7 +102,7 @@ export function validateHermesGpuStartupWorkflowBoundary(
   }
   if (Object.hasOwn(jobEnv, "NEMOCLAW_DOCKER_GPU_PATCH")) {
     errors.push(
-      `${JOB_NAME} job must leave NEMOCLAW_DOCKER_GPU_PATCH unset to exercise auto routing`,
+      `${JOB_NAME} job must leave NEMOCLAW_DOCKER_GPU_PATCH unset so the scenario harness owns route selection`,
     );
   }
   for (const name of HOSTED_PROVIDER_ENV_NAMES) {

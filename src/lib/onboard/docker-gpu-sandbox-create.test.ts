@@ -282,6 +282,29 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(waitForSupervisor).not.toHaveBeenCalled();
     expect(finalizeBackup).not.toHaveBeenCalled();
   });
+
+  it("hard-stops a structured failed GPU proof on the compatibility route", () => {
+    const deps = makeDeps();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => []),
+      },
+    });
+
+    expect(() =>
+      patch.verifyGpuOrExit(() => ({
+        status: "failed",
+        cudaVerified: false,
+        label: "nvidia-smi when available",
+        detail: "No devices were found",
+        at: "2026-07-07T00:00:00.000Z",
+      })),
+    ).toThrow("Sandbox GPU proof returned failed status: nvidia-smi when available");
+  });
 });
 
 describe("resolveDockerGpuSandboxCreatePlan", () => {

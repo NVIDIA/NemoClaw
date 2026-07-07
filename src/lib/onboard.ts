@@ -2850,7 +2850,7 @@ async function createSandboxWithBaseImageResolution(
     dockerGpuCreatePatch,
     route: selectedGpuRoute,
     firstCreateOutput,
-    selectedCreateImageRef,
+    registryImageRef,
   } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
@@ -2928,7 +2928,7 @@ async function createSandboxWithBaseImageResolution(
   // reconciled and the live agent selection is verified.
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag =
-    selectedCreateImageRef ??
+    registryImageRef ??
     buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`) ??
     resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId);
 

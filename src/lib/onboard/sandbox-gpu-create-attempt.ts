@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { hasSandboxListEntry } from "../state/gateway";
-import type { SandboxGpuProofResult } from "../state/registry";
-import { classifySandboxCreateFailure } from "../validation";
 import {
   canFallbackToDockerGpuCompatibility,
   type DockerGpuRoutePlan,
@@ -72,12 +70,13 @@ export type NativeGpuFallbackCleanupDeps = {
 /**
  * Source-of-truth boundary for the localized native-GPU fallback (#6110).
  *
- * The invalid state is an ordinary-Linux native attempt whose OpenShell GPU
- * create, GPU-backed readiness, or CUDA-usability proof fails for an explicitly
- * GPU-specific reason. OpenShell owns native `sandbox create --gpu` injection
- * and the resulting device initialization; NemoClaw only classifies that
- * boundary and proves CUDA usability. Build, upload, TLS, provider, policy,
- * dashboard, and inference failures remain on their existing error paths.
+ * The invalid state is an ordinary-Linux native attempt with a strict
+ * pre-progress `--gpu` parser rejection or an exact-container host runtime
+ * injection error. Sandbox proof output is diagnostic only unless independent
+ * host configuration proves that native GPU attachment is absent; it cannot by
+ * itself authorize the less-confined compatibility route. Build, upload, TLS,
+ * provider, policy, dashboard, and inference failures remain on their existing
+ * error paths.
  *
  * NemoClaw cannot source-fix the native injector because supported deployments
  * can combine different OpenShell and Docker versions that cannot be upgraded
@@ -96,56 +95,78 @@ export type NativeGpuFallbackCleanupDeps = {
  */
 export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
   const text = String(output ?? "");
-  return (
-    /(?:unexpected|unrecognized|unknown|unsupported)\s+(?:argument|option|flag)[^\n]*--gpu\b/i.test(
-      text,
-    ) || /--gpu\b[^\n]*(?:is not supported|was rejected)/i.test(text)
-  );
-}
-
-function isDockerBuildFailureOutput(output: string): boolean {
-  return (
-    /\b(?:docker|image)\s+build\b[^\n]*(?:failed|failure|error)/i.test(output) ||
-    /\bfailed to (?:build|compile|install)\b/i.test(output) ||
-    /\bfailed to solve\b|\breturned a non-zero code\b/i.test(output)
-  );
-}
-
-export function isNativeGpuCreateRoutingFailure(output: string): boolean {
-  const text = String(output ?? "");
-  // The create stream can include nested Docker build output. Keep those
-  // failures on the build path even when a Dockerfile happens to mention the
-  // OpenShell `--gpu` flag; only explicit create/injection evidence may retry.
-  if (isDockerBuildFailureOutput(text)) return false;
-  const failure = classifySandboxCreateFailure(output);
-  if (failure.kind === "gpu_cdi_injection_failed") return true;
-  if (failure.kind !== "unknown") return false;
-  return (
-    isNativeGpuCreatePreBuildRejection(text) ||
-    /--gpu\b[^\n]*injection failed/i.test(text) ||
-    /(?:native gpu injection|gpu device injection|gpu sandbox create)[^\n]*(?:failed|rejected|unsupported)/i.test(
-      text,
-    )
-  );
-}
-
-/** Require explicit GPU injection/device-init evidence for a readiness retry. */
-export function isNativeGpuReadinessRoutingFailure(output: string): boolean {
-  const text = String(output ?? "");
-  if (isDockerBuildFailureOutput(text)) return false;
-  return (
-    isNativeGpuCreateRoutingFailure(text) ||
-    /(?:cuda|nvidia|gpu)[^\n]*(?:device|driver|injection|initializ(?:e|ation))[^\n]*(?:failed|error|unavailable)/i.test(
-      text,
+  if (text.length > 4096) return false;
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0 || lines.length > 4) return false;
+  const [errorLine, ...envelope] = lines;
+  const exactError =
+    /^error:\s+(?:unexpected|unrecognized|unknown|unsupported)\s+(?:argument|option|flag)(?:\s+|:\s*)['"`]?--gpu['"`]?(?:\s+(?:found|provided|specified))?\.?$/i.test(
+      errorLine,
     ) ||
-    /(?:failed|error|unavailable)[^\n]*(?:cuda|nvidia|gpu)[^\n]*(?:device|driver|injection|initializ(?:e|ation))/i.test(
+    /^error:\s+(?:argument|option|flag)\s+['"`]?--gpu['"`]?\s+(?:is not supported|was rejected)\.?$/i.test(
+      errorLine,
+    );
+  return (
+    exactError &&
+    envelope.every(
+      (line) =>
+        /^tip:\s+to pass ['"`]--gpu['"`] as a value, use ['"`]-- --gpu['"`]\.?$/i.test(line) ||
+        /^Usage:\s+openshell sandbox create(?:\s|$)/.test(line) ||
+        /^For more information, try ['"`]--help['"`]\.?$/i.test(line),
+    )
+  );
+}
+
+export function isNativeGpuCreateRoutingFailure(
+  output: string,
+  options: { sawProgress: boolean },
+): boolean {
+  // Create output can contain arbitrary image build logs. Only a strict CLI
+  // parser rejection before any build/create progress is trusted here.
+  return options.sawProgress !== true && isNativeGpuCreatePreBuildRejection(output);
+}
+
+export function isTrustedNativeGpuRuntimeError(error: string): boolean {
+  const text = String(error ?? "").trim();
+  if (!text) return false;
+  // Match complete Docker/NVIDIA runtime clauses, not a conjunction of tokens:
+  // `.State.Error` can quote image-controlled WORKDIR/CMD paths.
+  const selector = String.raw`nvidia\.com\/gpu=[A-Za-z0-9._-]+`;
+  const selectors = String.raw`${selector}(?:,\s*${selector})*`;
+  const directCdi = new RegExp(
+    String.raw`^(?:Error response from daemon:\s*)?(?:CDI device injection failed:\s*)?unresolvable CDI devices ${selectors}\.?$`,
+    "i",
+  );
+  const customDeviceCdi = new RegExp(
+    String.raw`^error gathering device information while adding custom device ["']?${selector}["']?:\s*unresolvable CDI devices ${selectors}\.?$`,
+    "i",
+  );
+  const ociCdi = new RegExp(
+    String.raw`^failed to create task for container:\s*failed to create shim task:\s*OCI runtime create failed:\s*(?:could not apply required modification to OCI specification:\s*)?error injecting CDI devices:\s*unresolvable CDI devices ${selectors}(?::\s*unknown)?$`,
+    "i",
+  );
+  return (
+    directCdi.test(text) ||
+    customDeviceCdi.test(text) ||
+    ociCdi.test(text) ||
+    /^(?:error response from daemon:\s*)?could not select device driver[^\n]*with capabilities:\s*\[\[?['"]?gpu['"]?\]?\]\.?$/i.test(
       text,
     )
   );
 }
 
-export function isHardNativeGpuProofFailure(proof: SandboxGpuProofResult): boolean {
-  return proof.status === "failed";
+export function isNativeGpuReadinessRoutingFailure(evidence: {
+  failurePhase: string | null;
+  runtimeError: string;
+}): boolean {
+  return (
+    evidence.failurePhase !== null &&
+    ["Error", "Failed", "CrashLoopBackOff"].includes(evidence.failurePhase) &&
+    isTrustedNativeGpuRuntimeError(evidence.runtimeError)
+  );
 }
 
 function commandText(result: CommandResult): string {
@@ -220,8 +241,7 @@ export type SandboxGpuCreatePlanDeps<T> = {
   runAttempt(route: SelectedDockerGpuRoute): Promise<SandboxGpuCreateAttemptResult<T>>;
   captureNativeFailure?(failure: SandboxGpuCreateAttemptFailure): void;
   cleanupNativeFailure(): NativeGpuFallbackCleanupResult | Promise<NativeGpuFallbackCleanupResult>;
-  prepareCompatibilityAttempt?(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
-  activateCompatibilityAttempt?(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
+  prepareCompatibilityAttempt(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
   traceEvent?(name: string, attributes?: Record<string, unknown>): void;
 };
 
@@ -252,7 +272,7 @@ export async function executeSandboxGpuCreatePlan<T>(
     // Diagnostics are best effort; cleanup safety remains the retry gate.
   }
   try {
-    await deps.prepareCompatibilityAttempt?.(first);
+    await deps.prepareCompatibilityAttempt(first);
   } catch (error) {
     return {
       ...first,
@@ -266,15 +286,6 @@ export async function executeSandboxGpuCreatePlan<T>(
       cleanupRefused: cleanup.reason ?? "native GPU cleanup could not be proven safe",
     };
   }
-  try {
-    await deps.activateCompatibilityAttempt?.(first);
-  } catch (error) {
-    return {
-      ...first,
-      preparationRefused: error instanceof Error ? error.message : String(error),
-    };
-  }
-
   deps.traceEvent?.("gpu_compatibility_fallback", {
     from_route: "native",
     to_route: "compatibility",

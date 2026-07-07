@@ -633,7 +633,8 @@ Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not det
 Use `--sandbox-gpu` or `--no-sandbox-gpu` to control only direct NVIDIA GPU access inside the sandbox.
 Use `--sandbox-gpu --sandbox-gpu-device <device>` to pass a specific OpenShell GPU device selector to `openshell sandbox create`; device selectors require explicit sandbox GPU enablement.
 On ordinary native Linux Docker-driver hosts, NemoClaw automatically tries native OpenShell GPU injection first and keeps the Docker container-swap path as a one-time compatibility fallback.
-If native sandbox creation, readiness, or GPU verification reports a hard failure, onboarding saves redacted diagnostics and removes the incomplete sandbox before it retries through the compatibility path.
+If native sandbox creation or readiness has a trusted host-side GPU routing failure, or an explicit driver proof fails while the exact container's host configuration confirms that no GPU was attached, onboarding saves redacted diagnostics and removes the incomplete sandbox before it retries through the compatibility path.
+Sandbox-reported CUDA output alone cannot authorize the broader compatibility envelope; that case fails closed and points to the existing explicit `NEMOCLAW_DOCKER_GPU_PATCH=1` control.
 NemoClaw retries only after it verifies that no OpenShell-labeled container remains; if cleanup cannot be proven safe, onboarding stops and prints cleanup guidance instead.
 On Docker Desktop WSL and Jetson/Tegra, automatic GPU onboarding uses the compatibility path directly.
 On ordinary native Linux, the compatibility path uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime.

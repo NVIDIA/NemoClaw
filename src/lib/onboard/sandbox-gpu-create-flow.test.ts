@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   printSandboxCreateFailureDiagnostics: vi.fn(),
   collectDockerGpuPatchDiagnostics: vi.fn(),
   queryOpenShellDockerSandboxContainers: vi.fn(),
-  queryOpenShellDockerSandboxImage: vi.fn(),
+  queryOpenShellDockerSandboxRuntimeSnapshot: vi.fn(),
 }));
 
 vi.mock("../sandbox/create-stream", () => ({
@@ -46,7 +46,7 @@ vi.mock("./docker-gpu-patch", async (importOriginal) => ({
 vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./openshell-docker-sandbox-containers")>()),
   queryOpenShellDockerSandboxContainers: mocks.queryOpenShellDockerSandboxContainers,
-  queryOpenShellDockerSandboxImage: mocks.queryOpenShellDockerSandboxImage,
+  queryOpenShellDockerSandboxRuntimeSnapshot: mocks.queryOpenShellDockerSandboxRuntimeSnapshot,
 }));
 
 import type { SandboxGpuProofResult } from "../state/registry";
@@ -63,6 +63,21 @@ const VERIFIED_PROOF: SandboxGpuProofResult = {
   detail: null,
   at: "2026-07-06T00:00:00.000Z",
 };
+const FAILED_PROOF: SandboxGpuProofResult = {
+  status: "failed",
+  cudaVerified: false,
+  label: "cuInit(0) via libcuda.so.1",
+  detail: "cuInit(0)=999",
+  at: "2026-07-06T00:00:00.000Z",
+};
+const NVIDIA_SMI_FAILED_PROOF: SandboxGpuProofResult = {
+  status: "failed",
+  cudaVerified: false,
+  label: "nvidia-smi when available",
+  detail: "Failed to initialize NVML: Driver/library version mismatch",
+  at: "2026-07-06T00:00:00.000Z",
+};
+const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 
 function createInput(): SandboxGpuCreateFlowInput {
   return {
@@ -88,6 +103,7 @@ function createInput(): SandboxGpuCreateFlowInput {
     prebuild: {
       createArgs: ["--from", "openshell/sandbox-from:test", "--name", "alpha", "--gpu"],
       imageRef: "openshell/sandbox-from:test",
+      imageId: IMAGE_ID,
     },
     restoreBackupPath: null,
     terminalAgent: false,
@@ -131,14 +147,20 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
       failurePhase: null,
     });
     mocks.verifyGpuSandboxAccessAfterReady.mockImplementation((_config, options) =>
-      options.verifyDirectSandboxGpu(options.sandboxName),
+      options.verifyGpuOrExit
+        ? options.verifyGpuOrExit(options.verifyDirectSandboxGpu)
+        : options.verifyDirectSandboxGpu(options.sandboxName),
     );
     mocks.enforceDockerGpuPatchPreserveNetwork.mockResolvedValue(false);
     mocks.collectDockerGpuPatchDiagnostics.mockReturnValue(null);
     mocks.queryOpenShellDockerSandboxContainers.mockReturnValue({ ok: true, ids: [] });
-    mocks.queryOpenShellDockerSandboxImage.mockReturnValue({
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockReturnValue({
       ok: true,
-      imageRef: "openshell/sandbox-from:test",
+      imageId: IMAGE_ID,
+      bookkeepingImageRef: "openshell/sandbox-from:test",
+      stateError: "",
+      nativeGpuAttachmentState: "present",
+      containerId: "container-a",
     });
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -191,6 +213,31 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
+  it("does not let a stale same-label container authorize or receive fallback cleanup", async () => {
+    mocks.queryOpenShellDockerSandboxContainers.mockReturnValue({
+      ok: true,
+      ids: ["stale-container"],
+    });
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "error: unexpected argument '--gpu' found",
+      sawProgress: false,
+    });
+    const deps = createDeps();
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("does not retry compatibility for a non-GPU native readiness failure (#6110)", async () => {
     mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
       ready: false,
@@ -198,7 +245,9 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
       failurePhase: "Failed",
     });
     const deps = createDeps();
-    vi.mocked(deps.runCaptureOpenshell).mockReturnValue("alpha Failed policy denied startup exec");
+    vi.mocked(deps.runCaptureOpenshell).mockReturnValue(
+      "gpu-device-initialization-failed Failed\nother-sandbox Error NVIDIA GPU device unavailable",
+    );
     vi.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit:1");
     });
@@ -210,6 +259,74 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+  });
+
+  it("retries readiness only for exact-container host runtime evidence (#6110)", async () => {
+    mocks.waitForCreatedSandboxReadyWithTrace
+      .mockReturnValueOnce({
+        ready: false,
+        reason: "terminal_failure_phase",
+        failurePhase: "Error",
+      })
+      .mockReturnValue({ ready: true, reason: "ready", failurePhase: null });
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockReturnValue({
+      ok: true,
+      imageId: IMAGE_ID,
+      bookkeepingImageRef: "openshell/sandbox-from:test",
+      stateError: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+      nativeGpuAttachmentState: "absent",
+      containerId: "container-a",
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), createDeps())).resolves.toMatchObject({
+      route: "compatibility",
+      registryImageRef: "openshell/sandbox-from:test",
+    });
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports manual cleanup when ordinary readiness deletion fails (#6110)", async () => {
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: "Failed",
+    });
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockReturnValue({ status: 7, stderr: "gateway unavailable" });
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("could not be removed automatically");
+    expect(output).toContain('Manual cleanup: openshell sandbox delete "alpha"');
+    expect(output).not.toContain("Retry: nemoclaw onboard");
+  });
+
+  it("treats an already-absent sandbox as successful ordinary readiness cleanup", async () => {
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: "Failed",
+    });
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockReturnValue({
+      status: 1,
+      stderr: "sandbox alpha not found",
+    });
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("Retry: nemoclaw onboard");
+    expect(output).not.toContain("could not be removed automatically");
   });
 
   it("does not retry compatibility when the native proof throws an exec/policy error (#6110)", async () => {
@@ -226,6 +343,132 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
+  });
+
+  it("does not let sandbox-controlled CUDA output authorize compatibility fallback (#6110)", async () => {
+    const deps = createDeps();
+    vi.mocked(deps.verifyDirectSandboxGpu).mockReturnValue(FAILED_PROOF);
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      "cannot authorize a less-confined compatibility retry",
+    );
+  });
+
+  it("retries structured nvidia-smi failure only when host config proves no GPU attachment (#6110)", async () => {
+    const deps = createDeps();
+    vi.mocked(deps.verifyDirectSandboxGpu)
+      .mockReturnValueOnce(NVIDIA_SMI_FAILED_PROOF)
+      .mockReturnValue(VERIFIED_PROOF);
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockReturnValue({
+      ok: true,
+      imageId: IMAGE_ID,
+      bookkeepingImageRef: "openshell/sandbox-from:test",
+      stateError: "",
+      nativeGpuAttachmentState: "absent",
+      containerId: "container-a",
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
+      route: "compatibility",
+      registryImageRef: "openshell/sandbox-from:test",
+    });
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+  });
+
+  it.each([
+    "present",
+    "unknown",
+  ] as const)("fails closed on sandbox nvidia-smi text when host GPU attachment is %s", async (nativeGpuAttachmentState) => {
+    const deps = createDeps();
+    vi.mocked(deps.verifyDirectSandboxGpu).mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockReturnValue({
+      ok: true,
+      imageId: IMAGE_ID,
+      bookkeepingImageRef: "openshell/sandbox-from:test",
+      stateError: "",
+      nativeGpuAttachmentState,
+      containerId: "container-a",
+    });
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      "without corroborating host evidence cannot authorize",
+    );
+  });
+
+  it("stops after one compatibility retry when its GPU proof also fails", async () => {
+    const deps = createDeps();
+    vi.mocked(deps.verifyDirectSandboxGpu).mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockReturnValue({
+      ok: true,
+      imageId: IMAGE_ID,
+      bookkeepingImageRef: "openshell/sandbox-from:test",
+      stateError: "",
+      nativeGpuAttachmentState: "absent",
+      containerId: "container-a",
+    });
+    let patchNumber = 0;
+    mocks.createDockerGpuSandboxCreatePatch.mockImplementation(() => {
+      const patch = createPatch();
+      patchNumber += 1;
+      if (patchNumber === 2) {
+        patch.verifyGpuOrExit.mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
+      }
+      return patch;
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow(
+      "Sandbox GPU proof returned failed status",
+    );
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(
+      vi
+        .mocked(deps.runOpenshell)
+        .mock.calls.filter(([args]) => (args as string[]).includes("delete")),
+    ).toHaveLength(1);
+  });
+
+  it("hard-stops a returned failed proof in compatibility-only mode", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "compatibility-only";
+    input.initialGpuRoute = "compatibility";
+    mocks.createDockerGpuSandboxCreatePatch.mockImplementation(() => {
+      const patch = createPatch();
+      patch.verifyGpuOrExit.mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
+      return patch;
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow(
+      "Sandbox GPU proof returned failed status",
+    );
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
   it("discloses the compatibility container-swap confinement tradeoff and native-only opt-out", async () => {
@@ -317,31 +560,181 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
     expect(diagnostic).not.toContain("super-secret-cleanup-value");
   });
 
-  it("reuses the built image when native CDI injection fails after the build", async () => {
+  it("validates the full compatibility command before deleting native state (#6110)", async () => {
+    const input = createInput();
+    input.compatibilityPolicyPath = null;
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "error: unexpected argument '--gpu' found",
+      sawProgress: false,
+    });
+    const deps = createDeps();
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      "Compatibility retry policy was not materialized",
+    );
+  });
+
+  it("keeps native state when compatibility command rendering fails (#6110)", async () => {
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "error: unexpected argument '--gpu' found",
+      sawProgress: false,
+    });
+    const deps = createDeps();
+    vi.mocked(deps.openshellShellCommand).mockImplementation(() => {
+      throw new Error("compatibility command render rejected");
+    });
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      "compatibility command render rejected",
+    );
+  });
+
+  it("keeps native state when compatibility network preflight fails (#6110)", async () => {
+    const input = createInput();
+    input.provider = "ollama-local";
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "error: unexpected argument '--gpu' found",
+      sawProgress: false,
+    });
+    mocks.enforceDockerGpuPatchPreserveNetwork.mockRejectedValueOnce(
+      new Error("compatibility bridge is unreachable"),
+    );
+    const deps = createDeps();
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    expect(deps.openshellShellCommand).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      "compatibility bridge is unreachable",
+    );
+  });
+
+  it("refuses nvidia-smi fallback when exact native container provenance is unavailable (#6110)", async () => {
     const input = createInput();
     input.prebuild = {
       createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "alpha", "--gpu"],
       imageRef: null,
+      imageId: null,
     };
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockReturnValue({
+      ok: false,
+      error: "expected one labeled sandbox container, found 2",
+    });
+    const deps = createDeps();
+    vi.mocked(deps.verifyDirectSandboxGpu).mockReturnValue({
+      ...NVIDIA_SMI_FAILED_PROOF,
+      detail: "No devices were found",
+    });
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(deps.openshellShellCommand).not.toHaveBeenCalled();
+  });
+
+  it("ignores create-stream tags and reuses only the inspected immutable image", async () => {
+    const input = createInput();
+    input.prebuild = {
+      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "alpha", "--gpu"],
+      imageRef: null,
+      imageId: null,
+    };
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockReturnValue({
+      ok: true,
+      imageId: IMAGE_ID,
+      bookkeepingImageRef: "openshell/sandbox-from:built",
+      stateError: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+      nativeGpuAttachmentState: "absent",
+      containerId: "container-a",
+    });
     mocks.streamSandboxCreate.mockResolvedValueOnce({
       status: 1,
       output:
-        "Built image openshell/sandbox-from:built\nCDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+        "Built image attacker.example/redirect:latest\nCDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
       sawProgress: true,
     });
     const deps = createDeps();
 
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
       route: "compatibility",
-      selectedCreateImageRef: "openshell/sandbox-from:built",
+      registryImageRef: "openshell/sandbox-from:built",
     });
 
     expect(deps.openshellShellCommand).toHaveBeenCalledWith(
-      expect.arrayContaining(["--from", "openshell/sandbox-from:built"]),
+      expect.arrayContaining(["--from", IMAGE_ID]),
     );
     expect(deps.openshellShellCommand).not.toHaveBeenCalledWith(
-      expect.arrayContaining(["--from", "/tmp/build/Dockerfile"]),
+      expect.arrayContaining(["--from", "attacker.example/redirect:latest"]),
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
+  });
+
+  it("does not persist an immutable retry ID as the registry image tag", async () => {
+    const input = createInput();
+    input.prebuild = {
+      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "alpha", "--gpu"],
+      imageRef: null,
+      imageId: null,
+    };
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockReturnValue({
+      ok: true,
+      imageId: IMAGE_ID,
+      bookkeepingImageRef: IMAGE_ID,
+      stateError: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+      nativeGpuAttachmentState: "absent",
+      containerId: "container-a",
+    });
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+      sawProgress: true,
+    });
+    const deps = createDeps();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "compatibility",
+      registryImageRef: null,
+    });
+
+    expect(deps.openshellShellCommand).toHaveBeenCalledWith(
+      expect.arrayContaining(["--from", IMAGE_ID]),
+    );
   });
 });

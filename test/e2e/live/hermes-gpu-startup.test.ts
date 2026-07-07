@@ -17,6 +17,7 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   createHermesGpuFallbackWrapper,
+  extractHermesGpuDiagnosticsDirectory,
   HERMES_GPU_FALLBACK_EVENTS,
   readHermesGpuFallbackEvents,
   resolveHermesGpuStartupScenario,
@@ -43,11 +44,11 @@ const FAKE_MODEL = "test-model";
 const EXTRA_PLACEHOLDER_TOKEN_A = "e2e-hermes-gpu-extra-telegram-token";
 const EXTRA_PLACEHOLDER_TOKEN_B = "e2e-hermes-gpu-extra-slack-token";
 const LIVE_TIMEOUT_MS = 70 * 60_000;
-const FORCE_LEGACY_GPU_PATCH = process.env.NEMOCLAW_DOCKER_GPU_PATCH === "1";
 const { route: GPU_ROUTE, scenario: GPU_STARTUP_SCENARIO } = resolveHermesGpuStartupScenario(
   process.env.E2E_HERMES_GPU_STARTUP_SCENARIO,
-  FORCE_LEGACY_GPU_PATCH,
+  process.env.NEMOCLAW_DOCKER_GPU_PATCH === "1",
 );
+const FORCE_LEGACY_GPU_PATCH = GPU_ROUTE === "compatibility-only";
 validateSandboxName(SANDBOX_NAME);
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -322,7 +323,8 @@ test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches st
       fs.rmSync(wrapper.rootDir, { recursive: true, force: true }),
     );
     await artifacts.writeJson("gpu-fallback-wrapper.json", {
-      behavior: "reject exactly the first sandbox create containing --gpu, then delegate",
+      behavior:
+        "create real native state while dropping GPU attachment, reject exactly the first post-create nvidia-smi proof, then delegate compatibility retry",
       eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
     });
     return wrapper;
@@ -350,8 +352,7 @@ test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches st
     redactionValues: [FAKE_API_KEY, EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
     timeoutMs: 60 * 60_000,
   });
-  const gpuDiagnosticsDir =
-    resultText(install).match(/(?:Pre-rollback|Native GPU) diagnostics saved:\s*(\S+)/)?.[1] ?? "";
+  const gpuDiagnosticsDir = extractHermesGpuDiagnosticsDirectory(resultText(install));
   await (install.exitCode !== 0
     ? captureFailedGpuContainer(host, gpuDiagnosticsDir)
     : Promise.resolve());
@@ -361,8 +362,10 @@ test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches st
     const fallbackEvents = readHermesGpuFallbackEvents(wrapper.eventsPath);
     await artifacts.writeJson("gpu-fallback-events.json", fallbackEvents);
     expect(fallbackEvents).toEqual([
-      HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreate,
+      HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreateWithoutGpu,
+      HERMES_GPU_FALLBACK_EVENTS.rejectNativeNvidiaSmiProof,
       HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
+      HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection,
     ]);
     expect(resultText(install)).toContain("Native GPU diagnostics saved:");
     for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {

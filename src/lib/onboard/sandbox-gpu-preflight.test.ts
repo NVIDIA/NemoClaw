@@ -12,6 +12,7 @@ import {
   createDirectSandboxGpuVerifier,
   dockerNvidiaRuntimeAvailable,
   formatSandboxGpuPassthroughNote,
+  isExplicitNvidiaSmiDriverProofFailure,
   parseDockerRuntimeNames,
   sandboxGpuRemediationLines,
   validateSandboxGpuPreflight,
@@ -190,6 +191,123 @@ describe("sandbox GPU preflight", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(result?.status).toBe("unverified");
     expect(result?.cudaVerified).toBe(false);
+  });
+
+  it.each([
+    "Failed to initialize NVML: Driver/library version mismatch",
+    "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver.",
+    "No devices were found",
+    "Unable to determine the device handle for GPU 0000:01:00.0: Unknown Error",
+  ])("returns a structured required nvidia-smi failure for %s", (diagnostic) => {
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn(() => ({ status: 1, stdout: "", stderr: diagnostic })),
+      detectNvidiaPlatform: () => "linux",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi when available",
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    const result = verifier("demo");
+
+    expect(result).toMatchObject({
+      status: "failed",
+      cudaVerified: false,
+      label: "nvidia-smi when available",
+      detail: expect.stringContaining(diagnostic),
+    });
+    expect(isExplicitNvidiaSmiDriverProofFailure(result)).toBe(true);
+  });
+
+  it("keeps a required nvidia-smi exec or policy error on the hard-failure path", () => {
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: "openshell sandbox exec denied by policy",
+      })),
+      detectNvidiaPlatform: () => "linux",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi when available",
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    expect(() => verifier("demo")).toThrow(
+      "GPU proof failed: nvidia-smi when available (status 1): openshell sandbox exec denied by policy",
+    );
+  });
+
+  it("keeps an explicit nvidia-smi failure authoritative over a later CUDA pass", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "Failed to initialize NVML: Driver/library version mismatch",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: "cuInit(0)=0", stderr: "" });
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell,
+      detectNvidiaPlatform: () => "linux",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi when available",
+        },
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda-init"],
+          label: "cuInit(0) via libcuda.so.1",
+          optional: true,
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    const result = verifier("demo");
+
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      status: "failed",
+      cudaVerified: false,
+      label: "nvidia-smi when available",
+      detail: expect.stringContaining("Failed to initialize NVML"),
+    });
+    expect(isExplicitNvidiaSmiDriverProofFailure(result)).toBe(true);
+  });
+
+  it("rejects lookalike structured nvidia-smi results", () => {
+    expect(
+      isExplicitNvidiaSmiDriverProofFailure({
+        status: "failed",
+        cudaVerified: false,
+        label: "nvidia-smi when available",
+        detail: "openshell sandbox exec denied by policy",
+        at: "2026-07-07T00:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      isExplicitNvidiaSmiDriverProofFailure({
+        status: "failed",
+        cudaVerified: false,
+        label: "cuInit(0) via libcuda.so.1",
+        detail: "Failed to initialize NVML",
+        at: "2026-07-07T00:00:00.000Z",
+      }),
+    ).toBe(false);
   });
 
   it("reports failed when the CUDA usability proof reaches the driver and fails (#4231)", () => {

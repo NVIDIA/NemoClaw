@@ -320,7 +320,13 @@ export function createDockerGpuSandboxCreatePatch(
         }
       }
       try {
-        return verifyDirectSandboxGpu(sandboxName);
+        const proof = verifyDirectSandboxGpu(sandboxName);
+        if (proof.status === "failed") {
+          const label = proof.label ? `: ${proof.label}` : "";
+          const detail = proof.detail ? ` (${proof.detail})` : "";
+          throw new Error(`Sandbox GPU proof returned failed status${label}${detail}`);
+        }
+        return proof;
       } catch (error) {
         printDockerGpuProofFailure(sandboxName, error, result?.mode ?? null, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
