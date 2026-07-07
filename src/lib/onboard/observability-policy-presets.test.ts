@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  hasDcodeObservabilityDrift,
   isInactiveObservabilityPolicyPreset,
   mergeRequiredObservabilityPolicyPresets,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -12,6 +13,58 @@ import {
 import { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
 
 describe("observability policy presets", () => {
+  it("detects enabled and disabled drift for a live managed DCode sandbox", () => {
+    const base = {
+      liveExists: true,
+      managedDcodeAgent: true,
+      hasRegistryEntry: true,
+    };
+
+    expect(
+      hasDcodeObservabilityDrift({
+        ...base,
+        recordedObservabilityEnabled: true,
+        requestedObservabilityEnabled: false,
+      }),
+    ).toBe(true);
+    expect(
+      hasDcodeObservabilityDrift({
+        ...base,
+        recordedObservabilityEnabled: false,
+        requestedObservabilityEnabled: true,
+      }),
+    ).toBe(true);
+    expect(
+      hasDcodeObservabilityDrift({
+        ...base,
+        recordedObservabilityEnabled: undefined,
+        requestedObservabilityEnabled: false,
+      }),
+    ).toBe(true);
+    expect(
+      hasDcodeObservabilityDrift({
+        ...base,
+        recordedObservabilityEnabled: undefined,
+        requestedObservabilityEnabled: true,
+      }),
+    ).toBe(true);
+    expect(
+      hasDcodeObservabilityDrift({
+        ...base,
+        recordedObservabilityEnabled: true,
+        requestedObservabilityEnabled: true,
+      }),
+    ).toBe(false);
+    expect(
+      hasDcodeObservabilityDrift({
+        ...base,
+        liveExists: false,
+        recordedObservabilityEnabled: true,
+        requestedObservabilityEnabled: false,
+      }),
+    ).toBe(false);
+  });
+
   it("requires the fixed local OTLP preset only for enabled Deep Agents Code", () => {
     expect(requiredObservabilityPolicyPresets("langchain-deepagents-code", true)).toEqual([
       OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -42,6 +95,32 @@ describe("observability policy presets", () => {
         observabilityEnabled: false,
       }),
     ).toBe(true);
+  });
+
+  it("suppresses the built-in when exact custom content owns its policy key", () => {
+    expect(
+      mergeRequiredObservabilityPolicyPresets(["npm"], {
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        knownPresetNames: ["npm", OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET],
+        customOwnsObservability: true,
+      }),
+    ).toEqual(["npm"]);
+    expect(
+      isInactiveObservabilityPolicyPreset(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET, {
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        customOwnsObservability: true,
+      }),
+    ).toBe(true);
+    expect(
+      isInactiveObservabilityPolicyPreset(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET, {
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        customPresetNames: new Set([OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET]),
+        customOwnsObservability: false,
+      }),
+    ).toBe(false);
   });
 
   it("suppresses local trace egress on the restricted tier", () => {

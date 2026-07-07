@@ -166,7 +166,7 @@ export function resolveOnboardOptions(
     agent,
     agentsManifest: resolveAgentsManifest(flags.agents, agent, deps),
     toolDisclosure,
-    observabilityEnabled: flags.observability === true ? true : null,
+    observabilityEnabled: typeof flags.observability === "boolean" ? flags.observability : null,
     controlUiPort: flags["control-ui-port"] ?? null,
     gpu: flags.gpu === true,
     noGpu: flags["no-gpu"] === true,

@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Backend-neutral, metadata-only observability for managed Deep Agents Code."""
+"""Backend-neutral, bounded observability for managed Deep Agents Code."""
 
 from __future__ import annotations
 
 import atexit
+import json
 import logging
+import math
 import os
 import re
 import threading
@@ -17,15 +19,55 @@ _OBSERVABILITY_ENV = "NEMOCLAW_OBSERVABILITY"
 _OTLP_ENDPOINT = "http://host.openshell.internal:4318/v1/traces"
 _SERVICE_NAME = "nemoclaw-langchain-deepagents-code"
 _SUBSCRIBER_NAME = "nemoclaw-dcode-openinference"
-_GUARDRAIL_NAME = "nemoclaw-dcode-metadata-only"
+_GUARDRAIL_NAME = "nemoclaw-dcode-bounded-content"
 _EXPORT_TIMEOUT_MILLIS = 1_000
-_LANGCHAIN_MODEL_RESPONSE_KEY = "__nemo_relay_integrations_langchain_model_response"
 _REDACTED_EXCEPTION_MESSAGE = (
     "NEMOCLAW_DCODE_OPERATION_FAILED: managed operation failed (details redacted)"
 )
 _SCOPE_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_.:/-]+")
+_CAPTURE_KEY_ACRONYM_BOUNDARY = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
+_CAPTURE_KEY_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_CAPTURE_KEY_DELIMITER = re.compile(r"[^A-Za-z0-9]+")
 _MAX_SCOPE_NAME_CHARS = 128
+_MAX_CAPTURE_DEPTH = 8
+_MAX_CAPTURE_ITEMS = 50
+_MAX_CAPTURE_NODES = 2_048
+_MAX_CAPTURE_STRING_CHARS = 8_000
+_MAX_CAPTURE_AGGREGATE_STRING_CHARS = 50_000
+_MAX_CAPTURE_JSON_CHARS = 50_000
+_MAX_CAPTURE_PREVIEW_CHARS = 16_000
 _AMBIENT_OTEL_PREFIX = "OTEL_"
+_REDACTED_VALUE = "<redacted>"
+_UNSAFE_RELAY_SERIALIZATION_TAGS = {
+    "__nv_fallback_str__",
+    "__nv_pickle__",
+}
+_RESULT_UNSET = object()
+_SENSITIVE_CAPTURE_KEYS = {
+    "api_key",
+    "auth",
+    "authorization",
+    "cookie",
+    "credential",
+    "credentials",
+    "headers",
+    "password",
+    "proxy_authorization",
+    "secret",
+    "set_cookie",
+    "token",
+}
+_STATE_CAPTURE_KEYS = {
+    "__interrupt__",
+    "channel_values",
+    "checkpoint",
+    "checkpoint_id",
+    "checkpoint_ns",
+    "interrupt",
+    "interrupts",
+    "pending_sends",
+    "resume",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +75,28 @@ _lifecycle_lock = threading.RLock()
 _initialization_attempted = False
 _active = False
 _subscriber: Any = None
+
+
+class _CaptureBudget:
+    """Bound aggregate traversal and repeated container expansion."""
+
+    def __init__(self) -> None:
+        self.remaining_nodes = _MAX_CAPTURE_NODES
+        self.remaining_string_chars = _MAX_CAPTURE_AGGREGATE_STRING_CHARS
+        self.seen_containers: set[int] = set()
+
+    def claim_node(self) -> bool:
+        if self.remaining_nodes <= 0:
+            return False
+        self.remaining_nodes -= 1
+        return True
+
+    def claim_container(self, value: Any) -> bool:
+        identity = id(value)
+        if identity in self.seen_containers:
+            return False
+        self.seen_containers.add(identity)
+        return True
 
 
 def observability_requested(env: dict[str, str] | None = None) -> bool:
@@ -43,42 +107,343 @@ def observability_requested(env: dict[str, str] | None = None) -> bool:
 
 def _safe_identifier(value: Any, fallback: str) -> str:
     """Sanitize and cap identifiers at 128 characters before Relay receives them."""
-    if not isinstance(value, str):
+    if type(value) is not str:
         return fallback
     normalized = _SCOPE_NAME_UNSAFE.sub("_", value[:_MAX_SCOPE_NAME_CHARS]).strip("_")
     return normalized or fallback
 
 
-def _metadata_only_llm_request(request: Any) -> Any:
-    """Keep model identity while removing prompts, tools, headers, and settings."""
-    import nemo_relay
+def _bounded_string(value: str, budget: _CaptureBudget | None = None) -> str:
+    limit = min(len(value), _MAX_CAPTURE_STRING_CHARS)
+    if budget is not None:
+        limit = min(limit, budget.remaining_string_chars)
+        budget.remaining_string_chars -= limit
+    if limit == len(value):
+        return value
+    return f"{value[:limit]}...[truncated {len(value) - limit} chars]"
 
-    content = (
-        request.content if isinstance(getattr(request, "content", None), dict) else {}
+
+def _redact_capture_key(key: Any) -> bool:
+    if type(key) is not str:
+        return True
+    segmented = _CAPTURE_KEY_ACRONYM_BOUNDARY.sub("_", key.strip())
+    normalized = _CAPTURE_KEY_DELIMITER.sub(
+        "_", _CAPTURE_KEY_CAMEL_BOUNDARY.sub("_", segmented)
+    ).strip("_").lower()
+    segments = set(normalized.split("_"))
+    return (
+        normalized in _SENSITIVE_CAPTURE_KEYS
+        or normalized in _STATE_CAPTURE_KEYS
+        or bool(
+            segments
+            & {
+                "auth",
+                "authentication",
+                "authorization",
+                "bearer",
+                "cookie",
+                "credential",
+                "credentials",
+                "header",
+                "password",
+                "passwd",
+                "secret",
+                "token",
+            }
+        )
+        or ("key" in segments and bool(segments & {"access", "api", "private", "signing"}))
+        or normalized.endswith("_api_key")
+        or normalized.endswith("_access_key")
+        or normalized.endswith("_headers")
+        or normalized.endswith("_password")
+        or normalized.endswith("_private_key")
+        or normalized.endswith("_secret")
+        or normalized.endswith("_token")
+        or normalized.startswith("checkpoint_")
     )
-    model = _safe_identifier(content.get("model"), "unknown")
-    return nemo_relay.LLMRequest({}, {"messages": [], "model": model})
 
 
-def _metadata_only_llm_response(_response: Any) -> dict[str, Any]:
-    """Return a valid empty LangChain response for event annotation only."""
-    from langchain_core.messages import AIMessage, messages_to_dict
+def _opaque_capture_marker(_value: Any) -> dict[str, str]:
+    # Keep this marker constant. Even type-name lookup can invoke attacker-owned
+    # metaclass behavior, and the concrete class name is not useful trace data.
+    return {"_omitted_type": "opaque"}
 
+
+def _capture_jsonable(
+    value: Any,
+    *,
+    depth: int = 0,
+    budget: _CaptureBudget | None = None,
+) -> Any:
+    """Bound arbitrary Relay values and redact credential/checkpoint-shaped keys."""
+    if budget is None:
+        budget = _CaptureBudget()
+    if depth >= _MAX_CAPTURE_DEPTH:
+        return {"_omitted_at_depth": _MAX_CAPTURE_DEPTH}
+    if not budget.claim_node():
+        return {"_truncated_by_budget": True}
+    if value is None or type(value) in (bool, int):
+        return value
+    if type(value) is float:
+        return value if math.isfinite(value) else "<non-finite float>"
+    if type(value) is str:
+        return _bounded_string(value, budget)
+    if type(value) in (bytes, bytearray):
+        return f"<{len(value)} bytes>"
+    if type(value) is dict:
+        # Relay's best-effort arbitrary-object codec can encode opaque values as
+        # base64 pickle or attacker-controlled string output before guardrails
+        # run. Never inspect or export either fallback representation.
+        if any(tag in value for tag in _UNSAFE_RELAY_SERIALIZATION_TAGS):
+            return _opaque_capture_marker(value)
+        if not budget.claim_container(value):
+            return {"_omitted_reference": "shared_or_cycle"}
+        captured: dict[str, Any] = {}
+        omitted_items = 0
+        inspected_items = 0
+        for key, item in value.items():
+            if inspected_items >= _MAX_CAPTURE_ITEMS:
+                break
+            inspected_items += 1
+            if type(key) is not str:
+                omitted_items += 1
+                continue
+            bounded_key = _bounded_string(key, budget)
+            captured[bounded_key] = (
+                _REDACTED_VALUE
+                if _redact_capture_key(key)
+                else _capture_jsonable(item, depth=depth + 1, budget=budget)
+            )
+        truncated_items = len(value) - inspected_items
+        if truncated_items > 0:
+            captured["_truncated_items"] = truncated_items
+        if omitted_items > 0:
+            captured["_omitted_non_string_keys"] = omitted_items
+        return captured
+    if type(value) in (list, tuple):
+        if not budget.claim_container(value):
+            return {"_omitted_reference": "shared_or_cycle"}
+        captured_items: list[Any] = []
+        inspected_items = 0
+        for item in value:
+            if inspected_items >= _MAX_CAPTURE_ITEMS or budget.remaining_nodes <= 0:
+                break
+            inspected_items += 1
+            captured_items.append(
+                _capture_jsonable(item, depth=depth + 1, budget=budget)
+            )
+        if len(value) > inspected_items:
+            captured_items.append({"_truncated_items": len(value) - inspected_items})
+        return captured_items
+    return _opaque_capture_marker(value)
+
+
+def _finalize_capture(captured: Any, original: Any) -> Any:
+    try:
+        encoded = json.dumps(
+            captured,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    except Exception:  # noqa: BLE001 - preserve a bounded diagnostic shape
+        return {"_truncated": True, **_opaque_capture_marker(original)}
+    if len(encoded) <= _MAX_CAPTURE_JSON_CHARS:
+        return captured
     return {
-        _LANGCHAIN_MODEL_RESPONSE_KEY: {
-            "messages": messages_to_dict([AIMessage(content="")])
-        }
+        "_truncated": True,
+        **_opaque_capture_marker(original),
+        "preview": encoded[:_MAX_CAPTURE_PREVIEW_CHARS],
     }
 
 
-def _metadata_only_tool_request(_tool_name: str, _args: Any) -> dict[str, Any]:
-    """Remove tool arguments from the emitted event without changing execution."""
-    return {}
+def _bounded_capture(value: Any, *, budget: _CaptureBudget | None = None) -> Any:
+    active_budget = budget or _CaptureBudget()
+    return _finalize_capture(
+        _capture_jsonable(value, budget=active_budget),
+        value,
+    )
 
 
-def _metadata_only_tool_response(_tool_name: str, _result: Any) -> None:
-    """Remove tool results from the emitted event without changing execution."""
-    return None
+def _bounded_llm_request(request: Any) -> Any:
+    """Capture the model payload without transport headers or ambient credentials."""
+    import nemo_relay
+
+    content = request.content if type(getattr(request, "content", None)) is dict else {}
+    model = _safe_identifier(content.get("model"), "unknown")
+    messages = _bounded_capture(content.get("messages", []))
+    return nemo_relay.LLMRequest({}, {"messages": messages, "model": model})
+
+
+def _bounded_llm_response(response: Any) -> dict[str, Any]:
+    """Capture bounded LangChain output while preserving its observable shape."""
+    captured = _bounded_capture(response)
+    return captured if type(captured) is dict else {"content": captured}
+
+
+def _bounded_tool_request(_tool_name: str, args: Any) -> Any:
+    """Capture bounded tool arguments for the emitted event only."""
+    return _bounded_capture(args)
+
+
+def _bounded_tool_response(_tool_name: str, result: Any) -> Any:
+    """Capture bounded tool results for the emitted event only."""
+    return _bounded_capture(result)
+
+
+def _safe_object_attribute(value: Any, name: str, default: Any = None) -> Any:
+    """Read a framework-owned field without invoking an instance override."""
+    try:
+        return object.__getattribute__(value, name)
+    except Exception:  # noqa: BLE001 - an unreadable field is omitted from telemetry
+        return default
+
+
+def _bounded_langchain_message(
+    message: Any, budget: _CaptureBudget
+) -> dict[str, Any]:
+    """Project known LangChain messages without generic model serialization."""
+    try:
+        from langchain_core.messages import AIMessage
+        from langchain_core.messages import ChatMessage
+        from langchain_core.messages import FunctionMessage
+        from langchain_core.messages import HumanMessage
+        from langchain_core.messages import SystemMessage
+        from langchain_core.messages import ToolMessage
+    except Exception:  # noqa: BLE001 - observability remains fail-safe
+        return _opaque_capture_marker(message)
+
+    message_type = type(message)
+    roles = {
+        HumanMessage: "user",
+        AIMessage: "assistant",
+        SystemMessage: "system",
+        ToolMessage: "tool",
+        FunctionMessage: "function",
+        ChatMessage: "chat",
+    }
+    role = roles.get(message_type)
+    if role is None:
+        return _opaque_capture_marker(message)
+
+    captured: dict[str, Any] = {
+        "content": _capture_jsonable(
+            _safe_object_attribute(message, "content"), budget=budget
+        ),
+        "role": role,
+    }
+    name = _safe_object_attribute(message, "name")
+    if type(name) is str:
+        captured["name"] = _bounded_string(
+            _safe_identifier(name, "unknown"), budget
+        )
+    if message_type is AIMessage:
+        captured["tool_calls"] = _capture_jsonable(
+            _safe_object_attribute(message, "tool_calls", []), budget=budget
+        )
+    if message_type is ToolMessage:
+        captured["artifact"] = _capture_jsonable(
+            _safe_object_attribute(message, "artifact"), budget=budget
+        )
+        captured["status"] = _bounded_string(
+            _safe_identifier(_safe_object_attribute(message, "status"), "unknown"),
+            budget,
+        )
+        captured["tool_call_id"] = _bounded_string(
+            _safe_identifier(
+                _safe_object_attribute(message, "tool_call_id"), "unknown"
+            ),
+            budget,
+        )
+    return captured
+
+
+def _bounded_langchain_messages(
+    messages: Any,
+    *,
+    budget: _CaptureBudget,
+    prefix: tuple[Any, ...] = (),
+) -> Any:
+    raw_messages = messages if type(messages) in (list, tuple) else ()
+    total_items = len(prefix) + len(raw_messages)
+    captured = [
+        _bounded_langchain_message(message, budget)
+        for message in (*prefix, *raw_messages[:_MAX_CAPTURE_ITEMS])[
+            :_MAX_CAPTURE_ITEMS
+        ]
+    ]
+    if total_items > len(captured):
+        captured.append({"_truncated_items": total_items - len(captured)})
+    return _finalize_capture(captured, messages)
+
+
+def _managed_model_name(request: Any) -> str:
+    model = _safe_object_attribute(request, "model")
+    for field in ("model", "model_name", "model_id", "deployment_name"):
+        value = _safe_object_attribute(model, field)
+        if type(value) is str and value:
+            return _safe_identifier(value, "unknown")
+    return "unknown"
+
+
+def _bounded_model_call_request(request: Any) -> tuple[str, Any]:
+    """Build a telemetry-only request without model settings, schemas, or tools."""
+    import nemo_relay
+
+    budget = _CaptureBudget()
+    system_message = _safe_object_attribute(request, "system_message")
+    request_messages = _safe_object_attribute(request, "messages", [])
+    messages = _bounded_langchain_messages(
+        request_messages,
+        budget=budget,
+        prefix=(() if system_message is None else (system_message,)),
+    )
+    model_name = _managed_model_name(request)
+    return model_name, nemo_relay.LLMRequest(
+        {},
+        {"messages": messages, "model": model_name},
+    )
+
+
+def _bounded_model_call_response(response: Any) -> dict[str, Any]:
+    """Project a ModelResponse without Relay's arbitrary-object codec."""
+    try:
+        from langchain.agents.middleware import ModelResponse
+    except Exception:  # noqa: BLE001 - observability remains fail-safe
+        ModelResponse = None  # type: ignore[assignment,misc]
+
+    if ModelResponse is not None and type(response) is ModelResponse:
+        budget = _CaptureBudget()
+        raw_messages = _safe_object_attribute(response, "result", [])
+        captured = {
+            "messages": _bounded_langchain_messages(
+                raw_messages,
+                budget=budget,
+            ),
+            "structured_response": _capture_jsonable(
+                _safe_object_attribute(response, "structured_response"),
+                budget=budget,
+            ),
+        }
+        finalized = _finalize_capture(captured, response)
+        return finalized if type(finalized) is dict else {"content": finalized}
+
+    captured = _bounded_capture(response)
+    return captured if type(captured) is dict else {"content": captured}
+
+
+def _bounded_tool_call_response(response: Any) -> Any:
+    """Project a ToolMessage while leaving graph-control objects opaque."""
+    try:
+        from langchain_core.messages import ToolMessage
+    except Exception:  # noqa: BLE001 - observability remains fail-safe
+        ToolMessage = None  # type: ignore[assignment,misc]
+    if ToolMessage is not None and type(response) is ToolMessage:
+        budget = _CaptureBudget()
+        return _finalize_capture(
+            _bounded_langchain_message(response, budget), response
+        )
+    return _bounded_capture(response)
 
 
 class _MetadataOnlyGraphCallbacks:
@@ -344,7 +709,49 @@ def new_relay_middleware() -> Any:
     from nemo_relay.integrations.langchain import NemoRelayMiddleware
     from nemo_relay.utils import run_sync
 
-    class MetadataOnlyNemoRelayMiddleware(NemoRelayMiddleware):
+    class BoundedNemoRelayMiddleware(NemoRelayMiddleware):
+        def wrap_model_call(self, request: Any, handler: Any) -> Any:
+            model_name, relay_request = _bounded_model_call_request(request)
+            original_result: Any = _RESULT_UNSET
+
+            async def bounded_call(_relay_request: Any) -> Any:
+                nonlocal original_result
+                original_result = handler(request)
+                return _bounded_model_call_response(original_result)
+
+            run_sync(
+                self._llm_execute(
+                    model_name=model_name,
+                    request=relay_request,
+                    codec=None,
+                    response_codec=None,
+                    func=bounded_call,
+                )
+            )
+            if original_result is _RESULT_UNSET:
+                raise RuntimeError("managed model callback did not produce a result")
+            return original_result
+
+        async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+            model_name, relay_request = _bounded_model_call_request(request)
+            original_result: Any = _RESULT_UNSET
+
+            async def bounded_call(_relay_request: Any) -> Any:
+                nonlocal original_result
+                original_result = await handler(request)
+                return _bounded_model_call_response(original_result)
+
+            await self._llm_execute(
+                model_name=model_name,
+                request=relay_request,
+                codec=None,
+                response_codec=None,
+                func=bounded_call,
+            )
+            if original_result is _RESULT_UNSET:
+                raise RuntimeError("managed model callback did not produce a result")
+            return original_result
+
         async def _llm_execute(
             self,
             model_name: str,
@@ -377,64 +784,69 @@ def new_relay_middleware() -> Any:
             return result
 
         def wrap_tool_call(self, request: Any, handler: Any) -> Any:
-            parent, codec, tool_name, tool_args = self._prepare_tool_call(request)
+            parent, _codec, tool_name, tool_args = self._prepare_tool_call(request)
             boundary = _RelayExceptionBoundary()
+            original_result: Any = _RESULT_UNSET
 
-            def redacted_call(args: Any) -> Any:
+            def redacted_call(_args: Any) -> Any:
+                nonlocal original_result
                 callback_result: Any = None
                 with boundary.capture_callback_exception():
                     callback_result = handler(
-                        request.override(tool_call={**request.tool_call, "args": args})
+                        request.override(tool_call={**request.tool_call, "args": tool_args})
                     )
                 if boundary.has_original:
                     boundary.raise_redacted()
-                return callback_result
+                original_result = callback_result
+                return _bounded_tool_call_response(callback_result)
 
-            result: Any = None
-            with boundary.suppress_relay_exception():
-                result = run_sync(
-                    nemo_relay.typed.tool_execute(
-                        name=_safe_identifier(tool_name, "unknown"),
-                        args=tool_args,
-                        func=redacted_call,
-                        args_codec=codec,
-                        result_codec=codec,
-                        handle=parent,
-                    )
+            async def execute_tool() -> Any:
+                return await nemo_relay.tools.execute(
+                    name=_safe_identifier(tool_name, "unknown"),
+                    args=_bounded_capture(tool_args),
+                    func=redacted_call,
+                    handle=parent,
                 )
+
+            with boundary.suppress_relay_exception():
+                run_sync(execute_tool())
             if boundary.has_original:
                 boundary.restore_original()
-            return result
+            if original_result is _RESULT_UNSET:
+                raise RuntimeError("managed tool callback did not produce a result")
+            return original_result
 
         async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
-            parent, codec, tool_name, tool_args = self._prepare_tool_call(request)
+            parent, _codec, tool_name, tool_args = self._prepare_tool_call(request)
             boundary = _RelayExceptionBoundary()
+            original_result: Any = _RESULT_UNSET
 
-            async def redacted_call(args: Any) -> Any:
+            async def redacted_call(_args: Any) -> Any:
+                nonlocal original_result
                 callback_result: Any = None
                 with boundary.capture_callback_exception():
                     callback_result = await handler(
-                        request.override(tool_call={**request.tool_call, "args": args})
+                        request.override(tool_call={**request.tool_call, "args": tool_args})
                     )
                 if boundary.has_original:
                     boundary.raise_redacted()
-                return callback_result
+                original_result = callback_result
+                return _bounded_tool_call_response(callback_result)
 
-            result: Any = None
             with boundary.suppress_relay_exception():
-                result = await nemo_relay.typed.tool_execute(
+                await nemo_relay.tools.execute(
                     name=_safe_identifier(tool_name, "unknown"),
-                    args=tool_args,
+                    args=_bounded_capture(tool_args),
                     func=redacted_call,
-                    args_codec=codec,
-                    result_codec=codec,
                     handle=parent,
                 )
             if boundary.has_original:
                 boundary.restore_original()
-            return result
+            if original_result is _RESULT_UNSET:
+                raise RuntimeError("managed tool callback did not produce a result")
+            return original_result
 
-    return MetadataOnlyNemoRelayMiddleware(name="NemoClawObservabilityMiddleware")
+    return BoundedNemoRelayMiddleware(name="NemoClawObservabilityMiddleware")
 
 
 def _deregister_guardrails() -> None:
@@ -507,7 +919,7 @@ def shutdown_observability() -> None:
 
 
 def initialize_observability() -> bool:
-    """Enable the fixed metadata-only Relay exporter when explicitly requested."""
+    """Enable the fixed bounded-content Relay exporter when explicitly requested."""
     global _active, _initialization_attempted, _subscriber  # noqa: PLW0603
 
     if not observability_requested():
@@ -522,16 +934,16 @@ def initialize_observability() -> bool:
             import nemo_relay
 
             nemo_relay.guardrails.register_llm_sanitize_request(
-                _GUARDRAIL_NAME, 0, _metadata_only_llm_request
+                _GUARDRAIL_NAME, 0, _bounded_llm_request
             )
             nemo_relay.guardrails.register_llm_sanitize_response(
-                _GUARDRAIL_NAME, 0, _metadata_only_llm_response
+                _GUARDRAIL_NAME, 0, _bounded_llm_response
             )
             nemo_relay.guardrails.register_tool_sanitize_request(
-                _GUARDRAIL_NAME, 0, _metadata_only_tool_request
+                _GUARDRAIL_NAME, 0, _bounded_tool_request
             )
             nemo_relay.guardrails.register_tool_sanitize_response(
-                _GUARDRAIL_NAME, 0, _metadata_only_tool_response
+                _GUARDRAIL_NAME, 0, _bounded_tool_response
             )
 
             subscriber = _new_managed_subscriber(nemo_relay)

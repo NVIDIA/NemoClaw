@@ -32,6 +32,8 @@ export interface CoreOnboardFlowPhaseOptions<
   providerDeps: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["deps"];
   sandbox: {
     resumeAgentChanged: boolean;
+    requestedObservabilityEnabled?: boolean | null;
+    authoritativePolicyTier?: string | null;
     controlUiPort: number | null;
     rootDir: string;
   };
@@ -105,7 +107,9 @@ export function createCoreOnboardFlowPhases<
       resume: context.resume,
       fresh: context.fresh,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
+      authoritativePolicyTier: options.sandbox.authoritativePolicyTier,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
+      requestedObservabilityEnabled: options.sandbox.requestedObservabilityEnabled,
       session: context.session,
       sandboxName: context.sandboxName,
       model: context.model,

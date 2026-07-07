@@ -9,6 +9,7 @@ import http.server
 import importlib
 import importlib.metadata
 import importlib.util
+import math
 import os
 import re
 import sys
@@ -16,13 +17,19 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from types import SimpleNamespace
 from typing import Any
 from typing import cast
 
 import nemo_relay
+from langchain.agents.middleware import ModelRequest
+from langchain.agents.middleware import ModelResponse
 from langchain.agents.middleware.types import ToolCallRequest
+from langchain_core.messages import AIMessage
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.callbacks import CallbackManager
+from langchain_core.messages import HumanMessage
+from langchain_core.messages import ToolMessage
 from langchain_core.runnables.config import get_async_callback_manager_for_config
 from langchain_core.runnables.config import get_callback_manager_for_config
 from langgraph._internal._config import ensure_config as ensure_langgraph_config
@@ -30,7 +37,7 @@ from langgraph._internal._config import ensure_config as ensure_langgraph_config
 _EXPECTED_RELAY_VERSION = "0.4.0"
 _EXPECTED_LANGGRAPH_VERSION = "1.2.6"
 _EXPECTED_PRODUCTION_ENDPOINT = "http://host.openshell.internal:4318/v1/traces"
-_EXPECTED_REQUEST_COUNT = 7
+_EXPECTED_REQUEST_COUNT = 9
 _EXPECTED_WIRE_HEADERS = {
     "accept",
     "content-length",
@@ -45,8 +52,12 @@ _PROMPT_SECRET = "NEMOCLAW_PROMPT_SECRET"
 _MODEL_OUTPUT_SECRET = "NEMOCLAW_MODEL_OUTPUT_SECRET"
 _TOOL_ARGUMENT_SECRET = "NEMOCLAW_TOOL_ARGUMENT_SECRET"
 _TOOL_RESULT_SECRET = "NEMOCLAW_TOOL_RESULT_SECRET"
+_MODEL_WRAPPER_OUTPUT = "NEMOCLAW_MODEL_WRAPPER_OUTPUT"
+_TOOL_MESSAGE_OUTPUT = "NEMOCLAW_TOOL_MESSAGE_OUTPUT"
+_OPAQUE_ARTIFACT_SECRET = "NEMOCLAW_OPAQUE_ARTIFACT_SECRET"
 _EXCEPTION_SECRET = "NEMOCLAW_EXCEPTION_SECRET"
 _AMBIENT_EXPORTER_SECRET = "NEMOCLAW_AMBIENT_EXPORTER_SECRET"
+_DROPPED_REQUEST_SURFACE_SECRET = "NEMOCLAW_DROPPED_REQUEST_SURFACE_SECRET"
 _TRUNCATION_SENTINEL = "MUST_NOT_REACH_RELAY"
 _STABLE_ERROR_CODE = "NEMOCLAW_DCODE_OPERATION_FAILED"
 _CONTROL_CHARACTERS = "\r\n\t\x00\u202e"
@@ -63,6 +74,22 @@ class _CapturedRequest:
 
 class _HostileCallback(BaseCallbackHandler):
     """Invocation callback that must never enter the managed graph."""
+
+
+class _OpaqueArtifact:
+    def __init__(self) -> None:
+        self.api_token = _OPAQUE_ARTIFACT_SECRET
+
+    def __str__(self) -> str:
+        return _OPAQUE_ARTIFACT_SECRET
+
+
+class _HostileMessage:
+    def __repr__(self) -> str:
+        raise AssertionError("observability evaluated a hostile message repr")
+
+    def __str__(self) -> str:
+        raise AssertionError("observability evaluated a hostile message string")
 
 
 class _CollectorServer(http.server.ThreadingHTTPServer):
@@ -151,7 +178,7 @@ def _tool_request(name: str) -> ToolCallRequest:
     return ToolCallRequest(
         tool_call={
             "name": name,
-            "args": {"secret": _TOOL_ARGUMENT_SECRET},
+            "args": {"command": _TOOL_ARGUMENT_SECRET},
             "id": "managed-observability-validation",
         },
         tool=None,
@@ -186,6 +213,9 @@ async def _exercise_async_boundaries(
         {
             "model": raw_names["model"],
             "messages": [{"role": "user", "content": _PROMPT_SECRET}],
+            "model_settings": {"api_key": _DROPPED_REQUEST_SURFACE_SECRET},
+            "response_format": {"schema": _DROPPED_REQUEST_SURFACE_SECRET},
+            "tools": [{"description": _DROPPED_REQUEST_SURFACE_SECRET}],
         },
     )
 
@@ -223,7 +253,7 @@ async def _exercise_async_boundaries(
     async_request = _tool_request(raw_names["async_tool"])
 
     async def successful_async_tool(inner_request: Any) -> dict[str, str]:
-        if inner_request.tool_call["args"] != {"secret": _TOOL_ARGUMENT_SECRET}:
+        if inner_request.tool_call["args"] != {"command": _TOOL_ARGUMENT_SECRET}:
             raise AssertionError("tool telemetry changed execution arguments")
         return {"result": _TOOL_RESULT_SECRET}
 
@@ -268,7 +298,7 @@ def _exercise_sync_tool(middleware: Any, raw_tool_name: str) -> None:
     sync_tool_error = RuntimeError(f"sync-tool:{_EXCEPTION_SECRET}")
 
     def failing_sync_tool(inner_request: Any) -> Any:
-        if inner_request.tool_call["args"] != {"secret": _TOOL_ARGUMENT_SECRET}:
+        if inner_request.tool_call["args"] != {"command": _TOOL_ARGUMENT_SECRET}:
             raise AssertionError("tool telemetry changed sync execution arguments")
         raise sync_tool_error
 
@@ -278,6 +308,85 @@ def _exercise_sync_tool(middleware: Any, raw_tool_name: str) -> None:
         _assert_original_exception(caught, sync_tool_error, "failing_sync_tool")
     else:
         raise AssertionError("Relay swallowed the sync tool exception")
+
+
+def _exercise_framework_result_transparency(middleware: Any) -> None:
+    model_request = ModelRequest(
+        model=SimpleNamespace(model="managed-wrapper-model"),
+        messages=[HumanMessage(content=_PROMPT_SECRET)],
+    )
+    expected_model_result = ModelResponse(
+        result=[AIMessage(content=_MODEL_WRAPPER_OUTPUT)],
+        structured_response={"value": float("nan")},
+    )
+
+    def model_handler(_request: Any) -> ModelResponse[Any]:
+        return expected_model_result
+
+    actual_model_result = middleware.wrap_model_call(model_request, model_handler)
+    if actual_model_result is not expected_model_result:
+        raise AssertionError("observability replaced the LangChain ModelResponse")
+    structured_value = actual_model_result.structured_response["value"]
+    if not math.isnan(structured_value):
+        raise AssertionError("observability mutated non-finite structured model output")
+
+    artifact = _OpaqueArtifact()
+    expected_tool_result = ToolMessage(
+        content=_TOOL_MESSAGE_OUTPUT,
+        tool_call_id="managed-observability-validation",
+        artifact=artifact,
+    )
+
+    def tool_handler(_request: Any) -> ToolMessage:
+        return expected_tool_result
+
+    actual_tool_result = middleware.wrap_tool_call(
+        _tool_request("framework-result-tool"), tool_handler
+    )
+    if actual_tool_result is not expected_tool_result:
+        raise AssertionError("observability replaced the LangChain ToolMessage")
+    if actual_tool_result.artifact is not artifact:
+        raise AssertionError("observability mutated the ToolMessage artifact")
+
+
+def _assert_capture_traversal_bounds(observability: ModuleType) -> None:
+    shared: list[Any] = ["leaf"]
+    for _ in range(observability._MAX_CAPTURE_DEPTH + 1):
+        shared = [shared] * observability._MAX_CAPTURE_ITEMS
+    captured_shared = observability._bounded_capture(shared)
+    encoded_shared = repr(captured_shared)
+    if len(encoded_shared) > observability._MAX_CAPTURE_JSON_CHARS:
+        raise AssertionError("shared-container capture exceeded the aggregate bound")
+    if "shared_or_cycle" not in encoded_shared:
+        raise AssertionError("shared-container capture did not record reference omission")
+
+    cyclic: list[Any] = []
+    cyclic.append(cyclic)
+    captured_cycle = observability._bounded_capture(cyclic)
+    if "shared_or_cycle" not in repr(captured_cycle):
+        raise AssertionError("cyclic capture did not terminate with a reference marker")
+
+    large_request = SimpleNamespace(
+        model=SimpleNamespace(model="bounded-message-model"),
+        system_message=None,
+        messages=[HumanMessage(content="x" * 9_000) for _ in range(100)]
+        + [_HostileMessage()],
+    )
+    _, captured_request = observability._bounded_model_call_request(large_request)
+    encoded_request = repr(captured_request.content)
+    if len(encoded_request) > observability._MAX_CAPTURE_JSON_CHARS:
+        raise AssertionError("projected model messages exceeded the aggregate bound")
+    if "_truncated" not in encoded_request:
+        raise AssertionError("projected model messages did not record truncation")
+
+    large_response = ModelResponse(
+        result=[AIMessage(content="y" * 9_000) for _ in range(100)]
+    )
+    encoded_response = repr(observability._bounded_model_call_response(large_response))
+    if len(encoded_response) > observability._MAX_CAPTURE_JSON_CHARS:
+        raise AssertionError("projected model response exceeded the aggregate bound")
+    if "_truncated" not in encoded_response:
+        raise AssertionError("projected model response did not record truncation")
 
 
 def _exercise_graph(observability: ModuleType, raw_graph_name: str) -> None:
@@ -432,19 +541,32 @@ def _assert_wire_requests(
     header_values = "\n".join(
         value for request in requests for value in request.headers.values()
     ).encode()
-    sentinels = (
+    captured_content = (
         _PROMPT_SECRET,
         _MODEL_OUTPUT_SECRET,
         _TOOL_ARGUMENT_SECRET,
         _TOOL_RESULT_SECRET,
+        _MODEL_WRAPPER_OUTPUT,
+        _TOOL_MESSAGE_OUTPUT,
+    )
+    for sentinel in captured_content:
+        if sentinel.encode() not in bodies:
+            raise AssertionError(f"expected captured content {sentinel} is absent from OTLP")
+
+    excluded = (
         _EXCEPTION_SECRET,
         _AMBIENT_EXPORTER_SECRET,
+        _DROPPED_REQUEST_SURFACE_SECRET,
+        _OPAQUE_ARTIFACT_SECRET,
         _TRUNCATION_SENTINEL,
     )
-    for sentinel in sentinels:
+    for sentinel in excluded:
         encoded = sentinel.encode()
         if encoded in bodies or encoded in header_values:
             raise AssertionError(f"sensitive {sentinel} reached the OTLP request")
+    for sentinel in captured_content:
+        if sentinel.encode() in header_values:
+            raise AssertionError(f"captured content {sentinel} reached OTLP HTTP headers")
 
     stable_message = observability._REDACTED_EXCEPTION_MESSAGE.encode()
     if stable_message not in bodies or _STABLE_ERROR_CODE.encode() not in bodies:
@@ -556,11 +678,13 @@ def main() -> None:
             raise AssertionError("real Relay observability failed to initialize")
 
         _assert_callback_manager_boundary(observability)
+        _assert_capture_traversal_bounds(observability)
         middleware = observability.new_relay_middleware()
         asyncio.run(
             _exercise_async_boundaries(observability, middleware, raw_names)
         )
         _exercise_sync_tool(middleware, raw_names["sync_tool"])
+        _exercise_framework_result_transparency(middleware)
         _exercise_graph(observability, raw_names["graph"])
 
         nemo_relay.subscribers.flush()

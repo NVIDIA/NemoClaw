@@ -186,16 +186,5 @@ export function getResumeConfigConflicts(
     });
   }
 
-  if (
-    typeof opts.observabilityEnabled === "boolean" &&
-    opts.observabilityEnabled !== (session?.observabilityEnabled === true)
-  ) {
-    conflicts.push({
-      field: "observability",
-      requested: opts.observabilityEnabled ? "enabled" : "disabled",
-      recorded: session?.observabilityEnabled === true ? "enabled" : "disabled",
-    });
-  }
-
   return conflicts;
 }

@@ -1253,6 +1253,30 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
   }));
 }
 
+/** Return whether registered custom content owns an exact live network-policy key. */
+function customPresetOwnsNetworkPolicyKey(sandboxName: string, policyKey: string): boolean {
+  try {
+    return registry
+      .getCustomPolicies(sandboxName)
+      .some(
+        (entry) =>
+          parsePresetPolicyKeys(entry.content).includes(policyKey) &&
+          getPresetContentGatewayState(sandboxName, entry.content) === "match",
+      );
+  } catch {
+    return false;
+  }
+}
+
+/** Drop built-in registry attribution without mutating overlapping live policy content. */
+function removeBuiltinPresetAttribution(sandboxName: string, presetName: string): void {
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) return;
+  const policies = (sandbox.policies ?? []).filter((name) => name !== presetName);
+  if (policies.length === (sandbox.policies ?? []).length) return;
+  registry.updateSandbox(sandboxName, { policies });
+}
+
 /**
  * Query the gateway for the currently loaded policy and determine which
  * presets are actually enforced by matching network_policies entries
@@ -1428,6 +1452,7 @@ export {
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
   clampSetupPolicyPresetNames,
+  customPresetOwnsNetworkPolicyKey,
   extractPresetEntries,
   filterSetupPolicyPresets,
   getAppliedPresets,
@@ -1450,6 +1475,7 @@ export {
   parseCurrentPolicyOrEmpty as parseCurrentPolicy,
   parsePresetPolicyKeys,
   presetContentMatchesGateway,
+  removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,
   resolvePermissivePolicyPath,

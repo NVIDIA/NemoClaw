@@ -38,6 +38,7 @@ describe("decideSandboxResume", () => {
     ["sandbox GPU", { sandboxGpuConfigChanged: true }, true],
     ["messaging", { messagingChannelConfigChanged: true }, true],
     ["Hermes tool gateway", { hermesToolGatewayConfigChanged: true }, true],
+    ["observability", { observabilityChanged: true }, false],
     ["tool disclosure migration", { toolDisclosureMigrationNeeded: true }, false],
     ["tool disclosure", { toolDisclosureChanged: true }, false],
     ["live DCode inference selection", { inferenceSelectionChanged: true }, false],

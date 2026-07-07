@@ -12,7 +12,11 @@ import {
   HERMES_TOOL_GATEWAY_PRESET_NAMES,
 } from "./hermes-managed-tools";
 import { allMessagingChannelPolicyPresets } from "./messaging-policy-presets";
-import { requiredObservabilityPolicyPresets } from "./observability-policy-presets";
+import {
+  isInactiveObservabilityPolicyPreset,
+  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+  requiredObservabilityPolicyPresets,
+} from "./observability-policy-presets";
 import { seedInitialPolicyContext } from "./policy-context-seed";
 import {
   createUnavailablePolicyPresetPruner,
@@ -40,6 +44,8 @@ type PoliciesApi = {
   listSetupPolicyPresets(sandboxName: string, options?: SupportOptions): Preset[];
   listCustomPresets(sandboxName: string): Preset[];
   getAppliedPresets(sandboxName: string): string[];
+  customPresetOwnsNetworkPolicyKey?(sandboxName: string, policyKey: string): boolean;
+  removeBuiltinPresetAttribution?(sandboxName: string, presetName: string): void;
   clampSetupPolicyPresetNames(
     names: string[],
     selectablePresets: Preset[],
@@ -62,6 +68,7 @@ export type SetupPresetSuggestionOptions = {
   webSearchSupported?: boolean | null;
   hermesToolGateways?: string[] | null;
   customPresetNames?: ReadonlySet<string> | null;
+  customOwnsObservability?: boolean;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -73,6 +80,8 @@ export type SetupPolicySelectionOptions = {
   provider?: string | null;
   agent?: string | null;
   observabilityEnabled?: boolean | null;
+  /** Authoritative tier for transactional resume before registry registration is complete. */
+  tierName?: string | null;
   knownPresetNames?: string[];
   webSearchSupported?: boolean | null;
   hermesToolGateways?: string[] | null;
@@ -143,10 +152,29 @@ export function computeSetupPresetSuggestions(
           customPresetNames: options.customPresetNames,
         }),
     )
+    .filter(
+      (name) =>
+        !isInactiveObservabilityPolicyPreset(name, {
+          agent,
+          observabilityEnabled,
+          customPresetNames: options.customPresetNames,
+          customOwnsObservability: options.customOwnsObservability,
+        }),
+    )
     .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
     .filter((name) => !known || known.has(name));
   const add = (name: string) => {
     if (!setupPolicyPresetAppliesToAgent(name, agent)) return;
+    if (
+      isInactiveObservabilityPolicyPreset(name, {
+        agent,
+        observabilityEnabled,
+        customPresetNames: options.customPresetNames,
+        customOwnsObservability: options.customOwnsObservability,
+      })
+    ) {
+      return;
+    }
     if (
       isStaleBuiltinWebSearchPolicyPreset(name, {
         webSearchConfig,
@@ -232,7 +260,25 @@ async function setupPoliciesWithSelectionInner(
   const customPresetNames = new Set(
     deps.policies.listCustomPresets(sandboxName).map((preset) => preset.name),
   );
-  const currentAppliedPresets = deps.policies.getAppliedPresets(sandboxName);
+  const customOwnsObservability =
+    deps.policies.customPresetOwnsNetworkPolicyKey?.(
+      sandboxName,
+      OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+    ) === true;
+  if (customOwnsObservability) {
+    deps.policies.removeBuiltinPresetAttribution?.(
+      sandboxName,
+      OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+    );
+  }
+  const rawCurrentAppliedPresets = deps.policies.getAppliedPresets(sandboxName);
+  const currentAppliedPresets = customOwnsObservability
+    ? [...new Set(rawCurrentAppliedPresets)].filter(
+        (name) =>
+          name !== OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET ||
+          customPresetNames.has(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET),
+      )
+    : rawCurrentAppliedPresets;
   const selectablePresets = [
     ...allPresets,
     ...filterSetupPolicyPresetNamesForAgent(currentAppliedPresets, agent).map((name) => ({
@@ -251,6 +297,7 @@ async function setupPoliciesWithSelectionInner(
     observabilityEnabled,
     webSearchConfig,
     customPresetNames,
+    customOwnsObservability,
   });
   const appliedForPreservation = pruneUnavailablePresets(applied);
   const filterSupportedPresetNames = (presetNames: string[]) =>
@@ -271,7 +318,7 @@ async function setupPoliciesWithSelectionInner(
   // Resume (selectedPresets !== null) keeps the recorded tier so stale
   // suppressed presets from that tier still get filtered; fresh onboarding
   // below uses the newly-selected `tierName` from `selectPolicyTier()`.
-  const recordedTierName = deps.getRecordedPolicyTier?.(sandboxName) ?? null;
+  const recordedTierName = options.tierName ?? deps.getRecordedPolicyTier?.(sandboxName) ?? null;
   if (chosen !== null) {
     const knownSelectablePresets = new Set(selectablePresets.map((preset) => preset.name));
     chosen = mergeRequiredSetupPolicyPresets(chosen, {
@@ -284,6 +331,7 @@ async function setupPoliciesWithSelectionInner(
       tierName: recordedTierName,
       webSearchConfig,
       customPresetNames,
+      customOwnsObservability,
     });
     chosen = pruneUnavailablePresets(chosen);
   }
@@ -307,6 +355,7 @@ async function setupPoliciesWithSelectionInner(
       enabledChannels,
       webSearchConfig,
       customPresetNames,
+      customOwnsObservability,
       provider,
       agent,
       observabilityEnabled,
@@ -364,6 +413,7 @@ async function setupPoliciesWithSelectionInner(
       tierName,
       webSearchConfig,
       customPresetNames,
+      customOwnsObservability,
     });
     chosen = pruneUnavailablePresets(chosen, {
       preserveExplicitWebSearch: isAuthoritative,
@@ -428,6 +478,7 @@ async function setupPoliciesWithSelectionInner(
         tierName,
         webSearchConfig,
         customPresetNames,
+        customOwnsObservability,
       },
     ),
     { preserveExplicitWebSearch: true },

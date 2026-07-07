@@ -25,6 +25,7 @@ export type RequiredSetupPolicyPresetOptions = {
   tierName?: string | null;
   webSearchConfig?: WebSearchConfig | null;
   customPresetNames?: ReadonlySet<string> | null;
+  customOwnsObservability?: boolean;
 };
 
 export function mergeRequiredSetupPolicyPresets(
@@ -40,6 +41,7 @@ export function mergeRequiredSetupPolicyPresets(
         agent: options.agent,
         observabilityEnabled: options.observabilityEnabled,
         customPresetNames: options.customPresetNames,
+        customOwnsObservability: options.customOwnsObservability,
       }),
   );
   const effectiveHermesToolGateways = (options.hermesToolGateways ?? []).filter(
@@ -70,6 +72,7 @@ export function mergeRequiredSetupPolicyPresets(
       agent: options.agent,
       observabilityEnabled: options.observabilityEnabled,
       knownPresetNames: options.knownPresetNames,
+      customOwnsObservability: options.customOwnsObservability,
     },
   );
   const agentScoped = filterSetupPolicyPresetNamesForAgent(mergedPresets, options.agent);
@@ -110,6 +113,7 @@ export function createUnavailablePolicyPresetPruner(options: {
   observabilityEnabled?: boolean | null;
   webSearchConfig?: WebSearchConfig | null;
   customPresetNames?: ReadonlySet<string> | null;
+  customOwnsObservability?: boolean;
 }): (presetNames: string[], pruning?: { preserveExplicitWebSearch?: boolean }) => string[] {
   // Custom and interactive selections may explicitly opt into a built-in web-search
   // preset without storing provider config. Inactive observability remains ineligible.

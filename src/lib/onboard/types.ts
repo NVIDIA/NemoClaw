@@ -57,6 +57,8 @@ export interface SandboxCreateIntent {
   readonly recreate: boolean;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
+  /** Internal authoritative rebuild tier used before replacement registration completes. */
+  readonly policyTier?: string | null;
 }
 
 export type OnboardOptions = {
@@ -85,6 +87,8 @@ export type OnboardOptions = {
   agent?: string | null;
   toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;
   observabilityEnabled?: boolean | null;
+  /** Internal authoritative rebuild tier; never exposed as an onboard CLI option. */
+  policyTier?: string | null;
   controlUiPort?: number | null;
   gpu?: boolean;
   noGpu?: boolean;

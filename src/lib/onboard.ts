@@ -34,6 +34,7 @@ const inferenceInputCapability = require("./onboard/inference-input-capability")
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
 const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = require("./onboard/tool-disclosure-flow");
 const runtimeControlFlow: typeof import("./onboard/runtime-control-flow") = require("./onboard/runtime-control-flow");
+const observabilityPolicy: typeof import("./onboard/observability-policy-presets") = require("./onboard/observability-policy-presets");
 const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
@@ -2389,6 +2390,13 @@ async function createSandboxWithBaseImageResolution(
     );
     process.exit(1);
   }
+  const observabilityDrift = observabilityPolicy.hasDcodeObservabilityDrift({
+    liveExists,
+    managedDcodeAgent: isManagedDcodeAgent,
+    hasRegistryEntry: existingEntry !== null,
+    recordedObservabilityEnabled: existingEntry?.observabilityEnabled,
+    requestedObservabilityEnabled: createIntent?.observabilityEnabled,
+  });
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2482,7 +2490,8 @@ async function createSandboxWithBaseImageResolution(
       !credentialRotation.changed &&
       !hermesToolGatewayDrift &&
       !hermesDashboardDrift &&
-      !toolDisclosureMigrationNeeded
+      !toolDisclosureMigrationNeeded &&
+      !observabilityDrift
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -2635,6 +2644,8 @@ async function createSandboxWithBaseImageResolution(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes managed-tool changes.`);
     } else if (hermesDashboardDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
+    } else if (observabilityDrift) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to apply observability settings.`);
     } else if (toolDisclosureMigrationNote) {
       note(toolDisclosureMigrationNote);
     } else if (credentialRotation.changed) {
@@ -2768,6 +2779,7 @@ async function createSandboxWithBaseImageResolution(
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
     agentName: agent?.name,
+    policyTier: createIntent?.policyTier,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
@@ -3007,6 +3019,7 @@ async function createSandboxWithBaseImageResolution(
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
+          policyTier: createIntent?.policyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
           plannedMessagingState,
@@ -4283,28 +4296,26 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       canPrompt: !cannotPrompt,
     });
-    const selectedAgentName = normalizeSandboxAgentName(agent?.name);
-    const recordedAgentName = normalizeSandboxAgentName(session?.agent);
-    let resumeAgentChanged = false;
-    let forceProviderSelectionForAgentChange = false;
-    if (resume && session && recordedAgentName !== selectedAgentName) {
-      resumeAgentChanged = true;
-      forceProviderSelectionForAgentChange = true;
-      note(
-        `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
-      );
-      await stopTrackedModelRouterForAgentChange(
+    const selectedAgentTransition = await runtimeControlFlow.applySelectedAgentTransition(
+      {
+        resume,
         session,
-        loadBlueprintProfile("routed")?.router.port || 4000,
-      );
-      onboardSession.updateSession((current: Session) =>
-        clearAgentScopedResumeState(current, selectedAgentName),
-      );
-    }
-    setOnboardBrandingAgent(agent?.name || "openclaw");
-    session = onboardSession.updateSession((s: Session) =>
-      runtimeControlFlow.updateSessionAgent(s, agent?.name),
+        selectedAgentName: agent?.name,
+        routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
+      },
+      {
+        note,
+        stopTrackedModelRouterForAgentChange,
+        clearAgentScopedResumeState,
+        setOnboardBrandingAgent,
+        updateSession: onboardSession.updateSession,
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
     );
+    session = selectedAgentTransition.session;
+    const resumeAgentChanged = selectedAgentTransition.resumeAgentChanged;
+    const forceProviderSelectionForAgentChange = resumeAgentChanged;
 
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
@@ -4521,6 +4532,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         sandbox: {
           resumeAgentChanged,
+          requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
+          authoritativePolicyTier:
+            opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
           controlUiPort: opts.controlUiPort || null,
           rootDir: ROOT,
         },
@@ -4622,6 +4636,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       import("./verify-deployment").VerifyDeploymentResult
     >({
       branchState: agent ? "agent_setup" : "openclaw",
+      authoritativePolicyTier:
+        opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
       agentSetupDeps: {
         handleAgentSetup: agentOnboard.handleAgentSetup,
         agentSetupContext: () => ({

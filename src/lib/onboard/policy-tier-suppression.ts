@@ -2,16 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  isDcodeAgent,
+  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+} from "./observability-policy-presets";
+import {
   isOpenclawAgent,
   OPENCLAW_OTEL_LOCAL_POLICY_PRESET,
   requiredOpenclawOtelPolicyPresets,
 } from "./openclaw-otel-policy-presets";
-import {
-  isDcodeAgent,
-  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-} from "./observability-policy-presets";
 
 export const RESTRICTED_TIER_NAME = "restricted";
+
+export function normalizePolicyTierName(tierName: string | null | undefined): string | null {
+  if (typeof tierName !== "string") return null;
+  return tierName.trim().toLowerCase() || null;
+}
 
 export function agentRequiredPresetAdditions(
   agent: string | null | undefined,
@@ -89,7 +94,7 @@ export function suppressedAgentRequiredPresets(
   tierName: string,
   agent: string | null | undefined,
 ): string[] {
-  if (tierName !== RESTRICTED_TIER_NAME) return [];
+  if (normalizePolicyTierName(tierName) !== RESTRICTED_TIER_NAME) return [];
   return restrictedIncompatibleAgentRequiredPresets(agent);
 }
 

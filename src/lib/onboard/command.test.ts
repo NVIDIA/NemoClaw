@@ -98,6 +98,15 @@ describe("onboard command options", () => {
     });
   });
 
+  it("maps --no-observability to an explicit disabled request", () => {
+    expect(
+      resolve(
+        { agent: "dcode", observability: false },
+        { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
+      ).observabilityEnabled,
+    ).toBe(false);
+  });
+
   it("accepts the environment-based third-party notice acknowledgement", () => {
     expect(
       resolve({}, { env: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" } }).acceptThirdPartySoftware,
@@ -163,6 +172,15 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain(
       "--observability is supported only with --agent langchain-deepagents-code",
     );
+  });
+
+  it("allows an explicit observability opt-out while selecting another agent", () => {
+    expect(
+      resolve(
+        { agent: "hermes", observability: false },
+        { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
+      ).observabilityEnabled,
+    ).toBe(false);
   });
 
   it("rejects unknown agents with the available aliases", () => {

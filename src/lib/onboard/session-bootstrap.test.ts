@@ -144,6 +144,31 @@ describe("prepareOnboardSession", () => {
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
   });
 
+  it("records an explicit observability opt-out while resuming", async () => {
+    const { deps } = createDeps(
+      createSession({
+        sandboxName: "demo",
+        observabilityEnabled: true,
+        status: "failed",
+      }),
+    );
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: false,
+        nonInteractive: false,
+        requestedObservabilityEnabled: false,
+      },
+      deps,
+    );
+
+    expect(result.session?.observabilityEnabled).toBe(false);
+  });
+
   it("records and reports resume conflicts before exiting", async () => {
     const conflict: ResumeConfigConflict = {
       field: "fromDockerfile",

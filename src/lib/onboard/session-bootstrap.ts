@@ -169,6 +169,9 @@ async function prepareResumeSession(
 
   deps.updateSession((current: Session) => {
     deps.repairResumeMachineSnapshot(current);
+    if (typeof input.requestedObservabilityEnabled === "boolean") {
+      current.observabilityEnabled = input.requestedObservabilityEnabled;
+    }
     current.mode = mode(input.nonInteractive);
     current.failure = null;
     current.status = "in_progress";

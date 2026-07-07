@@ -408,7 +408,8 @@ ModelConfig.get_class_path = _nemoclaw_get_class_path
 # tests, progressive-disclosure tests, and observability conformance tests fail
 # closed on upstream drift. Remove each injection once an upstream agent-factory
 # API can preserve the managed MCP, credential, approval, executor, sandbox,
-# private checkpoint-state, and metadata-only trace boundaries end to end.
+# private checkpoint-state, bounded model/tool content, and metadata-only graph
+# trace boundaries end to end.
 AGENT_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.

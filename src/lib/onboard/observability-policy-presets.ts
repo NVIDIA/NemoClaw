@@ -10,6 +10,21 @@ export function isDcodeAgent(agent: string | null | undefined): boolean {
   return typeof agent === "string" && agent.trim().toLowerCase() === DCODE_AGENT_NAME;
 }
 
+export function hasDcodeObservabilityDrift(options: {
+  liveExists: boolean;
+  managedDcodeAgent: boolean;
+  hasRegistryEntry: boolean;
+  recordedObservabilityEnabled: boolean | null | undefined;
+  requestedObservabilityEnabled: boolean | null | undefined;
+}): boolean {
+  if (!options.liveExists || !options.managedDcodeAgent || !options.hasRegistryEntry) return false;
+  // A legacy row without this create-time bit cannot prove whether the live
+  // marker is enabled. Recreate before either enabling or disabling so the
+  // requested state becomes authoritative instead of treating unknown as off.
+  if (typeof options.recordedObservabilityEnabled !== "boolean") return true;
+  return options.recordedObservabilityEnabled !== (options.requestedObservabilityEnabled === true);
+}
+
 export function requiredObservabilityPolicyPresets(
   agent: string | null | undefined,
   observabilityEnabled: boolean | null | undefined,
@@ -25,10 +40,14 @@ export function isInactiveObservabilityPolicyPreset(
     agent?: string | null;
     observabilityEnabled?: boolean | null;
     customPresetNames?: ReadonlySet<string> | null;
+    customOwnsObservability?: boolean;
   } = {},
 ): boolean {
   const name = presetName.trim().toLowerCase();
   if (options.customPresetNames?.has(name)) return false;
+  if (name === OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET && options.customOwnsObservability) {
+    return true;
+  }
   return (
     name === OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET &&
     isDcodeAgent(options.agent) &&
@@ -42,6 +61,7 @@ export function mergeRequiredObservabilityPolicyPresets(
     agent?: string | null;
     observabilityEnabled?: boolean | null;
     knownPresetNames?: Iterable<string> | null;
+    customOwnsObservability?: boolean;
   } = {},
 ): string[] {
   const merged = [...selectedPresets];
@@ -52,6 +72,7 @@ export function mergeRequiredObservabilityPolicyPresets(
     options.agent,
     options.observabilityEnabled,
   )) {
+    if (options.customOwnsObservability) continue;
     if (known && !known.has(preset)) continue;
     if (selected.has(preset)) continue;
     merged.push(preset);

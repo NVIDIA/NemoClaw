@@ -30,7 +30,16 @@ export type RecoveredSandboxEntry = SandboxEntry & {
 type Session = ReturnType<typeof onboardSession.loadSession>;
 
 type RecoveredSandboxMetadata = Partial<
-  Pick<SandboxEntry, "model" | "provider" | "gpuEnabled" | "policies" | "nimContainer" | "agent">
+  Pick<
+    SandboxEntry,
+    | "model"
+    | "provider"
+    | "gpuEnabled"
+    | "policies"
+    | "nimContainer"
+    | "agent"
+    | "observabilityEnabled"
+  >
 > & {
   policyPresets?: string[] | null;
 };
@@ -63,6 +72,9 @@ function buildRecoveredSandboxEntry(
   // sandbox seed never set this field, so the existing entry must win.
   if (metadata.agent !== undefined && metadata.agent !== null) {
     entry.agent = metadata.agent;
+  }
+  if (typeof metadata.observabilityEnabled === "boolean") {
+    entry.observabilityEnabled = metadata.observabilityEnabled;
   }
   return entry;
 }
@@ -167,6 +179,9 @@ function seedRecoveryMetadata(
       nimContainer: session.nimContainer || null,
       policyPresets: session.policyPresets || null,
       agent: session.agent || null,
+      ...(typeof session.observabilityEnabled === "boolean"
+        ? { observabilityEnabled: session.observabilityEnabled }
+        : {}),
     }),
   );
   const sessionSandboxMissing = !current.sandboxes.some(

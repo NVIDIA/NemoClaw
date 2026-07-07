@@ -180,6 +180,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
+  if (recreateOptions.policyTier) {
+    process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
+  }
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
   try {

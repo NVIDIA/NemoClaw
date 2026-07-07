@@ -37,6 +37,7 @@ export interface CreatedSandboxRegistryEntryInput {
   appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
+  policyTier?: SandboxEntry["policyTier"];
   webSearchEnabled?: boolean;
   webSearchProvider?: SandboxEntry["webSearchProvider"];
   fromDockerfile?: string | null;
@@ -115,6 +116,7 @@ export function buildCreatedSandboxRegistryEntry(
     policies: input.appliedPolicies,
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
+    ...(input.policyTier !== undefined ? { policyTier: input.policyTier } : {}),
     webSearchEnabled: input.webSearchEnabled === true,
     webSearchProvider:
       input.webSearchEnabled === true ? (input.webSearchProvider ?? "brave") : null,

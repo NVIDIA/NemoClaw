@@ -24,7 +24,7 @@ function runScenario(scenario: "privacy" | "outage" | "construction") {
 }
 
 describe("managed Deep Agents Code observability", () => {
-  it("uses a fixed headerless local exporter and strips content at the source", () => {
+  it("exports bounded content through the fixed credential-free local boundary", () => {
     const result = runScenario("privacy");
 
     expect(result.exact_opt_in).toEqual({
@@ -51,11 +51,51 @@ describe("managed Deep Agents Code observability", () => {
       tool_request: 0,
       tool_response: 0,
     });
-    expect(result.secret_present).toBe(false);
+    expect(result.secret_present).toBe(true);
     expect(result.emitted).toMatchObject({
-      request: { headers: {}, content: { messages: [], model: "managed-model" } },
-      tool_request: {},
-      tool_response: null,
+      request: {
+        headers: {},
+        content: {
+          messages: [{ content: "NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL" }],
+          model: "managed-model",
+        },
+      },
+      response: {
+        content: "NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL",
+        error: "NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL",
+      },
+      tool_request: { command: "NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL" },
+      tool_response: { stdout: "NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL" },
+      bounded_redaction: {
+        APIKey: "<redacted>",
+        APIToken: "<redacted>",
+        AWS_SECRET_ACCESS_KEY: "<redacted>",
+        AWSSecretAccessKey: "<redacted>",
+        accessToken: "<redacted>",
+        api_key: "<redacted>",
+        apiKey: "<redacted>",
+        auth: "<redacted>",
+        authentication: "<redacted>",
+        bearer: "<redacted>",
+        clientSecret: "<redacted>",
+        credential: "<redacted>",
+        header: "<redacted>",
+        nested: { checkpoint_id: "<redacted>", command: "allowed" },
+        opaque: { _omitted_type: "opaque" },
+        passwd: "<redacted>",
+        privateKey: "<redacted>",
+        token: "<redacted>",
+      },
+      oversized_capture: {
+        _truncated: true,
+        _omitted_type: "opaque",
+      },
+      unsafe_relay_serialization: {
+        fallback_string: { _omitted_type: "opaque" },
+        pickle: { _omitted_type: "opaque" },
+      },
+      cyclic_capture: [{ _omitted_reference: "shared_or_cycle" }],
+      hostile_identifier: "fallback",
       callback_records: [
         {
           operation: "push",
@@ -79,6 +119,29 @@ describe("managed Deep Agents Code observability", () => {
         },
       ],
     });
+    const resultWithBounds = result.emitted as {
+      bounded_redaction: {
+        oversized: string;
+      };
+      oversized_capture: { preview: string };
+    };
+    const boundedRedaction = resultWithBounds.bounded_redaction;
+    expect(boundedRedaction.oversized).toMatch(/^x{8000}\.\.\.\[truncated 1000 chars\]$/);
+    expect(resultWithBounds.oversized_capture.preview).toHaveLength(16_000);
+    expect(
+      JSON.stringify((result.emitted as { shared_capture: unknown }).shared_capture),
+    ).toContain("shared_or_cycle");
+    expect(
+      JSON.stringify(
+        (result.emitted as { unsafe_relay_serialization: unknown }).unsafe_relay_serialization,
+      ),
+    ).not.toContain("NEMOCLAW-UNSAFE-RELAY-FALLBACK");
+    expect(JSON.stringify((result.emitted as { request: unknown }).request)).not.toMatch(
+      /NEMOCLAW-DROPPED-(MODEL-SETTINGS|RESPONSE-FORMAT|TOOL-SCHEMA)/,
+    );
+    expect(
+      JSON.stringify((result.emitted as { callback_records: unknown[] }).callback_records),
+    ).not.toContain("NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL");
     expect(result.middleware_distinct).toBe(true);
     expect(result.middleware_name).toBe("NemoClawObservabilityMiddleware");
     expect(result.callback_manager_boundary).toEqual({

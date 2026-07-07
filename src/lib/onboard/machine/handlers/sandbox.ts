@@ -14,6 +14,7 @@ import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import { hasDcodeObservabilityDrift, isDcodeAgent } from "../../observability-policy-presets";
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -39,7 +40,10 @@ export interface SandboxStateOptions<
   fresh: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
+  /** Internal rebuild tier that must govern create-time and resumed policy selection. */
+  authoritativePolicyTier?: string | null;
   resumeAgentChanged: boolean;
+  requestedObservabilityEnabled?: boolean | null;
   session: Session | null;
   sandboxName: string | null;
   model: string;
@@ -410,10 +414,56 @@ class SandboxStateFlow<
         recordedToolGateways,
         effectiveToolGateways,
       ),
+      observabilityChanged: hasDcodeObservabilityDrift({
+        liveExists: sandboxReuseState === "ready",
+        managedDcodeAgent: isDcodeAgent((this.options.agent as { name?: string } | null)?.name),
+        hasRegistryEntry: registryEntry !== null,
+        recordedObservabilityEnabled: registryEntry?.observabilityEnabled,
+        requestedObservabilityEnabled: state.session?.observabilityEnabled,
+      }),
       ...toolDisclosureSignals,
       ...dcodeResumeSignals,
     });
     return dcodeResume.preserveManagedDcodeRegistryEntry(this.options, decision);
+  }
+
+  private applyObservabilityRequest(
+    state: SandboxStepState<WebSearchConfig>,
+  ): SandboxStepState<WebSearchConfig> {
+    const registryEntry = state.sandboxName
+      ? this.deps.getSandboxRegistryEntry(state.sandboxName)
+      : null;
+    const selectedAgent = (this.options.agent as { name?: string } | null)?.name;
+    const requested = this.options.requestedObservabilityEnabled;
+    if (!isDcodeAgent(selectedAgent) && requested === true) {
+      this.deps.error(
+        "  --observability is supported only with --agent langchain-deepagents-code.",
+      );
+      return this.deps.exitProcess(1);
+    }
+    if (
+      !isDcodeAgent(selectedAgent) &&
+      typeof requested !== "boolean" &&
+      registryEntry?.observabilityEnabled === true
+    ) {
+      this.deps.error(
+        "  Recorded observability belongs to the existing Deep Agents Code sandbox. Pass --no-observability explicitly when switching agents.",
+      );
+      return this.deps.exitProcess(1);
+    }
+    const enabled =
+      isDcodeAgent(selectedAgent) &&
+      (typeof requested === "boolean"
+        ? requested
+        : typeof registryEntry?.observabilityEnabled === "boolean"
+          ? registryEntry.observabilityEnabled
+          : state.session?.observabilityEnabled === true);
+    if (state.session?.observabilityEnabled === enabled) return state;
+    const session = this.deps.updateSession((current) => {
+      current.observabilityEnabled = enabled;
+      return current;
+    });
+    return { ...state, session };
   }
 
   private async reuseSandbox(
@@ -538,6 +588,9 @@ class SandboxStateFlow<
             recreate: decision.kind !== "create",
             toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
             observabilityEnabled: state.session?.observabilityEnabled === true,
+            ...(this.options.authoritativePolicyTier
+              ? { policyTier: this.options.authoritativePolicyTier }
+              : {}),
           },
         ),
     );
@@ -666,7 +719,7 @@ class SandboxStateFlow<
   }
 
   async run(): Promise<SandboxStateResult<WebSearchConfig>> {
-    const initialState = this.prepareWebSearchSupport();
+    const initialState = this.applyObservabilityRequest(this.prepareWebSearchSupport());
     const decision = this.resolveResumeDecision(initialState);
     const completedState =
       decision.kind === "reuse"

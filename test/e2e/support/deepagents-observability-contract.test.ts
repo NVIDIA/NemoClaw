@@ -1,0 +1,490 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+import {
+  assertDeepAgentsTraceContract,
+  hasConfirmedOpenShellPolicyDenial,
+  observabilityPresetState,
+} from "../live/deepagents-observability-contract.ts";
+import {
+  isPrivateBridgeIpv4,
+  startOtlpCaptureServers,
+} from "../live/deepagents-otlp-capture-server.ts";
+import {
+  decodeExportTraceServiceRequest,
+  type OtlpAttributeValue,
+} from "../live/otlp-trace-decoder.ts";
+
+type TestSpan = {
+  attributes: Record<string, OtlpAttributeValue>;
+  name: string;
+};
+
+const SERVICE_NAME = "nemoclaw-langchain-deepagents-code";
+const DIRECT_PROMPT = "DIRECT_PROMPT";
+const DIRECT_RESPONSE = "DIRECT_RESPONSE";
+const LOGIN_PROMPT = "LOGIN_PROMPT";
+const LOGIN_RESPONSE = "LOGIN_RESPONSE";
+const TOOL_NAME = "nemoclaw_otlp_e2e_tool";
+const TOOL_ARGUMENT = "TOOL_ARGUMENT";
+const TOOL_RESULT = "TOOL_RESULT";
+const AMBIENT_CANARY = "AMBIENT_CANARY";
+
+function varint(value: number): Buffer {
+  let remaining = BigInt(value);
+  const bytes: number[] = [];
+  do {
+    let byte = Number(remaining & 0x7fn);
+    remaining >>= 7n;
+    if (remaining > 0n) byte |= 0x80;
+    bytes.push(byte);
+  } while (remaining > 0n);
+  return Buffer.from(bytes);
+}
+
+function field(fieldNumber: number, wireType: number, value: Buffer): Buffer {
+  return Buffer.concat([varint((fieldNumber << 3) | wireType), value]);
+}
+
+function bytesField(fieldNumber: number, value: Buffer): Buffer {
+  return field(fieldNumber, 2, Buffer.concat([varint(value.length), value]));
+}
+
+function stringField(fieldNumber: number, value: string): Buffer {
+  return bytesField(fieldNumber, Buffer.from(value));
+}
+
+function anyValue(value: OtlpAttributeValue): Buffer {
+  if (value === null) return Buffer.alloc(0);
+  if (typeof value === "string") return stringField(1, value);
+  if (typeof value === "boolean") return field(2, 0, varint(value ? 1 : 0));
+  if (typeof value === "number") {
+    if (Number.isSafeInteger(value) && value >= 0) return field(3, 0, varint(value));
+    const double = Buffer.alloc(8);
+    double.writeDoubleLE(value);
+    return field(4, 1, double);
+  }
+  if (Array.isArray(value)) {
+    const array = Buffer.concat(value.map((item) => bytesField(1, anyValue(item))));
+    return bytesField(5, array);
+  }
+  const entries = Object.entries(value).map(([key, item]) => bytesField(1, keyValue(key, item)));
+  return bytesField(6, Buffer.concat(entries));
+}
+
+function keyValue(key: string, value: OtlpAttributeValue): Buffer {
+  return Buffer.concat([stringField(1, key), bytesField(2, anyValue(value))]);
+}
+
+function attributes(fieldNumber: number, values: Record<string, OtlpAttributeValue>): Buffer[] {
+  return Object.entries(values).map(([key, value]) =>
+    bytesField(fieldNumber, keyValue(key, value)),
+  );
+}
+
+function spanBytes(span: TestSpan): Buffer {
+  return Buffer.concat([stringField(5, span.name), ...attributes(9, span.attributes)]);
+}
+
+function traceRequest(spans: readonly TestSpan[], serviceName = SERVICE_NAME): Buffer {
+  const resource = Buffer.concat(attributes(1, { "service.name": serviceName }));
+  const scopeSpans = Buffer.concat(spans.map((span) => bytesField(2, spanBytes(span))));
+  const resourceSpans = Buffer.concat([bytesField(1, resource), bytesField(2, scopeSpans)]);
+  return bytesField(1, resourceSpans);
+}
+
+function validSpans(): TestSpan[] {
+  return [
+    {
+      name: "direct model",
+      attributes: {
+        "openinference.span.kind": "LLM",
+        "input.value": JSON.stringify({ prompt: DIRECT_PROMPT, requested: DIRECT_RESPONSE }),
+        "output.value": JSON.stringify({ content: DIRECT_RESPONSE }),
+      },
+    },
+    {
+      name: "login model",
+      attributes: {
+        "openinference.span.kind": "LLM",
+        "llm.input_messages": JSON.stringify([{ content: LOGIN_PROMPT }]),
+        "llm.output_messages": JSON.stringify([{ content: LOGIN_RESPONSE }]),
+      },
+    },
+    {
+      name: "deterministic tool",
+      attributes: {
+        "openinference.span.kind": "TOOL",
+        "tool.name": TOOL_NAME,
+        "tool.parameters": JSON.stringify({ command: TOOL_ARGUMENT }),
+        "output.value": JSON.stringify({ stdout: TOOL_RESULT }),
+      },
+    },
+  ];
+}
+
+const expectations = {
+  ambientCanary: AMBIENT_CANARY,
+  serviceName: SERVICE_NAME,
+  llmExchanges: [
+    { label: "direct", promptMarker: DIRECT_PROMPT, responseMarker: DIRECT_RESPONSE },
+    { label: "login", promptMarker: LOGIN_PROMPT, responseMarker: LOGIN_RESPONSE },
+  ],
+  tool: { argumentMarker: TOOL_ARGUMENT, name: TOOL_NAME, resultMarker: TOOL_RESULT },
+} as const;
+
+function request(port: number, headers: Record<string, string>, body = ""): Promise<number | null> {
+  return new Promise((resolve) => {
+    const client = http.request(
+      { host: "127.0.0.1", method: "POST", path: "/v1/traces", port, headers },
+      (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode ?? null));
+      },
+    );
+    client.on("error", () => resolve(null));
+    if (body) client.write(body);
+    client.end();
+  });
+}
+
+function pendingRequest(
+  port: number,
+  contentLength: number,
+): {
+  complete(body: string): void;
+  destroy(): void;
+  status: Promise<number | null>;
+} {
+  let finish: (status: number | null) => void = () => {};
+  const status = new Promise<number | null>((resolve) => {
+    finish = resolve;
+  });
+  const client = http.request(
+    {
+      host: "127.0.0.1",
+      method: "POST",
+      path: "/v1/traces",
+      port,
+      headers: {
+        "content-length": String(contentLength),
+        "content-type": "application/x-protobuf",
+      },
+    },
+    (response) => {
+      response.resume();
+      response.on("end", () => finish(response.statusCode ?? null));
+    },
+  );
+  client.on("error", () => finish(null));
+  client.flushHeaders();
+  return {
+    complete: (body) => client.end(body),
+    destroy: () => client.destroy(),
+    status,
+  };
+}
+
+async function waitForMetadata(captureDir: string, count: number): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (fs.readdirSync(captureDir).filter((name) => name.endsWith(".json")).length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`capture server did not write ${count} metadata files`);
+}
+
+describe("Deep Agents OTLP trace contract", () => {
+  it("decodes the stable OTLP trace fields and recursive AnyValue shapes", () => {
+    const body = traceRequest([
+      {
+        name: "nested attributes",
+        attributes: {
+          "openinference.span.kind": "LLM",
+          nested: { enabled: true, items: ["one", 2, { leaf: "three" }] },
+        },
+      },
+    ]);
+
+    expect(decodeExportTraceServiceRequest(body)).toEqual([
+      {
+        name: "nested attributes",
+        resourceAttributes: { "service.name": SERVICE_NAME },
+        attributes: {
+          "openinference.span.kind": "LLM",
+          nested: { enabled: true, items: ["one", 2, { leaf: "three" }] },
+        },
+      },
+    ]);
+  });
+
+  it("requires input and output markers on the same managed LLM and TOOL spans", () => {
+    expect(assertDeepAgentsTraceContract([traceRequest(validSpans())], expectations)).toEqual({
+      requestCount: 1,
+      spanCount: 3,
+    });
+
+    const misplacedResponse = validSpans();
+    misplacedResponse[0] = {
+      ...misplacedResponse[0],
+      attributes: {
+        ...misplacedResponse[0].attributes,
+        "output.value": "unrelated output",
+      },
+    };
+    expect(() =>
+      assertDeepAgentsTraceContract([traceRequest(misplacedResponse)], expectations),
+    ).toThrow(/direct prompt and response markers were not associated on one managed LLM span/);
+
+    const misplacedToolArgument = validSpans();
+    misplacedToolArgument[0].attributes["input.value"] = JSON.stringify({
+      prompt: DIRECT_PROMPT,
+      requested: DIRECT_RESPONSE,
+      unrelatedToolArgument: TOOL_ARGUMENT,
+    });
+    misplacedToolArgument[2] = {
+      ...misplacedToolArgument[2],
+      attributes: { ...misplacedToolArgument[2].attributes, "tool.parameters": "unrelated" },
+    };
+    expect(() =>
+      assertDeepAgentsTraceContract([traceRequest(misplacedToolArgument)], expectations),
+    ).toThrow(/not associated on one managed TOOL span/);
+  });
+
+  it("fails closed on malformed requests, wrong service identity, and ambient canaries", () => {
+    expect(() =>
+      assertDeepAgentsTraceContract([Buffer.from([0x0a, 0x05, 0x01])], expectations),
+    ).toThrow(/not a valid ExportTraceServiceRequest/);
+    expect(() =>
+      assertDeepAgentsTraceContract(
+        [traceRequest(validSpans(), "unmanaged-service")],
+        expectations,
+      ),
+    ).toThrow(/not associated on one managed LLM span/);
+    expect(() =>
+      assertDeepAgentsTraceContract(
+        [traceRequest([...validSpans(), { name: AMBIENT_CANARY, attributes: {} }])],
+        expectations,
+      ),
+    ).toThrow(/ambient exporter configuration reached OTLP/);
+  });
+
+  it("rejects prototype-sensitive attribute keys and excessive AnyValue nesting", () => {
+    const hostileAttributes = Object.create(null) as Record<string, OtlpAttributeValue>;
+    hostileAttributes.__proto__ = "hostile";
+    expect(() =>
+      decodeExportTraceServiceRequest(
+        traceRequest([{ name: "hostile attribute", attributes: hostileAttributes }]),
+      ),
+    ).toThrow(/forbidden OTLP attribute key __proto__/);
+
+    let nested: OtlpAttributeValue = "leaf";
+    for (let depth = 0; depth < 18; depth += 1) nested = [nested];
+    expect(() =>
+      decodeExportTraceServiceRequest(
+        traceRequest([{ name: "deep attribute", attributes: { nested } }]),
+      ),
+    ).toThrow(/AnyValue nesting exceeds 16 levels/);
+  });
+});
+
+describe("Deep Agents observability policy proof", () => {
+  it("accepts only the exact active policy-list state", () => {
+    expect(
+      observabilityPresetState(
+        "  ● observability-otlp-local [from balanced tier] — host-local OTLP export\n",
+      ),
+    ).toBe("active");
+    expect(
+      observabilityPresetState(
+        "  ○ observability-otlp-local — host-local OTLP export (recorded locally, not active on gateway)\n",
+      ),
+    ).toBe("drift");
+    expect(observabilityPresetState("observability-otlp-local is documented here\n")).toBe(
+      "missing",
+    );
+  });
+
+  it("distinguishes confirmed OpenShell denials from DNS and transport failures", () => {
+    expect(
+      hasConfirmedOpenShellPolicyDenial(
+        "[1783046573.602] [sandbox] [OCSF ] NET:OPEN [MED] DENIED /usr/bin/curl(1) -> example.com:443 [reason:not allowed by any policy]",
+      ),
+    ).toBe(true);
+    expect(
+      hasConfirmedOpenShellPolicyDenial(
+        'proxy: {"error":"policy_denied","detail":"CONNECT example.com:443 not allowed by any policy"}',
+      ),
+    ).toBe(true);
+    expect(
+      hasConfirmedOpenShellPolicyDenial(
+        "nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'dcode-test'.",
+      ),
+    ).toBe(true);
+    expect(hasConfirmedOpenShellPolicyDenial("URLError: Name or service not known")).toBe(false);
+    expect(hasConfirmedOpenShellPolicyDenial("curl: (7) Connection refused")).toBe(false);
+    expect(hasConfirmedOpenShellPolicyDenial("curl: (28) Operation timed out")).toBe(false);
+  });
+
+  it("runs the policy parser and denial classifier through the live tsx command path", () => {
+    const tsx = path.join(process.cwd(), "node_modules", ".bin", "tsx");
+    const helper = path.join(
+      process.cwd(),
+      "test",
+      "e2e",
+      "live",
+      "deepagents-observability-contract.ts",
+    );
+    const active = spawnSync(tsx, [helper, "policy-state"], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+      input: "  ● observability-otlp-local [from balanced tier] — local OTLP\n",
+    });
+    expect(active.status, active.stderr).toBe(0);
+    expect(active.stdout.trim()).toBe("active");
+
+    const denial = spawnSync(tsx, [helper, "denial-state"], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+      input:
+        "[1.0] [sandbox] [OCSF ] NET:OPEN [MED] DENIED /usr/bin/curl(1) -> example.com:443 [reason:not allowed by any policy]\n",
+    });
+    expect(denial.status, denial.stderr).toBe(0);
+    expect(denial.stdout.trim()).toBe("policy-denied");
+  });
+});
+
+describe("bounded private OTLP capture server", () => {
+  it("accepts only private bridge addresses unless a hermetic test opts into loopback", () => {
+    expect(isPrivateBridgeIpv4("10.1.2.3")).toBe(true);
+    expect(isPrivateBridgeIpv4("172.31.0.1")).toBe(true);
+    expect(isPrivateBridgeIpv4("192.168.1.1")).toBe(true);
+    expect(isPrivateBridgeIpv4("127.0.0.1")).toBe(false);
+    expect(isPrivateBridgeIpv4("127.0.0.1", true)).toBe(true);
+    expect(isPrivateBridgeIpv4("0.0.0.0", true)).toBe(false);
+    expect(isPrivateBridgeIpv4("8.8.8.8", true)).toBe(false);
+  });
+
+  it("bounds per-request, aggregate, and request-count capture volume", async () => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-capture-test-"));
+    const started = await startOtlpCaptureServers({
+      allowLoopback: true,
+      bindIp: "127.0.0.1",
+      captureDir,
+      collectorPort: 0,
+      decoyPort: 0,
+      maxCaptureBytes: 16,
+      maxCaptureRequests: 3,
+      maxBodyBytes: 16,
+    });
+    try {
+      expect(
+        await request(
+          started.collectorPort,
+          { "content-length": "4", "content-type": "application/x-protobuf" },
+          "test",
+        ),
+      ).toBe(200);
+      const aggregateStatus = await request(
+        started.collectorPort,
+        { "content-length": "13", "content-type": "application/x-protobuf" },
+        "1234567890123",
+      );
+      expect([507, null]).toContain(aggregateStatus);
+      const oversizedStatus = await request(started.collectorPort, {
+        "content-length": "17",
+        "content-type": "application/x-protobuf",
+      });
+      expect([413, null]).toContain(oversizedStatus);
+      const overCountStatus = await request(
+        started.collectorPort,
+        { "content-length": "4", "content-type": "application/x-protobuf" },
+        "test",
+      );
+      expect([429, null]).toContain(overCountStatus);
+      await waitForMetadata(captureDir, 4);
+
+      const metadata = fs
+        .readdirSync(captureDir)
+        .filter((name) => name.endsWith(".json"))
+        .sort()
+        .map((name) => JSON.parse(fs.readFileSync(path.join(captureDir, name), "utf8")));
+      expect(metadata).toMatchObject([
+        { accepted: true, bytes: 4, observedBytes: 4, rejection: null },
+        {
+          accepted: false,
+          bytes: 0,
+          declaredBytes: 13,
+          rejection: "aggregate captured bodies exceed bound",
+        },
+        {
+          accepted: false,
+          bytes: 0,
+          declaredBytes: 17,
+          rejection: "declared body exceeds capture bound",
+        },
+        {
+          accepted: false,
+          bytes: 0,
+          declaredBytes: 4,
+          rejection: "capture request count exceeds bound",
+        },
+      ]);
+      const bodyFiles = fs
+        .readdirSync(captureDir)
+        .filter((name) => name.endsWith(".body"))
+        .sort();
+      expect(bodyFiles.map((name) => fs.statSync(path.join(captureDir, name)).size)).toEqual([
+        4, 0, 0, 0,
+      ]);
+    } finally {
+      await started.close();
+      fs.rmSync(captureDir, { force: true, recursive: true });
+    }
+  });
+
+  it("reserves declared bytes before admitting concurrent request bodies", async () => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-reservation-test-"));
+    const started = await startOtlpCaptureServers({
+      allowLoopback: true,
+      bindIp: "127.0.0.1",
+      captureDir,
+      collectorPort: 0,
+      decoyPort: 0,
+      maxBodyBytes: 16,
+      maxCaptureBytes: 16,
+      maxCaptureRequests: 10,
+    });
+    const first = pendingRequest(started.collectorPort, 12);
+    try {
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (started.snapshot().reservedBytes === 12) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(started.snapshot()).toMatchObject({ capturedBytes: 0, reservedBytes: 12 });
+
+      const rejectedStatus = await request(
+        started.collectorPort,
+        { "content-length": "12", "content-type": "application/x-protobuf" },
+        "abcdefghijkl",
+      );
+      expect([507, null]).toContain(rejectedStatus);
+      expect(started.snapshot()).toMatchObject({ capturedBytes: 0, reservedBytes: 12 });
+
+      first.complete("abcdefghijkl");
+      expect(await first.status).toBe(200);
+      await waitForMetadata(captureDir, 2);
+      expect(started.snapshot()).toMatchObject({ capturedBytes: 12, reservedBytes: 0 });
+    } finally {
+      first.destroy();
+      await started.close();
+      fs.rmSync(captureDir, { force: true, recursive: true });
+    }
+  });
+});

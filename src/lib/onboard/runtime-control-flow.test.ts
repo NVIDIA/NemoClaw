@@ -4,7 +4,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../state/onboard-session";
-import { applyOnboardRuntimeControlRequests, updateSessionAgent } from "./runtime-control-flow";
+import {
+  applyOnboardRuntimeControlRequests,
+  applySelectedAgentTransition,
+  updateSessionAgent,
+} from "./runtime-control-flow";
 
 afterEach(() => {
   delete process.env.NEMOCLAW_TOOL_DISCLOSURE;
@@ -36,7 +40,13 @@ describe("onboard runtime control flow", () => {
   });
 
   it("rejects enabled observability for a non-DCode agent", () => {
-    const session = createSession({ observabilityEnabled: true });
+    const session = createSession({
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+      provider: "nvidia",
+      routerPid: 1234,
+    });
+    const before = structuredClone(session);
     const error = vi.fn();
     const exitProcess = vi.fn(() => {
       throw new Error("exit 1");
@@ -44,8 +54,55 @@ describe("onboard runtime control flow", () => {
 
     expect(() => updateSessionAgent(session, "openclaw", { error, exitProcess })).toThrow("exit 1");
     expect(error).toHaveBeenCalledWith(
-      "  --observability is supported only with --agent langchain-deepagents-code.",
+      "  Recorded observability belongs to Deep Agents Code. Pass --no-observability explicitly when switching agents.",
     );
     expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(session).toEqual(before);
+  });
+
+  it("rejects an invalid resumed agent transition before router or session mutation", async () => {
+    const session = createSession({
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+      provider: "nvidia",
+      routerPid: 1234,
+    });
+    const before = structuredClone(session);
+    const stopTrackedModelRouterForAgentChange = vi.fn(async () => undefined);
+    const clearAgentScopedResumeState = vi.fn((current) => current);
+    const setOnboardBrandingAgent = vi.fn();
+    const updateSession = vi.fn((mutator) => mutator(session) ?? session);
+    const note = vi.fn();
+    const error = vi.fn();
+    const exitProcess = vi.fn(() => {
+      throw new Error("exit 1");
+    });
+
+    await expect(
+      applySelectedAgentTransition(
+        {
+          resume: true,
+          session,
+          selectedAgentName: "openclaw",
+          routerPort: 4000,
+        },
+        {
+          note,
+          stopTrackedModelRouterForAgentChange,
+          clearAgentScopedResumeState,
+          setOnboardBrandingAgent,
+          updateSession,
+          error,
+          exitProcess,
+        },
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(stopTrackedModelRouterForAgentChange).not.toHaveBeenCalled();
+    expect(clearAgentScopedResumeState).not.toHaveBeenCalled();
+    expect(setOnboardBrandingAgent).not.toHaveBeenCalled();
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(note).not.toHaveBeenCalled();
+    expect(session).toEqual(before);
   });
 });

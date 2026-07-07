@@ -55,13 +55,19 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   autoYes: true,
   toolDisclosure: "progressive",
   observabilityEnabled: true,
+  policyTier: "restricted",
   baseImageResolutionHint: null,
 };
 
 function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildRecreatePhaseInput {
   return {
     sandboxName: "alpha",
-    sandboxEntry: { name: "alpha", agent: DCODE_AGENT, observabilityEnabled: true },
+    sandboxEntry: {
+      name: "alpha",
+      agent: DCODE_AGENT,
+      observabilityEnabled: true,
+      policyTier: "restricted",
+    },
     sessionSnapshot: onboardSession.createSession({
       sandboxName: "alpha",
       observabilityEnabled: false,
@@ -136,6 +142,25 @@ describe("runRebuildRecreatePhase observability handoff", () => {
     expect(input.onCreated).toHaveBeenCalledOnce();
     expect(input.registryRollback.restoreForRetry).not.toHaveBeenCalled();
     expect(input.bail).not.toHaveBeenCalled();
+  });
+
+  it("pins the authoritative restricted tier during recreate and restores ambient policy input", async () => {
+    const previousPolicyTier = process.env.NEMOCLAW_POLICY_TIER;
+    process.env.NEMOCLAW_POLICY_TIER = "open";
+    try {
+      let observedTier: string | undefined;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        observedTier = process.env.NEMOCLAW_POLICY_TIER;
+      });
+
+      await expect(runRebuildRecreatePhase(makeInput())).resolves.toBe(true);
+
+      expect(observedTier).toBe("restricted");
+      expect(process.env.NEMOCLAW_POLICY_TIER).toBe("open");
+    } finally {
+      if (previousPolicyTier === undefined) delete process.env.NEMOCLAW_POLICY_TIER;
+      else process.env.NEMOCLAW_POLICY_TIER = previousPolicyTier;
+    }
   });
 
   it("retains enabled observability through inner onboard failure, recovery, and bail", async () => {

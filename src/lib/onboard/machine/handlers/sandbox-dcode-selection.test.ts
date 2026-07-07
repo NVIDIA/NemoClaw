@@ -29,6 +29,7 @@ function dcodeRegistryEntry(
     name,
     agent: "langchain-deepagents-code",
     nemoclawVersion: "0.1.0",
+    observabilityEnabled: false,
     toolDisclosure: "progressive",
     webSearchEnabled: false,
     webSearchProvider: null,

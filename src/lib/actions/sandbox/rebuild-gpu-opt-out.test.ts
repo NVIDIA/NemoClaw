@@ -197,6 +197,29 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     expect(legacy.observabilityEnabled).toBe(false);
   });
 
+  it("carries the authoritative restricted tier with observability into inner onboard", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      rebuildAgent: "langchain-deepagents-code",
+      sb: {
+        observabilityEnabled: true,
+        policyTier: "restricted",
+      },
+    });
+
+    expect(opts.policyTier).toBe("restricted");
+    expect(opts.observabilityEnabled).toBe(true);
+  });
+
+  it("rejects an invalid recorded policy tier before destructive recreate work", () => {
+    expect(() =>
+      buildRebuildRecreateOnboardOpts({
+        ...baseArgs,
+        sb: { ...dashboard, policyTier: "unknown-tier" },
+      }),
+    ).toThrow("Invalid recorded policy tier 'unknown-tier'.");
+  });
+
   it.each([
     "openclaw",
     "hermes",

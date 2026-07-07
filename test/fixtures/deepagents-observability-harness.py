@@ -16,6 +16,10 @@ from types import SimpleNamespace
 from typing import Any
 
 SECRET = "NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL"
+DROPPED_MODEL_SETTINGS = "NEMOCLAW-DROPPED-MODEL-SETTINGS"
+DROPPED_RESPONSE_FORMAT = "NEMOCLAW-DROPPED-RESPONSE-FORMAT"
+DROPPED_TOOL_SCHEMA = "NEMOCLAW-DROPPED-TOOL-SCHEMA"
+UNSAFE_RELAY_FALLBACK = "NEMOCLAW-UNSAFE-RELAY-FALLBACK"
 _RELAY_OBSERVED_ERRORS: list[dict[str, Any]] = []
 _RELAY_OBSERVED_MODEL_NAMES: list[str] = []
 _RELAY_OBSERVED_TOOL_NAMES: list[str] = []
@@ -301,6 +305,7 @@ def _install_stubs(
     relay.guardrails = guardrails
     relay.subscribers = subscribers
     relay.scope = scope
+    relay.tools = SimpleNamespace(execute=_tool_execute)
     relay.typed = SimpleNamespace(tool_execute=_tool_execute)
 
     integrations = types.ModuleType("nemo_relay.integrations")
@@ -348,6 +353,26 @@ def _load_module(path: Path) -> types.ModuleType:
 
 class _SensitiveOperationError(RuntimeError):
     pass
+
+
+class _HostileCaptureMeta(type):
+    def __getattribute__(cls, name: str) -> Any:
+        if name == "__name__":
+            raise AssertionError("observability evaluated a hostile type name")
+        return super().__getattribute__(name)
+
+
+class _HostileCaptureObject(metaclass=_HostileCaptureMeta):
+    def __repr__(self) -> str:
+        raise AssertionError("observability evaluated an opaque repr")
+
+    def __str__(self) -> str:
+        raise AssertionError("observability evaluated an opaque string")
+
+
+class _HostileIdentifier(str):
+    def __str__(self) -> str:
+        raise AssertionError("observability coerced a hostile identifier")
 
 
 class _ToolCallRequest:
@@ -585,14 +610,63 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
             {
                 "model": "managed-model",
                 "messages": [{"content": SECRET}],
-                "tools": [{"description": SECRET}],
-                "model_settings": {"secret": SECRET},
+                "tools": [{"description": DROPPED_TOOL_SCHEMA}],
+                "model_settings": {"api_key": DROPPED_MODEL_SETTINGS},
+                "response_format": {"schema": DROPPED_RESPONSE_FORMAT},
             },
         )
     )
     response = response_guardrail({"content": SECRET, "error": SECRET})
     tool_request = tool_request_guardrail("execute", {"command": SECRET})
     tool_response = tool_response_guardrail("execute", {"stdout": SECRET})
+    bounded_redaction = tool_request_guardrail(
+        "execute",
+        {
+            "APIKey": SECRET,
+            "APIToken": SECRET,
+            "AWS_SECRET_ACCESS_KEY": SECRET,
+            "AWSSecretAccessKey": SECRET,
+            "accessToken": SECRET,
+            "api_key": SECRET,
+            "apiKey": SECRET,
+            "auth": SECRET,
+            "authentication": SECRET,
+            "bearer": SECRET,
+            "clientSecret": SECRET,
+            "credential": SECRET,
+            "header": SECRET,
+            "nested": {"checkpoint_id": SECRET, "command": "allowed"},
+            "opaque": _HostileCaptureObject(),
+            "oversized": "x" * 9000,
+            "passwd": SECRET,
+            "privateKey": SECRET,
+            "token": SECRET,
+        },
+    )
+    oversized_capture = tool_request_guardrail(
+        "execute", {f"item_{index}": "y" * 8000 for index in range(10)}
+    )
+    unsafe_relay_serialization = {
+        "pickle": tool_request_guardrail(
+            "execute",
+            {"__nv_pickle__": "opaque.Artifact", "data": UNSAFE_RELAY_FALLBACK},
+        ),
+        "fallback_string": tool_request_guardrail(
+            "execute",
+            {
+                "__nv_fallback_str__": "opaque.Artifact",
+                "data": UNSAFE_RELAY_FALLBACK,
+            },
+        ),
+    }
+    cyclic_capture_input: list[Any] = []
+    cyclic_capture_input.append(cyclic_capture_input)
+    cyclic_capture = tool_request_guardrail("execute", cyclic_capture_input)
+    shared_capture_input: list[Any] = ["leaf"]
+    for _ in range(module._MAX_CAPTURE_DEPTH + 1):
+        shared_capture_input = [shared_capture_input] * module._MAX_CAPTURE_ITEMS
+    shared_capture = tool_request_guardrail("execute", shared_capture_input)
+    hostile_identifier = module._safe_identifier(_HostileIdentifier(SECRET), "fallback")
 
     callback = module.new_metadata_only_callback_handler()
     callback.on_chain_start(
@@ -626,6 +700,12 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
         "response": response,
         "tool_request": tool_request,
         "tool_response": tool_response,
+        "bounded_redaction": bounded_redaction,
+        "oversized_capture": oversized_capture,
+        "unsafe_relay_serialization": unsafe_relay_serialization,
+        "cyclic_capture": cyclic_capture,
+        "shared_capture": shared_capture,
+        "hostile_identifier": hostile_identifier,
         "callback_records": list(scope.records),
     }
     identifier_boundaries = _exercise_identifier_boundaries(module, scope)

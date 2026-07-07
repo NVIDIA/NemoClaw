@@ -7,13 +7,14 @@ import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
+import { isDcodeAgent } from "../../onboard/observability-policy-presets";
 import type {
   PreparedDcodeRebuildHandoff,
   PreparedImageRebuildHandoff,
 } from "../../onboard/prepared-dcode-rebuild";
 import type { RebuildRouteHandoff } from "../../onboard/rebuild-route-handoff";
-import { isDcodeAgent } from "../../onboard/observability-policy-presets";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
+import { getTier } from "../../policy/tiers";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
@@ -27,6 +28,7 @@ export type RebuildGpuOptOutEntry = {
   gatewayPort?: number | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
+  policyTier?: string | null;
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -99,6 +101,7 @@ export type RebuildRecreateOnboardOpts = {
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
+  policyTier: string | null;
   baseImageResolutionHint: SandboxBaseImageResolutionMetadata | null;
   noGpu?: true;
 };
@@ -118,6 +121,10 @@ export function buildRebuildRecreateOnboardOpts(args: {
     );
   }
   const gpuOverrides = getRebuildSandboxGpuOverrides(args.sb);
+  const rawPolicyTier = args.sb?.policyTier?.trim().toLowerCase() || null;
+  if (rawPolicyTier && !getTier(rawPolicyTier)) {
+    throw new Error(`Invalid recorded policy tier '${String(args.sb?.policyTier)}'.`);
+  }
   const targetGatewayName = resolveSandboxGatewayName(args.sb);
   const targetGatewayPort = resolveGatewayPortFromName(targetGatewayName);
   if (targetGatewayPort === null) {
@@ -157,6 +164,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     autoYes: args.autoYes,
     toolDisclosure: toolDisclosureOrDefault(args.sb?.toolDisclosure),
     observabilityEnabled: args.sb?.observabilityEnabled === true,
+    policyTier: rawPolicyTier,
     baseImageResolutionHint: args.baseImageResolutionHint ?? null,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
   };

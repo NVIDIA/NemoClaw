@@ -141,6 +141,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+      "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
     ]);
 
     for (const scriptPath of DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS) {
@@ -160,6 +161,11 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       ),
     ).toBe(180_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      ),
+    ).toBe(8 * 60_000);
   });
 
   it("documents Deep Agents check scripts in generated launch/QA evidence", () => {

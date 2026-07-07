@@ -49,11 +49,20 @@ export async function prepareRebuildTargetPreflights(args: {
   rebuildAgent: string | null;
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
+  requestedObservabilityEnabled?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
-  const { sandboxName, sandboxEntry, rebuildAgent, autoYes, requestedToolDisclosure, log, bail } =
-    args;
+  const {
+    sandboxName,
+    sandboxEntry,
+    rebuildAgent,
+    autoYes,
+    requestedToolDisclosure,
+    requestedObservabilityEnabled,
+    log,
+    bail,
+  } = args;
   hydrateMessagingConfigForRebuild(sandboxName, log);
   if (!(await ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail)))
     return null;
@@ -85,6 +94,8 @@ export async function prepareRebuildTargetPreflights(args: {
   // session. Use that authoritative value for both preflight and inner onboard,
   // never the raw registry fallback used while constructing generic options.
   recreateOptions.toolDisclosure = durableConfig.toolDisclosure;
+  recreateOptions.observabilityEnabled =
+    requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,
