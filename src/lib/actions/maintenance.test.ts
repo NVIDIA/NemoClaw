@@ -422,9 +422,7 @@ describe("backupAll", () => {
       expectSkipGuidance,
     );
     expect(errorOutput.includes("Strict pre-upgrade backup cannot skip")).toBe(!expectSkipGuidance);
-    if (!expectSkipGuidance) {
-      expect(errorOutput).not.toContain("prepare the upgrade manually");
-    }
+    expect(errorOutput).not.toContain("prepare the upgrade manually");
 
     errorSpy.mockRestore();
     exitSpy.mockRestore();
