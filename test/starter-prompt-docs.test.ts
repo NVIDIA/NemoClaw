@@ -37,6 +37,10 @@ function read(relativePath: string): string {
   return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 }
 
+function urlsIn(content: string): URL[] {
+  return Array.from(content.matchAll(/https?:\/\/[^\s"'<>;]+/g), ([match]) => new URL(match));
+}
+
 describe("starter prompt docs CTA", () => {
   it("keeps the button and manual fallback on one shared prompt source (#5048)", () => {
     const promptSource = fs.readFileSync(starterPromptSource, "utf8");
@@ -80,10 +84,15 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("?fields=NVIDIA_INFERENCE_API_KEY:secret");
     expect(formSource).toContain("<title>NemoClaw Local Credential Form</title>");
     expect(formSource).toContain("Content-Security-Policy");
-    expect(formSource).toContain(
-      "connect-src 'self' http://127.0.0.1:* http://localhost:* http://[::1]:*;",
-    );
-    expect(formSource).not.toMatch(/https?:\/\/(?!127\.0\.0\.1|localhost|\[::1\])/);
+    expect(formSource).toContain("connect-src 'self';");
+    expect(formSource).not.toContain("frame-ancestors");
+    expect(promptSource).toContain("Content-Security-Policy: frame-ancestors 'none'");
+    expect(formSource).toContain('const LOCAL_SUBMIT_PATH = "/submit";');
+    expect(formSource).toContain("fetch(LOCAL_SUBMIT_PATH");
+    expect(formSource).not.toContain('params.get("submit")');
+    for (const url of urlsIn(formSource)) {
+      expect(["127.0.0.1", "localhost", "[::1]"], url.href).toContain(url.hostname);
+    }
     expect(formSource).not.toContain("localStorage");
     expect(formSource).not.toContain("sessionStorage");
   });
