@@ -5,7 +5,7 @@
 # Case: Deep Agents Code interactive TUI startup (#5620).
 #
 # This live check runs against a real Deep Agents Code sandbox. It proves the
-# interactive `dcode` TUI starts in a PTY, completes its queued `/help` probe,
+# interactive `dcode` TUI starts in a PTY, opens and closes the `/agents` modal,
 # exits after Ctrl-C, and leaves only sanitized, secret-free capture artifacts.
 #
 # shellcheck disable=SC2016
@@ -15,17 +15,15 @@ set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
-# DCode independently budgets up to 60 seconds for server health and another
-# 60 seconds for graph readiness. Leave headroom for cold CI startup.
-TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-150}"
+TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
 CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
-# Pinned DCode 0.1.34 renders this exact heading for `/help`. The command is
-# queued until onboarding and server startup finish, so it is a stronger ready
-# signal than release-specific welcome copy or the always-visible app banner.
-TUI_READY_PATTERN='(interactive features:)'
+# Pinned DCode 0.1.34 renders this exact modal title for `/agents`. Opening it
+# proves input reached the main composer after optional onboarding; headless
+# check 07 independently owns backend readiness and inference acceptance.
+TUI_READY_PATTERN='(select agent)'
 # NemoClaw configures DCode's model and managed provider before launch, so
 # the model picker is a regression. The name prompt is allowed on first run.
 TUI_FIRST_RUN_PATTERN='(choose a recommended model)'
@@ -162,16 +160,16 @@ proc append_marker {markers marker} {
   close $fh
 }
 
-proc submit_help {markers} {
-  # Slash autocomplete initially highlights /agents. Type at human cadence so
-  # DCode 0.1.34 filters to the exact /help entry before Enter submits it.
-  foreach char [split "/help" ""] {
+proc submit_agents {markers} {
+  # Type at human cadence so DCode 0.1.34's reactive slash completion processes
+  # the exact command before Enter submits the selected /agents entry.
+  foreach char [split "/agents" ""] {
     send -- $char
     after 150
   }
   after 500
   send -- "\r"
-  append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
+  append_marker $markers "NEMOCLAW_TUI_AGENTS_SUBMITTED"
 }
 
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
@@ -179,7 +177,7 @@ spawn {*}$cmd
 
 # DCode's own onboarding predicate is sampled immediately before launch. This
 # avoids guessing from a short negative observation while imports/first paint
-# are still in flight (which could otherwise type `/help` into the name field).
+# are still in flight (which could otherwise type `/agents` into the name field).
 if {$expect_name_prompt eq "1"} {
   set timeout $env(NEMOCLAW_TUI_TIMEOUT)
   expect {
@@ -192,7 +190,7 @@ if {$expect_name_prompt eq "1"} {
       after 500
       send -- "\r"
       after 500
-      submit_help $markers
+      submit_agents $markers
     }
     -nocase -re $first_run_pattern {
       append_marker $markers "$expect_out(0,string)"
@@ -216,7 +214,7 @@ if {$expect_name_prompt eq "1"} {
 } else {
   append_marker $markers "NEMOCLAW_TUI_NO_NAME_PROMPT"
   after 1000
-  submit_help $markers
+  submit_agents $markers
 }
 
 set ready_match ""
@@ -248,6 +246,9 @@ expect {
 append_marker $markers "$ready_match"
 append_marker $markers "NEMOCLAW_TUI_READY"
 puts "\nNEMOCLAW_TUI_READY"
+# Close the Select Agent modal before exercising the idle-app quit path.
+send -- "\033"
+after 500
 # Idle dcode arms quit on the first Ctrl-C and exits on the second.
 send -- "\003"
 after 250
@@ -397,9 +398,9 @@ main() {
   fi
 
   if grep -q "NEMOCLAW_TUI_READY" "$plain_capture_file" && is_tui_ready_capture <"$plain_capture_file"; then
-    pass "dcode TUI completed onboarding/server startup and rendered /help"
+    pass "dcode TUI reached the main composer and opened Select Agent"
   else
-    fail_test "dcode TUI /help readiness marker missing from capture"
+    fail_test "dcode TUI Select Agent readiness marker missing from capture"
   fi
 
   assert_clean_exit_code "$plain_capture_file"

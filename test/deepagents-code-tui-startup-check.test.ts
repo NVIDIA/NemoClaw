@@ -119,7 +119,7 @@ proc expect {branches} {
       }
       ready {
         set branch_index [lsearch -exact $branches {$ready_pattern}]
-        set ::expect_out(0,string) "Interactive Features:"
+        set ::expect_out(0,string) "Select Agent"
       }
       exit {
         set branch_index [lsearch -glob $branches {NEMOCLAW_TUI_EXIT:*}]
@@ -171,7 +171,7 @@ proc exit {{code 0}} {
       NEMOCLAW_TUI_FIRST_RUN_PATTERN: "(choose a recommended model)",
       NEMOCLAW_TUI_NAME_PROMPT_PATTERN:
         "(your name \\(optional\\)|what should deep agents call you)",
-      NEMOCLAW_TUI_READY_PATTERN: "(interactive features:)",
+      NEMOCLAW_TUI_READY_PATTERN: "(select agent)",
       NEMOCLAW_TUI_SANDBOX_NAME: "fake-deepagents",
       NEMOCLAW_TUI_TIMEOUT: "5",
       NEMOCLAW_TUI_TRACE: trace,
@@ -193,7 +193,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         { DEEPAGENTS_TUI_TIMEOUT: timeout },
       );
 
-    expect(validate("150")).toBe("valid");
+    expect(validate("90")).toBe("valid");
     expect(validate("0")).toBe("invalid");
     expect(validate("1; touch /tmp/nemoclaw-tui-timeout-injection")).toBe("invalid");
   });
@@ -254,7 +254,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(tuiStartupCheckSource).not.toMatch(/\b(?:sudo|apt-get)\b/u);
   });
 
-  it("matches the pinned /help readiness response without accepting startup-only text", () => {
+  it("matches the pinned Select Agent modal without accepting startup-only text", () => {
     const readiness = (capture: string) =>
       runTuiStartupCheckHelper(
         'if printf "%s" "$CAPTURE" | is_tui_ready_capture; then printf ready; else printf not-ready; fi',
@@ -267,9 +267,12 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(readiness("What should Deep Agents call you?")).toBe("not-ready");
     expect(readiness("What would you like to do next?")).toBe("not-ready");
     expect(readiness("Enter your task, then press Enter")).toBe("not-ready");
-    expect(readiness("Interactive Features:\n  Enter           Submit your message")).toBe("ready");
-    expect(tuiExpectProgram).toContain('foreach char [split "/help" ""]');
-    expect(tuiExpectProgram).not.toContain('send -- "/help\\r"');
+    expect(readiness("Interactive Features:\n  Enter           Submit your message")).toBe(
+      "not-ready",
+    );
+    expect(readiness("Select Agent\nagent (current)\nskills")).toBe("ready");
+    expect(tuiExpectProgram).toContain('foreach char [split "/agents" ""]');
+    expect(tuiExpectProgram).not.toContain('send -- "/agents\\r"');
   });
 
   it("matches the pinned first-run model picker that managed DCode must suppress (#6410)", () => {
@@ -319,7 +322,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(traceText).toBe("0d,2f,68,65,6c,70,0d,03");
+    expect(traceText).toBe("0d,2f,61,67,65,6e,74,73,0d,1b,03");
     expect(markerText).toContain("What should Deep Agents call you");
     expect(markerText).toContain("NEMOCLAW_TUI_NAME_PROMPT");
     expect(markerText).toContain("NEMOCLAW_TUI_READY");
@@ -330,7 +333,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     const { markerText, result, traceText } = runTuiExpectStateMachine(["namePrompt", "firstRun"]);
 
     expect(result.status, result.stderr).toBe(24);
-    expect(traceText).toBe("0d,2f,68,65,6c,70,0d,03");
+    expect(traceText).toBe("0d,2f,61,67,65,6e,74,73,0d,03");
     expect(markerText).toContain("NEMOCLAW_TUI_NAME_PROMPT");
     expect(markerText).toContain("Choose a Recommended Model");
     expect(markerText).toContain("NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN");
@@ -344,7 +347,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(traceText).toBe("2f,68,65,6c,70,0d,03");
+    expect(traceText).toBe("2f,61,67,65,6e,74,73,0d,1b,03");
     expect(markerText).toContain("NEMOCLAW_TUI_READY");
     expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
   });
@@ -383,7 +386,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:pending\\n'; }",
           "ensure_expect_available() { return 0; }",
           "run_tui_expect() {",
-          '  printf "Interactive Features:\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
+          '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
           "  return 0",
           "}",
           "main",
@@ -395,7 +398,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("finite expect harness reached startup and observed exit");
       expect(result.stdout).toContain(
-        "dcode TUI completed onboarding/server startup and rendered /help",
+        "dcode TUI reached the main composer and opened Select Agent",
       );
       expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
