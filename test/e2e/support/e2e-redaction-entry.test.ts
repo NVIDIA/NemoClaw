@@ -22,11 +22,59 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { redactString } from "../fixtures/redaction.ts";
+import { buildChildEnv, redactString } from "../fixtures/redaction.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 
 describe("fixture redaction entry point", () => {
+  it("passes only the workflow-owned trace directory through child env", () => {
+    const childEnv = buildChildEnv(
+      {
+        PATH: "/usr/bin",
+        NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-traces",
+        NEMOCLAW_TRACE_FILE: "/tmp/nemoclaw-trace.json",
+        NEMOCLAW_TRACE_EXPORTER: "debug",
+        NEMOCLAW_LOG_LEVEL: "debug",
+      },
+      { fixtureOverlay: {} },
+    );
+
+    expect(childEnv.NEMOCLAW_TRACE_DIR).toBe("/tmp/nemoclaw-traces");
+    expect(childEnv.NEMOCLAW_TRACE_FILE).toBeUndefined();
+    expect(childEnv.NEMOCLAW_TRACE_EXPORTER).toBeUndefined();
+    expect(childEnv.NEMOCLAW_LOG_LEVEL).toBe("debug");
+  });
+
+  it("preserves the trace directory when fixture overlay values are layered", () => {
+    const childEnv = buildChildEnv(
+      {
+        PATH: "/usr/bin",
+        E2E_ARTIFACT_DIR: "/tmp/e2e-artifacts/live/target",
+        NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-e2e-traces/target",
+        NEMOCLAW_TRACE_FILE: "/tmp/raw-trace.json",
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test-secret",
+      },
+      {
+        fixtureOverlay: {
+          E2E_CONTEXT_DIR: "/tmp/e2e-context",
+          E2E_PHASE: "onboard",
+          E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
+        },
+        secretEnv: ["NVIDIA_INFERENCE_API_KEY"],
+      },
+    );
+
+    expect(childEnv).toMatchObject({
+      E2E_ARTIFACT_DIR: "/tmp/e2e-artifacts/live/target",
+      E2E_CONTEXT_DIR: "/tmp/e2e-context",
+      E2E_PHASE: "onboard",
+      E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
+      NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-e2e-traces/target",
+      NVIDIA_INFERENCE_API_KEY: "nvapi-test-secret",
+    });
+    expect(childEnv.NEMOCLAW_TRACE_FILE).toBeUndefined();
+  });
+
   it("redacts explicit values with [REDACTED] and canonical shapes with <REDACTED>", () => {
     const explicit = "test-secret-aBcD";
     const canonical = `nvapi-${"x".repeat(24)}`;
@@ -38,6 +86,15 @@ describe("fixture redaction entry point", () => {
     expect(out).toContain("<REDACTED>");
     expect(out).not.toContain(explicit);
     expect(out).not.toContain(canonical);
+  });
+
+  it("redacts a complete multi-segment LangSmith key without exposing its tail", () => {
+    const canonical = `lsv2_sk_${"a".repeat(36)}_${"tail".repeat(3)}`;
+
+    const out = redactString(`canonical=${canonical}`);
+
+    expect(out).toBe("canonical=<REDACTED>");
+    expect(out).not.toContain("_tailtailtail");
   });
 
   it("applies explicit values longest first so a shorter substring cannot expose a longer one", () => {

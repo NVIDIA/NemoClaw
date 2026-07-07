@@ -16,7 +16,7 @@
 - [ ] Doc only (includes code sample changes)
 
 ## Quality Gates
-<!-- Check all that apply. For any "covered by existing tests", "not applicable", or waiver entry, add a brief justification on the same line or in the Changes section. -->
+<!-- Check exactly one tests line and one docs line. Check other lines when applicable. Add every requested justification or approval reference. -->
 - [ ] Tests added or updated for changed behavior
 - [ ] Existing tests cover changed behavior — justification:
 - [ ] Tests not applicable — justification:
@@ -27,11 +27,11 @@
 - [ ] Non-success, skipped, or missing CI check accepted by maintainer — check name, approval link, and follow-up issue:
 
 ## Verification
-<!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
+<!-- Check each applicable item only when supported by the requested evidence. Run targeted tests once per relevant change set and rerun after later edits or hook autofixes that can affect the tested behavior. Do not rerun hook-covered checks. -->
 - [ ] PR description includes the DCO sign-off declaration and every commit appears as `Verified` in GitHub
-- [ ] Git hooks passed during commit and push, or `npx prek run --from-ref main --to-ref HEAD` passes
-- [ ] Targeted tests pass for changed behavior
-- [ ] Full `npm test` passes (broad runtime changes only)
+- [ ] Normal `pre-commit`, `commit-msg`, and `pre-push` hooks passed, or `npm run check:diff` passed when hooks were skipped or unavailable
+- [ ] Targeted behavior tests pass for the current change set, or tests are marked not applicable above — command/result or justification:
+- [ ] Applicable broad gate passed — `npm test` for broad runtime/test-harness changes; `npm run check` for repo-wide validation/coverage changes — command/result:
 - [ ] Quality Gates section completed with required justifications or waivers
 - [ ] No secrets, API keys, or credentials committed
 - [ ] `npm run docs` builds without warnings (doc changes only)

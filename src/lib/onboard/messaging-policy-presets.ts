@@ -52,7 +52,19 @@ export function requiredMessagingChannelPolicyPresets(
   return required;
 }
 
-export function mergeRequiredMessagingChannelPolicyPresets(
+// Merge the policy presets every enabled messaging channel needs into a
+// selection. An enabled channel cannot function without its network-egress
+// preset, so that preset must survive policy finalization regardless of how the
+// operator arrived at the selection (interactive tier, env-driven custom list,
+// or a recorded resume set). We intentionally merge *all* of a channel's
+// presets, not just the create-time `requiredAtCreate` ones: `requiredAtCreate`
+// governs whether a preset is injected into the boot policy at sandbox-create
+// time (only Slack today), while finalization applies any newly-merged preset
+// to the live gateway itself. Using only the create-time-required set here drops
+// every other channel's preset (Discord, Telegram, WhatsApp, Teams, WeChat) from
+// the persisted selection, so `policy-list` shows them unapplied even though the
+// channel was configured during onboard. See #5967.
+export function mergeEnabledMessagingChannelPolicyPresets(
   selectedPresets: string[],
   channels: string[] | null | undefined,
   knownPresetNames?: Iterable<string> | null,
@@ -61,7 +73,7 @@ export function mergeRequiredMessagingChannelPolicyPresets(
   const selected = new Set(merged);
   const known = knownPresetNames ? new Set(knownPresetNames) : null;
 
-  for (const preset of requiredMessagingChannelPolicyPresets(channels)) {
+  for (const preset of allMessagingChannelPolicyPresets(channels)) {
     if (known && !known.has(preset)) continue;
     if (selected.has(preset)) continue;
     merged.push(preset);

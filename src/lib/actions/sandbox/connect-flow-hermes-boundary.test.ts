@@ -78,6 +78,72 @@ describe("connectSandbox Hermes secret-boundary refusals", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("fails closed on Hermes MCP drift with restart and rebuild guidance", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        mcpReconciliationRefused: true,
+        mcpReconciliationReason: "Hermes MCP config does not match persisted managed intent",
+      },
+    });
+    const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
+    vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("Probe failed: refused to confirm Hermes gateway in 'alpha'");
+    expect(errorOutput).toContain("nemoclaw alpha mcp restart");
+    expect(errorOutput).toContain("nemoclaw alpha rebuild --yes");
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("refuses an HTTP-healthy Hermes gateway while MCP integrity is pending", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        // Process recovery normalizes both HTTP 200 and authenticated HTTP 401
+        // health probes to this positive running state before reconciliation.
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: true,
+        mcpReconciliationRefused: true,
+        mcpReconciliationReason:
+          "\x1b[31mHermes MCP integrity is pending\x1b[0m\nFORGED SUCCESS ghp_0123456789abcdefghij",
+      },
+    });
+    const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
+    vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    const failureLine = harness.errorSpy.mock.calls
+      .map((call) => String(call[0] ?? ""))
+      .find((line) => line.includes("Connect failed:"));
+    expect(failureLine).toContain("Hermes MCP integrity is pending FORGED SUCCESS <REDACTED>");
+    expect(failureLine).not.toMatch(/[\r\n\x1b]/);
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("nemoclaw alpha mcp restart");
+    expect(errorOutput).toContain("nemoclaw alpha rebuild --yes");
+    expect(errorOutput).not.toContain("ghp_0123456789abcdefghij");
+    expect(harness.ensureOllamaAuthProxySpy).not.toHaveBeenCalled();
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it.each([
     [
       "raw-secret",

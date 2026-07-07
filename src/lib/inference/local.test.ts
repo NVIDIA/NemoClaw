@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import fs, { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
 import { OLLAMA_MODEL_REGISTRY } from "./ollama-model-registry";
@@ -36,6 +36,7 @@ import {
   parseOllamaList,
   parseOllamaTags,
   probeLocalProviderHealth,
+  probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
   resetOllamaContainerPortCache,
   validateLocalProvider,
@@ -347,11 +348,15 @@ describe("local inference helpers", () => {
   // probe to :11434 that ignored the auth proxy at :11435 entirely, so a
   // broken proxy hid behind a "healthy" backend.
   it("attaches a healthy auth-proxy subprobe when ollama backend is up", () => {
-    const responses: Array<{ args: string[]; status: number }> = [];
+    const responses: Array<{
+      args: string[];
+      opts?: { trustedConfigFiles?: readonly string[] };
+      status: number;
+    }> = [];
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "test-token",
-      runCurlProbeImpl: (argv: string[]) => {
-        responses.push({ args: argv, status: 200 });
+      runCurlProbeImpl: (argv: string[], opts?: { trustedConfigFiles?: readonly string[] }) => {
+        responses.push({ args: argv, opts, status: 200 });
         return {
           ok: true,
           httpStatus: 200,
@@ -365,7 +370,10 @@ describe("local inference helpers", () => {
     const proxyCall = responses.find((r) =>
       r.args.some((a) => typeof a === "string" && a.includes("11435")),
     );
-    expect(proxyCall?.args).toContain("Authorization: Bearer test-token");
+    expect(proxyCall?.args).toContain("--config");
+    expect(proxyCall?.args.join(" ")).not.toContain("test-token");
+    expect(proxyCall?.args).not.toContain("Authorization: Bearer test-token");
+    expect(proxyCall?.opts?.trustedConfigFiles ?? []).not.toHaveLength(0);
     expect(result?.ok).toBe(true);
     expect(result?.subprobes).toHaveLength(1);
     expect(result?.subprobes?.[0]).toMatchObject({
@@ -496,6 +504,25 @@ describe("local inference helpers", () => {
     });
     expect(result?.ok).toBe(true);
     expect(result?.detail).toContain("reachable");
+  });
+
+  it("reports the auth proxy as unhealthy when the auth config cannot be prepared", () => {
+    const spy = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
+      throw new Error("mkdtemp failed");
+    });
+    try {
+      const result = probeOllamaAuthProxyHealth({
+        loadOllamaProxyTokenImpl: () => "token",
+        runCurlProbeImpl: () => {
+          throw new Error("curl should not be spawned when auth config setup fails");
+        },
+      });
+      expect(result?.ok).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("mkdtemp failed");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("returns null when provider health probing is not supported", () => {
@@ -842,8 +869,8 @@ describe("local inference helpers", () => {
       models: [{ name: "qwen3.6:35b", size_vram: 0, processor: "100% CPU" }],
     });
     const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const rendered = cmd.join(" ");
       if (rendered.includes("/api/ps")) return psOutput;
       return payload;
     };
@@ -861,8 +888,8 @@ describe("local inference helpers", () => {
       models: [{ name: "qwen3.6:35b", size_vram: 24_000_000_000, processor: "100% GPU" }],
     });
     const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const rendered = cmd.join(" ");
       if (rendered.includes("/api/ps")) return psOutput;
       return payload;
     };
@@ -880,8 +907,8 @@ describe("local inference helpers", () => {
       error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)",
     });
     const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return oomPayload;
     };
@@ -896,8 +923,8 @@ describe("local inference helpers", () => {
       error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)",
     });
     const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return oomPayload;
     };
@@ -913,8 +940,8 @@ describe("local inference helpers", () => {
       error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)",
     });
     const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return oomPayload;
     };
@@ -1050,8 +1077,8 @@ describe("local inference helpers", () => {
       if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };
       return { stdout: oomPayload, exitCode: 0, timedOut: false };
     };
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return "";
     };

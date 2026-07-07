@@ -26,12 +26,13 @@ const installModule = require("../src/lib/onboard/openshell-install") as {
   parseOpenshellReleaseTag: (tag: unknown) => string | null;
   resolveOpenshellInstallVersion: (
     available: readonly string[],
-    options: { max: string | null },
+    options: { min?: string | null; max: string | null },
     helpers: { versionGte: (a: string, b: string) => boolean },
   ) => {
     kind: "pin" | "no-max" | "incompatible";
     version?: string;
     latest?: string | null;
+    min?: string | null;
     max?: string;
     message?: string;
     reason?: "latest" | "max-cap";
@@ -40,6 +41,7 @@ const installModule = require("../src/lib/onboard/openshell-install") as {
 
 const pinModule = require("../src/lib/onboard/openshell-pin") as {
   resolveOpenshellInstallPin: (deps: {
+    getBlueprintMinOpenshellVersion?: () => string | null;
     getBlueprintMaxOpenshellVersion: () => string | null;
     versionGte: (a: string, b: string) => boolean;
     listReleases?: () => string[] | null;
@@ -253,6 +255,29 @@ describe("resolveOpenshellInstallVersion", () => {
     expect(result.latest).toBe("0.0.36");
   });
 
+  it("rejects published releases below the supported minimum", () => {
+    const result = installModule.resolveOpenshellInstallVersion(
+      ["v0.0.71"],
+      { min: "0.0.72", max: "0.0.72" },
+      helpers,
+    );
+    expect(result.kind).toBe("incompatible");
+    expect(result.min).toBe("0.0.72");
+    expect(result.max).toBe("0.0.72");
+    expect(result.message).toContain("0.0.72 through 0.0.72");
+  });
+
+  it("selects the release that satisfies both minimum and maximum", () => {
+    const result = installModule.resolveOpenshellInstallVersion(
+      ["v0.0.71", "v0.0.72"],
+      { min: "0.0.72", max: "0.0.72" },
+      helpers,
+    );
+    expect(result.kind).toBe("pin");
+    expect(result.version).toBe("0.0.72");
+    expect(result.reason).toBe("latest");
+  });
+
   it("returns incompatible when no release ≤ max exists", () => {
     const result = installModule.resolveOpenshellInstallVersion(
       ["v0.0.38", "0.0.39"],
@@ -350,6 +375,17 @@ describe("resolveOpenshellInstallPin", () => {
     expect(logged.join("\n")).toContain("0.0.38");
   });
 
+  it("surfaces incompatible before download when all releases are below min", () => {
+    const result = pinModule.resolveOpenshellInstallPin({
+      getBlueprintMinOpenshellVersion: () => "0.0.72",
+      getBlueprintMaxOpenshellVersion: () => "0.0.72",
+      versionGte,
+      listReleases: () => ["v0.0.71"],
+    });
+    expect(result.kind).toBe("incompatible");
+    expect(result.message ?? "").toContain("0.0.72 through 0.0.72");
+  });
+
   it("surfaces incompatible when no published release ≤ max exists", () => {
     const result = pinModule.resolveOpenshellInstallPin({
       getBlueprintMaxOpenshellVersion: () => "0.0.36",
@@ -363,6 +399,27 @@ describe("resolveOpenshellInstallPin", () => {
 });
 
 describe("computeOpenshellInstallEnv", () => {
+  it("does not apply stable release discovery to the dev channel", () => {
+    const channel = "dev";
+    const result = pinModule.computeOpenshellInstallEnv(
+      {
+        NEMOCLAW_OPENSHELL_CHANNEL: channel,
+        NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.71",
+      },
+      {
+        getBlueprintMinOpenshellVersion: () => "0.0.72",
+        getBlueprintMaxOpenshellVersion: () => "0.0.72",
+        versionGte,
+        listReleases: () => ["v0.0.71"],
+      },
+    );
+    expect(result.env).not.toBe(null);
+    expect(result.env?.NEMOCLAW_OPENSHELL_CHANNEL).toBe(channel);
+    expect(result.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBeUndefined();
+    expect(result.env?.NEMOCLAW_OPENSHELL_MIN_VERSION).toBe("0.0.72");
+    expect(result.env?.NEMOCLAW_OPENSHELL_MAX_VERSION).toBe("0.0.72");
+  });
+
   it("overlays MIN/MAX/PIN env vars from blueprint when latest exceeds max", () => {
     const result = pinModule.computeOpenshellInstallEnv(
       { EXISTING: "preserved" },

@@ -16,11 +16,13 @@ import type {
   ChannelInputSpec,
   ChannelManifest,
   ChannelRenderSpec,
+  MessagingAgentId,
 } from "../manifest";
 import {
   BUILT_IN_CHANNEL_MANIFESTS,
   createBuiltInChannelManifestRegistry,
   discordManifest,
+  getBuiltInRenderedConfigParser,
   slackManifest,
   teamsManifest,
   telegramManifest,
@@ -220,6 +222,38 @@ describe("built-in channel manifests", () => {
     expect(JSON.parse(JSON.stringify(BUILT_IN_CHANNEL_MANIFESTS))).toEqual(
       BUILT_IN_CHANNEL_MANIFESTS,
     );
+  });
+
+  it("keeps rendered config parsers aligned with built-in manifests", () => {
+    expect(
+      BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => [
+        manifest.id,
+        Boolean(getBuiltInRenderedConfigParser(manifest.id)),
+      ]),
+    ).toEqual(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => [manifest.id, true]));
+  });
+
+  it("keeps rendered config parser keys limited to manifest config inputs", () => {
+    const agentIds: readonly MessagingAgentId[] = ["openclaw", "hermes"];
+    const secretLikePattern = /(?:token|secret|password|client_secret|client-secret)/i;
+    expect(
+      BUILT_IN_CHANNEL_MANIFESTS.flatMap((manifest) => {
+        const configInputIds: ReadonlySet<string> = new Set(
+          manifest.inputs.filter((input) => input.kind === "config").map((input) => input.id),
+        );
+        const parser = getBuiltInRenderedConfigParser(manifest.id);
+        return agentIds.flatMap((agentId) =>
+          (parser?.listConfigVisibilityKeys({ manifest, agentId, inputs: [] }) ?? [])
+            .filter(
+              (key) =>
+                !configInputIds.has(key.inputId) ||
+                secretLikePattern.test(key.envKey ?? "") ||
+                secretLikePattern.test(key.target),
+            )
+            .map((key) => `${manifest.id}.${agentId}.${key.inputId}:${key.envKey ?? key.target}`),
+        );
+      }),
+    ).toEqual([]);
   });
 
   it("keeps input compatibility aliases out of built-in manifests", () => {
@@ -624,6 +658,10 @@ describe("built-in channel manifests", () => {
       manager: "openclaw-plugin",
       spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
       pin: true,
+      integrity:
+        "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+      tarballUrl:
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
       required: true,
     });
     expect(wechatManifest.hooks.map((hook) => hook.handler)).toEqual([
@@ -809,6 +847,13 @@ describe("built-in channel manifests", () => {
       manager: "openclaw-plugin",
       spec: "npm:@openclaw/msteams@{{openclaw.version}}",
       pin: true,
+      integrityByVersion: {
+        "2026.6.10":
+          "sha512-GjHnCPvjbnI0C7mEFcdT2uKDH4/WwOe2dZBfQiWxBtkE76m6TNG0J9dJjD4mc8/pk8rXSO0cWw+KV9jzWtF9VA==",
+      },
+      tarballUrlByVersion: {
+        "2026.6.10": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.6.10.tgz",
+      },
       required: true,
     });
     expect(teamsManifest.agentPackages).toContainEqual({

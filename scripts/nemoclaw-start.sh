@@ -231,6 +231,11 @@ case "${1:-}" in
 esac
 NEMOCLAW_CMD=("$@")
 
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Force this
+# after self-wrapper normalization so injected or inherited values cannot make
+# OpenClaw processes probe an impossible credential source.
+export AWS_EC2_METADATA_DISABLED=true
+
 # Marker file the Docker HEALTHCHECK reads to decide whether an in-container
 # gateway liveness check is meaningful. Its presence means this container has
 # entered the OpenClaw gateway launch path (standalone deployments and the #3975
@@ -254,6 +259,7 @@ NEMOCLAW_CMD=("$@")
 # Internal test seam shared by the PID writer and watchdog. This is deliberately
 # not documented as a public env API; production always keeps the default path.
 GATEWAY_PID_FILE=/tmp/nemoclaw-gateway.pid
+GATEWAY_WATCHDOG_KILL_FILE="${_NEMOCLAW_GATEWAY_WATCHDOG_KILL_FILE:-/tmp/nemoclaw-gateway-watchdog-kill}"
 
 # A numeric PID is not a process identity: Linux may reuse it immediately
 # after the child is reaped.  Capture `/proc/<pid>/stat` field 22 (starttime)
@@ -358,6 +364,19 @@ record_gateway_pid() {
 
 clear_gateway_pid_record() {
   printf '' | _nemoclaw_safe_replace_tmp_file "$GATEWAY_PID_FILE" 600 "" best-effort 2>/dev/null || true
+}
+
+record_gateway_watchdog_kill() {
+  printf '%s\n' "${1:-}" \
+    | _nemoclaw_safe_replace_tmp_file "$GATEWAY_WATCHDOG_KILL_FILE" 600 "" best-effort 2>/dev/null || true
+}
+
+consume_gateway_watchdog_kill() {
+  local expected="$1" marked=""
+  [ -f "$GATEWAY_WATCHDOG_KILL_FILE" ] || return 1
+  IFS= read -r marked <"$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
+  rm -f "$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
+  [ -n "$marked" ] && [ "$marked" = "$expected" ]
 }
 
 _chat_ui_url_port() {
@@ -492,29 +511,6 @@ export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 # inherit group=sandbox regardless of which UID created them, so the
 # agent keeps read access and shields-up locking still works the same.
 #
-# Keep the recovery baseline outside the mutable group-write contract. It is
-# readable by the sandbox group for restore, but only root should rewrite it.
-lock_openclaw_config_baseline_if_present() {
-  local config_dir="${1:-/sandbox/.openclaw}"
-  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
-
-  [ -f "$baseline_file" ] || return 0
-  [ "$(id -u)" -eq 0 ] || return 0
-
-  if [ -L "$config_dir" ] || [ -L "$baseline_file" ]; then
-    return 0
-  fi
-
-  if ! chown root:sandbox "$baseline_file"; then
-    printf '[SECURITY] Failed to set ownership on %s\n' "$baseline_file" >&2
-    return 1
-  fi
-  if ! chmod 0440 "$baseline_file"; then
-    printf '[SECURITY] Failed to set permissions on %s\n' "$baseline_file" >&2
-    return 1
-  fi
-}
-
 # Idempotent. Skips when shields are UP (config dir owned by root) so
 # the lock is not weakened.
 #
@@ -523,23 +519,246 @@ lock_openclaw_config_baseline_if_present() {
 # restores the setgid + group-writable contract. Host-side, `nemoclaw <name>
 # doctor --fix` and the rebuild post-upgrade repair step apply the same
 # normalization without requiring a restart.
+resolve_mutable_config_normalizer() {
+  local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"
+  if [ -f "$normalizer" ]; then
+    printf '%s\n' "$normalizer"
+    return 0
+  fi
+  # A privileged repair may execute only the immutable helper installed in the
+  # image. The environment and checkout fallbacks below exist solely for
+  # non-root developer/test harnesses, where they cannot change ownership.
+  if [ "$(id -u)" -eq 0 ]; then
+    return 1
+  fi
+  if [ -n "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER:-}" ] \
+    && [ -f "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}" ]; then
+    printf '%s\n' "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}"
+    return 0
+  fi
+  if [ -f "scripts/lib/normalize_mutable_config_perms.py" ]; then
+    printf '%s\n' "scripts/lib/normalize_mutable_config_perms.py"
+    return 0
+  fi
+  normalizer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/normalize_mutable_config_perms.py"
+  if [ -f "$normalizer" ]; then
+    printf '%s\n' "$normalizer"
+    return 0
+  fi
+  return 1
+}
+
 normalize_mutable_config_perms() {
   local config_dir="/sandbox/.openclaw"
-  [ -d "$config_dir" ] || return 0
+  local operation="${1:-normalize}"
 
-  # Detect shields-up. Config dir owned by root means shields are
-  # currently locked; normalizing would weaken the contract.
-  local config_dir_owner
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" = "root" ]; then
+  if [ "$operation" != "normalize" ] \
+    && [ "$operation" != "capture" ] \
+    && [ "$operation" != "recover" ]; then
+    printf '[SECURITY] Refusing mutable config permission normalization — invalid operation %s\n' "$operation" >&2
+    return 1
+  fi
+
+  local config_dir_uid
+  if ! config_dir_uid="$(
+    python3 -I - "$config_dir" <<'PY_CLASSIFY_MUTABLE_CONFIG'
+import os
+import stat
+import sys
+
+try:
+    metadata = os.lstat(sys.argv[1])
+except FileNotFoundError:
+    print("missing")
+    raise SystemExit(0)
+if not stat.S_ISDIR(metadata.st_mode):
+    raise SystemExit(1)
+print(metadata.st_uid)
+PY_CLASSIFY_MUTABLE_CONFIG
+  )"; then
+    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe classification failed\n' >&2
+    return 1
+  fi
+  [ "$config_dir_uid" = "missing" ] && return 0
+  if [ "$config_dir_uid" = "0" ]; then
+    [ "$operation" = "normalize" ] || return 0
+    # Dockerfile and policy sources establish sandbox:sandbox 2770/660 as the
+    # mutable default. #6300 establishes the root-ownership/write regression,
+    # but not a broader safe-to-repair state; no in-repo producer has been
+    # identified. This compatibility path therefore accepts only the narrow
+    # root:root 0700/0600 fixture, under a sandbox:sandbox 0755 parent. That is
+    # distinct from #6047's sandbox-owned mode collapse, which the owner-UID
+    # normalizer below repairs. Every other root-owned state fails closed.
+    # Remove this path once the runtime preserves the declared ownership and
+    # the live shields-config regression proves that boundary.
+    reclaim_collapsed_mutable_config "$config_dir" || return 1
     return 0
   fi
 
-  chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
-  find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
-  chmod 2770 "$config_dir" 2>/dev/null || true
-  chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
-  lock_openclaw_config_baseline_if_present "$config_dir" || return 1
+  local expected_config_dir_uid expected_config_dir_gid
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! expected_config_dir_uid="$(id -u sandbox)" \
+      || ! expected_config_dir_gid="$(id -g sandbox)"; then
+      printf '[SECURITY] Refusing mutable config permission normalization — sandbox identity lookup failed\n' >&2
+      return 1
+    fi
+  else
+    expected_config_dir_uid="$(id -u)"
+    expected_config_dir_gid="$(id -g)"
+  fi
+  if [ "$config_dir_uid" != "$expected_config_dir_uid" ]; then
+    printf '[SECURITY] Refusing mutable config permission normalization — config directory owner UID %s does not match sandbox UID %s\n' \
+      "$config_dir_uid" "$expected_config_dir_uid" >&2
+    return 1
+  fi
+
+  local normalizer
+  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
+    printf '[SECURITY] Refusing mutable config permission normalization — trusted normalizer is missing\n' >&2
+    return 1
+  fi
+
+  # Root supervises an owner-UID child and receives the still-open config
+  # directory descriptor over a private authenticated socket. The descriptor
+  # stays pinned across the privilege boundary, so inode reuse cannot make the
+  # root baseline phase act on a substituted tree.
+  local -a normalizer_args=(
+    "$config_dir"
+    "$expected_config_dir_uid"
+    "$expected_config_dir_gid"
+  )
+  if [ "$operation" = "capture" ]; then
+    local node_binary
+    if ! node_binary="$(command -v node)" || [ -z "$node_binary" ]; then
+      printf '[config] ERROR: JSON5 baseline validator failed for openclaw.json\n' >&2
+      return 1
+    fi
+    normalizer_args+=(
+      capture
+      "$node_binary"
+      /opt/nemoclaw/node_modules/json5
+    )
+  elif [ "$operation" = "recover" ]; then
+    normalizer_args+=(recover)
+  fi
+
+  if ! python3 -I "$normalizer" "${normalizer_args[@]}"; then
+    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe repair detected an unsafe link, race, owner, or metadata state\n' >&2
+    return 1
+  fi
+}
+
+classify_openclaw_config_seal() {
+  local config_dir="$1"
+  local sandbox_uid sandbox_gid
+  if [ "$(id -u)" -eq 0 ]; then
+    sandbox_uid="$(id -u sandbox)" || return 2
+    sandbox_gid="$(id -g sandbox)" || return 2
+  else
+    sandbox_uid="$(id -u)"
+    sandbox_gid="$(id -g)"
+  fi
+  local normalizer
+  normalizer="$(resolve_mutable_config_normalizer)" || return 2
+  python3 -I "$normalizer" classify-seal \
+    "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null
+}
+
+reclaim_collapsed_mutable_config() {
+  local config_dir="$1"
+
+  if [ "$(id -u)" -ne 0 ]; then
+    if classify_openclaw_config_seal "$config_dir"; then
+      return 0
+    fi
+    printf '[SECURITY] Refusing mutable config reclaim — root privileges are required\n' >&2
+    return 1
+  fi
+
+  local sandbox_uid sandbox_gid
+  if ! sandbox_uid="$(id -u sandbox)" || ! sandbox_gid="$(id -g sandbox)"; then
+    printf '[SECURITY] Refusing mutable config reclaim — sandbox identity lookup failed\n' >&2
+    return 1
+  fi
+
+  local normalizer
+  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
+    printf '[SECURITY] Refusing mutable config reclaim — trusted normalizer is missing\n' >&2
+    return 1
+  fi
+
+  if ! python3 -I "$normalizer" reclaim-if-unsealed "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null; then
+    printf '[SECURITY] Refusing mutable config reclaim — descriptor-safe reclaim detected an unsafe link, race, owner, or metadata state\n' >&2
+    return 1
+  fi
+}
+
+# Invalid state (#4538, #6047): OpenClaw assumes a single-UID 700/600 config
+# tree, while NemoClaw's separate sandbox and gateway UIDs require the mutable
+# 2770/660 group contract. The tightening originates at the OpenClaw command
+# boundary; NemoClaw owns restoring its multi-UID postcondition afterward.
+# Regression proof lives in test/nemoclaw-start-perms.test.ts and the live
+# shields-config documented-exec phase. Issue #6047 tracks the boundary and its
+# removal condition: remove this wrapper only when the pinned OpenClaw preserves
+# 2770/660 after every command outcome; do not replace that upstream source fix
+# with a NemoClaw timeout or permission escape flag.
+run_oneshot_command() {
+  local _nemoclaw_runtime_env_file="${_RUNTIME_SHELL_ENV_FILE:-/tmp/nemoclaw-proxy-env.sh}"
+  local _nemoclaw_oneshot_child_pid=""
+  local _nemoclaw_oneshot_signal=""
+  local _nemoclaw_oneshot_wait_rc=0
+  local _nemoclaw_oneshot_cleanup_rc=0
+
+  # Bash gives asynchronous commands /dev/null stdin and an ignored SIGINT
+  # when job control is off. The explicit stdin and signal reset preserve the
+  # foreground command contract; exec keeps the launched command as our one
+  # direct child rather than adding a forwarding process.
+  (
+    trap - TERM INT
+    # Source the root-owned runtime environment before stepping down so PID-1
+    # one-shot commands use the same proxy, state, and gateway routing contract
+    # as connect-shell and host `exec` commands.
+    # shellcheck source=/dev/null
+    if [ -r "$_nemoclaw_runtime_env_file" ]; then
+      builtin source "$_nemoclaw_runtime_env_file" || exit $?
+    fi
+    # The shared, sandbox-readable file also exports the gateway token.
+    # Remove it from the child's ambient environment so ordinary one-shot argv
+    # uses local device auth and does not print it accidentally. This is not a
+    # secrecy boundary against a command that deliberately reads the file.
+    builtin unset OPENCLAW_GATEWAY_TOKEN
+    builtin exec -- "$@"
+  ) <&0 &
+  _nemoclaw_oneshot_child_pid=$!
+  trap '_nemoclaw_oneshot_signal=TERM; kill -TERM "$_nemoclaw_oneshot_child_pid" 2>/dev/null || true' TERM
+  trap '_nemoclaw_oneshot_signal=INT; kill -INT "$_nemoclaw_oneshot_child_pid" 2>/dev/null || true' INT
+
+  # A trapped signal interrupts `wait`. Forward it above, then wait again so
+  # the direct child is reaped and its final status remains authoritative.
+  while :; do
+    _nemoclaw_oneshot_signal=""
+    if wait "$_nemoclaw_oneshot_child_pid"; then
+      _nemoclaw_oneshot_wait_rc=0
+    else
+      _nemoclaw_oneshot_wait_rc=$?
+    fi
+    [ -n "$_nemoclaw_oneshot_signal" ] || break
+  done
+  _nemoclaw_oneshot_child_pid=""
+
+  if normalize_mutable_config_perms; then
+    _nemoclaw_oneshot_cleanup_rc=0
+  else
+    _nemoclaw_oneshot_cleanup_rc=$?
+  fi
+  trap - TERM INT
+
+  if [ "$_nemoclaw_oneshot_cleanup_rc" -ne 0 ]; then
+    printf '[one-shot] command status=%s; permission cleanup status=%s; returning cleanup failure\n' \
+      "$_nemoclaw_oneshot_wait_rc" "$_nemoclaw_oneshot_cleanup_rc" >&2
+    return "$_nemoclaw_oneshot_cleanup_rc"
+  fi
+  return "$_nemoclaw_oneshot_wait_rc"
 }
 
 openclaw_config_dir_owner() {
@@ -555,6 +774,36 @@ openclaw_locked_parent_is_protected() {
     "root:sandbox 1775" | "root:sandbox 01775") return 0 ;;
     *) return 1 ;;
   esac
+}
+
+prepare_openclaw_config_startup() {
+  run_openclaw_config_guard revoke-startup-ready --startup-owner || return 1
+
+  # A persisted #6300 root:root 0700/0600 mutable tree overlaps one broad
+  # orphan-freeze discriminator in the transaction guard. Repair only that
+  # exact signature before recovery; sealed and indeterminate states remain
+  # untouched for the guard to verify or recover under its mutation mutex.
+  if [ "$(openclaw_config_dir_owner /sandbox/.openclaw)" = "root" ]; then
+    local seal_state=0
+    classify_openclaw_config_seal /sandbox/.openclaw || seal_state=$?
+    case "$seal_state" in
+      0 | 2) ;;
+      1) reclaim_collapsed_mutable_config /sandbox/.openclaw || return 1 ;;
+      *)
+        printf '[SECURITY] Refusing mutable config startup — invalid seal classification %s\n' \
+          "$seal_state" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  run_openclaw_config_guard recover --startup-owner || return 1
+  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
+    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
+    timeout --signal=TERM --kill-after=5s 12m \
+      python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
+      --config-dir /sandbox/.openclaw || return 1
+  fi
 }
 
 prepare_openclaw_config_for_write() {
@@ -661,12 +910,16 @@ restore_openclaw_config_after_write() {
 # mode openclaw.json is root-owned and immutable, so an empty file there
 # implies tampering (which integrity check should catch) rather than the
 # #3118 trigger (which requires a writable config).
+# Remove this recovery only after upstream writes can no longer truncate
+# openclaw.json and regression coverage proves the empty-config state cannot
+# recur at any supported inference-update boundary.
 
-# Capture a known-good copy of openclaw.json for later restore. Idempotent:
-# only writes the baseline once. Runs at root after apply_model_override and
-# apply_cors_override so the baseline reflects the post-override config that
-# the user actually started with. Refuses to capture broken state (empty,
-# whitespace-only, or unparseable input).
+# Capture a known-good copy of openclaw.json for later restore. A pristine
+# root-owned baseline is retained; a sandbox-owned candidate is replaced from
+# the exact validated active-config descriptor. Runs at root after
+# apply_model_override and apply_cors_override so the baseline reflects the
+# post-override config that the user actually started with. Refuses to capture
+# broken state (empty, whitespace-only, or unparseable input).
 write_openclaw_config_baseline() {
   local config_dir="/sandbox/.openclaw"
   local config_file="$config_dir/openclaw.json"
@@ -676,94 +929,18 @@ write_openclaw_config_baseline() {
   [ -f "$config_file" ] || return 0
   [ "$(id -u)" -eq 0 ] || return 0
 
-  # Refuse to act through symlinks (mirrors apply_model_override's stance).
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$baseline_file" ]; then
-    return 0
+  local baseline_existed=0
+  [ -e "$baseline_file" ] && baseline_existed=1
+
+  # Capture and lock through the same pinned directory descriptor used by
+  # permission normalization. The permanently dropped child validates and
+  # pins the exact active config; root copies that descriptor into a fresh
+  # inode. No root path-based cp/chown/chmod operation follows an
+  # attacker-swappable entry in the mutable directory.
+  normalize_mutable_config_perms capture || return 1
+  if [ "$baseline_existed" -eq 0 ] && [ -f "$baseline_file" ]; then
+    printf '[config] Baseline snapshot created: %s\n' "$baseline_file" >&2
   fi
-
-  # Idempotent — only capture once per sandbox. Still re-lock an existing
-  # baseline because mutable permission normalization is intentionally broad.
-  if [ -f "$baseline_file" ]; then
-    lock_openclaw_config_baseline_if_present "$config_dir"
-    return $?
-  fi
-
-  # Skip in shields-up mode — config is supposed to be locked, baseline
-  # capture is unnecessary and the prepare/restore permission dance is
-  # already owned by the override paths.
-  if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
-    return 0
-  fi
-
-  # Refuse to capture broken state. grep -q '[^[:space:]]' is false for both
-  # 0-byte and whitespace-only files.
-  if ! grep -q '[^[:space:]]' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  # Refuse to capture content that doesn't parse as JSON5 — keeps the
-  # baseline a known-good restore target. openclaw.json is JSON5 (comments,
-  # trailing commas) everywhere else in the stack — OpenClaw uses
-  # JSON5.parse / parseJsonWithJson5Fallback, and migration-state.ts uses
-  # JSON5.parse — so use the real JSON5 parser instead of approximating the
-  # grammar with regexes.
-  local _json5_rc=0
-  node - "$config_file" <<'NODE_VALIDATE' || _json5_rc=$?
-  const fs = require("fs");
-
-  const configPath = process.argv[2];
-
-  // The entrypoint runs this validator as root. Only load the parser from the
-  // packaged plugin tree, never from sandbox-writable cwd or npm global roots.
-  const candidates = ["/opt/nemoclaw/node_modules/json5"];
-
-  const attempted = [];
-  let JSON5;
-  for (const candidate of [...new Set(candidates)]) {
-    try {
-      JSON5 = require(candidate);
-      if (JSON5 && typeof JSON5.parse === "function") {
-        break;
-      }
-      attempted.push(`${candidate}: missing parse()`);
-      JSON5 = undefined;
-    } catch {
-      attempted.push(candidate);
-    }
-  }
-
-  if (!JSON5) {
-    console.error(
-      `[config] ERROR: unable to load JSON5 parser for baseline validation. Tried: ${
-        attempted.length ? attempted.join(", ") : "(no candidate module paths found)"
-      }`,
-    );
-    process.exit(2);
-  }
-
-  try {
-    JSON5.parse(fs.readFileSync(configPath, "utf8"));
-  } catch {
-    process.exit(3);
-  }
-NODE_VALIDATE
-  case "$_json5_rc" in
-    0) ;;
-    3) return 0 ;;
-    *)
-      printf '[config] ERROR: JSON5 baseline validator failed for %s\n' "$config_file" >&2
-      return 1
-      ;;
-  esac
-
-  if ! cp "$config_file" "$baseline_file" 2>/dev/null; then
-    return 0
-  fi
-  # 0440 root:sandbox so the gateway/sandbox user can READ for recovery but
-  # cannot truncate or rewrite the baseline through the same path that
-  # corrupts the active config.
-  lock_openclaw_config_baseline_if_present "$config_dir" || return 1
-  printf '[config] Baseline snapshot created: %s\n' "$baseline_file" >&2
 }
 
 # Restore openclaw.json from a baseline when the active file has been
@@ -776,64 +953,15 @@ NODE_VALIDATE
 recover_openclaw_config_if_empty() {
   local config_dir="/sandbox/.openclaw"
   local config_file="$config_dir/openclaw.json"
-  local hash_file="$config_dir/.config-hash"
-  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
-  local last_good_file="$config_dir/openclaw.json.last-good"
 
   [ -d "$config_dir" ] || return 0
   [ -f "$config_file" ] || return 0
 
-  # Refuse to act through symlinks.
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    return 0
-  fi
-
-  # Skip in shields-up mode — see header comment.
-  if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
-    return 0
-  fi
-
-  # Active file is non-empty → no-op.
-  if grep -q '[^[:space:]]' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  local source=""
-  if [ -f "$last_good_file" ] && [ ! -L "$last_good_file" ] \
-    && grep -q '[^[:space:]]' "$last_good_file" 2>/dev/null; then
-    source="$last_good_file"
-  elif [ -f "$baseline_file" ] && [ ! -L "$baseline_file" ] \
-    && grep -q '[^[:space:]]' "$baseline_file" 2>/dev/null; then
-    source="$baseline_file"
-  fi
-
-  # Recovery failures must be loud, not silent. In mutable-default mode the
-  # downstream verify_config_integrity_if_locked is intentionally a no-op,
-  # so a soft-fail here would let startup continue with an empty (or
-  # restored-but-unhashed) config and crash much later in a less obvious
-  # place. Return non-zero so `set -e` aborts startup with the diagnostic
-  # already on stderr.
-  if [ -z "$source" ]; then
-    printf '[config] ERROR: openclaw.json is empty (%s). No baseline available; restart cannot recover. See issue #3118.\n' "$config_file" >&2
-    return 1
-  fi
-
-  if ! cp "$source" "$config_file" 2>/dev/null; then
-    printf '[config] ERROR: Failed to restore openclaw.json from %s (see #3118)\n' "$source" >&2
-    return 1
-  fi
-  chown sandbox:sandbox "$config_file" 2>/dev/null || true
-  chmod 660 "$config_file" 2>/dev/null || true
-
-  if (cd "$config_dir" && sha256sum openclaw.json >".config-hash") 2>/dev/null; then
-    chown sandbox:sandbox "$hash_file" 2>/dev/null || true
-    chmod 660 "$hash_file" 2>/dev/null || true
-  else
-    printf '[config] ERROR: Restored openclaw.json from %s but failed to recompute %s (see #3118)\n' "$source" "$hash_file" >&2
-    return 1
-  fi
-
-  printf '[config] openclaw.json restored from %s (was empty — see #3118)\n' "$source" >&2
+  # The owner-identity phase pins the mutable directory and recovery source,
+  # then installs fresh sandbox-owned config/hash inodes with dir-fd-relative
+  # atomic replaces. Root never follows, writes, chowns, or chmods an existing
+  # sandbox-controlled pathname.
+  normalize_mutable_config_perms recover
 }
 
 # Refresh the mutable-default .config-hash so it matches the current
@@ -1893,6 +2021,9 @@ node_options_has_require() {
   local token
   local tokens=()
   IFS=$' \t\n' read -r -a tokens <<<"${NODE_OPTIONS:-}"
+  # Iterating "${tokens[@]}" on an empty array trips `set -u` on bash 3.2
+  # (macOS default); guard so the local unit harnesses run there too.
+  [ "${#tokens[@]}" -gt 0 ] || return 1
   for token in "${tokens[@]}"; do
     if [ "$previous" = "--require" ] && [ "$token" = "$wanted" ]; then
       return 0
@@ -2000,7 +2131,7 @@ validate_nemoclaw_tmp_permissions() {
     [ -n "$_target" ] && _dynamic_targets+=("$_target")
   done < <(messaging_runtime_preload_targets)
 
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]}"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
 }
 
 verify_messaging_runtime_secret_scans() {
@@ -2360,7 +2491,20 @@ start_auto_pair() {
   if [ "$(id -u)" -eq 0 ]; then
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
   fi
-  OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 -u - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
+  # The gateway must retain NemoClaw's private-interface URL, but the watcher
+  # is an ordinary OpenClaw CLI client. Source the trusted runtime environment
+  # in this child only so an injected private URL is removed before the first
+  # `devices list`. OpenClaw can then complete its local-loopback pairing
+  # bootstrap before this unchanged watcher starts approving bounded requests.
+  # An explicit URL override is preserved by write_runtime_shell_env().
+  (
+    if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
+      # shellcheck source=/dev/null
+      builtin source "$_RUNTIME_SHELL_ENV_FILE" || exit $?
+    fi
+    export OPENCLAW_BIN="$OPENCLAW"
+    exec nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u -
+  ) <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import importlib.util
 import os
@@ -2388,11 +2532,10 @@ def load_approval_policy(path):
     return (
         module.approval_request_decision,
         module.gateway_approval_env,
-        getattr(module, 'recover_failed_scope_approval', None),
     )
 
 
-approval_request_decision, gateway_approval_env, recover_failed_scope_approval = load_approval_policy(APPROVAL_POLICY_FILE)
+approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -2470,22 +2613,24 @@ APPROVED = 0
 SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
-# (the gateway stores connectParams.client.id verbatim). This allowlist
-# is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
-# timeout reduction, and token cleanup for a more comprehensive fix.
+# (the gateway stores connectParams.client.id verbatim). The policy requires
+# an explicit known clientId and never trusts an allowlisted mode by itself.
+# This remains defense-in-depth, not a trust boundary. PR #690 adds one-shot
+# exit, timeout reduction, and token cleanup for a more comprehensive fix.
 # The approval_request_decision helper is shared with connect-time approvals.
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
-# Workaround boundary (NemoClaw#4462): OpenClaw owns the gateway/device
-# approval semantics. In OpenClaw 2026.5.x, a gateway-pinned
-# `openclaw devices approve <scope-upgrade>` can request the upgraded scopes
-# for its own connection and return the same pending-scope error it is trying
-# to resolve. List calls must stay gateway-pinned so we inspect the live
-# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL,
-# OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN to use OpenClaw's local
-# pairing fallback. Remove this when OpenClaw approve can complete scope
-# upgrades through the gateway using only operator.pairing.
+# Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
+# runtime environment, so list calls resolve the same live gateway through
+# local loopback instead of the injected private-interface URL. Approval calls
+# additionally drop the gateway env triplet so OpenClaw must use the local
+# device token. The reviewed 2026.6.10 dist patch requests only
+# operator.pairing for a complete bounded CLI self-upgrade and forces the
+# existing local-only stored-device-auth path so a shared token reloaded from
+# config cannot win authentication. The gateway then validates and commits in
+# OpenClaw's canonical locked pairing writer. Remove both pieces when upstream
+# supports that flow.
 def run(*args, strip_gateway_env=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
@@ -2599,19 +2744,6 @@ while time.time() < DEADLINE:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
-            elif callable(recover_failed_scope_approval):
-                recovered = recover_failed_scope_approval(
-                    request_id,
-                    os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
-                    aerr or aout or '',
-                    device,
-                )
-                if recovered:
-                    HANDLED.add(request_id)
-                    APPROVED += 1
-                    print(f'[auto-pair] recovered failed approve request={request_id} client={client_id} mode={client_mode}')
-                elif aout or aerr:
-                    print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
         # Drop previously-bumped requestIds that the gateway no longer reports
@@ -2886,6 +3018,7 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+export AWS_EC2_METADATA_DISABLED="true"
 export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
@@ -2901,16 +3034,28 @@ PROXYEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
       _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
-      printf "export OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+      # Preserve NemoClaw's sandbox-interface dial-back URL for the few
+      # NemoClaw-owned commands that require it without forcing ordinary
+      # OpenClaw CLI clients onto the explicit remote-gateway pairing path.
+      printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+      cat <<'GATEWAYURLENVEOF'
+# Equality identifies NemoClaw's inherited private-interface value. A different
+# nonempty raw value was supplied explicitly after this file was generated, so
+# preserve that caller override and its matching insecure-WS marker.
+if [ -z "${OPENCLAW_GATEWAY_URL:-}" ] || [ "${OPENCLAW_GATEWAY_URL}" = "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" ]; then
+  unset OPENCLAW_GATEWAY_URL
+  unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
+fi
+GATEWAYURLENVEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
     fi
     if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
-      # Mirrors the gateway-process export above so connect-shell CLI
-      # clients accept the plaintext eth0 ws:// gateway URL too.
-      printf "export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
+      # Retain the matching break-glass under the same private namespace.
+      # WhatsApp reinjects it only for its gateway-backed login command.
+      printf "export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
     fi
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
@@ -2970,169 +3115,18 @@ _nemoclaw_messaging_connect_node_options() {
   printf '%s' "$_nemoclaw_options"
 }
 openclaw() {
-  # NemoClaw#4462: keep user-initiated device approval usable from an
-  # interactive sandbox shell until upstream OpenClaw can approve scope
-  # upgrades through the gateway without requesting the upgraded scopes for
-  # the approval command itself. Approval calls temporarily drop the gateway
-  # URL/port/token; other commands keep the full gateway environment.
+  # NemoClaw#4462: approval calls temporarily drop the gateway URL/port/token
+  # so OpenClaw resolves the local loopback gateway and device token. The
+  # reviewed 2026.6.10 compatibility patch then performs bounded same-device
+  # scope upgrades in the gateway's canonical locked pairing writer. This
+  # wrapper never reads or writes pending.json/paired.json.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
-    _nemoclaw_approve_request_id="${3:-}"
-    _nemoclaw_approve_state_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
-    _nemoclaw_approve_before=""
-    if [ -n "$_nemoclaw_approve_request_id" ] && command -v python3 >/dev/null 2>&1; then
-      _nemoclaw_approve_before="$(NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" python3 - <<'PYAPPROVEBEFORE' 2>/dev/null || true
-import json
-import os
-from pathlib import Path
-
-root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
-request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
-try:
-    pending = json.loads((root / "pending.json").read_text(encoding="utf-8"))
-except Exception:
-    pending = {}
-if not isinstance(pending, dict):
-    pending = {}
-request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
-if request:
-    print(json.dumps({
-        "requestId": request_id,
-        "deviceId": request.get("deviceId"),
-        "scopes": request.get("scopes") or request.get("requestedScopes") or [],
-    }, sort_keys=True))
-PYAPPROVEBEFORE
-)"
-    fi
     _nemoclaw_approve_errexit=0
     case $- in *e*) _nemoclaw_approve_errexit=1 ;; esac
     set +e
-    _nemoclaw_approve_output="$(unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" 2>&1)"
+    (unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@")
     _nemoclaw_approve_rc=$?
     if [ "$_nemoclaw_approve_errexit" = "1" ]; then set -e; else set +e; fi
-    if [ "$_nemoclaw_approve_rc" -eq 0 ]; then
-      printf '%s\n' "$_nemoclaw_approve_output"
-      return 0
-    fi
-    if [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
-      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" NEMOCLAW_APPROVE_OUTPUT="$_nemoclaw_approve_output" python3 - <<'PYAPPROVEAFTER'; then
-import json
-import os
-import re
-from pathlib import Path
-
-request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
-root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
-try:
-    before = json.loads(os.environ.get("NEMOCLAW_APPROVE_BEFORE") or "{}")
-except Exception:
-    before = {}
-approve_output = os.environ.get("NEMOCLAW_APPROVE_OUTPUT") or ""
-
-def load(name):
-    try:
-        value = json.loads((root / name).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return value if isinstance(value, dict) else {}
-
-def save(name, value):
-    path = root / name
-    tmp = path.with_name(f".{path.name}.tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
-
-def norm(value):
-    return str(value or "").strip()
-
-def scope_set(entry, key="scopes"):
-    return {norm(scope) for scope in (entry.get(key) or []) if norm(scope)}
-
-def output_mentions_request_id(value):
-    request = norm(value)
-    return bool(request and re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", approve_output))
-
-def is_scope_upgrade_approval_compat_failure(output):
-    text = norm(output).lower()
-    return "scope upgrade pending approval" in text and (
-        "gatewayclientrequesterror" in text or "gateway" in text
-    )
-
-requested = scope_set(before)
-device_id = norm(before.get("deviceId"))
-pending = load("pending.json")
-paired = load("paired.json")
-original_pending_key = None
-for key, item in pending.items():
-    if isinstance(item, dict) and item.get("requestId") == request_id:
-        original_pending_key = key
-        break
-still_pending = original_pending_key is not None
-paired_entry = paired.get(device_id) if device_id else None
-paired_scopes = scope_set(paired_entry or {}, "approvedScopes") | scope_set(paired_entry or {})
-# Compatibility boundary: treat a nonzero approve as success only when OpenClaw
-# already removed the pending request and persisted the requested paired scopes.
-if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(paired_scopes):
-    print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": sorted(requested), "compatibility": "openclaw-approve-applied-after-nonzero"}, sort_keys=True))
-    raise SystemExit(0)
-
-# Compatibility boundary: repair only the local OpenClaw device state after a
-# failed approve leaves behind exactly one same-device admin-shaped replacement
-# request. Some OpenClaw failures only surface opaque gateway text, so the state
-# files are the source of truth; stderr is only used as an exact disambiguator
-# when it carries a replacement request ID. Remove this once OpenClaw stops
-# replacing operator.write approvals with admin-shaped pending requests or
-# exposes a supported approval repair API.
-allowed = {"operator.pairing", "operator.read", "operator.write"}
-if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes:
-    raise SystemExit(1)
-replacement_allowed = allowed | {"operator.admin"}
-candidates = []
-mentioned = []
-for key, item in pending.items():
-    item_scopes = scope_set(item) if isinstance(item, dict) else set()
-    if (isinstance(item, dict) and norm(item.get("requestId")) != request_id and norm(item.get("deviceId")) == device_id and
-            "operator.admin" in item_scopes and requested.issubset(item_scopes) and item_scopes.issubset(replacement_allowed)):
-        candidates.append((key, item))
-        if output_mentions_request_id(item.get("requestId")):
-            mentioned.append((key, item))
-compatibility = "openclaw-approve-recovered-replacement"
-if len(mentioned) == 1:
-    replacement_key, replacement = mentioned[0]
-elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
-    replacement_key, replacement = candidates[0]
-elif still_pending and not candidates and is_scope_upgrade_approval_compat_failure(approve_output):
-    replacement_key = original_pending_key
-    compatibility = "openclaw-approve-recovered-original"
-else:
-    raise SystemExit(1)
-approved = set(paired_scopes) | requested
-if "operator.write" in approved:
-    approved.add("operator.read")
-if {"operator.read", "operator.write"} & approved:
-    approved.add("operator.pairing")
-if not approved.issubset(allowed):
-    raise SystemExit(1)
-approved_list = [scope for scope in ("operator.pairing", "operator.read", "operator.write") if scope in approved]
-paired_entry["scopes"] = approved_list
-paired_entry["approvedScopes"] = approved_list
-token = paired_entry.get("tokens", {}).get("operator")
-if isinstance(token, dict):
-    token["scopes"] = approved_list
-pending.pop(request_id, None)
-pending.pop(replacement_key, None)
-paired[device_id] = paired_entry
-save("pending.json", pending)
-save("paired.json", paired)
-print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": approved_list, "compatibility": compatibility}, sort_keys=True))
-raise SystemExit(0)
-PYAPPROVEAFTER
-        return 0
-      fi
-    fi
-    printf '%s\n' "$_nemoclaw_approve_output"
     return "$_nemoclaw_approve_rc"
   fi
   case "$1" in
@@ -3219,8 +3213,17 @@ PYAPPROVEAFTER
           # "1008 abnormal closure") is diagnosed separately from QR rendering,
           # and force compact QR output so the code fits on the screen.
           if [ "$_login_help" != "1" ] && [ "$_login_channel" = "whatsapp" ]; then
-            if [ -z "${OPENCLAW_GATEWAY_URL:-}" ]; then
-              echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL is not set in this shell." >&2
+            # Keep an explicit override coupled to its own opt-in. The private
+            # veth URL may inherit only NemoClaw's matching private-WS marker.
+            if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
+              _nemoclaw_whatsapp_gateway_url="$OPENCLAW_GATEWAY_URL"
+              _nemoclaw_whatsapp_insecure_ws="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
+            else
+              _nemoclaw_whatsapp_gateway_url="${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}"
+              _nemoclaw_whatsapp_insecure_ws="${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
+            fi
+            if [ -z "$_nemoclaw_whatsapp_gateway_url" ]; then
+              echo "Error: WhatsApp pairing cannot start — gateway URL is not set in this shell." >&2
               echo "Pairing talks to the OpenClaw gateway; without the gateway URL the login will" >&2
               echo "close immediately (this is a gateway/env problem, not a QR problem)." >&2
               echo "" >&2
@@ -3232,10 +3235,10 @@ PYAPPROVEAFTER
             # ws://127.0.0.1:<port> at boot). Reject a malformed scheme up front
             # so a typo'd/clobbered URL is reported as a gateway/env problem
             # rather than failing inside the login as an ambiguous close.
-            case "${OPENCLAW_GATEWAY_URL}" in
+            case "$_nemoclaw_whatsapp_gateway_url" in
               ws://*|wss://*) ;;
               *)
-                echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL='${OPENCLAW_GATEWAY_URL}' is not a ws:// gateway URL." >&2
+                echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a ws:// gateway URL." >&2
                 echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
                 echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
                 echo "" >&2
@@ -3244,7 +3247,7 @@ PYAPPROVEAFTER
                 return 1
                 ;;
             esac
-            echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
+            echo "[whatsapp] Pairing via gateway ${_nemoclaw_whatsapp_gateway_url}." >&2
             echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
             # Defense-in-depth: connect-session NODE_OPTIONS already wires
             # manifest-declared connect preloads for every openclaw invocation;
@@ -3252,9 +3255,14 @@ PYAPPROVEAFTER
             # preload modules are idempotent, so a double --require is harmless.
             _nemoclaw_connect_node_options="$(_nemoclaw_messaging_connect_node_options)"
             if [ -n "$_nemoclaw_connect_node_options" ]; then
-              NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" command openclaw "$@"
+              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
+                command openclaw "$@"
             else
-              command openclaw "$@"
+              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                command openclaw "$@"
             fi
             _whatsapp_login_exit=$?
             if [ "$_whatsapp_login_exit" -ne 0 ]; then
@@ -3317,6 +3325,99 @@ PYAPPROVEAFTER
   return "$_nemoclaw_oc_status"
 }
 # nemoclaw-configure-guard end
+# nemoclaw-policy-denial-hint begin
+# #5978: outbound network is denied-by-default and enforced by the OpenShell L7
+# proxy. From inside the sandbox, generic CLIs (curl, git, wget, python, …) see
+# a policy denial only as the opaque protocol error
+# "CONNECT tunnel failed, response 403" — with no pointer to the detailed
+# allow/deny reason, which lives in the NemoClaw logs. Surface a one-line
+# breadcrumb when a human first lands in an interactive connect shell so a later
+# 403 is recognisable and actionable.
+#
+# This deliberately does NOT wrap or alter curl/git/wget: wrapping them to scan
+# stderr turns their stderr into a pipe, which makes the tools treat it as a
+# non-TTY and silently drop progress meters and colour — a worse regression than
+# the missing breadcrumb. The hint is therefore tool-agnostic informational
+# output that leaves every tool's stdout/stderr/TTY behaviour and exit code
+# byte-for-byte unchanged, and covers every connect path that sources this file.
+# Shown once per top-level interactive TTY session; suppress with
+# NEMOCLAW_NO_POLICY_HINT=1.
+#
+# Source-of-truth: the 403 itself is emitted by the OpenShell L7 egress proxy,
+# which lives in a separate codebase/release cycle, so the denial response
+# cannot be made self-describing from this repo. This proactive breadcrumb is
+# the NemoClaw-owned surface that points at the denial reason in the logs.
+# Regression coverage: test/repro-5978-policy-denial-hint.test.ts. Removal
+# condition: drop this stanza once the OpenShell proxy returns a structured,
+# actionable denial (naming the rule / a logs pointer) at the tunnel-failure
+# site, at which point the breadcrumb is redundant.
+#
+# Accepted contract (#5978, maintainer-agreed on PR #6018): the supported
+# behavior is this proactive connect-shell reminder. It does NOT make the
+# denial-time curl/git/wget error itself denial-adjacent — that is intentional,
+# given the source boundary above — so the tool error stays unchanged.
+_nemoclaw_policy_denial_hint_label() {
+  # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
+  # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
+  # interpolated into a copyable `nemoclaw … logs` command, so allowlist it
+  # rather than merely stripping: only render it when it is a valid sandbox name.
+  # This mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts with a lowercase letter,
+  # then lowercase alphanumerics/hyphens, no trailing hyphen. Anything else
+  # (digit-leading labels, control characters, ANSI escapes, shell
+  # metacharacters, whitespace) falls back to a placeholder the user resolves
+  # with `nemoclaw list`. Shell `case` globs match newlines as ordinary
+  # characters, so an embedded newline is rejected by the metacharacter class.
+  #
+  # Evaluate the ranges under the C locale so [a-z0-9-] stays ASCII and is not
+  # widened by the caller's LC_COLLATE/LC_CTYPE (e.g. a locale that folds
+  # additional code points into [a-z]). Safe to set unconditionally: this helper
+  # is only ever called inside $(…) command substitution (a subshell), so the
+  # assignment cannot leak into the interactive shell.
+  LC_ALL=C
+  # Allowlist pattern mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (RFC-1123 label: /^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63). Keep them in sync.
+  case "${OPENSHELL_SANDBOX:-}" in
+    "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
+    [!a-z]* | *- | *[!a-z0-9-]*) printf '<name>' ;;
+    *)
+      if [ "${#OPENSHELL_SANDBOX}" -le 63 ]; then
+        printf '%s' "$OPENSHELL_SANDBOX"
+      else
+        printf '<name>'
+      fi
+      ;;
+  esac
+}
+_nemoclaw_policy_denial_hint_text() {
+  {
+    printf '  Note: this sandbox restricts outbound network access by policy.\n'
+    printf "  Blocked requests fail with 'CONNECT tunnel failed, response 403'.\n"
+    printf '  See which rule denied a request:  nemoclaw %s logs --tail 50\n' \
+      "$(_nemoclaw_policy_denial_hint_label)"
+  } >&2
+}
+_nemoclaw_maybe_policy_denial_hint() {
+  # Once per shell process: a login shell can source this file through more than
+  # one system-wide hook (the login-profile hook and the interactive-bash hook;
+  # #2704), so guard against printing twice. Not exported, so it neither leaks
+  # into child processes nor suppresses sibling connect sessions.
+  [ -n "${_NEMOCLAW_POLICY_HINT_SHOWN:-}" ] && return 0
+  # Suppressed by the user.
+  case "${NEMOCLAW_NO_POLICY_HINT:-}" in 1 | true | TRUE | yes | YES) return 0 ;; esac
+  # Interactive human shells only — never automation (`bash -c`, scripts).
+  case $- in *i*) ;; *) return 0 ;; esac
+  # Real terminal on stderr (where the hint is written).
+  [ -t 2 ] || return 0
+  # Top-level connect shell only — don't repeat in every subshell/pane.
+  [ "${SHLVL:-1}" -le 1 ] || return 0
+  # Nothing is proxied (no egress restriction) ⇒ nothing to explain.
+  [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ] || return 0
+  _NEMOCLAW_POLICY_HINT_SHOWN=1
+  _nemoclaw_policy_denial_hint_text
+}
+_nemoclaw_maybe_policy_denial_hint
+# nemoclaw-policy-denial-hint end
 GUARDENVEOF
     # Global sandbox safety net for connect sessions — must be first.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
@@ -4122,6 +4223,7 @@ start_gateway_serving_watchdog() {
       # _NEMOCLAW_GATEWAY_LOG is a test seam; production always appends to
       # /tmp/gateway.log alongside the gateway's own output.
       echo "$msg" >>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}" 2>/dev/null || true
+      record_gateway_watchdog_kill "$tracked_identity"
       kill -TERM "$pid" 2>/dev/null || true
       for _ in 1 2 3 4 5 6 7 8 9 10; do
         openclaw_supervised_pid_is_live "$pid" "$start_identity" || break
@@ -4632,14 +4734,7 @@ handle_openclaw_gateway_control_request() {
 # OpenClaw config. Recovery runs before the locked-parent discriminator so a
 # crash in a prior config write/restart/handoff can complete deterministically.
 if [ "$(id -u)" -eq 0 ]; then
-  run_openclaw_config_guard revoke-startup-ready --startup-owner || exit 1
-  run_openclaw_config_guard recover --startup-owner || exit 1
-  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
-    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
-    timeout --signal=TERM --kill-after=5s 12m \
-      python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
-      --config-dir /sandbox/.openclaw || exit 1
-  fi
+  prepare_openclaw_config_startup || exit 1
 fi
 
 # A root-owned config directory is the shields-up discriminator. Its parent
@@ -4703,7 +4798,9 @@ if [ "$(id -u)" -ne 0 ]; then
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     install_messaging_runtime_preloads
     verify_messaging_runtime_secret_scans
-    exec "${NEMOCLAW_CMD[@]}"
+    _nemoclaw_cmd_rc=0
+    run_oneshot_command "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+    exit "$_nemoclaw_cmd_rc"
   fi
 
   configure_messaging_channels
@@ -4797,9 +4894,11 @@ if [ "$(id -u)" -ne 0 ]; then
     # non-zero, defeating the respawn loop entirely.
     RC=0
     EXITED_GATEWAY_PID="$GATEWAY_PID"
+    EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
     wait "$EXITED_GATEWAY_PID" || RC=$?
     mark_openclaw_gateway_stopped
-    if [ "$RC" -eq 0 ]; then
+    if [ "$RC" -eq 0 ] \
+      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
       exit 0
     fi
     NOW=$(date +%s)
@@ -4871,7 +4970,9 @@ setup_auth_profile_as_sandbox
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
-  exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
+  _nemoclaw_cmd_rc=0
+  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+  exit "$_nemoclaw_cmd_rc"
 fi
 
 # Gateway log: owned by gateway user, world-readable for diagnostics.
@@ -5068,6 +5169,7 @@ while :; do
   fi
 
   EXITED_GATEWAY_PID="$GATEWAY_PID"
+  EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
   REAP_STATUS=0
   openclaw_reap_exited_gateway || REAP_STATUS=$?
   if [ "$REAP_STATUS" -eq 3 ]; then
@@ -5082,7 +5184,8 @@ while :; do
     handle_openclaw_gateway_control_request || true
     continue
   fi
-  if [ "$RC" -eq 0 ]; then
+  if [ "$RC" -eq 0 ] \
+    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
     exit 0
   fi
   NOW=$(date +%s)

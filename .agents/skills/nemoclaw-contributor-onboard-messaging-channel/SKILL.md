@@ -88,15 +88,24 @@ Start with the manifest. Add core code only when the manifest vocabulary cannot 
 
 ## Verification
 
-Use the narrowest tests that cover the changed behavior:
+Build one targeted Vitest invocation from only the files that cover the changed behavior.
+Omit unaffected paths from this example, then run the resulting command once per relevant change set:
 
 ```bash
-npm run build:cli
-npm run typecheck:cli
-npx vitest run src/lib/messaging/channels/manifests.test.ts src/lib/messaging/channels/metadata.test.ts src/lib/messaging/compiler/manifest-compiler.test.ts
-npx vitest run src/lib/messaging/channels/<channel>/hooks
-npx vitest run test/messaging-build-applier.test.ts
+npx vitest run \
+  src/lib/messaging/channels/<channel> \
+  src/lib/messaging/channels/manifests.test.ts \
+  src/lib/messaging/channels/metadata.test.ts \
+  src/lib/messaging/compiler/manifest-compiler.test.ts \
+  test/messaging-build-applier.test.ts
 ```
 
 Add channel-specific config render, hook, policy, and channel add/remove tests when those surfaces change.
-Run `npm run docs` for documentation changes and `npx prek run --files <changed files>` before handoff. If broad hooks expose unrelated failures, report the failure with the targeted passing evidence.
+Rerun the targeted command after later edits or hook autofixes that can affect the tested behavior.
+Run `npm run docs` for documentation changes.
+Commit and push normally so pre-commit handles cheap structural and file-local checks and pre-push runs the path-scoped type checks.
+Treat successful hooks as verification and do not rerun their checks manually.
+If `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run check:diff` once to reproduce those checks.
+Refresh `origin/main` first.
+Reserve `npm test` for broad runtime or test-harness changes.
+Reserve `npm run check` for repo-wide validation or coverage-baseline changes.

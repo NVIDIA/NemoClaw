@@ -10,13 +10,25 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import {
+  readJsonFileOrFallback,
+  restoreFile,
+  snapshotFile,
+  writeJsonFile,
+} from "../fixtures/file-state.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
-export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
+export { REPO_ROOT };
+
 const BLUEPRINT_RELPATH = path.join("nemoclaw-blueprint", "blueprint.yaml");
 const BLUEPRINT = path.join(REPO_ROOT, BLUEPRINT_RELPATH);
 const BASE_CONTEXT_SCRIPT_RELPATH = path.join("scripts", "lib", "sandbox-rlimits.sh");
+const MCPORTER_RUNTIME_RELPATHS = [
+  path.join("agents", "openclaw", "mcporter-runtime", "package.json"),
+  path.join("agents", "openclaw", "mcporter-runtime", "package-lock.json"),
+];
 const TEST_SANDBOX_PREFIX = "e2e-upgrade-stale";
 export const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -30,11 +42,6 @@ export const OLD_BASE_TAG = `nemoclaw-old-base:${SANDBOX_NAME.toLowerCase().repl
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-
-interface FileSnapshot {
-  exists: boolean;
-  content?: string;
-}
 
 function assertSafeSandboxName(): void {
   if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
@@ -65,32 +72,6 @@ export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-function readJsonFile<T>(file: string, fallback: T): T {
-  try {
-    return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJsonFile(file: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-function snapshotFile(file: string): FileSnapshot {
-  return fs.existsSync(file)
-    ? { exists: true, content: fs.readFileSync(file, "utf8") }
-    : { exists: false };
-}
-
-function restoreFile(file: string, snapshot: FileSnapshot): void {
-  snapshot.exists || fs.rmSync(file, { force: true });
-  if (!snapshot.exists) return;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, snapshot.content ?? "", "utf8");
-}
-
 function createOldBaseBuildContext(): string {
   const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upgrade-stale-base-"));
   fs.mkdirSync(path.join(buildContext, path.dirname(BLUEPRINT_RELPATH)), { recursive: true });
@@ -112,11 +93,16 @@ function createOldBaseBuildContext(): string {
     path.join(REPO_ROOT, BASE_CONTEXT_SCRIPT_RELPATH),
     path.join(buildContext, BASE_CONTEXT_SCRIPT_RELPATH),
   );
+  for (const relativePath of MCPORTER_RUNTIME_RELPATHS) {
+    const target = path.join(buildContext, relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(REPO_ROOT, relativePath), target);
+  }
   return buildContext;
 }
 
 export function writeStaleRegistryEntry(): void {
-  const session = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
+  const session = readJsonFileOrFallback<Record<string, unknown>>(SESSION_FILE, {});
   const envProvider =
     process.env.NEMOCLAW_PROVIDER === "custom"
       ? "compatible-endpoint"
@@ -130,10 +116,18 @@ export function writeStaleRegistryEntry(): void {
     process.env.NEMOCLAW_MODEL ||
     process.env.NEMOCLAW_COMPAT_MODEL ||
     "nvidia/nvidia/nemotron-3-ultra";
-  const registry = readJsonFile<{
+  const registry = readJsonFileOrFallback<{
     sandboxes?: Record<string, Record<string, unknown>>;
     defaultSandbox?: string;
   }>(REGISTRY_FILE, {});
+  const dashboardPort = registry.sandboxes?.[SANDBOX_NAME]?.dashboardPort;
+  expect(
+    typeof dashboardPort === "number" &&
+      Number.isInteger(dashboardPort) &&
+      dashboardPort > 0 &&
+      dashboardPort <= 65535,
+    "initial onboard must persist the dashboard port used by authoritative rebuild",
+  ).toBe(true);
   registry.sandboxes = registry.sandboxes ?? {};
   registry.sandboxes[SANDBOX_NAME] = {
     name: SANDBOX_NAME,
@@ -143,6 +137,8 @@ export function writeStaleRegistryEntry(): void {
     gpuEnabled: false,
     policies: [],
     policyTier: null,
+    fromDockerfile: null,
+    dashboardPort,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
   };
@@ -249,6 +245,8 @@ export async function buildOldOpenClawBase(host: HostCliClient): Promise<ShellPr
         "build",
         "--build-arg",
         `OPENCLAW_VERSION=${OLD_OPENCLAW_VERSION}`,
+        "--build-arg",
+        "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
         "-f",
         path.join(REPO_ROOT, "Dockerfile.base"),
         "-t",

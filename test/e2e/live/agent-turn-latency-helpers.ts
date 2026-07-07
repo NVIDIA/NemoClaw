@@ -11,11 +11,13 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
-export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
+export { REPO_ROOT };
+
+export const CLI = CLI_ENTRYPOINT;
 export const OPENCLAW_SANDBOX =
   process.env.NEMOCLAW_OPENCLAW_TURN_LATENCY_SANDBOX_NAME ?? "e2e-openclaw-turn-latency";
 export const HERMES_SANDBOX =
@@ -148,6 +150,34 @@ export function extractOpenClawAgentText(output: string): string {
   for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
     const text = collectAssistantText(parseJsonObjectAt(output, start))[0];
     if (text) return text;
+  }
+  return "";
+}
+
+function collectOpenClawPayloadText(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const record = value as Record<string, unknown>;
+  const result =
+    record.result && typeof record.result === "object" && !Array.isArray(record.result)
+      ? (record.result as Record<string, unknown>)
+      : null;
+  const payloads = Array.isArray(record.payloads)
+    ? record.payloads
+    : Array.isArray(result?.payloads)
+      ? result.payloads
+      : [];
+  return payloads.flatMap((payload) => {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+    const text = (payload as Record<string, unknown>).text;
+    return typeof text === "string" && text.trim() ? [text.trim()] : [];
+  });
+}
+
+/** Read only OpenClaw's agent-output payloads, excluding echoed request messages. */
+export function extractOpenClawAgentPayloadText(output: string): string {
+  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
+    const text = collectOpenClawPayloadText(parseJsonObjectAt(output, start));
+    if (text.length > 0) return text.join("\n");
   }
   return "";
 }

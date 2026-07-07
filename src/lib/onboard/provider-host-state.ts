@@ -17,6 +17,7 @@ import {
   getWindowsHostOllamaDockerRequirement,
   type WindowsHostOllamaDockerRequirement,
 } from "./local-inference-topology";
+import { warnAboutArm64NimImageCompatibility } from "./nim-image-compat-warning";
 import { resolveOllamaInstallMenuEntry, type OllamaInstallMenuResult } from "./ollama-install-menu";
 import { buildVllmMenuEntries, type VllmMenuEntry } from "./vllm-menu";
 import { detectWindowsHostOllama, type WindowsHostOllamaState } from "./windows-host-ollama";
@@ -183,6 +184,13 @@ export function detectInferenceProviderHostState(
     runCapture: deps.runCapture,
     log,
   });
+  const gpuNimCapable = Boolean(input.gpu?.nimCapable);
+  warnAboutArm64NimImageCompatibility({
+    gpu: input.gpu,
+    nimLocalAvailable: input.experimental && gpuNimCapable,
+    platform,
+    log,
+  });
 
   const ollamaInstallMenu = resolveOllamaInstallMenuEntry({
     hasOllama,
@@ -219,6 +227,6 @@ export function detectInferenceProviderHostState(
       log: (message) => log(message),
     }),
     ollamaInstallMenu,
-    gpuNimCapable: Boolean(input.gpu?.nimCapable),
+    gpuNimCapable,
   };
 }

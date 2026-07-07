@@ -88,6 +88,9 @@ navigation:
               - page: "Set Up Messaging Channels"
                 path: _build/agent-variants/manage-sandboxes/messaging-channels.openclaw.generated.mdx
                 slug: messaging-channels
+              - page: "Set Up MCP Servers"
+                path: _build/agent-variants/deployment/set-up-mcp-bridge.openclaw.generated.mdx
+                slug: set-up-mcp-servers
               - page: "Workspace Files"
                 path: _build/agent-variants/manage-sandboxes/workspace-files.openclaw.generated.mdx
                 slug: workspace-files
@@ -143,6 +146,9 @@ navigation:
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.openclaw.generated.mdx
                 slug: trusted-computing-base
+              - page: "OpenShell 0.0.72 Compatibility Review"
+                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.openclaw.generated.mdx
+                slug: openshell-0.0.72-compatibility-review
               - page: "OpenShell 0.0.71 Review"
                 path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.openclaw.generated.mdx
                 slug: openshell-0.0.71-gateway-auth-review
@@ -168,6 +174,9 @@ navigation:
               - page: "CLI Selection Guide"
                 path: _build/agent-variants/reference/cli-selection-guide.openclaw.generated.mdx
                 slug: cli-selection-guide
+              - page: "Host Files and State"
+                path: _build/agent-variants/reference/host-files-and-state.openclaw.generated.mdx
+                slug: host-files-and-state
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.openclaw.generated.mdx
                 slug: network-policies
@@ -256,6 +265,9 @@ navigation:
               - page: "Set Up Messaging Channels"
                 path: _build/agent-variants/manage-sandboxes/messaging-channels.hermes.generated.mdx
                 slug: messaging-channels
+              - page: "Set Up MCP Servers"
+                path: _build/agent-variants/deployment/set-up-mcp-bridge.hermes.generated.mdx
+                slug: set-up-mcp-servers
               - page: "Workspace Files"
                 path: _build/agent-variants/manage-sandboxes/workspace-files.hermes.generated.mdx
                 slug: workspace-files
@@ -298,6 +310,9 @@ navigation:
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.hermes.generated.mdx
                 slug: trusted-computing-base
+              - page: "OpenShell 0.0.72 Compatibility Review"
+                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.hermes.generated.mdx
+                slug: openshell-0.0.72-compatibility-review
               - page: "OpenShell 0.0.71 Review"
                 path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.hermes.generated.mdx
                 slug: openshell-0.0.71-gateway-auth-review
@@ -320,6 +335,9 @@ navigation:
               - page: "CLI Selection Guide"
                 path: _build/agent-variants/reference/cli-selection-guide.hermes.generated.mdx
                 slug: cli-selection-guide
+              - page: "Host Files and State"
+                path: _build/agent-variants/reference/host-files-and-state.hermes.generated.mdx
+                slug: host-files-and-state
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.hermes.generated.mdx
                 slug: network-policies

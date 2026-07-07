@@ -40,7 +40,14 @@ export function hermesAuthMethodLabel(method: HermesAuthMethod | null | undefine
   return method === HERMES_AUTH_METHOD_API_KEY ? "Nous API Key" : "Nous Portal OAuth";
 }
 
-export function getRequestedHermesAuthMethod(): HermesAuthMethod | null {
+export interface HermesAuthFailureBoundary {
+  error(message: string): void;
+  exitProcess(code: number): never;
+}
+
+export function getRequestedHermesAuthMethod(
+  boundary: HermesAuthFailureBoundary,
+): HermesAuthMethod | null {
   const raw =
     process.env.NEMOCLAW_HERMES_AUTH_METHOD ||
     process.env.NEMOCLAW_HERMES_AUTH ||
@@ -48,9 +55,9 @@ export function getRequestedHermesAuthMethod(): HermesAuthMethod | null {
     "";
   const method = normalizeHermesAuthMethod(raw);
   if (!raw || method) return method;
-  console.error(`  Unsupported Hermes Provider auth method: ${raw}`);
-  console.error("  Valid values: oauth, nous-portal-oauth, api-key, nous-api-key");
-  process.exit(1);
+  boundary.error(`  Unsupported Hermes Provider auth method: ${raw}`);
+  boundary.error("  Valid values: oauth, nous-portal-oauth, api-key, nous-api-key");
+  boundary.exitProcess(1);
 }
 
 export interface HermesAuthFlowDeps {
@@ -70,6 +77,8 @@ export interface HermesAuthFlowDeps {
     stdout?: string | Buffer | null;
     stderr?: string | Buffer | null;
   };
+  error(message: string): void;
+  exitProcess(code: number): never;
   backToSelection: unknown;
 }
 
@@ -96,7 +105,10 @@ export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHel
         label: "Nous API Key (paste a key from the provider dashboard)",
       },
     ];
-    const requested = getRequestedHermesAuthMethod();
+    const requested = getRequestedHermesAuthMethod({
+      error: deps.error,
+      exitProcess: deps.exitProcess,
+    });
     if (deps.isNonInteractive()) {
       const method =
         requested ||
@@ -156,8 +168,8 @@ export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHel
     const key = normalizeCredentialValue(rawKey);
     const validationError = deps.validateNvidiaApiKeyValue(key, HERMES_NOUS_API_KEY_CREDENTIAL_ENV);
     if (validationError) {
-      console.error(validationError);
-      process.exit(1);
+      deps.error(validationError);
+      deps.exitProcess(1);
     }
     process.env[HERMES_NOUS_API_KEY_CREDENTIAL_ENV] = key;
     return key;

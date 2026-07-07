@@ -7,10 +7,13 @@ import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { validateDocsValidationWorkflowBoundary } from "./docs-validation-workflow-boundary.mts";
 import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
+import { validateHermesGpuStartupWorkflowBoundary } from "./hermes-gpu-startup-workflow-boundary.mts";
 import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
 import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-boundary.mts";
+import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflowBoundary } from "./security-posture-workflow-boundary.mts";
+import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -49,16 +52,30 @@ const COMMON_SECRET_ENV_NAMES = [
   "DOCKERHUB_TOKEN",
   "GITHUB_TOKEN",
 ];
-const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
-  "full-e2e",
-  "hermes-e2e",
-  "hermes-root-entrypoint-smoke",
-  "openclaw-tui-chat-correlation",
-]);
+const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e"]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
 ]);
+const NO_IMAGE_E2E_JOBS = new Set([
+  "docs-validation",
+  "gateway-drift-preflight",
+  "gateway-health-honest",
+  "inference-routing",
+  "onboard-negative-paths",
+  "openshell-version-pin",
+]);
+const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
+const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
+const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
+const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
+// The general E2E workflow runs on schedule/manual dispatch. Its event set is
+// intentionally distinct from the reusable image workflow's push/manual boundary.
+const TRUSTED_DOCKER_HUB_PREDICATE =
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
+const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;
+const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
+const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -352,6 +369,24 @@ function requireRunContains(
   }
 }
 
+function requireRunFragmentBefore(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  before: string,
+  after: string,
+): void {
+  if (!step) return;
+  const run = stringValue(step.run);
+  const beforeIndex = run.indexOf(before);
+  const afterIndex = run.indexOf(after);
+  if (beforeIndex === -1 || afterIndex === -1) return;
+  if (beforeIndex > afterIndex) {
+    errors.push(
+      `step '${step.name ?? "<unnamed>"}' run script must include ${before} before ${after}`,
+    );
+  }
+}
+
 function requireRunDoesNotContain(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -360,6 +395,22 @@ function requireRunDoesNotContain(
   if (!step) return;
   if (stringValue(step.run).includes(forbidden)) {
     errors.push(`step '${step.name ?? "<unnamed>"}' run script must not include ${forbidden}`);
+  }
+}
+
+function requireUploadPathContains(errors: string[], uploadPath: string, expected: string): void {
+  if (!uploadPath.includes(expected)) {
+    errors.push(`artifact upload path must include ${expected}`);
+  }
+}
+
+function requireUploadPathDoesNotContain(
+  errors: string[],
+  uploadPath: string,
+  forbidden: string,
+): void {
+  if (uploadPath.includes(forbidden)) {
+    errors.push(`artifact upload path must not include ${forbidden}`);
   }
 }
 
@@ -392,22 +443,6 @@ function validateInlineHostDependencyInstall(
   const expectedInstall = `${installPrefix}${expectedPackages.join(" ")}`;
   if (installLines.length !== 1 || installLines[0] !== expectedInstall) {
     errors.push(`${jobName} host dependency install must be exactly '${expectedInstall}'`);
-  }
-}
-
-function requireUploadPathContains(errors: string[], uploadPath: string, expected: string): void {
-  if (!uploadPath.includes(expected)) {
-    errors.push(`artifact upload path must include ${expected}`);
-  }
-}
-
-function requireUploadPathDoesNotContain(
-  errors: string[],
-  uploadPath: string,
-  forbidden: string,
-): void {
-  if (uploadPath.includes(forbidden)) {
-    errors.push(`artifact upload path must not include ${forbidden}`);
   }
 }
 
@@ -516,39 +551,6 @@ function validateGatewayGuardRecoveryJob(errors: string[], jobs: WorkflowRecord)
   }
 }
 
-function validateSerializedHostedAgentProofs(errors: string[], jobs: WorkflowRecord): void {
-  const specs = [
-    {
-      jobName: "full-e2e",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start"],
-    },
-    {
-      jobName: "openclaw-tui-chat-correlation",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start", "full-e2e"],
-    },
-  ] as const;
-
-  for (const { dependencies, jobName } of specs) {
-    const job = asRecord(jobs[jobName]);
-    const needs = Array.isArray(job.needs) ? job.needs : [];
-    if (
-      needs.length !== dependencies.length ||
-      dependencies.some((dependency) => !needs.includes(dependency))
-    ) {
-      errors.push(`${jobName} job must wait for ${dependencies.join(", ")}`);
-    }
-    const condition = stringValue(job.if);
-    if (!condition.includes("always()")) {
-      errors.push(`${jobName} job must remain runnable after skipped dependencies`);
-    }
-    for (const selector of ["inputs.jobs", "inputs.targets", `,${jobName},`]) {
-      if (!condition.includes(selector)) {
-        errors.push(`${jobName} job selector must include ${selector}`);
-      }
-    }
-  }
-}
-
 function jobPassesNvidiaInferenceSecret(job: WorkflowRecord): boolean {
   return asSteps(job.steps).some(
     (step) => asRecord(step.env).NVIDIA_INFERENCE_API_KEY !== undefined,
@@ -600,9 +602,6 @@ function validateFreeStandingInventoryBoundary(
     for (const step of steps) {
       if (step.uses) {
         requireFullShaAction(errors, step, `${jobName} step '${step.name ?? step.uses}'`);
-        if (stringValue(step.uses).startsWith("actions/upload-artifact@")) {
-          requireUploadPathDoesNotContain(errors, stringValue(asRecord(step.with).path), "/tmp/");
-        }
       }
       if (/\$\{\{\s*secrets\./.test(stringValue(step.run))) {
         errors.push(
@@ -695,39 +694,9 @@ function validateOpenShellVersionPinJob(errors: string[], jobs: WorkflowRecord):
     errors.push("openshell-version-pin checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("openshell-version-pin job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "openshell-version-pin setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run OpenShell version-pin live test");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/openshell-version-pin.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload OpenShell version-pin artifacts");
-  requireFullShaAction(errors, upload, "openshell-version-pin upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-openshell-version-pin") {
-    errors.push("openshell-version-pin artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/openshell-version-pin/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openshell-version-pin artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openshell-version-pin artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("openshell-version-pin artifact upload retention-days must be 14");
-  }
 }
 
 function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
@@ -775,21 +744,6 @@ function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
     errors.push("skill-agent checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("skill-agent job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "skill-agent setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
 
@@ -807,42 +761,6 @@ function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "export OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/skill-agent.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload skill-agent artifacts");
-  requireFullShaAction(errors, upload, "skill-agent upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-skill-agent") {
-    errors.push("skill-agent artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  for (const expected of [
-    "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
-    "e2e-artifacts/live/skill-agent/*/cleanup.json",
-    "e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json",
-    "e2e-artifacts/live/skill-agent/*/target.json",
-    "e2e-artifacts/live/skill-agent/*/target-result.json",
-    "e2e-artifacts/live/skill-agent/*/shell/*.result.json",
-    "e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt",
-    "e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt",
-  ]) {
-    requireUploadPathContains(errors, uploadPath, expected);
-  }
-  for (const line of uploadPath.split("\n")) {
-    if (line.trim() === "e2e-artifacts/live/skill-agent/") {
-      errors.push(
-        "skill-agent artifact upload path must not list the whole skill-agent artifact directory",
-      );
-    }
-  }
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("skill-agent artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("skill-agent artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("skill-agent artifact upload retention-days must be 14");
-  }
 }
 
 function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void {
@@ -934,25 +852,6 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
     ["expect"],
   );
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("network-policy job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "network-policy setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
-  if (namedStep(steps, "Authenticate to Docker Hub")) {
-    errors.push("network-policy must not include unused Docker Hub authentication");
-  }
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -968,24 +867,6 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/network-policy.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload network-policy artifacts");
-  requireFullShaAction(errors, upload, "network-policy upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-network-policy") {
-    errors.push("network-policy artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/network-policy/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("network-policy artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("network-policy artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("network-policy artifact upload retention-days must be 14");
-  }
 }
 
 function validateIssue4434HostDependencies(errors: string[], jobs: WorkflowRecord): void {
@@ -1068,7 +949,11 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
         "NVIDIA_INFERENCE_API_KEY",
       );
     }
-    for (const secret of ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+    const forbiddenSecrets =
+      step.name === DOCKER_HUB_AUTH_STEP
+        ? ["GITHUB_TOKEN"]
+        : ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"];
+    for (const secret of forbiddenSecrets) {
       requireEnvDoesNotExposeSecret(
         errors,
         `common-egress-agent step '${stepName}'`,
@@ -1084,21 +969,6 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("common-egress-agent checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("common-egress-agent job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "common-egress-agent setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -1116,24 +986,6 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/common-egress-agent.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload common-egress agent artifacts");
-  requireFullShaAction(errors, upload, "common-egress-agent upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-common-egress-agent") {
-    errors.push("common-egress-agent artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/common-egress-agent/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("common-egress-agent artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("common-egress-agent artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("common-egress-agent artifact upload retention-days must be 14");
-  }
 }
 
 function validateShieldsConfigJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1210,28 +1062,6 @@ function validateShieldsConfigJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("shields-config checkout step must set persist-credentials=false");
   }
 
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("shields-config Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("shields-config Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("shields-config job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "shields-config setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run shields-config live test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
@@ -1239,25 +1069,6 @@ function validateShieldsConfigJob(errors: string[], jobs: WorkflowRecord): void 
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/shields-config.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload shields-config artifacts");
-  requireFullShaAction(errors, upload, "shields-config upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-shields-config") {
-    errors.push("shields-config artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/shields-config/");
-  requireUploadPathDoesNotContain(errors, uploadPath, "/tmp/nemoclaw-e2e-shields-install.log");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("shields-config artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("shields-config artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("shields-config artifact upload retention-days must be 14");
-  }
 }
 
 function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1309,31 +1120,6 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
     errors.push("rebuild-openclaw checkout step must set persist-credentials=false");
   }
 
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("rebuild-openclaw Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("rebuild-openclaw Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("rebuild-openclaw job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "rebuild-openclaw setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireEnvDoesNotExposeSecret(
     errors,
@@ -1356,24 +1142,6 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-openclaw.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload OpenClaw rebuild artifacts");
-  requireFullShaAction(errors, upload, "rebuild-openclaw upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-rebuild-openclaw") {
-    errors.push("rebuild-openclaw artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/rebuild-openclaw/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("rebuild-openclaw artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("rebuild-openclaw artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("rebuild-openclaw artifact upload retention-days must be 14");
-  }
 }
 
 function validateRebuildHermesJob(
@@ -1466,29 +1234,6 @@ function validateRebuildHermesJob(
     errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
 
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_USERNAME from secrets`);
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_TOKEN from secrets`);
-  }
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push(`${jobName} job missing step: Set up Node`);
-  requireFullShaAction(errors, setupNode, `${jobName} setup-node`);
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
   const runVitest = requireJobStep(
     errors,
     jobName,
@@ -1501,38 +1246,6 @@ function validateRebuildHermesJob(
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    options.staleBase
-      ? "Upload Hermes stale-base rebuild artifacts"
-      : "Upload Hermes rebuild artifacts",
-  );
-  requireFullShaAction(errors, upload, `${jobName} upload-artifact`);
-  const uploadWith = asRecord(upload?.with);
-  const artifactName = options.staleBase ? "e2e-rebuild-hermes-stale-base" : "e2e-rebuild-hermes";
-  if (uploadWith.name !== artifactName) {
-    errors.push(`${jobName} artifact upload name must be stable`);
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    options.staleBase
-      ? "e2e-artifacts/live/rebuild-hermes-stale-base/"
-      : "e2e-artifacts/live/rebuild-hermes/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(`${jobName} artifact upload must set include-hidden-files: false`);
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(`${jobName} artifact upload must ignore missing fixture artifacts`);
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push(`${jobName} artifact upload retention-days must be 14`);
-  }
 }
 
 function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1598,32 +1311,6 @@ function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void
     errors.push("sandbox-rebuild checkout step must set persist-credentials=false");
   }
 
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("sandbox-rebuild Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("sandbox-rebuild Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("sandbox-rebuild job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "sandbox-rebuild setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -1640,24 +1327,6 @@ function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/sandbox-rebuild.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload sandbox rebuild artifacts");
-  requireFullShaAction(errors, upload, "sandbox-rebuild upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-sandbox-rebuild") {
-    errors.push("sandbox-rebuild artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/sandbox-rebuild/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("sandbox-rebuild artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("sandbox-rebuild artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("sandbox-rebuild artifact upload retention-days must be 14");
-  }
 }
 
 function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1734,34 +1403,6 @@ function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): 
     errors.push("state-backup-restore checkout step must set persist-credentials=false");
   }
 
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "state-backup-restore Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("state-backup-restore Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("state-backup-restore job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "state-backup-restore setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -1778,24 +1419,6 @@ function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): 
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/state-backup-restore.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload state backup restore artifacts");
-  requireFullShaAction(errors, upload, "state-backup-restore upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-state-backup-restore") {
-    errors.push("state-backup-restore artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/state-backup-restore/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("state-backup-restore artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("state-backup-restore artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("state-backup-restore artifact upload retention-days must be 14");
-  }
 }
 
 function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1866,48 +1489,6 @@ function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord):
     errors.push("upgrade-stale-sandbox checkout step must set persist-credentials=false");
   }
 
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-upgrade-stale-sandbox" >> "$GITHUB_ENV"',
-  );
-
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "upgrade-stale-sandbox Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("upgrade-stale-sandbox Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerHubAuth, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerHubAuth, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("upgrade-stale-sandbox job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "upgrade-stale-sandbox setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -1929,28 +1510,6 @@ function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord):
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/upgrade-stale-sandbox.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload upgrade stale sandbox artifacts");
-  requireFullShaAction(errors, upload, "upgrade-stale-sandbox upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-upgrade-stale-sandbox") {
-    errors.push("upgrade-stale-sandbox artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/upgrade-stale-sandbox/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("upgrade-stale-sandbox artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("upgrade-stale-sandbox artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("upgrade-stale-sandbox artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2000,31 +1559,6 @@ function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("token-rotation checkout step must set persist-credentials=false");
   }
 
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("token-rotation Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("token-rotation Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("token-rotation job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "token-rotation setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run token rotation live test");
   const runVitestEnv = asRecord(runVitest?.env);
   requireEnvDoesNotExposeSecret(
@@ -2057,24 +1591,6 @@ function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void 
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/token-rotation.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload token rotation artifacts");
-  requireFullShaAction(errors, upload, "token-rotation upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-token-rotation") {
-    errors.push("token-rotation artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/token-rotation/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("token-rotation artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("token-rotation artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("token-rotation artifact upload retention-days must be 14");
-  }
 }
 
 function validateMessagingCompatibleEndpointJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2144,29 +1660,25 @@ function validateMessagingCompatibleEndpointJob(errors: string[], jobs: Workflow
       stepEnv,
       "NVIDIA_INFERENCE_API_KEY",
     );
-    requireEnvDoesNotExposeSecret(
-      errors,
-      `messaging-compatible-endpoint step '${stepName}'`,
-      stepEnv,
-      "DOCKERHUB_USERNAME",
-    );
-    requireEnvDoesNotExposeSecret(
-      errors,
-      `messaging-compatible-endpoint step '${stepName}'`,
-      stepEnv,
-      "DOCKERHUB_TOKEN",
-    );
-    requireNoDockerHubAuthInRun(
-      errors,
-      `messaging-compatible-endpoint step '${stepName}'`,
-      stringValue(step.run),
-    );
-  }
-
-  if (namedStep(steps, "Authenticate to Docker Hub")) {
-    errors.push(
-      "messaging-compatible-endpoint must not authenticate to Docker Hub before branch-controlled test code runs",
-    );
+    if (step.name !== DOCKER_HUB_AUTH_STEP) {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `messaging-compatible-endpoint step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_USERNAME",
+      );
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `messaging-compatible-endpoint step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_TOKEN",
+      );
+      requireNoDockerHubAuthInRun(
+        errors,
+        `messaging-compatible-endpoint step '${stepName}'`,
+        stringValue(step.run),
+      );
+    }
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
@@ -2175,21 +1687,6 @@ function validateMessagingCompatibleEndpointJob(errors: string[], jobs: Workflow
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("messaging-compatible-endpoint checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("messaging-compatible-endpoint job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "messaging-compatible-endpoint setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const runVitest = requireJobStep(
     errors,
@@ -2215,37 +1712,6 @@ function validateMessagingCompatibleEndpointJob(errors: string[], jobs: Workflow
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/messaging-compatible-endpoint.test.ts");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload messaging compatible endpoint artifacts",
-  );
-  requireFullShaAction(errors, upload, "messaging-compatible-endpoint upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-messaging-compatible-endpoint") {
-    errors.push("messaging-compatible-endpoint artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/messaging-compatible-endpoint/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "messaging-compatible-endpoint artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "messaging-compatible-endpoint artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("messaging-compatible-endpoint artifact upload retention-days must be 14");
-  }
 }
 
 function validateOnboardNegativePathsJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2297,42 +1763,9 @@ function validateOnboardNegativePathsJob(errors: string[], jobs: WorkflowRecord)
     errors.push("onboard-negative-paths checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("onboard-negative-paths job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "onboard-negative-paths setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run onboard negative-paths live test");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/onboard-negative-paths.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload onboard negative-paths artifacts");
-  requireFullShaAction(errors, upload, "onboard-negative-paths upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-onboard-negative-paths") {
-    errors.push("onboard-negative-paths artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/onboard-negative-paths/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("onboard-negative-paths artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("onboard-negative-paths artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("onboard-negative-paths artifact upload retention-days must be 14");
-  }
 }
 
 function validateCloudInferenceJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2391,21 +1824,6 @@ function validateCloudInferenceJob(errors: string[], jobs: WorkflowRecord): void
     errors.push("cloud-inference checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("cloud-inference job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "cloud-inference setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run cloud inference live test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
@@ -2413,24 +1831,6 @@ function validateCloudInferenceJob(errors: string[], jobs: WorkflowRecord): void
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/cloud-inference.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload cloud inference artifacts");
-  requireFullShaAction(errors, upload, "cloud-inference upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-cloud-inference") {
-    errors.push("cloud-inference artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/cloud-inference/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("cloud-inference artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("cloud-inference artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("cloud-inference artifact upload retention-days must be 14");
-  }
 }
 
 function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
@@ -2439,6 +1839,262 @@ function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript:
   const referencesSecret = /\bsecrets\.[A-Za-z0-9_]+\b|\$\{\{\s*secrets\.[^}]+\}\}/.test(runScript);
   if (usesDockerLogin || referencesSecret) {
     errors.push(`${owner} run script must not use docker login or inline secret interpolation`);
+  }
+}
+
+function requireCanonicalDockerHubAuthRun(
+  errors: string[],
+  authStep: WorkflowStep | undefined,
+): void {
+  if (!authStep) return;
+  if (Object.hasOwn(authStep, "if")) {
+    errors.push(
+      "canonical Docker Hub auth step must always run so untrusted refs receive an isolated empty Docker config",
+    );
+  }
+  if (authStep.shell !== "bash") {
+    errors.push("canonical Docker Hub auth step must use bash");
+  }
+  if (authStep.uses !== undefined) {
+    errors.push("canonical Docker Hub auth step must use the audited inline retry script");
+  }
+  if (authStep["continue-on-error"] !== undefined) {
+    errors.push(
+      "canonical Docker Hub auth step must fail closed when trusted authentication fails",
+    );
+  }
+
+  const authEnv = asRecord(authStep.env);
+  if (authEnv.DOCKERHUB_AUTH_REQUIRED !== GUARDED_DOCKER_HUB_AUTH_REQUIRED) {
+    errors.push(
+      "canonical Docker Hub auth must gate DOCKERHUB_AUTH_REQUIRED on the trusted repository, main ref, and scheduled/manual events",
+    );
+  }
+  if (authEnv.DOCKERHUB_USERNAME !== GUARDED_DOCKER_HUB_USERNAME) {
+    errors.push(
+      "canonical Docker Hub auth must gate DOCKERHUB_USERNAME on the trusted repository, main ref, and scheduled/manual events",
+    );
+  }
+  if (authEnv.DOCKERHUB_TOKEN !== GUARDED_DOCKER_HUB_TOKEN) {
+    errors.push(
+      "canonical Docker Hub auth must gate DOCKERHUB_TOKEN on the trusted repository, main ref, and scheduled/manual events",
+    );
+  }
+  const unexpectedEnv = Object.keys(authEnv).filter(
+    (name) => !["DOCKERHUB_AUTH_REQUIRED", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"].includes(name),
+  );
+  if (unexpectedEnv.length > 0) {
+    errors.push("canonical Docker Hub auth step must expose only its three guarded inputs");
+  }
+
+  const runScript = stringValue(authStep.run);
+  for (const fragment of [
+    'mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX"',
+    'chmod 700 "${docker_config}"',
+    'export DOCKER_CONFIG="${docker_config}"',
+    'if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then',
+    "continuing with anonymous pulls",
+    'if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then',
+    'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
+    ': > "${auth_marker}"',
+    'chmod 600 "${auth_marker}"',
+    "for attempt in 1 2 3; do",
+    "timeout 30s docker login docker.io",
+    '--username "${DOCKERHUB_USERNAME}"',
+    "--password-stdin",
+    "Docker Hub login failed after 3 attempts",
+  ]) {
+    if (!runScript.includes(fragment)) {
+      errors.push(`canonical Docker Hub auth run script must include ${fragment}`);
+    }
+  }
+  if (
+    !runScript.includes("printf 'DOCKER_CONFIG=%s\\n'") ||
+    !runScript.includes('"${DOCKER_CONFIG}"') ||
+    !runScript.includes('>> "${GITHUB_ENV}"')
+  ) {
+    errors.push(
+      "canonical Docker Hub auth run script must persist the isolated DOCKER_CONFIG through GITHUB_ENV",
+    );
+  }
+  if (runScript.includes("${{ github.workspace }}") || runScript.includes("GITHUB_WORKSPACE")) {
+    errors.push("canonical Docker Hub auth directory must not use the checkout workspace");
+  }
+  if (/--password(?:=|\s)(?!-stdin\b)/u.test(runScript)) {
+    errors.push("canonical Docker Hub auth must pass the token only through --password-stdin");
+  }
+
+  const configIndex = runScript.indexOf(
+    'mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX"',
+  );
+  const trustIndex = runScript.indexOf('if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then');
+  const loginIndex = runScript.indexOf("docker login docker.io");
+  if (configIndex < 0 || trustIndex <= configIndex || loginIndex <= trustIndex) {
+    errors.push(
+      "canonical Docker Hub auth must isolate Docker config before evaluating trust and authenticating",
+    );
+  }
+  const missingCredentialsIndex = runScript.indexOf(
+    'if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then',
+  );
+  const missingCredentialsEndIndex = runScript.indexOf("\nfi", missingCredentialsIndex);
+  const markerPathIndex = runScript.indexOf(
+    'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
+  );
+  const markerCreateIndex = runScript.indexOf(': > "${auth_marker}"');
+  const markerChmodIndex = runScript.indexOf('chmod 600 "${auth_marker}"');
+  const retryIndex = runScript.indexOf("for attempt in 1 2 3; do");
+  const missingCredentialsBlock =
+    missingCredentialsIndex >= 0 && retryIndex > missingCredentialsIndex
+      ? runScript.slice(missingCredentialsIndex, retryIndex)
+      : "";
+  if (!missingCredentialsBlock.includes("exit 1")) {
+    errors.push("canonical Docker Hub auth must fail when trusted credentials are missing");
+  }
+  if (
+    missingCredentialsEndIndex < 0 ||
+    markerPathIndex <= missingCredentialsEndIndex ||
+    markerCreateIndex <= markerPathIndex ||
+    markerChmodIndex <= markerCreateIndex ||
+    retryIndex <= markerChmodIndex ||
+    loginIndex <= retryIndex
+  ) {
+    errors.push(
+      "canonical Docker Hub auth must create and protect its login-attempt marker after trusted credential validation and before login",
+    );
+  }
+  const exhaustedLoginIndex = runScript.indexOf("Docker Hub login failed after 3 attempts");
+  if (exhaustedLoginIndex < 0 || !runScript.slice(exhaustedLoginIndex).includes("exit 1")) {
+    errors.push("canonical Docker Hub auth must fail after exhausting login retries");
+  }
+}
+
+function requireCanonicalDockerHubCleanupRun(
+  errors: string[],
+  jobName: string,
+  cleanupStep: WorkflowStep | undefined,
+): void {
+  if (!cleanupStep) return;
+
+  const cleanupKeys = Object.keys(cleanupStep).sort();
+  if (
+    cleanupKeys.length !== DOCKER_HUB_CLEANUP_KEYS.length ||
+    cleanupKeys.some((key, index) => key !== DOCKER_HUB_CLEANUP_KEYS[index])
+  ) {
+    errors.push(`${jobName} Docker Hub cleanup step must contain exactly name, if, shell, and run`);
+  }
+  if (cleanupStep.name !== DOCKER_HUB_CLEANUP_STEP) {
+    errors.push(`${jobName} Docker Hub cleanup step must use the canonical name`);
+  }
+  if (cleanupStep.if !== "always()") {
+    errors.push(`${jobName} Docker Hub cleanup step must always run`);
+  }
+  if (cleanupStep.shell !== "bash") {
+    errors.push(`${jobName} Docker Hub cleanup step must use bash`);
+  }
+  if (cleanupStep.run !== DOCKER_HUB_CLEANUP_RUN) {
+    errors.push(`${jobName} Docker Hub cleanup step must run only ${DOCKER_HUB_CLEANUP_RUN}`);
+  }
+}
+
+function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): void {
+  const e2eJobNames = Object.entries(jobs)
+    .filter(([, rawJob]) => asRecord(asRecord(rawJob).env).E2E_JOB === "1")
+    .map(([jobName]) => jobName);
+  for (const exemptJobName of NO_IMAGE_E2E_JOBS) {
+    if (!e2eJobNames.includes(exemptJobName)) {
+      errors.push(`Docker Hub no-image exemption references unknown E2E job: ${exemptJobName}`);
+    }
+  }
+
+  const imageJobNames = [
+    "live",
+    ...e2eJobNames.filter((jobName) => !NO_IMAGE_E2E_JOBS.has(jobName)),
+  ];
+  const liveSteps = asSteps(asRecord(jobs.live).steps);
+  const canonicalAuth = namedStep(liveSteps, DOCKER_HUB_AUTH_STEP);
+  requireCanonicalDockerHubAuthRun(errors, canonicalAuth);
+
+  for (const jobName of imageJobNames) {
+    const job = asRecord(jobs[jobName]);
+    const jobEnv = asRecord(job.env);
+    for (const variable of [
+      "DOCKER_CONFIG",
+      "DOCKERHUB_AUTH_REQUIRED",
+      "DOCKERHUB_USERNAME",
+      "DOCKERHUB_TOKEN",
+    ]) {
+      requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, variable);
+    }
+
+    const steps = asSteps(job.steps);
+    const authSteps = steps.filter((step) => step.name === DOCKER_HUB_AUTH_STEP);
+    const cleanupSteps = steps.filter((step) => step.name === DOCKER_HUB_CLEANUP_STEP);
+    if (authSteps.length !== 1) {
+      errors.push(`${jobName} image-consuming job must have exactly one Docker Hub auth step`);
+    }
+    if (cleanupSteps.length !== 1) {
+      errors.push(`${jobName} image-consuming job must have exactly one Docker Hub cleanup step`);
+    }
+    const auth = authSteps[0];
+    const cleanup = cleanupSteps[0];
+    if (auth && canonicalAuth && auth !== canonicalAuth) {
+      errors.push(`${jobName} Docker Hub auth must reuse the canonical workflow alias`);
+    }
+    requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
+
+    const checkoutIndex = steps.findIndex((step) =>
+      stringValue(step.uses).startsWith("actions/checkout@"),
+    );
+    const authIndex = steps.indexOf(auth);
+    const cleanupIndex = steps.indexOf(cleanup);
+    if (checkoutIndex < 0 || authIndex !== checkoutIndex + 1) {
+      errors.push(`${jobName} Docker Hub auth must run immediately after checkout`);
+    }
+    if (authIndex < 0 || cleanupIndex <= authIndex) {
+      errors.push(`${jobName} Docker Hub cleanup must run after authentication and test work`);
+    }
+    if (cleanupIndex !== steps.length - 1) {
+      errors.push(`${jobName} Docker Hub cleanup must be the final job step`);
+    }
+
+    for (const step of steps) {
+      const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+      const stepEnv = asRecord(step.env);
+      if (step !== auth) {
+        for (const variable of [
+          "DOCKER_CONFIG",
+          "DOCKERHUB_AUTH_REQUIRED",
+          "DOCKERHUB_USERNAME",
+          "DOCKERHUB_TOKEN",
+        ]) {
+          requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, variable);
+        }
+        const runScript = stringValue(step.run);
+        if (/\bdocker\s+login\b/iu.test(runScript) || /secrets\.DOCKERHUB_/u.test(runScript)) {
+          errors.push(`${stepName} must not authenticate or interpolate Docker Hub secrets`);
+        }
+        if (/DOCKER_CONFIG=.*GITHUB_ENV/su.test(runScript) && step !== cleanup) {
+          errors.push(`${stepName} must not override the canonical Docker auth directory`);
+        }
+      }
+    }
+  }
+
+  for (const jobName of NO_IMAGE_E2E_JOBS) {
+    const steps = asSteps(asRecord(jobs[jobName]).steps);
+    if (namedStep(steps, DOCKER_HUB_AUTH_STEP) || namedStep(steps, DOCKER_HUB_CLEANUP_STEP)) {
+      errors.push(`${jobName} no-image job must not receive Docker Hub authentication`);
+    }
+  }
+
+  const classifiedJobNames = new Set([...imageJobNames, ...NO_IMAGE_E2E_JOBS]);
+  for (const [jobName, rawJob] of Object.entries(jobs)) {
+    if (classifiedJobNames.has(jobName)) continue;
+    const steps = asSteps(asRecord(rawJob).steps);
+    if (namedStep(steps, DOCKER_HUB_AUTH_STEP) || namedStep(steps, DOCKER_HUB_CLEANUP_STEP)) {
+      errors.push(`${jobName} non-E2E job must not own the shared Docker Hub auth aliases`);
+    }
   }
 }
 
@@ -2494,32 +2150,6 @@ function validateDoubleOnboardJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("double-onboard checkout step must set persist-credentials=false");
   }
 
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("double-onboard Docker login step must read DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("double-onboard Docker login step must read DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("double-onboard job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "double-onboard setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installTools = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installTools, "bash scripts/install-openshell.sh");
 
@@ -2527,109 +2157,7 @@ function validateDoubleOnboardJob(errors: string[], jobs: WorkflowRecord): void 
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/double-onboard.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload double-onboard Vitest artifacts");
-  requireFullShaAction(errors, upload, "double-onboard upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-double-onboard") {
-    errors.push("double-onboard artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/double-onboard/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("double-onboard artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("double-onboard artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("double-onboard artifact upload retention-days must be 14");
-  }
 }
-function validateRuntimeOverridesJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "runtime-overrides";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing runtime-overrides job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("runtime-overrides job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, "runtime-overrides");
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("runtime-overrides job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/runtime-overrides") {
-    errors.push(
-      "runtime-overrides job must write artifacts under e2e-artifacts/live/runtime-overrides",
-    );
-  }
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "runtime-overrides job",
-    jobEnv,
-    "NVIDIA_INFERENCE_API_KEY",
-  );
-  requireEnvDoesNotExposeSecret(errors, "runtime-overrides job", jobEnv, "DOCKERHUB_USERNAME");
-  requireEnvDoesNotExposeSecret(errors, "runtime-overrides job", jobEnv, "DOCKERHUB_TOKEN");
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `runtime-overrides step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-    requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("runtime-overrides job missing checkout step");
-  requireFullShaAction(errors, checkout, "runtime-overrides checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("runtime-overrides checkout step must set persist-credentials=false");
-  }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("runtime-overrides job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "runtime-overrides setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run runtime overrides live test");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/runtime-overrides.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload runtime overrides artifacts");
-  requireFullShaAction(errors, upload, "runtime-overrides upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-runtime-overrides") {
-    errors.push("runtime-overrides artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/runtime-overrides/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("runtime-overrides artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("runtime-overrides artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("runtime-overrides artifact upload retention-days must be 14");
-  }
-}
-
 function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "hermes-e2e";
   const job = asRecord(jobs[jobName]);
@@ -2692,21 +2220,6 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     errors.push("hermes-e2e checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("hermes-e2e job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "hermes-e2e setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
@@ -2715,286 +2228,6 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/hermes-e2e.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload Hermes live Vitest artifacts");
-  requireFullShaAction(errors, upload, "hermes-e2e upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-hermes-e2e") {
-    errors.push("hermes-e2e artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/hermes-e2e/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("hermes-e2e artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("hermes-e2e artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("hermes-e2e artifact upload retention-days must be 14");
-  }
-}
-
-function validateHermesRootEntrypointSmokeJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "hermes-root-entrypoint-smoke";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing hermes-root-entrypoint-smoke job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("hermes-root-entrypoint-smoke job must run on ubuntu-latest");
-  }
-  if (job.needs !== "generate-matrix") {
-    errors.push("hermes-root-entrypoint-smoke job must depend on generate-matrix");
-  }
-  const expectedIf =
-    "${{ needs.generate-matrix.result == 'success' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-root-entrypoint-smoke,') || contains(format(',{0},', inputs.targets), ',hermes-root-entrypoint-smoke,')) }}";
-  if (job.if !== expectedIf) {
-    errors.push(
-      "hermes-root-entrypoint-smoke job must gate on generate-matrix and the shared selector condition",
-    );
-  }
-  if (job["timeout-minutes"] !== 45) {
-    errors.push("hermes-root-entrypoint-smoke job must keep the 45 minute timeout");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("hermes-root-entrypoint-smoke job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke"
-  ) {
-    errors.push(
-      "hermes-root-entrypoint-smoke job must write artifacts under e2e-artifacts/live/hermes-root-entrypoint-smoke",
-    );
-  }
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "hermes-root-entrypoint-smoke job",
-    jobEnv,
-    "NVIDIA_INFERENCE_API_KEY",
-  );
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "hermes-root-entrypoint-smoke job",
-    jobEnv,
-    "DOCKERHUB_USERNAME",
-  );
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "hermes-root-entrypoint-smoke job",
-    jobEnv,
-    "DOCKERHUB_TOKEN",
-  );
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = step.name ?? step.uses ?? "<unnamed>";
-    const stepEnv = asRecord(step.env);
-    requireEnvDoesNotExposeSecret(
-      errors,
-      `hermes-root-entrypoint-smoke step '${stepName}'`,
-      stepEnv,
-      "NVIDIA_INFERENCE_API_KEY",
-    );
-    requireEnvDoesNotExposeSecret(
-      errors,
-      `hermes-root-entrypoint-smoke step '${stepName}'`,
-      stepEnv,
-      "DOCKERHUB_USERNAME",
-    );
-    requireEnvDoesNotExposeSecret(
-      errors,
-      `hermes-root-entrypoint-smoke step '${stepName}'`,
-      stepEnv,
-      "DOCKERHUB_TOKEN",
-    );
-    requireNoDockerHubAuthInRun(
-      errors,
-      `hermes-root-entrypoint-smoke step '${stepName}'`,
-      stringValue(step.run),
-    );
-  }
-
-  if (namedStep(steps, "Authenticate to Docker Hub")) {
-    errors.push(
-      "hermes-root-entrypoint-smoke must not authenticate to Docker Hub before branch-controlled test code runs",
-    );
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("hermes-root-entrypoint-smoke job missing checkout step");
-  requireFullShaAction(errors, checkout, "hermes-root-entrypoint-smoke checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("hermes-root-entrypoint-smoke checkout step must set persist-credentials=false");
-  }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("hermes-root-entrypoint-smoke job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "hermes-root-entrypoint-smoke setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Run Hermes root entrypoint smoke live test",
-  );
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/hermes-root-entrypoint-smoke.test.ts");
-  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload Hermes root entrypoint smoke artifacts",
-  );
-  requireFullShaAction(errors, upload, "hermes-root-entrypoint-smoke upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-hermes-root-entrypoint-smoke") {
-    errors.push("hermes-root-entrypoint-smoke artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/hermes-root-entrypoint-smoke/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "hermes-root-entrypoint-smoke artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "hermes-root-entrypoint-smoke artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("hermes-root-entrypoint-smoke artifact upload retention-days must be 14");
-  }
-}
-
-function validateHermesSandboxSecretBoundaryJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "hermes-sandbox-secret-boundary";
-  const targetName = "hermes-sandbox-secret-boundary";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing hermes-sandbox-secret-boundary job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("hermes-sandbox-secret-boundary job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-  if (job["timeout-minutes"] !== 60) {
-    errors.push("hermes-sandbox-secret-boundary job must keep the 60 minute timeout");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("hermes-sandbox-secret-boundary job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/live/hermes-sandbox-secret-boundary"
-  ) {
-    errors.push(
-      "hermes-sandbox-secret-boundary job must write artifacts under e2e-artifacts/live/hermes-sandbox-secret-boundary",
-    );
-  }
-  for (const secret of ["NVIDIA_INFERENCE_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"]) {
-    requireEnvDoesNotExposeSecret(errors, "hermes-sandbox-secret-boundary job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `hermes-sandbox-secret-boundary step '${
-      step.name ?? step.uses ?? "<unnamed>"
-    }'`;
-    const stepEnv = asRecord(step.env);
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-    requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-  }
-
-  if (namedStep(steps, "Authenticate to Docker Hub")) {
-    errors.push(
-      "hermes-sandbox-secret-boundary must not authenticate to Docker Hub before branch-controlled test code runs",
-    );
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("hermes-sandbox-secret-boundary job missing checkout step");
-  requireFullShaAction(errors, checkout, "hermes-sandbox-secret-boundary checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("hermes-sandbox-secret-boundary checkout step must set persist-credentials=false");
-  }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("hermes-sandbox-secret-boundary job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "hermes-sandbox-secret-boundary setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Run Hermes sandbox secret-boundary live test",
-  );
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/hermes-sandbox-secret-boundary.test.ts");
-  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload Hermes sandbox secret-boundary artifacts",
-  );
-  requireFullShaAction(errors, upload, "hermes-sandbox-secret-boundary upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-hermes-sandbox-secret-boundary") {
-    errors.push("hermes-sandbox-secret-boundary artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/hermes-sandbox-secret-boundary/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "hermes-sandbox-secret-boundary artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "hermes-sandbox-secret-boundary artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("hermes-sandbox-secret-boundary artifact upload retention-days must be 14");
-  }
 }
 
 function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3056,16 +2289,12 @@ function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
     if (step.name !== "Run diagnostics live test") {
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
     }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-    requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    if (step.name !== DOCKER_HUB_AUTH_STEP) {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
     requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-  }
-
-  if (namedStep(steps, "Authenticate to Docker Hub")) {
-    errors.push(
-      "diagnostics job must not authenticate to Docker Hub before branch-controlled test code runs",
-    );
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
@@ -3075,21 +2304,6 @@ function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
     errors.push("diagnostics checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("diagnostics job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "diagnostics setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run diagnostics live test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
@@ -3098,24 +2312,6 @@ function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/diagnostics.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload diagnostics artifacts");
-  requireFullShaAction(errors, upload, "diagnostics upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-diagnostics") {
-    errors.push("diagnostics artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/diagnostics/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("diagnostics artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("diagnostics artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("diagnostics artifact upload retention-days must be 14");
-  }
 }
 
 function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3175,8 +2371,10 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
     if (step.name !== "Run Spark install live test") {
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
     }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+    if (step.name !== DOCKER_HUB_AUTH_STEP) {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+    }
     requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
   }
 
@@ -3189,20 +2387,6 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
     errors.push("spark-install checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("spark-install job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "spark-install setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run Spark install live test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
@@ -3211,24 +2395,6 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "set -euo pipefail");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/spark-install.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload Spark install artifacts");
-  requireFullShaAction(errors, upload, "spark-install upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-spark-install") {
-    errors.push("spark-install artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/spark-install/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("spark-install artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("spark-install artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("spark-install artifact upload retention-days must be 14");
-  }
 }
 
 function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3306,47 +2472,6 @@ function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): vo
     errors.push("snapshot-commands checkout step must set persist-credentials=false");
   }
 
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
-  );
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("snapshot-commands Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("snapshot-commands Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("snapshot-commands job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "snapshot-commands setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run snapshot commands live test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
@@ -3356,31 +2481,6 @@ function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): vo
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/snapshot-commands.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload snapshot commands artifacts");
-  requireFullShaAction(errors, upload, "snapshot-commands upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-snapshot-commands") {
-    errors.push("snapshot-commands artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/snapshot-commands/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("snapshot-commands artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("snapshot-commands artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("snapshot-commands artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("snapshot-commands Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateModelRouterProviderRoutedInferenceJob(
@@ -3468,54 +2568,6 @@ function validateModelRouterProviderRoutedInferenceJob(
     );
   }
 
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-model-router-provider-routed-inference" >> "$GITHUB_ENV"',
-  );
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "model-router-provider-routed-inference Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push(
-      "model-router-provider-routed-inference Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
-    );
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("model-router-provider-routed-inference job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "model-router-provider-routed-inference setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(
     errors,
     jobName,
@@ -3534,44 +2586,6 @@ function validateModelRouterProviderRoutedInferenceJob(
     runVitest,
     "test/e2e/live/model-router-provider-routed-inference.test.ts",
   );
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload Model Router provider-routed inference artifacts",
-  );
-  requireFullShaAction(errors, upload, "model-router-provider-routed-inference upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-model-router-provider-routed-inference") {
-    errors.push("model-router-provider-routed-inference artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/model-router-provider-routed-inference/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "model-router-provider-routed-inference artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "model-router-provider-routed-inference artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("model-router-provider-routed-inference artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("model-router-provider-routed-inference Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateGatewayDriftPreflightJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3662,51 +2676,6 @@ function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): voi
     errors.push("tunnel-lifecycle checkout step must set persist-credentials=false");
   }
 
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"',
-  );
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("tunnel-lifecycle Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("tunnel-lifecycle Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("tunnel-lifecycle job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "tunnel-lifecycle setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const cloudflaredPrereq = requireJobStep(
     errors,
     jobName,
@@ -3766,31 +2735,6 @@ function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): voi
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/tunnel-lifecycle.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload tunnel lifecycle artifacts");
-  requireFullShaAction(errors, upload, "tunnel-lifecycle upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-tunnel-lifecycle") {
-    errors.push("tunnel-lifecycle artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/tunnel-lifecycle/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("tunnel-lifecycle artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("tunnel-lifecycle artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("tunnel-lifecycle artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("tunnel-lifecycle Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3858,55 +2802,6 @@ function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowR
     errors.push("issue-2478-crash-loop-recovery checkout step must set persist-credentials=false");
   }
 
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-issue-2478-crash-loop-recovery" >> "$GITHUB_ENV"',
-  );
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "issue-2478-crash-loop-recovery Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push(
-      "issue-2478-crash-loop-recovery Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
-    );
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("issue-2478-crash-loop-recovery job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "issue-2478-crash-loop-recovery setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
 
@@ -3925,44 +2820,6 @@ function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowR
   );
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/issue-2478-crash-loop-recovery.test.ts");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload issue #2478 crash-loop recovery artifacts",
-  );
-  requireFullShaAction(errors, upload, "issue-2478-crash-loop-recovery upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-issue-2478-crash-loop-recovery") {
-    errors.push("issue-2478-crash-loop-recovery artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/issue-2478-crash-loop-recovery/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "issue-2478-crash-loop-recovery artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "issue-2478-crash-loop-recovery artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("issue-2478-crash-loop-recovery artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("issue-2478-crash-loop-recovery Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4007,23 +2864,19 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
     errors.push("channels-add-remove job must force OPENSHELL_GATEWAY=nemoclaw");
   }
-  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
-    errors.push("channels-add-remove job must enable hosted-compatible inference mode");
-  }
-  if (jobEnv.NEMOCLAW_PROVIDER !== "custom") {
-    errors.push("channels-add-remove job must route hosted inference through the custom provider");
-  }
-  if (jobEnv.NEMOCLAW_ENDPOINT_URL !== "https://inference-api.nvidia.com/v1") {
-    errors.push("channels-add-remove job must use the hosted compatible inference endpoint");
-  }
-  if (jobEnv.NEMOCLAW_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
-    errors.push("channels-add-remove job must use the hosted Inference Hub model id");
-  }
-  if (jobEnv.NEMOCLAW_COMPAT_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
-    errors.push("channels-add-remove job must set NEMOCLAW_COMPAT_MODEL to the hosted model id");
-  }
-  if (jobEnv.NEMOCLAW_PREFERRED_API !== "openai-completions") {
-    errors.push("channels-add-remove job must prefer openai-completions for hosted inference");
+  for (const name of [
+    "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+    "NEMOCLAW_PROVIDER",
+    "NEMOCLAW_ENDPOINT_URL",
+    "NEMOCLAW_MODEL",
+    "NEMOCLAW_COMPAT_MODEL",
+    "NEMOCLAW_PREFERRED_API",
+  ]) {
+    if (jobEnv[name] !== undefined) {
+      errors.push(
+        `channels-add-remove job must leave ${name} unset for its local inference fixture`,
+      );
+    }
   }
   for (const secret of [
     "NVIDIA_INFERENCE_API_KEY",
@@ -4040,10 +2893,8 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   for (const step of steps) {
     const stepName = `channels-add-remove step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
-    if (step.name !== "Run channels add/remove live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "COMPATIBLE_API_KEY");
-    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "COMPATIBLE_API_KEY");
     if (step.name !== "Authenticate to Docker Hub") {
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
@@ -4059,32 +2910,6 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("channels-add-remove checkout step must set persist-credentials=false");
   }
 
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("channels-add-remove Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("channels-add-remove Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("channels-add-remove job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "channels-add-remove setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -4095,14 +2920,6 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run channels add/remove live test");
   const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("channels-add-remove step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  if (runVitestEnv.COMPATIBLE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push(
-      "channels-add-remove step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY",
-    );
-  }
   if (runVitestEnv.TELEGRAM_BOT_TOKEN !== "test-fake-telegram-token-add-remove-e2e") {
     errors.push("channels-add-remove step must set the fake Telegram token");
   }
@@ -4115,24 +2932,6 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/channels-add-remove.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload channels add/remove artifacts");
-  requireFullShaAction(errors, upload, "channels-add-remove upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-channels-add-remove") {
-    errors.push("channels-add-remove artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/channels-add-remove/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("channels-add-remove artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("channels-add-remove artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("channels-add-remove artifact upload retention-days must be 14");
-  }
 }
 
 function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4183,52 +2982,6 @@ function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecor
     errors.push("openclaw-discord-pairing checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("openclaw-discord-pairing job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "openclaw-discord-pairing setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-discord-pairing" >> "$GITHUB_ENV"',
-  );
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "openclaw-discord-pairing Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push(
-      "openclaw-discord-pairing Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
-    );
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -4252,33 +3005,6 @@ function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecor
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/openclaw-discord-pairing.test.ts");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload OpenClaw Discord pairing artifacts",
-  );
-  requireFullShaAction(errors, upload, "openclaw-discord-pairing upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/openclaw-discord-pairing/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openclaw-discord-pairing artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openclaw-discord-pairing artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("openclaw-discord-pairing artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("openclaw-discord-pairing Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateOpenClawSlackPairingJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4329,50 +3055,6 @@ function validateOpenClawSlackPairingJob(errors: string[], jobs: WorkflowRecord)
     errors.push("openclaw-slack-pairing checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("openclaw-slack-pairing job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "openclaw-slack-pairing setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-slack-pairing" >> "$GITHUB_ENV"',
-  );
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "openclaw-slack-pairing Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("openclaw-slack-pairing Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -4394,28 +3076,6 @@ function validateOpenClawSlackPairingJob(errors: string[], jobs: WorkflowRecord)
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/openclaw-slack-pairing.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload OpenClaw Slack pairing artifacts");
-  requireFullShaAction(errors, upload, "openclaw-slack-pairing upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/openclaw-slack-pairing/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openclaw-slack-pairing artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openclaw-slack-pairing artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("openclaw-slack-pairing artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("openclaw-slack-pairing Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4480,12 +3140,6 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
     errors.push("channels-stop-start job must force OPENSHELL_GATEWAY=nemoclaw");
   }
-  if (
-    jobEnv.DOCKER_CONFIG !==
-    "${{ github.workspace }}/.docker-config-channels-stop-start-${{ matrix.agent }}"
-  ) {
-    errors.push("channels-stop-start job must isolate Docker auth by matrix agent");
-  }
   for (const secret of [
     "NVIDIA_INFERENCE_API_KEY",
     "DOCKERHUB_USERNAME",
@@ -4517,35 +3171,6 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("channels-stop-start checkout step must set persist-credentials=false");
   }
-
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("channels-stop-start Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("channels-stop-start Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerHubAuth, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerHubAuth, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-  requireRunContains(errors, dockerHubAuth, "--password-stdin");
-  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("channels-stop-start job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "channels-stop-start setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -4580,35 +3205,6 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/channels-stop-start.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload channels stop/start artifacts");
-  requireFullShaAction(errors, upload, "channels-stop-start upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-channels-stop-start-${{ matrix.agent }}") {
-    errors.push("channels-stop-start artifact upload name must include matrix.agent");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("channels-stop-start artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("channels-stop-start artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("channels-stop-start artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("channels-stop-start Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4653,33 +3249,6 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
     requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
   }
 
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-telegram-injection" >> "$GITHUB_ENV"',
-  );
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("telegram-injection Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("telegram-injection Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -4695,27 +3264,6 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/telegram-injection.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload Telegram injection artifacts");
-  const uploadWith = asRecord(upload?.with);
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/telegram-injection/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("telegram-injection artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("telegram-injection artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("telegram-injection artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("telegram-injection Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateBedrockRuntimeCompatibleAnthropicJob(
@@ -4830,54 +3378,6 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     );
   }
 
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}" >> "$GITHUB_ENV"',
-  );
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "bedrock-runtime-compatible-anthropic Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push(
-      "bedrock-runtime-compatible-anthropic Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
-    );
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("bedrock-runtime-compatible-anthropic job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "bedrock-runtime-compatible-anthropic setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(
     errors,
     jobName,
@@ -4891,52 +3391,15 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
   );
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload Bedrock Runtime compatible Anthropic artifacts",
-  );
-  requireFullShaAction(errors, upload, "bedrock-runtime-compatible-anthropic upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}") {
-    errors.push(
-      "bedrock-runtime-compatible-anthropic artifact upload name must include matrix.agent",
-    );
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "bedrock-runtime-compatible-anthropic artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "bedrock-runtime-compatible-anthropic artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("bedrock-runtime-compatible-anthropic artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("bedrock-runtime-compatible-anthropic Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
+  errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
+  errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflowBoundary(workflowPath));
+  errors.push(...validateHermesGpuStartupWorkflowBoundary(workflowPath));
   errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
   errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
   errors.push(...validateDocsValidationWorkflowBoundary(workflowPath));
@@ -4973,6 +3436,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     deriveFreeStandingJobsInventoryFromJobs(jobs);
   errors.push(...inventoryErrors);
   validateFreeStandingInventoryBoundary(errors, jobs, freeStandingInventory);
+  validateDockerHubAuthBoundary(errors, jobs);
   const generateMatrix = asRecord(jobs["generate-matrix"]);
   if (Object.keys(generateMatrix).length === 0) errors.push("workflow missing generate-matrix job");
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {
@@ -4998,9 +3462,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
   }
-  const generateSetupNode = namedStep(generateSteps, "Set up Node");
-  if (!generateSetupNode) errors.push("generate-matrix job missing step: Set up Node");
-  requireFullShaAction(errors, generateSetupNode, "generate-matrix setup-node");
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
@@ -5103,12 +3564,22 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     errors.push("checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("live job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "setup-node");
+  const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
+  const configureTraceEnv = asRecord(configureTrace?.env);
+  if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live trace setup step must pass matrix.id through TARGET_ID env");
+  }
+  if (configureTrace?.["if"] !== undefined) {
+    errors.push("live trace setup step must run before live E2E tests without an if condition");
+  }
+  if (stringValue(jobEnv.NEMOCLAW_TRACE_DIR).length > 0) {
+    errors.push("live job must not set NEMOCLAW_TRACE_DIR at job scope");
+  }
+  requireRunContains(errors, configureTrace, "NEMOCLAW_TRACE_DIR=%s");
+  requireRunContains(errors, configureTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(errors, configureTrace, '>> "${GITHUB_ENV}"');
 
-  const buildCli = requireStep(errors, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
+  const prepareWorkspace = requireStep(errors, steps, "Prepare E2E workspace");
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
   const runVitestEnv = asRecord(runVitest?.env);
@@ -5121,6 +3592,71 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
   requireRunContains(errors, runVitest, '"^${TARGET_ID}$"');
+
+  const sanitizeTrace = requireStep(errors, steps, "Build trusted live E2E timing summary");
+  const sanitizeTraceEnv = asRecord(sanitizeTrace?.env);
+  if (sanitizeTrace?.["if"] !== "always()") {
+    errors.push("live trace sanitizer must always run");
+  }
+  if (sanitizeTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live trace sanitizer must pass matrix.id through TARGET_ID env");
+  }
+  requireRunContains(errors, sanitizeTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(
+    errors,
+    sanitizeTrace,
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+  );
+  requireRunContains(errors, sanitizeTrace, "scripts/e2e/sanitize-trace-timing.py");
+  requireRunFragmentBefore(
+    errors,
+    sanitizeTrace,
+    'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"',
+    "python3 scripts/e2e/sanitize-trace-timing.py",
+  );
+  requireRunFragmentBefore(
+    errors,
+    sanitizeTrace,
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+    "python3 scripts/e2e/sanitize-trace-timing.py",
+  );
+  requireRunContains(errors, sanitizeTrace, '"${NEMOCLAW_TRACE_DIR}"');
+  requireRunContains(errors, sanitizeTrace, '"${E2E_ARTIFACT_DIR}/${TARGET_ID}"');
+
+  const deleteTrace = requireStep(errors, steps, "Delete raw live E2E traces");
+  const deleteTraceEnv = asRecord(deleteTrace?.env);
+  if (deleteTrace?.["if"] !== "always()") {
+    errors.push("live raw trace cleanup must always run");
+  }
+  if (deleteTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live raw trace cleanup must pass matrix.id through TARGET_ID env");
+  }
+  requireRunContains(errors, deleteTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(errors, deleteTrace, '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]');
+  requireRunContains(errors, deleteTrace, 'rm -rf -- "${NEMOCLAW_TRACE_DIR}"');
+
+  const configureTraceIndex = steps.indexOf(configureTrace as WorkflowStep);
+  const runVitestIndex = steps.indexOf(runVitest as WorkflowStep);
+  const sanitizeTraceIndex = steps.indexOf(sanitizeTrace as WorkflowStep);
+  const deleteTraceIndex = steps.indexOf(deleteTrace as WorkflowStep);
+  const prepareWorkspaceIndex = steps.indexOf(prepareWorkspace as WorkflowStep);
+  if (
+    configureTraceIndex === -1 ||
+    prepareWorkspaceIndex === -1 ||
+    runVitestIndex === -1 ||
+    sanitizeTraceIndex === -1 ||
+    deleteTraceIndex === -1 ||
+    !(
+      configureTraceIndex < prepareWorkspaceIndex &&
+      prepareWorkspaceIndex < runVitestIndex &&
+      runVitestIndex < sanitizeTraceIndex &&
+      sanitizeTraceIndex < deleteTraceIndex
+    )
+  ) {
+    errors.push(
+      "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+    );
+  }
 
   const summary = requireStep(errors, steps, "Summarize artifacts");
   const summaryEnv = asRecord(summary?.env);
@@ -5140,7 +3676,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   requireRunContains(errors, summary, "TARGET_ID");
 
   const upload = requireStep(errors, steps, "Upload E2E artifacts");
-  requireFullShaAction(errors, upload, "upload-artifact");
   const uploadWith = asRecord(upload?.with);
   if (uploadWith.name !== "e2e-${{ matrix.id }}") {
     errors.push("artifact upload name must include matrix.id");
@@ -5172,22 +3707,20 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
   );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
+  );
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/actions/");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/logs/");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/shell/");
+  requireUploadPathDoesNotContain(errors, uploadPath, "nemoclaw-e2e-traces");
+  requireUploadPathDoesNotContain(errors, uploadPath, "NEMOCLAW_TRACE_DIR");
   for (const line of uploadPath.split("\n")) {
     if (line.trim() === "e2e-artifacts/live/${{ matrix.id }}/") {
       errors.push("artifact upload path must not list the whole matrix artifact directory");
     }
-  }
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("artifact upload retention-days must be 14");
   }
 
   validateOpenShellVersionPinJob(errors, jobs);
@@ -5197,12 +3730,9 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing", "inference-routing");
   validateCloudInferenceJob(errors, jobs);
-  validateRuntimeOverridesJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "hermes-discord", "hermes-discord");
-  validateHermesRootEntrypointSmokeJob(errors, jobs);
-  validateHermesSandboxSecretBoundaryJob(errors, jobs);
   validateNetworkPolicyJob(errors, jobs);
   validateCommonEgressAgentJob(errors, jobs);
   validateShieldsConfigJob(errors, jobs);
@@ -5214,7 +3744,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateUpgradeStaleSandboxJob(errors, jobs);
   validateTokenRotationJob(errors, jobs);
   validateMessagingCompatibleEndpointJob(errors, jobs);
-  validateSerializedHostedAgentProofs(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery", "gateway-guard-recovery");
   validateGatewayGuardRecoveryJob(errors, jobs);
   validateFreeStandingJobSelector(

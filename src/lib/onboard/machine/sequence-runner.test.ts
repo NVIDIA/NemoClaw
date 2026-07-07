@@ -7,17 +7,17 @@ import {
   createSession,
   filterSafeUpdates,
   normalizeSession,
-  sanitizeFailure,
   type Session,
   type SessionUpdates,
+  sanitizeFailure,
 } from "../../state/onboard-session";
 import { advanceTo, branchTo, completeOnboardMachine, retryTo } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import {
   buildOnboardSequenceHandlers,
   DuplicateOnboardSequencePhaseError,
-  runOnboardSequenceWithRunner,
   type OnboardSequencePhase,
+  runOnboardSequenceWithRunner,
 } from "./sequence-runner";
 
 interface SequenceContext {
@@ -85,6 +85,7 @@ function phase(
 
 describe("onboard sequence runner", () => {
   it("runs sequence phases through the strict FSM runner", async () => {
+    const wrappedStates: string[] = [];
     const phases: OnboardSequencePhase<SequenceContext>[] = [
       phase("init", (context) => ({
         context: { ...context, log: [...context.log, "init"] },
@@ -142,6 +143,12 @@ describe("onboard sequence runner", () => {
       context: { attempt: 0, log: [] },
       runtime: createRuntime(),
       phases,
+      phaseProgress: {
+        wrap: (candidate) => {
+          wrappedStates.push(candidate.state);
+          return candidate;
+        },
+      },
     });
 
     expect(result.session).toMatchObject({
@@ -164,6 +171,7 @@ describe("onboard sequence runner", () => {
         "post_verify",
       ],
     });
+    expect(wrappedStates).toEqual(phases.map((candidate) => candidate.state));
   });
 
   it("passes custom sequence ownership through to the runner", async () => {

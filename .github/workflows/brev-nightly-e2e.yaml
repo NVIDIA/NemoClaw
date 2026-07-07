@@ -9,6 +9,7 @@ name: E2E / Brev Nightly
 # Suites:
 #   all                 credential-sanitization + telegram-injection
 #   messaging-providers Telegram + Discord provider/L7 proxy validation
+#   messaging-compatible-endpoint local compatible-endpoint Telegram validation
 #   full                install/onboard/inference/CLI path
 
 on:
@@ -16,10 +17,6 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
-      branch:
-        description: "Branch to test (default: ref used for this dispatch; schedule always tests main)"
-        required: false
-        default: ""
       keep_alive:
         description: "Keep Brev instances alive after tests (for SSH debugging)"
         required: false
@@ -28,6 +25,12 @@ on:
 
 permissions:
   contents: read
+  # GitHub validates a reusable workflow's complete permission ceiling before
+  # evaluating skipped jobs. The called workflow explicitly downgrades its
+  # secret-bearing validation job to read-only; only its no-checkout reporter
+  # may use these write grants when a different caller supplies pr_number.
+  checks: write
+  pull-requests: write
 
 concurrency:
   group: brev-nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.ref || 'schedule' }}
@@ -39,10 +42,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test_suite: [all, messaging-providers, full]
+        test_suite: [all, messaging-providers, messaging-compatible-endpoint, full]
     uses: ./.github/workflows/e2e-branch-validation.yaml
     with:
-      branch: ${{ github.event_name == 'schedule' && 'main' || inputs.branch || github.ref_name }}
+      # Bind tested code to the ref that supplied this reviewed workflow. Do
+      # not let a write-scoped trusted caller select a second arbitrary branch.
+      branch: ${{ github.ref_name }}
       test_suite: ${{ matrix.test_suite }}
       use_launchable: true
       keep_alive: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_alive || false }}
