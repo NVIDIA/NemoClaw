@@ -27,6 +27,17 @@ NemoClaw no longer vendors or overlays that source.
 The build patch verifies those official artifacts, then registers the native
 profile under the two `openai:` model keys used by NemoClaw's managed
 OpenAI-compatible `ChatOpenAI` route. It is atomic, idempotent, and fails closed
-on version, source, bootstrap, or partial-state drift. Remove the alias bridge
-when Deep Agents natively recognizes both managed keys; exact version and hash
-gates force that review on the next dependency change.
+on version, source, bootstrap, or partial-state drift. The image build applies
+the patch and runs the complete profile and dispatch validator against the
+installed hash-locked wheels, while focused fixtures cover failure states.
+
+Deep Agents Code `0.1.34` is the released consumer; prerelease risk is limited
+to its exact `deepagents==0.7.0a6` SDK pin. That risk is accepted because the
+consumer and SDK are hash locked, the dependency audit is clean, and all source,
+version, middleware, graph, and dispatch checks fail closed.
+
+The exact version and source-hash gates are also the lifecycle tracker for the
+alias bridge: any dependency change stops the image build and requires this
+review to be updated. No standalone removal issue is used for this bridge. When
+Deep Agents natively recognizes both managed keys, that mandatory dependency
+review removes the bridge instead of updating its hashes.

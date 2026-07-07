@@ -52,6 +52,12 @@ EXPECTED_MIDDLEWARE = (
 DISPATCH_COMMAND = "printf NEMOCLAW_DISPATCH_OK"
 
 
+def require(condition: bool, message: str) -> None:
+    """Keep image validation active under optimized Python execution."""
+    if not condition:
+        raise RuntimeError(message)
+
+
 class ScriptedManagedModel(FakeMessagesListChatModel):
     """Expose the managed ChatOpenAI identity while returning fixed messages."""
 
@@ -107,12 +113,24 @@ def validate_profile(model_id: str) -> ChatOpenAI:
     model = make_model(model_id)
     profile = _harness_profile_for_model(model, None)
     suffix = profile.system_prompt_suffix
-    assert suffix is not None and "<state_changes>" in suffix
+    require(
+        suffix is not None and "<state_changes>" in suffix,
+        f"{model_id}: native profile system prompt is missing state guidance",
+    )
     read_file_description = profile.tool_description_overrides.get("read_file")
-    assert read_file_description is not None
+    require(
+        read_file_description is not None,
+        f"{model_id}: native profile is missing the read_file override",
+    )
     for argument in ("file_path", "offset", "limit"):
-        assert argument in read_file_description
-    assert middleware_names(profile) == EXPECTED_MIDDLEWARE
+        require(
+            argument in read_file_description,
+            f"{model_id}: read_file override is missing {argument}",
+        )
+    require(
+        middleware_names(profile) == EXPECTED_MIDDLEWARE,
+        f"{model_id}: native middleware stack does not match the reviewed profile",
+    )
     return model
 
 
@@ -132,13 +150,19 @@ def validate_parser_tool_visibility() -> None:
     for content, tool_name in cases:
         message = AIMessage(content=content)
         blocked = NemotronTextToolCallParser._repair_message(message, {"read_file"})
-        assert blocked.content == content
-        assert blocked.tool_calls == []
+        require(blocked.content == content, f"blocked {tool_name} content changed")
+        require(blocked.tool_calls == [], f"blocked {tool_name} became a tool call")
 
         allowed = NemotronTextToolCallParser._repair_message(message, {tool_name})
-        assert allowed.content == ""
-        assert len(allowed.tool_calls) == 1
-        assert allowed.tool_calls[0]["name"] == tool_name
+        require(allowed.content == "", f"allowed {tool_name} retained tool-call text")
+        require(
+            len(allowed.tool_calls) == 1,
+            f"allowed {tool_name} did not produce exactly one tool call",
+        )
+        require(
+            allowed.tool_calls[0]["name"] == tool_name,
+            f"allowed {tool_name} produced the wrong tool name",
+        )
 
 
 def dispatch_execute_once(
@@ -177,10 +201,16 @@ def dispatch_execute_once(
         for message in result["messages"]
         if isinstance(message, ToolMessage) and message.name == "execute"
     ]
-    assert len(backend.dispatched_commands) == 1
-    assert len(execute_results) == 1
+    require(
+        len(backend.dispatched_commands) == 1,
+        "execute validation did not dispatch exactly one shell command",
+    )
+    require(
+        len(execute_results) == 1,
+        "execute validation did not produce exactly one tool result",
+    )
     tool_result = execute_results[0]
-    assert isinstance(tool_result.content, str)
+    require(isinstance(tool_result.content, str), "execute result content is not text")
     return backend.dispatched_commands[0], (tool_result.content, tool_result.status)
 
 
@@ -208,16 +238,20 @@ def validate_parser_dispatch_parity() -> None:
             ],
         )
     )
-    assert repaired == native
-    assert repaired[0] == (DISPATCH_COMMAND, None)
-    assert repaired[1][1] == "success"
+    require(repaired == native, "repaired and native execute dispatch results differ")
+    require(
+        repaired[0] == (DISPATCH_COMMAND, None),
+        "execute dispatch arguments do not match the managed command",
+    )
+    require(repaired[1][1] == "success", "managed execute dispatch was not successful")
 
 
 def main() -> None:
     for distribution, expected in EXPECTED_VERSIONS.items():
         actual = importlib.metadata.version(distribution)
-        assert actual == expected, (
-            f"expected {distribution}=={expected}, found {actual}"
+        require(
+            actual == expected,
+            f"expected {distribution}=={expected}, found {actual}",
         )
 
     managed_models = [validate_profile(model_id) for model_id in MANAGED_MODEL_IDS]
@@ -227,11 +261,17 @@ def main() -> None:
     # One graph construction materializes the shared middleware schemas and
     # catches pinned-stack incompatibilities without making an inference request.
     agent = create_deep_agent(model=managed_models[0])
-    assert agent is not None
+    require(agent is not None, "complete Deep Agents graph did not compile")
 
     unrelated = _harness_profile_for_model(make_model("gpt-4.1-mini"), None)
-    assert unrelated.system_prompt_suffix is None
-    assert middleware_names(unrelated) == ()
+    require(
+        unrelated.system_prompt_suffix is None,
+        "unrelated OpenAI model received Ultra system guidance",
+    )
+    require(
+        middleware_names(unrelated) == (),
+        "unrelated OpenAI model received Ultra middleware",
+    )
     print("Nemotron 3 Ultra managed harness profile validation passed.")
 
 

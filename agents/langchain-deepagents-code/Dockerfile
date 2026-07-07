@@ -33,7 +33,8 @@ COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # The Nemotron bridge registers managed aliases for the released SDK profile; the
 # managed-runtime patch independently hardens Deep Agents Code entrypoints.
-# Both are exact-version, fail-closed build steps validated together below.
+# Both are exact-version, fail-closed build steps validated in one layer so no
+# reusable image layer can contain only one of the required managed patches.
 RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh \
     && chmod -R a+rX /opt/nemoclaw-blueprint \

@@ -76,7 +76,7 @@ If the version check fails, review the reported version error and run `nemo-deep
 NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
 When you use NVIDIA Endpoints without selecting another model, new Deep Agents Code sandboxes default to `nvidia/nemotron-3-ultra-550b-a55b`.
 For this model, the managed image maps the OpenAI-compatible route to Deep Agents `0.7.0a6`'s native Nemotron 3 Ultra harness profile, including model-specific tool-calling, filesystem, retry, context, and final-answer safeguards.
-Rebuild existing Deep Agents Code sandboxes after upgrading so their image includes this profile.
+Rebuild existing Deep Agents Code sandboxes after upgrading to NemoClaw v0.0.76 or later so their image includes this profile.
 This agent-specific default does not change the shared Nemotron 3 Super default for OpenClaw and Hermes.
 NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
 Deep Agents Code reaches `inference.local` through the managed OpenShell L7 proxy rather than direct sandbox DNS.

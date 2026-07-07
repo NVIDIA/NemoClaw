@@ -296,6 +296,8 @@ describe("LangChain Deep Agents Code Nemotron Ultra managed aliases", () => {
     ]) {
       expect(validator).toContain(expected);
     }
+    expect(validator).toContain("def require(condition: bool, message: str)");
+    expect(validator).not.toMatch(/^\s*assert\b/m);
   });
 
   it("registers both aliases against the native profile atomically and idempotently", () => {
@@ -307,7 +309,6 @@ describe("LangChain Deep Agents Code Nemotron Ultra managed aliases", () => {
     expect(first.status, first.stderr).toBe(0);
     const patchedBootstrap = fs.readFileSync(fixture.builtinPath, "utf8");
     expect(fs.readFileSync(fixture.nativeProfilePath, "utf8")).toBe(originalProfile);
-    expect(fs.statSync(fixture.builtinPath).mode & 0o777).toBe(0o644);
     expect(patchedBootstrap).toContain("    _register_harness_profile_impl,\n");
     expect(countOccurrences(patchedBootstrap, REGISTER_ANCHOR)).toBe(1);
     for (const alias of MANAGED_MODEL_ALIASES) {
@@ -328,6 +329,7 @@ describe("LangChain Deep Agents Code Nemotron Ultra managed aliases", () => {
     expect(second.stdout).toContain("managed-alias bridge is already applied");
     expect(fs.readFileSync(fixture.builtinPath, "utf8")).toBe(patchedBootstrap);
     expect(fs.readFileSync(fixture.nativeProfilePath, "utf8")).toBe(originalProfile);
+    expect(fs.statSync(fixture.builtinPath).mode & 0o777).toBe(0o644);
   });
 
   it.each([
