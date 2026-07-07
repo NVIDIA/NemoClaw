@@ -295,7 +295,7 @@ Leave it unset on supported hosts.
 The compatibility container uses host networking and mounts the host Docker socket read-only.
 A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host.
 The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon.
-See the [OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
+See the [OpenShell 0.0.72 compatibility review](/user-guide/openclaw/security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
 
 Refer to [Environment Variables](commands#environment-variables) for the full list of port overrides.
 
@@ -1002,6 +1002,115 @@ The status command detects the sandbox context and reports "active (inside sandb
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
+<AgentOnly variant="deepagents">
+
+## Deep Agents
+
+### `dcode status` reports a stale inference route
+
+The managed `dcode` runtime reads provider and model settings from `/sandbox/.deepagents/config.toml`.
+NemoClaw generates that file during onboarding and rebuilds, and Deep Agents provider or model changes require fresh named recreation rather than `inference set`.
+
+Check the host-recorded route first:
+
+```bash
+nemo-deepagents <name> status
+```
+
+Then connect and compare the in-sandbox identity:
+
+```bash
+nemo-deepagents <name> connect
+dcode status
+```
+
+If the provider or model does not match the host route, rebuild the sandbox to regenerate `config.toml` from recorded metadata:
+
+```bash
+nemo-deepagents <name> rebuild
+```
+
+To intentionally switch provider or model, recreate the named sandbox with fresh onboarding:
+
+```bash
+nemo-deepagents onboard --fresh --name <name> --recreate-sandbox
+```
+
+### `dcode` refuses to start because upstream auth state exists
+
+The managed launchers refuse upstream credential state inside `/sandbox/.deepagents/.state/auth.json` and `/sandbox/.deepagents/.state/chatgpt-auth.json`.
+Those files can contain provider credentials or OAuth state that bypasses NemoClaw's host-owned credential boundary.
+
+Remove the upstream auth state from the sandbox, then start `dcode` again:
+
+```bash
+rm -f /sandbox/.deepagents/.state/auth.json /sandbox/.deepagents/.state/chatgpt-auth.json
+dcode status
+```
+
+Do not put provider credentials in `/sandbox/.deepagents/.env`, project `.env` files, or Deep Agents config files.
+Register credentials with NemoClaw or OpenShell on the host so the gateway can inject them at egress.
+
+### Managed MCP commands report an older Deep Agents runtime
+
+Deep Agents sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`.
+The rebuild installs the current managed MCP projection path and reconstructs `/sandbox/.deepagents/.nemoclaw-mcp.json` from the host registry.
+
+```bash
+nemo-deepagents <name> rebuild
+nemo-deepagents <name> mcp add <server-name> <url>
+```
+
+NemoClaw does not auto-load user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into the managed configuration.
+Use `nemo-deepagents <name> mcp ...` commands for managed MCP servers that need OpenShell credential replacement and egress policy.
+
+### Tavily remains blocked after opt-in
+
+Deep Agents does not have a NemoClaw-managed web-search feature.
+The Tavily flow only opens Python egress for project code or manually configured tools that call Tavily.
+
+Confirm that the target sandbox has the `tavily` preset applied:
+
+```bash
+nemo-deepagents <name> policy-list
+```
+
+If it is missing, apply the preset, register the host-side credential, and rebuild so the provider attaches:
+
+```bash
+nemo-deepagents <name> policy-add tavily --yes
+export TAVILY_API_KEY=tvly-...
+nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+unset TAVILY_API_KEY
+nemo-deepagents <name> rebuild
+```
+
+If Tavily is still blocked after rebuild, inspect recent policy denials:
+
+```bash
+nemo-deepagents <name> logs --tail 50
+```
+
+The `tavily` preset is a managed-Python opt-in.
+It is process-wide for sandbox Python and is not a `dcode`-only boundary.
+
+### Deep Agents read-only path checks fail
+
+The Deep Agents image keeps the managed Python environment under `/opt/venv` read-only and leaves `/sandbox` writable for project and agent state.
+Writes under `/usr`, `/etc`, or `/opt/venv` should fail, while writes under `/sandbox` and `/tmp` should work.
+
+If a read-only path probe reports that protected paths are writable, rebuild with the current NemoClaw image:
+
+```bash
+nemo-deepagents <name> rebuild
+```
+
+If the warning mentions degraded Landlock support, check the host kernel and container runtime.
+Linux kernels older than 5.13 and some VM-backed Docker runtimes can run with reduced filesystem enforcement.
+NemoClaw still relies on container mount configuration in that mode, but you should treat the host as lower assurance until Landlock is available.
+
+</AgentOnly>
+
 ### Git clone fails with a certificate verification error
 
 In networks that inspect TLS, OpenShell injects a proxy CA bundle into the sandbox.
@@ -1070,11 +1179,24 @@ To see which rule denied the request, read the merged logs from the host:
 $$nemoclaw <name> logs --tail 50
 ```
 
+<AgentOnly variant="openclaw,hermes">
 If the host should be reachable, allow it with a preset or a [custom preset](../network-policy/customize-network-policy#custom-preset-files):
+</AgentOnly>
+<AgentOnly variant="deepagents">
+If the host should be reachable, allow it with a built-in preset or apply a reviewed custom preset file from the host:
+</AgentOnly>
 
 ```bash
 $$nemoclaw <name> policy-add <preset>
 ```
+
+<AgentOnly variant="deepagents">
+
+```bash
+nemo-deepagents <name> policy-add --from-file ./my-preset.yaml --yes
+```
+
+</AgentOnly>
 
 Replace `<preset>` with a real preset name such as `github`, `pypi`, or `npm`. Run `$$nemoclaw <name> policy-add` with no preset to list the available presets.
 
@@ -1693,7 +1815,12 @@ openshell term
 ```
 
 To permanently allow an endpoint, add it to the network policy.
+<AgentOnly variant="openclaw,hermes">
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for details.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+For Deep Agents, use `nemo-deepagents <name> policy-add <preset>` for built-in presets or `nemo-deepagents <name> policy-add --from-file <preset.yaml>` for reviewed custom presets.
+</AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 
