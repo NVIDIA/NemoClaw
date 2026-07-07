@@ -21,6 +21,21 @@ vi.mock("../../messaging-channel-setup", () => ({
 
 const detectMessagingChannelsFromEnvMock = vi.mocked(detectMessagingChannelsFromEnv);
 
+function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
+  return {
+    name,
+    agent: "langchain-deepagents-code",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    credentialEnv: null,
+    preferredInferenceApi: "openai-completions",
+    gatewayName: "nemoclaw",
+    toolDisclosure: "progressive" as const,
+    ...(typeof observabilityEnabled === "boolean" ? { observabilityEnabled } : {}),
+  };
+}
+
 describe("handleSandboxState", () => {
   beforeEach(() => {
     detectMessagingChannelsFromEnvMock.mockReturnValue([]);
@@ -152,12 +167,7 @@ describe("handleSandboxState", () => {
   it("preserves recorded observability when a new onboard run omits the flag", async () => {
     const session = createSession({ observabilityEnabled: false });
     const { deps, calls } = createDeps({
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: true,
-        toolDisclosure: "progressive",
-      }),
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
         return mutator(session) ?? session;
       }),
@@ -185,12 +195,7 @@ describe("handleSandboxState", () => {
       observabilityEnabled: true,
     });
     const { deps, calls } = createDeps({
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: true,
-        toolDisclosure: "progressive",
-      }),
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
         return mutator(session) ?? session;
       }),
@@ -216,12 +221,7 @@ describe("handleSandboxState", () => {
       observabilityRequestedExplicitly: true,
     });
     const { deps, calls } = createDeps({
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: false,
-        toolDisclosure: "progressive",
-      }),
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, false),
     });
 
     await expect(
@@ -243,12 +243,7 @@ describe("handleSandboxState", () => {
       observabilityEnabled: true,
     });
     const { deps, calls } = createDeps({
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: true,
-        toolDisclosure: "progressive",
-      }),
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
         return mutator(session) ?? session;
       }),
@@ -274,12 +269,7 @@ describe("handleSandboxState", () => {
       return mutator(session) ?? session;
     });
     const { deps } = createDeps({
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: true,
-        toolDisclosure: "progressive",
-      }),
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
       updateSession,
     });
 
@@ -310,11 +300,7 @@ describe("handleSandboxState", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        observabilityEnabled: recorded,
-        toolDisclosure: "progressive",
-      }),
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, recorded),
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
         return mutator(session) ?? session;
       }),
@@ -354,12 +340,7 @@ describe("handleSandboxState", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: recorded,
-        toolDisclosure: "progressive",
-      }),
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, recorded),
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
         return mutator(session) ?? session;
       }),
@@ -389,12 +370,7 @@ describe("handleSandboxState", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: true,
-        toolDisclosure: "progressive",
-      }),
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
         return mutator(session) ?? session;
       }),
@@ -420,10 +396,7 @@ describe("handleSandboxState", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        toolDisclosure: "progressive",
-      }),
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name),
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
         return mutator(session) ?? session;
       }),
@@ -493,6 +466,17 @@ describe("handleSandboxState", () => {
     const recordStateSkipped = vi.fn(async () => skippedSession);
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: () => ({
+        name: "saved",
+        pendingRouteReservation: true,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        toolDisclosure: "progressive",
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+      }),
       recordStateSkipped,
     });
 
@@ -503,6 +487,9 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
+      pendingRouteReservation: undefined,
+    });
     expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
     expect(recordStateSkipped).toHaveBeenCalledWith("sandbox", {
       reason: "resume",
@@ -577,6 +564,10 @@ describe("handleSandboxState", () => {
       getSandboxReuseState: () => "ready",
       getSandboxRegistryEntry: (name) => ({
         name,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
         nemoclawVersion: "0.1.0",
         toolDisclosure: "progressive",
       }),

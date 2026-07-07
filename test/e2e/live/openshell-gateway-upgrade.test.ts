@@ -23,12 +23,13 @@ import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   currentGatewayUpgradeInstallerArgs,
@@ -36,7 +37,6 @@ import {
   upgradeGatewayCleanupScript,
 } from "./openshell-gateway-upgrade-helpers.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_OPENSHELL = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 const STATE_DIR = path.join(
   os.homedir(),
@@ -105,10 +105,6 @@ function shellLoginPrefix(): string {
     "fi",
     'export PATH="$HOME/.local/bin:$PATH"',
   ].join("\n");
-}
-
-function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
 }
 
 function expectOutputContains(result: ShellProbeResult, value: string, label: string): void {
@@ -666,10 +662,8 @@ exit 99
   );
 }
 
-const runOpenShellGatewayUpgrade = test.skipIf(!shouldRunLiveE2E());
-const runLinuxOpenShellGatewayUpgrade = test.skipIf(
-  !shouldRunLiveE2E() || process.platform !== "linux",
-);
+const runOpenShellGatewayUpgrade = test;
+const runLinuxOpenShellGatewayUpgrade = test.skipIf(process.platform !== "linux");
 
 runLinuxOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",

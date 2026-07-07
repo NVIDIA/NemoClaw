@@ -4,24 +4,21 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   adminApprovalConnectScript,
   extractPendingRequestId,
 } from "./issue-4462-admin-approval-helper.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = 70 * 60_000;
-const liveTest = shouldRunLiveE2E() ? test : test.skip;
 
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -42,10 +39,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     OPENSHELL_GATEWAY: "nemoclaw",
     ...extra,
   };
-}
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 interface FreshAgentGatewaySnapshot {
@@ -1212,273 +1205,269 @@ echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$final_device request=\${request_id:-co
 `;
 }
 
-liveTest(
-  "issue 4462 scope-upgrade approval stays on gateway path without admin leak",
-  { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    await artifacts.writeJson("target.json", {
-      id: "issue-4462-scope-upgrade-approval",
-      sandboxName: SANDBOX_NAME,
-      contracts: [
-        "install.sh creates a real OpenClaw sandbox",
-        "the exact first three host-side nemoclaw sandbox exec openclaw agent turns from issue 4504 stay on the gateway path",
-        "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
-        "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
-        "operator.admin remains pending until a reviewed devices approve, cron add retry, and cron run enqueue",
-        "CLI scope upgrade is approved without operator.admin",
-        "final openclaw agent turn stays on the gateway path and answers 42",
-      ],
-    });
+test("keeps issue 4462 scope-upgrade approval on the gateway path without an admin leak", {
+  timeout: LIVE_TIMEOUT_MS,
+}, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, secrets, skip }) => {
+  const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+  await artifacts.target.declare({
+    id: "issue-4462-scope-upgrade-approval",
+    sandboxName: SANDBOX_NAME,
+    contracts: [
+      "install.sh creates a real OpenClaw sandbox",
+      "the exact first three host-side nemoclaw sandbox exec openclaw agent turns from issue 4504 stay on the gateway path",
+      "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
+      "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
+      "operator.admin remains pending until a reviewed devices approve, cron add retry, and cron run enqueue",
+      "CLI scope upgrade is approved without operator.admin",
+      "final openclaw agent turn stays on the gateway path and answers 42",
+    ],
+  });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "phase-0-docker-info",
-      env: env(),
-      timeoutMs: 30_000,
-    });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-      skip(`Docker is required: ${resultText(docker)}`);
-    }
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "phase-0-docker-info",
+    env: env(),
+    timeoutMs: 30_000,
+  });
+  if (docker.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
+    skip(`Docker is required: ${resultText(docker)}`);
+  }
 
-    cleanupRegistry.add("remove issue-4462 sandbox", () => cleanup(host, sandbox));
-    await cleanup(host, sandbox);
+  cleanupRegistry.add("remove issue-4462 sandbox", () => cleanup(host, sandbox));
+  await cleanup(host, sandbox);
 
-    const install = await host.command(
-      "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
-      {
-        artifactName: "phase-1-install-sh",
-        cwd: REPO_ROOT,
-        env: env({ NVIDIA_INFERENCE_API_KEY: apiKey }),
-        redactionValues: [apiKey],
-        timeoutMs: 30 * 60_000,
-      },
-    );
-    expect(install.exitCode, resultText(install)).toBe(0);
+  const install = await host.command(
+    "bash",
+    ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+    {
+      artifactName: "phase-1-install-sh",
+      cwd: REPO_ROOT,
+      env: env({ NVIDIA_INFERENCE_API_KEY: apiKey }),
+      redactionValues: [apiKey],
+      timeoutMs: 30 * 60_000,
+    },
+  );
+  expect(install.exitCode, resultText(install)).toBe(0);
 
-    const captureFreshAgentGatewaySnapshot = async (
-      phase: string,
-      minimumGatewayRuns: number,
-    ): Promise<FreshAgentGatewaySnapshot> => {
-      const result = await sandbox.exec(
-        SANDBOX_NAME,
-        [
-          "sh",
-          "-lc",
-          'printf \'%s\' "$1" | base64 -d | python3 - "$2"',
-          "fresh-agent-gateway-snapshot",
-          FRESH_AGENT_GATEWAY_SNAPSHOT_B64,
-          String(minimumGatewayRuns),
-        ],
-        {
-          artifactName: phase,
-          env: env(),
-          redactionValues: [apiKey],
-          timeoutMs: 30_000,
-        },
-      );
-      expect(result.exitCode, resultText(result)).toBe(0);
-      const snapshot = JSON.parse(result.stdout.trim()) as FreshAgentGatewaySnapshot;
-      await artifacts.writeJson(`${phase}.json`, snapshot);
-      return snapshot;
-    };
-
-    let freshSnapshot = await captureFreshAgentGatewaySnapshot("phase-2-fresh-state-0", 0);
-    expect(freshSnapshot.deviceId).not.toBe("");
-    expect(freshSnapshot.publicKey).not.toBe("");
-    expect(freshSnapshot.pairedCliCount).toBe(1);
-    expect(freshSnapshot.matchingPairedCount).toBe(1);
-    expect(freshSnapshot.pendingCount).toBe(0);
-    expect(freshSnapshot.sameDevicePendingCount).toBe(0);
-    expect(freshSnapshot.activeOperatorTokenCount).toBe(1);
-    expect(freshSnapshot.deviceScopes).toEqual(["operator.pairing", "operator.write"]);
-    expect(freshSnapshot.approvedScopes).toEqual(["operator.pairing", "operator.write"]);
-    expect(freshSnapshot.activeOperatorTokenScopes).toEqual([
-      "operator.pairing",
-      "operator.read",
-      "operator.write",
-    ]);
-
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const sessionId = `gpu-${attempt}-${Math.floor(Date.now() / 1000)}`;
-      const freshAgent = await host.command(
-        process.execPath,
-        [
-          CLI_ENTRYPOINT,
-          "sandbox",
-          "exec",
-          SANDBOX_NAME,
-          "--timeout",
-          "60",
-          "--",
-          "openclaw",
-          "agent",
-          "--agent",
-          "main",
-          "-m",
-          `hi #${attempt}`,
-          "--session-id",
-          sessionId,
-        ],
-        {
-          artifactName: `phase-2-fresh-agent-${attempt}`,
-          env: env(),
-          redactionValues: [apiKey],
-          timeoutMs: 90_000,
-        },
-      );
-      const freshAgentOutput = resultText(freshAgent);
-      await artifacts.writeText(`phase-2-fresh-agent-${attempt}.txt`, freshAgentOutput);
-      expect(freshAgent.exitCode, freshAgentOutput).toBe(0);
-      expect(freshAgentOutput).not.toMatch(
-        /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
-      );
-      expect(freshAgent.stdout.trim(), freshAgentOutput).not.toBe("");
-
-      const nextSnapshot = await captureFreshAgentGatewaySnapshot(
-        `phase-2-fresh-state-${attempt}`,
-        freshSnapshot.gatewayCompletedRuns + 1,
-      );
-      expect(nextSnapshot.deviceId).toBe(freshSnapshot.deviceId);
-      expect(nextSnapshot.publicKey).toBe(freshSnapshot.publicKey);
-      expect(nextSnapshot.pairedCliCount).toBe(1);
-      expect(nextSnapshot.matchingPairedCount).toBe(1);
-      expect(nextSnapshot.pendingCount).toBe(0);
-      expect(nextSnapshot.sameDevicePendingCount).toBe(0);
-      expect(nextSnapshot.activeOperatorTokenCount).toBe(1);
-      expect(nextSnapshot.deviceScopes).toEqual(freshSnapshot.deviceScopes);
-      expect(nextSnapshot.approvedScopes).toEqual(freshSnapshot.approvedScopes);
-      expect(nextSnapshot.activeOperatorTokenScopes).toEqual(
-        freshSnapshot.activeOperatorTokenScopes,
-      );
-      expect(nextSnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
-      freshSnapshot = nextSnapshot;
-    }
-
-    // Preserve the transactional read/write upgrade proof before deliberately
-    // broadening this same CLI device with the manual admin approval below.
-    const encodedScopeUpgradeScript = Buffer.from(
-      scopeUpgradeScript().replaceAll("\\${", "${"),
-      "utf8",
-    ).toString("base64");
-    const scopeUpgradeScriptChunks = encodedScopeUpgradeScript.match(/.{1,24000}/g) ?? [];
-    expect(scopeUpgradeScriptChunks).not.toHaveLength(0);
-    const probe = await sandbox.exec(
+  const captureFreshAgentGatewaySnapshot = async (
+    phase: string,
+    minimumGatewayRuns: number,
+  ): Promise<FreshAgentGatewaySnapshot> => {
+    const result = await sandbox.exec(
       SANDBOX_NAME,
       [
         "sh",
         "-lc",
-        `set -e; umask 077; tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; printf '%s' "$@" | base64 -d > "$tmp"; bash "$tmp"`,
-        "issue-4462-scope-upgrade-probe",
-        ...scopeUpgradeScriptChunks,
+        'printf \'%s\' "$1" | base64 -d | python3 - "$2"',
+        "fresh-agent-gateway-snapshot",
+        FRESH_AGENT_GATEWAY_SNAPSHOT_B64,
+        String(minimumGatewayRuns),
       ],
       {
-        artifactName: "phase-3-scope-upgrade-approval",
+        artifactName: phase,
         env: env(),
         redactionValues: [apiKey],
-        timeoutMs: 12 * 60_000,
+        timeoutMs: 30_000,
       },
     );
-    expect(probe.exitCode, resultText(probe)).toBe(0);
-    expect(resultText(probe)).toContain("ISSUE_4462_SCOPE_UPGRADE_OK");
+    expect(result.exitCode, resultText(result)).toBe(0);
+    const snapshot = JSON.parse(result.stdout.trim()) as FreshAgentGatewaySnapshot;
+    await artifacts.writeJson(`${phase}.json`, snapshot);
+    return snapshot;
+  };
 
-    // #5324 command coverage (PRA-3): the operator scope-upgrade / approval
-    // boundary is scope-keyed and command-agnostic, not per-command. Automatic
-    // approval is bounded to {operator.pairing, operator.read, operator.write}
-    // (scripts/lib/openclaw_device_approval_policy.py `ALLOWED_SCOPES`), while
-    // operator.admin always requires a reviewed `devices approve`. The pending
-    // request is selected by its requested scope + CLI/operator role, never by
-    // command name (ADMIN_REQUEST_SELECTOR_PY in issue-4462-admin-approval-helper.ts).
-    // Every non-TUI OpenClaw command (`agent`, `cron add`, `cron run`, `exec`)
-    // reaches the gateway through the same device-token operator client and is
-    // gated purely by the scope it requests. This test exercises both tiers on
-    // that single shared boundary: operator.write via the gateway-backed `agent`
-    // turns above, and operator.admin via the `cron add` trigger + manual
-    // approval below. `cron run` and `exec` cannot follow a different approval
-    // path — whichever tier they request is one of the two already proven here,
-    // so no separate per-command evidence is required to close #5324.
-    const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
-    // #5324's `exec` is NemoClaw's host transport, not an OpenClaw CLI
-    // subcommand (the pinned OpenClaw 2026.6.10 command catalog has none).
-    // Use the issue's documented `nemoclaw <name> exec -- openclaw ...` form
-    // for its cron reproduction while preserving #4504's exact command above.
-    const cronTrigger = await host.command(
+  let freshSnapshot = await captureFreshAgentGatewaySnapshot("phase-2-fresh-state-0", 0);
+  expect(freshSnapshot.deviceId).not.toBe("");
+  expect(freshSnapshot.publicKey).not.toBe("");
+  expect(freshSnapshot.pairedCliCount).toBe(1);
+  expect(freshSnapshot.matchingPairedCount).toBe(1);
+  expect(freshSnapshot.pendingCount).toBe(0);
+  expect(freshSnapshot.sameDevicePendingCount).toBe(0);
+  expect(freshSnapshot.activeOperatorTokenCount).toBe(1);
+  expect(freshSnapshot.deviceScopes).toEqual(["operator.pairing", "operator.write"]);
+  expect(freshSnapshot.approvedScopes).toEqual(["operator.pairing", "operator.write"]);
+  expect(freshSnapshot.activeOperatorTokenScopes).toEqual([
+    "operator.pairing",
+    "operator.read",
+    "operator.write",
+  ]);
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const sessionId = `gpu-${attempt}-${Math.floor(Date.now() / 1000)}`;
+    const freshAgent = await host.command(
       process.execPath,
       [
         CLI_ENTRYPOINT,
-        SANDBOX_NAME,
+        "sandbox",
         "exec",
+        SANDBOX_NAME,
         "--timeout",
         "60",
         "--",
         "openclaw",
-        "cron",
-        "add",
-        "--name",
-        cronName,
-        "--every",
-        "2h",
+        "agent",
         "--agent",
         "main",
-        "--session",
-        "isolated",
-        "--message",
-        "hello",
+        "-m",
+        `hi #${attempt}`,
+        "--session-id",
+        sessionId,
       ],
       {
-        artifactName: "phase-4-trigger-admin-cron",
+        artifactName: `phase-2-fresh-agent-${attempt}`,
         env: env(),
         redactionValues: [apiKey],
         timeoutMs: 90_000,
       },
     );
-    const cronTriggerOutput = resultText(cronTrigger);
-    expect(cronTrigger.exitCode, cronTriggerOutput).not.toBe(0);
-    expect(cronTriggerOutput).toMatch(
-      /operator\.admin|scope upgrade pending approval|device pairing required|pairing required|requestId/i,
+    const freshAgentOutput = resultText(freshAgent);
+    await artifacts.writeText(`phase-2-fresh-agent-${attempt}.txt`, freshAgentOutput);
+    expect(freshAgent.exitCode, freshAgentOutput).toBe(0);
+    expect(freshAgentOutput).not.toMatch(
+      /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
     );
-    const adminRequestId = extractPendingRequestId(cronTriggerOutput);
+    expect(freshAgent.stdout.trim(), freshAgentOutput).not.toBe("");
 
-    const connectProbe = await host.command(
-      process.execPath,
-      [CLI_ENTRYPOINT, SANDBOX_NAME, "connect", "--probe-only"],
-      {
-        artifactName: "phase-5-connect-auto-pair-probe",
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 90_000,
-      },
+    const nextSnapshot = await captureFreshAgentGatewaySnapshot(
+      `phase-2-fresh-state-${attempt}`,
+      freshSnapshot.gatewayCompletedRuns + 1,
     );
-    expect(connectProbe.exitCode, resultText(connectProbe)).toBe(0);
+    expect(nextSnapshot.deviceId).toBe(freshSnapshot.deviceId);
+    expect(nextSnapshot.publicKey).toBe(freshSnapshot.publicKey);
+    expect(nextSnapshot.pairedCliCount).toBe(1);
+    expect(nextSnapshot.matchingPairedCount).toBe(1);
+    expect(nextSnapshot.pendingCount).toBe(0);
+    expect(nextSnapshot.sameDevicePendingCount).toBe(0);
+    expect(nextSnapshot.activeOperatorTokenCount).toBe(1);
+    expect(nextSnapshot.deviceScopes).toEqual(freshSnapshot.deviceScopes);
+    expect(nextSnapshot.approvedScopes).toEqual(freshSnapshot.approvedScopes);
+    expect(nextSnapshot.activeOperatorTokenScopes).toEqual(freshSnapshot.activeOperatorTokenScopes);
+    expect(nextSnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
+    freshSnapshot = nextSnapshot;
+  }
 
-    const adminConnect = await host.command(
-      "bash",
-      [
-        "-lc",
-        adminApprovalConnectScript(
-          host.commandPath,
-          SANDBOX_NAME,
-          adminRequestId,
-          cronName,
-          `issue-5324-connect-${Date.now()}-${process.pid}`,
-        ),
-      ],
-      {
-        artifactName: "phase-6-connect-admin-approval",
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 4 * 60_000,
-      },
-    );
-    const adminConnectOutput = resultText(adminConnect);
-    expect(adminConnect.exitCode, adminConnectOutput).toBe(0);
-    expect(adminConnectOutput).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+  // Preserve the transactional read/write upgrade proof before deliberately
+  // broadening this same CLI device with the manual admin approval below.
+  const encodedScopeUpgradeScript = Buffer.from(
+    scopeUpgradeScript().replaceAll("\\${", "${"),
+    "utf8",
+  ).toString("base64");
+  const scopeUpgradeScriptChunks = encodedScopeUpgradeScript.match(/.{1,24000}/g) ?? [];
+  expect(scopeUpgradeScriptChunks).not.toHaveLength(0);
+  const probe = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "sh",
+      "-lc",
+      `set -e; umask 077; tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; printf '%s' "$@" | base64 -d > "$tmp"; bash "$tmp"`,
+      "issue-4462-scope-upgrade-probe",
+      ...scopeUpgradeScriptChunks,
+    ],
+    {
+      artifactName: "phase-3-scope-upgrade-approval",
+      env: env(),
+      redactionValues: [apiKey],
+      timeoutMs: 12 * 60_000,
+    },
+  );
+  expect(probe.exitCode, resultText(probe)).toBe(0);
+  expect(resultText(probe)).toContain("ISSUE_4462_SCOPE_UPGRADE_OK");
 
-    await cleanup(host, sandbox);
-    await artifacts.writeJson("target-result.json", {
-      id: "issue-4462-scope-upgrade-approval",
-      status: "passed",
-    });
-  },
-);
+  // #5324 command coverage (PRA-3): the operator scope-upgrade / approval
+  // boundary is scope-keyed and command-agnostic, not per-command. Automatic
+  // approval is bounded to {operator.pairing, operator.read, operator.write}
+  // (scripts/lib/openclaw_device_approval_policy.py `ALLOWED_SCOPES`), while
+  // operator.admin always requires a reviewed `devices approve`. The pending
+  // request is selected by its requested scope + CLI/operator role, never by
+  // command name (ADMIN_REQUEST_SELECTOR_PY in issue-4462-admin-approval-helper.ts).
+  // Every non-TUI OpenClaw command (`agent`, `cron add`, `cron run`, `exec`)
+  // reaches the gateway through the same device-token operator client and is
+  // gated purely by the scope it requests. This test exercises both tiers on
+  // that single shared boundary: operator.write via the gateway-backed `agent`
+  // turns above, and operator.admin via the `cron add` trigger + manual
+  // approval below. `cron run` and `exec` cannot follow a different approval
+  // path — whichever tier they request is one of the two already proven here,
+  // so no separate per-command evidence is required to close #5324.
+  const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
+  // #5324's `exec` is NemoClaw's host transport, not an OpenClaw CLI
+  // subcommand (the pinned OpenClaw 2026.6.10 command catalog has none).
+  // Use the issue's documented `nemoclaw <name> exec -- openclaw ...` form
+  // for its cron reproduction while preserving #4504's exact command above.
+  const cronTrigger = await host.command(
+    process.execPath,
+    [
+      CLI_ENTRYPOINT,
+      SANDBOX_NAME,
+      "exec",
+      "--timeout",
+      "60",
+      "--",
+      "openclaw",
+      "cron",
+      "add",
+      "--name",
+      cronName,
+      "--every",
+      "2h",
+      "--agent",
+      "main",
+      "--session",
+      "isolated",
+      "--message",
+      "hello",
+    ],
+    {
+      artifactName: "phase-4-trigger-admin-cron",
+      env: env(),
+      redactionValues: [apiKey],
+      timeoutMs: 90_000,
+    },
+  );
+  const cronTriggerOutput = resultText(cronTrigger);
+  expect(cronTrigger.exitCode, cronTriggerOutput).not.toBe(0);
+  expect(cronTriggerOutput).toMatch(
+    /operator\.admin|scope upgrade pending approval|device pairing required|pairing required|requestId/i,
+  );
+  const adminRequestId = extractPendingRequestId(cronTriggerOutput);
+
+  const connectProbe = await host.command(
+    process.execPath,
+    [CLI_ENTRYPOINT, SANDBOX_NAME, "connect", "--probe-only"],
+    {
+      artifactName: "phase-5-connect-auto-pair-probe",
+      env: env(),
+      redactionValues: [apiKey],
+      timeoutMs: 90_000,
+    },
+  );
+  expect(connectProbe.exitCode, resultText(connectProbe)).toBe(0);
+
+  const adminConnect = await host.command(
+    "bash",
+    [
+      "-lc",
+      adminApprovalConnectScript(
+        host.commandPath,
+        SANDBOX_NAME,
+        adminRequestId,
+        cronName,
+        `issue-5324-connect-${Date.now()}-${process.pid}`,
+      ),
+    ],
+    {
+      artifactName: "phase-6-connect-admin-approval",
+      env: env(),
+      redactionValues: [apiKey],
+      timeoutMs: 4 * 60_000,
+    },
+  );
+  const adminConnectOutput = resultText(adminConnect);
+  expect(adminConnect.exitCode, adminConnectOutput).toBe(0);
+  expect(adminConnectOutput).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+
+  await cleanup(host, sandbox);
+  await artifacts.target.complete({
+    id: "issue-4462-scope-upgrade-approval",
+    status: "passed",
+  });
+});

@@ -10,21 +10,63 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createOpenClawQrTerminalLoaderSource,
+  describeOpenClawQrTerminalPatchSkip,
   isQrcodePackage,
   isQrcodeTerminalPackage,
+  isOpenClawQrTerminalRendererSource,
+  isReviewedOpenClawQrTerminalRendererIntegrity,
+  patchOpenClawQrTerminalRendererSource,
   patchQrcode,
   patchQrcodeTerminal,
+  REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
+  warnWhatsappQrCompact,
 } from "./whatsapp-qr-compact";
 import { makeQrcodeLoadHook } from "./whatsapp-qr-compact-test-helpers";
+
+const OPENCLAW_QR_RENDERER_SOURCE = `
+const COMPACT_MARGIN_MODULES = 1;
+function readModule(modules, x, y) {
+  if (x < 0 || y < 0 || x >= modules.size || y >= modules.size) return false;
+  return Boolean(modules.data[y * modules.size + x]);
+}
+function compactBlock(top, bottom) {
+  if (top && bottom) return "█";
+  if (top) return "▀";
+  if (bottom) return "▄";
+  return " ";
+}
+function renderCompactTerminalQr(modules) {
+  const lines = [];
+  for (let y = -1; y < modules.size + COMPACT_MARGIN_MODULES; y += 2) {
+    let line = "";
+    for (let x = -1; x < modules.size + COMPACT_MARGIN_MODULES; x += 1) line += compactBlock(readModule(modules, x, y), readModule(modules, x, y + 1));
+    lines.push(line);
+  }
+  return lines.join("\\n");
+}
+async function renderQrTerminal(input, opts = {}) {
+  const text = normalizeQrText(input);
+  const qrCode = await loadQrCodeRuntime();
+  if (opts.small === true) return renderCompactTerminalQr(qrCode.create(text).modules);
+  return await qrCode.toString(text, {
+    small: false,
+    type: "terminal"
+  });
+}
+`;
 
 // A fake of the `qrcode` package main: has its OWN toString + create().
 function makeQrcodeFake() {
   const calls: Array<{ text: unknown; opts: unknown; cb: unknown }> = [];
+  const createCalls: Array<{ text: unknown; opts: unknown }> = [];
   const mod = {
     calls,
-    create() {
-      return {};
+    create(text: unknown, opts?: unknown) {
+      createCalls.push({ text, opts });
+      return { modules: { size: 1, data: [true] } };
     },
+    createCalls,
     toString(text: unknown, opts?: unknown, cb?: unknown) {
       calls.push({ text, opts, cb });
       return "QR";
@@ -76,12 +118,89 @@ describe("isQrcodeTerminalPackage (#4522)", () => {
   });
 });
 
+describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
+  it("detects the OpenClaw QR terminal renderer by the old patch selectors", () => {
+    expect(isOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE)).toBe(true);
+    expect(isOpenClawQrTerminalRendererSource("const unrelated = true;")).toBe(false);
+  });
+
+  it("recognizes the reviewed OpenClaw 2026.6.10 renderer integrity", () => {
+    expect(
+      isReviewedOpenClawQrTerminalRendererIntegrity(REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256),
+    ).toBe(true);
+    expect(isReviewedOpenClawQrTerminalRendererIntegrity("0".repeat(64))).toBe(false);
+  });
+
+  it("widens the compact-renderer quiet zone on all four edges", () => {
+    const patched = patchOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE);
+
+    expect(patched).toContain("const COMPACT_MARGIN_MODULES = 4;");
+    expect(patched).toContain(
+      "for (let y = -COMPACT_MARGIN_MODULES; y < modules.size + COMPACT_MARGIN_MODULES; y += 2)",
+    );
+    expect(patched).toContain(
+      "for (let x = -COMPACT_MARGIN_MODULES; x < modules.size + COMPACT_MARGIN_MODULES; x += 1)",
+    );
+    expect(patched).not.toContain("toDataURL");
+    expect(patched).not.toContain("data:image/png");
+  });
+
+  it("fails closed for an unreviewed renderer integrity", () => {
+    expect(patchOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE, "0".repeat(64))).toBe(
+      OPENCLAW_QR_RENDERER_SOURCE,
+    );
+    expect(
+      describeOpenClawQrTerminalPatchSkip(OPENCLAW_QR_RENDERER_SOURCE, "0".repeat(64)),
+    ).toContain("integrity is unreviewed");
+  });
+
+  it("fails closed instead of partially patching when a loop preimage drifts", () => {
+    const drifted = OPENCLAW_QR_RENDERER_SOURCE.replace("let x = -1;", "let x = 0;");
+
+    expect(patchOpenClawQrTerminalRendererSource(drifted)).toBe(drifted);
+    expect(describeOpenClawQrTerminalPatchSkip(drifted)).toContain("preimage is unrecognized");
+  });
+
+  it("is idempotent once the source already has the four-edge quiet-zone patch", () => {
+    const patched = patchOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE);
+
+    expect(patchOpenClawQrTerminalRendererSource(patched)).toBe(patched);
+  });
+
+  it("loader source computes renderer integrity before applying the source rewrite", () => {
+    const loader = createOpenClawQrTerminalLoaderSource();
+
+    expect(loader).toContain('import { createHash } from "node:crypto";');
+    expect(loader).toContain(REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256);
+    expect(loader).toContain("const integrity = sha256Hex(source);");
+    expect(loader).toContain("warnOpenClawQrPatchSkip(skipReason)");
+    expect(loader).toContain("patchOpenClawQrTerminalRendererSource(source, integrity)");
+  });
+
+  it("emits non-secret loader diagnostics when the source rewrite is skipped", () => {
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      warnWhatsappQrCompact(
+        "OpenClaw QR renderer preimage is unrecognized; explicit compact quiet-zone rewrite skipped",
+      );
+      expect(write).toHaveBeenCalledWith(
+        expect.stringContaining("[channels] WhatsApp compact-QR warning:"),
+      );
+      expect(write).toHaveBeenCalledWith(expect.not.stringContaining("data:image/png"));
+    } finally {
+      write.mockRestore();
+    }
+  });
+});
+
 describe("patchQrcode (#4522)", () => {
-  it("forces small:true only for terminal renders", () => {
+  it("renders terminal output through the four-edge compact renderer", async () => {
     const mod = makeQrcodeFake();
     patchQrcode(mod);
-    mod.toString("payload", { type: "terminal" });
-    expect(mod.calls[0].opts).toEqual({ type: "terminal", small: true });
+    const rendered = await mod.toString("payload", { type: "terminal" });
+    expect(rendered).toContain("\x1b[47m\x1b[30m");
+    expect(mod.calls).toEqual([]);
+    expect(mod.createCalls).toEqual([{ text: "payload", opts: {} }]);
   });
 
   it.each(["svg", "png", "utf8"])("leaves type=%s options untouched", (type) => {
@@ -92,11 +211,11 @@ describe("patchQrcode (#4522)", () => {
     expect((mod.calls[0].opts as Record<string, unknown>).small).toBeUndefined();
   });
 
-  it("does not mutate the caller-supplied options object", () => {
+  it("does not mutate the caller-supplied options object", async () => {
     const mod = makeQrcodeFake();
     patchQrcode(mod);
     const opts = { type: "terminal" };
-    mod.toString("payload", opts);
+    await mod.toString("payload", opts);
     expect(opts).toEqual({ type: "terminal" });
   });
 
@@ -110,15 +229,16 @@ describe("patchQrcode (#4522)", () => {
     expect(mod.calls[0].opts).toEqual({});
   });
 
-  it("is idempotent: double-patch does not re-wrap", () => {
+  it("is idempotent: double-patch does not re-wrap", async () => {
     const mod = makeQrcodeFake();
     patchQrcode(mod);
     const wrappedOnce = mod.toString;
     patchQrcode(mod);
     expect(mod.toString).toBe(wrappedOnce);
-    // And forcing still works exactly once.
-    mod.toString("payload", { type: "terminal" });
-    expect(mod.calls[0].opts).toEqual({ type: "terminal", small: true });
+    // And compact rendering still happens exactly once.
+    await mod.toString("payload", { type: "terminal" });
+    expect(mod.calls).toEqual([]);
+    expect(mod.createCalls).toHaveLength(1);
   });
 });
 
@@ -154,8 +274,9 @@ describe("Module._load hook path-segment matching (#4522)", () => {
     try {
       const loaded = Module._load(absolutePath) as ReturnType<typeof makeQrcodeFake>;
       expect(loaded).toBe(qrcodeFake);
-      loaded.toString("payload", { type: "terminal" });
-      expect(loaded.calls[0].opts).toEqual({ type: "terminal", small: true });
+      await loaded.toString("payload", { type: "terminal" });
+      expect(loaded.calls).toEqual([]);
+      expect(loaded.createCalls).toEqual([{ text: "payload", opts: {} }]);
     } finally {
       Module._load = origLoad;
     }

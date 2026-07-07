@@ -27,7 +27,29 @@ vi.mock("./nim", () => ({
   getGpuIndicesByName: mocks.getGpuIndicesByName,
 }));
 
-import { buildVllmRunCommand, detectVllmProfile, installVllm, pullImage } from "./vllm";
+import {
+  buildVllmRunCommand,
+  detectVllmProfile,
+  installVllm,
+  pullImage,
+  resolveVllmServedModelId,
+} from "./vllm";
+
+describe("vLLM served route identity", () => {
+  it("uses one safe served-model override and rejects ambiguous aliases (#6315)", () => {
+    expect(resolveVllmServedModelId("catalog/model", [])).toBe("catalog/model");
+    expect(resolveVllmServedModelId("catalog/model", ["--served-model-name", "served/model"])).toBe(
+      "served/model",
+    );
+    expect(() =>
+      resolveVllmServedModelId("catalog/model", [
+        "--served-model-name",
+        "served/one",
+        "served/two",
+      ]),
+    ).toThrow("exactly one safe model ID");
+  });
+});
 
 describe("vLLM profile detection", () => {
   beforeEach(() => {
@@ -62,6 +84,21 @@ describe("vLLM profile detection", () => {
     expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.03.post1-py3");
     expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
     expect(profile!.defaultModel.envValue).toBe("nemotron-3-nano-4b");
+  });
+
+  it("generic-Linux default model pins the tool-call flags (#6314)", () => {
+    // Regression for #6314: without --enable-auto-tool-choice + --tool-call-parser,
+    // agent requests that set `tool_choice: "auto"` fail HTTP 400 out of the box
+    // on the generic-Linux managed vLLM default. The Spark and Station defaults
+    // already carry their own tool-call parsers; this asserts the Linux default
+    // does too, matching the vLLM launch example on the model card.
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const args = profile!.defaultModel.modelArgs;
+    expect(args).toContain("--enable-auto-tool-choice");
+    const parserIdx = args.indexOf("--tool-call-parser");
+    expect(parserIdx).toBeGreaterThanOrEqual(0);
+    expect(args[parserIdx + 1]).toBe("qwen3_coder");
   });
 });
 
@@ -160,6 +197,7 @@ describe("installVllm model resolution", () => {
     errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     delete process.env.NEMOCLAW_VLLM_MODEL;
+    delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
     delete process.env.HF_TOKEN;
     delete process.env.HUGGING_FACE_HUB_TOKEN;
     // Fail dockerPrereqsOk so the function returns before any docker work,
@@ -243,5 +281,45 @@ describe("installVllm model resolution", () => {
     expect(mocks.runCapture).not.toHaveBeenCalled();
     const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(errors).toMatch(/gated on Hugging Face/);
+  });
+
+  it("guards the effective served model before any docker work (#6315)", async () => {
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
+      "--served-model-name",
+      "shared/served-model",
+    ]);
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const beforeInstall = vi.fn();
+
+    await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    expect(beforeInstall).toHaveBeenCalledWith("shared/served-model");
+    expect(beforeInstall.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runCapture.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("performs no Docker work when the shared-gateway guard rejects installation (#6315)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+
+    await expect(
+      installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+        beforeInstall: () => {
+          throw new Error("route conflict");
+        },
+      }),
+    ).rejects.toThrow("route conflict");
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
   });
 });

@@ -9,6 +9,7 @@ import {
   normalizeGarbageCollectImagesOptions,
 } from "../domain/lifecycle/options";
 import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
+import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
@@ -161,10 +162,11 @@ export async function garbageCollectImages(
 
   let imagesOutput = "";
   try {
-    imagesOutput = dockerListImagesFormat(
-      "openshell/sandbox-from",
-      "{{.Repository}}:{{.Tag}}\t{{.Size}}",
-    );
+    // Scan every sandbox image repo, not just sandbox-from; see
+    // SANDBOX_IMAGE_REPOS for why local prebuilds were missed (#6301).
+    imagesOutput = SANDBOX_IMAGE_REPOS.map((repo) =>
+      dockerListImagesFormat(repo, "{{.Repository}}:{{.Tag}}\t{{.Size}}"),
+    ).join("\n");
   } catch {
     console.error("  Failed to query Docker images. Is Docker running?");
     process.exit(1);

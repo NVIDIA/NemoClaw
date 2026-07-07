@@ -25,6 +25,7 @@ export interface CoreOnboardFlowPhaseOptions<
   MessagingChannelConfig = unknown,
   ResourceProfile = unknown,
 > {
+  gatewayName: string;
   forceProviderSelection: boolean;
   forceInferenceSetup?: boolean;
   authoritativeResumeConfig?: boolean;
@@ -58,6 +59,7 @@ export function createCoreOnboardFlowPhases<
 ): [OnboardSequencePhase<Context>, OnboardSequencePhase<Context>] {
   const providerInferencePhase = createProviderInferencePhase<Context>(async (context) => {
     const providerInferenceResult = await handleProviderInferenceState({
+      gatewayName: options.gatewayName,
       resume: context.resume,
       fresh: context.fresh,
       session: context.session,
@@ -108,6 +110,7 @@ export function createCoreOnboardFlowPhases<
     const sandboxStateResult = await handleSandboxState({
       resume: context.resume,
       fresh: context.fresh,
+      gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.sandbox.authoritativePolicyTier,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,

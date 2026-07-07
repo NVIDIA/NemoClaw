@@ -82,10 +82,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       output: overrides.sandboxListOutput ?? (overrides.staleRecovery ? "" : "alpha Ready"),
     },
   });
-  vi.spyOn(gatewayState, "getReconciledSandboxGatewayState").mockResolvedValue({
-    state: overrides.staleRecovery ? "missing" : "present",
-    output: "",
-  });
+  vi.spyOn(gatewayState, "getReconciledSandboxGatewayState").mockResolvedValue(
+    overrides.reconciledSandboxGatewayState ?? {
+      state: overrides.staleRecovery ? "missing" : "present",
+      output: "",
+    },
+  );
   const ensureRebuildAgentBaseImageSpy = vi
     .spyOn(rebuildFlowHelpers, "ensureRebuildAgentBaseImage")
     .mockReturnValue(

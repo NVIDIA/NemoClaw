@@ -48,6 +48,23 @@ NemoClaw v0.0.74 upgrades the OpenShell policy boundary, adds managed MCP and pr
   The selected mode persists through resume and transactional rebuilds, and model-specific compatibility safeguards can keep an incompatible model on direct disclosure.
   Sandbox-first `inference get` and `inference set` commands now provide the same route controls as their global forms.
   For more information, refer to [Tool Calling Reliability](../inference/tool-calling-reliability), [Model Capability Audit](../inference/model-capability-audit), and [NemoClaw CLI Commands Reference](../reference/commands).
+- Shared OpenShell gateways now enforce a single compatible inference route across every registered sandbox, including stopped sandboxes.
+  Onboarding, connect-time repair, and `inference set` reject provider/model conflicts; custom routes must also match the normalized endpoint and API family.
+  As a migration requirement, custom switches must provide `--endpoint-url` and an unambiguous API family, and incomplete legacy custom-route metadata fails closed until the sandbox is removed and re-onboarded with complete metadata.
+  After backing up an affected workspace, an OpenAI-compatible route can be re-onboarded with complete metadata as follows (replace the example endpoint, model, and sandbox name):
+
+  ```bash
+  $$nemoclaw legacy-sandbox destroy
+  NEMOCLAW_PROVIDER=custom \
+    NEMOCLAW_ENDPOINT_URL=https://endpoint.example/v1 \
+    NEMOCLAW_MODEL=your-model-id \
+    NEMOCLAW_PREFERRED_API=openai-completions \
+    $$nemoclaw onboard --name legacy-sandbox
+  ```
+
+  Hermes deterministically selects `openai-completions` for `compatible-anthropic-endpoint`, so that one route may omit `--inference-api`; explicit incompatible values are rejected.
+  Use a different `NEMOCLAW_GATEWAY_PORT` when sandboxes need independent routes.
+  For more information, refer to [Switch Inference Providers](../inference/switch-inference-providers), [NemoClaw CLI Commands Reference](../reference/commands), and [Troubleshooting](../reference/troubleshooting).
 - LangChain Deep Agents Code now provides managed `status`, `whoami`, and `identity` commands without launching the interactive UI, validates the installed agent version during onboarding, and keeps credential-shaped or tracing configuration out of persisted runtime metadata.
   Its rebuild path validates recreation before destructive handoff and preserves the managed proxy, tool-disclosure, and MCP boundaries.
   For more information, refer to [Quickstart with LangChain Deep Agents Code](../../openclaw/get-started/quickstart-langchain-deepagents-code), [NemoClaw CLI Commands Reference](../reference/commands), and [Security Best Practices](../security/best-practices).

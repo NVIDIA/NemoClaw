@@ -38,6 +38,7 @@ export interface NimModel {
   name: string;
   image: string;
   minGpuMemoryMB: number;
+  servedModel?: string;
 }
 
 export type NvidiaPlatform = "spark" | "station" | "jetson" | "linux";
@@ -346,6 +347,11 @@ export function containerName(sandboxName: string): string {
 export function getImageForModel(modelName: string): string | null {
   const entry = nimImages.models.find((m: NimModel) => m.name === modelName);
   return entry ? entry.image : null;
+}
+
+export function expectedServedModelId(modelName: string): string {
+  const entry = nimImages.models.find((model: NimModel) => model.name === modelName);
+  return entry?.servedModel || modelName;
 }
 
 export function listModels(): NimModel[] {

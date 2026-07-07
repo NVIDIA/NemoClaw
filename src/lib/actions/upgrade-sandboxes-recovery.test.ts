@@ -1,19 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-type UpgradeSandboxes = typeof import("./upgrade-sandboxes")["upgradeSandboxes"];
+import * as coreVersion from "../core/version";
+import * as sandboxList from "../openshell-sandbox-list";
+import * as sandboxVersion from "../sandbox/version";
+import * as registry from "../state/registry";
+import * as sandboxState from "../state/sandbox";
+import { upgradeSandboxes, upgradeSandboxesDependencies } from "./upgrade-sandboxes";
 
-const requireDist = createRequire(import.meta.url);
-const upgradeModulePath = "./upgrade-sandboxes.js";
-
-// Warm the CommonJS source graph outside the first test's timeout. Each harness
-// still reloads the entry module after installing its dependency spies.
-requireDist(upgradeModulePath);
-delete require.cache[requireDist.resolve(upgradeModulePath)];
+type UpgradeSandboxes = typeof upgradeSandboxes;
 
 function makeManifest(sandboxName: string) {
   const timestamp = `2026-07-01T06-50-4${sandboxName.length}-044Z`;
@@ -63,7 +60,6 @@ function createRecoveryHarness(
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
   liveListSpy: ReturnType<typeof vi.spyOn>;
 } {
-  delete require.cache[requireDist.resolve(upgradeModulePath)];
   vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
   vi.stubEnv(
     "NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES",
@@ -71,19 +67,13 @@ function createRecoveryHarness(
       ? options.confirmedLegacyManagedNames
       : JSON.stringify(options.confirmedLegacyManagedNames ?? []),
   );
-  vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(options.gatewayPort ?? 8080));
-  delete require.cache[requireDist.resolve("../core/ports.js")];
-
-  const coreVersion = requireDist("../core/version.js");
-  const sandboxList = requireDist("../openshell-sandbox-list.js");
-  const sandboxVersion = requireDist("../sandbox/version.js");
-  const registry = requireDist("../state/registry.js");
-  const sandboxState = requireDist("../state/sandbox.js");
-  const rebuild = requireDist("./sandbox/rebuild.js");
 
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  vi.spyOn(upgradeSandboxesDependencies, "getGatewayPort").mockReturnValue(
+    options.gatewayPort ?? 8080,
+  );
   vi.spyOn(coreVersion, "getVersion").mockReturnValue("0.0.71");
   const liveListSpy = vi
     .spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit")
@@ -92,6 +82,7 @@ function createRecoveryHarness(
       output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
     });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
+    defaultSandbox: null,
     sandboxes: names.map((name) => ({
       name,
       agent: null,
@@ -108,6 +99,7 @@ function createRecoveryHarness(
       sandboxVersion: options.staleNames?.includes(name) === true ? "2026.5.26" : "2026.5.27",
       expectedVersion: "2026.5.27",
       isStale: options.staleNames?.includes(name) === true,
+      verificationFailed: false,
       detectionMethod: "registry",
     };
   });
@@ -125,10 +117,12 @@ function createRecoveryHarness(
   const managedEvidenceSpy = options.useRealManagedEvidence
     ? vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence")
     : vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(true);
-  const rebuildSpy = vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
+  const rebuildSpy = vi
+    .spyOn(upgradeSandboxesDependencies, "rebuildSandbox")
+    .mockResolvedValue(undefined);
 
   return {
-    upgradeSandboxes: requireDist(upgradeModulePath).upgradeSandboxes,
+    upgradeSandboxes,
     rebuildSpy,
     latestBackupSpy,
     managedEvidenceSpy,
@@ -139,7 +133,6 @@ function createRecoveryHarness(
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  delete require.cache[requireDist.resolve(upgradeModulePath)];
 });
 
 describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {

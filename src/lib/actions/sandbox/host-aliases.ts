@@ -3,11 +3,7 @@
 
 import { isIP } from "node:net";
 
-import {
-  dockerExecFileSync,
-  dockerSpawnSync,
-  type DockerSpawnSyncResult,
-} from "../../adapters/docker/exec";
+import { dockerExecFileSync, dockerSpawnSync } from "../../adapters/docker/exec";
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -25,6 +21,12 @@ export type LegacyGatewayHostAliasSupportDeps = {
   getSandbox: (sandboxName: string) => Pick<SandboxEntry, "openshellDriver"> | null | undefined;
   probeLegacyGatewayContainer: () => LegacyGatewayProbe;
 };
+
+export type SandboxHostAliasesDeps = Readonly<
+  LegacyGatewayHostAliasSupportDeps & {
+    runKubectlInClusterRaw: (args: string[]) => string;
+  }
+>;
 
 // Drivers that run a per-sandbox direct container (openshell-<sandbox>...)
 // instead of the legacy k3s gateway. They have no openshell-cluster-nemoclaw
@@ -135,15 +137,8 @@ export function assertLegacyGatewayHostAliasSupportWithDeps(
   }
 }
 
-function assertLegacyGatewayHostAliasSupport(sandboxName: string): void {
-  assertLegacyGatewayHostAliasSupportWithDeps(sandboxName, {
-    getSandbox: registry.getSandbox,
-    probeLegacyGatewayContainer,
-  });
-}
-
 export function probeLegacyGatewayContainerWithDeps(
-  dockerPs: () => DockerSpawnSyncResult,
+  dockerPs: typeof dockerSpawnSync,
 ): LegacyGatewayProbe {
   // `docker ps --filter name=...` accepts only substring or anchored regex
   // syntax (`name=^/<container>$`) per the Docker CLI reference, and the
@@ -151,7 +146,11 @@ export function probeLegacyGatewayContainerWithDeps(
   // `docker ps --format '{{.Names}}'` pattern used in
   // src/lib/sandbox/privileged-exec.ts and do the exact match in code so
   // there is no doubt about substring overlap or anchor support.
-  const result = dockerPs();
+  const result = dockerPs(["ps", "--format", "{{.Names}}"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+    timeout: HOST_ALIAS_DOCKER_PROBE_TIMEOUT_MS,
+  });
   if (result.error) {
     const code = (result.error as NodeJS.ErrnoException).code ?? "";
     if (code === "ETIMEDOUT") {
@@ -175,13 +174,7 @@ export function probeLegacyGatewayContainerWithDeps(
 }
 
 function probeLegacyGatewayContainer(): LegacyGatewayProbe {
-  return probeLegacyGatewayContainerWithDeps(() =>
-    dockerSpawnSync(["ps", "--format", "{{.Names}}"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-      timeout: HOST_ALIAS_DOCKER_PROBE_TIMEOUT_MS,
-    }),
-  );
+  return probeLegacyGatewayContainerWithDeps(dockerSpawnSync);
 }
 
 function validateHostAliasHostname(hostname: string): boolean {
@@ -202,24 +195,33 @@ function runKubectlInClusterRaw(args: string[]): string {
   });
 }
 
+function productionHostAliasesDeps(): SandboxHostAliasesDeps {
+  return {
+    getSandbox: registry.getSandbox,
+    probeLegacyGatewayContainer,
+    runKubectlInClusterRaw,
+  };
+}
+
 function throwKubectlError(action: string, error: unknown): never {
   const err = error as { stderr?: unknown; stdout?: unknown; message?: unknown; status?: number };
   const detail = String(err?.stderr || err?.stdout || err?.message || "").trim();
   hostAliasesFail(`  Failed to ${action}.${detail ? ` ${detail}` : ""}`, err?.status || 1);
 }
 
-function runKubectlInCluster(args: string[], action: string): string {
+function runKubectlInCluster(args: string[], action: string, deps: SandboxHostAliasesDeps): string {
   try {
-    return runKubectlInClusterRaw(args);
+    return deps.runKubectlInClusterRaw(args);
   } catch (error) {
     throwKubectlError(action, error);
   }
 }
 
-function getSandboxResource(sandboxName: string): SandboxResource {
+function getSandboxResource(sandboxName: string, deps: SandboxHostAliasesDeps): SandboxResource {
   const raw = runKubectlInCluster(
     ["get", "sandbox", sandboxName, "-o", "json"],
     "read host aliases",
+    deps,
   );
   try {
     return JSON.parse(raw) as SandboxResource;
@@ -280,8 +282,9 @@ function patchHostAliases(
   sandboxName: string,
   resource: SandboxResource,
   hostAliases: HostAlias[],
+  deps: SandboxHostAliasesDeps,
 ): void {
-  runKubectlInClusterRaw([
+  deps.runKubectlInClusterRaw([
     "patch",
     "sandbox",
     sandboxName,
@@ -296,13 +299,14 @@ function patchHostAliasesWithRetry(
   buildAliases: BuildHostAliases,
   initialResource: SandboxResource,
   initialAliases: HostAlias[],
+  deps: SandboxHostAliasesDeps,
 ): void {
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const resource = attempt === 1 ? initialResource : getSandboxResource(sandboxName);
+    const resource = attempt === 1 ? initialResource : getSandboxResource(sandboxName, deps);
     const aliases = attempt === 1 ? initialAliases : buildAliases(resource);
     try {
-      patchHostAliases(sandboxName, resource, aliases);
+      patchHostAliases(sandboxName, resource, aliases, deps);
       return;
     } catch (error) {
       if (!isHostAliasPatchConflict(error) || attempt === maxAttempts) {
@@ -313,8 +317,15 @@ function patchHostAliasesWithRetry(
 }
 
 export function listSandboxHostAliases(sandboxName: string): void {
-  assertLegacyGatewayHostAliasSupport(sandboxName);
-  const aliases = getHostAliases(getSandboxResource(sandboxName));
+  listSandboxHostAliasesWithDeps(sandboxName, productionHostAliasesDeps());
+}
+
+export function listSandboxHostAliasesWithDeps(
+  sandboxName: string,
+  deps: SandboxHostAliasesDeps,
+): void {
+  assertLegacyGatewayHostAliasSupportWithDeps(sandboxName, deps);
+  const aliases = getHostAliases(getSandboxResource(sandboxName, deps));
   if (aliases.length === 0) {
     console.log(`  No host aliases configured for '${sandboxName}'.`);
     return;
@@ -367,11 +378,19 @@ export function addSandboxHostAlias(
   sandboxName: string,
   options: AddSandboxHostAliasOptions = {},
 ): void {
+  addSandboxHostAliasWithDeps(sandboxName, options, productionHostAliasesDeps());
+}
+
+export function addSandboxHostAliasWithDeps(
+  sandboxName: string,
+  options: AddSandboxHostAliasOptions,
+  deps: SandboxHostAliasesDeps,
+): void {
   const dryRun = Boolean(options.dryRun);
   const { hostname, ip } = validateSandboxHostAliasAddOptions(options);
-  assertLegacyGatewayHostAliasSupport(sandboxName);
+  assertLegacyGatewayHostAliasSupportWithDeps(sandboxName, deps);
 
-  const resource = getSandboxResource(sandboxName);
+  const resource = getSandboxResource(sandboxName, deps);
   const buildAliases: BuildHostAliases = (currentResource) => {
     const aliases = normalizeHostAliases(currentResource);
     if (aliases.some((alias) => alias.hostnames.includes(hostname))) {
@@ -392,7 +411,7 @@ export function addSandboxHostAlias(
     console.log(JSON.stringify(buildHostAliasesPatch(resource, aliases), null, 2));
     return;
   }
-  patchHostAliasesWithRetry(sandboxName, buildAliases, resource, aliases);
+  patchHostAliasesWithRetry(sandboxName, buildAliases, resource, aliases, deps);
   console.log(`  Added host alias ${hostname} -> ${ip}`);
 }
 
@@ -400,11 +419,19 @@ export function removeSandboxHostAlias(
   sandboxName: string,
   options: RemoveSandboxHostAliasOptions = {},
 ): void {
+  removeSandboxHostAliasWithDeps(sandboxName, options, productionHostAliasesDeps());
+}
+
+export function removeSandboxHostAliasWithDeps(
+  sandboxName: string,
+  options: RemoveSandboxHostAliasOptions,
+  deps: SandboxHostAliasesDeps,
+): void {
   const dryRun = Boolean(options.dryRun);
   const { hostname } = validateSandboxHostAliasRemoveOptions(options);
-  assertLegacyGatewayHostAliasSupport(sandboxName);
+  assertLegacyGatewayHostAliasSupportWithDeps(sandboxName, deps);
 
-  const resource = getSandboxResource(sandboxName);
+  const resource = getSandboxResource(sandboxName, deps);
   const buildAliases: BuildHostAliases = (currentResource) => {
     const original = normalizeHostAliases(currentResource);
     const aliases = original
@@ -428,6 +455,6 @@ export function removeSandboxHostAlias(
     console.log(JSON.stringify(buildHostAliasesPatch(resource, aliases), null, 2));
     return;
   }
-  patchHostAliasesWithRetry(sandboxName, buildAliases, resource, aliases);
+  patchHostAliasesWithRetry(sandboxName, buildAliases, resource, aliases, deps);
   console.log(`  Removed host alias ${hostname}`);
 }

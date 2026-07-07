@@ -23,6 +23,8 @@ type SandboxRecord = {
   imageTag?: string | null;
   openshellDriver?: string | null;
   observabilityEnabled?: boolean;
+  provider?: string | null;
+  model?: string | null;
 };
 type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 
@@ -148,6 +150,10 @@ const dcodeSandboxEntry = {
   name: "alpha",
   agent: "langchain-deepagents-code",
 };
+const latestBackupFixture = {
+  timestamp: "2026-06-15T00:00:00.000Z",
+  backupPath: "/tmp/backup-alpha",
+};
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
@@ -223,6 +229,10 @@ vi.mock("../../state/gateway", () => ({
 vi.mock("../../state/registry", () => ({
   getCustomPolicies: getCustomPoliciesMock,
   getSandbox: getSandboxMock,
+  listSandboxes: () => ({
+    sandboxes: ["alpha", "beta", "gamma"].map((name) => getSandboxMock(name)).filter(Boolean),
+    defaultSandbox: "alpha",
+  }),
   registerSandbox: registerSandboxMock,
   removeSandbox: vi.fn(),
   updateSandbox: updateSandboxMock,
@@ -855,12 +865,16 @@ describe("runSandboxSnapshot", () => {
             agent: "openclaw",
             imageTag: "nemoclaw-alpha:test",
             openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
           }
         : {
             name: "beta",
             agent: "openclaw",
             imageTag: "nemoclaw-beta:test",
             openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
           },
     );
     parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
@@ -870,10 +884,7 @@ describe("runSandboxSnapshot", () => {
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
-    getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-    });
+    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
     restoreSandboxStateMock.mockReturnValue({
       success: true,
       restoredDirs: ["workspace"],
@@ -904,6 +915,42 @@ describe("runSandboxSnapshot", () => {
     expect(restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
   });
 
+  it("blocks auto-create before deleting a destination when a gateway peer conflicts", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    getSandboxMock.mockImplementation((name) => ({
+      name: name ?? "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      imageTag: `nemoclaw-${name}:test`,
+      openshellDriver: "docker",
+      provider: name === "gamma" ? "anthropic-prod" : "nvidia-nim",
+      model: name === "gamma" ? "claude-new" : "nvidia/model-a",
+    }));
+    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    captureOpenshellMock.mockImplementation((args) =>
+      openshellResponses(args, {
+        "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(consoleError.mock.calls.flat().join("\n")).toContain("gamma");
+    expect(lifecycleMock.events).not.toContain("delete");
+    expect(streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(registerSandboxMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     { enabled: true, assignmentPresent: true },
     { enabled: false, assignmentPresent: false },
@@ -920,6 +967,8 @@ describe("runSandboxSnapshot", () => {
             imageTag: "nemoclaw-alpha:test",
             openshellDriver: "docker",
             observabilityEnabled: enabled,
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
           }
         : null,
     );
@@ -930,10 +979,7 @@ describe("runSandboxSnapshot", () => {
       }),
     );
     parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
-    getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-    });
+    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
@@ -957,11 +1003,7 @@ describe("runSandboxSnapshot", () => {
       observabilityEnabled: true,
       policyTier: "balanced",
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-      policyPresets: ["npm"],
-    });
+    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: ["npm"] });
     getAppliedPresetsMock.mockReturnValue(["npm"]);
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -1001,11 +1043,7 @@ describe("runSandboxSnapshot", () => {
       policyTier: "balanced",
       policies: [],
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-      policyPresets: [],
-    });
+    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: [] });
     getAppliedPresetsMock.mockReturnValue([]);
     getPresetContentGatewayStateMock.mockReturnValueOnce("match").mockReturnValueOnce("absent");
     const { runSandboxSnapshot } = await import("./snapshot");

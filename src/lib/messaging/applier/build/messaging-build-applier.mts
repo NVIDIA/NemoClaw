@@ -138,6 +138,8 @@ export const OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY = Object.freeze
   registryTarballUrl: "must-match-committed-url",
 } as const);
 
+const NPM_METADATA_MAX_BUFFER = 16 * 1024 * 1024;
+
 type HermesUvPackageInstall = {
   readonly spec: string;
 };
@@ -1160,6 +1162,7 @@ function npmViewString(packageSpec: string, field: string, env: Env): string {
   const result = spawnSync("npm", ["view", packageSpec, field], {
     encoding: "utf-8",
     env: env as NodeJS.ProcessEnv,
+    maxBuffer: NPM_METADATA_MAX_BUFFER,
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error) throw result.error;
@@ -1211,6 +1214,7 @@ function packNpmArchive(
   const result = spawnSync("npm", ["pack", packageSpec, "--pack-destination", rootDir, "--json"], {
     encoding: "utf-8",
     env: env as NodeJS.ProcessEnv,
+    maxBuffer: NPM_METADATA_MAX_BUFFER,
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error) {

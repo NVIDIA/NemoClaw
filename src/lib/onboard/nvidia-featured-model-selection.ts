@@ -15,24 +15,31 @@ export type NvidiaFeaturedModelSession = {
   ) => Promise<ModelPromptResult>;
 };
 
+export type NvidiaFeaturedModelSessionOptions = {
+  writeLine?: (message: string) => void;
+  defaultModel?: string;
+};
+
 /** Create one catalog-backed model selector for an onboarding session. */
 export function createNvidiaFeaturedModelSession(
-  writeLine: (message: string) => void = console.log,
+  options: NvidiaFeaturedModelSessionOptions = {},
 ): NvidiaFeaturedModelSession {
+  const writeLine = options.writeLine ?? console.log;
+  const defaultModel = options.defaultModel?.trim() || DEFAULT_CLOUD_MODEL;
   const loadPromptOptions = createNvidiaFeaturedModelPromptOptionsLoader();
   let announcedLoad = false;
   return {
     async select(requestedModel, recoveredModel, nonInteractive, envModel) {
       if (requestedModel) return requestedModel;
       if (recoveredModel) return recoveredModel;
-      if (nonInteractive) return DEFAULT_CLOUD_MODEL;
+      const configuredModel = envModel?.trim();
+      if (nonInteractive) return configuredModel || defaultModel;
       if (!announcedLoad) {
         writeLine("  Loading NVIDIA's featured model catalog...");
         announcedLoad = true;
       }
-      const configuredModel = envModel?.trim();
       return promptCloudModel({
-        ...loadPromptOptions(configuredModel),
+        ...loadPromptOptions(configuredModel || defaultModel),
         manualDefaultModelId: configuredModel,
       });
     },

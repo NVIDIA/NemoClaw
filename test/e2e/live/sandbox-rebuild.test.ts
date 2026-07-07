@@ -4,10 +4,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   latestRebuildBackupDir,
   listCredentialLeakPaths,
@@ -38,10 +37,6 @@ const ONBOARD_TIMEOUT_MS = TEST_TIMEOUT_MS;
 const REBUILD_TIMEOUT_MS = TEST_TIMEOUT_MS;
 const MARKER_CONTENT = `REBUILD_E2E_${Date.now()}`;
 
-function resultText(result: ShellProbeResult): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 function sandboxRebuildEnv(apiKey: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
@@ -69,7 +64,7 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-test.skipIf(!shouldRunLiveE2E())(
+test(
   "sandbox-rebuild: rebuild preserves marker state and refreshes registry metadata",
   async ({
     artifacts,

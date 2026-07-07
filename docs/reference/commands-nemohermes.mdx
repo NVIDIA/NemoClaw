@@ -576,8 +576,10 @@ If another terminal is already connected to the sandbox, `connect` prints a note
 An unknown model slug, malformed extra-args JSON, or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
 Unset the managed-vLLM variable, or fix the value, before retrying.
 
-When the live OpenShell gateway inference route differs from the route recorded in the NemoClaw registry, `connect` prints an explicit warning and realigns the shared gateway to the recorded route.
-Use `nemohermes inference set --provider <provider> --model <model>` to make an intentional route change.
+When the live OpenShell gateway inference route differs from the route recorded in the NemoClaw registry, `connect` checks every registered sandbox on that gateway before attempting a repair.
+It realigns the route only when those registry entries are compatible with the requested provider and model.
+If another sandbox records a conflicting route, `connect` exits non-zero without changing the gateway and names the affected sandboxes.
+Use `nemohermes inference set --provider <provider> --model <model>` to make an intentional compatible route change.
 If the sandbox is registered locally but missing from a healthy gateway, `connect` preserves the registry entry and points you to `rebuild --yes`, `onboard`, or `destroy` instead of deleting the metadata needed for recovery.
 
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
@@ -608,10 +610,19 @@ Everything after `--` is forwarded verbatim to the sandbox command, including fl
 
 The exit code is the remote command's exit code.
 
+By default, NemoClaw inherits caller stdin only when it is a terminal.
+Non-terminal or unavailable stdin is closed so SSH, CI, and other one-shot commands cannot wait on an inherited pipe.
+Pass `--stdin` to forward an intentional pipe, or `--no-stdin` to close terminal stdin explicitly.
+
+```bash
+printf 'hello\n' | nemohermes my-assistant exec --stdin -- cat
+ssh dgx-spark 'nemohermes my-assistant exec --no-stdin -- pwd'
+```
+
 The OpenShell exec endpoint rejects any command argument (the values after `--`) that contains a newline or carriage return, so multi-line commands such as a `bash` heredoc cannot be passed through `exec`.
 NemoClaw detects this before dispatch, names the offending argument position, and exits with status `2` instead of surfacing the lower-level OpenShell `InvalidArgument` error.
 Join the statements with semicolons (`nemohermes <name> exec -- bash -lc "cmd1; cmd2"`).
-Pipe the script into the sandbox shell over stdin (`printf 'cmd1\ncmd2\n' | nemohermes <name> exec -- bash`).
+Pipe the script into the sandbox shell over stdin (`printf 'cmd1\ncmd2\n' | nemohermes <name> exec --stdin -- bash`).
 Or write the script to a file in the sandbox and run it (`nemohermes <name> exec -- bash <script-path>`).
 
 | Flag | Description |
@@ -619,6 +630,7 @@ Or write the script to a file in the sandbox and run it (`nemohermes <name> exec
 | `--workdir <dir>` | Working directory inside the sandbox. The directory is checked before the command runs; if it does not exist, NemoClaw reports `error: --workdir: <dir> does not exist inside the sandbox` and exits with status `1` without invoking the inner command. |
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
+| `--stdin` / `--no-stdin` | Force caller stdin forwarding or closure (default: inherit terminal stdin; close non-terminal or unavailable stdin). |
 
 ### `nemohermes <name> agent`
 
@@ -869,14 +881,19 @@ Use `--` to separate `exec` options from the command you want to run inside the 
 The command exits with the remote command's exit code.
 
 ```bash
-nemohermes my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
+nemohermes my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]
 ```
+
+By default, NemoClaw inherits caller stdin only when it is a terminal.
+Non-terminal or unavailable stdin is closed so SSH, CI, and other one-shot commands cannot wait on an inherited pipe.
+Pass `--stdin` to forward an intentional pipe, or `--no-stdin` to close terminal stdin explicitly.
 
 | Flag | Description |
 |------|-------------|
 | `--workdir <dir>` | Set the working directory inside the sandbox. The directory is checked before the command runs; if it does not exist, NemoClaw reports `error: --workdir: <dir> does not exist inside the sandbox` and exits with status `1` without invoking the inner command. |
 | `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection |
 | `--timeout <s>` | Timeout in seconds. Use `0` for no timeout |
+| `--stdin`, `--no-stdin` | Force caller stdin forwarding or closure (default: inherit terminal stdin; close non-terminal or unavailable stdin). |
 
 ### `nemohermes <name> logs`
 
@@ -1291,6 +1308,9 @@ NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal 
 OpenShell `0.0.72` evaluates that policy before replacing the attached provider placeholder in the allowed request header.
 Static provider placeholders are sandbox-scoped rather than endpoint-exclusive, so do not grant broader inspected-HTTP routes to the same adapter runtime and credential key.
 The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener.
+After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, generic type, valid resource version, and exactly one credential key matching the recorded key.
+If those readiness checks pass, it sends a differential pair of wire-level MCP `initialize` requests from inside the sandbox — one with the placeholder header and one with an unresolvable control bearer — to verify that OpenShell resolves the credential on egress; otherwise it reports an inconclusive `probe skipped` result and sends no request.
+Neither outcome fails the committed add, and `--no-probe` skips this check.
 For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
 
 Hermes MCP add, restart, and remove mutate managed config and are refused while shields are up.
@@ -1309,14 +1329,24 @@ unset GITHUB_MCP_TOKEN
 Inspect MCP server state for one server or for all configured servers.
 Status includes OpenShell provider presence and credential-key shape, provider attachment, generated policy content match, adapter registration, current host-variable availability, and the selected agent's MCP support mode.
 While a managed provider is attached, text and JSON status warn that its credential is sandbox-scoped until OpenShell supports endpoint-exclusive binding plus Host, scheme, and query enforcement.
+When a single server is named, status requests a differential wire-level credential-resolution probe.
+It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, generic type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail.
+When ready, the same MCP `initialize` is sent from inside the sandbox once with the `openshell:resolve:env:KEY` placeholder header and once with a deliberately-unresolvable control bearer.
+Classification uses the two HTTP status codes plus curl exit codes for transport, timeout, and policy-denial outcomes; response bodies are never captured or printed.
+A `verified` verdict requires the placeholder request to be accepted (HTTP 2xx) while the control is rejected — the only outcome that proves a valid credential was on the wire.
+Identical HTTP 400, 401, or 403 rejections raise a warning that names the hypotheses — the placeholder forwarded verbatim, an expired or revoked credential that resolved correctly, or (for HTTP 400) endpoint request validation — and tells you to verify the stored credential first.
+For HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders and agent runtimes receive the same auth failure and skip the server; HTTP 400 remains inconclusive because the endpoint may reject the probe request itself.
+Every other outcome — differing rejections (an endpoint may reject two different literal bearers differently), endpoints that skip authentication, endpoint outages, policy denials, and unreachable sandboxes — reports as `unknown` rather than blaming the credential rewrite, and a persisted URL that fails the current authenticated-endpoint boundary is never probed.
 
 ```bash
-nemohermes my-assistant mcp status [server] [--json]
+nemohermes my-assistant mcp status [server] [--json] [--probe|--no-probe]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--json` | Emit status as JSON without credential values |
+| `--probe` | Request the wire-level credential-resolution probe for every listed server; entries that fail readiness checks are skipped |
+| `--no-probe` | Skip the probe; it defaults on only when a single server is named |
 
 ### `nemohermes <name> mcp restart`
 
@@ -1930,6 +1960,12 @@ By default, the command syncs the default registered sandbox.
 The command refuses before changing the OpenShell route when the selected sandbox has shields up.
 Run `nemohermes <name> shields down`, apply the inference change, then run `nemohermes <name> shields up` again.
 
+Each OpenShell gateway exposes one inference route to every sandbox registered on that gateway.
+Before changing the route, NemoClaw compares the requested provider and model with every same-gateway registry entry, including stopped sandboxes.
+Custom compatible routes must also have matching normalized endpoint URLs and API families.
+If a route conflicts or a legacy custom route lacks enough endpoint or API-family metadata to prove compatibility, the command exits non-zero before changing the OpenShell route, agent config, or host registry and names the conflicting sandboxes.
+Align those sandboxes to the same route, remove the conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
+
 ```bash
 nemohermes inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
 ```
@@ -1942,19 +1978,21 @@ nemohermes my-assistant inference set --provider nvidia-prod --model nvidia/nemo
 ```
 
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
-If you only want the lower-level OpenShell route operation, run `openshell inference set -g nemoclaw --model <model> --provider <provider>` directly.
-When either flag is missing, `nemohermes inference set` prints that OpenShell command instead of an oclif flag-validation error.
+NemoClaw resolves the OpenShell gateway from the target sandbox's recorded gateway binding, including non-default `NEMOCLAW_GATEWAY_PORT` deployments.
+Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses registry compatibility checks and can break other sandboxes.
+When either flag is missing, `nemohermes inference set` reports both required flags without suggesting a raw OpenShell command.
 The command updates the host registry immediately after the gateway route changes.
 If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry aligned, warns that the running image may still need a rebuild, and points you to `nemohermes <name> rebuild`.
 
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
-When switching to `compatible-endpoint` or `compatible-anthropic-endpoint` from a different provider family, pass `--endpoint-url` with the trusted custom provider URL so NemoClaw can persist durable rebuild metadata.
+When switching to `compatible-endpoint` or `compatible-anthropic-endpoint` from a different provider family, pass `--endpoint-url` with the trusted custom provider URL and, except for the Hermes case below, `--inference-api` with its API family so NemoClaw can persist a complete route identity for rebuild and shared-gateway checks.
+For a Hermes `compatible-anthropic-endpoint` target, `--inference-api` may be omitted because NemoClaw deterministically selects `openai-completions`; an explicit different API family is rejected.
 NemoClaw rejects loopback, link-local, private, and internal endpoint addresses, including public hostnames that resolve to a private address.
 For public HTTP URLs, NemoClaw stores the validated IP address to prevent DNS rebinding.
 DNS-backed HTTPS URLs are rejected because NemoClaw cannot pin the downstream peer address while preserving TLS SNI and host validation across the OpenShell runtime boundary; HTTPS IP-literal URLs remain supported.
 NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
-`--credential-env` and `--inference-api` may also be supplied for the compatible provider metadata; supported API values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
+`--credential-env` may also be supplied for compatible provider metadata; supported `--inference-api` values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
 
 ### `nemohermes setup`
 

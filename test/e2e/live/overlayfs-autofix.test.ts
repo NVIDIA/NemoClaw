@@ -10,7 +10,6 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { negativeOverlayOutcome } from "./overlayfs-autofix-outcome.ts";
 
@@ -142,7 +141,7 @@ async function waitForDocker(host: HostCliClient): Promise<boolean> {
   return ready;
 }
 
-test.skipIf(!shouldRunLiveE2E() || overlayfsAutofixNotInRuntimePath())(
+test.skipIf(overlayfsAutofixNotInRuntimePath())(
   "overlayfs-autofix: patched cluster image handles Docker containerd overlayfs",
   async ({ artifacts, cleanup, host, secrets, skip }) => {
     assertTestOwnedSandboxName();
