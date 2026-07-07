@@ -3,7 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
+import {
+  createRebuildProviderReconfigureHandoff,
+  type RegistryInferenceRoute,
+  validateRebuildProviderReconfigureHandoff,
+} from "../../onboard/rebuild-route-handoff";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { prepareRebuildRecreateOptions } from "./rebuild-target-staging";
@@ -43,6 +47,25 @@ const bail = (message: string): never => {
 };
 
 describe("prepareRebuildRecreateOptions", () => {
+  it("binds provider reconfiguration authority to the exact rebuild target (#6114)", () => {
+    const handoff = createRebuildProviderReconfigureHandoff({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "nvidia/model",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      endpointUrl: "https://inference.example.test/v1",
+    });
+
+    expect(Object.isFrozen(handoff)).toBe(true);
+    expect(validateRebuildProviderReconfigureHandoff(handoff, handoff)).toBe(true);
+    expect(() =>
+      validateRebuildProviderReconfigureHandoff(handoff, {
+        ...handoff,
+        endpointUrl: "https://other.example.test/v1",
+      }),
+    ).toThrow("does not match the authoritative target");
+  });
+
   it("carries the immutable pre-delete registry route into the one-shot onboard call", () => {
     const options = prepareRebuildRecreateOptions(
       "alpha",

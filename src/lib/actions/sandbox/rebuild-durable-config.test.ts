@@ -155,6 +155,36 @@ describe("resolveRebuildDurableConfig", () => {
     expect(config.fromDockerfileError).toContain("cannot distinguish");
   });
 
+  it("accepts an ambiguous legacy image only with scoped managed-image confirmation (#6114)", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", nemoclawVersion: null },
+      createSession({ sandboxName: "other" }),
+      undefined,
+      undefined,
+      true,
+    );
+    expect(config.fromDockerfile).toBeNull();
+    expect(config.fromDockerfileError).toBeNull();
+  });
+
+  it("rejects matching-session custom-image evidence despite legacy confirmation (#6114)", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", provider: "ollama-local", model: "model", nemoclawVersion: null },
+      createSession({
+        sandboxName: "alpha",
+        provider: "ollama-local",
+        model: "model",
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: "/tmp/custom.Dockerfile" },
+      }),
+      undefined,
+      undefined,
+      true,
+    );
+    expect(config.fromDockerfileError).toContain("conflicts with a recorded custom --from image");
+  });
+
   it("accepts explicit managed-image provenance for an old agent runtime", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",

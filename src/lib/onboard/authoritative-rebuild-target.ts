@@ -5,6 +5,7 @@ import { findDashboardForwardOwner } from "./dashboard-port";
 import { resolveGatewayName } from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
+import { validateRebuildProviderReconfigureHandoff } from "./rebuild-route-handoff";
 import type { OnboardOptions } from "./types";
 
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
@@ -19,6 +20,8 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort"
 > & {
   authoritativeResumeConfig: true;
+  /** Internal prepared-backup recovery defers route repair to authoritative onboard. */
+  deferInferenceRouteUntilOnboard?: true;
   model: string;
   provider: string;
   sandboxName: string;
@@ -60,12 +63,60 @@ export function resolveAuthoritativeOnboardGatewayBinding(
 }
 
 export type AuthoritativeRebuildTarget = {
+  deferInferenceRouteUntilOnboard?: true;
   sandboxName: string;
   provider: string;
   model: string;
   targetGatewayName: string;
   controlUiPort: number | null;
 };
+
+/** Validate the one-shot authority to reconstruct a provider during a locked rebuild resume. */
+function validateRebuildHandoff(
+  opts: OnboardOptions,
+  target: {
+    sandboxName: string | null;
+    provider: string | null;
+    model: string | null;
+    credentialEnv: string | null;
+    endpointUrl: string | null;
+  },
+): boolean {
+  const handoff = opts.rebuildProviderReconfigure;
+  if (!handoff) return false;
+  if (
+    opts.authoritativeResumeConfig !== true ||
+    opts.resume !== true ||
+    opts.recreateSandbox !== true ||
+    opts.onboardLockAlreadyHeld !== true ||
+    !target.sandboxName ||
+    !target.provider ||
+    !target.model ||
+    !target.credentialEnv
+  ) {
+    throw new Error(
+      "Prepared provider reconfiguration requires an authoritative locked rebuild resume.",
+    );
+  }
+  return validateRebuildProviderReconfigureHandoff(handoff, {
+    sandboxName: target.sandboxName,
+    provider: target.provider,
+    model: target.model,
+    credentialEnv: target.credentialEnv,
+    endpointUrl: target.endpointUrl,
+  });
+}
+
+/** Derive the provider-phase authority from one validated rebuild handoff. */
+export function rebuildProviderFlowOptions(
+  opts: OnboardOptions,
+  target: Parameters<typeof validateRebuildHandoff>[1],
+): { authoritativeResumeConfig: boolean; forceInferenceSetup: boolean } {
+  return {
+    authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+    forceInferenceSetup: validateRebuildHandoff(opts, target),
+  };
+}
 
 export type AuthoritativeRebuildTargetDeps = {
   runFatalRuntimePreflight(): unknown;
@@ -90,7 +141,14 @@ export async function preflightAuthoritativeRebuildTarget(
   try {
     deps.runFatalRuntimePreflight();
     deps.ensureOpenshell();
-    if (!deps.inferenceRouteReady(target.provider, target.model)) {
+    // Prepared-backup recovery can run after the installer has replaced a
+    // legacy gateway. That fresh gateway has no inference route to validate
+    // yet; authoritative onboarding configures and verifies the pinned route
+    // before recreating the sandbox. Normal rebuilds must still match here.
+    if (
+      target.deferInferenceRouteUntilOnboard !== true &&
+      !deps.inferenceRouteReady(target.provider, target.model)
+    ) {
       fail(
         `OpenShell inference route does not match provider '${target.provider}' and model '${target.model}'.`,
       );

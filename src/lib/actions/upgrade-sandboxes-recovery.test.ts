@@ -1,19 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-type UpgradeSandboxes = typeof import("./upgrade-sandboxes")["upgradeSandboxes"];
+import * as coreVersion from "../core/version";
+import * as sandboxList from "../openshell-sandbox-list";
+import * as sandboxVersion from "../sandbox/version";
+import * as registry from "../state/registry";
+import * as sandboxState from "../state/sandbox";
+import { upgradeSandboxes, upgradeSandboxesDependencies } from "./upgrade-sandboxes";
 
-const requireDist = createRequire(import.meta.url);
-const upgradeModulePath = "./upgrade-sandboxes.js";
-
-// Warm the CommonJS source graph outside the first test's timeout. Each harness
-// still reloads the entry module after installing its dependency spies.
-requireDist(upgradeModulePath);
-delete require.cache[requireDist.resolve(upgradeModulePath)];
+type UpgradeSandboxes = typeof upgradeSandboxes;
 
 function makeManifest(sandboxName: string) {
   const timestamp = `2026-07-01T06-50-4${sandboxName.length}-044Z`;
@@ -46,11 +43,13 @@ function createRecoveryHarness(
     registryOverrides?: Record<
       string,
       Partial<{
-        agent: "openclaw" | "hermes" | null;
+        agent: "openclaw" | "hermes" | "langchain-deepagents-code" | null;
         agentVersion: string | null;
         nemoclawVersion: string | null;
+        fromDockerfile: string | null;
       }>
     >;
+    confirmedLegacyManagedNames?: string[] | string;
     staleNames?: string[];
     useRealManagedEvidence?: boolean;
   } = {},
@@ -61,21 +60,20 @@ function createRecoveryHarness(
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
   liveListSpy: ReturnType<typeof vi.spyOn>;
 } {
-  delete require.cache[requireDist.resolve(upgradeModulePath)];
   vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
-  vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(options.gatewayPort ?? 8080));
-  delete require.cache[requireDist.resolve("../core/ports.js")];
-
-  const coreVersion = requireDist("../core/version.js");
-  const sandboxList = requireDist("../openshell-sandbox-list.js");
-  const sandboxVersion = requireDist("../sandbox/version.js");
-  const registry = requireDist("../state/registry.js");
-  const sandboxState = requireDist("../state/sandbox.js");
-  const rebuild = requireDist("./sandbox/rebuild.js");
+  vi.stubEnv(
+    "NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES",
+    typeof options.confirmedLegacyManagedNames === "string"
+      ? options.confirmedLegacyManagedNames
+      : JSON.stringify(options.confirmedLegacyManagedNames ?? []),
+  );
 
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  vi.spyOn(upgradeSandboxesDependencies, "getGatewayPort").mockReturnValue(
+    options.gatewayPort ?? 8080,
+  );
   vi.spyOn(coreVersion, "getVersion").mockReturnValue("0.0.71");
   const liveListSpy = vi
     .spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit")
@@ -84,6 +82,7 @@ function createRecoveryHarness(
       output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
     });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
+    defaultSandbox: null,
     sandboxes: names.map((name) => ({
       name,
       agent: null,
@@ -100,6 +99,7 @@ function createRecoveryHarness(
       sandboxVersion: options.staleNames?.includes(name) === true ? "2026.5.26" : "2026.5.27",
       expectedVersion: "2026.5.27",
       isStale: options.staleNames?.includes(name) === true,
+      verificationFailed: false,
       detectionMethod: "registry",
     };
   });
@@ -117,10 +117,12 @@ function createRecoveryHarness(
   const managedEvidenceSpy = options.useRealManagedEvidence
     ? vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence")
     : vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(true);
-  const rebuildSpy = vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
+  const rebuildSpy = vi
+    .spyOn(upgradeSandboxesDependencies, "rebuildSandbox")
+    .mockResolvedValue(undefined);
 
   return {
-    upgradeSandboxes: requireDist(upgradeModulePath).upgradeSandboxes,
+    upgradeSandboxes,
     rebuildSpy,
     latestBackupSpy,
     managedEvidenceSpy,
@@ -131,7 +133,6 @@ function createRecoveryHarness(
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  delete require.cache[requireDist.resolve(upgradeModulePath)];
 });
 
 describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
@@ -197,6 +198,127 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("registry has no NemoClaw-managed image fingerprint"),
     );
+  });
+
+  it("fails closed for an absent same-gateway legacy sandbox without a managed fingerprint", async () => {
+    const harness = createRecoveryHarness(["legacy-box"], {
+      liveOutput: "other-box Ready",
+      registryOverrides: {
+        "legacy-box": { nemoclawVersion: null },
+      },
+      useRealManagedEvidence: true,
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.liveListSpy).toHaveBeenCalledTimes(2);
+    expect(harness.latestBackupSpy).toHaveBeenCalledWith("legacy-box");
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("registry has no NemoClaw-managed image fingerprint"),
+    );
+  });
+
+  it("recovers an explicitly confirmed v0.0.55 managed-image row (#6114)", async () => {
+    const harness = createRecoveryHarness(["legacy-box"], {
+      confirmedLegacyManagedNames: ["legacy-box"],
+      registryOverrides: {
+        "legacy-box": { agent: null, nemoclawVersion: null },
+      },
+      useRealManagedEvidence: true,
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.rebuildSpy).toHaveBeenCalledWith("legacy-box", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "legacy-box" }),
+      allowLegacyManagedImageRecovery: true,
+    });
+  });
+
+  it("does not apply legacy confirmation to another sandbox name (#6114)", async () => {
+    const harness = createRecoveryHarness(["legacy-box"], {
+      confirmedLegacyManagedNames: ["other-box"],
+      registryOverrides: {
+        "legacy-box": { agent: null, nemoclawVersion: null },
+      },
+      useRealManagedEvidence: true,
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(console.warn).toHaveBeenCalledWith(
+      '  Warning: confirmed legacy managed-image sandbox "other-box" is not registered; ignoring it.',
+    );
+  });
+
+  it.each([
+    "not-json",
+    '{"legacy-box":true}',
+    '["legacy-box",1]',
+  ])("rejects malformed scoped confirmation %s (#6114)", async (confirmedLegacyManagedNames) => {
+    const harness = createRecoveryHarness(["legacy-box"], {
+      confirmedLegacyManagedNames,
+      registryOverrides: {
+        "legacy-box": { agent: null, nemoclawVersion: null },
+      },
+      useRealManagedEvidence: true,
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not let legacy confirmation override a recorded custom image (#6114)", async () => {
+    const harness = createRecoveryHarness(["custom-box"], {
+      confirmedLegacyManagedNames: ["custom-box"],
+      registryOverrides: {
+        "custom-box": {
+          agent: null,
+          nemoclawVersion: null,
+          fromDockerfile: "/tmp/custom.Dockerfile",
+        },
+      },
+      useRealManagedEvidence: true,
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not authorize DCode with a legacy managed-image confirmation (#6114)", async () => {
+    const harness = createRecoveryHarness(["dcode-box"], {
+      confirmedLegacyManagedNames: ["dcode-box"],
+      registryOverrides: {
+        "dcode-box": { agent: "langchain-deepagents-code", nemoclawVersion: null },
+      },
+      useRealManagedEvidence: true,
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
   });
 
   it("warns and does not recover a stale registered sandbox absent from the selected gateway", async () => {

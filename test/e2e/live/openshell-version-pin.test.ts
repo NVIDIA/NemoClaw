@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // #3474). The former bash script is a hermetic installer-script behavioral
 // test: it runs scripts/install-openshell.sh under a stubbed PATH where the
@@ -19,7 +20,6 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 // no environment phase, no lifecycle. The test consumes only the `artifacts`
 // fixture from e2e-test.ts so failures attach the per-target artifact root.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 
 test("openshell-version-pin: selects shipping 0.0.72 between older and too-new releases", () => {
@@ -310,9 +310,8 @@ async function runVersionPinTarget(
   artifacts: ArtifactSink,
   options: { ghDownloadMode: GhDownloadMode },
 ): Promise<void> {
-  await artifacts.writeJson("target.json", {
+  await artifacts.target.declare({
     id: "openshell-version-pin",
-    runner: "vitest",
     boundary: "installer-script-unit",
     regressionTarget: "#3474",
     ghDownloadMode: options.ghDownloadMode,

@@ -17,11 +17,10 @@ import { assertExitZero, resultText, sandboxAccessEnv } from "../fixtures/client
 import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-survival";
 const MIN_OPENSHELL_VERSION = "0.0.24";
 const MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
@@ -71,7 +70,7 @@ async function expectSandboxExecAlive(
   expect(alive.stdout.trim(), resultText(alive)).toBe("alive");
 }
 
-test.skipIf(!shouldRunLiveE2E())(
+test(
   "sandbox survives gateway restart with registry, state, SSH, and live inference intact",
   async ({
     artifacts,
@@ -88,9 +87,8 @@ test.skipIf(!shouldRunLiveE2E())(
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "sandbox-survival",
-      runner: "vitest",
       boundary: "install-sh-docker-openshell-gateway-sandbox-inference",
       contracts: [
         "install.sh --non-interactive creates the named OpenClaw sandbox",
@@ -304,7 +302,7 @@ test.skipIf(!shouldRunLiveE2E())(
       new RegExp(`(^|\\s)${SANDBOX_NAME}(\\s|$)`, "m"),
     );
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "sandbox-survival",
       status: "passed",
       assertions: {
