@@ -485,7 +485,6 @@ class _MetadataOnlyGraphCallbacks:
                 name,
                 nemo_relay.ScopeType.Agent,
                 handle=parent,
-                metadata={"integration": "langgraph"},
             )
         except Exception:  # noqa: BLE001 - observability must not fail agent work
             logger.debug("NeMo Relay scope start failed", exc_info=True)
@@ -521,7 +520,13 @@ class _MetadataOnlyGraphCallbacks:
         if handle is None:
             return
         try:
-            nemo_relay.scope.pop(handle, metadata={"otel.status_code": status})
+            nemo_relay.scope.pop(
+                handle,
+                metadata={
+                    "integration": "langgraph",
+                    "otel.status_code": status,
+                },
+            )
         except Exception:  # noqa: BLE001 - observability must not fail agent work
             logger.debug("NeMo Relay scope end failed", exc_info=True)
 

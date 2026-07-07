@@ -33,6 +33,9 @@ from langchain_core.messages import ToolMessage
 from langchain_core.runnables.config import get_async_callback_manager_for_config
 from langchain_core.runnables.config import get_callback_manager_for_config
 from langgraph._internal._config import ensure_config as ensure_langgraph_config
+from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+    ExportTraceServiceRequest,
+)
 
 _EXPECTED_RELAY_VERSION = "0.4.0"
 _EXPECTED_LANGGRAPH_VERSION = "1.2.6"
@@ -433,6 +436,43 @@ def _assert_only_managed_handler(manager: Any, managed_handler: Any) -> None:
         raise AssertionError("an invocation callback became inheritable")
 
 
+def _assert_unique_attributes(attributes: Any, location: str) -> None:
+    seen: set[str] = set()
+    for attribute in attributes:
+        if attribute.key in seen:
+            raise AssertionError(f"{location} contains duplicate OTLP attribute keys")
+        seen.add(attribute.key)
+
+
+def _assert_unique_otlp_attribute_keys(body: bytes, request_index: int) -> None:
+    request = ExportTraceServiceRequest.FromString(body)
+    for resource_index, resource_spans in enumerate(request.resource_spans, 1):
+        resource_location = (
+            f"OTLP request {request_index} resource {resource_index}"
+        )
+        _assert_unique_attributes(
+            resource_spans.resource.attributes, resource_location
+        )
+        for scope_index, scope_spans in enumerate(resource_spans.scope_spans, 1):
+            scope_location = f"{resource_location} scope {scope_index}"
+            _assert_unique_attributes(
+                scope_spans.scope.attributes, scope_location
+            )
+            for span_index, span in enumerate(scope_spans.spans, 1):
+                span_location = f"{scope_location} span {span_index}"
+                _assert_unique_attributes(span.attributes, span_location)
+                for event_index, event in enumerate(span.events, 1):
+                    _assert_unique_attributes(
+                        event.attributes,
+                        f"{span_location} event {event_index}",
+                    )
+                for link_index, link in enumerate(span.links, 1):
+                    _assert_unique_attributes(
+                        link.attributes,
+                        f"{span_location} link {link_index}",
+                    )
+
+
 def _assert_callback_manager_boundary(observability: ModuleType) -> None:
     bound_manager = observability.new_metadata_only_callback_manager()
     managed_handler = bound_manager.handlers[0]
@@ -522,7 +562,7 @@ def _assert_wire_requests(
             f"expected {_EXPECTED_REQUEST_COUNT} OTLP requests, received {len(requests)}"
         )
 
-    for request in requests:
+    for request_index, request in enumerate(requests, 1):
         if request.method != "POST" or request.path != "/v1/traces":
             raise AssertionError(
                 f"unexpected OTLP route: {request.method} {request.path}"
@@ -536,6 +576,7 @@ def _assert_wire_requests(
             raise AssertionError("OTLP request is not binary protobuf")
         if int(request.headers["content-length"]) != len(request.body):
             raise AssertionError("OTLP content-length does not match its body")
+        _assert_unique_otlp_attribute_keys(request.body, request_index)
 
     bodies = b"".join(request.body for request in requests)
     header_values = "\n".join(

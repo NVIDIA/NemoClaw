@@ -199,7 +199,7 @@ It also replaces original exception text with a stable redacted error.
 Model request traces include only the bounded messages and sanitized model identifier.
 They exclude request headers, `model_settings`, `response_format`, and tool definitions or schemas.
 Model and tool spans carry the bounded content used for debugging.
-LangGraph node scopes export only bounded node names and success or error status.
+LangGraph node scopes export only bounded node names, a static LangGraph integration label, and success or error status.
 They omit raw graph inputs and outputs, callback metadata, checkpoint payloads, and interrupt or resume values so a node span does not duplicate the full conversation and graph state.
 These controls bound payload shape and remove recognized key classes, but they do not classify arbitrary text values.
 A secret pasted into a prompt, model response, shell command, tool result, file body, or unrecognized field can still be exported.

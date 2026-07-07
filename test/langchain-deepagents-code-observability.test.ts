@@ -101,11 +101,10 @@ describe("managed Deep Agents Code observability", () => {
           operation: "push",
           name: "model",
           category: "agent",
-          metadata: { integration: "langgraph" },
         },
         {
           operation: "pop",
-          metadata: { "otel.status_code": "ERROR" },
+          metadata: { integration: "langgraph", "otel.status_code": "ERROR" },
         },
         {
           operation: "event",
