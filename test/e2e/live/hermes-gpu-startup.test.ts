@@ -190,26 +190,7 @@ test("hermes-gpu-startup: selected OpenShell GPU route reaches stable Ready stat
   });
   expect(dockerInfo.exitCode, resultText(dockerInfo)).toBe(0);
 
-  const hostAddressProbe = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        'ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk \'{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}\')"',
-        'test -n "$ip_addr" || ip_addr="$(hostname -I 2>/dev/null | awk \'{print $1}\')"',
-        'test -n "$ip_addr"',
-        'printf "%s\\n" "$ip_addr"',
-      ].join("\n"),
-    ],
-    {
-      artifactName: "phase-1-sandbox-reachable-host-address",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(hostAddressProbe.exitCode, resultText(hostAddressProbe)).toBe(0);
-  const hostAddress = hostAddressProbe.stdout.trim().split(/\s+/)[0];
-  expect(hostAddress).toBeTruthy();
+  const hostAddress = "host.openshell.internal";
 
   const fake = await startFakeOpenAiCompatibleServer({
     apiKey: FAKE_API_KEY,
