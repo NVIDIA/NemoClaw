@@ -447,7 +447,7 @@ chmod 755 ${shellQuote(oldInstaller)}`,
   );
   const expectedHead = await bash(
     host,
-    `git ls-remote https://github.com/NVIDIA/NemoClaw.git refs/tags/${shellQuote(OLD_NEMOCLAW_REF)} | awk '{print $1}'`,
+    `resolved=$(git ls-remote https://github.com/NVIDIA/NemoClaw.git ${shellQuote(`refs/tags/${OLD_NEMOCLAW_REF}^{}`)} | awk '{print $1}'); if [ -z "$resolved" ]; then resolved=$(git ls-remote https://github.com/NVIDIA/NemoClaw.git ${shellQuote(`refs/tags/${OLD_NEMOCLAW_REF}`)} | awk '{print $1}'); fi; printf '%s\n' "$resolved"`,
     { artifactName: "old-source-expected-head", timeoutMs: 60_000 },
   );
   expectExitZero(sourceHead, "read old source head");
