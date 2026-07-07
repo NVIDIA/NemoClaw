@@ -50,8 +50,10 @@ export interface EndpointSsrfPreflightResult {
    * pinning (curl `--resolve`) so a subsequent probe cannot re-resolve the name
    * to a rebound private/internal address (TOCTOU). Present only when
    * `ok === true` and pinning applies — resolved public names and public IP
-   * literals. Absent for an explicit-loopback host (already local; no rebind
-   * surface) so callers connect normally.
+   * literals. An empty array is the explicit trusted-no-pin capability for
+   * loopback, OpenShell-managed aliases, and public IP literals. Callers must
+   * preserve it so credentialed probes bypass ambient proxies even when no
+   * curl `--resolve` argument is needed.
    */
   addresses?: string[];
 }
@@ -89,14 +91,14 @@ export async function assertEndpointResolvesPublic(
   }
 
   // An explicit loopback host is a legitimate local inference server.
-  if (isLoopbackHostname(hostname)) return { ok: true };
+  if (isLoopbackHostname(hostname)) return { ok: true, addresses: [] };
 
   // NemoClaw's own OpenShell-managed aliases (inference.local, host.*.internal)
   // resolve to the managed proxy/loopback by design and are trusted, not
   // rebinding surfaces. Exempt like loopback — connect normally (no pinning) —
   // and exempt BEFORE isPrivateHostname, which would otherwise reject their
   // reserved .local/.internal suffixes (#6293).
-  if (isOpenShellManagedHost(hostname)) return { ok: true };
+  if (isOpenShellManagedHost(hostname)) return { ok: true, addresses: [] };
 
   // A literal private IP or reserved private name is refused without resolving.
   if (isPrivateHostname(hostname)) {
@@ -107,7 +109,7 @@ export async function assertEndpointResolvesPublic(
   // the URL already contains the address curl will connect to.
   const bare =
     hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  if (isIP(bare)) return { ok: true };
+  if (isIP(bare)) return { ok: true, addresses: [] };
 
   let addresses: Array<{ address: string; family?: number }>;
   try {

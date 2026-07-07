@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createOpenClawQrTerminalLoaderSource,
+  createOpenClawQrTerminalSyncLoadHook,
   describeOpenClawQrTerminalPatchSkip,
   isQrcodePackage,
   isQrcodeTerminalPackage,
@@ -175,6 +176,17 @@ describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
     expect(loader).toContain("const integrity = sha256Hex(source);");
     expect(loader).toContain("warnOpenClawQrPatchSkip(skipReason)");
     expect(loader).toContain("patchOpenClawQrTerminalRendererSource(source, integrity)");
+  });
+
+  it("provides a synchronous registerHooks loader that composes with other preloads", () => {
+    const nextLoad = vi.fn(() => ({ format: "module", source: "export const value = 1;" }));
+    const hook = createOpenClawQrTerminalSyncLoadHook();
+
+    const result = hook("file:///tmp/unrelated.mjs", {}, nextLoad);
+
+    expect(result).toEqual({ format: "module", source: "export const value = 1;" });
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(nextLoad).toHaveBeenCalledTimes(1);
   });
 
   it("emits non-secret loader diagnostics when the source rewrite is skipped", () => {

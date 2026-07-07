@@ -107,10 +107,19 @@ function containsExactJsonToken(value: unknown, token: string): boolean {
   return false;
 }
 
-function expectHermeticCompatibleEndpointUsed(fake: FakeOpenAiCompatibleServer): void {
-  const requests = fake.requests();
+function expectHermeticCompatibleEndpointUsed(
+  fake: FakeOpenAiCompatibleServer,
+  requestOffset: number,
+): void {
+  const requests = fake.requests().slice(requestOffset);
   expect(
-    requests.some((entry) => entry.method === "GET" && entry.path === "/v1/models"),
+    requests.some(
+      (entry) =>
+        entry.method === "GET" &&
+        entry.path === "/v1/models" &&
+        entry.authorizationSent === true &&
+        entry.auth === "ok",
+    ),
     `expected authenticated fake endpoint discovery, got ${JSON.stringify(requests)}`,
   ).toBe(true);
   expect(
@@ -171,6 +180,7 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
     model: FAKE_COMPATIBLE_MODEL,
     publicHost: fakePublicHost,
     requireAuth: true,
+    requireAuthModels: true,
   });
   cleanup.add("close fake OpenAI-compatible endpoint", async () => {
     await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
@@ -183,8 +193,11 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
   });
   const localModelsUrl = new URL(`${fake.baseUrl}/models`);
   localModelsUrl.hostname = "127.0.0.1";
-  const modelsResponse = await fetch(localModelsUrl);
+  const modelsResponse = await fetch(localModelsUrl, {
+    headers: { Authorization: `Bearer ${FAKE_COMPATIBLE_AUTH_VALUE}` },
+  });
   expect(modelsResponse.ok, `fake endpoint ${fake.baseUrl}/models should be reachable`).toBe(true);
+  const onboardingRequestOffset = fake.requests().length;
 
   // ──────────────────────────────────────────────────────────────────
   // Phase 0 (deferred): pre-cleanup of leftover sandbox/session state.
@@ -309,7 +322,7 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
   expect(interrupted.failure?.step).toBe("policies");
 
   await artifacts.writeJson("phase-2-fake-openai-compatible-requests.json", fake.requests());
-  expectHermeticCompatibleEndpointUsed(fake);
+  expectHermeticCompatibleEndpointUsed(fake, onboardingRequestOffset);
 
   // ──────────────────────────────────────────────────────────────────
   // Phase 3: resume — NVIDIA_INFERENCE_API_KEY and COMPATIBLE_API_KEY are

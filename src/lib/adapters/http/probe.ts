@@ -26,7 +26,11 @@ export interface CurlProbeOptions {
   timeoutMs?: number;
   /** Absolute or cwd-relative curl config files created by trusted NemoClaw callers. */
   trustedConfigFiles?: readonly string[];
-  /** Public addresses approved by the endpoint SSRF preflight. */
+  /**
+   * Connection capability returned by the endpoint SSRF preflight. A defined
+   * value, including `[]` for an approved no-DNS origin, requires direct
+   * connection with ambient proxies disabled.
+   */
   pinnedAddresses?: readonly string[];
   spawnSyncImpl?: (
     command: string,
@@ -51,11 +55,14 @@ function resolveCurlProbeSpawnEnv(
   const env = opts.replaceEnv
     ? scrubCredentialEnv(opts.env ?? {})
     : buildScrubbedCurlProbeEnv(opts.env ?? {});
-  if (!args.some((arg) => arg === "--resolve" || arg.startsWith("--resolve="))) return env;
+  const hasPreflightCapability = opts.pinnedAddresses !== undefined;
+  const hasResolvePin = args.some((arg) => arg === "--resolve" || arg.startsWith("--resolve="));
+  if (!hasPreflightCapability && !hasResolvePin) return env;
 
-  // A proxy defeats origin --resolve pinning: curl sends CONNECT host:port and
-  // lets the proxy perform a fresh, attacker-rebindable DNS lookup. Pinned
-  // probes therefore bypass every curl proxy environment spelling fail-closed.
+  // A proxy defeats the preflight trust boundary: curl sends CONNECT host:port
+  // and delegates origin selection (and DNS for names) to the proxy. Every
+  // preflight-approved probe therefore bypasses all proxy env spellings,
+  // including approved no-pin loopback, managed-alias, and IP-literal origins.
   for (const name of [
     "HTTP_PROXY",
     "HTTPS_PROXY",

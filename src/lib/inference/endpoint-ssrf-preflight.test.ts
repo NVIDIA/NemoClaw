@@ -48,6 +48,7 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     const lookup = vi.fn<EndpointDnsLookupFn>();
     const result = await assertEndpointResolvesPublic(endpointUrl, lookup);
     expect(result.ok).toBe(true);
+    expect(result.addresses).toEqual([]);
     expect(lookup).not.toHaveBeenCalled();
   });
 
@@ -55,7 +56,7 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     const lookup = vi.fn<EndpointDnsLookupFn>();
     const result = await assertEndpointResolvesPublic("https://93.184.216.34/v1", lookup);
     expect(result.ok).toBe(true);
-    expect(result.addresses).toBeUndefined();
+    expect(result.addresses).toEqual([]);
     expect(lookup).not.toHaveBeenCalled();
   });
 
@@ -97,9 +98,9 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     const lookup = vi.fn<EndpointDnsLookupFn>();
     const result = await assertEndpointResolvesPublic(endpointUrl, lookup);
     expect(result.ok).toBe(true);
-    // Managed aliases connect normally through the OpenShell proxy — no
-    // --resolve pinning (no addresses) and no DNS lookup.
-    expect(result.addresses).toBeUndefined();
+    // Managed aliases need no --resolve pin, but the defined empty capability
+    // still forces credentialed host probes to bypass ambient proxies.
+    expect(result.addresses).toEqual([]);
     expect(lookup).not.toHaveBeenCalled();
   });
 });

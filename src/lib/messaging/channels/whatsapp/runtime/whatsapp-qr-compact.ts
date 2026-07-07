@@ -198,6 +198,35 @@ function warnWhatsappQrCompact(message) {
   }
 }
 
+function openClawQrLoaderSourceToText(source) {
+  if (typeof source === "string") return source;
+  if (typeof Buffer !== "undefined") {
+    if (Buffer.isBuffer(source)) return source.toString("utf8");
+    if (source instanceof Uint8Array) return Buffer.from(source).toString("utf8");
+    if (source instanceof ArrayBuffer) return Buffer.from(source).toString("utf8");
+  }
+  return null;
+}
+
+function createOpenClawQrTerminalSyncLoadHook() {
+  var createHash = require("node:crypto").createHash;
+  return function nemoclawWhatsappQrLoadHook(urlValue, context, nextLoad) {
+    var result = nextLoad(urlValue, context);
+    if (!result || result.format !== "module") return result;
+    var source = openClawQrLoaderSourceToText(result.source);
+    if (source === null || !isOpenClawQrTerminalRendererSource(source)) return result;
+    var integrity = createHash("sha256").update(source).digest("hex");
+    var skipReason = describeOpenClawQrTerminalPatchSkip(source, integrity);
+    if (skipReason) {
+      warnWhatsappQrCompact(skipReason);
+      return result;
+    }
+    var patched = patchOpenClawQrTerminalRendererSource(source, integrity);
+    if (patched === source) return result;
+    return Object.assign({}, result, { source: patched });
+  };
+}
+
 // `qrcode` package main: renderQrTerminal() calls qrcode.toString(text, opts).
 // Require an OWN toString (every object inherits Object.prototype.toString, so
 // a plain `typeof mod.toString` check would also match qrcode's internal
@@ -366,6 +395,7 @@ export {
   patchOpenClawQrTerminalRendererSource,
   REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
   createOpenClawQrTerminalLoaderSource,
+  createOpenClawQrTerminalSyncLoadHook,
   patchQrcode,
   patchQrcodeTerminal,
   resolvePatchedModule,
@@ -373,7 +403,10 @@ export {
 
 function installOpenClawQrTerminalSourceLoader(Module) {
   if (process.__nemoclawWhatsappQrCompactSourceLoaderInstalled) return;
-  if (!Module || typeof Module.register !== "function") {
+  if (
+    !Module ||
+    (typeof Module.registerHooks !== "function" && typeof Module.register !== "function")
+  ) {
     warnWhatsappQrCompact(
       "OpenClaw QR renderer source loader registration is unavailable; explicit compact quiet-zone rewrite skipped",
     );
@@ -388,6 +421,15 @@ function installOpenClawQrTerminalSourceLoader(Module) {
   }
 
   try {
+    // Node's synchronous registerHooks API must be used when available. Mixing
+    // an async Module.register loader with another preload's synchronous hook
+    // chain makes later ESM loads call loadSync on an async customization
+    // object (notably the Slack provider preload). Keeping every modern-Node
+    // preload in the same synchronous chain avoids that runtime failure.
+    if (typeof Module.registerHooks === "function") {
+      Module.registerHooks({ load: createOpenClawQrTerminalSyncLoadHook() });
+      return;
+    }
     var loaderSource = createOpenClawQrTerminalLoaderSource();
     var loaderUrl =
       "data:text/javascript;base64," + Buffer.from(loaderSource, "utf8").toString("base64");

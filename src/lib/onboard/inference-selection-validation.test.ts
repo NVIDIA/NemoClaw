@@ -120,6 +120,48 @@ describe("inference selection validation", () => {
     }
   });
 
+  it.each([
+    "http://127.0.0.1:8000/v1",
+    "https://inference.local/v1",
+    "https://93.184.216.34/v1",
+  ])("carries the approved no-pin capability to probes for %s (#6293)", async (endpointUrl) => {
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const resolveEndpointHost = vi.fn(async () => [{ address: "10.0.0.8", family: 4 }]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost,
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomOpenAiLikeSelection(
+          "Custom endpoint",
+          endpointUrl,
+          "model-a",
+          "COMPATIBLE_API_KEY",
+        ),
+      ).resolves.toEqual({
+        ok: true,
+        api: "openai-completions",
+        pinnedAddresses: [],
+      });
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        endpointUrl,
+        "model-a",
+        "test-key",
+        expect.objectContaining({ pinnedAddresses: [] }),
+      );
+      expect(resolveEndpointHost).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("exits non-interactively when a custom Anthropic endpoint resolves to link-local metadata, without probing (#6293)", async () => {
     const originalExitCode = process.exitCode;
     const probeAnthropicEndpoint = vi.fn();
