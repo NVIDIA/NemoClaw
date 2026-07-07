@@ -13,6 +13,8 @@ import { testTimeout } from "../../helpers/timeouts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   buildMcpDnsRebindingProbeScript,
+  hostAddressForSandbox,
+  hostPrivateAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,
   restoreDnsRebindingHostsFixture,
 } from "../live/mcp-bridge-sandbox.ts";
@@ -81,6 +83,20 @@ async function captureRestoreScript(hostBackupPath: string, sandboxBackupPath: s
 }
 
 describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
+  it("separates the managed endpoint alias from the concrete rebinding address", async () => {
+    let probeScript = "";
+    const host = {
+      command: async (_command: string, args: string[]) => {
+        probeScript = args[1] ?? "";
+        return { ...denialResult(), stdout: "10.20.30.40\n" };
+      },
+    } as unknown as HostCliClient;
+
+    await expect(hostAddressForSandbox(host)).resolves.toBe("host.openshell.internal");
+    await expect(hostPrivateAddressForSandbox(host)).resolves.toBe("10.20.30.40");
+    expect(probeScript).toContain("ip route get 1.1.1.1");
+  });
+
   it("accepts an L7 HTTP 403 denial", () => {
     expect(
       isExpectedMcpCurlPolicyDenial(denialResult({ stdout: "NEMOCLAW_MCP_CURL_HTTP_CODE=403\n" })),
