@@ -8,6 +8,7 @@ import {
   type HostCliClient,
   resultText,
   type SandboxClient,
+  trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -256,6 +257,25 @@ test("hermes-gpu-startup: selected OpenShell GPU route reaches stable Ready stat
     status,
   });
 
+  const inference = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
+        {
+          model: FAKE_MODEL,
+          messages: [{ role: "user", content: "reply with OK" }],
+          max_tokens: 8,
+        },
+      )}'`,
+    ),
+    {
+      artifactName: "phase-5-authenticated-inference-post",
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  expect(inference.exitCode, resultText(inference)).toBe(0);
+
   const fakeRequests = fake.requests();
   const inferencePosts = fakeRequests.filter(
     (request) =>
@@ -269,6 +289,7 @@ test("hermes-gpu-startup: selected OpenShell GPU route reaches stable Ready stat
     `expected authenticated fake inference POST, got ${JSON.stringify(fakeRequests)}`,
   ).toBeGreaterThan(0);
   expect(inferencePosts.filter((request) => request.auth !== "ok")).toEqual([]);
+  expect(inferencePosts.filter((request) => request.authorizationSent !== true)).toEqual([]);
   expect(inferencePosts.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0)).toEqual([]);
   expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
   expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
