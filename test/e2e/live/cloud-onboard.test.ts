@@ -72,13 +72,14 @@ async function assertPackagedInitialCliPairing(sandbox: SandboxClient): Promise<
     trustedSandboxShellScript(String.raw`
 set -euo pipefail
 auto_pair_log=/tmp/auto-pair.log
-deadline=$((SECONDS + 30))
+attempt=0
 while ! grep -q 'approved initial CLI pairing request=' "$auto_pair_log" 2>/dev/null; do
-  if [ "$SECONDS" -ge "$deadline" ]; then
+  if [ "$attempt" -ge 30 ]; then
     echo "INITIAL_CLI_PAIRING_MARKER_MISSING" >&2
     cat "$auto_pair_log" >&2 2>/dev/null || true
     exit 20
   fi
+  attempt=$((attempt + 1))
   sleep 1
 done
 
