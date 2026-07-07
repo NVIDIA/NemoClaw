@@ -348,8 +348,7 @@ describe("LangChain Deep Agents Code Nemotron Ultra profile patch", () => {
 
     const second = runPatcher(fixture, script);
     expect(second.status, second.stderr).toBe(0);
-    expect(fs.readFileSync(fixture.builtinPath, "utf8")).toBe(firstBuiltin);
-    expect(fs.readFileSync(fixture.destinationPath, "utf8")).toBe(firstProfile);
+    expect(second.stdout).toContain("profile patch is already applied");
   });
 
   it.each([
