@@ -50,10 +50,22 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 
 function normalizeMutableConfigPermsFor(configDir: string): string {
   const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-  return extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms").replace(
+  const normalizeFunction = extractShellFunctionFromSource(
+    startScript,
+    "normalize_mutable_config_perms",
+  ).replace(
     'local config_dir="/sandbox/.openclaw"',
     `local config_dir=${JSON.stringify(configDir)}`,
   );
+  const resolveNormalizerFunction = extractShellFunctionFromSource(
+    startScript,
+    "resolve_mutable_config_normalizer",
+  );
+  const reclaimFunction = extractShellFunctionFromSource(
+    startScript,
+    "reclaim_collapsed_mutable_config",
+  );
+  return [resolveNormalizerFunction, reclaimFunction, normalizeFunction].join("\n");
 }
 
 function modeBits(filePath: string): number {
@@ -704,8 +716,10 @@ process.stdout.write(JSON.stringify(calls));
           [
             "set -euo pipefail",
             // Model the descriptor observing root ownership without requiring
-            // the test runner itself to own this fixture as root.
-            'python3() { if [ "${2:-}" != "-" ]; then printf "unexpected helper invocation\\n" >&2; return 68; fi; cat >/dev/null; printf "0\\n"; }',
+            // the test runner itself to own this fixture as root: the initial
+            // classification reports uid 0, and reclaim-if-unsealed reports a
+            // sealed/no-op tree, so normalize must never reach chmod or find.
+            'python3() { if [ "${2:-}" = "-" ]; then cat >/dev/null; printf "0\\n"; return 0; fi; if [ "${3:-}" = "reclaim-if-unsealed" ]; then return 0; fi; printf "unexpected helper invocation\\n" >&2; return 68; }',
             'chmod() { printf "CHMOD %s\\n" "$*" >&2; exit 66; }',
             'find() { printf "FIND %s\\n" "$*" >&2; exit 67; }',
             normalizeMutableConfigPermsFor(configDir),

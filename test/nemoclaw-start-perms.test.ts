@@ -40,6 +40,7 @@ function mode(filePath: string): number {
 }
 
 const oneShotFunction = extractShellFunction("run_oneshot_command");
+const resolveNormalizerFunction = extractShellFunction("resolve_mutable_config_normalizer");
 
 describe("nemoclaw-start one-shot command lifecycle", () => {
   it("restores a real mutable config tree and preserves child exit status (#6047)", () => {
@@ -55,6 +56,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     );
     const script = [
       "set -euo pipefail",
+      resolveNormalizerFunction,
       normalizeFunction,
       oneShotFunction,
       "rc=0",
@@ -156,6 +158,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     );
     const script = [
       "set -euo pipefail",
+      resolveNormalizerFunction,
       normalizeFunction,
       oneShotFunction,
       "rc=0",
@@ -194,6 +197,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     );
     const script = [
       "set -euo pipefail",
+      resolveNormalizerFunction,
       normalizeFunction,
       "rc=0",
       "normalize_mutable_config_perms || rc=$?",
@@ -247,6 +251,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     const script = [
       "set -euo pipefail",
       `export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=${JSON.stringify(normalizerPath)}`,
+      resolveNormalizerFunction,
       normalizeFunction,
       "rc=0",
       "normalize_mutable_config_perms || rc=$?",
@@ -289,6 +294,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     );
     const script = [
       "set -euo pipefail",
+      resolveNormalizerFunction,
       normalizeFunction,
       oneShotFunction,
       "rc=0",
@@ -337,6 +343,7 @@ const runningAsRoot = process.getuid?.() === 0;
 function runClassify(configDir: string) {
   const script = [
     "set -uo pipefail",
+    resolveNormalizerFunction,
     classifyFunction,
     "rc=0",
     `classify_openclaw_config_seal ${JSON.stringify(configDir)} || rc=$?`,
@@ -431,13 +438,13 @@ describe("nemoclaw-start mutable config reclaim", () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-root-"));
       const configDir = path.join(root, ".openclaw");
       fs.mkdirSync(configDir);
-      fs.chmodSync(configDir, 0o2770);
+      fs.chmodSync(configDir, 0o700);
       const configFile = path.join(configDir, "openclaw.json");
       const hashFile = path.join(configDir, ".config-hash");
       fs.writeFileSync(configFile, "{}\n");
-      fs.chmodSync(configFile, 0o660);
+      fs.chmodSync(configFile, 0o600);
       fs.writeFileSync(hashFile, "hash\n");
-      fs.chmodSync(hashFile, 0o660);
+      fs.chmodSync(hashFile, 0o600);
 
       const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
         'local config_dir="/sandbox/.openclaw"',
@@ -448,6 +455,7 @@ describe("nemoclaw-start mutable config reclaim", () => {
         .replace("id -g sandbox", `echo ${JSON.stringify(nobodyGid)}`);
       const script = [
         "set -euo pipefail",
+        resolveNormalizerFunction,
         classifyFunction,
         patchedReclaimFunction,
         normalizeFunction,

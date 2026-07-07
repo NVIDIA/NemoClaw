@@ -616,7 +616,10 @@ fi
 info "30. One-shot cleanup repairs 700/600 without CAP_DAC_OVERRIDE"
 OUT=$(docker run --rm --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
-  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start >/tmp/normalize.sh
+  {
+    sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+  } >/tmp/normalize.sh
   test -s /tmp/normalize.sh
   source /tmp/normalize.sh
   capsh --has-p=cap_setgid
@@ -643,7 +646,10 @@ fi
 info "30a. One-shot cleanup rejects a mutable tree owned by another UID"
 OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
-  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start >/tmp/normalize.sh
+  {
+    sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+  } >/tmp/normalize.sh
   test -s /tmp/normalize.sh
   source /tmp/normalize.sh
   chown -R gateway:gateway /sandbox/.openclaw
@@ -667,7 +673,10 @@ fi
 info "30b. One-shot cleanup reports a missing CAP_SETGID precondition"
 OUT=$(docker run --rm --user 0:0 --cap-drop DAC_OVERRIDE --cap-drop SETGID --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
-  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start >/tmp/normalize.sh
+  {
+    sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+  } >/tmp/normalize.sh
   test -s /tmp/normalize.sh
   source /tmp/normalize.sh
   sandbox_gid=$(id -g sandbox)
@@ -698,6 +707,7 @@ info "30c. Post-override capture freshens a hardlinked recovery baseline"
 OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
+    sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
     sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
     sed -n "/^write_openclaw_config_baseline() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
   } >/tmp/normalize.sh
@@ -748,9 +758,11 @@ if source.count(needle) != 1:
     raise SystemExit("handoff injection point changed")
 Path("/tmp/normalizer-handoff-race.py").write_text(source.replace(needle, replacement))
 PY_INJECT_HANDOFF_RACE
-  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start \
-    | sed "s#/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py#/tmp/normalizer-handoff-race.py#" \
-    >/tmp/normalize.sh
+  {
+    sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start \
+      | sed "s#/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py#/tmp/normalizer-handoff-race.py#"
+    sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+  } >/tmp/normalize.sh
   source /tmp/normalize.sh
   find /sandbox/.openclaw -mindepth 1 -delete
   gosu sandbox sh -c "printf \"{}\\n\" > /sandbox/.openclaw/openclaw.json; printf \"hash\\n\" > /sandbox/.openclaw/.config-hash"
@@ -776,6 +788,7 @@ info "30e. Empty-config recovery refuses a protected-target symlink"
 OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
+    sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
     sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
     sed -n "/^recover_openclaw_config_if_empty() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
   } >/tmp/recover.sh
@@ -811,9 +824,11 @@ from pathlib import Path
 
 Path("/tmp/untrusted-normalizer-ran").write_text("unsafe\n")
 PY_UNTRUSTED_NORMALIZER
-  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start \
-    | sed "s#/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py#/tmp/missing-normalizer.py#" \
-    >/tmp/normalize.sh
+  {
+    sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start \
+      | sed "s#/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py#/tmp/missing-normalizer.py#"
+    sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+  } >/tmp/normalize.sh
   source /tmp/normalize.sh
   export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=/tmp/untrusted-normalizer.py
   rc=0

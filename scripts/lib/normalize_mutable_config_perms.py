@@ -178,6 +178,109 @@ def normalize_dir(directory_fd: int, *, top_level: bool = False) -> None:
             os.close(child_fd)
 
 
+SEALED = 0
+UNSEALED = 1
+INDETERMINATE = 2
+
+
+def classify_seal(root_fd: int, root_metadata: os.stat_result) -> int:
+    if not stat.S_ISDIR(root_metadata.st_mode):
+        return INDETERMINATE
+    dir_sealed = (
+        root_metadata.st_uid == 0
+        and root_metadata.st_gid == 0
+        and stat.S_IMODE(root_metadata.st_mode) == 0o755
+    )
+    if not dir_sealed:
+        return UNSEALED
+    try:
+        file_metadata = os.stat(CONFIG_NAME, dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return SEALED
+    except OSError:
+        return INDETERMINATE
+    file_sealed = (
+        stat.S_ISREG(file_metadata.st_mode)
+        and file_metadata.st_uid == 0
+        and file_metadata.st_gid == 0
+        and stat.S_IMODE(file_metadata.st_mode) == 0o444
+    )
+    return SEALED if file_sealed else UNSEALED
+
+
+def reclaim_dir(
+    directory_fd: int,
+    sandbox_uid: int,
+    sandbox_gid: int,
+    *,
+    top_level: bool,
+) -> None:
+    with os.scandir(directory_fd) as entries:
+        names = sorted(entry.name for entry in entries)
+    for name in names:
+        try:
+            before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise UnsafeTree() from exc
+        if stat.S_ISLNK(before.st_mode):
+            raise UnsafeTree()
+        if stat.S_ISDIR(before.st_mode):
+            child_fd, opened = open_pinned(directory_fd, name, directory_flags(), before)
+            try:
+                reclaim_dir(child_fd, sandbox_uid, sandbox_gid, top_level=False)
+                os.fchown(child_fd, sandbox_uid, sandbox_gid)
+                current_mode = stat.S_IMODE(os.fstat(child_fd).st_mode)
+                os.fchmod(child_fd, (current_mode | 0o2070) & ~0o007)
+                verify_still_linked(directory_fd, name, opened)
+            finally:
+                os.close(child_fd)
+            continue
+        if not stat.S_ISREG(before.st_mode):
+            continue
+        child_fd, opened = open_pinned(directory_fd, name, file_flags(), before)
+        try:
+            os.fchown(child_fd, sandbox_uid, sandbox_gid)
+            target_mode = (
+                0o660
+                if top_level and name in FIXED_FILES
+                else (stat.S_IMODE(opened.st_mode) | 0o060) & ~0o007
+            )
+            os.fchmod(child_fd, target_mode)
+            verify_still_linked(directory_fd, name, opened)
+        finally:
+            os.close(child_fd)
+
+
+def reclaim_if_unsealed(config_dir: str, sandbox_uid: int, sandbox_gid: int) -> int:
+    """Classify and, only if unsealed, reclaim a root-collapsed OpenClaw config.
+
+    Opens config_dir exactly once (O_NOFOLLOW) so classification and reclaim
+    act on the same pinned descriptor, closing the window between a
+    path-based seal check and a later, separately opened mutation.
+    """
+    try:
+        root_fd = os.open(config_dir, directory_flags())
+    except OSError:
+        return 0
+    try:
+        root_metadata = os.fstat(root_fd)
+        if classify_seal(root_fd, root_metadata) != UNSEALED:
+            return 0
+        if root_metadata.st_uid != 0 or root_metadata.st_gid != 0:
+            raise UnsafeTree()
+        reclaim_dir(root_fd, sandbox_uid, sandbox_gid, top_level=True)
+        os.fchown(root_fd, sandbox_uid, sandbox_gid)
+        os.fchmod(root_fd, 0o2770)
+        current = os.stat(config_dir, follow_symlinks=False)
+        if inode_key(current) != inode_key(os.fstat(root_fd)):
+            raise UnsafeTree()
+        return 0
+    except (OSError, UnsafeTree):
+        return 1
+    finally:
+        os.close(root_fd)
+
+
 def config_dir_matches(
     root_fd: int,
     config_dir: str,
@@ -1358,6 +1461,30 @@ def run_root_supervisor(
 
 
 def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "classify-seal":
+        if len(sys.argv) != 3:
+            return 1
+        config_dir = sys.argv[2]
+        try:
+            root_fd = os.open(config_dir, directory_flags())
+        except OSError:
+            return INDETERMINATE
+        try:
+            return classify_seal(root_fd, os.fstat(root_fd))
+        finally:
+            os.close(root_fd)
+
+    if len(sys.argv) >= 2 and sys.argv[1] == "reclaim-if-unsealed":
+        if len(sys.argv) != 5:
+            return 1
+        config_dir = sys.argv[2]
+        try:
+            sandbox_uid = int(sys.argv[3])
+            sandbox_gid = int(sys.argv[4])
+        except ValueError:
+            return 1
+        return reclaim_if_unsealed(config_dir, sandbox_uid, sandbox_gid)
+
     if len(sys.argv) not in {4, 5, 7}:
         return 1
     config_dir = sys.argv[1]

@@ -519,6 +519,32 @@ export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 # restores the setgid + group-writable contract. Host-side, `nemoclaw <name>
 # doctor --fix` and the rebuild post-upgrade repair step apply the same
 # normalization without requiring a restart.
+resolve_mutable_config_normalizer() {
+  local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"
+  if [ -f "$normalizer" ]; then
+    printf '%s\n' "$normalizer"
+    return 0
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    return 1
+  fi
+  if [ -n "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER:-}" ] \
+    && [ -f "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}" ]; then
+    printf '%s\n' "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}"
+    return 0
+  fi
+  if [ -f "scripts/lib/normalize_mutable_config_perms.py" ]; then
+    printf '%s\n' "scripts/lib/normalize_mutable_config_perms.py"
+    return 0
+  fi
+  normalizer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/normalize_mutable_config_perms.py"
+  if [ -f "$normalizer" ]; then
+    printf '%s\n' "$normalizer"
+    return 0
+  fi
+  return 1
+}
+
 normalize_mutable_config_perms() {
   local config_dir="/sandbox/.openclaw"
   local operation="${1:-normalize}"
@@ -553,12 +579,15 @@ PY_CLASSIFY_MUTABLE_CONFIG
   [ "$config_dir_uid" = "missing" ] && return 0
   if [ "$config_dir_uid" = "0" ]; then
     [ "$operation" = "normalize" ] || return 0
-    local seal_state
-    classify_openclaw_config_seal "$config_dir"
-    seal_state=$?
-    if [ "$seal_state" -eq 1 ]; then
-      reclaim_collapsed_mutable_config "$config_dir" || return 1
-    fi
+    # Root ownership here is the same OpenClaw doctor --fix collapse tracked
+    # by #6047 (https://github.com/NVIDIA/NemoClaw/issues/6047), the upstream
+    # tightening run_oneshot_command's wrapper below also works around.
+    # reclaim_collapsed_mutable_config classifies and, only if unsealed,
+    # reclaims under one pinned descriptor, so a genuinely sealed lock
+    # (root:root 0755 dir, 0444 config) is never reopened for mutation; drop
+    # this call once the pinned OpenClaw stops collapsing the sandbox
+    # 2770/660 contract on its own.
+    reclaim_collapsed_mutable_config "$config_dir" || return 1
     return 0
   fi
 
@@ -579,23 +608,8 @@ PY_CLASSIFY_MUTABLE_CONFIG
     return 1
   fi
 
-  # The installed helper wins in production. Repository-relative resolution is
-  # only for source-tree tests and ad-hoc development runs.
-  local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"
-  if [ ! -f "$normalizer" ]; then
-    if [ "$(id -u)" -eq 0 ]; then
-      printf '[SECURITY] Refusing mutable config permission normalization — trusted normalizer is missing\n' >&2
-      return 1
-    elif [ -n "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER:-}" ] \
-      && [ -f "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}" ]; then
-      normalizer="${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}"
-    elif [ -f "scripts/lib/normalize_mutable_config_perms.py" ]; then
-      normalizer="scripts/lib/normalize_mutable_config_perms.py"
-    else
-      normalizer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/normalize_mutable_config_perms.py"
-    fi
-  fi
-  if [ ! -f "$normalizer" ]; then
+  local normalizer
+  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
     printf '[SECURITY] Refusing mutable config permission normalization — trusted normalizer is missing\n' >&2
     return 1
   fi
@@ -632,48 +646,9 @@ PY_CLASSIFY_MUTABLE_CONFIG
 
 classify_openclaw_config_seal() {
   local config_dir="$1"
-  python3 -I - "$config_dir" "$config_dir/openclaw.json" <<'PY_CLASSIFY_OPENCLAW_SEAL'
-import os
-import stat
-import sys
-
-SEALED = 0
-UNSEALED = 1
-INDETERMINATE = 2
-
-try:
-    dir_path, file_path = sys.argv[1], sys.argv[2]
-    try:
-        dir_meta = os.lstat(dir_path)
-    except OSError:
-        raise SystemExit(INDETERMINATE)
-    if not stat.S_ISDIR(dir_meta.st_mode):
-        raise SystemExit(INDETERMINATE)
-    dir_sealed = (
-        dir_meta.st_uid == 0
-        and dir_meta.st_gid == 0
-        and stat.S_IMODE(dir_meta.st_mode) == 0o755
-    )
-    if not dir_sealed:
-        raise SystemExit(UNSEALED)
-    try:
-        file_meta = os.lstat(file_path)
-    except FileNotFoundError:
-        raise SystemExit(SEALED)
-    except OSError:
-        raise SystemExit(INDETERMINATE)
-    file_sealed = (
-        stat.S_ISREG(file_meta.st_mode)
-        and file_meta.st_uid == 0
-        and file_meta.st_gid == 0
-        and stat.S_IMODE(file_meta.st_mode) == 0o444
-    )
-    raise SystemExit(SEALED if file_sealed else UNSEALED)
-except SystemExit:
-    raise
-except Exception:
-    raise SystemExit(INDETERMINATE)
-PY_CLASSIFY_OPENCLAW_SEAL
+  local normalizer
+  normalizer="$(resolve_mutable_config_normalizer)" || return 2
+  python3 -I "$normalizer" classify-seal "$config_dir" >/dev/null
 }
 
 reclaim_collapsed_mutable_config() {
@@ -687,129 +662,13 @@ reclaim_collapsed_mutable_config() {
     return 1
   fi
 
-  if ! python3 -I - "$config_dir" "$sandbox_uid" "$sandbox_gid" <<'PY_RECLAIM_MUTABLE_CONFIG'; then
-import os
-import stat
-import sys
+  local normalizer
+  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
+    printf '[SECURITY] Refusing mutable config reclaim — trusted normalizer is missing\n' >&2
+    return 1
+  fi
 
-
-class UnsafeTree(Exception):
-    """The collapsed config tree changed identity or violated its ownership contract."""
-
-
-FIXED_FILES = ("openclaw.json", ".config-hash")
-
-
-def inode_key(metadata):
-    return metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode)
-
-
-def directory_flags():
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    if not nofollow:
-        raise UnsafeTree()
-    return os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | nofollow
-
-
-def file_flags():
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    if not nofollow:
-        raise UnsafeTree()
-    return os.O_RDONLY | os.O_CLOEXEC | nofollow
-
-
-def open_pinned(parent_fd, name, flags, expected):
-    child_fd = os.open(name, flags, dir_fd=parent_fd)
-    opened = os.fstat(child_fd)
-    if inode_key(opened) != inode_key(expected):
-        os.close(child_fd)
-        raise UnsafeTree()
-    return child_fd, opened
-
-
-def verify_still_linked(parent_fd, name, opened):
-    current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-    if inode_key(current) != inode_key(opened):
-        raise UnsafeTree()
-
-
-def is_sealed(root_fd, root_metadata):
-    if stat.S_IMODE(root_metadata.st_mode) != 0o755:
-        return False
-    try:
-        file_meta = os.stat("openclaw.json", dir_fd=root_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return True
-    return (
-        stat.S_ISREG(file_meta.st_mode)
-        and file_meta.st_uid == 0
-        and file_meta.st_gid == 0
-        and stat.S_IMODE(file_meta.st_mode) == 0o444
-    )
-
-
-def reclaim_dir(directory_fd, sandbox_uid, sandbox_gid, *, top_level):
-    with os.scandir(directory_fd) as entries:
-        names = sorted(entry.name for entry in entries)
-    for name in names:
-        before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        if stat.S_ISLNK(before.st_mode):
-            raise UnsafeTree()
-        if stat.S_ISDIR(before.st_mode):
-            child_fd, opened = open_pinned(directory_fd, name, directory_flags(), before)
-            try:
-                reclaim_dir(child_fd, sandbox_uid, sandbox_gid, top_level=False)
-                os.fchown(child_fd, sandbox_uid, sandbox_gid)
-                current_mode = stat.S_IMODE(os.fstat(child_fd).st_mode)
-                os.fchmod(child_fd, (current_mode | 0o2070) & ~0o007)
-                verify_still_linked(directory_fd, name, opened)
-            finally:
-                os.close(child_fd)
-            continue
-        if not stat.S_ISREG(before.st_mode):
-            continue
-        child_fd, opened = open_pinned(directory_fd, name, file_flags(), before)
-        try:
-            os.fchown(child_fd, sandbox_uid, sandbox_gid)
-            target_mode = (
-                0o660
-                if top_level and name in FIXED_FILES
-                else (stat.S_IMODE(opened.st_mode) | 0o060) & ~0o007
-            )
-            os.fchmod(child_fd, target_mode)
-            verify_still_linked(directory_fd, name, opened)
-        finally:
-            os.close(child_fd)
-
-
-def main():
-    config_dir, sandbox_uid, sandbox_gid = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-    root_fd = os.open(config_dir, directory_flags())
-    try:
-        root_metadata = os.fstat(root_fd)
-        if (
-            not stat.S_ISDIR(root_metadata.st_mode)
-            or root_metadata.st_uid != 0
-            or root_metadata.st_gid != 0
-        ):
-            raise UnsafeTree()
-        if is_sealed(root_fd, root_metadata):
-            return
-        reclaim_dir(root_fd, sandbox_uid, sandbox_gid, top_level=True)
-        os.fchown(root_fd, sandbox_uid, sandbox_gid)
-        os.fchmod(root_fd, 0o2770)
-        current = os.stat(config_dir, follow_symlinks=False)
-        if inode_key(current) != inode_key(os.fstat(root_fd)):
-            raise UnsafeTree()
-    finally:
-        os.close(root_fd)
-
-
-try:
-    main()
-except (OSError, UnsafeTree):
-    raise SystemExit(1)
-PY_RECLAIM_MUTABLE_CONFIG
+  if ! python3 -I "$normalizer" reclaim-if-unsealed "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null; then
     printf '[SECURITY] Refusing mutable config reclaim — descriptor-safe reclaim detected an unsafe link, race, owner, or metadata state\n' >&2
     return 1
   fi
