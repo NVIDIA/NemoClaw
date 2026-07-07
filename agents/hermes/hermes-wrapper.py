@@ -50,6 +50,27 @@
 #     redacts credential-shaped fields natively or `buildHermesConfig` stops
 #     emitting an inline `api_key` value.
 #
+# Source-of-truth note for the `_translate_resumed_oneshot` parser
+# differential risk (NVIDIA/NemoClaw#5254):
+#   - Invalid state: upstream Hermes currently accepts top-level resumed or
+#     continued one-shot flags but persists the turn in a new session instead
+#     of appending to the selected session; the wrapper therefore parses a
+#     small allowlist of Hermes argv forms so it can route only those affected
+#     invocations through Hermes' native `chat --query` append path.
+#   - Risk accepted: upstream Hermes flag parsing may diverge from this
+#     wrapper's allowlist. The wrapper fails closed to unchanged passthrough on
+#     ambiguity, so the safe fallback is preserving Hermes' native behavior,
+#     but that may lose the resume/continue append workaround until the
+#     allowlist is updated.
+#   - Mitigations: the Dockerfile performs build-time AST validation of the
+#     wrapper flag constants, probes the pinned `hermes --help` surfaces, and
+#     the wrapper suite covers routed forms plus fail-closed cases with 20+
+#     unit tests.
+#   - Tracking: keep monitoring upstream Hermes flag stability while this
+#     localized compatibility layer exists.
+#   - Removal condition: delete this translation when Hermes natively appends
+#     top-level resumed or continued one-shot turns to the selected session.
+#
 # Scope of the masker: structured key-labelled secret fields (api_key,
 # api_secret, access_token, auth_token, client_secret, secret_key, secret,
 # token, password, bearer, authorization, credential — including
