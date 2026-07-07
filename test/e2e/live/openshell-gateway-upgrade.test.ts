@@ -200,15 +200,17 @@ NEMOCLAW_OLD_PAYLOAD_PIN_PY
 
 function createOldDockerWrapper(artifacts: ArtifactSink): string {
   const wrapperDir = artifacts.pathFor("old-docker-wrapper");
+  const logFile = artifacts.pathFor("old-docker-wrapper.log");
+  const realDocker = process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker";
   fs.mkdirSync(wrapperDir, { recursive: true, mode: 0o700 });
   writeExecutable(
     path.join(wrapperDir, "docker"),
     `#!/usr/bin/env bash
 set -euo pipefail
-real_docker="\${NEMOCLAW_REAL_DOCKER:-/usr/bin/docker}"
-base_ref="\${NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:?}"
-old_openclaw="\${NEMOCLAW_OLD_OPENCLAW_VERSION:?}"
-log_file="\${NEMOCLAW_OLD_DOCKER_WRAPPER_LOG:?}"
+real_docker=${shellQuote(realDocker)}
+base_ref=${shellQuote(OLD_SANDBOX_BASE_IMAGE_REF)}
+old_openclaw=${shellQuote(OLD_OPENCLAW_VERSION)}
+log_file=${shellQuote(logFile)}
 base_tag="ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
 if [ "\${1:-}" = "pull" ]; then
   for arg in "$@"; do
