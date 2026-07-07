@@ -639,7 +639,6 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "widgets/auth.py",
       "widgets/codex_auth.py",
       "widgets/model_selector.py",
-      "onboarding.py",
       "widgets/approval.py",
       "server.py",
       "_server_config.py",
@@ -670,30 +669,6 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ]) {
       expect(main).toContain(expected);
     }
-  });
-
-  it("skips the upstream first-run model picker in managed interactive sessions (#6410)", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-
-    const result = spawnSync(
-      "python3",
-      [
-        "-c",
-        "from deepagents_code.onboarding import should_run_onboarding; print(should_run_onboarding())",
-      ],
-      {
-        env: {
-          PATH: process.env.PATH,
-          PYTHONPATH: tempDir,
-          DEEPAGENTS_CODE_DEBUG_ONBOARDING: "1",
-        },
-        encoding: "utf8",
-      },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("False\n");
   });
 
   it.each([
@@ -1228,6 +1203,13 @@ async def validate():
     assert instance._rubric_model is None
     assert instance._server_kwargs["rubric_model"] is None
     await instance._prompt_launch_tavily()
+    dep_continued, dep_result = await instance._prompt_launch_dependencies_then_model()
+    assert dep_continued is False
+    assert dep_result is None
+    dep_screen, dep_future = instance._build_launch_dependencies_prompt()
+    assert dep_screen is None
+    assert dep_future.done()
+    assert dep_future.result() == (False, None)
     assert await instance._prompt_model_auth_if_needed("provider:model") is False
     await instance._show_auth_manager(initial_provider="provider")
     await instance._enter_service_api_key(None, None)

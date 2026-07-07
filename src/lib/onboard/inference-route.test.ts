@@ -29,7 +29,9 @@ describe("verifyInferenceRoute", () => {
       gatewayRoute("compatible-endpoint", "test-model"),
     );
 
-    expect(() => helpers.verifyInferenceRoute("compatible-endpoint", "test-model")).not.toThrow();
+    expect(() =>
+      helpers.verifyInferenceRoute("nemoclaw", "compatible-endpoint", "test-model"),
+    ).not.toThrow();
   });
 
   it("rejects a different live gateway route after provider recreation (#6114)", () => {
@@ -39,9 +41,9 @@ describe("verifyInferenceRoute", () => {
     }) as never);
     const helpers = createInferenceRouteHelpers(() => gatewayRoute("openai-api", "other-model"));
 
-    expect(() => helpers.verifyInferenceRoute("compatible-endpoint", "test-model")).toThrow(
-      "process.exit(1)",
-    );
+    expect(() =>
+      helpers.verifyInferenceRoute("nemoclaw", "compatible-endpoint", "test-model"),
+    ).toThrow("process.exit(1)");
     expect(exit).toHaveBeenCalledWith(1);
     expect(errors.mock.calls.flat().join("\n")).toContain(
       "does not match provider 'compatible-endpoint' and model 'test-model'",

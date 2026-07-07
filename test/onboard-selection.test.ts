@@ -192,12 +192,13 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     handleVllmSelection: async () => unexpected("vLLM selection"),
     handleRoutedSelection: async () => unexpected("routed selection"),
     coerceAgentInferenceApi: (_agent, preferredInferenceApi) => preferredInferenceApi,
+    resolveAgentInferenceApi: (_agentName, _provider, preferredInferenceApi) =>
+      preferredInferenceApi,
     clearCompatibleEndpointReasoning: () => null,
     maybePromptForInferenceInputCapability: async () => {},
     ...overrides,
   };
 }
-
 function makeInstallOllamaLinuxOptions(
   overrides: Partial<InstallOllamaLinuxOptions> = {},
 ): InstallOllamaLinuxOptions {
@@ -223,7 +224,6 @@ function makeInstallOllamaLinuxOptions(
     ...overrides,
   };
 }
-
 function successfulRunShellResult(): ReturnType<
   NonNullable<InstallOllamaLinuxOptions["runShellImpl"]>
 > {
@@ -4801,7 +4801,7 @@ runner.runCapture = (cmd) => {
 process.env.COMPATIBLE_API_KEY = "test-key";
 const { setupInference } = require(${onboardPath});
 (async () => {
-  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://lan-server:11434/v1", "COMPATIBLE_API_KEY");
+  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://lan-server:11434/v1", "COMPATIBLE_API_KEY", null, [], { preferredInferenceApi: "openai-completions" });
   process.exit(0);
 })().catch((err) => { console.error(err); process.exit(1); });
 `;

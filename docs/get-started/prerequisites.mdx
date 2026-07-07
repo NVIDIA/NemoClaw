@@ -9,6 +9,8 @@ keywords: ["nemoclaw prerequisites", "nemoclaw supported platforms", "nemoclaw h
 content:
   type: "reference"
 ---
+import { AgentOnly } from "../_components/AgentGuide";
+
 Before you start, verify that your machine has the software and hardware needed to run NemoClaw.
 
 ## Hardware
@@ -75,7 +77,9 @@ On Linux hosts running Docker 26 or later with the [containerd image store](http
 The containerd image store is the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros.
 The `fuse-overlayfs`-enabled image bypasses a kernel-level nested-overlay limitation in k3s.
 You do not need manual setup.
+<AgentOnly variant="openclaw,hermes">
 Refer to the [troubleshooting guide](../reference/troubleshooting) for the override knobs and a manual `daemon.json` alternative.
+</AgentOnly>
 </Note>
 
 ## Platforms
