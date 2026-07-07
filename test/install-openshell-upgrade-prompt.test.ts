@@ -66,6 +66,7 @@ fi
 exit 0
 `,
   );
+  writeExecutable(path.join(bin, "python3"), "#!/usr/bin/env bash\nexit 127\n");
 
   const resolveCli =
     options.hasOldCli === false
@@ -77,7 +78,6 @@ exit 0
     warn() { printf '[WARN] %s\\n' "$*"; }
     _CLI_BIN=nemoclaw
     HOME="${home}"
-    registered_sandbox_count() { printf '1'; }
     command_exists() { [ "$1" = "openshell" ]; }
     installed_openshell_version() { printf '${openshellVersion}'; }
     resolve_existing_cli_runner() { ${resolveCli}; }
@@ -94,7 +94,12 @@ exit 0
     printf 'CONFIRMED_NAMES=%s\\n' "\${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-}"
   `;
 
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, ...env };
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: home,
+    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    ...env,
+  };
   const inheritedControlKeys = [
     "NON_INTERACTIVE",
     "NEMOCLAW_NON_INTERACTIVE",
@@ -285,6 +290,40 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain("must exactly match the listed sandbox names");
+    expect(cliLog).toBe("");
+    expect(openshellLog).toBe("");
+  });
+
+  it.each([
+    ["malformed JSON", "not-json"],
+    ["a non-object sandboxes field", '{"sandboxes":[]}'],
+    ["a malformed sandbox row", '{"sandboxes":{"alpha":null}}'],
+  ])("fails closed when the registry contains %s (#6114)", (_case, registryJson) => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+      },
+      { registryJson },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "Could not inspect the existing sandbox registry",
+    );
+    expect(cliLog).toBe("");
+    expect(openshellLog).toBe("");
+  });
+
+  it("accepts a validated empty sandbox registry without requiring Python (#6114)", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      { registryJson: '{"sandboxes":{}}' },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("RESTORE=");
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("");
   });

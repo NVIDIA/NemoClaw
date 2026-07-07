@@ -146,6 +146,12 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "0.0.71" })).toBe(true);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: null })).toBe(false);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "  " })).toBe(false);
+    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: 123 } as never)).toBe(
+      false,
+    );
+    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: {} } as never)).toBe(
+      false,
+    );
   });
 
   it("allows legacy managed-image recovery only with per-row authority and no custom image (#6114)", () => {

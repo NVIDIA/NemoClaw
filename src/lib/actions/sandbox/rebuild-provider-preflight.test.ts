@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
+  canRecreateMissingRebuildGatewayProvider,
   checkRebuildGatewayCredentialReuseOrBail,
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
@@ -61,6 +62,20 @@ describe("shouldVerifyRebuildGatewayProvider", () => {
     expect(checkRebuildGatewayProviderOrBail("ollama-local", null, log, bail)).toBe(true);
     expect(log).not.toHaveBeenCalled();
     expect(bail).not.toHaveBeenCalled();
+  });
+});
+
+describe("canRecreateMissingRebuildGatewayProvider", () => {
+  it("requires a canonical provider and its exact credential binding (#6114)", () => {
+    expect(
+      canRecreateMissingRebuildGatewayProvider("compatible-endpoint", "COMPATIBLE_API_KEY"),
+    ).toBe(true);
+    expect(canRecreateMissingRebuildGatewayProvider("compatible-endpoint", "OPENAI_API_KEY")).toBe(
+      false,
+    );
+    expect(canRecreateMissingRebuildGatewayProvider("mystery-provider", "MYSTERY_API_KEY")).toBe(
+      false,
+    );
   });
 });
 

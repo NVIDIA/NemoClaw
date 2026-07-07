@@ -67,7 +67,10 @@ export async function preflightRebuildTargetRuntime(
   recreateOptions: RebuildRecreateOnboardOpts,
   log: RebuildLog,
   bail: RebuildBail,
-  options: { skipImagePreflight?: boolean } = {},
+  options: {
+    allowGatewayProviderReconfigure?: boolean;
+    skipImagePreflight?: boolean;
+  } = {},
 ): Promise<RebuildTargetRuntimePreflightResult> {
   const webSearchConfig = target.durableConfig.webSearchConfig;
   const webSearchProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
@@ -186,6 +189,7 @@ export async function preflightRebuildTargetRuntime(
         },
         log,
         bail,
+        { allowGatewayProviderReconfigure: options.allowGatewayProviderReconfigure },
       )
     ) {
       return { ok: false };

@@ -50,6 +50,7 @@ export async function prepareRebuildTargetPreflights(args: {
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
   allowLegacyManagedImageRecovery?: boolean;
+  allowGatewayProviderReconfigure?: boolean;
   allowInferenceRouteReconfigure?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
@@ -61,6 +62,7 @@ export async function prepareRebuildTargetPreflights(args: {
     autoYes,
     requestedToolDisclosure,
     allowLegacyManagedImageRecovery,
+    allowGatewayProviderReconfigure,
     allowInferenceRouteReconfigure,
     log,
     bail,
@@ -156,7 +158,10 @@ export async function prepareRebuildTargetPreflights(args: {
       recreateOptions,
       log,
       bail,
-      { skipImagePreflight: rebuildsDcodeSandbox },
+      {
+        allowGatewayProviderReconfigure,
+        skipImagePreflight: rebuildsDcodeSandbox,
+      },
     );
   } finally {
     restoreBaseImageOverride();

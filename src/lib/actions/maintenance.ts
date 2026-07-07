@@ -130,7 +130,7 @@ export async function backupAll(): Promise<void> {
       );
       if (requireAll) {
         console.error(
-          `  Strict pre-upgrade backup cannot skip these sandboxes. Restore their gateway health, then run '${CLI_NAME} backup-all' again. To accept an existing validated backup instead, prepare the upgrade manually.`,
+          `  Strict pre-upgrade backup cannot skip these sandboxes. Restore their gateway health, then run '${CLI_NAME} backup-all' again.`,
         );
       } else {
         console.error(
@@ -147,9 +147,7 @@ export async function backupAll(): Promise<void> {
     console.error(
       `  Strict pre-upgrade backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
     );
-    console.error(
-      "  Resolve each skipped sandbox using its reason above and retry. To accept an existing validated backup instead, prepare the upgrade manually.",
-    );
+    console.error("  Resolve each skipped sandbox using its reason above and retry.");
   }
   if (failed > 0 || (requireAll && skipped > 0)) process.exit(1);
 }

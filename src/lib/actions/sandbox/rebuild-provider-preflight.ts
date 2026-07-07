@@ -71,11 +71,28 @@ export function shouldVerifyRebuildGatewayProvider(
   );
 }
 
+/** Whether authoritative resume can recreate this exact provider/credential binding. */
+export function canRecreateMissingRebuildGatewayProvider(
+  provider: string | null | undefined,
+  credentialEnv: string | null,
+): boolean {
+  if (!provider || !credentialEnv) return false;
+  const config =
+    provider === "nvidia-nim"
+      ? REMOTE_PROVIDER_CONFIG.build
+      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
+  return config?.credentialEnv === credentialEnv;
+}
+
 export function checkRebuildGatewayProviderOrBail(
   provider: string | null | undefined,
   credentialEnv: string | null,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
+  options: {
+    allowProviderReconfigure?: boolean;
+    hostCredentialAvailable?: boolean;
+  } = {},
 ): boolean {
   if (!shouldVerifyRebuildGatewayProvider(provider)) return true;
 
@@ -86,6 +103,16 @@ export function checkRebuildGatewayProviderOrBail(
     } in OpenShell`,
   );
   if (providerRegisteredInGateway) return true;
+  if (
+    options.allowProviderReconfigure &&
+    options.hostCredentialAvailable &&
+    canRecreateMissingRebuildGatewayProvider(provider, credentialEnv)
+  ) {
+    log(
+      `Preflight gateway provider check: validated prepared recovery will recreate missing provider '${provider}' from ${credentialEnv ?? "the exported host credential"}`,
+    );
+    return true;
+  }
 
   printMissingRebuildGatewayProvider(provider, credentialEnv);
   bail(`Missing gateway provider: ${provider}`);

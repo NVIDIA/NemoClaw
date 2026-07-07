@@ -1671,7 +1671,7 @@ export function validateRebuildRecoveryManifest(
 export function hasPositiveManagedImageEvidence(
   sandbox: Pick<registry.SandboxEntry, "nemoclawVersion">,
 ): boolean {
-  return Boolean(String(sandbox.nemoclawVersion || "").trim());
+  return typeof sandbox.nemoclawVersion === "string" && sandbox.nemoclawVersion.trim().length > 0;
 }
 
 /**

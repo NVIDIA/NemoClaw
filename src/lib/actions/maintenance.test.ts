@@ -163,12 +163,10 @@ describe("backupAll", () => {
     await expect(backupAll()).rejects.toThrow("exit:1");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
-      "requires every registered sandbox to be backed up",
-    );
-    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
-      "Resolve each skipped sandbox using its reason above",
-    );
+    const errorOutput = errorSpy.mock.calls.flat().join("\n");
+    expect(errorOutput).toContain("requires every registered sandbox to be backed up");
+    expect(errorOutput).toContain("Resolve each skipped sandbox using its reason above");
+    expect(errorOutput).not.toContain("prepare the upgrade manually");
   });
 
   it("continues backup loop when backupSandboxState throws for one sandbox", async () => {
@@ -424,6 +422,9 @@ describe("backupAll", () => {
       expectSkipGuidance,
     );
     expect(errorOutput.includes("Strict pre-upgrade backup cannot skip")).toBe(!expectSkipGuidance);
+    if (!expectSkipGuidance) {
+      expect(errorOutput).not.toContain("prepare the upgrade manually");
+    }
 
     errorSpy.mockRestore();
     exitSpy.mockRestore();

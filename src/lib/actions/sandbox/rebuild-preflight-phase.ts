@@ -144,9 +144,11 @@ export async function runRebuildPreflightPhase(
         autoYes: true,
         requestedToolDisclosure,
         allowLegacyManagedImageRecovery,
-        // A validated prepared backup is the only path allowed to repair a
-        // missing or stale gateway route during recreate. Provider, endpoint,
-        // credential, image, and registry checks still run before deletion.
+        // A validated prepared backup is the only path allowed to reconstruct
+        // a missing gateway provider and route during recreate. The exact
+        // endpoint, credential, image, and registry checks still run before
+        // deletion; ordinary rebuilds continue to require the live bindings.
+        allowGatewayProviderReconfigure: recoveryManifest !== null,
         allowInferenceRouteReconfigure: recoveryManifest !== null,
         log,
         bail,

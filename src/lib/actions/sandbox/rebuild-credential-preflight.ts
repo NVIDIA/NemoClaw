@@ -30,6 +30,10 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
 
 export type RebuildBail = (message: string, code?: number) => never;
 export type RebuildLog = (message: string) => void;
+export type RebuildCredentialPreflightOptions = {
+  /** A validated prepared recovery may rebuild a missing provider from an exported host key. */
+  allowGatewayProviderReconfigure?: boolean;
+};
 
 function normalizeHermesRebuildAuthMethod(value: unknown): "oauth" | "api_key" | null {
   const normalized = String(value || "")
@@ -145,6 +149,7 @@ export function preflightRebuildCredentials(
   sb: RebuildSandboxEntry,
   log: RebuildLog,
   bail: RebuildBail,
+  options: RebuildCredentialPreflightOptions = {},
 ): boolean {
   const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider, sb.credentialEnv);
   const rebuildProvider = sb.provider;
@@ -171,7 +176,12 @@ export function preflightRebuildCredentials(
   log(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
-  if (!checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail)) {
+  if (
+    !checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
+      allowProviderReconfigure: options.allowGatewayProviderReconfigure,
+      hostCredentialAvailable: Boolean(credentialValue),
+    })
+  ) {
     return false;
   }
   if (!credentialValue && shouldVerifyRebuildGatewayProvider(rebuildProvider)) {

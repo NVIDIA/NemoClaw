@@ -1679,20 +1679,53 @@ verify_nemoclaw() {
   error "Installation failed: ${_CLI_BIN} binary not found."
 }
 
+inspect_sandbox_registry_for_upgrade() {
+  local reg_file="$1" field="$2"
+  node - "$reg_file" "$field" <<'NODE'
+const fs = require("node:fs");
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+let registry;
+try {
+  registry = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+} catch {
+  process.exit(1);
+}
+if (!isRecord(registry) || !isRecord(registry.sandboxes)) process.exit(1);
+
+const entries = Object.entries(registry.sandboxes);
+if (entries.some(([, entry]) => !isRecord(entry))) process.exit(1);
+
+if (process.argv[3] === "count") {
+  process.stdout.write(String(entries.length));
+  process.exit(0);
+}
+if (process.argv[3] !== "ambiguous-names") process.exit(1);
+
+const ambiguous = entries
+  .filter(([, entry]) => {
+    const version = entry.nemoclawVersion;
+    const hasFingerprint = typeof version === "string" && version.trim().length > 0;
+    const hasNoCustomImageEvidence =
+      entry.fromDockerfile === undefined || entry.fromDockerfile === null;
+    return !hasFingerprint && hasNoCustomImageEvidence;
+  })
+  .map(([name]) => name)
+  .sort();
+process.stdout.write(JSON.stringify(ambiguous));
+NODE
+}
+
 registered_sandbox_count() {
   local reg_file="${HOME}/.nemoclaw/sandboxes.json"
   if [ ! -f "$reg_file" ]; then
     printf "0"
     return
   fi
-  python3 -c "
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(len(d.get('sandboxes', {})))
-except Exception:
-    print(0)
-" "$reg_file" 2>/dev/null || printf "0"
+  inspect_sandbox_registry_for_upgrade "$reg_file" count
 }
 
 resolve_existing_cli_runner() {
@@ -1776,28 +1809,7 @@ installer_non_interactive() {
 
 legacy_ambiguous_sandbox_names_json() {
   local reg_file="$1"
-  node - "$reg_file" <<'NODE'
-const fs = require("node:fs");
-
-const registry = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const sandboxes = registry?.sandboxes;
-if (!sandboxes || typeof sandboxes !== "object" || Array.isArray(sandboxes)) process.exit(1);
-
-const ambiguous = [];
-for (const [name, entry] of Object.entries(sandboxes)) {
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-    ambiguous.push(name);
-    continue;
-  }
-  const version = entry.nemoclawVersion;
-  const hasFingerprint = typeof version === "string" && version.trim().length > 0;
-  const hasNoCustomImageEvidence =
-    entry.fromDockerfile === undefined || entry.fromDockerfile === null;
-  if (!hasFingerprint && hasNoCustomImageEvidence) ambiguous.push(name);
-}
-
-process.stdout.write(JSON.stringify(ambiguous.sort()));
-NODE
+  inspect_sandbox_registry_for_upgrade "$reg_file" ambiguous-names
 }
 
 normalize_legacy_managed_confirmation_json() {
@@ -1968,7 +1980,9 @@ preinstall_backup_and_retire_legacy_gateway() {
   [ -f "$reg_file" ] || return 0
 
   local sandbox_count
-  sandbox_count="$(registered_sandbox_count)"
+  if ! sandbox_count="$(registered_sandbox_count)"; then
+    error "Could not inspect the existing sandbox registry. Existing gateway and sandboxes were left unchanged."
+  fi
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
   command_exists openshell || return 0
