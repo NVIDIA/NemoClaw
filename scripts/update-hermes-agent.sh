@@ -94,16 +94,6 @@ for tool in curl python3 npm sha256sum tar sed realpath; do
   }
 done
 
-image_ref_without_tag() {
-  local ref="$1"
-  local basename="${ref##*/}"
-  if [[ "$basename" == *:* ]]; then
-    printf '%s\n' "${ref%:*}"
-    return
-  fi
-  printf '%s\n' "$ref"
-}
-
 gh_api() {
   local url="$1"
   local -a auth=()
@@ -208,11 +198,18 @@ installed_copy_schema_error() {
     for item in \
       "validate-hermes-env-secret-boundary.py" \
       "seed-hermes-dashboard-config.py" \
+      "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py" \
+      "/opt/hermes/.venv/bin/python -I /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py --guard /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py" \
+      "hermes-mcp-config-transaction.py" \
+      "openshell-child-visible-credentials.v0.0.72.json" \
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix" \
       "node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts" \
       "/sandbox/.hermes/dashboard-home"; do
       grep -Fq "$item" "$dockerfile" || missing+=("marker ${item}")
     done
+    if grep -q '^ARG HERMES_SEMVER=' "$dockerfile"; then
+      missing+=("final Dockerfile #5254 guard must derive Hermes version from installed hermes --version")
+    fi
   fi
 
   if ((${#missing[@]} == 0)); then
@@ -248,9 +245,9 @@ apply_dockerfile_pins() {
 
 apply_manifest_pin() {
   local manifest="$1"
-  sed -i.bak "s|^expected_version: \".*\"|expected_version: \"${CALVER}\"|" "$manifest"
+  sed -i.bak "s|^expected_version: \".*\"|expected_version: \"${SEMVER}\"|" "$manifest"
   rm -f "${manifest}.bak"
-  grep -q "^expected_version: \"${CALVER}\"$" "$manifest"
+  grep -q "^expected_version: \"${SEMVER}\"$" "$manifest"
 }
 
 # ---------------------------------------------------------------------------
@@ -276,9 +273,10 @@ current_arg() {
 }
 
 CURRENT_TAG="$(current_arg HERMES_VERSION)"
+CURRENT_SEMVER="$(current_arg HERMES_SEMVER)"
 CURRENT_MANIFEST_VERSION="$(sed -n 's|^expected_version: "\(.*\)"|\1|p' "$MANIFEST" | head -1)"
 
-if [[ -z "$CURRENT_TAG" || -z "$CURRENT_MANIFEST_VERSION" ]]; then
+if [[ -z "$CURRENT_TAG" || -z "$CURRENT_SEMVER" || -z "$CURRENT_MANIFEST_VERSION" ]]; then
   echo "ERROR: could not read current pins from ${DOCKERFILE_BASE} / ${MANIFEST}" >&2
   exit 1
 fi
@@ -291,8 +289,8 @@ if [[ "$CHECK_ONLY" == 1 ]]; then
   else
     echo "OK: Dockerfile.base pins Hermes ${TAG}."
   fi
-  if [[ "$CURRENT_MANIFEST_VERSION" != "${CURRENT_TAG#v}" ]]; then
-    echo "DRIFT: manifest expected_version (${CURRENT_MANIFEST_VERSION}) does not match Dockerfile.base (${CURRENT_TAG#v})."
+  if [[ "$CURRENT_MANIFEST_VERSION" != "$CURRENT_SEMVER" ]]; then
+    echo "DRIFT: manifest expected_version (${CURRENT_MANIFEST_VERSION}) does not match Dockerfile.base HERMES_SEMVER (${CURRENT_SEMVER})."
     status=1
   fi
   if [[ "$UPDATE_INSTALLED_COPIES" == 1 ]]; then
@@ -387,7 +385,7 @@ done
 echo ""
 echo "Updated:"
 echo "  ${DOCKERFILE_BASE#"${REPO_ROOT}"/}: HERMES_VERSION=${TAG}, HERMES_SEMVER=${SEMVER}"
-echo "  ${MANIFEST#"${REPO_ROOT}"/}: expected_version=\"${CALVER}\""
+echo "  ${MANIFEST#"${REPO_ROOT}"/}: expected_version=\"${SEMVER}\""
 
 # ---------------------------------------------------------------------------
 # Bring saved installed copies (~/.nemoclaw, ~/.hermes) along, so an
@@ -418,7 +416,7 @@ if [[ "$UPDATE_INSTALLED_COPIES" == 1 ]]; then
         echo "ERROR: failed to update expected_version in installed copy ${installed_manifest}" >&2
         exit 1
       }
-      echo "  installed copy ${installed_manifest}: expected_version=\"${CALVER}\""
+      echo "  installed copy ${installed_manifest}: expected_version=\"${SEMVER}\""
     fi
   done < <(discover_installed_dockerfiles)
 else
@@ -448,9 +446,8 @@ if [[ "$DO_REBUILD" == 1 ]]; then
   # locally built images have no registry digest to pin to — the ID-derived
   # tag guarantees the rebuild uses exactly the image built above.
   base_image_id="$(docker image inspect -f '{{.Id}}' "$BASE_REF")"
-  base_image_id_short="${base_image_id#sha256:}"
-  base_image_id_short="${base_image_id_short:0:12}"
-  pin_tag="$(image_ref_without_tag "$BASE_REF"):${TAG#v}-${base_image_id_short}"
+  base_image_id_hex="${base_image_id#sha256:}"
+  pin_tag="nemoclaw-hermes-sandbox-base-local:image-${base_image_id_hex}"
   docker tag "$BASE_REF" "$pin_tag"
   echo ""
   echo "Rebuilding sandbox against ${pin_tag} (image ID ${base_image_id})…"

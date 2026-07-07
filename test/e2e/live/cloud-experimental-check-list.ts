@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+export const DEEPAGENTS_FRESH_REONBOARD_CHECK =
+  "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh";
+
 export const DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS = [
+  DEEPAGENTS_FRESH_REONBOARD_CHECK,
   "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
   "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",

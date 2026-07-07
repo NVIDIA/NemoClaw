@@ -43,6 +43,6 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 
 - Run `npm run docs:sync-agent-variants` after editing shared variant source pages or navigation.
 - Run `npm run docs` before opening a PR for docs or Fern changes.
-- For doc-only PRs, rely on normal commit and push hooks when they ran.
-  If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD`.
-- Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
+- For doc-only PRs, rely on normal `pre-commit`, `commit-msg`, and `pre-push` hooks when they pass.
+  If hooks were skipped or unavailable, refresh `origin/main` and run `npm run check:diff` once to reproduce those checks.
+- Leave the broad-gate verification item unchecked unless you actually ran the applicable command.

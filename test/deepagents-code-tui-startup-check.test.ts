@@ -391,6 +391,8 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       );
     const redactsSecret = (token: string) =>
       runTuiStartupCheckHelper('printf "%s" "$TOKEN" | redact_secrets', { TOKEN: token });
+    const langsmithPt = `lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`;
+    const langsmithSk = `lsv2_sk_${"a".repeat(36)}_${"c".repeat(10)}`;
     const canonicalSamples = new Map<string, { name: string; sample: string; rawSecret?: string }>([
       [fingerprint(TOKEN_PREFIX_PATTERNS[0]), { name: "nvapi", sample: "nvapi-abcdefghijklmnop" }],
       [fingerprint(TOKEN_PREFIX_PATTERNS[1]), { name: "nvcf", sample: "nvcf-abcdefghijklmnopq" }],
@@ -436,6 +438,14 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
         },
       ],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[16]), { name: "tvly", sample: "tvly-abcdefghijklmnop" }],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[17]),
+        {
+          name: "langsmith_pt",
+          sample: langsmithPt,
+        },
+      ],
       [
         fingerprint(CONTEXT_PATTERNS[0]),
         {
@@ -461,6 +471,10 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       {
         name: "xapp",
         sample: secretFixture("x", "app", "-", "1", "-", "A1B2C3", "-", "12345", "-", "abcde"),
+      },
+      {
+        name: "langsmith_sk",
+        sample: langsmithSk,
       },
       {
         name: "token_context",
@@ -500,6 +514,8 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         rawSecret ?? sample,
       );
     }
+    expect(redactsSecret(langsmithPt)).toBe("[REDACTED_SECRET]");
+    expect(redactsSecret(langsmithSk)).toBe("[REDACTED_SECRET]");
     expect(detectsSecret("plain startup text")).toBe("clean");
   });
 

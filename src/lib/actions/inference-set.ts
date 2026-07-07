@@ -1,19 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
-
-import { getOpenshellBinary, runOpenshell } from "../adapters/openshell/runtime";
+import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
+import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
+  resolveAgentInferenceApi,
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import {
+  matchesGatewayProviderBinding,
+  parseGatewayProviderMetadata,
+} from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
   type AgentConfigTarget,
@@ -27,11 +32,28 @@ import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import { isConfigObject, isConfigValue } from "../security/credential-filter";
 import { appendAuditEntry } from "../shields/audit";
 import { withTimerBoundShieldsMutationLockAsync } from "../shields/timer-bound-lock";
+import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
+import { InferenceSetError, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER } from "./inference-set-error";
+import {
+  completeInferenceGatewayRestart,
+  defaultInferenceGatewayRestart,
+  finalizeInferenceMutation,
+  type InferenceGatewayRestartDeps,
+  type InferenceMutation,
+  readPreviousOpenClawInferenceApi,
+} from "./inference-set-gateway-restart";
+import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
+import {
+  applyOpenClawAnthropicReplyBudget,
+  readOpenClawPrimaryReplyBudget,
+} from "./inference-set-reply-budget";
+
+export { InferenceSetError };
 
 export interface InferenceSetOptions {
   provider: string;
@@ -54,9 +76,7 @@ export interface InferenceSetResult {
   inSandboxConfigSynced: boolean;
 }
 
-type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">;
-
-export interface InferenceSetDeps {
+export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
@@ -75,25 +95,19 @@ export interface InferenceSetDeps {
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   prepareRunOpenshell: () => void;
-  runOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => OpenshellRunResult;
-  appendAuditEntry: typeof appendAuditEntry;
-  log: (message: string) => void;
+  captureOpenshell: (
+    args: string[],
+    opts?: Pick<
+      CaptureOpenshellOptions,
+      "ignoreError" | "includeStreams" | "maxBuffer" | "timeout"
+    >,
+  ) => CaptureOpenshellResult;
   isLocalInferenceProvider: (provider: string) => boolean;
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
   isSandboxConfigMutable: (sandboxName: string) => boolean;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
-}
-
-export class InferenceSetError extends Error {
-  constructor(
-    message: string,
-    readonly exitCode = 1,
-  ) {
-    super(message);
-    this.name = "InferenceSetError";
-  }
 }
 
 const SUPPORTED_PROVIDER_NAMES = [
@@ -126,7 +140,7 @@ function defaultDeps(): InferenceSetDeps {
     prepareRunOpenshell: () => {
       getOpenshellBinary();
     },
-    runOpenshell: (args, opts) => runOpenshell(args, opts),
+    captureOpenshell: (args, opts) => captureOpenshell(args, opts),
     appendAuditEntry,
     log: console.log,
     isLocalInferenceProvider: (provider) =>
@@ -135,6 +149,7 @@ function defaultDeps(): InferenceSetDeps {
     ensureLocalProviderReachable,
     resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning,
+    restartSandboxGateway: defaultInferenceGatewayRestart,
     isSandboxConfigMutable: (sandboxName) => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
       return isShieldsDown(sandboxName, true);
@@ -251,6 +266,7 @@ function buildProviderConfig(
   model: string,
   route: SandboxInferenceConfig,
   contextWindow?: number,
+  inheritedMaxTokens?: number,
 ): ConfigObject {
   const firstExistingModel = Array.isArray(existing.models)
     ? cloneConfigObject(existing.models[0])
@@ -262,6 +278,9 @@ function buildProviderConfig(
   // Omitted (undefined) → keep whatever the existing entry had.
   if (typeof contextWindow === "number") {
     firstExistingModel.contextWindow = contextWindow;
+  }
+  if (route.inferenceApi === "anthropic-messages") {
+    applyOpenClawAnthropicReplyBudget(firstExistingModel, inheritedMaxTokens);
   }
   if (route.inferenceCompat) {
     firstExistingModel.compat = asConfigObject(route.inferenceCompat);
@@ -285,6 +304,7 @@ export function patchOpenClawInferenceConfig(
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  const inheritedMaxTokens = readOpenClawPrimaryReplyBudget(config);
 
   updateAgentPrimary(config, route.primaryModelRef);
 
@@ -292,7 +312,13 @@ export function patchOpenClawInferenceConfig(
   models.mode = "merge";
   const providers = ensureObject(models, "providers");
   const existingProvider = cloneConfigObject(providers[route.providerKey]);
-  providers[route.providerKey] = buildProviderConfig(existingProvider, model, route, contextWindow);
+  providers[route.providerKey] = buildProviderConfig(
+    existingProvider,
+    model,
+    route,
+    contextWindow,
+    inheritedMaxTokens,
+  );
 
   return { changed: before !== JSON.stringify(config), route };
 }
@@ -399,6 +425,46 @@ const INFERENCE_SET_APIS = new Set([
 
 function isCustomCompatibleProvider(provider: string): boolean {
   return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
+}
+
+function assertHermesCompatibleAnthropicOpenAiProvider(
+  sandboxName: string,
+  agentName: string,
+  provider: string,
+  endpointUrl: string | null,
+  deps: InferenceSetDeps,
+): void {
+  if (
+    agentName !== "hermes" ||
+    provider !== "compatible-anthropic-endpoint" ||
+    isBedrockRuntimeEndpoint(endpointUrl)
+  ) {
+    return;
+  }
+
+  const result = deps.captureOpenshell(["provider", "get", provider], {
+    ignoreError: true,
+    includeStreams: true,
+    maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+  });
+  const output = result.output || `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const metadata = result.status === 0 ? parseGatewayProviderMetadata(output) : null;
+  if (
+    matchesGatewayProviderBinding(metadata, {
+      name: provider,
+      type: "openai",
+      credentialKey: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "OPENAI_BASE_URL",
+    })
+  ) {
+    return;
+  }
+
+  throw new InferenceSetError(
+    `Hermes requires provider '${provider}' to be registered on its verified OpenAI-compatible surface. ` +
+      `Run '${CLI_NAME} ${sandboxName} rebuild' to migrate this sandbox, or re-run onboarding for the endpoint before using inference set.`,
+    2,
+  );
 }
 
 function hasExplicitCustomMetadata(options: InferenceSetOptions): boolean {
@@ -595,7 +661,7 @@ function registryMetadataForProviderSwitch(options: {
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
-): Promise<InferenceSetResult> {
+): Promise<InferenceMutation<InferenceSetResult>> {
   const provider = trimRequired(options.provider, "provider");
   const model = trimRequired(options.model, "model");
   assertSupportedProvider(provider, model);
@@ -634,6 +700,18 @@ async function runInferenceSetWithoutHostLock(
     deps.rewriteConfigUrlsWithDnsPinning,
   );
   const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
+  if (
+    agentName === "hermes" &&
+    provider === "compatible-anthropic-endpoint" &&
+    explicitPreferredInferenceApi !== null &&
+    explicitPreferredInferenceApi !== "openai-completions"
+  ) {
+    throw new InferenceSetError(
+      "Hermes custom Anthropic endpoints require the managed openai-completions frontend. " +
+        "Set --inference-api openai-completions or omit --inference-api so NemoClaw selects it.",
+      2,
+    );
+  }
   const registryMetadata = registryMetadataForProviderSwitch({
     entry,
     provider,
@@ -672,18 +750,29 @@ async function runInferenceSetWithoutHostLock(
     }
   }
 
+  // `inference set` changes the selected route but cannot change a gateway
+  // provider's protocol type. Fail before mutation when a legacy Anthropic
+  // registration would make the required Hermes OpenAI frontend unroutable.
+  assertHermesCompatibleAnthropicOpenAiProvider(
+    sandboxName,
+    agentName,
+    provider,
+    registryMetadata.endpointUrl ?? null,
+    deps,
+  );
+
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
-  const setResult = deps.runOpenshell(
+  const setResult = deps.captureOpenshell(
     openshellInferenceSetArgs({ provider, model, noVerify: effectiveNoVerify }),
     {
       ignoreError: true,
+      includeStreams: true,
+      maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
     },
   );
   if (setResult.status !== 0) {
-    throw new InferenceSetError(
-      `OpenShell inference route update failed with exit ${setResult.status ?? 1}.`,
-      setResult.status ?? 1,
-    );
+    const failure = buildInferenceSetFailure(setResult, provider, deps);
+    throw new InferenceSetError(failure.message, failure.exitCode);
   }
 
   // Write minimal registry state before any sandbox-facing config read so the
@@ -698,12 +787,22 @@ async function runInferenceSetWithoutHostLock(
       nimContainer: registryMetadata.nimContainer ?? null,
     });
   if (
-    !deps.updateSandbox(sandboxName, registryFields(registryMetadata.preferredInferenceApi ?? null))
+    !deps.updateSandbox(
+      sandboxName,
+      registryFields(
+        resolveAgentInferenceApi(
+          agentName,
+          provider,
+          registryMetadata.preferredInferenceApi ?? null,
+        ),
+      ),
+    )
   ) {
     throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
   }
 
   const config = deps.readSandboxConfig(sandboxName, target);
+  const previousOpenClawInferenceApi = readPreviousOpenClawInferenceApi(agentName, config);
   const preferredInferenceApi =
     explicitPreferredInferenceApi ??
     resolveRuntimeInferenceApi({
@@ -794,35 +893,25 @@ async function runInferenceSetWithoutHostLock(
     deps,
   );
 
-  deps.appendAuditEntry({
-    action: "inference_set",
-    sandbox: sandboxName,
-    timestamp: new Date().toISOString(),
-    reason: `inference set ${agentName}:${provider}:${model}${
-      inSandboxConfigSynced ? "" : " (in-sandbox sync incomplete)"
-    }`,
-  });
-
-  // Only claim "synced" when the in-sandbox layer actually synced; otherwise the
-  // warning above already described the degraded state.
-  if (inSandboxConfigSynced) {
-    deps.log(
-      agentName === "hermes"
-        ? `  Inference route synced for '${sandboxName}': ${model}`
-        : `  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`,
-    );
-  }
-
-  return {
-    sandboxName,
-    provider,
-    model,
-    primaryModelRef: patched.route.primaryModelRef,
-    providerKey: patched.route.providerKey,
-    configChanged: patched.changed,
-    sessionUpdated,
-    inSandboxConfigSynced,
-  };
+  return finalizeInferenceMutation(
+    {
+      agentName,
+      configChanged: patched.changed,
+      nextApi: patched.route.inferenceApi,
+      previousApi: previousOpenClawInferenceApi,
+      result: {
+        sandboxName,
+        provider,
+        model,
+        primaryModelRef: patched.route.primaryModelRef,
+        providerKey: patched.route.providerKey,
+        configChanged: patched.changed,
+        sessionUpdated,
+        inSandboxConfigSynced,
+      },
+    },
+    deps,
+  );
 }
 
 export async function runInferenceSet(
@@ -836,7 +925,16 @@ export async function runInferenceSet(
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
   deps.prepareRunOpenshell();
-  return withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>
-    runInferenceSetWithoutHostLock({ ...options, sandboxName: selected.sandboxName }, deps),
-  );
+  return withSandboxMutationLock(selected.sandboxName, async () => {
+    const mutation = await withTimerBoundShieldsMutationLockAsync(
+      selected.sandboxName,
+      "inference set",
+      () => runInferenceSetWithoutHostLock({ ...options, sandboxName: selected.sandboxName }, deps),
+    );
+    // Release the config transition lock before the managed restart reacquires
+    // it, but retain the outer sandbox lifecycle lock so another process cannot
+    // destroy/recreate this name between the committed write and restart.
+    completeInferenceGatewayRestart(mutation, deps);
+    return mutation.result;
+  });
 }

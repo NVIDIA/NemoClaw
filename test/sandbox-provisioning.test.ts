@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Regression guards for sandbox image provisioning.
-//
 // Verifies that the image-build sources (Dockerfile and Dockerfile.base)
 // preserve the mutable-by-default config layout (#2227) and the gateway
 // auth token externalization (#2378).
-//
 // These guards execute the relevant Dockerfile/startup snippets in temporary
 // fixtures where practical, so coverage follows behavior rather than source
 // text shape.
@@ -301,11 +299,13 @@ describe("sandbox provisioning: runtime npm online state", () => {
 
 describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
   it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
+    const braveIntegrity =
+      "sha512-DDRnb4reL99O8kbISNbRFyk/xoUPYHsXG3UGikKAsVs+zIldYYA0hY0d3Z2aWoE+0vfda27mJUByCo7Xr15qdw==";
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const command = dockerRunCommandBetween(
       dockerfile,
       "# Install non-messaging OpenClaw plugins",
-      "# hadolint ignore=DL3059,DL4006\nRUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install",
+      '# hadolint ignore=DL3059,DL4006\nRUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install',
     );
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-plugin-install-"));
     try {
@@ -314,6 +314,13 @@ describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
         tmp,
         [
           [
+            "npm() {",
+            '  printf "npm %s|BRAVE_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" >> "$call_log"',
+            `  if [ "$1 $2 $3" = "view @openclaw/brave-plugin@2026.6.10 dist.integrity" ]; then printf "%s\\n" "${braveIntegrity}"; return 0; fi`,
+            '  if [ "$1 $2 $3" = "view @openclaw/brave-plugin@2026.6.10 dist.tarball" ]; then printf "%s\\n" "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz"; return 0; fi',
+            `  if [ "$1" = "pack" ]; then pack_dir="\${4:-}"; test -n "$pack_dir"; printf "fake brave plugin tarball" > "$pack_dir/brave-plugin-2026.6.10.tgz"; printf '[{"filename":"brave-plugin-2026.6.10.tgz","integrity":"%s"}]\\n' "${braveIntegrity}"; return 0; fi`,
+            "  return 1",
+            "}",
             "openclaw() {",
             '  printf "%s|BRAVE_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" >> "$call_log"',
             "}",
@@ -322,15 +329,23 @@ describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
         {
           NEMOCLAW_OPENCLAW_OTEL: "0",
           NEMOCLAW_WEB_SEARCH_ENABLED: "1",
-          OPENCLAW_VERSION: "2026.5.22",
+          NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+          OPENCLAW_VERSION: "2026.6.10",
+          OPENCLAW_BRAVE_PLUGIN_2026_6_10_INTEGRITY: braveIntegrity,
         },
       );
 
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
-      expect(calls.trim().split("\n")).toEqual([
-        "plugins install npm:@openclaw/brave-plugin@2026.5.22 --pin|BRAVE_API_KEY=",
+      expect(calls).toContain("npm view @openclaw/brave-plugin@2026.6.10 dist.integrity");
+      expect(calls).toContain("npm view @openclaw/brave-plugin@2026.6.10 dist.tarball");
+      expect(calls).toContain(
+        "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz --pack-destination",
+      );
+      expect(calls).toContain("plugins install ");
+      expect(calls).toContain("brave-plugin-2026.6.10.tgz --pin|BRAVE_API_KEY=");
+      expect(calls).toContain(
         "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
-      ]);
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1187,6 +1202,9 @@ describe("Hermes sandbox provisioning", () => {
     const bashrcPath = path.join(etcDir, "bash.bashrc");
     const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
+    const buildMcpDigestPath = path.join(localLib, "build-hermes-mcp-digest.py");
+    const mcpConfigTransactionPath = path.join(localLib, "hermes-mcp-config-transaction.py");
+    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.72.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const files = [
@@ -1194,8 +1212,12 @@ describe("Hermes sandbox provisioning", () => {
       gatewayControlPath,
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
+      path.join(localLib, "patch-hermes-session-list-preview.py"),
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
+      buildMcpDigestPath,
+      mcpConfigTransactionPath,
+      mcpManifest,
       gatewaySupervisorPath,
       stateDirGuardPath,
       managedGatewayControlPath,
@@ -1210,7 +1232,6 @@ describe("Hermes sandbox provisioning", () => {
       .replaceAll("/usr/local/lib/nemoclaw", localLib)
       .replaceAll("/etc/profile.d", profileDir)
       .replaceAll("/etc/bash.bashrc", bashrcPath);
-
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
@@ -1224,9 +1245,12 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${mcpManifest}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
+      expect((fs.statSync(mcpConfigTransactionPath).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(mcpManifest).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
@@ -1356,6 +1380,8 @@ describe("Hermes sandbox provisioning", () => {
         "web",
         "--extra",
         "pty",
+        "--extra",
+        "mcp",
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

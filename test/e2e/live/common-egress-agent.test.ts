@@ -22,11 +22,16 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  agentReplyContainsToken,
+  classifyPreContractProviderValidationSkip,
+  parseChatContent,
+  parseOpenClawAgentText,
+} from "./common-egress-agent-helpers.ts";
 import { stripAnsi } from "./json-envelope.ts";
-import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 //
 // Preserve the legacy live boundary: real NemoClaw onboard, real OpenShell
@@ -34,9 +39,6 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 // agent path. Helpers stay local because this test is a focused migration of
 // one bash script, not a new shared e2e framework.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
 const OPENCLAW_BALANCED_SANDBOX =
   process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_BALANCED_SANDBOX ??
   "e2e-common-egress-openclaw-balanced";
@@ -61,28 +63,6 @@ validateSandboxName(HERMES_SANDBOX);
 
 type NemoEnv = NodeJS.ProcessEnv;
 type SkipFn = (note?: string) => never;
-
-interface AgentJsonDoc {
-  payloads?: Array<{ text?: unknown }>;
-  result?: { payloads?: Array<{ text?: unknown }> };
-}
-
-interface ChatCompletionLike {
-  choices?: Array<{
-    message?: {
-      content?: unknown;
-      reasoning_content?: unknown;
-    };
-    text?: unknown;
-  }>;
-}
-
-interface CommonEgressProviderValidationSkip {
-  http429ProviderValidationFailure: boolean;
-  matches: boolean;
-  sanitizedEndpointValidationFailure: boolean;
-  transientProviderValidationFailure: boolean;
-}
 
 interface CleanupAttempt {
   exitCode: number | null;
@@ -112,62 +92,6 @@ function commandEnv(extra: NemoEnv = {}): NemoEnv {
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     ...extra,
   };
-}
-
-function parseAgentJsonDocs(raw: string): AgentJsonDoc[] {
-  try {
-    const parsed = JSON.parse(raw) as AgentJsonDoc | AgentJsonDoc[];
-    return Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
-    // Invalid state: `openclaw agent --json` has emitted both single JSON
-    // documents and log-prefixed streams across versions. Source boundary:
-    // OpenClaw CLI stdout framing inside the sandbox, outside this NemoClaw
-    // migration. Source-fix constraint: keep this test local and legacy-script
-    // compatible instead of rewriting shared fixtures or patching OpenClaw from
-    // a migration PR. Removal condition: supported OpenClaw versions guarantee
-    // a strict single JSON document with payload text on stdout.
-  }
-
-  const docs: AgentJsonDoc[] = [];
-  for (let index = 0; index < raw.length; index += 1) {
-    if (raw[index] !== "{") continue;
-    for (let end = index + 1; end <= raw.length; end += 1) {
-      try {
-        const parsed = JSON.parse(raw.slice(index, end)) as AgentJsonDoc | AgentJsonDoc[];
-        docs.push(...(Array.isArray(parsed) ? parsed : [parsed]));
-        index = end - 1;
-        break;
-      } catch {
-        // Keep extending the candidate slice until it becomes valid JSON.
-      }
-    }
-  }
-  return docs;
-}
-
-function parseOpenClawAgentText(raw: string): string {
-  return parseAgentJsonDocs(raw)
-    .flatMap((doc) => doc.payloads ?? doc.result?.payloads ?? [])
-    .map((payload) => payload.text)
-    .filter((value): value is string => typeof value === "string")
-    .join("\n")
-    .trim();
-}
-
-function parseChatContent(raw: string): string {
-  const doc = JSON.parse(raw) as ChatCompletionLike;
-  const choice = doc.choices?.[0];
-  const content = choice?.message?.content ?? choice?.message?.reasoning_content ?? choice?.text;
-  return typeof content === "string" ? content.trim() : "";
-}
-
-function compactAgentReply(value: string): string {
-  return value.replace(/\s+/gu, "");
-}
-
-function agentReplyContainsToken(reply: string, expected: string): boolean {
-  const compactExpected = compactAgentReply(expected);
-  return compactExpected.length > 0 && compactAgentReply(reply).includes(compactExpected);
 }
 
 function httpStatusFromResponse(raw: string): string {
@@ -203,33 +127,6 @@ function isOpenClawTransientAgentError(output: string): boolean {
   return /ECONNREFUSED|EAI_AGAIN|ECONNRESET|ETIMEDOUT|gateway unavailable|network connection error|DNS error|fetch failed|LLM request timed out|FailoverError|inference service unavailable|rawError=503/i.test(
     output,
   );
-}
-
-function classifyPreContractProviderValidationSkip(
-  result: Pick<ShellProbeResult, "stdout" | "stderr">,
-): CommonEgressProviderValidationSkip {
-  const output = text(result);
-  const providerValidation =
-    /endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i.test(
-      output,
-    );
-  const transientProviderValidationFailure = isTransientProviderValidationFailure(result);
-  const http429ProviderValidationFailure =
-    providerValidation && /HTTP\s*429|\b429\b|rate[- ]?limit|too many requests/i.test(output);
-  const sanitizedEndpointValidationFailure =
-    providerValidation &&
-    /Validation details were omitted to avoid exposing credentials/i.test(output) &&
-    process.env.GITHUB_ACTIONS === "true";
-
-  return {
-    http429ProviderValidationFailure,
-    matches:
-      transientProviderValidationFailure ||
-      http429ProviderValidationFailure ||
-      sanitizedEndpointValidationFailure,
-    sanitizedEndpointValidationFailure,
-    transientProviderValidationFailure,
-  };
 }
 
 function isMissingSandboxOutput(output: string): boolean {
@@ -661,87 +558,8 @@ async function runHermesAgentAssertion(
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
 
-const liveTest = shouldRunLiveE2E() ? test : test.skip;
-const openClawTest =
-  process.env.NEMOCLAW_COMMON_EGRESS_SKIP_OPENCLAW === "1" ? test.skip : liveTest;
-const hermesTest = process.env.NEMOCLAW_COMMON_EGRESS_SKIP_HERMES === "1" ? test.skip : liveTest;
-
-test("common-egress agent OpenClaw JSON parser accepts framed agent payloads", () => {
-  expect(
-    parseOpenClawAgentText(
-      JSON.stringify({ payloads: [{ text: "noise" }, { text: "WEATHER_AGENT_OK" }] }),
-    ),
-  ).toContain("WEATHER_AGENT_OK");
-  expect(
-    parseOpenClawAgentText(
-      JSON.stringify({ result: { payloads: [{ text: "REFERENCE_AGENT_OK" }] } }),
-    ),
-  ).toContain("REFERENCE_AGENT_OK");
-  expect(
-    parseOpenClawAgentText(
-      `openclaw log line\n${JSON.stringify({
-        result: { payloads: [{ text: "HERMES_REFERENCE_AGENT_OK" }] },
-      })}\n`,
-    ),
-  ).toContain("HERMES_REFERENCE_AGENT_OK");
-});
-
-test("common-egress agent Hermes response parser reads message content", () => {
-  expect(
-    parseChatContent(
-      JSON.stringify({ choices: [{ message: { content: "HERMES_REFERENCE_AGENT_OK" } }] }),
-    ),
-  ).toBe("HERMES_REFERENCE_AGENT_OK");
-});
-
-test("common-egress agent expected-token matching ignores model line breaks", () => {
-  expect(agentReplyContainsToken("REFER\nENCE_AGENT_OK", "REFERENCE_AGENT_OK")).toBe(true);
-  expect(agentReplyContainsToken("HERMES_REFERENCE\n_AGENT_OK", "HERMES_REFERENCE_AGENT_OK")).toBe(
-    true,
-  );
-});
-
-test("common-egress agent classifies pre-contract provider validation skips", () => {
-  expect(
-    classifyPreContractProviderValidationSkip({
-      stdout: "",
-      stderr:
-        "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429",
-    }),
-  ).toMatchObject({
-    http429ProviderValidationFailure: true,
-    matches: true,
-  });
-
-  const originalGithubActions = process.env.GITHUB_ACTIONS;
-  try {
-    process.env.GITHUB_ACTIONS = "true";
-    expect(
-      classifyPreContractProviderValidationSkip({
-        stdout: "",
-        stderr:
-          "NVIDIA Endpoints endpoint validation failed.\nValidation details were omitted to avoid exposing credentials.",
-      }),
-    ).toMatchObject({
-      matches: true,
-      sanitizedEndpointValidationFailure: true,
-    });
-  } finally {
-    if (originalGithubActions === undefined) {
-      delete process.env.GITHUB_ACTIONS;
-    } else {
-      process.env.GITHUB_ACTIONS = originalGithubActions;
-    }
-  }
-
-  expect(
-    classifyPreContractProviderValidationSkip({
-      stdout: "",
-      stderr:
-        "NVIDIA Endpoints endpoint validation failed.\ninvalid NVIDIA_INFERENCE_API_KEY credential",
-    }),
-  ).toMatchObject({ matches: false });
-});
+const openClawTest = process.env.NEMOCLAW_COMMON_EGRESS_SKIP_OPENCLAW === "1" ? test.skip : test;
+const hermesTest = process.env.NEMOCLAW_COMMON_EGRESS_SKIP_HERMES === "1" ? test.skip : test;
 
 describe.sequential("common-egress agent live targets", () => {
   openClawTest(
@@ -751,7 +569,7 @@ describe.sequential("common-egress agent live targets", () => {
       const hosted = await assertPrerequisites(host, secrets, skip);
       const apiKey = hosted.apiKey;
       const braveApiKey = secrets.required("BRAVE_API_KEY");
-      await artifacts.writeJson("target.json", {
+      await artifacts.target.declare({
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
@@ -864,7 +682,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
       );
       expect(weatherProof.exitCode, text(weatherProof)).toBe(0);
       expect(weatherProof.stdout.trim()).toMatch(/^[a-f0-9]{64}\s+/);
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
         status: "passed",
@@ -878,7 +696,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
       const apiKey = hosted.apiKey;
-      await artifacts.writeJson("target.json", {
+      await artifacts.target.declare({
         id: "common-egress-agent",
         case: "openclaw-open-public-reference",
         sandboxName: OPENCLAW_OPEN_SANDBOX,
@@ -910,7 +728,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
 https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json
 After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.`,
       });
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "common-egress-agent",
         case: "openclaw-open-public-reference",
         status: "passed",
@@ -924,7 +742,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
       const apiKey = hosted.apiKey;
-      await artifacts.writeJson("target.json", {
+      await artifacts.target.declare({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",
         sandboxName: HERMES_SANDBOX,
@@ -960,7 +778,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         prompt: buildHermesReferencePrompt(),
         sandboxName: HERMES_SANDBOX,
       });
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",
         status: "passed",

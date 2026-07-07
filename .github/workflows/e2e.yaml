@@ -14,7 +14,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live E2E job ids. Empty runs default-enabled jobs only when targets is also empty; explicit-only jobs openshell-gateway-auth-contract, jetson-nvmap-gpu, and sandbox-rlimits-connect are skipped unless selected."
+        description: "Optional comma-separated free-standing live E2E job ids. Empty runs default-enabled jobs only when targets is also empty; explicit-only jobs openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, and jetson-nvmap-gpu are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -48,14 +48,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          build-cli: "false"
 
       - id: matrix
         name: Generate E2E target matrix
@@ -266,17 +262,62 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      # Keep only the credential-bearing step anchored. Cleanup mappings stay
+      # explicit because strict YAML decoders reject 100 or more aliases here.
+      - &dockerhub-auth
+        name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_AUTH_REQUIRED: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_USERNAME || '' }}
+          DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_TOKEN || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker_config="$(mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX")"
+          chmod 700 "${docker_config}"
+          export DOCKER_CONFIG="${docker_config}"
+          printf 'DOCKER_CONFIG=%s\n' "${DOCKER_CONFIG}" >> "${GITHUB_ENV}"
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then
+            echo "::notice::Docker Hub credentials are withheld for this ref; continuing with anonymous pulls."
+            exit 0
+          fi
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::error::Docker Hub credentials are required for trusted E2E runs."
+            exit 1
+          fi
 
-      - name: Build CLI
-        run: npm run build:cli
+          auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"
+          : > "${auth_marker}"
+          chmod 600 "${auth_marker}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if printf '%s' "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "${login_succeeded}" -ne 1 ]]; then
+            echo "::error::Docker Hub login failed after 3 attempts."
+            exit 1
+          fi
+
+      - name: Configure live E2E trace directory
+        env:
+          TARGET_ID: ${{ matrix.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}" >> "${GITHUB_ENV}"
+
+      # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
+      # command writes raw traces under runner temp, never under upload roots.
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run live E2E tests
         env:
@@ -285,6 +326,40 @@ jobs:
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts -t "^${TARGET_ID}$" --silent=false --reporter=default
+
+      # The sanitizer reads raw traces only after checking the workflow-owned
+      # runner-temp path, then writes the timing-only file into upload roots.
+      - name: Build trusted live E2E timing summary
+        if: always()
+        env:
+          TARGET_ID: ${{ matrix.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"
+          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
+            echo "::error::Refusing to sanitize unexpected raw trace path" >&2
+            exit 1
+          fi
+          python3 scripts/e2e/sanitize-trace-timing.py \
+            "${NEMOCLAW_TRACE_DIR}" \
+            "${E2E_ARTIFACT_DIR}/${TARGET_ID}"
+
+      # Cleanup intentionally runs after sanitization and before upload so raw
+      # trace JSON never becomes part of the uploaded artifact surface.
+      - name: Delete raw live E2E traces
+        if: always()
+        env:
+          TARGET_ID: ${{ matrix.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"
+          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
+            echo "::error::Refusing to delete unexpected raw trace path" >&2
+            exit 1
+          fi
+          rm -rf -- "${NEMOCLAW_TRACE_DIR}"
 
       - name: Summarize artifacts
         if: always()
@@ -329,7 +404,7 @@ jobs:
 
       - name: Upload E2E artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-${{ matrix.id }}
           path: |
@@ -339,12 +414,15 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/environment.result.json
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
+            e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
             e2e-artifacts/live/${{ matrix.id }}/actions/
             e2e-artifacts/live/${{ matrix.id }}/logs/
             e2e-artifacts/live/${{ matrix.id }}/shell/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   # Free-standing live tests under test/e2e/live/ that don't fit the
   # registry-driven steady-state probe model. Each gets a discrete job here
@@ -365,14 +443,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          build-cli: "false"
 
       - name: Run OpenShell version-pin live test
         # Hermetic
@@ -385,13 +459,7 @@ jobs:
 
       - name: Upload OpenShell version-pin artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openshell-version-pin
-          path: e2e-artifacts/live/openshell-version-pin/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   openshell-gateway-auth-contract:
     needs: generate-matrix
@@ -409,24 +477,17 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.71"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -456,13 +517,211 @@ jobs:
 
       - name: Upload OpenShell gateway auth contract artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  mcp-bridge:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',mcp-bridge,') || contains(format(',{0},', inputs.targets), ',mcp-bridge,') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Three destructive agent scenarios each have a 45-minute Vitest budget,
+    # plus pinned OpenShell installation and cold image setup.
+    timeout-minutes: 180
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "mcp-bridge"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_OPENSHELL_CHANNEL: stable
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          name: e2e-openshell-gateway-auth-contract
-          path: e2e-artifacts/live/openshell-gateway-auth-contract/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Install and verify cloudflared prerequisite
+        # Update posture: maintainers review upstream cloudflared releases and
+        # update the version and reviewed SHA256 together in both explicit MCP
+        # lanes; mutable package repositories and unreviewed latest releases
+        # are intentionally rejected by the workflow-contract tests.
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
+            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
+            exit 1
+          fi
+          sudo dpkg -i "${cloudflared_deb}"
+          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
+
+      - name: Generate MCP test TLS
+        run: bash test/e2e/setup-mcp-test-tls.sh
+
+      - name: Install OpenShell CLI
+        env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+        run: |
+          set -euo pipefail
+          bash scripts/install-openshell.sh
+
+      - name: Run MCP OpenShell provider live test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-live \
+            test/e2e/live/mcp-bridge.test.ts \
+            --silent=false --reporter=default
+
+      - id: mcp_artifact_secret_scan
+        name: Scan MCP artifacts for fixture credentials
+        if: always()
+        run: >-
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
+          e2e-artifacts/live/mcp-bridge
+
+      - name: Upload MCP server artifacts
+        if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-mcp-bridge
+          path: e2e-artifacts/live/mcp-bridge/
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  mcp-bridge-dev:
+    needs: generate-matrix
+    # Moving OpenShell dev artifacts are compatibility evidence only and must
+    # never enter scheduled or default manual runs without explicit selection.
+    if: ${{ contains(format(',{0},', inputs.jobs), ',mcp-bridge-dev,') || contains(format(',{0},', inputs.targets), ',mcp-bridge-dev,') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 180
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_TARGET_ID: "mcp-bridge-dev"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_OPENSHELL_CHANNEL: dev
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Install and verify cloudflared prerequisite
+        # Update posture: keep this dev compatibility lane on the same reviewed
+        # version/SHA256 pair as the stable lane; workflow-contract tests fail
+        # if the pins diverge or installation becomes mutable.
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
+            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
+            exit 1
+          fi
+          sudo dpkg -i "${cloudflared_deb}"
+          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
+
+      - name: Generate MCP test TLS
+        run: bash test/e2e/setup-mcp-test-tls.sh
+
+      - name: Revoke Docker auth before unverified dev tooling
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+      - name: Install OpenShell CLI
+        env:
+          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1"
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+        run: |
+          set -euo pipefail
+          bash scripts/install-openshell.sh
+
+      - name: Run MCP OpenShell provider live test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-live \
+            test/e2e/live/mcp-bridge.test.ts \
+            --silent=false --reporter=default
+
+      - id: mcp_artifact_secret_scan
+        name: Scan MCP artifacts for fixture credentials
+        if: always()
+        run: >-
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
+          e2e-artifacts/live/mcp-bridge-dev
+
+      - name: Upload MCP server artifacts
+        if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-mcp-bridge-dev
+          path: e2e-artifacts/live/mcp-bridge-dev/
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   onboard-negative-paths:
     needs: generate-matrix
@@ -479,17 +738,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run onboard negative-paths live test
         # Direct E2E coverage
@@ -503,13 +753,7 @@ jobs:
 
       - name: Upload onboard negative-paths artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-onboard-negative-paths
-          path: e2e-artifacts/live/onboard-negative-paths/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   # Live skill injection and real OpenClaw agent-turn contract.
   skill-agent:
@@ -529,43 +773,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         # The migrated skill-agent lane invokes helper scripts that call
@@ -598,7 +809,7 @@ jobs:
 
       - name: Upload skill-agent artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-skill-agent
           path: |
@@ -610,11 +821,14 @@ jobs:
             e2e-artifacts/live/skill-agent/*/shell/*.result.json
             e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt
             e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
   # Direct OpenClaw skills CLI contract.
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   openclaw-skill-cli:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-skill-cli,') || contains(format(',{0},', inputs.targets), ',openclaw-skill-cli,') }}
@@ -634,43 +848,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run OpenClaw skill CLI live test
         env:
@@ -683,19 +864,12 @@ jobs:
 
       - name: Upload OpenClaw skill CLI artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openclaw-skill-cli
-          path: e2e-artifacts/live/openclaw-skill-cli/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
         shell: bash
-        run: |
-          docker logout docker.io >/dev/null 2>&1 || true
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   # Checkout-local CLI/docs parity and deterministic local Markdown/MDX link
   # validation. Keep this discrete until the focused docs workflows are
@@ -716,14 +890,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          build-cli: "false"
 
       - name: Run docs validation live Vitest test
         run: |
@@ -734,101 +904,7 @@ jobs:
 
       - name: Upload docs validation artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-docs-validation
-          path: e2e-artifacts/live/docs-validation/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
-
-  hermes-root-entrypoint-smoke:
-    needs: generate-matrix
-    if: ${{ needs.generate-matrix.result == 'success' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-root-entrypoint-smoke,') || contains(format(',{0},', inputs.targets), ',hermes-root-entrypoint-smoke,')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "hermes-root-entrypoint-smoke"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Run Hermes root entrypoint smoke live test
-        # This
-        # builds the real Hermes image unless NEMOCLAW_HERMES_TEST_IMAGE points
-        # at a prebuilt image, then probes the root entrypoint via Docker.
-        run: |
-          set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-root-entrypoint-smoke.test.ts \
-            --silent=false --reporter=default
-
-      - name: Upload Hermes root entrypoint smoke artifacts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-hermes-root-entrypoint-smoke
-          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
-
-  hermes-sandbox-secret-boundary:
-    needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-sandbox-secret-boundary,') || contains(format(',{0},', inputs.targets), ',hermes-sandbox-secret-boundary,') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "hermes-sandbox-secret-boundary"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-sandbox-secret-boundary
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Run Hermes sandbox secret-boundary live test
-        # This
-        # builds the real Hermes images unless prebuilt NEMOCLAW_HERMES_* image
-        # env vars are supplied, then probes image and startup secret boundaries.
-        run: |
-          set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-sandbox-secret-boundary.test.ts \
-            --silent=false --reporter=default
-
-      - name: Upload Hermes sandbox secret-boundary artifacts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-hermes-sandbox-secret-boundary
-          path: e2e-artifacts/live/hermes-sandbox-secret-boundary/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   inference-routing:
     needs: generate-matrix
@@ -845,17 +921,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run inference routing live test
         # Direct E2E coverage. The
@@ -872,13 +939,7 @@ jobs:
 
       - name: Upload inference routing artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-inference-routing
-          path: e2e-artifacts/live/inference-routing/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   cloud-inference:
     needs: generate-matrix
@@ -899,17 +960,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run cloud inference live test
         # The Vitest test
@@ -926,13 +980,12 @@ jobs:
 
       - name: Upload cloud inference artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-cloud-inference
-          path: e2e-artifacts/live/cloud-inference/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   gpu-e2e:
     needs: generate-matrix
@@ -957,15 +1010,10 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-      - name: Build CLI
-        run: npm run build:cli
+
+      - *dockerhub-auth
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run GPU Ollama live Vitest test
@@ -987,13 +1035,12 @@ jobs:
           npx vitest run --project e2e-live             test/e2e/live/gpu-e2e.test.ts             --silent=false --reporter=default
       - name: Upload GPU E2E artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gpu-e2e
-          path: e2e-artifacts/live/gpu-e2e/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   agent-turn-latency:
     needs: generate-matrix
@@ -1019,15 +1066,10 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-      - name: Build CLI
-        run: npm run build:cli
+
+      - *dockerhub-auth
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run agent turn latency live Vitest test
@@ -1052,13 +1094,12 @@ jobs:
           npx vitest run --project e2e-live             test/e2e/live/agent-turn-latency.test.ts             --silent=false --reporter=default
       - name: Upload agent turn latency artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-agent-turn-latency
-          path: e2e-artifacts/live/agent-turn-latency/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   kimi-inference-compat:
     needs: generate-matrix
@@ -1080,15 +1121,10 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-      - name: Build CLI
-        run: npm run build:cli
+
+      - *dockerhub-auth
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run Kimi compatibility live Vitest test
@@ -1101,13 +1137,12 @@ jobs:
           npx vitest run --project e2e-live             test/e2e/live/kimi-inference-compat.test.ts             --silent=false --reporter=default
       - name: Upload Kimi compatibility artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-kimi-inference-compat
-          path: e2e-artifacts/live/kimi-inference-compat/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-inference-switch:
     needs: generate-matrix
@@ -1122,8 +1157,8 @@ jobs:
         include:
           - mode: hosted
             sandbox_name: e2e-hermes-inference-switch
-            switch_provider: compatible-endpoint
-            switch_model: nvidia/nvidia/nemotron-3-super-v3
+            switch_provider: nvidia-prod
+            switch_model: nvidia/nemotron-3-super-120b-a12b
             switch_inference_api: openai-completions
             switch_mock_anthropic: "0"
           - mode: anthropic
@@ -1152,20 +1187,16 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-      - name: Build CLI
-        run: npm run build:cli
+
+      - *dockerhub-auth
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run Hermes inference switch live Vitest test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -1173,13 +1204,15 @@ jobs:
           npx vitest run --project e2e-live             test/e2e/live/hermes-inference-switch.test.ts             --silent=false --reporter=default
       - name: Upload Hermes inference switch artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-hermes-inference-switch-${{ matrix.mode }}
           path: e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   brave-search:
     needs: generate-matrix
@@ -1202,17 +1235,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -1239,13 +1265,12 @@ jobs:
 
       - name: Upload Brave search artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-brave-search
-          path: e2e-artifacts/live/brave-search/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   ollama-auth-proxy:
     needs: generate-matrix
@@ -1264,14 +1289,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        with:
+          build-cli: "false"
 
       - name: Run Ollama auth proxy live Vitest test
         run: |
@@ -1280,13 +1303,12 @@ jobs:
 
       - name: Upload Ollama auth proxy artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-ollama-auth-proxy
-          path: e2e-artifacts/live/ollama-auth-proxy/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   cron-preflight-inference-local:
     needs: generate-matrix
@@ -1309,17 +1331,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -1345,13 +1360,12 @@ jobs:
 
       - name: Upload cron preflight inference.local artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-cron-preflight-inference-local
-          path: e2e-artifacts/live/cron-preflight-inference-local/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   issue-4434-tui-unreachable-inference:
     needs: generate-matrix
@@ -1373,6 +1387,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       # This free-standing job checks out and executes the PR target ref. It
       # keeps privileged host dependency setup inline in trusted workflow YAML
@@ -1397,43 +1413,8 @@ jobs:
           done
           sudo apt-get install -y --no-install-recommends expect iptables
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -1462,13 +1443,12 @@ jobs:
 
       - name: "Upload issue #4434 TUI unreachable inference artifacts"
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-issue-4434-tui-unreachable-inference
-          path: e2e-artifacts/live/issue-4434-tui-unreachable-inference/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   credential-sanitization:
     needs: generate-matrix
@@ -1489,43 +1469,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run credential sanitization live test
         # Preserves the
@@ -1542,19 +1489,12 @@ jobs:
 
       - name: Upload credential sanitization artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-credential-sanitization
-          path: e2e-artifacts/live/credential-sanitization/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
         shell: bash
-        run: |
-          docker logout docker.io >/dev/null 2>&1 || true
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   credential-migration:
     needs: generate-matrix
@@ -1574,43 +1514,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run credential migration live test
         # This live test
@@ -1633,13 +1540,12 @@ jobs:
 
       - name: Upload credential migration artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-credential-migration
-          path: e2e-artifacts/live/credential-migration/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   sessions-agents-cli:
     needs: generate-matrix
@@ -1660,43 +1566,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: |
@@ -1720,56 +1593,12 @@ jobs:
 
       - name: Upload sessions/agents CLI artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sessions-agents-cli
-          path: e2e-artifacts/live/sessions-agents-cli/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
-  runtime-overrides:
-    needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',runtime-overrides,') || contains(format(',{0},', inputs.targets), ',runtime-overrides,') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "runtime-overrides"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/runtime-overrides
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Run runtime overrides live test
-        # Builds the real
-        # sandbox image and exercises the runtime ENTRYPOINT override boundary.
-        run: |
-          set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/runtime-overrides.test.ts \
-            --silent=false --reporter=default
-
-      - name: Upload runtime overrides artifacts
+      - name: Clean up Docker auth
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-runtime-overrides
-          path: e2e-artifacts/live/runtime-overrides/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-slack:
     needs: generate-matrix
@@ -1795,48 +1624,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-hermes-slack" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run Hermes Slack live test
         # Preserves the
@@ -1854,20 +1645,15 @@ jobs:
 
       - name: Upload Hermes Slack artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-hermes-slack
           path: e2e-artifacts/live/hermes-slack-e2e/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-e2e:
     needs: generate-matrix
@@ -1892,17 +1678,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run Hermes live Vitest test
         env:
@@ -1915,13 +1694,57 @@ jobs:
 
       - name: Upload Hermes live Vitest artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  hermes-gpu-startup:
+    needs: generate-matrix
+    if: ${{ contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,') }}
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 75
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_TARGET_ID: "hermes-gpu-startup"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: hermes
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_GPU: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes-gpu-startup
+      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          name: e2e-hermes-e2e
-          path: e2e-artifacts/live/hermes-e2e/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Run Hermes GPU startup live Vitest test
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-live \
+            test/e2e/live/hermes-gpu-startup.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes GPU startup artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-dashboard:
     needs: generate-matrix
@@ -1947,17 +1770,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run Hermes dashboard live Vitest test
         env:
@@ -1970,13 +1786,12 @@ jobs:
 
       - name: Upload Hermes dashboard live Vitest artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-hermes-dashboard
-          path: e2e-artifacts/live/hermes-dashboard/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-discord:
     needs: generate-matrix
@@ -1999,46 +1814,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Isolate Docker auth
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-hermes-discord" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run Hermes Discord live test
         # Preserves the
@@ -2058,20 +1837,12 @@ jobs:
 
       - name: Upload Hermes Discord artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-hermes-discord
-          path: e2e-artifacts/live/hermes-discord/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG:-}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   network-policy:
     needs: generate-matrix
@@ -2093,6 +1864,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       # Expect is a reviewed host-tool consumer for the interactive policy-add
       # test. Keep this privileged setup inline in trusted workflow YAML. This
@@ -2116,17 +1889,8 @@ jobs:
           done
           sudo apt-get install -y --no-install-recommends expect
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell
         # Runs without workflow tokens, Docker credentials, or NVIDIA_INFERENCE_API_KEY.
@@ -2150,13 +1914,12 @@ jobs:
 
       - name: Upload network-policy artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-network-policy
-          path: e2e-artifacts/live/network-policy/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   common-egress-agent:
     needs: generate-matrix
@@ -2179,17 +1942,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell
         # Direct Vitest execution uses bin/nemoclaw.js instead of install.sh,
@@ -2228,13 +1984,12 @@ jobs:
 
       - name: Upload common-egress agent artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-common-egress-agent
-          path: e2e-artifacts/live/common-egress-agent/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   shields-config:
     needs: generate-matrix
@@ -2256,40 +2011,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          build-cli: "false"
 
       - name: Run shields-config live test
         # The Vitest test runs
@@ -2305,14 +2032,16 @@ jobs:
 
       - name: Upload shields-config artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-shields-config
           path: |
             e2e-artifacts/live/shields-config/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   rebuild-openclaw:
     needs: generate-matrix
@@ -2331,43 +2060,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell
         # Direct Vitest execution uses bin/nemoclaw.js instead of install.sh,
@@ -2401,13 +2097,12 @@ jobs:
 
       - name: Upload OpenClaw rebuild artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-rebuild-openclaw
-          path: e2e-artifacts/live/rebuild-openclaw/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   rebuild-hermes:
     needs: generate-matrix
@@ -2435,40 +2130,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          build-cli: "false"
 
       - name: Run Hermes rebuild live test
         # Preserves the real
@@ -2484,13 +2151,12 @@ jobs:
 
       - name: Upload Hermes rebuild artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-rebuild-hermes
-          path: e2e-artifacts/live/rebuild-hermes/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   rebuild-hermes-stale-base:
     needs: generate-matrix
@@ -2519,40 +2185,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          build-cli: "false"
 
       - name: Run Hermes stale-base rebuild live test
         # Uses NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1, preserving issue #3025's
@@ -2567,13 +2205,12 @@ jobs:
 
       - name: Upload Hermes stale-base rebuild artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-rebuild-hermes-stale-base
-          path: e2e-artifacts/live/rebuild-hermes-stale-base/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   sandbox-rebuild:
     needs: generate-matrix
@@ -2595,43 +2232,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell
         env:
@@ -2663,13 +2267,12 @@ jobs:
 
       - name: Upload sandbox rebuild artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sandbox-rebuild
-          path: e2e-artifacts/live/sandbox-rebuild/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   sandbox-rlimits-connect:
     needs: generate-matrix
@@ -2693,43 +2296,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell
         env:
@@ -2761,13 +2331,12 @@ jobs:
 
       - name: Upload sandbox rlimit connect artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sandbox-rlimits-connect
-          path: e2e-artifacts/live/sandbox-rlimits-connect/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   overlayfs-autofix:
     needs: generate-matrix
@@ -2791,48 +2360,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-overlayfs-autofix" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run overlayfs autofix live test
         env:
@@ -2845,17 +2376,12 @@ jobs:
 
       - name: Upload overlayfs autofix artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-overlayfs-autofix
-          path: e2e-artifacts/live/overlayfs-autofix/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
-      - name: Clean Docker auth
+      - name: Clean up Docker auth
         if: always()
-        run: rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   state-backup-restore:
     needs: generate-matrix
@@ -2878,43 +2404,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell
         env:
@@ -2946,13 +2439,12 @@ jobs:
 
       - name: Upload state backup restore artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-state-backup-restore
-          path: e2e-artifacts/live/state-backup-restore/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   upgrade-stale-sandbox:
     needs: generate-matrix
@@ -2975,48 +2467,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-upgrade-stale-sandbox" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: |
@@ -3047,20 +2501,12 @@ jobs:
 
       - name: Upload upgrade stale sandbox artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-upgrade-stale-sandbox
-          path: e2e-artifacts/live/upgrade-stale-sandbox/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   double-onboard:
     needs: generate-matrix
@@ -3080,43 +2526,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3143,13 +2556,12 @@ jobs:
 
       - name: Upload double-onboard Vitest artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-double-onboard
-          path: e2e-artifacts/live/double-onboard/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   jetson-nvmap-gpu:
     needs: generate-matrix
@@ -3163,7 +2575,6 @@ jobs:
       E2E_JOB: "1"
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "jetson-nvmap-gpu"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-jetson-nvmap-gpu
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/jetson-nvmap-gpu
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -3178,45 +2589,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Verify Jetson GPU availability
         run: |
@@ -3243,20 +2619,12 @@ jobs:
 
       - name: Upload Jetson nvmap GPU artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-jetson-nvmap-gpu
-          path: e2e-artifacts/live/jetson-nvmap-gpu/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   concurrent-gateway-ports:
     needs: generate-matrix
@@ -3276,43 +2644,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3339,13 +2674,12 @@ jobs:
 
       - name: Upload concurrent gateway ports Vitest artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-concurrent-gateway-ports
-          path: e2e-artifacts/live/concurrent-gateway-ports/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   onboard-resume:
     needs: generate-matrix
@@ -3366,17 +2700,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -3401,20 +2728,16 @@ jobs:
 
       - name: Upload onboard-resume artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-onboard-resume
-          path: e2e-artifacts/live/onboard-resume/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   full-e2e:
-    # Keep the load-sensitive agent-mediated proof out of the peak hosted
-    # lifecycle burst. always() preserves targeted dispatch when the
-    # unselected dependencies are skipped.
-    needs: [generate-matrix, token-rotation, channels-stop-start]
-    if: ${{ always() && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',full-e2e,') || contains(format(',{0},', inputs.targets), ',full-e2e,')) }}
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',full-e2e,') || contains(format(',{0},', inputs.targets), ',full-e2e,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -3432,17 +2755,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3469,13 +2785,12 @@ jobs:
 
       - name: Upload full-e2e artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-full-e2e
-          path: e2e-artifacts/live/full-e2e/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   security-posture:
     permissions:
@@ -3518,17 +2833,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -3545,13 +2853,15 @@ jobs:
 
       - name: Upload security posture artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-security-posture-${{ matrix.agent }}
           path: e2e-artifacts/live/security-posture-${{ matrix.agent }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   cloud-onboard:
     needs: generate-matrix
@@ -3574,23 +2884,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - *dockerhub-auth
+
       - name: Configure cloud-onboard trace directory
         shell: bash
         run: |
           set -euo pipefail
           printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces" >> "${GITHUB_ENV}"
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3620,6 +2923,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"
+          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
+            echo "::error::Refusing to sanitize unexpected raw trace path" >&2
+            exit 1
+          fi
           python3 scripts/e2e/sanitize-trace-timing.py \
             "${NEMOCLAW_TRACE_DIR}" \
             "${E2E_ARTIFACT_DIR}"
@@ -3644,13 +2952,12 @@ jobs:
 
       - name: Upload cloud-onboard artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-cloud-onboard
-          path: e2e-artifacts/live/cloud-onboard/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   gpu-double-onboard:
     needs: generate-matrix
@@ -3673,17 +2980,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3708,13 +3008,12 @@ jobs:
 
       - name: Upload gpu-double-onboard artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gpu-double-onboard
-          path: e2e-artifacts/live/gpu-double-onboard/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   onboard-repair:
     needs: generate-matrix
@@ -3735,17 +3034,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3770,13 +3062,12 @@ jobs:
 
       - name: Upload onboard-repair artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-onboard-repair
-          path: e2e-artifacts/live/onboard-repair/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   issue-4462-scope-upgrade-approval:
     needs: generate-matrix
@@ -3798,17 +3089,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3835,13 +3119,12 @@ jobs:
 
       - name: Upload issue-4462-scope-upgrade-approval artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-issue-4462-scope-upgrade-approval
-          path: e2e-artifacts/live/issue-4462-scope-upgrade-approval/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   token-rotation:
     needs: generate-matrix
@@ -3859,43 +3142,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run token rotation live test
         # Preserve the original runner class: ubuntu-latest with Docker/OpenShell
@@ -3919,13 +3169,12 @@ jobs:
 
       - name: Upload token rotation artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-token-rotation
-          path: e2e-artifacts/live/token-rotation/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   messaging-compatible-endpoint:
     needs: generate-matrix
@@ -3945,17 +3194,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run messaging compatible endpoint live test
         # Preserves the fake OpenAI-compatible endpoint, Telegram messaging
@@ -3973,13 +3215,12 @@ jobs:
 
       - name: Upload messaging compatible endpoint artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-messaging-compatible-endpoint
-          path: e2e-artifacts/live/messaging-compatible-endpoint/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-gateway-upgrade:
     needs: generate-matrix
@@ -4001,46 +3242,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openshell-gateway-upgrade" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run OpenShell gateway upgrade live Vitest test
         # This
@@ -4058,20 +3263,12 @@ jobs:
 
       - name: Upload OpenShell gateway upgrade artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openshell-gateway-upgrade
-          path: e2e-artifacts/live/openshell-gateway-upgrade/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
         shell: bash
-        run: |
-          docker logout docker.io >/dev/null 2>&1 || true
-          rm -rf "${DOCKER_CONFIG}"
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   messaging-providers:
     needs: generate-matrix
@@ -4093,43 +3290,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run messaging providers live Vitest test
         # The test keeps
@@ -4155,13 +3319,12 @@ jobs:
 
       - name: Upload messaging providers artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-messaging-providers
-          path: e2e-artifacts/live/messaging-providers/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   launchable-smoke:
     needs: generate-matrix
@@ -4187,40 +3350,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          build-cli: "false"
 
       - name: Run launchable smoke live test
         env:
@@ -4234,15 +3369,15 @@ jobs:
 
       - name: Upload launchable smoke artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-launchable-smoke
-          path: e2e-artifacts/live/launchable-smoke/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   # Provider-routed Model Router inference contract.
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   model-router-provider-routed-inference:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',model-router-provider-routed-inference,') || contains(format(',{0},', inputs.targets), ',model-router-provider-routed-inference,') }}
@@ -4260,48 +3395,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-model-router-provider-routed-inference" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run Model Router provider-routed inference live test
         # Preserves the real provider-routed onboard, host model-router health, and
@@ -4317,20 +3414,12 @@ jobs:
 
       - name: Upload Model Router provider-routed inference artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-model-router-provider-routed-inference
-          path: e2e-artifacts/live/model-router-provider-routed-inference/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   snapshot-commands:
     needs: generate-matrix
@@ -4352,45 +3441,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          build-cli: "false"
 
       - name: Run snapshot commands live test
         # Preserves the
@@ -4406,20 +3462,12 @@ jobs:
 
       - name: Upload snapshot commands artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-snapshot-commands
-          path: e2e-artifacts/live/snapshot-commands/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   sandbox-operations:
     needs: generate-matrix
@@ -4447,17 +3495,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Verify CLI launcher
         run: |
@@ -4474,37 +3515,6 @@ jobs:
             -u GITHUB_TOKEN \
             bash scripts/install-openshell.sh
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-sandbox-operations" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
       - name: Run sandbox operations live test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
@@ -4517,20 +3527,12 @@ jobs:
 
       - name: Upload sandbox operations artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sandbox-operations
-          path: e2e-artifacts/live/sandbox-operations/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   sandbox-survival:
     needs: generate-matrix
@@ -4540,7 +3542,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "sandbox-survival"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-sandbox-survival
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/sandbox-survival
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
@@ -4553,45 +3554,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run sandbox survival live test
         # This intentionally
@@ -4608,20 +3574,12 @@ jobs:
 
       - name: Upload sandbox survival artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sandbox-survival
-          path: e2e-artifacts/live/sandbox-survival/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   diagnostics:
     needs: generate-matrix
@@ -4644,17 +3602,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run diagnostics live test
         # This preserves the
@@ -4669,13 +3620,12 @@ jobs:
 
       - name: Upload diagnostics artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-diagnostics
-          path: e2e-artifacts/live/diagnostics/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   gateway-drift-preflight:
     needs: generate-matrix
@@ -4694,17 +3644,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run gateway drift preflight Vitest test
         # This keeps
@@ -4719,20 +3660,12 @@ jobs:
 
       - name: Upload gateway drift preflight artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gateway-drift-preflight
-          path: e2e-artifacts/live/gateway-drift-preflight/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   # The #2603/#3145 OpenClaw websocket protocol/history contract.
   openclaw-tui-chat-correlation:
-    # Run the strict hosted-correlation proof after the serialized full agent
-    # proof. always() preserves targeted dispatch when dependencies are skipped.
-    needs: [generate-matrix, token-rotation, channels-stop-start, full-e2e]
-    if: ${{ always() && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation,') || contains(format(',{0},', inputs.targets), ',openclaw-tui-chat-correlation,')) }}
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation,') || contains(format(',{0},', inputs.targets), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -4752,43 +3685,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run OpenClaw TUI chat correlation live test
         env:
@@ -4802,13 +3702,7 @@ jobs:
 
       - name: Upload OpenClaw TUI chat correlation artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openclaw-tui-chat-correlation
-          path: e2e-artifacts/live/openclaw-tui-chat-correlation/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   # ── Free-standing recovery targets (#2701) ─────────────────────────
   # Recovery / disruption targets don't fit the steady-state expected-state
@@ -4819,6 +3713,12 @@ jobs:
   # First failing-test-first guard for #2701 (gateway recovery does not
   # restore the /tmp guard chain after pod recreate). Will fail on `main`
   # until the #2701 fix lands; flips green afterwards.
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   gateway-guard-recovery:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') || contains(format(',{0},', inputs.targets), ',gateway-guard-recovery,') }}
@@ -4847,17 +3747,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         # This target invokes `bin/nemoclaw.js onboard` directly, so install
@@ -4896,13 +3789,12 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gateway-guard-recovery
-          path: e2e-artifacts/live/gateway-guard-recovery/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   openclaw-inference-switch:
     needs: generate-matrix
@@ -4917,8 +3809,8 @@ jobs:
         include:
           - mode: hosted
             sandbox_name: e2e-openclaw-inference-switch
-            switch_provider: compatible-endpoint
-            switch_model: nvidia/nvidia/nemotron-3-super-v3
+            switch_provider: nvidia-prod
+            switch_model: nvidia/nemotron-3-super-120b-a12b
             switch_inference_api: openai-completions
             switch_mock_anthropic: "0"
           - mode: anthropic
@@ -4948,52 +3840,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - *dockerhub-auth
 
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
-
-      - name: Configure isolated Docker auth directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker_config="${RUNNER_TEMP}/docker-config-openclaw-inference-switch-${{ matrix.mode }}"
-          mkdir -p "${docker_config}"
-          chmod 700 "${docker_config}"
-          echo "DOCKER_CONFIG=${docker_config}" >> "${GITHUB_ENV}"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run OpenClaw inference switch live test
         # Preserves
@@ -5001,31 +3851,25 @@ jobs:
         # Vitest owns the route, config, registry, inference.local, and agent
         # assertions.
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/openclaw-inference-switch.test.ts \
             --silent=false --reporter=default
 
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker_config="${DOCKER_CONFIG:-${RUNNER_TEMP}/docker-config-openclaw-inference-switch-${{ matrix.mode }}}"
-          DOCKER_CONFIG="${docker_config}" docker logout docker.io >/dev/null 2>&1 || true
-          rm -rf "${docker_config}"
-
       - name: Upload OpenClaw inference switch artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-openclaw-inference-switch-${{ matrix.mode }}
           path: e2e-artifacts/live/openclaw-inference-switch/${{ matrix.mode }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   # Bedrock Runtime compatible Anthropic endpoint contract.
   bedrock-runtime-compatible-anthropic:
@@ -5054,48 +3898,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run Bedrock Runtime compatible Anthropic live test
         # Direct Vitest coverage for
@@ -5111,20 +3917,15 @@ jobs:
 
       - name: Upload Bedrock Runtime compatible Anthropic artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: e2e-artifacts/live/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   gateway-health-honest:
     needs: generate-matrix
@@ -5144,17 +3945,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5172,13 +3964,7 @@ jobs:
 
       - name: Upload gateway health honesty artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gateway-health-honest
-          path: e2e-artifacts/live/gateway-health-honest/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   device-auth-health:
     needs: generate-matrix
@@ -5201,55 +3987,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-device-auth-health" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
       - name: Run device auth health live Vitest test
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -5268,20 +4014,12 @@ jobs:
 
       - name: Upload device auth health artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-device-auth-health
-          path: e2e-artifacts/live/device-auth-health/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   channels-add-remove:
     needs: generate-matrix
@@ -5291,7 +4029,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "channels-add-remove"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-channels-add-remove
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/channels-add-remove
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5299,56 +4036,15 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-channels-add-remove"
       OPENSHELL_GATEWAY: "nemoclaw"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_PROVIDER: custom
-      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_PREFERRED_API: openai-completions
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell
         env:
@@ -5361,10 +4057,9 @@ jobs:
         # Preserves the
         # real OpenClaw + Docker/OpenShell boundary for onboard-empty,
         # channels add, rebuild, gateway credential reuse, policy-list, and
-        # channels remove cleanup.
+        # channels remove cleanup; the test owns its authenticated local
+        # compatible-inference baseline.
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-add-remove-e2e"
           TELEGRAM_ALLOWED_IDS: "123456789"
           TELEGRAM_REQUIRE_MENTION: "0"
@@ -5388,20 +4083,12 @@ jobs:
 
       - name: Upload channels add/remove artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-channels-add-remove
-          path: e2e-artifacts/live/channels-add-remove/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   telegram-injection:
     needs: generate-matrix
@@ -5424,48 +4111,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-telegram-injection" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell
         env:
@@ -5500,20 +4149,12 @@ jobs:
 
       - name: Upload Telegram injection artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-telegram-injection
-          path: e2e-artifacts/live/telegram-injection/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   channels-stop-start:
     needs: generate-matrix
@@ -5527,7 +4168,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "channels-stop-start"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-channels-stop-start-${{ matrix.agent }}
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5543,32 +4183,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin || echo "::warning::Docker Hub login failed; continuing with anonymous pulls."
+      - *dockerhub-auth
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell
         env:
@@ -5608,20 +4226,15 @@ jobs:
 
       - name: Upload channels stop/start artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-channels-stop-start-${{ matrix.agent }}
           path: e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   openclaw-slack-pairing:
     needs: generate-matrix
@@ -5644,37 +4257,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: |
-          set -euo pipefail
-          echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-slack-pairing" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin || echo "::warning::Docker Hub login failed; continuing with anonymous pulls."
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: |
@@ -5709,20 +4295,12 @@ jobs:
 
       - name: Upload OpenClaw Slack pairing artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openclaw-slack-pairing
-          path: e2e-artifacts/live/openclaw-slack-pairing/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   issue-2478-crash-loop-recovery:
     needs: generate-matrix
@@ -5744,48 +4322,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-issue-2478-crash-loop-recovery" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5812,20 +4352,12 @@ jobs:
 
       - name: "Upload issue #2478 crash-loop recovery artifacts"
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-issue-2478-crash-loop-recovery
-          path: e2e-artifacts/live/issue-2478-crash-loop-recovery/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   openclaw-discord-pairing:
     needs: generate-matrix
@@ -5848,48 +4380,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-discord-pairing" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install OpenShell CLI
         run: |
@@ -5923,20 +4417,12 @@ jobs:
 
       - name: Upload OpenClaw Discord pairing artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openclaw-discord-pairing
-          path: e2e-artifacts/live/openclaw-discord-pairing/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   tunnel-lifecycle:
     needs: generate-matrix
@@ -5959,48 +4445,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Install and verify cloudflared prerequisite
         env:
@@ -6045,20 +4493,12 @@ jobs:
 
       - name: Upload tunnel lifecycle artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-tunnel-lifecycle
-          path: e2e-artifacts/live/tunnel-lifecycle/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   spark-install:
     needs: generate-matrix
@@ -6083,27 +4523,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-spark-install" >> "$GITHUB_ENV"
+      - *dockerhub-auth
 
-      - name: Authenticate to Docker Hub
-        if: github.ref == 'refs/heads/main'
-        # Authentication only accelerates pulls; anonymous pulls remain valid.
-        continue-on-error: true
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
+          build-cli: "false"
 
       - name: Run Spark install live test
         # This preserves the
@@ -6120,153 +4545,12 @@ jobs:
 
       - name: Upload Spark install artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-spark-install
-          path: e2e-artifacts/live/spark-install/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          if [[ -n "${DOCKER_CONFIG:-}" && "${DOCKER_CONFIG}" == "${RUNNER_TEMP}/docker-config-spark-install" ]]; then
-            docker logout docker.io || true
-            rm -rf -- "${DOCKER_CONFIG}"
-          fi
-
-  # ── Scheduled failure routing ──────────────────────────────────────────────
-  notify-on-failure:
-    runs-on: ubuntu-latest
-    needs:
-      [
-        generate-matrix,
-        live,
-        openshell-version-pin,
-        openshell-gateway-auth-contract,
-        onboard-negative-paths,
-        skill-agent,
-        openclaw-skill-cli,
-        docs-validation,
-        inference-routing,
-        cloud-inference,
-        gpu-e2e,
-        agent-turn-latency,
-        kimi-inference-compat,
-        hermes-inference-switch,
-        brave-search,
-        ollama-auth-proxy,
-        cron-preflight-inference-local,
-        credential-sanitization,
-        credential-migration,
-        sessions-agents-cli,
-        runtime-overrides,
-        hermes-e2e,
-        hermes-dashboard,
-        hermes-slack,
-        hermes-discord,
-        hermes-root-entrypoint-smoke,
-        hermes-sandbox-secret-boundary,
-        network-policy,
-        common-egress-agent,
-        shields-config,
-        rebuild-openclaw,
-        rebuild-hermes,
-        rebuild-hermes-stale-base,
-        sandbox-rebuild,
-        sandbox-rlimits-connect,
-        overlayfs-autofix,
-        state-backup-restore,
-        upgrade-stale-sandbox,
-        openshell-gateway-upgrade,
-        token-rotation,
-        messaging-compatible-endpoint,
-        messaging-providers,
-        launchable-smoke,
-        double-onboard,
-        jetson-nvmap-gpu,
-        concurrent-gateway-ports,
-        full-e2e,
-        security-posture,
-        cloud-onboard,
-        gpu-double-onboard,
-        onboard-repair,
-        issue-4462-scope-upgrade-approval,
-        onboard-resume,
-        model-router-provider-routed-inference,
-        sandbox-operations,
-        sandbox-survival,
-        diagnostics,
-        snapshot-commands,
-        gateway-drift-preflight,
-        openclaw-tui-chat-correlation,
-        gateway-guard-recovery,
-        issue-4434-tui-unreachable-inference,
-        openclaw-inference-switch,
-        bedrock-runtime-compatible-anthropic,
-        issue-2478-crash-loop-recovery,
-        gateway-health-honest,
-        device-auth-health,
-        channels-add-remove,
-        tunnel-lifecycle,
-        telegram-injection,
-        openclaw-discord-pairing,
-        openclaw-slack-pairing,
-        channels-stop-start,
-        spark-install,
-      ]
-    if: ${{ always() && github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
-    permissions:
-      issues: write
-    steps:
-      - name: Create or update scheduled E2E failure issue
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            // Preserve the existing issue thread and its historical title.
-            const title = 'Nightly E2E failed';
-            const needs = ${{ toJSON(needs) }};
-            const failed = Object.entries(needs)
-              .filter(([, value]) => value.result === 'failure')
-              .map(([name]) => name);
-            const cancelled = Object.entries(needs)
-              .filter(([, value]) => value.result === 'cancelled')
-              .map(([name]) => name);
-            const summary = [
-              failed.length ? `**Failed:** ${failed.join(', ')}` : '',
-              cancelled.length ? `**Cancelled:** ${cancelled.join(', ')}` : '',
-            ].filter(Boolean).join('\n');
-            const body = `**Run:** ${runUrl}\n${summary}\n**Artifacts:** Check the run artifacts for target logs and structured evidence.`;
-
-            const { data: existing } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'CI/CD',
-              per_page: 100,
-            });
-            const match = existing.find(
-              (issue) => !issue.pull_request && issue.title.startsWith(title),
-            );
-            if (match) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: match.number,
-                body: `Failed again on ${new Date().toISOString().split('T')[0]}.\n\n${body}`,
-              });
-            } else {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `${title} — ${new Date().toISOString().split('T')[0]}`,
-                body: `The scheduled E2E pipeline failed.\n\n${body}`,
-                labels: ['bug', 'CI/CD'],
-              });
-            }
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   # ── PR result comment ─────────────────────────────────────────────────────
   # Posts a results table on the open PR for the dispatching branch (or the
@@ -6278,12 +4562,14 @@ jobs:
     # This entire workflow is dispatch-only. Keeping selective jobs in `needs`
     # makes the report wait for and record any requested job without adding
     # skipped checks to the normal pull_request workflow.
-    needs:
+    needs: &e2e-result-jobs
       [
         generate-matrix,
         live,
         openshell-version-pin,
         openshell-gateway-auth-contract,
+        mcp-bridge,
+        mcp-bridge-dev,
         onboard-negative-paths,
         skill-agent,
         openclaw-skill-cli,
@@ -6300,13 +4586,11 @@ jobs:
         credential-sanitization,
         credential-migration,
         sessions-agents-cli,
-        runtime-overrides,
         hermes-e2e,
+        hermes-gpu-startup,
         hermes-dashboard,
         hermes-slack,
         hermes-discord,
-        hermes-root-entrypoint-smoke,
-        hermes-sandbox-secret-boundary,
         network-policy,
         common-egress-agent,
         shields-config,
@@ -6357,7 +4641,8 @@ jobs:
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
-      issues: write
+      # The issue-comment endpoint accepts pull request write permission for PR comments.
+      # Keep issues: write absent so this job cannot restore general issue routing.
       pull-requests: write
     steps:
       - name: Post E2E target results to PR
@@ -6383,6 +4668,11 @@ jobs:
                 job: 'openshell-gateway-auth-contract',
                 target: 'openshell-gateway-auth-contract',
                 reason: 'default dispatch excludes the resource-heavy OpenShell auth-contract probe unless selected',
+              },
+              'mcp-bridge-dev': {
+                job: 'mcp-bridge-dev',
+                target: 'mcp-bridge-dev',
+                reason: 'default dispatch excludes moving OpenShell dev artifacts unless explicitly selected',
               },
               'jetson-nvmap-gpu': {
                 job: 'jetson-nvmap-gpu',
@@ -6501,7 +4791,7 @@ jobs:
                       : passingStatus;
 
             const lines = [
-              `### Vitest E2E Target Results — ${status}`,
+              `### E2E Target Results — ${status}`,
               '',
               `**Run:** [${context.runId}](${runUrl})`,
               `**Workflow ref:** \`${workflowBranch}\``,
@@ -6514,7 +4804,7 @@ jobs:
                 ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs `openshell-gateway-auth-contract`, `jetson-nvmap-gpu`, and `sandbox-rlimits-connect` are skipped unless selected)_',
+                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
@@ -6551,83 +4841,7 @@ jobs:
   # ── Scheduled/manual scorecard ────────────────────────────────────────────
   scorecard:
     runs-on: ubuntu-latest
-    needs:
-      [
-        generate-matrix,
-        live,
-        openshell-version-pin,
-        openshell-gateway-auth-contract,
-        onboard-negative-paths,
-        skill-agent,
-        openclaw-skill-cli,
-        docs-validation,
-        inference-routing,
-        cloud-inference,
-        gpu-e2e,
-        agent-turn-latency,
-        kimi-inference-compat,
-        hermes-inference-switch,
-        brave-search,
-        ollama-auth-proxy,
-        cron-preflight-inference-local,
-        credential-sanitization,
-        credential-migration,
-        sessions-agents-cli,
-        runtime-overrides,
-        hermes-e2e,
-        hermes-dashboard,
-        hermes-slack,
-        hermes-discord,
-        hermes-root-entrypoint-smoke,
-        hermes-sandbox-secret-boundary,
-        network-policy,
-        common-egress-agent,
-        shields-config,
-        rebuild-openclaw,
-        rebuild-hermes,
-        rebuild-hermes-stale-base,
-        sandbox-rebuild,
-        sandbox-rlimits-connect,
-        overlayfs-autofix,
-        state-backup-restore,
-        upgrade-stale-sandbox,
-        openshell-gateway-upgrade,
-        token-rotation,
-        messaging-compatible-endpoint,
-        messaging-providers,
-        launchable-smoke,
-        double-onboard,
-        jetson-nvmap-gpu,
-        concurrent-gateway-ports,
-        full-e2e,
-        security-posture,
-        cloud-onboard,
-        gpu-double-onboard,
-        onboard-repair,
-        issue-4462-scope-upgrade-approval,
-        onboard-resume,
-        model-router-provider-routed-inference,
-        sandbox-operations,
-        sandbox-survival,
-        diagnostics,
-        snapshot-commands,
-        gateway-drift-preflight,
-        openclaw-tui-chat-correlation,
-        gateway-guard-recovery,
-        issue-4434-tui-unreachable-inference,
-        openclaw-inference-switch,
-        bedrock-runtime-compatible-anthropic,
-        issue-2478-crash-loop-recovery,
-        gateway-health-honest,
-        device-auth-health,
-        channels-add-remove,
-        tunnel-lifecycle,
-        telegram-injection,
-        openclaw-discord-pairing,
-        openclaw-slack-pairing,
-        channels-stop-start,
-        spark-install,
-      ]
+    needs: *e2e-result-jobs
     if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     permissions:
       actions: read
@@ -6637,7 +4851,9 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-          sparse-checkout: scripts/scorecard
+          sparse-checkout: |
+            ci/onboard-performance-budget.json
+            scripts/scorecard
           sparse-checkout-cone-mode: false
 
       - name: Generate E2E scorecard
@@ -6680,7 +4896,6 @@ jobs:
                 : 'Scheduled E2E';
             const metaJobs = [
               'generate-matrix',
-              'notify-on-failure',
               'report-to-pr',
               'scorecard',
             ];
@@ -6706,8 +4921,9 @@ jobs:
               month: 'short',
               day: 'numeric',
             });
-            const { traceTimingLine, traceSummaryLines } =
-              await traceTiming.buildTraceTimingResult({ github, context });
+            const { budgetWarningMessage, traceTimingLine, traceSummaryLines } =
+              await traceTiming.buildTraceTimingResult({ github, context, core });
+            if (budgetWarningMessage) core.warning(budgetWarningMessage);
             const lines = [
               `## 🌅 NemoClaw E2E Scorecard — ${today}`,
               '',

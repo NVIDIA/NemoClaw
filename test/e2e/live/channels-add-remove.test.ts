@@ -14,7 +14,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 // Preserve the user-visible contract: onboard OpenClaw without messaging,
@@ -31,6 +31,14 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "test-fake-telegram-tok
 const TELEGRAM_ALLOWED_IDS = process.env.TELEGRAM_ALLOWED_IDS ?? "123456789";
 const TELEGRAM_REQUIRE_MENTION = process.env.TELEGRAM_REQUIRE_MENTION ?? "0";
 const PROVIDER_NAME = `${SANDBOX_NAME}-telegram-bridge`;
+const BASELINE_API_KEY = "channels-add-remove-baseline-credential";
+const BASELINE_MODEL = "channels-add-remove-baseline-model";
+const ONBOARD_ARGS = [
+  "onboard",
+  "--non-interactive",
+  "--yes",
+  "--yes-i-accept-third-party-software",
+];
 
 const TEST_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 4_500) * 1_000;
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
@@ -58,21 +66,6 @@ function escapeRegex(value: string): string {
 
 function isFakeTelegramToken(value: string): boolean {
   return value.includes("fake");
-}
-
-function isEndpointRateLimited(error: unknown): boolean {
-  const text = errorText(error);
-  return (
-    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
-    (/Validation details were omitted/i.test(text) ||
-      /HTTP 429|rate limit|too many requests|quota|temporarily unavailable|timed out|timeout/i.test(
-        text,
-      ))
-  );
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function baseEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -106,6 +99,24 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   } catch {
     // Cleanup and pre-cleanup must not mask the primary phase failure.
   }
+}
+
+async function onboardWithLocalBaseline(host: HostCliClient, endpointUrl: string): Promise<void> {
+  const result = await host.nemoclaw(ONBOARD_ARGS, {
+    artifactName: "onboard-channels-add-remove",
+    env: baseEnv({
+      COMPATIBLE_API_KEY: BASELINE_API_KEY,
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_COMPAT_MODEL: BASELINE_MODEL,
+      NEMOCLAW_ENDPOINT_URL: endpointUrl,
+      NEMOCLAW_MODEL: BASELINE_MODEL,
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_PROVIDER: "custom",
+    }),
+    redactionValues: [BASELINE_API_KEY],
+    timeoutMs: ONBOARD_TIMEOUT_MS,
+  });
+  assertExitZero(result, "channels add/remove baseline onboarding");
 }
 
 function readSandboxEntry(): RegistrySandboxEntry {
@@ -352,35 +363,45 @@ async function telegramEgressProbe(
   return { result, status: "inconclusive" };
 }
 
-const liveTest = shouldRunLiveE2E() ? test : test.skip;
-
-liveTest(
+test(
   "channels add/remove telegram updates registry, gateway, policy, and sandbox state",
   testTimeoutOptions(TEST_TIMEOUT_MS),
-  async ({ artifacts, cleanup, environment, host, lifecycle, onboard, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, environment, host, lifecycle, onboard, sandbox }) => {
     if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
       throw new Error(
         `channels-add-remove live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
       );
     }
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    // The OpenShell router reaches this fixture from its own network namespace,
+    // so runner loopback is not a valid advertised provider endpoint.
+    const baseline = await startFakeOpenAiCompatibleServer({
+      apiKey: BASELINE_API_KEY,
+      host: "0.0.0.0",
+      model: BASELINE_MODEL,
+      publicHost: "host.openshell.internal",
+      requireAuth: true,
+    });
+    cleanup.add("close channels add/remove baseline fixture", async () => {
+      await artifacts.writeJson("baseline-inference-requests.json", baseline.requests());
+      await baseline.close();
+    });
+    const apiKey = BASELINE_API_KEY;
     const secretsToRedact = redactionValues(apiKey);
 
-    const ready = await environment.assertReady({
+    await environment.assertReady({
       platform: "ubuntu-local",
       install: "repo-current",
       runtime: "docker-running",
       onboarding: "cloud-openclaw",
     });
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "channels-add-remove",
-      runner: "vitest",
       sandboxName: SANDBOX_NAME,
       contract: [
         "onboard creates an OpenClaw sandbox with no Telegram channel",
         "channels add telegram registers the bridge and persists messaging.plan",
-        "post-add rebuild reuses the gateway-stored inference credential when NVIDIA_INFERENCE_API_KEY is absent",
+        "post-add rebuild reuses the gateway-stored inference credential when COMPATIBLE_API_KEY is absent",
         "post-add rebuild applies the Telegram policy preset and renders openclaw.json channel state",
         "channels remove telegram removes provider, policy, registry plan, and rendered channel state after rebuild",
         "post-remove rebuild does not use stale Telegram host env inputs that would stage a fresh channel add",
@@ -421,21 +442,7 @@ liveTest(
       }),
     );
 
-    let instance;
-    try {
-      instance = await onboard.from(ready, {
-        sandboxName: SANDBOX_NAME,
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      });
-    } catch (error) {
-      if (isEndpointRateLimited(error)) {
-        await artifacts.writeText("endpoint-rate-limit-skip.txt", errorText(error));
-        skip(
-          "NVIDIA endpoint validation was unavailable/rate-limited before the channels add/remove contract could run",
-        );
-      }
-      throw error;
-    }
+    await onboardWithLocalBaseline(host, baseline.baseUrl);
     await expectSandboxReady(sandbox, "phase-1-sandbox-ready-after-onboard");
 
     await expectProvider(host, "absent", "phase-2-provider-get-baseline");
@@ -453,15 +460,25 @@ liveTest(
     expectHostTelegramConfig("after channels add");
     expectHostTelegramPlan("active", "after channels add");
 
+    const baselineRequestCountBeforeCredentialReuseRebuild = baseline.requests().length;
     const rebuildAdd = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
-      artifactName: "phase-3-rebuild-after-add-without-host-nvidia-key",
+      artifactName: "phase-3-rebuild-after-add-without-host-compatible-key",
       env: channelEnv(),
       redactionValues: secretsToRedact,
       timeoutMs: REBUILD_TIMEOUT_MS,
     });
     expect(resultText(rebuildAdd)).not.toContain("provider credential not found");
     assertExitZero(rebuildAdd, `nemoclaw ${SANDBOX_NAME} rebuild --yes after add`);
-    await lifecycle.assertSandboxReadyAfterRebuild(instance, {
+    expect(
+      baseline.requests().slice(baselineRequestCountBeforeCredentialReuseRebuild),
+    ).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        model: BASELINE_MODEL,
+        path: "/v1/chat/completions",
+      }),
+    );
+    await lifecycle.assertSandboxReadyAfterRebuild(SANDBOX_NAME, {
       artifactNamePrefix: "phase-3-sandbox-ready-after-add-rebuild",
       env: sandboxAccessEnv(),
       attempts: 12,
@@ -489,7 +506,7 @@ liveTest(
 
     const remove = await host.nemoclaw([SANDBOX_NAME, "channels", "remove", "telegram"], {
       artifactName: "phase-5-channels-remove-telegram",
-      env: channelEnv({ NVIDIA_INFERENCE_API_KEY: apiKey }),
+      env: channelEnv({ COMPATIBLE_API_KEY: apiKey }),
       redactionValues: secretsToRedact,
       timeoutMs: COMMAND_TIMEOUT_MS,
     });
@@ -499,12 +516,12 @@ liveTest(
 
     const rebuildRemove = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-5-rebuild-after-remove-with-stale-telegram-env",
-      env: channelEnv({ NVIDIA_INFERENCE_API_KEY: apiKey }),
+      env: channelEnv({ COMPATIBLE_API_KEY: apiKey }),
       redactionValues: secretsToRedact,
       timeoutMs: REBUILD_TIMEOUT_MS,
     });
     assertExitZero(rebuildRemove, `nemoclaw ${SANDBOX_NAME} rebuild --yes after remove`);
-    await lifecycle.assertSandboxReadyAfterRebuild(instance, {
+    await lifecycle.assertSandboxReadyAfterRebuild(SANDBOX_NAME, {
       artifactNamePrefix: "phase-5-sandbox-ready-after-remove-rebuild",
       env: sandboxAccessEnv(),
       attempts: 12,

@@ -3,23 +3,32 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { isGatewayManagedCompatibleInference } from "../fixtures/ci-compatible-inference.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import {
+  classifyIssue4434AcceptanceFields,
+  extractFinalIssue4434ErrorBlock,
+  hasFullIssue4434Diagnostics,
+  stripTerminalControl,
+} from "../support/issue-4434-tui-capture.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // This remains a privileged opt-in live repro: it onboards a real cloud
 // OpenClaw sandbox, installs temporary DOCKER-USER DROP rules for the NVIDIA
-// endpoint IPs, drives `openclaw tui` through `openshell sandbox exec --tty`,
-// and requires a visible inference error plus an error status instead of the
-// broken spinner+connected signature from #4434. This stays local to the live
-// target rather than introducing shared framework or registry helpers.
+// endpoint IPs, proves the managed route through a test endpoint and then stops
+// that endpoint, drives `openclaw tui` through `openshell sandbox exec --tty`,
+// and requires a visible inference error, full #4434 diagnostic fields, and an
+// error status instead of the broken spinner+connected signature from #4434.
+// This stays local to the live target rather than introducing shared framework
+// helpers. Keep the route provider/model assertion and direct `inference.local`
+// pre-block probe so a status result of "not probed" cannot weaken the precondition.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4434-tui-unreachable";
@@ -48,18 +57,22 @@ const ERROR_STATUS_RE = /\|\s*error\b/i;
 const HOSTED_INFERENCE_IS_GATEWAY_MANAGED = isGatewayManagedCompatibleInference();
 
 const runIssue4434LiveTest =
-  shouldRunLiveE2E() && process.env.NEMOCLAW_ISSUE_4434_LIVE === "1"
+  process.env.NEMOCLAW_ISSUE_4434_LIVE === "1"
     ? test.skipIf(HOSTED_INFERENCE_IS_GATEWAY_MANAGED)
     : test.skip;
 
 type CommandResultText = { stdout: string; stderr: string };
 
-function resultText(result: CommandResultText): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function chatCompletionPayload(model: string, content: string): string {
+  return JSON.stringify({
+    model,
+    messages: [{ role: "user", content }],
+    max_tokens: 8,
+  });
 }
 
 function readBundledOpenClawVersion(): string {
@@ -71,13 +84,6 @@ function readBundledOpenClawVersion(): string {
   return match[1];
 }
 
-function stripTerminalControl(value: string): string {
-  return value
-    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\r/g, "\n");
-}
-
 function analyzeIssue4434TuiCapture(capture: string) {
   const plain = stripTerminalControl(capture);
   const statusLines = plain
@@ -85,14 +91,17 @@ function analyzeIssue4434TuiCapture(capture: string) {
     .map((line) => line.trim())
     .filter((line) => STATUS_LINE_RE.test(line));
   const lastStatusLine = statusLines.at(-1) ?? "";
+  const finalErrorBlock = extractFinalIssue4434ErrorBlock(plain);
   return {
     plain,
+    finalErrorBlock,
     visibleError: VISIBLE_ERROR_RE.test(plain),
     connectedSpinner: CONNECTED_SPINNER_RE.test(plain),
     issue4434Signature: CONNECTED_SPINNER_RE.test(plain) && !VISIBLE_ERROR_RE.test(plain),
     lastStatusLine,
     finalStatusIsError: ERROR_STATUS_RE.test(lastStatusLine),
     finalStatusIsConnectedSpinner: CONNECTED_SPINNER_RE.test(lastStatusLine),
+    diagnosticFields: classifyIssue4434AcceptanceFields(finalErrorBlock),
   };
 }
 
@@ -146,12 +155,12 @@ runIssue4434LiveTest(
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "issue-4434-tui-unreachable-inference",
-      runner: "vitest",
       boundary: [
         "real cloud OpenClaw sandbox",
         "host DOCKER-USER iptables DROP rules",
+        "managed inference route through a stopped fake OpenAI-compatible endpoint",
         "openshell sandbox exec --tty",
         "openclaw tui",
       ],
@@ -223,6 +232,38 @@ runIssue4434LiveTest(
     expect(status.exitCode, resultText(status)).toBe(0);
     expect(resultText(status)).toMatch(/managed_inference|inference\.local/i);
     expect(resultText(status)).toMatch(/Docker health:\s*healthy/i);
+    const route = await host.command(
+      "bash",
+      ["-lc", "openshell inference get -g nemoclaw 2>&1 || openshell inference get 2>&1"],
+      {
+        artifactName: "issue4434-openshell-inference-before-block",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(route.exitCode, resultText(route)).toBe(0);
+    const routePlain = stripTerminalControl(resultText(route));
+    expect(routePlain).toContain(`Provider: ${hosted.providerName}`);
+    expect(routePlain).toContain(`Model: ${hosted.model}`);
+    const originalRouteTimeout = routePlain.match(/Timeout:\s*(\d+)s/i)?.[1] ?? "0";
+    expect(originalRouteTimeout, `could not parse inference timeout\n${routePlain}`).not.toBe("0");
+
+    const preBlockPayload = chatCompletionPayload(hosted.model, "Reply before the fault.");
+    const preBlockProbe = await sandbox.execShell(
+      instance.sandboxName,
+      trustedSandboxShellScript(
+        `command -v curl >/dev/null && curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d ${shellSingleQuote(preBlockPayload)} >/dev/null`,
+      ),
+      {
+        artifactName: "issue4434-inference-local-before-block",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 90_000,
+      },
+    );
+    expect(
+      preBlockProbe.exitCode,
+      `inference.local was not reachable before the firewall block\n${resultText(preBlockProbe)}`,
+    ).toBe(0);
 
     const connectProbe = await host.nemoclaw([instance.sandboxName, "connect", "--probe-only"], {
       artifactName: "issue4434-connect-probe-before-block",
@@ -261,6 +302,184 @@ runIssue4434LiveTest(
       `inference-api.nvidia.com remained reachable from inside the sandbox after firewall block\n${resultText(blockedEndpointProbe)}`,
     ).not.toBe(0);
 
+    const fake = await startFakeOpenAiCompatibleServer({
+      host: "0.0.0.0",
+      model: hosted.model,
+      publicHost: "host.openshell.internal",
+    });
+    let fakeClosePromise: Promise<void> | undefined;
+    const closeFake = (): Promise<void> => {
+      fakeClosePromise ??= (async () => {
+        await artifacts.writeJson("issue4434-fake-openai-requests-cleanup.json", fake.requests());
+        await fake.close();
+      })();
+      return fakeClosePromise;
+    };
+    cleanup.add("close issue #4434 fake OpenAI-compatible endpoint", closeFake);
+    await artifacts.writeJson("issue4434-fake-openai-endpoint.json", { baseUrl: fake.baseUrl });
+
+    const fakeProviderName = `issue-4434-fake-${new URL(fake.baseUrl).port}`;
+    const failedRoutePayload = chatCompletionPayload(
+      hosted.model,
+      `This must fail after ${fakeProviderName} stops.`,
+    );
+    const createProvider = await host.command(
+      "openshell",
+      [
+        "provider",
+        "create",
+        "-g",
+        "nemoclaw",
+        "--name",
+        fakeProviderName,
+        "--type",
+        "openai",
+        "--credential",
+        "COMPATIBLE_API_KEY",
+        "--config",
+        `OPENAI_BASE_URL=${fake.baseUrl}`,
+      ],
+      {
+        artifactName: "issue4434-create-fake-provider",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          COMPATIBLE_API_KEY: "issue-4434-test-only",
+        },
+        timeoutMs: 30_000,
+      },
+    );
+    expect(createProvider.exitCode, resultText(createProvider)).toBe(0);
+
+    cleanup.add("delete issue #4434 fake inference provider", async () => {
+      const removeProvider = await host.command(
+        "openshell",
+        ["provider", "delete", "-g", "nemoclaw", fakeProviderName],
+        {
+          artifactName: "cleanup-issue4434-delete-fake-provider",
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(
+        removeProvider.exitCode,
+        `failed to delete fake inference provider\n${resultText(removeProvider)}`,
+      ).toBe(0);
+    });
+    cleanup.add("restore issue #4434 hosted inference route", async () => {
+      const restoreRoute = await host.command(
+        "openshell",
+        [
+          "inference",
+          "set",
+          "-g",
+          "nemoclaw",
+          "--no-verify",
+          "--provider",
+          hosted.providerName,
+          "--model",
+          hosted.model,
+          "--timeout",
+          originalRouteTimeout,
+        ],
+        {
+          artifactName: "cleanup-issue4434-restore-inference-route",
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(
+        restoreRoute.exitCode,
+        `failed to restore hosted inference route\n${resultText(restoreRoute)}`,
+      ).toBe(0);
+    });
+
+    const updateRoute = await host.command(
+      "openshell",
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--no-verify",
+        "--provider",
+        fakeProviderName,
+        "--model",
+        hosted.model,
+        "--timeout",
+        "15",
+      ],
+      {
+        artifactName: "issue4434-route-to-fake-endpoint",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(updateRoute.exitCode, resultText(updateRoute)).toBe(0);
+
+    let fakeRouteProbeAttempt = 0;
+    let fakeRouteProbeExitCode: number | null | undefined;
+    let fakeRouteProbeText = "";
+    await expect
+      .poll(
+        async () => {
+          fakeRouteProbeAttempt += 1;
+          const fakeRoutePayload = chatCompletionPayload(
+            hosted.model,
+            `Reply through ${fakeProviderName}, attempt ${fakeRouteProbeAttempt}.`,
+          );
+          const probe = await sandbox.execShell(
+            instance.sandboxName,
+            trustedSandboxShellScript(
+              `command -v curl >/dev/null && curl -fsS --max-time 30 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d ${shellSingleQuote(fakeRoutePayload)} >/dev/null`,
+            ),
+            {
+              artifactName: `issue4434-inference-local-through-fake-endpoint-${fakeRouteProbeAttempt}`,
+              env: buildAvailabilityProbeEnv(),
+              timeoutMs: 45_000,
+            },
+          );
+          fakeRouteProbeExitCode = probe.exitCode;
+          fakeRouteProbeText = resultText(probe);
+          return fake
+            .requests()
+            .some(
+              (request) =>
+                request.method === "POST" &&
+                ["/chat/completions", "/v1/chat/completions"].includes(request.path),
+            );
+        },
+        {
+          interval: 1_000,
+          message: "managed inference route did not refresh to the fake provider",
+          timeout: 45_000,
+        },
+      )
+      .toBe(true);
+    expect(
+      fakeRouteProbeExitCode,
+      `inference.local reached the fake provider with a failed response\n${fakeRouteProbeText}`,
+    ).toBe(0);
+    const fakeRequests = fake.requests();
+    await artifacts.writeJson("issue4434-fake-openai-requests.json", fakeRequests);
+
+    await closeFake();
+
+    const failedManagedRouteProbe = await sandbox.execShell(
+      instance.sandboxName,
+      trustedSandboxShellScript(
+        `command -v curl >/dev/null && curl -fsS --connect-timeout 5 --max-time 30 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d ${shellSingleQuote(failedRoutePayload)} >/dev/null`,
+      ),
+      {
+        artifactName: "issue4434-inference-local-after-fake-endpoint-stopped",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 45_000,
+      },
+    );
+    expect(
+      failedManagedRouteProbe.exitCode,
+      `inference.local remained healthy after its configured provider stopped\n${resultText(failedManagedRouteProbe)}`,
+    ).not.toBe(0);
+
     const captureFile = artifacts.pathFor("openclaw-tui-capture.log");
     const expectLog = artifacts.pathFor("expect.log");
     const expectScript = artifacts.pathFor("issue4434-openclaw-tui.expect");
@@ -292,7 +511,7 @@ runIssue4434LiveTest(
     fs.writeFileSync(captureFile, redactedRawCapture, "utf8");
     const analysis = analyzeIssue4434TuiCapture(redactedRawCapture);
     await artifacts.writeText("openclaw-tui-capture.plain.log", analysis.plain);
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "issue-4434-tui-unreachable-inference",
       expectExitCode: tui.exitCode,
       visibleError: analysis.visibleError,
@@ -301,16 +520,24 @@ runIssue4434LiveTest(
       lastStatusLine: analysis.lastStatusLine,
       finalStatusIsError: analysis.finalStatusIsError,
       finalStatusIsConnectedSpinner: analysis.finalStatusIsConnectedSpinner,
+      finalErrorBlock: analysis.finalErrorBlock,
+      diagnosticFields: analysis.diagnosticFields,
     });
 
     const failureContext = [
       `expect exit=${tui.exitCode}`,
       `capture=${captureFile}`,
       `lastStatusLine=${analysis.lastStatusLine}`,
+      `finalErrorBlock=${analysis.finalErrorBlock}`,
+      `diagnosticFields=${JSON.stringify(analysis.diagnosticFields)}`,
       "plain capture:",
       analysis.plain,
     ].join("\n");
 
+    expect(
+      hasFullIssue4434Diagnostics(analysis.diagnosticFields),
+      "OpenClaw TUI output must include full #4434 diagnostic fields: HTTP/cause, gateway/upstream layer, and recovery hint",
+    ).toBe(true);
     expect(analysis.visibleError, failureContext).toBe(true);
     expect(tui.exitCode, failureContext).toBe(0);
     expect(analysis.issue4434Signature, failureContext).toBe(false);

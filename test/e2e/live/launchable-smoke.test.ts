@@ -5,10 +5,10 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -17,7 +17,7 @@ import {
   HOSTED_INFERENCE_PROVIDER_NAME,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -27,7 +27,6 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 // CLI can onboard, route inference.local, and run an OpenClaw agent turn.
 // through Vitest.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const LAUNCHABLE_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
 const SENTINEL = "/var/run/nemoclaw-launchable-ready";
 const MODEL =
@@ -79,10 +78,6 @@ async function runBash(
     redactionValues: options.redactionValues,
     timeoutMs: options.timeoutMs,
   });
-}
-
-function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
 }
 
 function parseChatContent(raw: string): string {
@@ -214,286 +209,287 @@ async function expectPongFromSandboxInference(
   );
 }
 
-const runLaunchableSmokeTest = shouldRunLiveE2E() ? test : test.skip;
+test("launchable smoke: bootstrap, onboard, sandbox health, live inference, cleanup", {
+  timeout: TEST_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  validateSandboxName(SANDBOX_NAME);
 
-runLaunchableSmokeTest(
-  "launchable smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
-  { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    validateSandboxName(SANDBOX_NAME);
+  await artifacts.target.declare({
+    id: "launchable-smoke",
+    boundary: "ubuntu-launchable-install-flow",
+    refs: ["#2599", "#5098"],
+    phases: [
+      "preseed-launchable-clone",
+      "prerequisites",
+      "brev-launchable-ci-cpu",
+      "install-artifacts",
+      "onboard",
+      "sandbox-health",
+      "live-inference",
+      "cleanup",
+    ],
+  });
 
-    await artifacts.writeJson("target.json", {
-      id: "launchable-smoke",
-      runner: "vitest",
-      boundary: "ubuntu-launchable-install-flow",
-      refs: ["#2599", "#5098"],
-      phases: [
-        "preseed-launchable-clone",
-        "prerequisites",
-        "brev-launchable-ci-cpu",
-        "install-artifacts",
-        "onboard",
-        "sandbox-health",
-        "live-inference",
-        "cleanup",
-      ],
-    });
+  const hosted = requireHostedInferenceConfig(secrets);
+  const apiKey = hosted.apiKey;
 
-    const hosted = requireHostedInferenceConfig(secrets);
-    const apiKey = hosted.apiKey;
+  expect(fs.existsSync(LAUNCHABLE_SCRIPT), `${LAUNCHABLE_SCRIPT} missing`).toBe(true);
 
-    expect(fs.existsSync(LAUNCHABLE_SCRIPT), `${LAUNCHABLE_SCRIPT} missing`).toBe(true);
+  const sudo = await host.command("sudo", ["-n", "true"], {
+    artifactName: "prereq-passwordless-sudo",
+    env: runEnv(),
+    timeoutMs: 30_000,
+  });
+  if (sudo.exitCode !== 0) skip("passwordless sudo is required for launchable smoke");
 
-    const sudo = await host.command("sudo", ["-n", "true"], {
-      artifactName: "prereq-passwordless-sudo",
-      env: runEnv(),
-      timeoutMs: 30_000,
-    });
-    if (sudo.exitCode !== 0) skip("passwordless sudo is required for launchable smoke");
+  const dockerInfo = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info",
+    env: runEnv(),
+    timeoutMs: 30_000,
+  });
+  expectExitZero(dockerInfo, "Docker is running");
 
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info",
-      env: runEnv(),
-      timeoutMs: 30_000,
-    });
-    expectExitZero(dockerInfo, "Docker is running");
-
-    const network = await host.command(
-      "bash",
-      [
-        "-lc",
-        'cfg=$(mktemp); trap \'rm -f "$cfg"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; curl -sf --max-time 10 --config "$cfg" "$HOSTED_ENDPOINT_URL/models"',
-      ],
-      {
-        artifactName: "prereq-inference-api-models",
-        env: runEnv({
-          HOSTED_ENDPOINT_URL: hosted.endpointUrl,
-          NVIDIA_INFERENCE_API_KEY: apiKey,
-        }),
-        redactionValues: [apiKey],
-        timeoutMs: 30_000,
-      },
-    );
-    expectExitZero(network, "inference-api.nvidia.com reachable");
-
-    const cloneDir = path.join(os.tmpdir(), `NemoClaw-launchable-${randomUUID()}`);
-    cleanup.add(`remove launchable clone ${cloneDir}`, async () =>
-      cleanupLaunchableState(host, cloneDir),
-    );
-    await cleanupLaunchableState(host, cloneDir);
-    await preseedLaunchableClone(host, cloneDir, artifacts);
-
-    const installLog = artifacts.pathFor("launch-plugin.log");
-    const install = await host.command("sudo", ["-E", "bash", LAUNCHABLE_SCRIPT], {
-      artifactName: "phase-2-brev-launchable-ci-cpu",
+  const network = await host.command(
+    "bash",
+    [
+      "-lc",
+      'cfg=$(mktemp); trap \'rm -f "$cfg"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; curl -sf --max-time 10 --config "$cfg" "$HOSTED_ENDPOINT_URL/models"',
+    ],
+    {
+      artifactName: "prereq-inference-api-models",
       env: runEnv({
-        LAUNCH_LOG: installLog,
-        NEMOCLAW_CLONE_DIR: cloneDir,
-        NEMOCLAW_REF: "main",
-        SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
+        HOSTED_ENDPOINT_URL: hosted.endpointUrl,
+        NVIDIA_INFERENCE_API_KEY: apiKey,
       }),
-      timeoutMs: INSTALL_TIMEOUT_MS,
-    });
-    expectExitZero(install, "brev-launchable-ci-cpu.sh completed");
-
-    const pathEnv = runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` });
-
-    const nemoclawHelp = await runBash(host, "command -v nemoclaw && nemoclaw --help >/dev/null", {
-      artifactName: "phase-3-nemoclaw-help",
-      env: pathEnv,
+      redactionValues: [apiKey],
       timeoutMs: 30_000,
+    },
+  );
+  expectExitZero(network, "inference-api.nvidia.com reachable");
+
+  const cloneDir = path.join(os.tmpdir(), `NemoClaw-launchable-${randomUUID()}`);
+  cleanup.add(`remove launchable clone ${cloneDir}`, async () =>
+    cleanupLaunchableState(host, cloneDir),
+  );
+  await cleanupLaunchableState(host, cloneDir);
+  await preseedLaunchableClone(host, cloneDir, artifacts);
+
+  const installLog = artifacts.pathFor("launch-plugin.log");
+  const install = await host.command("sudo", ["-E", "bash", LAUNCHABLE_SCRIPT], {
+    artifactName: "phase-2-brev-launchable-ci-cpu",
+    env: runEnv({
+      LAUNCH_LOG: installLog,
+      NEMOCLAW_CLONE_DIR: cloneDir,
+      NEMOCLAW_REF: "main",
+      SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
+    }),
+    timeoutMs: INSTALL_TIMEOUT_MS,
+  });
+  expectExitZero(install, "brev-launchable-ci-cpu.sh completed");
+
+  const pathEnv = runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` });
+
+  const nemoclawHelp = await runBash(host, "command -v nemoclaw && nemoclaw --help >/dev/null", {
+    artifactName: "phase-3-nemoclaw-help",
+    env: pathEnv,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(nemoclawHelp, "nemoclaw is on PATH and --help works");
+
+  const openshellVersion = await runBash(host, "command -v openshell && openshell --version", {
+    artifactName: "phase-3-openshell-version",
+    env: pathEnv,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(openshellVersion, "openshell is on PATH and --version works");
+  const openshellVersionText = `${openshellVersion.stdout}\n${openshellVersion.stderr}`;
+  expect(
+    process.env.NEMOCLAW_OPENSHELL_CHANNEL !== "dev" ||
+      /\d+\.\d+\.\d+[.-]dev\d*(?:[.+-][0-9A-Za-z]+)*/i.test(openshellVersionText),
+    "the dev integration target must install a dev-channel OpenShell build",
+  ).toBe(true);
+
+  const nodeVersion = await host.command(
+    "node",
+    [
+      "-p",
+      "JSON.stringify({version: process.version, major: Number(process.versions.node.split('.')[0])})",
+    ],
+    { artifactName: "phase-3-node-version", env: pathEnv, timeoutMs: 30_000 },
+  );
+  expectExitZero(nodeVersion, "node version probe");
+  const node = JSON.parse(nodeVersion.stdout) as { version: string; major: number };
+  await artifacts.writeJson("node-version.json", node);
+  expect(
+    node.major,
+    `Node.js too old after launchable install: ${node.version}`,
+  ).toBeGreaterThanOrEqual(20);
+
+  const dockerAfterInstall = await host.command("docker", ["info"], {
+    artifactName: "phase-3-docker-info-after-install",
+    env: pathEnv,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(dockerAfterInstall, "Docker running after install");
+  expect(fs.existsSync(SENTINEL), `${SENTINEL} missing`).toBe(true);
+  expect(fs.existsSync(path.join(cloneDir, ".git")), `${cloneDir}/.git missing`).toBe(true);
+  expect(fs.existsSync(path.join(cloneDir, "dist")), `${cloneDir}/dist missing`).toBe(true);
+  expect(
+    fs.existsSync(path.join(cloneDir, "nemoclaw", "dist")),
+    `${cloneDir}/nemoclaw/dist missing`,
+  ).toBe(true);
+
+  let onboard: ShellProbeResult | undefined;
+  for (let attempt = 1; attempt <= ONBOARD_ATTEMPTS; attempt += 1) {
+    onboard = await host.command("nemoclaw", ["onboard", "--non-interactive"], {
+      artifactName: attempt === 1 ? "phase-4-onboard" : `phase-4-onboard-attempt-${attempt}`,
+      cwd: cloneDir,
+      env: runEnv({
+        PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
+        ...hosted.env,
+        NEMOCLAW_MODEL: MODEL,
+        NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+      }),
+      redactionValues: [apiKey],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
     });
-    expectExitZero(nemoclawHelp, "nemoclaw is on PATH and --help works");
-
-    const openshellVersion = await runBash(host, "command -v openshell && openshell --version", {
-      artifactName: "phase-3-openshell-version",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(openshellVersion, "openshell is on PATH and --version works");
-
-    const nodeVersion = await host.command(
-      "node",
-      [
-        "-p",
-        "JSON.stringify({version: process.version, major: Number(process.versions.node.split('.')[0])})",
-      ],
-      { artifactName: "phase-3-node-version", env: pathEnv, timeoutMs: 30_000 },
-    );
-    expectExitZero(nodeVersion, "node version probe");
-    const node = JSON.parse(nodeVersion.stdout) as { version: string; major: number };
-    await artifacts.writeJson("node-version.json", node);
-    expect(
-      node.major,
-      `Node.js too old after launchable install: ${node.version}`,
-    ).toBeGreaterThanOrEqual(20);
-
-    const dockerAfterInstall = await host.command("docker", ["info"], {
-      artifactName: "phase-3-docker-info-after-install",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(dockerAfterInstall, "Docker running after install");
-    expect(fs.existsSync(SENTINEL), `${SENTINEL} missing`).toBe(true);
-    expect(fs.existsSync(path.join(cloneDir, ".git")), `${cloneDir}/.git missing`).toBe(true);
-    expect(fs.existsSync(path.join(cloneDir, "dist")), `${cloneDir}/dist missing`).toBe(true);
-    expect(
-      fs.existsSync(path.join(cloneDir, "nemoclaw", "dist")),
-      `${cloneDir}/nemoclaw/dist missing`,
-    ).toBe(true);
-
-    let onboard: ShellProbeResult | undefined;
-    for (let attempt = 1; attempt <= ONBOARD_ATTEMPTS; attempt += 1) {
-      onboard = await host.command("nemoclaw", ["onboard", "--non-interactive"], {
-        artifactName: attempt === 1 ? "phase-4-onboard" : `phase-4-onboard-attempt-${attempt}`,
-        cwd: cloneDir,
-        env: runEnv({
-          PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
-          ...hosted.env,
-          NEMOCLAW_MODEL: MODEL,
-          NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-          NEMOCLAW_RECREATE_SANDBOX: "1",
-        }),
-        redactionValues: [apiKey],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      });
-      if (onboard.exitCode === 0) break;
-      if (isTransientProviderValidationFailure(onboard) && attempt < ONBOARD_ATTEMPTS) {
-        await sleep(30_000 * attempt);
-        continue;
-      }
-      if (isTransientProviderValidationFailure(onboard) && process.env.GITHUB_ACTIONS === "true") {
-        await artifacts.writeJson("transient-provider-validation.skip.json", {
-          reason: "transient NVIDIA Endpoints validation failure during launchable onboard",
-          attempts: ONBOARD_ATTEMPTS,
-          sourceBoundary: "external NVIDIA Endpoints provider availability",
-          removalCondition:
-            "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
-        });
-        skip(
-          `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${ONBOARD_ATTEMPTS} attempts`,
-        );
-      }
-      break;
+    if (onboard.exitCode === 0) break;
+    if (isTransientProviderValidationFailure(onboard) && attempt < ONBOARD_ATTEMPTS) {
+      await sleep(30_000 * attempt);
+      continue;
     }
-    expectExitZero(onboard as ShellProbeResult, "nemoclaw onboard --non-interactive");
-
-    const list = await host.command("nemoclaw", ["list"], {
-      artifactName: "phase-5-nemoclaw-list",
-      cwd: cloneDir,
-      env: pathEnv,
-      timeoutMs: 60_000,
-    });
-    expectExitZero(list, "nemoclaw list");
-    expect(list.stdout).toContain(SANDBOX_NAME);
-
-    const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
-      artifactName: "phase-5-nemoclaw-status",
-      cwd: cloneDir,
-      env: pathEnv,
-      timeoutMs: 60_000,
-    });
-    expectExitZero(status, `nemoclaw ${SANDBOX_NAME} status`);
-
-    const inferenceConfig = await host.command("openshell", ["inference", "get"], {
-      artifactName: "phase-5-openshell-inference-get",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(inferenceConfig, "openshell inference get");
-    expect(inferenceConfig.stdout).toMatch(new RegExp(EXPECTED_ROUTE_PROVIDER, "i"));
-
-    const gatewayContainer = await runBash(
-      host,
-      "docker ps --format '{{.Names}}' | grep -E 'nemoclaw|openshell'",
-      { artifactName: "phase-5-gateway-container", env: pathEnv, timeoutMs: 30_000 },
-    );
-    const gatewayContainerNames = gatewayContainer.stdout.trim();
-    await artifacts.writeJson("gateway-container.json", {
-      confirmed: gatewayContainerNames.length > 0,
-      stdout: gatewayContainer.stdout,
-    });
-    expect(gatewayContainerNames, "expected a NemoClaw/OpenShell gateway container").not.toBe("");
-
-    const directPayload = JSON.stringify({
-      model: MODEL,
-      messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-      max_tokens: 100,
-    });
-    const direct = await host.command(
-      "bash",
-      [
-        "-lc",
-        'cfg=$(mktemp); payload=$(mktemp); trap \'rm -f "$cfg" "$payload"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; printf \'%s\' "$DIRECT_PAYLOAD" > "$payload"; curl -s --max-time 30 -X POST --config "$cfg" -H \'Content-Type: application/json\' -d @"$payload" "$HOSTED_ENDPOINT_URL/chat/completions"',
-      ],
-      {
-        artifactName: "phase-6-direct-nvidia-chat",
-        env: runEnv({
-          ...pathEnv,
-          DIRECT_PAYLOAD: directPayload,
-          HOSTED_ENDPOINT_URL: hosted.endpointUrl,
-          NVIDIA_INFERENCE_API_KEY: apiKey,
-        }),
-        redactionValues: [apiKey],
-        timeoutMs: INFERENCE_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(direct, "direct NVIDIA Endpoints chat completion");
-    expect(parseChatContent(direct.stdout)).toMatch(/PONG/i);
-
-    const sandboxExec = (command: string[], artifactName: string) =>
-      sandbox.exec(SANDBOX_NAME, command, {
-        artifactName,
-        env: pathEnv,
-        timeoutMs: INFERENCE_TIMEOUT_MS,
+    if (isTransientProviderValidationFailure(onboard) && process.env.GITHUB_ACTIONS === "true") {
+      await artifacts.writeJson("transient-provider-validation.skip.json", {
+        reason: "transient NVIDIA Endpoints validation failure during launchable onboard",
+        attempts: ONBOARD_ATTEMPTS,
+        sourceBoundary: "external NVIDIA Endpoints provider availability",
+        removalCondition:
+          "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
       });
-    await expectPongFromSandboxInference(sandboxExec);
-
-    const sessionId = `e2e-launchable-${Date.now()}-${randomUUID()}`;
-    const agent = await sandboxExec(
-      [
-        "openclaw",
-        "agent",
-        "--agent",
-        "main",
-        "--json",
-        "--thinking",
-        "off",
-        "--session-id",
-        sessionId,
-        "-m",
-        "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
-      ],
-      "phase-6-openclaw-agent",
-    );
-    expect(
-      agent.exitCode,
-      `openclaw agent failed; rc=${agent.exitCode}; stdout='${agent.stdout.slice(0, 300)}'; stderr='${agent.stderr.slice(0, 300)}'`,
-    ).toBe(0);
-    const agentReply = parseAgentText(agent.stdout);
-    expect(
-      containsInteger42Answer(agentReply),
-      `expected agent reply to contain 42; rc=${agent.exitCode}; reply='${agentReply.slice(0, 200)}'; stdout='${agent.stdout.slice(0, 300)}'; stderr='${agent.stderr.slice(0, 300)}'`,
-    ).toBe(true);
-
-    const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "phase-7-nemoclaw-destroy",
-      cwd: cloneDir,
-      env: pathEnv,
-      timeoutMs: 120_000,
-    });
-    expectExitZero(destroy, `destroy ${SANDBOX_NAME}`);
-    await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "phase-7-openshell-gateway-destroy",
-      env: pathEnv,
-      timeoutMs: 60_000,
-    });
-
-    const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
-    if (fs.existsSync(registryFile)) {
-      expect(fs.readFileSync(registryFile, "utf8")).not.toContain(`"${SANDBOX_NAME}"`);
+      skip(
+        `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${ONBOARD_ATTEMPTS} attempts`,
+      );
     }
+    break;
+  }
+  expectExitZero(onboard as ShellProbeResult, "nemoclaw onboard --non-interactive");
 
-    await cleanupLaunchableState(host, cloneDir);
-  },
-);
+  const list = await host.command("nemoclaw", ["list"], {
+    artifactName: "phase-5-nemoclaw-list",
+    cwd: cloneDir,
+    env: pathEnv,
+    timeoutMs: 60_000,
+  });
+  expectExitZero(list, "nemoclaw list");
+  expect(list.stdout).toContain(SANDBOX_NAME);
+
+  const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
+    artifactName: "phase-5-nemoclaw-status",
+    cwd: cloneDir,
+    env: pathEnv,
+    timeoutMs: 60_000,
+  });
+  expectExitZero(status, `nemoclaw ${SANDBOX_NAME} status`);
+
+  const inferenceConfig = await host.command("openshell", ["inference", "get"], {
+    artifactName: "phase-5-openshell-inference-get",
+    env: pathEnv,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(inferenceConfig, "openshell inference get");
+  expect(inferenceConfig.stdout).toMatch(new RegExp(EXPECTED_ROUTE_PROVIDER, "i"));
+
+  const gatewayContainer = await runBash(
+    host,
+    "docker ps --format '{{.Names}}' | grep -E 'nemoclaw|openshell'",
+    { artifactName: "phase-5-gateway-container", env: pathEnv, timeoutMs: 30_000 },
+  );
+  const gatewayContainerNames = gatewayContainer.stdout.trim();
+  await artifacts.writeJson("gateway-container.json", {
+    confirmed: gatewayContainerNames.length > 0,
+    stdout: gatewayContainer.stdout,
+  });
+  expect(gatewayContainerNames, "expected a NemoClaw/OpenShell gateway container").not.toBe("");
+
+  const directPayload = JSON.stringify({
+    model: MODEL,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    max_tokens: 100,
+  });
+  const direct = await host.command(
+    "bash",
+    [
+      "-lc",
+      'cfg=$(mktemp); payload=$(mktemp); trap \'rm -f "$cfg" "$payload"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; printf \'%s\' "$DIRECT_PAYLOAD" > "$payload"; curl -s --max-time 30 -X POST --config "$cfg" -H \'Content-Type: application/json\' -d @"$payload" "$HOSTED_ENDPOINT_URL/chat/completions"',
+    ],
+    {
+      artifactName: "phase-6-direct-nvidia-chat",
+      env: runEnv({
+        ...pathEnv,
+        DIRECT_PAYLOAD: directPayload,
+        HOSTED_ENDPOINT_URL: hosted.endpointUrl,
+        NVIDIA_INFERENCE_API_KEY: apiKey,
+      }),
+      redactionValues: [apiKey],
+      timeoutMs: INFERENCE_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(direct, "direct NVIDIA Endpoints chat completion");
+  expect(parseChatContent(direct.stdout)).toMatch(/PONG/i);
+
+  const sandboxExec = (command: string[], artifactName: string) =>
+    sandbox.exec(SANDBOX_NAME, command, {
+      artifactName,
+      env: pathEnv,
+      timeoutMs: INFERENCE_TIMEOUT_MS,
+    });
+  await expectPongFromSandboxInference(sandboxExec);
+
+  const sessionId = `e2e-launchable-${Date.now()}-${randomUUID()}`;
+  const agent = await sandboxExec(
+    [
+      "openclaw",
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--thinking",
+      "off",
+      "--session-id",
+      sessionId,
+      "-m",
+      "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+    ],
+    "phase-6-openclaw-agent",
+  );
+  expect(
+    agent.exitCode,
+    `openclaw agent failed; rc=${agent.exitCode}; stdout='${agent.stdout.slice(0, 300)}'; stderr='${agent.stderr.slice(0, 300)}'`,
+  ).toBe(0);
+  const agentReply = parseAgentText(agent.stdout);
+  expect(
+    containsInteger42Answer(agentReply),
+    `expected agent reply to contain 42; rc=${agent.exitCode}; reply='${agentReply.slice(0, 200)}'; stdout='${agent.stdout.slice(0, 300)}'; stderr='${agent.stderr.slice(0, 300)}'`,
+  ).toBe(true);
+
+  const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "phase-7-nemoclaw-destroy",
+    cwd: cloneDir,
+    env: pathEnv,
+    timeoutMs: 120_000,
+  });
+  expectExitZero(destroy, `destroy ${SANDBOX_NAME}`);
+  await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+    artifactName: "phase-7-openshell-gateway-destroy",
+    env: pathEnv,
+    timeoutMs: 60_000,
+  });
+
+  const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+  if (fs.existsSync(registryFile)) {
+    expect(fs.readFileSync(registryFile, "utf8")).not.toContain(`"${SANDBOX_NAME}"`);
+  }
+
+  await cleanupLaunchableState(host, cloneDir);
+});

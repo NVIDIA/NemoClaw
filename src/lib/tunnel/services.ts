@@ -22,6 +22,8 @@ import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding"
 import { isRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildSubprocessEnv } from "../subprocess-env";
+import { registerTunnelOrigin } from "./allowed-origins";
+import * as gatewayStop from "./gateway-stop";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,6 +40,8 @@ export interface ServiceOptions {
   pidDir?: string;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
+  /** Also release the managed host gateway port (legacy full-stop only). */
+  releaseGatewayPort?: boolean;
 }
 
 export interface ServiceStatus {
@@ -619,7 +623,28 @@ export function stopAll(opts: ServiceOptions = {}): void {
 
   // Stop host-side services.
   stopService(pidDir, "cloudflared");
+
+  if (opts.releaseGatewayPort) {
+    gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
+  }
+
   info("All services stopped.");
+}
+
+/**
+ * Sandbox name for tunnel-origin registration: same option/env precedence as
+ * the other service commands, gated on the safe-name rules, but without the
+ * registry default-sandbox fallback (registration is skipped rather than
+ * guessed when no name is explicitly available).
+ */
+function resolveTunnelOriginSandboxName(opts: ServiceOptions): string | null {
+  const raw =
+    opts.sandboxName ??
+    process.env.NEMOCLAW_SANDBOX_NAME ??
+    process.env.NEMOCLAW_SANDBOX ??
+    process.env.SANDBOX_NAME;
+  if (!raw || !SAFE_NAME_RE.test(raw) || raw.includes("..")) return null;
+  return raw;
 }
 
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
@@ -673,6 +698,21 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   let tunnelUrl = "";
   if (isRunning(pidDir, "cloudflared")) {
     tunnelUrl = getTunnelUrl(pidDir, dashboardPort);
+  }
+
+  if (tunnelUrl) {
+    const sandboxName = resolveTunnelOriginSandboxName(opts);
+    if (sandboxName) {
+      try {
+        registerTunnelOrigin(sandboxName, tunnelUrl, { info, warn });
+      } catch (err) {
+        warn(`Could not register tunnel origin (${err instanceof Error ? err.message : err}).`);
+      }
+    } else {
+      warn(
+        "No sandbox name available — skipping tunnel-origin registration in gateway allowedOrigins.",
+      );
+    }
   }
 
   const bannerLines = [

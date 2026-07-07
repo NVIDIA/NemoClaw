@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -12,16 +11,22 @@ import {
   trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-health-auth";
 validateSandboxName(SANDBOX_NAME);
 export const DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789";
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 
-export function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
+export interface DeviceAuthInferenceFixture {
+  apiKey: string;
+  endpointUrl: string;
+  model: string;
+}
+
+export function commandEnv(inference?: DeviceAuthInferenceFixture): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
@@ -31,7 +36,16 @@ export function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  apiKey && Object.assign(env, { NVIDIA_INFERENCE_API_KEY: apiKey });
+  if (inference) {
+    Object.assign(env, {
+      COMPATIBLE_API_KEY: inference.apiKey,
+      NEMOCLAW_COMPAT_MODEL: inference.model,
+      NEMOCLAW_ENDPOINT_URL: inference.endpointUrl,
+      NEMOCLAW_MODEL: inference.model,
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_PROVIDER: "custom",
+    });
+  }
   return env;
 }
 
@@ -97,19 +111,19 @@ export async function cleanupDeviceAuthSandbox(
 
 export async function installDeviceAuthSandbox(
   host: HostCliClient,
-  apiKey: string,
+  inference: DeviceAuthInferenceFixture,
   installLog: string,
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
-    install = await host.command("bash", ["install.sh", "--non-interactive"], {
+    install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
       artifactName:
         attempt === 1
           ? "phase-1-install-device-auth-health"
           : `phase-1-install-device-auth-health-attempt-${attempt}`,
       cwd: REPO_ROOT,
-      env: commandEnv(apiKey),
-      redactionValues: [apiKey],
+      env: commandEnv(inference),
+      redactionValues: [inference.apiKey],
       timeoutMs: 20 * 60_000,
     });
     fs.writeFileSync(installLog, resultText(install));

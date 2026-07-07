@@ -5,10 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
 // Keep this free-standing and direct: the the contract is the real CLI +
 // OpenShell/provider boundary for messaging credential reuse/rotation, not the
@@ -16,8 +17,6 @@ import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 // `nemoclaw onboard` CLI with fake provider tokens, preserving the provider
 // upsert, registry credential-hash, sandbox rebuild, and reuse assertions.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const REGISTRY_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "sandboxes.json");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-token-rotation-${process.pid}`;
 validateSandboxName(SANDBOX_NAME);
@@ -52,16 +51,13 @@ type RegistryCredentialBinding = {
 };
 
 type RegistrySandboxEntry = {
+  imageTag?: unknown;
   messaging?: {
     plan?: {
       credentialBindings?: RegistryCredentialBinding[];
     };
   };
 };
-
-function resultText(result: { stdout: string; stderr: string }): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
@@ -99,6 +95,13 @@ function readSandboxRegistryEntry(): RegistrySandboxEntry {
   expect(entry, `registry entry ${SANDBOX_NAME} missing`).toBeTruthy();
   if (!entry) throw new Error(`registry entry ${SANDBOX_NAME} missing`);
   return entry;
+}
+
+function sandboxImageTag(): string {
+  const imageTag = readSandboxRegistryEntry().imageTag;
+  const normalizedImageTag = typeof imageTag === "string" ? imageTag.trim() : "";
+  expect(normalizedImageTag, "registry imageTag missing").not.toBe("");
+  return normalizedImageTag;
 }
 
 function credentialBindings(): RegistryCredentialBinding[] {
@@ -255,9 +258,7 @@ async function destroyGatewayIfOpenshellExists(
   );
 }
 
-const liveTest = shouldRunLiveE2E() ? test : test.skip;
-
-liveTest(
+test(
   "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
   testTimeoutOptions(PHASE_TIMEOUT_MS),
   async ({ artifacts, cleanup, host, skip }) => {
@@ -291,9 +292,8 @@ liveTest(
       await fakeOpenAI.close();
     });
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "token-rotation",
-      runner: "vitest",
       boundary: "direct-cli-onboard-openshell",
       workflow: {
         workflow: "e2e.yaml",
@@ -349,6 +349,29 @@ liveTest(
       NEMOCLAW_RECREATE_SANDBOX: "1",
     });
     expect(first.exitCode, resultText(first)).toBe(0);
+
+    // OpenShell removes each deployment image during credential-driven
+    // recreation. Retain one test-owned tag so Docker can reuse the identical
+    // OpenClaw/plugin layers across the three rotations; token values remain in
+    // gateway providers and are never baked into this image.
+    const cacheImageTag = `nemoclaw-token-rotation-cache:${process.pid}`;
+    const retainBuildCache = await host.command(
+      "docker",
+      ["image", "tag", sandboxImageTag(), cacheImageTag],
+      {
+        artifactName: "phase-1-retain-build-cache",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(retainBuildCache.exitCode, resultText(retainBuildCache)).toBe(0);
+    cleanup.add("remove token-rotation build cache tag", async () => {
+      await host.command("docker", ["image", "rm", cacheImageTag], {
+        artifactName: "cleanup-token-rotation-build-cache",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      });
+    });
 
     const openshellVersion = await host.command("openshell", ["--version"], {
       artifactName: "phase-0-openshell-version-token-rotation",
@@ -462,7 +485,7 @@ liveTest(
     expect(afterSlackSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
     expect(afterSlackSameText).toContain("reusing it");
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "token-rotation",
       sandboxName: SANDBOX_NAME,
       assertions: {

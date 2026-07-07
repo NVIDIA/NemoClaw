@@ -1,0 +1,126 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Docs / Publish Staging
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "fern/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/sync-agent-variant-docs.ts"
+      - ".github/workflows/docs-publish-staging.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-publish-staging
+  cancel-in-progress: false
+
+env:
+  FERN_STAGING_INSTANCE: nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: docs-staging
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+
+      - name: Install docs dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate doc variants and validate Fern docs
+        run: |
+          npm run docs:sync-agent-variants
+          npm run docs
+
+      - name: Publish staging docs
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+        run: |
+          FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
+          cd fern
+          npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE"
+
+  delete-preview:
+    runs-on: ubuntu-latest
+    needs: publish
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Find merged PR previews
+        id: previews
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "preview_ids<<EOF"
+            gh api "repos/${GH_REPO}/commits/${COMMIT_SHA}/pulls" \
+              -H "Accept: application/vnd.github+json" \
+              --jq '.[] | "pr-\(.number)"'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          mapfile -t pr_numbers < <(
+            gh api "repos/${GH_REPO}/commits/${COMMIT_SHA}/pulls" \
+              -H "Accept: application/vnd.github+json" \
+              --jq '.[].number'
+          )
+          if [ "${#pr_numbers[@]}" -eq 0 ]; then
+            echo "has_previews=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No PR associated with ${COMMIT_SHA}; no Fern previews to delete."
+            exit 0
+          fi
+          echo "has_previews=true" >> "$GITHUB_OUTPUT"
+          printf 'Found Fern preview IDs to delete: '
+          printf 'pr-%s ' "${pr_numbers[@]}"
+          printf '\n'
+
+      - name: Checkout repository
+        if: ${{ steps.previews.outputs.has_previews == 'true' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        if: ${{ steps.previews.outputs.has_previews == 'true' }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+
+      - name: Delete Fern previews
+        if: ${{ steps.previews.outputs.has_previews == 'true' }}
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+          PREVIEW_IDS: ${{ steps.previews.outputs.preview_ids }}
+        run: |
+          set -euo pipefail
+          FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
+          cd fern
+          while IFS= read -r preview_id; do
+            if [ -z "$preview_id" ]; then
+              continue
+            fi
+            npx --yes "fern-api@${FERN_VERSION}" docs preview delete --id "$preview_id"
+            echo "Deleted Fern preview ${preview_id}."
+          done <<< "$PREVIEW_IDS"

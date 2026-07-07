@@ -608,12 +608,15 @@ process.exit(0);
       const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
       const sshLog = path.join(fixture, "ssh-log.jsonl");
       const extensionsDir = path.join(openclawDir, "extensions");
+      const managedExtensions =
+        "nemoclaw,diagnostics-otel,brave,discord,openclaw-weixin,slack,whatsapp,msteams".split(",");
       fs.mkdirSync(binDir, { recursive: true });
-      fs.mkdirSync(path.join(extensionsDir, "nemoclaw"), { recursive: true });
-      fs.mkdirSync(path.join(extensionsDir, "openclaw-weixin"), { recursive: true });
+      for (const extensionName of managedExtensions) {
+        const extensionDir = path.join(extensionsDir, extensionName);
+        fs.mkdirSync(extensionDir, { recursive: true });
+        fs.writeFileSync(path.join(extensionDir, "marker.txt"), `fresh-${extensionName}\n`);
+      }
       fs.mkdirSync(path.join(extensionsDir, "stale-user-extension"), { recursive: true });
-      fs.writeFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "fresh-nemoclaw\n");
-      fs.writeFileSync(path.join(extensionsDir, "openclaw-weixin", "marker.txt"), "fresh-weixin\n");
       fs.writeFileSync(path.join(extensionsDir, "stale-user-extension", "marker.txt"), "stale\n");
 
       const manifest = writeBackup("alpha", "2026-05-19T12-00-00-000Z", {
@@ -621,14 +624,12 @@ process.exit(0);
         backedUpDirs: ["extensions"],
       });
       const backupExtensionsDir = path.join(String(manifest.backupPath), "extensions");
-      fs.mkdirSync(path.join(backupExtensionsDir, "nemoclaw"), { recursive: true });
-      fs.mkdirSync(path.join(backupExtensionsDir, "openclaw-weixin"), { recursive: true });
+      for (const extensionName of managedExtensions) {
+        const extensionDir = path.join(backupExtensionsDir, extensionName);
+        fs.mkdirSync(extensionDir, { recursive: true });
+        fs.writeFileSync(path.join(extensionDir, "marker.txt"), `old-${extensionName}\n`);
+      }
       fs.mkdirSync(path.join(backupExtensionsDir, "user-extension"), { recursive: true });
-      fs.writeFileSync(path.join(backupExtensionsDir, "nemoclaw", "marker.txt"), "old-nemoclaw\n");
-      fs.writeFileSync(
-        path.join(backupExtensionsDir, "openclaw-weixin", "marker.txt"),
-        "old-weixin\n",
-      );
       fs.writeFileSync(
         path.join(backupExtensionsDir, "user-extension", "marker.txt"),
         "restored\n",
@@ -655,9 +656,10 @@ function readStdin() {
 }
 if (cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf")) {
   const extensionsDir = ${JSON.stringify(extensionsDir)};
+  const managedExtensions = new Set(${JSON.stringify(managedExtensions)});
   fs.mkdirSync(extensionsDir, { recursive: true });
   for (const entry of fs.readdirSync(extensionsDir)) {
-    if (entry === "nemoclaw" || entry === "openclaw-weixin") continue;
+    if (managedExtensions.has(entry)) continue;
     fs.rmSync(path.join(extensionsDir, entry), { recursive: true, force: true });
   }
   process.exit(0);
@@ -685,12 +687,11 @@ process.exit(0);
       const restore = sandboxState.restoreSandboxState("alpha", String(manifest.backupPath));
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(["extensions"]);
-      expect(fs.readFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "utf-8")).toBe(
-        "fresh-nemoclaw\n",
-      );
-      expect(
-        fs.readFileSync(path.join(extensionsDir, "openclaw-weixin", "marker.txt"), "utf-8"),
-      ).toBe("fresh-weixin\n");
+      for (const extensionName of managedExtensions) {
+        expect(
+          fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
+        ).toBe(`fresh-${extensionName}\n`);
+      }
       expect(fs.existsSync(path.join(extensionsDir, "stale-user-extension"))).toBe(false);
       expect(
         fs.readFileSync(path.join(extensionsDir, "user-extension", "marker.txt"), "utf-8"),
@@ -705,8 +706,9 @@ process.exit(0);
         cmd.includes("/sandbox/.openclaw/extensions"),
       );
       expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
-      expect(cleanupCommand).toContain("! -name 'nemoclaw'");
-      expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
+      for (const extensionName of managedExtensions) {
+        expect(cleanupCommand).toContain(`! -name '${extensionName}'`);
+      }
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -732,6 +734,7 @@ process.exit(0);
       const auditLines = [
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal\t../qrcode-terminal/bin/qrcode-terminal.js",
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
+        "l\t/sandbox/.openclaw/extensions/slack/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
       ].join("\n");
 
       const openshell = writeFakeOpenshell(binDir);
@@ -964,7 +967,7 @@ process.exit(0);
       for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
       const auditLines = [
-        "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/etc/passwd",
+        "l\t/sandbox/.openclaw/extensions/slack/node_modules/openclaw\t/etc/passwd",
       ].join("\n");
 
       const openshell = writeFakeOpenshell(binDir);
@@ -991,7 +994,7 @@ process.exit(0);
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
-      expect(backup.error).toMatch(/openclaw-weixin/);
+      expect(backup.error).toMatch(/extensions\/slack/);
       expect(backup.error).toMatch(/\/etc\/passwd/);
     } finally {
       if (oldOpenshell === undefined) {
@@ -1224,9 +1227,12 @@ describe("Deep Agents Code durable state files", () => {
         "name: note-summarizer\n",
       );
       fs.writeFileSync(path.join(deepAgentsDir, "config.toml"), "generated config\n");
-      fs.writeFileSync(path.join(deepAgentsDir, "hooks.json"), "{}\n");
       fs.writeFileSync(path.join(deepAgentsDir, ".env"), "NVIDIA_API_KEY=should-not-copy\n");
       fs.writeFileSync(path.join(deepAgentsDir, ".mcp.json"), '{"token":"should-not-copy"}\n');
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".nemoclaw-mcp.json"),
+        '{"mcpServers":{"reconstructable":{}}}\n',
+      );
 
       const openshell = path.join(binDir, "openshell");
       writeExecutable(
@@ -1254,10 +1260,6 @@ fs.appendFileSync(log, JSON.stringify({ cmd }) + "\\n");
 const deepAgentsDir = path.join(root, ".deepagents");
 if (cmd.includes("config.toml") && cmd.includes("cat --")) {
   process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "config.toml")));
-  process.exit(0);
-}
-if (cmd.includes("hooks.json") && cmd.includes("cat --")) {
-  process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "hooks.json")));
   process.exit(0);
 }
 if (cmd.includes(".env") || cmd.includes(".mcp.json")) {
@@ -1297,15 +1299,12 @@ process.exit(0);
       const backup = sandboxState.backupSandboxState("deepagents", { name: "deepagents-state" });
       expect(backup.success).toBe(true);
       expect(backup.backedUpDirs).toEqual([".state", "skills", "agent/skills"]);
-      expect(backup.backedUpFiles).toEqual(["config.toml", "hooks.json"]);
+      expect(backup.backedUpFiles).toEqual(["config.toml"]);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.failedFiles).toEqual([]);
       expect(backup.manifest?.agentType).toBe("langchain-deepagents-code");
       expect(backup.manifest?.stateDirs).toEqual([".state", "skills", "agent/skills"]);
-      expect(backup.manifest?.stateFiles).toEqual([
-        { path: "config.toml", strategy: "copy" },
-        { path: "hooks.json", strategy: "copy" },
-      ]);
+      expect(backup.manifest?.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "thread.json"))).toBe(
         true,
       );
@@ -1317,9 +1316,13 @@ process.exit(0);
       );
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(false);
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".nemoclaw-mcp.json"))).toBe(
+        false,
+      );
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
       expect(loggedCommands).not.toContain(".env");
       expect(loggedCommands).not.toContain(".mcp.json");
+      expect(loggedCommands).not.toContain(".nemoclaw-mcp.json");
 
       // #5753 is "lost after rebuild" (backup + recreate + restore): restore
       // must list agent/skills among the dirs it brings back into the sandbox.

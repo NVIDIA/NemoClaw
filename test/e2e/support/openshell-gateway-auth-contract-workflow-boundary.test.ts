@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { UPLOAD_E2E_ARTIFACTS_ACTION } from "../../../tools/e2e/upload-e2e-artifacts-workflow-boundary.mts";
 import {
   evaluateE2eWorkflowDispatchSelectors,
   readFreeStandingJobsInventory,
@@ -73,7 +74,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
       E2E_ARTIFACT_DIR:
         "${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
       NEMOCLAW_RUN_LIVE_E2E: "1",
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.71",
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72",
       DOCKER_GRPC_PROBE_IMAGE:
         "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d",
     });
@@ -92,18 +93,13 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
 
     const upload = namedStep(job, "Upload OpenShell gateway auth contract artifacts");
     expect(upload?.if).toBe("always()");
-    expect(upload?.with).toMatchObject({
-      name: "e2e-openshell-gateway-auth-contract",
-      path: "e2e-artifacts/live/openshell-gateway-auth-contract/",
-      "include-hidden-files": false,
-      "if-no-files-found": "ignore",
-      "retention-days": 14,
-    });
+    expect(upload?.uses).toBe(UPLOAD_E2E_ARTIFACTS_ACTION);
+    expect(upload?.with).toBeUndefined();
   });
 
   it("waits for the auth contract in every aggregate result job", () => {
     const jobs = workflowJobs();
-    for (const aggregate of ["notify-on-failure", "report-to-pr", "scorecard"]) {
+    for (const aggregate of ["report-to-pr", "scorecard"]) {
       expect(jobs[aggregate]?.needs).toContain("openshell-gateway-auth-contract");
     }
   });

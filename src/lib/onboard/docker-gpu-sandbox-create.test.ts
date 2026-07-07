@@ -52,6 +52,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const recreatePatch = vi.fn(() => result);
     const waitForSupervisor = vi.fn(() => true);
     const finalizeBackup = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
@@ -65,6 +66,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         recreatePatch,
         waitForSupervisor,
         finalizeBackup,
+        capturePreRollbackDiagnostics,
         onPatchFailureExit,
       },
     });
@@ -83,6 +85,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(waitForSupervisor).toHaveBeenCalledTimes(1);
     expect(finalizeBackup).toHaveBeenCalledTimes(1);
     expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: true }, deps);
+    expect(capturePreRollbackDiagnostics).not.toHaveBeenCalled();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
 
@@ -91,6 +94,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
     const waitForSupervisor = vi.fn(() => false);
+    const capturePreRollbackDiagnostics = vi.fn(() => null);
     const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
     const onPatchFailureExit = vi.fn();
     const findContainerIds = vi.fn(() => ["existing-container"]);
@@ -105,6 +109,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         recreatePatch,
         waitForSupervisor,
         finalizeBackup,
+        capturePreRollbackDiagnostics,
         onPatchFailureExit,
       },
     });
@@ -112,6 +117,10 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
 
+    expect(capturePreRollbackDiagnostics).toHaveBeenCalledWith("alpha", result, deps);
+    expect(capturePreRollbackDiagnostics.mock.invocationCallOrder[0]).toBeLessThan(
+      finalizeBackup.mock.invocationCallOrder[0],
+    );
     expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
     expect(onPatchFailureExit).toHaveBeenCalledTimes(1);
     const [sandboxName, error, exitDeps] = onPatchFailureExit.mock.calls[0];
@@ -129,6 +138,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const recreatePatch = vi.fn(() => result);
     const waitForSupervisor = vi.fn(() => false);
     const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: false }));
+    const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
@@ -142,6 +152,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         recreatePatch,
         waitForSupervisor,
         finalizeBackup,
+        capturePreRollbackDiagnostics,
         onPatchFailureExit,
       },
     });
@@ -256,6 +267,36 @@ describe("resolveDockerGpuSandboxCreatePlan Docker Desktop WSL handling", () => 
     } finally {
       if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
       else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
+    }
+  });
+
+  it("uses native OpenShell GPU by default and preserves the explicit legacy force", () => {
+    vi.stubEnv("NEMOCLAW_DOCKER_GPU_PATCH", "");
+    try {
+      expect(
+        resolveDockerGpuSandboxCreatePlan(
+          { sandboxGpuEnabled: true },
+          {
+            dockerDriverGateway: true,
+            detectDockerDesktopWsl: () => false,
+            platform: "linux",
+          },
+        ).useDockerGpuPatch,
+      ).toBe(false);
+
+      vi.stubEnv("NEMOCLAW_DOCKER_GPU_PATCH", "1");
+      expect(
+        resolveDockerGpuSandboxCreatePlan(
+          { sandboxGpuEnabled: true },
+          {
+            dockerDriverGateway: true,
+            detectDockerDesktopWsl: () => false,
+            platform: "linux",
+          },
+        ).useDockerGpuPatch,
+      ).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 
