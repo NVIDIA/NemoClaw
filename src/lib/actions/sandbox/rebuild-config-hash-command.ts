@@ -18,7 +18,7 @@ export function buildRefreshMutableOpenClawConfigHashCommand(
     '[ "$owner" != "root" ] || exit 0',
     '[ -f "$config_file" ] || exit 0',
     'cd "$config_dir" || exit 13',
-    "sha256sum openclaw.json > .config-hash",
+    "sha256sum openclaw.json > .config-hash || exit 14",
     "chmod 660 .config-hash 2>/dev/null || true",
   ].join("; ");
 }

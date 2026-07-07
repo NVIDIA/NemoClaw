@@ -51,7 +51,7 @@ function makeSandboxEntry(): Parameters<typeof backupSandboxStateForRebuild>[1] 
     policies: [],
     customPolicies: [],
     nimContainer: null,
-  } as unknown as Parameters<typeof backupSandboxStateForRebuild>[1];
+  } satisfies Parameters<typeof backupSandboxStateForRebuild>[1];
 }
 
 function makeBail(): (msg: string, code?: number) => never {
