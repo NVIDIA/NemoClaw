@@ -3,9 +3,9 @@
 
 // Regression coverage for #6376: `nemoclaw <sandbox> mcp remove <server> --force`
 // must recover an incomplete-destroy transaction non-destructively — but only
-// the PREPARED (phase-one) marker, where the sandbox still exists. The PENDING
-// (phase-two) marker means OpenShell already deleted the sandbox, so it must NOT
-// be cleared here (that would abandon the still-owed provider/policy cleanup).
+// the PREPARED (phase-one) marker, where deletion is not durably confirmed. The
+// PENDING (phase-two) marker records confirmed OpenShell deletion, so it must
+// NOT be cleared here (that would abandon still-owed provider/policy cleanup).
 // The prepared marker is cleared only AFTER the removal succeeds, so a failed
 // recovery preserves the durable retry state.
 
@@ -59,6 +59,16 @@ const GITHUB_BRIDGE = `{
   url: "https://mcp.example.test/mcp",
   env: [],
   policyName: "mcp-bridge-github",
+  addedAt: "2026-06-01T00:00:00.000Z",
+}`;
+
+const SLACK_BRIDGE = `{
+  server: "slack",
+  agent: "openclaw",
+  adapter: "mcporter",
+  url: "https://mcp.example.test/slack",
+  env: [],
+  policyName: "mcp-bridge-slack",
   addedAt: "2026-06-01T00:00:00.000Z",
 }`;
 
@@ -118,7 +128,7 @@ process.stdout.write(JSON.stringify({ changed, mutated: before !== after }));
     expect(parsed.mutated).toBe(false);
   });
 
-  it("REFUSES to clear a pending (phase-two) marker and preserves it — the sandbox was already deleted", () => {
+  it("refuses to clear a pending marker and preserves the complete destroy transaction", () => {
     const home = createTempHome("nemoclaw-clear-pending-refuse-");
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
@@ -128,7 +138,8 @@ registry.registerSandbox({
   name: "deleted-sandbox",
   agent: "openclaw",
   mcp: {
-    bridges: {},
+    bridges: { github: ${GITHUB_BRIDGE} },
+    managedServerNames: ["github"],
     destroyPreparedAt: "2026-06-27T01:00:00.000Z",
     destroyPendingAt: "2026-06-27T01:05:00.000Z",
   },
@@ -149,8 +160,11 @@ process.stdout.write(JSON.stringify({ threw, mcp: after && after.mcp }));
       mcp: SandboxMcpSnapshot | undefined;
     };
     expect(parsed.threw).toContain("past the point of no return");
-    // The durable pending retry marker survives the refusal.
+    expect(parsed.threw).toContain("nemoclaw deleted-sandbox destroy");
+    expect(parsed.mcp?.destroyPreparedAt).toBe("2026-06-27T01:00:00.000Z");
     expect(parsed.mcp?.destroyPendingAt).toBe("2026-06-27T01:05:00.000Z");
+    expect(parsed.mcp?.managedServerNames).toEqual(["github"]);
+    expect(parsed.mcp?.bridges).toHaveProperty("github");
   });
 });
 
@@ -165,7 +179,7 @@ registry.registerSandbox({
   agent: "openclaw",
   mcp: {
     // Empty bridges — a destroy interrupted after the bridge entry was purged
-    // but before the marker was cleared. The sandbox still exists (phase one).
+    // but before the marker was cleared. Deletion is not durably confirmed.
     bridges: {},
     destroyPreparedAt: "2026-06-27T01:00:00.000Z",
   },
@@ -242,7 +256,7 @@ bridge.removeMcpBridge("stuck-sandbox", "not-registered", { force: true }).then(
     expect(result.stdout).not.toContain("Cleared incomplete MCP destroy transaction");
   });
 
-  it("REFUSES --force on a pending destroy (sandbox already deleted) and preserves the marker", async () => {
+  it("refuses --force on a pending destroy and preserves both markers", async () => {
     const home = createTempHome("nemoclaw-force-pending-refuse-");
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
@@ -251,7 +265,8 @@ registry.registerSandbox({
   name: "deleted-sandbox",
   agent: "openclaw",
   mcp: {
-    bridges: {},
+    bridges: { github: ${GITHUB_BRIDGE} },
+    managedServerNames: ["github"],
     destroyPreparedAt: "2026-06-27T01:00:00.000Z",
     destroyPendingAt: "2026-06-27T01:05:00.000Z",
   },
@@ -276,9 +291,11 @@ bridge.removeMcpBridge("deleted-sandbox", "github", { force: true }).then(
       mcp: SandboxMcpSnapshot | undefined;
     };
     expect(parsed.error).toContain("past the point of no return");
-    expect(parsed.error).toContain("destroy");
-    // The pending marker is NOT cleared — the destroy must be finished, not erased.
+    expect(parsed.error).toContain("nemoclaw deleted-sandbox destroy");
+    expect(parsed.mcp?.destroyPreparedAt).toBe("2026-06-27T01:00:00.000Z");
     expect(parsed.mcp?.destroyPendingAt).toBe("2026-06-27T01:05:00.000Z");
+    expect(parsed.mcp?.managedServerNames).toEqual(["github"]);
+    expect(parsed.mcp?.bridges).toHaveProperty("github");
     // And the fix's "Cleared incomplete MCP destroy transaction" log must NOT appear.
     expect(result.stdout).not.toContain("Cleared incomplete MCP destroy transaction");
   });
@@ -351,6 +368,105 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
     expect(result.stdout).not.toContain("Cleared incomplete MCP destroy transaction");
   });
 
+  it("preserves the prepared marker and manifest when forced cleanup tolerates residuals", async () => {
+    const home = createTempHome("nemoclaw-force-residual-preserve-");
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
+const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
+const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+state.ensureSandboxGatewaySelected = async () => {};
+adapters.assertAgentMcpConfigMutationAllowed = () => {};
+adapters.assertAgentMcpTeardownRuntimeCapability = () => {};
+adapters.unregisterAgentAdapter = () => {
+  throw new Error("adapter cleanup failed (injected)");
+};
+policy.assertGeneratedPolicyMutationSafe = () => {};
+registry.registerSandbox({
+  name: "stuck-sandbox",
+  agent: "openclaw",
+  mcp: {
+    bridges: { github: ${GITHUB_BRIDGE} },
+    managedServerNames: ["github"],
+    destroyPreparedAt: "2026-06-27T01:00:00.000Z",
+  },
+});
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+bridge.removeMcpBridge("stuck-sandbox", "github", { force: true, allowResidual: true }).then(
+  () => {
+    const after = registry.getSandbox("stuck-sandbox");
+    process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({ mcp: after && after.mcp }));
+    process.exit(0);
+  },
+  (error) => {
+    process.stderr.write(String(error && error.message || error));
+    process.exit(1);
+  },
+);
+`;
+    const result = runNodeScript(home, script);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("adapter cleanup failed (injected)");
+    const jsonMarker = "<<REPRO_JSON>>";
+    const parsed = JSON.parse(
+      result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
+    ) as { mcp: SandboxMcpSnapshot | undefined };
+    expect(parsed.mcp?.destroyPreparedAt).toBe("2026-06-27T01:00:00.000Z");
+    expect(parsed.mcp?.managedServerNames).toEqual(["github"]);
+    expect(parsed.mcp?.bridges).toHaveProperty("github");
+    expect(result.stdout).not.toContain("Cleared incomplete MCP destroy transaction");
+  });
+
+  it("keeps the prepared marker until every bridge entry is removed", async () => {
+    const home = createTempHome("nemoclaw-force-multi-bridge-");
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
+const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
+const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+state.ensureSandboxGatewaySelected = async () => {};
+adapters.assertAgentMcpConfigMutationAllowed = () => {};
+adapters.assertAgentMcpTeardownRuntimeCapability = () => {};
+adapters.unregisterAgentAdapter = () => "removed";
+policy.assertGeneratedPolicyMutationSafe = () => {};
+policy.removeGeneratedPolicy = () => {};
+registry.registerSandbox({
+  name: "stuck-sandbox",
+  agent: "openclaw",
+  mcp: {
+    bridges: { github: ${GITHUB_BRIDGE}, slack: ${SLACK_BRIDGE} },
+    managedServerNames: ["github", "slack"],
+    destroyPreparedAt: "2026-06-27T01:00:00.000Z",
+  },
+});
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
+  () => {
+    const after = registry.getSandbox("stuck-sandbox");
+    process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({ mcp: after && after.mcp }));
+    process.exit(0);
+  },
+  (error) => {
+    process.stderr.write(String(error && error.message || error));
+    process.exit(1);
+  },
+);
+`;
+    const result = runNodeScript(home, script);
+    expect(result.status).toBe(0);
+    const jsonMarker = "<<REPRO_JSON>>";
+    const parsed = JSON.parse(
+      result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
+    ) as { mcp: SandboxMcpSnapshot | undefined };
+    expect(parsed.mcp?.destroyPreparedAt).toBe("2026-06-27T01:00:00.000Z");
+    expect(parsed.mcp?.managedServerNames).toEqual(["github", "slack"]);
+    expect(parsed.mcp?.bridges).not.toHaveProperty("github");
+    expect(parsed.mcp?.bridges).toHaveProperty("slack");
+    expect(result.stdout).not.toContain("Cleared incomplete MCP destroy transaction");
+  });
+
   it("rebuild refuses a stuck destroy in the PREFLIGHT phase, before any destructive/backup work (#6376)", async () => {
     const home = createTempHome("nemoclaw-rebuild-preflight-marker-");
     // runRebuildPreflightPhase runs before the pipeline's backup and delete
@@ -382,6 +498,52 @@ preflight.runRebuildPreflightPhase("stuck-sandbox", [], { throwOnError: true }).
     expect(result.stdout).toContain("incomplete MCP destroy transaction");
     // Destructive markers from a real backup/delete must not appear — the guard
     // fired first.
+    expect(result.stdout).not.toContain("Deleting old sandbox");
+  });
+
+  it("refuses a both-marker rebuild before destructive work and preserves destroy guidance", async () => {
+    const home = createTempHome("nemoclaw-rebuild-preflight-pending-");
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+registry.registerSandbox({
+  name: "stuck-sandbox",
+  agent: "openclaw",
+  mcp: {
+    bridges: { github: ${GITHUB_BRIDGE} },
+    managedServerNames: ["github"],
+    destroyPreparedAt: "2026-06-27T01:00:00.000Z",
+    destroyPendingAt: "2026-06-27T01:05:00.000Z",
+  },
+});
+const preflight = require("./src/lib/actions/sandbox/rebuild-preflight-phase.js");
+preflight.runRebuildPreflightPhase("stuck-sandbox", [], { throwOnError: true }).then(
+  () => {
+    process.stdout.write("UNEXPECTED_OK");
+    process.exit(0);
+  },
+  (error) => {
+    const after = registry.getSandbox("stuck-sandbox");
+    process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({
+      error: String(error && error.message || error),
+      mcp: after && after.mcp,
+    }));
+    process.exit(0);
+  },
+);
+`;
+    const result = runNodeScript(home, script);
+    expect(result.status).toBe(0);
+    const jsonMarker = "<<REPRO_JSON>>";
+    const parsed = JSON.parse(
+      result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
+    ) as { error: string; mcp: SandboxMcpSnapshot | undefined };
+    expect(parsed.error).toContain("past the point of no return");
+    expect(parsed.error).toContain("nemoclaw stuck-sandbox destroy");
+    expect(parsed.mcp?.destroyPreparedAt).toBe("2026-06-27T01:00:00.000Z");
+    expect(parsed.mcp?.destroyPendingAt).toBe("2026-06-27T01:05:00.000Z");
+    expect(parsed.mcp?.managedServerNames).toEqual(["github"]);
+    expect(parsed.mcp?.bridges).toHaveProperty("github");
     expect(result.stdout).not.toContain("Deleting old sandbox");
   });
 

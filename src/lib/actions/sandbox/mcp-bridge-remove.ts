@@ -85,10 +85,10 @@ function assertExactMcpRemoveProvider(
   }
 }
 
-// Discriminated outcome of a single `mcp remove` so the caller clears the
-// phase-one destroy marker ONLY for a proven recovery — never after a no-op
-// (wrong server) or a residual-preserving force cleanup, which would drop the
-// durable retry state without actually finishing the recovery.
+// Discriminated outcome of a single `mcp remove` so the caller can prove the
+// requested entry was handled. Clearing the transaction marker additionally
+// requires that no bridge entries remain: phase one scrubbed/detached every
+// bridge, so one successful removal cannot mark a multi-bridge recovery done.
 type McpRemovalOutcome =
   | "removedTarget" // the requested committed server was cleaned up
   | "cancelledPreparedAdd" // an incomplete add for the requested server was cancelled
@@ -102,6 +102,14 @@ const PROVEN_MCP_RECOVERY_OUTCOMES: ReadonlySet<McpRemovalOutcome> = new Set([
   "markerOnlyNoEntries",
 ]);
 
+function completedPreparedDestroyRecovery(
+  sandboxName: string,
+  outcome: McpRemovalOutcome,
+): boolean {
+  if (!PROVEN_MCP_RECOVERY_OUTCOMES.has(outcome)) return false;
+  return Object.keys(bridgeState(getSandboxOrThrow(sandboxName))).length === 0;
+}
+
 export async function removeMcpBridge(
   sandboxName: string,
   server: string,
@@ -113,16 +121,14 @@ export async function removeMcpBridge(
     const recoverPreparedDestroy =
       !!options.force && !!before?.destroyPreparedAt && !before?.destroyPendingAt;
     const outcome = await removeMcpBridgeUnlocked(sandboxName, server, options);
-    // Clear the phase-one destroy marker only after a PROVEN recovery (an actual
-    // target removal, a prepared-add cancel, or a marker-only clear on a
-    // no-entries sandbox) — and only after the removal returned without throwing,
-    // so a mid-recovery failure preserves the durable retry marker. A no-op
-    // wrong-server `--force` or a residual-preserving cleanup must NOT drop the
-    // marker. `setBridgeState` preserves the marker across the removal's own
-    // writes until this explicit, phase-aware clear.
+    // Clear the phase-one destroy marker only after the requested entry was
+    // handled AND no bridge entries remain. A failed removal, wrong-server
+    // no-op, residual-preserving cleanup, or partial multi-bridge recovery must
+    // retain the durable marker. `setBridgeState` preserves it across each
+    // removal until this explicit, phase-aware clear.
     if (
       recoverPreparedDestroy &&
-      PROVEN_MCP_RECOVERY_OUTCOMES.has(outcome) &&
+      completedPreparedDestroyRecovery(sandboxName, outcome) &&
       clearMcpDestroyMarkers(sandboxName)
     ) {
       console.log(
@@ -142,17 +148,16 @@ async function removeMcpBridgeUnlocked(
   const sandbox = getSandboxOrThrow(sandboxName);
   // #6376: `--force` on `mcp remove` is the documented non-destructive recovery
   // for a stuck MCP destroy transaction. It is PHASE-AWARE: only the prepared
-  // (phase-one) marker — in-sandbox scrub + provider detach done, sandbox NOT
-  // yet deleted — is recoverable here, because the sandbox still exists. In that
-  // case skip the guard and run the requested removal; removeMcpBridge clears the
-  // marker only after this function returns successfully, so a failure preserves
-  // the durable retry state. Every other state still hits the guard:
+  // (phase-one) marker — in-sandbox scrub + provider detach done, deletion not
+  // durably confirmed — is recoverable here when the sandbox is still live. In
+  // that case skip the guard and attempt the requested removal; removeMcpBridge
+  // clears the marker only after the full bridge manifest is drained, so a
+  // failure or an absent sandbox preserves the durable retry state. Every other
+  // state still hits the guard:
   //   - no `--force`: refuse (the guard's normal behavior);
-  //   - the pending (phase-two) marker: the sandbox was already deleted from
-  //     OpenShell, so the guard's phase-aware message points at `nemoclaw
-  //     <name> destroy` — `mcp remove` cannot recover a deleted sandbox and
-  //     clearing that marker would abandon the still-owed provider/policy
-  //     cleanup.
+  //   - the pending (phase-two) marker: the registry records confirmed OpenShell
+  //     deletion, so the guard points at `nemoclaw <name> destroy`; clearing that
+  //     marker would abandon still-owed provider/policy cleanup.
   const recoverPreparedDestroy =
     !!options.force && !!sandbox.mcp?.destroyPreparedAt && !sandbox.mcp?.destroyPendingAt;
   if (!recoverPreparedDestroy) {
