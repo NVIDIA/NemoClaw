@@ -9,7 +9,11 @@ import path from "node:path";
 import { afterEach, describe, it, vi } from "vitest";
 
 import { getSandboxInferenceConfig } from "../src/lib/inference/config";
-import { isManagedModelRouterCurrent, startModelRouter } from "../src/lib/onboard/model-router";
+import {
+  createProductionModelRouterCommandProvisioner,
+  isManagedModelRouterCurrent,
+  startModelRouter,
+} from "../src/lib/onboard/model-router";
 import {
   createModelRouterCommandProvisioner,
   type ModelRouterCommandDeps,
@@ -17,6 +21,7 @@ import {
 import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard/setup-inference.js";
 import { run, runCapture } from "../src/lib/runner";
 import {
+  createProductionModelRouterInstallFixture,
   readRouterLaunchLog,
   stopTestProcess,
 } from "./support/model-router-process-test-helpers.js";
@@ -226,6 +231,41 @@ describe("onboard Model Router setup", () => {
     });
 
     assert.equal(isManagedModelRouterCurrent(routerDir, venvDir), true);
+  });
+
+  it("installs the managed command through the production provisioning adapters", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-install-"));
+    tempDirs.add(tmpDir);
+    const fixture = createProductionModelRouterInstallFixture(tmpDir);
+
+    await withProcessEnv(
+      {
+        NEMOCLAW_MODEL_ROUTER_PYTHON: undefined,
+        PATH: `${fixture.fakeBin}:/usr/bin:/bin`,
+      },
+      async () => {
+        const provisioner = createProductionModelRouterCommandProvisioner(
+          fixture.routerDir,
+          fixture.venvDir,
+        );
+        assert.equal(provisioner.ensureModelRouterCommand(), fixture.managedCommand);
+        assert.equal(provisioner.isManagedModelRouterCurrent(), true);
+      },
+    );
+
+    const setupLog = fs.readFileSync(fixture.setupLog, "utf8");
+    assert.match(setupLog, new RegExp(`python3 -m venv ${fixture.venvDir}`));
+    assert.match(
+      setupLog,
+      new RegExp(
+        `venv-python -m pip install --quiet --upgrade ${fixture.routerDir}\\[prefill,proxy\\]`,
+      ),
+    );
+    assert.doesNotMatch(setupLog, /path-router/);
+    assert.equal(
+      fs.readFileSync(fixture.fingerprintPath, "utf8").trim(),
+      `git:${fixture.sourceHead}`,
+    );
   });
 
   it("starts the managed command through the production process adapters", async () => {

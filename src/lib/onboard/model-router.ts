@@ -135,7 +135,7 @@ function modelRouterVenvDir(): string {
   return process.env.NEMOCLAW_MODEL_ROUTER_VENV || MODEL_ROUTER_VENV_DIR;
 }
 
-function createProductionModelRouterCommandProvisioner(
+export function createProductionModelRouterCommandProvisioner(
   routerDir = modelRouterPackageDir(),
   venvDir = modelRouterVenvDir(),
 ) {
