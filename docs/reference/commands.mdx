@@ -199,6 +199,8 @@ For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `de
 
 NemoClaw records onboarding progress so interrupted runs can continue.
 Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, and custom Dockerfile path recorded by the original run.
+Completed onboarding sessions are not resumable.
+Use `--resume` only for interrupted `in_progress` sessions, not to change provider, model, agent, or sandbox recreation settings after onboarding has completed.
 During resume, NemoClaw reruns preflight, gateway, provider, and sandbox repair checks even when the saved session has already reached a later nonterminal onboarding phase.
 If the recorded session conflicts with flags you pass on the recovery run, NemoClaw exits and tells you to either rerun with the original settings or start over.
 
@@ -208,6 +210,8 @@ It also bypasses locally recorded sandbox base-image resolution metadata and rer
 `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint.
 The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection.
 `--resume` and `--fresh` are mutually exclusive.
+For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or build-time setting.
+Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
 
 #### `--tool-disclosure <progressive|direct>`
 
@@ -2553,7 +2557,7 @@ NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit p
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents sandboxes, prefer `$$nemoclaw onboard --resume --recreate-sandbox` when you need to change the provider or model.
+For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` when you need to change the provider or model.
 The managed `dcode` configuration is written under `/sandbox/.deepagents` during onboarding, so the recreate path keeps the OpenShell route and the sandbox config aligned.
 Use `$$nemoclaw inference get` and `$$nemoclaw <name> status` to inspect the current route.
 

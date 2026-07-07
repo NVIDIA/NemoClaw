@@ -209,7 +209,7 @@ $$nemoclaw inference set --model <model> --provider <provider>
 For Deep Agents, recreate the sandbox when you change the provider or model so `/sandbox/.deepagents/config.toml` and the OpenShell route stay aligned:
 
 ```bash
-nemo-deepagents onboard --resume --recreate-sandbox
+nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
 </AgentOnly>

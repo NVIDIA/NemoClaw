@@ -32,8 +32,11 @@ Use `$$nemoclaw` for operations where NemoClaw adds product-specific state, safe
 
   ```bash
   $$nemoclaw onboard
-  $$nemoclaw onboard --resume --recreate-sandbox
+  $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
   ```
+
+Use `--resume` only when you are recovering an interrupted onboarding session.
+For a completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you need NemoClaw to recreate it.
 
 - List, connect to, check, or delete NemoClaw-managed sandboxes:
 
@@ -250,14 +253,14 @@ For Deep Agents sandboxes, prefer a fresh recreate when you need to change the p
 The managed `dcode` configuration is written under `/sandbox/.deepagents` during onboarding, so the recreate path keeps the OpenShell route and the sandbox config aligned while the Deep Agents runtime switch path is still being hardened.
 
 ```bash
-nemo-deepagents onboard --resume --recreate-sandbox
+nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
 </AgentOnly>
 For a build-time agent setting change, rerun onboarding so the sandbox configuration is recreated consistently:
 
 ```bash
-$$nemoclaw onboard --resume --recreate-sandbox
+$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
 Verify either path with:

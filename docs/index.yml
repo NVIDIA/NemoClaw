@@ -240,9 +240,6 @@ navigation:
               - page: "Inference Options"
                 path: _build/agent-variants/inference/inference-options.deepagents.generated.mdx
                 slug: inference-options
-              - page: "Use Local Inference"
-                path: _build/agent-variants/inference/use-local-inference.deepagents.generated.mdx
-                slug: use-local-inference
               - page: "Model Capability Audit"
                 path: _build/agent-variants/inference/model-capability-audit.deepagents.generated.mdx
                 slug: model-capability-audit
