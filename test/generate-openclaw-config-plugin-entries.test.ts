@@ -27,9 +27,9 @@ const BASE_ENV: Record<string, string> = {
 };
 
 describe("generate-openclaw-config.mts: default plugin entries", () => {
-  it("disables the bundled acpx and bonjour plugins by default", () => {
+  it("omits the stale acpx entry and disables bundled bonjour by default", () => {
     const config = buildConfig({ ...BASE_ENV });
-    expect(config.plugins.entries.acpx).toEqual({ enabled: false });
+    expect(config.plugins.entries.acpx).toBeUndefined();
     expect(config.plugins.entries.bonjour).toEqual({ enabled: false });
   });
 
