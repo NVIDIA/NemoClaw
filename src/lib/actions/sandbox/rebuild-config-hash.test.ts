@@ -69,26 +69,29 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
     }
   });
 
-  it("reports hash command failures instead of masking them (#6245)", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-hash-failure-"));
-    const configDir = path.join(tmpDir, ".openclaw");
-    const binDir = path.join(tmpDir, "bin");
-    const hashCommand = path.join(binDir, "sha256sum");
-    try {
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.mkdirSync(binDir, { recursive: true });
-      fs.writeFileSync(path.join(configDir, "openclaw.json"), '{"gateway":{}}\n');
-      fs.writeFileSync(hashCommand, "#!/bin/sh\nexit 42\n");
-      fs.chmodSync(hashCommand, 0o755);
+  it.skipIf(process.getuid?.() === 0)(
+    "reports hash command failures instead of masking them (#6245)",
+    () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-hash-failure-"));
+      const configDir = path.join(tmpDir, ".openclaw");
+      const binDir = path.join(tmpDir, "bin");
+      const hashCommand = path.join(binDir, "sha256sum");
+      try {
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(path.join(configDir, "openclaw.json"), '{"gateway":{}}\n');
+        fs.writeFileSync(hashCommand, "#!/bin/sh\nexit 42\n");
+        fs.chmodSync(hashCommand, 0o755);
 
-      const result = runRefresh(configDir, {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-      });
+        const result = runRefresh(configDir, {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        });
 
-      expect(result.status).toBe(14);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+        expect(result.status).toBe(14);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

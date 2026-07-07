@@ -29,10 +29,13 @@ export const upgradeSandboxesDependencies = {
   getGatewayPort(): number {
     return GATEWAY_PORT;
   },
+  async loadRebuildModule(): Promise<RebuildModule> {
+    return import("./sandbox/rebuild");
+  },
   async rebuildSandbox(
     ...args: Parameters<RebuildModule["rebuildSandbox"]>
   ): ReturnType<RebuildModule["rebuildSandbox"]> {
-    const { rebuildSandbox } = await import("./sandbox/rebuild");
+    const { rebuildSandbox } = await upgradeSandboxesDependencies.loadRebuildModule();
     return rebuildSandbox(...args);
   },
 };
