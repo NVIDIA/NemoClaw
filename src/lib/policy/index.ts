@@ -1256,13 +1256,21 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
 /** Return whether registered custom content owns an exact live network-policy key. */
 function customPresetOwnsNetworkPolicyKey(sandboxName: string, policyKey: string): boolean {
   try {
-    return registry
+    const candidates = registry
       .getCustomPolicies(sandboxName)
-      .some(
-        (entry) =>
-          parsePresetPolicyKeys(entry.content).includes(policyKey) &&
-          getPresetContentGatewayState(sandboxName, entry.content) === "match",
-      );
+      .filter((entry) => parsePresetPolicyKeys(entry.content).includes(policyKey));
+    if (candidates.length === 0) return false;
+
+    const rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
+    return candidates.some(
+      (entry) =>
+        inspectPresetContentGatewayState({
+          readPolicy: () => rawPolicy,
+          parseCurrentPolicy: parseCurrentPolicyOrEmpty,
+          extractPresetEntries,
+          presetContent: entry.content,
+        }) === "match",
+    );
   } catch {
     return false;
   }
