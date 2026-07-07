@@ -19,8 +19,8 @@ const innerWorstCaseMs =
 
 describe("connect auto-pair budget", () => {
   it("keeps the outer spawnSync cap above the worst-case inner runtime", () => {
-    // If this ever inverts, a legitimately slow approve is SIGKILLed mid-loop,
-    // stranding the allowlisted request (the regression #4504 guarded against).
+    // If this ever inverts, the outer timeout can terminate a legitimately slow
+    // approve mid-loop, stranding the allowlisted request (#4504).
     expect(CONNECT_AUTO_PAIR_TIMEOUT_MS).toBeGreaterThan(innerWorstCaseMs);
   });
 

@@ -21,6 +21,6 @@ export const CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S = 10;
 // (CONNECT_AUTO_PAIR_LIST_TIMEOUT_S + CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S ×
 // CONNECT_AUTO_PAIR_MAX_APPROVALS) PLUS shell/python startup, since the outer
 // timer starts at `sh` spawn before the proxy env is sourced and python3
-// launches; the 5s slack means a legitimate slow approve is never SIGKILLed
-// mid-loop, which would strand the allowlisted request.
+// launches; the 5s slack prevents the outer timeout from terminating a
+// legitimate slow approve mid-loop, which would strand the allowlisted request.
 export const CONNECT_AUTO_PAIR_TIMEOUT_MS = 20_000;
