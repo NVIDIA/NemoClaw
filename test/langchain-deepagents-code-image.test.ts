@@ -330,6 +330,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     for (const s of [
       "managed-dcode-runtime.py",
       "patch-managed-deepagents-code.py",
+      "patch-nemotron-ultra-profile.py",
+      "nemotron-ultra-harness-profile.py",
+      "validate-nemotron-ultra-profile.py",
+      "LICENSE.langchain-deepagents",
       "DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
       "LANGSMITH_TRACING=false",
       "DEEPAGENTS_CODE_OFFLINE=1",
@@ -350,6 +354,21 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     expect(dockerfile).toContain(
       "rm -f /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py",
+    );
+    expect(dockerfile).toContain(
+      "python3 /opt/nemoclaw-deepagents-code/patch-nemotron-ultra-profile.py",
+    );
+    expect(dockerfile).toContain(
+      "python3 /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
+    );
+    expect(dockerfile).toContain(
+      "rm -f /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
+    );
+    expect(dockerfile).toContain("/usr/local/share/licenses/nemoclaw/langchain-deepagents-MIT.txt");
+    expect(
+      dockerfile.indexOf("python3 /opt/nemoclaw-deepagents-code/patch-nemotron-ultra-profile.py"),
+    ).toBeLessThan(
+      dockerfile.indexOf("python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py"),
     );
     expect(dockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=progressive");
     expect(dockerfile).toContain("NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}");
@@ -649,6 +668,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(tavilyOptInCheck).toMatch(expected);
     }
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
+      "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
       "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",

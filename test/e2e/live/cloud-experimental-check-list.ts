@@ -5,6 +5,7 @@ export const DEEPAGENTS_FRESH_REONBOARD_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh";
 
 export const DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS = [
+  "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
   DEEPAGENTS_FRESH_REONBOARD_CHECK,
   "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
   "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
