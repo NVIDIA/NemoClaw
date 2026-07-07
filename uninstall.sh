@@ -4,7 +4,7 @@
 #
 # Compatibility wrapper for the TypeScript NemoClaw uninstaller.
 #
-# Usage: ./uninstall.sh [--yes] [--keep-openshell] [--delete-models]
+# Usage: ./uninstall.sh [--yes] [--keep-openshell] [--delete-models] [--destroy-user-data]
 
 set -euo pipefail
 

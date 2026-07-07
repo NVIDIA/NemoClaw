@@ -13,6 +13,9 @@ interface TimerMarker {
   snapshotPath: string;
   restoreAt: string;
   processToken?: string;
+  allowLegacyHermesProtocol?: boolean;
+  leaseOwnerPid?: number;
+  leaseOwnerStartIdentity?: string;
 }
 
 type UnknownRecord = { [key: string]: unknown };
@@ -31,7 +34,19 @@ function isTimerMarker(value: unknown): value is TimerMarker {
     typeof value.sandboxName === "string" &&
     typeof value.snapshotPath === "string" &&
     typeof value.restoreAt === "string" &&
-    (value.processToken === undefined || typeof value.processToken === "string")
+    (value.processToken === undefined || typeof value.processToken === "string") &&
+    (value.allowLegacyHermesProtocol === undefined ||
+      typeof value.allowLegacyHermesProtocol === "boolean") &&
+    (value.leaseOwnerPid === undefined ||
+      (typeof value.leaseOwnerPid === "number" &&
+        Number.isInteger(value.leaseOwnerPid) &&
+        value.leaseOwnerPid > 0)) &&
+    (value.leaseOwnerStartIdentity === undefined ||
+      typeof value.leaseOwnerStartIdentity === "string") &&
+    ((value.leaseOwnerPid === undefined && value.leaseOwnerStartIdentity === undefined) ||
+      (typeof value.leaseOwnerPid === "number" &&
+        typeof value.leaseOwnerStartIdentity === "string" &&
+        value.leaseOwnerStartIdentity.length > 0))
   );
 }
 
@@ -48,6 +63,18 @@ function readTimerMarker(sandboxName: string): TimerMarker | null {
   } catch {
     return null;
   }
+}
+
+function readAutoRestoreTakeoverToken(sandboxName: string): string | undefined {
+  const marker = readTimerMarker(sandboxName);
+  if (
+    marker?.sandboxName !== sandboxName ||
+    typeof marker.processToken !== "string" ||
+    !/^[0-9a-f]{32}$/.test(marker.processToken)
+  ) {
+    return undefined;
+  }
+  return marker.processToken;
 }
 
 interface ClearTimerMarkerResult {
@@ -75,11 +102,118 @@ function clearTimerMarker(sandboxName: string): ClearTimerMarkerResult {
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
+    const raw = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
+    const closingParen = raw.lastIndexOf(")");
+    if (
+      closingParen >= 0 &&
+      raw
+        .slice(closingParen + 2)
+        .trim()
+        .split(/\s+/, 1)[0] === "Z"
+    ) {
+      return false;
+    }
+  } catch {
+    try {
+      const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      if (state.startsWith("Z")) return false;
+    } catch {
+      // Fall through to kill(0), which supplies the final liveness answer.
+    }
+  }
+  try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+function readProcessStartIdentity(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const raw = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
+    const closingParen = raw.lastIndexOf(")");
+    if (closingParen >= 0) {
+      const fields = raw
+        .slice(closingParen + 2)
+        .trim()
+        .split(/\s+/);
+      // The suffix starts at field 3 (`state`); Linux starttime is field 22.
+      if (fields[19]) return `proc:${fields[19]}`;
+    }
+  } catch {
+    // Fall through to the portable ps identity.
+  }
+
+  try {
+    const started = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+    return started ? `ps:${started}` : null;
+  } catch {
+    return null;
+  }
+}
+
+interface ProcessIdentity {
+  pid: number;
+  startIdentity: string;
+  depth: number;
+}
+
+function listDescendantProcessIdentities(rootPid: number): ProcessIdentity[] | null {
+  if (!Number.isInteger(rootPid) || rootPid <= 0) return null;
+  let rows: Array<{ pid: number; ppid: number }> = [];
+  try {
+    rows = execFileSync("ps", ["-e", "-o", "pid=,ppid="], {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/))
+      .filter((parts) => parts.length >= 2)
+      .map(([pid, ppid]) => ({ pid: Number(pid), ppid: Number(ppid) }))
+      .filter((row) => Number.isInteger(row.pid) && Number.isInteger(row.ppid));
+  } catch {
+    return null;
+  }
+
+  const descendants: Array<{ pid: number; depth: number }> = [];
+  let frontier = [{ pid: rootPid, depth: 0 }];
+  const seen = new Set<number>([rootPid]);
+  while (frontier.length > 0) {
+    const next: Array<{ pid: number; depth: number }> = [];
+    for (const parent of frontier) {
+      for (const row of rows) {
+        if (row.ppid !== parent.pid || seen.has(row.pid)) continue;
+        seen.add(row.pid);
+        const child = { pid: row.pid, depth: parent.depth + 1 };
+        descendants.push(child);
+        next.push(child);
+      }
+    }
+    frontier = next;
+  }
+
+  const identities: ProcessIdentity[] = [];
+  for (const { pid, depth } of descendants) {
+    const startIdentity = readProcessStartIdentity(pid);
+    if (startIdentity) {
+      identities.push({ pid, startIdentity, depth });
+    } else if (isProcessAlive(pid)) {
+      // A live descendant that cannot be identity-pinned must not be signaled;
+      // callers fail closed instead of risking PID-reuse collateral damage.
+      return null;
+    }
+  }
+  return identities.sort((a, b) => b.depth - a.depth);
 }
 
 function readProcessCommandLine(pid: number): string | null {
@@ -187,13 +321,15 @@ function killTimer(sandboxName: string): KillTimerResult {
   };
 }
 
+export type { ClearTimerMarkerResult, KillTimerResult, ProcessIdentity, TimerMarker };
 export {
-  timerMarkerPath,
-  readTimerMarker,
   clearTimerMarker,
   isProcessAlive,
-  verifyTimerMarkerIdentity,
   killTimer,
+  listDescendantProcessIdentities,
+  readAutoRestoreTakeoverToken,
+  readProcessStartIdentity,
+  readTimerMarker,
+  timerMarkerPath,
+  verifyTimerMarkerIdentity,
 };
-
-export type { TimerMarker, ClearTimerMarkerResult, KillTimerResult };

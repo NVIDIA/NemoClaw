@@ -7,7 +7,7 @@ import {
   BACK_TO_SELECTION,
   returningToProviderSelection,
   shouldReturnToProviderSelection,
-} from "../../../dist/lib/onboard/credential-navigation";
+} from "./credential-navigation";
 
 describe("credential prompt navigation helpers", () => {
   it("treats both the shared back sentinel and credential back intents as provider-selection navigation", () => {

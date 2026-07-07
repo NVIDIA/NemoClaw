@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeToolDisclosure,
+  TOOL_DISCLOSURE_VALUES,
+  type ToolDisclosure,
+} from "../../tool-disclosure";
+
 export interface DestroySandboxOptions {
   force?: boolean;
   yes?: boolean;
@@ -27,6 +33,7 @@ function readCleanupGatewayEnv(): boolean | undefined {
 
 export interface RebuildSandboxOptions {
   force?: boolean;
+  toolDisclosure?: ToolDisclosure;
   verbose?: boolean;
   yes?: boolean;
 }
@@ -69,14 +76,30 @@ export function normalizeDestroySandboxOptions(
 export function normalizeRebuildSandboxOptions(
   options: string[] | RebuildSandboxOptions = {},
 ): RebuildSandboxOptions {
+  let rawToolDisclosure: unknown;
   if (Array.isArray(options)) {
+    const splitIndex = options.lastIndexOf("--tool-disclosure");
+    const inline = [...options].reverse().find((value) => value.startsWith("--tool-disclosure="));
+    const toolDisclosureFlagProvided = splitIndex >= 0 || inline !== undefined;
+    rawToolDisclosure =
+      splitIndex >= 0 ? options[splitIndex + 1] : inline?.slice("--tool-disclosure=".length);
+    const toolDisclosure = normalizeToolDisclosure(rawToolDisclosure);
+    if (toolDisclosureFlagProvided && !toolDisclosure) {
+      throw new Error(`--tool-disclosure must be one of: ${TOOL_DISCLOSURE_VALUES.join(", ")}.`);
+    }
     return {
       force: options.includes("--force"),
+      ...(toolDisclosure ? { toolDisclosure } : {}),
       verbose: options.includes("--verbose") || options.includes("-v"),
       yes: options.includes("--yes"),
     };
   }
-  return options;
+  rawToolDisclosure = options.toolDisclosure;
+  const toolDisclosure = normalizeToolDisclosure(rawToolDisclosure);
+  if (rawToolDisclosure !== undefined && !toolDisclosure) {
+    throw new Error(`toolDisclosure must be one of: ${TOOL_DISCLOSURE_VALUES.join(", ")}.`);
+  }
+  return { ...options, ...(toolDisclosure ? { toolDisclosure } : {}) };
 }
 
 export function normalizeGarbageCollectImagesOptions(

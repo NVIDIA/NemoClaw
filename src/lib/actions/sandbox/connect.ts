@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import os from "node:os";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -17,6 +16,7 @@ import {
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import { spawnExitCode } from "../../core/process-exit";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import {
   parseGatewayInference,
@@ -31,8 +31,10 @@ import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import {
+  isSandboxReady,
   isTerminalSandboxPhase,
   parseSandboxPhase,
+  parseSandboxStatus,
   TERMINAL_SANDBOX_PHASES,
 } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
@@ -49,13 +51,25 @@ import {
   CONNECT_AUTO_PAIR_MAX_APPROVALS,
   CONNECT_AUTO_PAIR_TIMEOUT_MS,
 } from "./connect-autopair-budget";
+import {
+  exitOnMcpReconciliationRefusal,
+  exitOnSecretBoundaryRefusal,
+} from "./connect-boundary-refusal";
+import {
+  buildSandboxInferenceRouteProbeArgs,
+  type InferenceRouteProbeAgent,
+} from "./connect-inference-route-probe";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
-import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
-import { checkAndRecoverSandboxProcesses, executeSandboxExecCommand } from "./process-recovery";
+import {
+  checkAndRecoverSandboxProcesses,
+  executeSandboxExecCommand,
+  resolveSandboxDashboardPort,
+} from "./process-recovery";
+import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 export type SandboxConnectOptions = {
@@ -121,7 +135,7 @@ export type ManagedInferenceRouteResetDeps = {
   ) => boolean;
   runInferenceSet: (provider: string, model: string) => { status: number | null };
   probe: (sandboxName: string, options?: InferenceRouteProbeOptions) => SandboxInferenceRouteProbe;
-  printUnrecoverableInferenceRoute: (sandboxName: string, sb: SandboxEntry, detail: string) => void;
+  printUnrecoverableInferenceRoute: (sandboxName: string, route: string, detail: string) => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
 };
@@ -184,30 +198,19 @@ export function parseSandboxConnectArgs(
   return options;
 }
 
-function exitOnSecretBoundaryRefusal(
+function exitOnForwardRecoveryFailure(
   sandboxName: string,
   agentName: string,
-  processCheck: Record<string, unknown>,
-  contextLabel: "Probe" | "Connect",
+  port: number,
+  detail?: string,
 ): never {
   console.error("");
-  const reason =
-    "secretBoundaryReason" in processCheck
-      ? (processCheck.secretBoundaryReason as "raw-secret" | "inconclusive" | undefined)
-      : undefined;
-  if (reason === "raw-secret") {
-    console.error(
-      `  ${contextLabel} failed: refused to confirm ${agentName} gateway in '${sandboxName}' — /sandbox/.hermes/.env contains raw secret-shaped values.`,
-    );
-    console.error(
-      "  Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
-    );
-  } else {
-    console.error(
-      `  ${contextLabel} failed: secret-boundary check did not complete for ${agentName} gateway in '${sandboxName}'.`,
-    );
-    console.error("  Inspect the validator output above and re-run `nemoclaw <sandbox> recover`.");
-  }
+  console.error(
+    `  Probe failed: ${agentName} gateway is running in '${sandboxName}', but ${detail ?? "the dashboard/API host forward could not be restored"}.`,
+  );
+  console.error(
+    `  Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run \`nemoclaw ${sandboxName} recover\`.`,
+  );
   process.exit(1);
 }
 
@@ -219,7 +222,7 @@ function runSandboxConnectProbe(sandboxName: string): void {
       agent,
       agentName,
       capture: captureOpenshell,
-      ensureInferenceRoute: ensureSandboxInferenceRoute,
+      ensureInferenceRoute: (name, options) => ensureSandboxInferenceRoute(name, agent, options),
       sandboxName,
     });
     return;
@@ -235,8 +238,23 @@ function runSandboxConnectProbe(sandboxName: string): void {
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Probe");
   }
+  if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
+    exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Probe");
+  }
+  if ("forwardRecoveryFailed" in processCheck && processCheck.forwardRecoveryFailed) {
+    const detail =
+      "forwardRecoveryFailureDetail" in processCheck
+        ? String(processCheck.forwardRecoveryFailureDetail)
+        : undefined;
+    exitOnForwardRecoveryFailure(
+      sandboxName,
+      agentName,
+      resolveSandboxDashboardPort(sandboxName),
+      detail,
+    );
+  }
   if (processCheck.wasRunning) {
-    ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
@@ -251,13 +269,13 @@ function runSandboxConnectProbe(sandboxName: string): void {
     return;
   }
   if (processCheck.recovered) {
-    ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     runConnectAutoPairApprovalPass(sandboxName);
     console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
     return;
   }
-  ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+  ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
@@ -334,6 +352,7 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
 
 function probeSandboxInferenceRoute(
   sandboxName: string,
+  agent: InferenceRouteProbeAgent,
   { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},
 ): SandboxInferenceRouteProbe {
   let lastProbe: SandboxInferenceRouteProbe | null = null;
@@ -343,23 +362,10 @@ function probeSandboxInferenceRoute(
     // Keep the shell string inside the sandbox: curl write-out, body capture,
     // and status classification must run as one bounded probe. sandboxName
     // remains an argv value, so no user input is interpolated into the script.
-    const probe = captureOpenshell(
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        sandboxName,
-        "--",
-        "sh",
-        "-c",
-        [
-          "OUT=/tmp/nemoclaw-inference-route-probe.out",
-          "HTTP_CODE=$(curl -sk -o \"$OUT\" -w '%{http_code}' --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
-          'case "$HTTP_CODE" in 000|5*) printf \'BROKEN %s \' "$HTTP_CODE"; head -c 160 "$OUT" 2>/dev/null || true ;; *) printf \'OK %s\' "$HTTP_CODE" ;; esac',
-        ].join("; "),
-      ],
-      { ignoreError: true, timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS },
-    );
+    const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
+      ignoreError: true,
+      timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+    });
     const detail = probe.output.trim();
     lastProbe = {
       healthy: probe.status === 0 && /^OK\s+[0-9]{3}\b/.test(detail),
@@ -402,13 +408,15 @@ function buildInferenceSetArgs(provider: string, model: string): string[] {
 function reapplyVmInferenceRoute(
   sandboxName: string,
   sb: SandboxEntry | null,
+  agent: InferenceRouteProbeAgent,
 ): SandboxInferenceRouteProbe | null {
-  if (!sb?.provider || !sb.model) return null;
-  runOpenshell(buildInferenceSetArgs(sb.provider, sb.model), {
+  const inference = sb ? registry.getSandboxEntryInference(sb) : null;
+  if (inference?.kind !== "configured") return null;
+  runOpenshell(buildInferenceSetArgs(inference.provider, inference.model), {
     ignoreError: true,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
-  return probeSandboxInferenceRoute(sandboxName);
+  return probeSandboxInferenceRoute(sandboxName, agent);
 }
 
 export function repairSandboxInferenceRouteWithDeps(
@@ -548,6 +556,7 @@ export function repairSandboxInferenceRouteWithDeps(
 function repairSandboxInferenceRouteIfNeeded(
   sandboxName: string,
   sb: SandboxEntry | null,
+  agent: InferenceRouteProbeAgent,
   { quiet = false }: { quiet?: boolean } = {},
 ): SandboxInferenceRouteRepairResult {
   return repairSandboxInferenceRouteWithDeps(
@@ -556,10 +565,10 @@ function repairSandboxInferenceRouteIfNeeded(
     { quiet },
     {
       isRepairDisabled: () => process.env.NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR === "1",
-      probe: probeSandboxInferenceRoute,
+      probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
       shouldApplyVmDnsMonkeypatch,
       applyVmDnsMonkeypatch: applyOpenShellVmDnsMonkeypatch,
-      reapplyVmInferenceRoute,
+      reapplyVmInferenceRoute: (name, sandbox) => reapplyVmInferenceRoute(name, sandbox, agent),
       repairLegacyDnsProxy: (name, isQuiet) =>
         runSetupDnsProxy(
           { gatewayName: resolveSandboxGatewayName(sb), sandboxName: name },
@@ -606,16 +615,14 @@ function verifyLocalInferenceRouteDependencies(
 
 function printUnrecoverableInferenceRoute(
   sandboxName: string,
-  sb: SandboxEntry,
+  route: string,
   detail: string,
 ): void {
   console.error(
     `  Error: inference.local is still unavailable inside '${sandboxName}' after DNS and route repair.`,
   );
-  console.error(`  Route: ${sb.provider}/${sb.model}`);
-  if (detail) {
-    console.error(`  Last probe: ${detail}`);
-  }
+  console.error(`  Route: ${route}`);
+  if (detail) console.error(`  Last probe: ${detail}`);
   console.error(`  Run:  ${CLI_NAME} ${sandboxName} doctor`);
   console.error("  Connect is stopping because the sandbox inference route is known to be broken.");
 }
@@ -627,44 +634,27 @@ export function resetManagedInferenceRouteWithDeps(
   deps: ManagedInferenceRouteResetDeps,
 ): boolean {
   const log = deps.log ?? console.log;
-  const error = deps.error ?? console.error;
-  if (!sb.provider || !sb.model) return false;
-
-  if (!deps.verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
+  const inference = registry.getSandboxEntryInference(sb);
+  if (inference.kind !== "configured") return false;
+  const { provider, model } = inference;
+  const route = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;
+  const fail = (failureDetail: string, message?: string): false => {
     if (!quiet) {
-      deps.printUnrecoverableInferenceRoute(sandboxName, sb, detail);
+      if (message) (deps.error ?? console.error)(message);
+      deps.printUnrecoverableInferenceRoute(sandboxName, route, failureDetail);
     }
     return false;
+  };
+
+  if (!deps.verifyLocalInferenceRouteDependencies(provider, { quiet })) {
+    return fail(detail);
   }
 
-  if (!quiet) {
-    log(`  Resetting inference route to ${sb.provider}/${sb.model}.`);
-  }
-  const resetResult = deps.runInferenceSet(sb.provider, sb.model);
-  if (resetResult.status !== 0) {
-    const finalProbe = deps.probe(sandboxName, {
-      attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
-      delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
-    });
-    if (finalProbe.healthy) {
-      if (!quiet) {
-        log("  inference.local route repaired.");
-      }
-      return true;
-    }
-
-    if (!quiet) {
-      error("  Error: failed to reset the OpenShell inference route.");
-      deps.printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail || detail);
-    }
-    return false;
-  }
-
-  if (!deps.verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
-    if (!quiet) {
-      deps.printUnrecoverableInferenceRoute(sandboxName, sb, detail);
-    }
-    return false;
+  if (!quiet) log(`  Resetting inference route to ${route}.`);
+  const resetResult = deps.runInferenceSet(provider, model);
+  const resetFailed = resetResult.status !== 0;
+  if (!resetFailed && !deps.verifyLocalInferenceRouteDependencies(provider, { quiet })) {
+    return fail(detail);
   }
 
   const finalProbe = deps.probe(sandboxName, {
@@ -672,21 +662,20 @@ export function resetManagedInferenceRouteWithDeps(
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
   if (finalProbe.healthy) {
-    if (!quiet) {
-      log("  inference.local route repaired.");
-    }
+    if (!quiet) log("  inference.local route repaired.");
     return true;
   }
 
-  if (!quiet) {
-    deps.printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail);
-  }
-  return false;
+  return fail(
+    resetFailed ? finalProbe.detail || detail : finalProbe.detail,
+    resetFailed ? "  Error: failed to reset the OpenShell inference route." : undefined,
+  );
 }
 
 function resetManagedInferenceRoute(
   sandboxName: string,
   sb: SandboxEntry,
+  agent: InferenceRouteProbeAgent,
   { detail, quiet = false }: { detail: string; quiet?: boolean },
 ): boolean {
   return resetManagedInferenceRouteWithDeps(
@@ -700,7 +689,7 @@ function resetManagedInferenceRoute(
           ignoreError: true,
           timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
         }),
-      probe: probeSandboxInferenceRoute,
+      probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
       printUnrecoverableInferenceRoute,
     },
   );
@@ -708,81 +697,87 @@ function resetManagedInferenceRoute(
 
 function ensureSandboxInferenceRoute(
   sandboxName: string,
+  agent: InferenceRouteProbeAgent,
   { quiet = false }: { quiet?: boolean } = {},
 ): SandboxInferenceRouteEnsureResult {
   let sb: SandboxEntry | null = null;
+  let inference: ReturnType<typeof registry.getSandboxEntryInference> | null = null;
   try {
     sb = registry.getSandbox(sandboxName);
-    if (sb && sb.provider && sb.model) {
-      const live = parseGatewayInference(
-        captureOpenshell(["inference", "get"], {
-          ignoreError: true,
-          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-        }).output,
-      );
-      const plan = planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model });
-      if (plan.kind !== "aligned") {
-        if (plan.kind === "diverged") {
-          // Shared gateway: re-point loudly (even when quiet) — silent revert was
-          // #3726. Values sanitized: registry/gateway strings are untrusted.
-          const liveProvider = sanitizeRouteValueForDisplay(plan.live.provider);
-          const liveModel = sanitizeRouteValueForDisplay(plan.live.model);
-          const recordedRoute = `${sanitizeRouteValueForDisplay(sb.provider)}/${sanitizeRouteValueForDisplay(sb.model)}`;
-          console.error(
-            `  ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) ` +
-              `differs from the recorded route for sandbox '${sandboxName}' (${recordedRoute}).${R}`,
-          );
-          console.error(
-            `  ${YW}Aligning the gateway to ${recordedRoute}. To keep ` +
-              `${liveProvider}/${liveModel}, set it the supported way:${R}`,
-          );
-          console.error(
-            `    ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
-          );
-        } else if (!quiet) {
-          // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
-          console.log(
-            `  Setting inference route to ${sb.provider}/${sb.model} for sandbox '${sandboxName}'`,
-          );
-        }
-        const swapResult = runOpenshell(buildInferenceSetArgs(sb.provider, sb.model), {
-          ignoreError: true,
-          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-        });
-        if (swapResult.status !== 0 && (plan.kind === "diverged" || !quiet)) {
-          console.error(
-            `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
-          );
-        }
+    if (!sb) return { sandbox: null, routeHealthy: null };
+    // This projection is total; the catch below handles only later gateway and repair failures.
+    inference = registry.getSandboxEntryInference(sb);
+    if (inference.kind !== "configured") return { sandbox: sb, routeHealthy: null };
+    const { provider, model } = inference;
+    const live = parseGatewayInference(
+      captureOpenshell(["inference", "get"], {
+        ignoreError: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      }).output,
+    );
+    const plan = planInferenceRouteReconcile(live, { provider, model });
+    if (plan.kind !== "aligned") {
+      const recordedRoute = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;
+      if (plan.kind === "diverged") {
+        // Shared gateway: re-point loudly (even when quiet) — silent revert was
+        // #3726. Values sanitized: registry/gateway strings are untrusted.
+        const liveProvider = sanitizeRouteValueForDisplay(plan.live.provider);
+        const liveModel = sanitizeRouteValueForDisplay(plan.live.model);
+        console.error(
+          `  ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) ` +
+            `differs from the recorded route for sandbox '${sandboxName}' (${recordedRoute}).${R}`,
+        );
+        console.error(
+          `  ${YW}Aligning the gateway to ${recordedRoute}. To keep ` +
+            `${liveProvider}/${liveModel}, set it the supported way:${R}`,
+        );
+        console.error(
+          `    ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
+        );
+      } else if (!quiet) {
+        // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
+        console.log(`  Setting inference route to ${recordedRoute} for sandbox '${sandboxName}'`);
       }
-      const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, { quiet });
-      if (!repairResult.healthy && repairResult.repairAttempted) {
-        const resetResult = resetManagedInferenceRoute(sandboxName, sb, {
-          detail: repairResult.detail,
-          quiet,
-        });
-        return { sandbox: sb, routeHealthy: resetResult };
+      const swapResult = runOpenshell(buildInferenceSetArgs(provider, model), {
+        ignoreError: true,
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      });
+      if (swapResult.status !== 0 && (plan.kind === "diverged" || !quiet)) {
+        console.error(
+          `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
+        );
       }
-      return { sandbox: sb, routeHealthy: repairResult.healthy };
     }
+    const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, agent, { quiet });
+    if (!repairResult.healthy && repairResult.repairAttempted) {
+      const resetResult = resetManagedInferenceRoute(sandboxName, sb, agent, {
+        detail: repairResult.detail,
+        quiet,
+      });
+      return { sandbox: sb, routeHealthy: resetResult };
+    }
+    return { sandbox: sb, routeHealthy: repairResult.healthy };
   } catch (error) {
-    if (sb?.provider && sb.model) {
-      const detail = error instanceof Error && error.message ? error.message : String(error);
-      if (!quiet) {
-        console.error(`  Error: failed to verify or repair inference route: ${detail}`);
-        printUnrecoverableInferenceRoute(sandboxName, sb, detail);
-      }
-      return { sandbox: sb, routeHealthy: false };
+    if (!sb || inference?.kind !== "configured") return { sandbox: sb, routeHealthy: null };
+    const detail = error instanceof Error && error.message ? error.message : String(error);
+    if (!quiet) {
+      console.error(`  Error: failed to verify or repair inference route: ${detail}`);
+      printUnrecoverableInferenceRoute(
+        sandboxName,
+        `${sanitizeRouteValueForDisplay(inference.provider)}/${sanitizeRouteValueForDisplay(inference.model)}`,
+        detail,
+      );
     }
+    return { sandbox: sb, routeHealthy: false };
   }
-  return { sandbox: sb, routeHealthy: null };
 }
 
 function ensureSandboxInferenceRouteOrExit(
   sandboxName: string,
+  agent: InferenceRouteProbeAgent,
   { quiet = false }: { quiet?: boolean } = {},
 ): SandboxEntry | null {
-  const result = ensureSandboxInferenceRoute(sandboxName, { quiet });
+  const result = ensureSandboxInferenceRoute(sandboxName, agent, { quiet });
   if (result.routeHealthy === false) {
     process.exit(1);
   }
@@ -829,19 +824,6 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   }
 }
 
-function exitWithSpawnResult(result: SpawnLikeResult): void {
-  if (result.status !== null) {
-    process.exit(result.status);
-  }
-
-  if (result.signal) {
-    const signalNumber = os.constants.signals[result.signal];
-    process.exit(signalNumber ? 128 + signalNumber : 1);
-  }
-
-  process.exit(1);
-}
-
 function restoreInteractiveTerminal(): void {
   if (!process.stdin.isTTY) return;
 
@@ -875,7 +857,7 @@ function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult
     console.error("");
     console.error(`  Gateway connection lost. Reconnect with: ${CLI_NAME} ${sandboxName} connect`);
   }
-  exitWithSpawnResult(result);
+  process.exit(spawnExitCode(result));
 }
 
 export async function connectSandbox(
@@ -886,7 +868,6 @@ export async function connectSandbox(
   // express-vLLM model preflight for them (it only steers the install path
   // and would otherwise hard-exit a recovery on a stale NEMOCLAW_VLLM_MODEL).
   if (!probeOnly) preflightVllmModelEnvOrExit();
-  const { isSandboxReady, parseSandboxStatus } = require("../../onboard");
   const live = await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
   // Fast-fail on a Docker daemon outage before the probe-only health check and
@@ -943,6 +924,10 @@ export async function connectSandbox(
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Connect");
+  }
+  if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
+    const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
+    exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
   }
   // Ensure Ollama auth proxy is running (recovers from host reboots)
   ensureOllamaAuthProxy();
@@ -1067,7 +1052,8 @@ export async function connectSandbox(
   // When the user has multiple sandboxes with different providers, the
   // cluster-wide inference.local route may still point at the other provider.
   // After the sandbox is Ready, verify and recover the route before SSH.
-  sb = ensureSandboxInferenceRouteOrExit(sandboxName);
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  sb = ensureSandboxInferenceRouteOrExit(sandboxName, agent);
   maybeEnsureHermesToolGatewayBroker(sb);
 
   // ── Auto-pair late scope-upgrade approval (#4263) ───────────────
@@ -1091,10 +1077,7 @@ export async function connectSandbox(
   ) {
     console.log("");
     const agentName = sb?.agent || "openclaw";
-    const terminalCommand = agentRuntime.getTerminalCommand(
-      agentRuntime.getSessionAgent(sandboxName),
-      "interactive",
-    );
+    const terminalCommand = agentRuntime.getTerminalCommand(agent, "interactive");
     const agentCmd = terminalCommand ?? (agentName === "openclaw" ? "openclaw tui" : agentName);
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
     console.log(
@@ -1103,6 +1086,12 @@ export async function connectSandbox(
     console.log(
       `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
     );
+    // The policy-denial breadcrumb (#5978) is emitted once by the in-sandbox
+    // `nemoclaw-policy-denial-hint` stanza when this connect shell sources
+    // /tmp/nemoclaw-proxy-env.sh. We deliberately do NOT also print it here:
+    // doing so duplicated the hint in the normal connect flow, and the stanza
+    // already shows the real sandbox name on supported OpenShell (it reads
+    // OPENSHELL_SANDBOX) and covers every other interactive entry path too.
     console.log("");
   }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {

@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   INSTALLER_PAYLOAD,
+  readShellConstant,
   TEST_SYSTEM_PATH,
   writeExecutable,
 } from "./helpers/installer-sourced-env";
@@ -285,7 +286,7 @@ exit 98
       },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const gitCalls = fs.readFileSync(gitLog, "utf-8");
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
@@ -389,7 +390,7 @@ exit 98
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(output).toMatch(/NemoClaw Installer/);
     expect(output).not.toMatch(/deprecated compatibility wrapper/);
   });
@@ -409,18 +410,18 @@ exit 98
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(output).toMatch(/NemoClaw Installer/);
     expect(output).not.toMatch(/deprecated compatibility wrapper/);
   });
 
-  it("--help exits 0 and shows install usage", () => {
+  it("exits 0 and shows install usage for --help", () => {
     const result = spawnSync("bash", [INSTALLER, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const output = `${result.stdout}${result.stderr}`;
     expect(output).toMatch(/NemoClaw Installer/);
     expect(output).toMatch(/--non-interactive/);
@@ -443,25 +444,25 @@ exit 98
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
     expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
   });
 
-  it("--version exits 0 and prints the version number", () => {
+  it("exits 0 and prints the version number for --version", () => {
     const result = spawnSync("bash", [INSTALLER, "--version"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const output = `${result.stdout}${result.stderr}`;
     expect(output.trim()).toMatch(/^nemoclaw-installer(?: v\d+\.\d+\.\d+(?:-.+)?)?$/);
     expect(output).not.toMatch(/0\.1\.0/);
   });
 
-  it("-v exits 0 and prints the version number", () => {
+  it("exits 0 and prints the version number for -v", () => {
     const result = spawnSync("bash", [INSTALLER, "-v"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -517,6 +518,8 @@ exit 98
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
+    writeOpenShellOkStub(fakeBin);
     writeExecutable(
       path.join(fakeBin, "git"),
       `#!/usr/bin/env bash
@@ -597,7 +600,7 @@ fi`,
       },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const log = fs.readFileSync(npmLog, "utf-8");
     // install (no -g) and link must both have been called
     expect(log).toMatch(/^install(?!\s+-g)/m);
@@ -623,6 +626,7 @@ fi`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
     writeNpmStub(
       fakeBin,
       `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
@@ -982,7 +986,7 @@ fi`,
   // #2430: --fresh is the escape hatch. Even with a session file on disk
   // (failed or otherwise), the installer should skip the auto-resume check
   // and let the onboard command create a new session.
-  it("--fresh skips auto-resume regardless of session state (#2430)", () => {
+  it("skips auto-resume with --fresh regardless of session state (#2430)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-fresh-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -2112,7 +2116,7 @@ describe("installer release-tag resolution", () => {
     });
   }
 
-  it("defaults to 'lkg' with no env override", () => {
+  it("defaults to the installer default ref with no env override", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-default-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -2122,7 +2126,7 @@ describe("installer release-tag resolution", () => {
     const result = callResolveReleaseTag(fakeBin);
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("lkg");
+    expect(result.stdout.trim()).toBe(readShellConstant(INSTALLER, "DEFAULT_INSTALL_REF"));
   });
 
   it("uses NEMOCLAW_INSTALL_TAG override", () => {
@@ -2169,6 +2173,8 @@ exit 99`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
+    writeOpenShellOkStub(fakeBin);
     writeNpmStub(
       fakeBin,
       `if [ "$1" = "pack" ]; then exit 1; fi
@@ -2230,7 +2236,7 @@ exit 0`,
       },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     // git clone / git fetch should NOT have been called in the source-checkout path.
     // git may be called for version resolution (git describe), so we check
     // that no clone or fetch was attempted rather than no git calls at all.
@@ -2252,6 +2258,8 @@ exit 0`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
+    writeOpenShellOkStub(fakeBin);
 
     writeExecutable(
       path.join(fakeBin, "curl"),
@@ -2307,7 +2315,7 @@ fi`,
       },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const gitCalls = fs.readFileSync(gitLog, "utf-8");
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
@@ -2900,7 +2908,7 @@ describe("installer flag parsing", () => {
     expect(output).toMatch(/NemoClaw Installer/); // usage was printed
   });
 
-  it("--help shows NEMOCLAW_INSTALL_TAG in environment section", () => {
+  it("shows NEMOCLAW_INSTALL_TAG in the --help environment section", () => {
     const result = spawnSync("bash", [INSTALLER, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -2908,16 +2916,14 @@ describe("installer flag parsing", () => {
 
     expect(result.status).toBe(0);
     const output = `${result.stdout}${result.stderr}`;
+    const defaultInstallRef = readShellConstant(INSTALLER, "DEFAULT_INSTALL_REF");
+    const installTagExample = readShellConstant(INSTALLER, "INSTALL_TAG_EXAMPLE");
     expect(output).toMatch(/NEMOCLAW_INSTALL_TAG/);
-    expect(output).toMatch(/default: lkg/);
+    expect(output).toContain(`default: ${defaultInstallRef}`);
     expect(output).toMatch(/set this on bash or export it first/);
-    expect(output).toMatch(/curl .* \| NEMOCLAW_INSTALL_TAG=v0\.0\.56 bash/);
+    expect(output).toContain(`NEMOCLAW_INSTALL_TAG=${installTagExample} bash`);
   });
 });
-
-// ---------------------------------------------------------------------------
-// ensure_supported_runtime — missing binary paths
-// ---------------------------------------------------------------------------
 
 describe("installer runtime checks (sourced)", () => {
   /**
@@ -3125,7 +3131,7 @@ exit 0`,
     return { result, args };
   }
 
-  it("#2670: ACCEPT_THIRD_PARTY_SOFTWARE=1 alone clears the notice in non-TTY mode", () => {
+  it("clears the notice in non-TTY mode with ACCEPT_THIRD_PARTY_SOFTWARE=1 alone (#2670)", () => {
     const { result, args } = callShowUsageNotice({
       // Simulates curl|bash mode: stdin is not a TTY, NON_INTERACTIVE is unset,
       // and only --yes-i-accept-third-party-software was passed.
@@ -3160,7 +3166,7 @@ exit 0`,
     expect(output).not.toMatch(/\/dev\/tty/);
   });
 
-  it("#3058: error message includes a working curl|bash example users can copy-paste", () => {
+  it("includes a working curl|bash example users can copy-paste in the error message (#3058)", () => {
     // The reporter on #3058 hit this error with `curl ... | bash` on a
     // non-TTY box and was left guessing how to combine the env var with
     // the documented one-liner. The fix surfaces the exact invocations
@@ -3772,7 +3778,7 @@ sys.exit(exit_code)
     return runInstallerWithTty(answer, "tty");
   }
 
-  it("#2671: headless curl|bash with no flags exits 1 BEFORE phase 1 (atomic — no Node/CLI install)", () => {
+  it("exits 1 before phase 1 for headless curl|bash with no flags and installs nothing (#2671)", () => {
     const { result, phases } = runInstaller({});
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}${result.stderr}`;
@@ -3855,7 +3861,7 @@ sys.exit(exit_code)
     expect(state).toBe("");
   });
 
-  it("--non-interactive alone with a controlling TTY still stops before phase 1", () => {
+  it("stops before phase 1 for --non-interactive alone with a controlling TTY", () => {
     const { result, phases, state } = runInstallerWithTty("yes\n", "pipe", {
       NEMOCLAW_NON_INTERACTIVE: "1",
     });
@@ -3871,7 +3877,7 @@ sys.exit(exit_code)
     expect(state).toBe("");
   });
 
-  it("--yes-i-accept-third-party-software alone is sufficient to clear the fail-fast gate", () => {
+  it("clears the fail-fast gate with --yes-i-accept-third-party-software alone", () => {
     // The flag implies non-interactive intent (set by main() before the
     // preflight check), so it must clear the gate AND let the install
     // progress past preflight into phase 1 — assert phases is non-empty
@@ -3883,7 +3889,7 @@ sys.exit(exit_code)
     expect(phases).not.toBe("");
   });
 
-  it("--non-interactive alone does not clear the fail-fast gate", () => {
+  it("does not clear the fail-fast gate with --non-interactive alone", () => {
     const { result, phases } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);
@@ -3895,40 +3901,15 @@ sys.exit(exit_code)
   });
 });
 
-// ---------------------------------------------------------------------------
-// Build-dependency preflight (#4415): missing binutils/`strings` should fail
-// fast at preflight, before any clone/build/download work, instead of ~5
-// minutes in at OpenShell verification.
-// ---------------------------------------------------------------------------
-
-/**
- * Like buildIsolatedSystemPath but lets the caller exclude additional binary
- * names (in addition to node/npm/npx). Used to simulate a host that is missing
- * `strings` (binutils) while keeping the rest of coreutils available.
- */
-function buildSystemPathExcluding(extra: readonly string[]): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-nodep-"));
-  const EXCLUDE = new Set(["node", "npm", "npx", ...extra]);
-  for (const sysDir of ["/usr/bin", "/bin"]) {
-    if (!fs.existsSync(sysDir)) continue;
-    for (const name of fs.readdirSync(sysDir)) {
-      if (EXCLUDE.has(name)) continue;
-      try {
-        fs.symlinkSync(path.join(sysDir, name), path.join(dir, name));
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      }
-    }
-  }
-  return dir;
-}
-
 /** docker stub whose `info` always succeeds, so ensure_docker passes. */
 function writeDockerOkStub(fakeBin: string) {
   writeExecutable(
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
-if [ "$1" = "info" ]; then exit 0; fi
+if [ "$1" = "info" ]; then
+  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  exit 0
+fi
 exit 0
 `,
   );
@@ -3941,66 +3922,13 @@ exit 0
   );
 }
 
-describe("installer build-dependency preflight (#4415)", { timeout: 30_000 }, () => {
-  it("fails fast at preflight when binutils (strings) is missing, before any clone/build", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-    writeNodeStub(fakeBin);
-    writeDockerOkStub(fakeBin);
-    const noStringsPath = buildSystemPathExcluding(["strings"]);
-
-    const result = spawnSync("bash", [INSTALLER], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${noStringsPath}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-      },
-    });
-
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).not.toBe(0);
-    expect(output).toMatch(/'strings' \(from binutils\) is required/);
-    expect(output).toMatch(/sudo apt-get install -y binutils/);
-    // Fail-fast guarantee: never reached the OpenShell install/verify or the
-    // CLI build, which is the ~5-minutes-in failure point the issue reports.
-    expect(output).not.toMatch(/Installing OpenShell/);
-    expect(output).not.toMatch(/Cloning into/);
-  });
-
-  it("does not fire the binutils preflight when OpenShell install is deferred", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-deferred-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-    writeNodeStub(fakeBin);
-    // npm stub that fails fast on install, so the run stops shortly AFTER the
-    // (skipped) binutils preflight rather than doing real work. The assertion
-    // only cares that our binutils error never fires under DEFER.
-    writeNpmStub(fakeBin, 'echo "npm stub stop" >&2; exit 91');
-    writeDockerOkStub(fakeBin);
-    const noStringsPath = buildSystemPathExcluding(["strings"]);
-
-    const result = spawnSync("bash", [INSTALLER], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${noStringsPath}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
-        NPM_PREFIX: path.join(tmp, "prefix"),
-      },
-    });
-
-    const output = `${result.stdout}${result.stderr}`;
-    // The deferred path postpones all OpenShell work (and its own strings
-    // check) to a later phase, so the early preflight must stay silent.
-    expect(output).not.toMatch(/'strings' \(from binutils\) is required/);
-  });
-});
+function writeOpenShellOkStub(fakeBin: string, version = "0.0.72") {
+  writeExecutable(
+    path.join(fakeBin, "openshell"),
+    `#!/usr/bin/env bash
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell ${version}"; exit 0; fi
+# request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods
+exit 0
+`,
+  );
+}

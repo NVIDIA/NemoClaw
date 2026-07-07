@@ -21,16 +21,28 @@ export async function setupRemoteProviderInference(
     provider: string;
     endpointUrl: string | null;
     credentialEnv: string | null;
+    reuseGatewayCredentialWithoutLocalKey?: boolean;
   },
   deps: RemoteProviderDeps,
 ): Promise<{ done: true; result: SetupInferenceResult } | { done: false }> {
-  const { sandboxName, model, provider, endpointUrl, credentialEnv } = args;
+  const {
+    sandboxName,
+    model,
+    provider,
+    endpointUrl,
+    credentialEnv,
+    reuseGatewayCredentialWithoutLocalKey,
+  } = args;
   const {
     runOpenshell,
     upsertProvider,
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
     isNonInteractive,
+    registry,
+    exitProcess,
+    error,
+    log,
     REMOTE_PROVIDER_CONFIG,
     hydrateCredentialEnv,
     promptValidationRecovery,
@@ -46,8 +58,8 @@ export async function setupRemoteProviderInference(
       ? REMOTE_PROVIDER_CONFIG.build
       : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
   if (!config) {
-    console.error(`  Unsupported provider configuration: ${provider}`);
-    process.exit(1);
+    error(`  Unsupported provider configuration: ${provider}`);
+    return exitProcess(1);
   }
   const bedrockSetup = await bedrockRuntimeOnboard.setupBedrockRuntimeInference({
     sandboxName,
@@ -60,25 +72,56 @@ export async function setupRemoteProviderInference(
     upsertProvider,
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
+    updateSandbox: registry.updateSandbox,
+    exitProcess,
+    error,
+    log,
   });
   if (bedrockSetup.handled) return { done: true, result: bedrockSetup.result };
   while (true) {
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
-    const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
-    const env =
-      resolvedCredentialEnv && credentialValue ? { [resolvedCredentialEnv]: credentialValue } : {};
-    const providerResult = upsertProvider(
-      provider,
-      config.providerType,
-      resolvedCredentialEnv,
-      resolvedEndpointUrl,
-      env,
-    );
+    let providerResult;
+    if (reuseGatewayCredentialWithoutLocalKey) {
+      // This is only a last-moment existence probe. The primary authorization
+      // of the provider's non-secret credential/config binding identity is
+      // assessRecoveredProviderCredentialReuse in recovered-provider-reuse.ts.
+      const existing = runOpenshell(["provider", "get", provider], {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      providerResult =
+        existing.status === 0
+          ? { ok: true }
+          : {
+              ok: false,
+              status: existing.status || 1,
+              message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
+            };
+    } else {
+      const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
+      const env =
+        resolvedCredentialEnv && credentialValue
+          ? { [resolvedCredentialEnv]: credentialValue }
+          : {};
+      providerResult = credentialValue
+        ? upsertProvider(
+            provider,
+            config.providerType,
+            resolvedCredentialEnv,
+            resolvedEndpointUrl,
+            env,
+          )
+        : {
+            ok: false,
+            status: 1,
+            message: `A host credential is required to configure provider '${provider}'.`,
+          };
+    }
     if (!providerResult.ok) {
-      console.error(`  ${providerResult.message}`);
+      error(`  ${providerResult.message}`);
       if (isNonInteractive()) {
-        process.exit(providerResult.status || 1);
+        return exitProcess(providerResult.status || 1);
       }
       const retry = await promptValidationRecovery(
         config.label,
@@ -92,7 +135,7 @@ export async function setupRemoteProviderInference(
       if (retry === "selection" || retry === "model") {
         return { done: true, result: { retry: "selection" } };
       }
-      process.exit(providerResult.status || 1);
+      return exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
     if (config.skipVerify) {
@@ -109,9 +152,9 @@ export async function setupRemoteProviderInference(
     const message =
       compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
       `Failed to configure inference provider '${provider}'.`;
-    console.error(`  ${message}`);
+    error(`  ${message}`);
     if (isNonInteractive()) {
-      process.exit(applyResult.status || 1);
+      return exitProcess(applyResult.status || 1);
     }
     const retry = await promptValidationRecovery(
       config.label,
@@ -125,7 +168,7 @@ export async function setupRemoteProviderInference(
     if (retry === "selection" || retry === "model") {
       return { done: true, result: { retry: "selection" } };
     }
-    process.exit(applyResult.status || 1);
+    return exitProcess(applyResult.status || 1);
   }
   return { done: false };
 }

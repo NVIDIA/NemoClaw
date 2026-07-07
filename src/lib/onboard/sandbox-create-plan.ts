@@ -2,19 +2,51 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  type MessagingCredentialMetadata,
   listMessagingCredentialMetadata,
+  type MessagingCredentialMetadata,
 } from "../messaging/channels";
 import type { InitialSandboxPolicy } from "./initial-policy";
+import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
 import { resolveQrSelectedChannels } from "./messaging-state";
+import type {
+  MaterializeSandboxCreatePlanInput,
+  ResolveSandboxCreateIntentInput,
+  SandboxCreateIntent,
+  SandboxCreateMessagingProviderRequest,
+} from "./sandbox-create-intent-types";
 import { buildSandboxGpuCreateArgs, type SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
-type MessagingTokenDef = {
-  name?: string;
-  envKey: string;
-  token: string | null;
-};
+export type {
+  MaterializeSandboxCreatePlanInput,
+  ResolveSandboxCreateIntentInput,
+  SandboxCreateIntent,
+  SandboxCreateMessagingProviderRequest,
+  SandboxCreatePolicyRequest,
+} from "./sandbox-create-intent-types";
+
+// Known canonical policy tier names. Kept inline so the create-time path
+// validates the env value without pulling `../policy/tiers` (which transitively
+// requires `runner.ts` and breaks vitest source resolution for this module's
+// tests). The list mirrors `nemoclaw-blueprint/policies/tiers.yaml`; adding a
+// tier there requires updating this set so an explicit tier env value reaches
+// the create-time policy decision.
+const KNOWN_POLICY_TIER_NAMES = new Set(["restricted", "balanced", "open"]);
+
+function readPolicyTierEnv(): string | null {
+  // Only trust the env value in non-interactive mode. Interactive flows let the
+  // operator override the tier via the selector after sandbox creation; if the
+  // env said balanced but the operator picks restricted, an interactive trust
+  // of the env would have already let create-time OTEL through. Fail closed:
+  // interactive mode returns null so the OTEL preset is deferred to the
+  // post-boot policy step.
+  const isNonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  if (!isNonInteractive) return null;
+  const raw = process.env.NEMOCLAW_POLICY_TIER;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim().toLowerCase();
+  return KNOWN_POLICY_TIER_NAMES.has(trimmed) ? trimmed : null;
+}
 
 type ResolveDockerGpuSandboxCreatePlan =
   typeof import("./docker-gpu-sandbox-create").resolveDockerGpuSandboxCreatePlan;
@@ -37,6 +69,7 @@ export type PrepareSandboxCreatePlanInput = {
   messagingTokenDefs: MessagingTokenDef[];
   reusableMessagingChannels: string[];
   reusableMessagingProviders: string[];
+  extraProviders?: readonly string[];
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuCreateConfig;
   dockerDriverGateway: boolean;
@@ -49,6 +82,7 @@ export type PrepareSandboxCreatePlanInput = {
   getMessagingChannelForEnvKey(envKey: string): string | null;
   getHermesToolGatewayProviderName(sandboxName: string): string;
   agentName?: string | null;
+  policyTier?: string | null;
   deps?: SandboxCreatePlanDeps;
 };
 
@@ -84,25 +118,18 @@ function filterEnabledChannelNames(
   return channelNames.filter((channelName) => !disabledChannelNames.has(channelName));
 }
 
-function filterMessagingTokenDefsByEnabledChannel(
-  messagingTokenDefs: MessagingTokenDef[],
+function filterMessagingProviderRequestsByEnabledChannel(
+  requests: readonly SandboxCreateMessagingProviderRequest[],
   disabledChannelNames: ReadonlySet<string>,
-  getMessagingChannelForEnvKey: (envKey: string) => string | null,
-): MessagingTokenDef[] {
-  return messagingTokenDefs.filter(({ envKey }) => {
-    const channel = getMessagingChannelForEnvKey(envKey);
-    return !channel || !disabledChannelNames.has(channel);
-  });
+): SandboxCreateMessagingProviderRequest[] {
+  return requests.filter(({ channel }) => !channel || !disabledChannelNames.has(channel));
 }
 
 function resolveTokenProviderChannelMap(
-  messagingTokenDefs: MessagingTokenDef[],
-  getMessagingChannelForEnvKey: (envKey: string) => string | null,
+  requests: readonly SandboxCreateMessagingProviderRequest[],
 ): Map<string, string> {
   const providerChannels = new Map<string, string>();
-  for (const { envKey, name } of messagingTokenDefs) {
-    if (!name) continue;
-    const channel = getMessagingChannelForEnvKey(envKey);
+  for (const { channel, name } of requests) {
     if (channel) providerChannels.set(name, channel);
   }
   return providerChannels;
@@ -123,19 +150,19 @@ function resolveActiveMessagingChannels({
   channels,
   disabledChannelNames,
   enabledChannels,
-  getMessagingChannelForEnvKey,
-  messagingTokenDefs,
+  messagingProviderRequests,
+  primaryMessagingCredentialEnvKeys,
   reusableMessagingChannels,
 }: Pick<
-  PrepareSandboxCreatePlanInput,
+  ResolveSandboxCreateIntentInput,
   | "channels"
   | "disabledChannelNames"
   | "enabledChannels"
-  | "getMessagingChannelForEnvKey"
-  | "messagingTokenDefs"
+  | "messagingProviderRequests"
+  | "primaryMessagingCredentialEnvKeys"
   | "reusableMessagingChannels"
 >): string[] {
-  const primaryCredentialEnvKeys = getPrimaryCredentialEnvKeys();
+  const primaryCredentialEnvKeys = new Set(primaryMessagingCredentialEnvKeys);
   const qrSelectedChannels = resolveQrSelectedChannels(
     channels,
     enabledChannels,
@@ -144,10 +171,9 @@ function resolveActiveMessagingChannels({
   return filterEnabledChannelNames(
     [
       ...new Set([
-        ...messagingTokenDefs
-          .filter(({ token }) => !!token)
-          .flatMap(({ envKey }) => {
-            const channel = getMessagingChannelForEnvKey(envKey);
+        ...messagingProviderRequests
+          .filter(({ credentialConfigured }) => credentialConfigured)
+          .flatMap(({ channel, envKey }) => {
             return channel && primaryCredentialEnvKeys.has(envKey) ? [channel] : [];
           }),
         ...reusableMessagingChannels,
@@ -186,6 +212,191 @@ function compareCredentialsForPrimarySelection(
   );
 }
 
+export function resolveSandboxCreateMessagingProviderRequests(
+  messagingTokenDefs: readonly MessagingTokenDef[],
+  getMessagingChannelForEnvKey: (envKey: string) => string | null,
+): SandboxCreateMessagingProviderRequest[] {
+  return messagingTokenDefs.map(({ name, envKey, providerType, token }) => ({
+    name,
+    envKey,
+    ...(providerType ? { providerType } : {}),
+    credentialConfigured: Boolean(token),
+    channel: getMessagingChannelForEnvKey(envKey),
+  }));
+}
+
+export function resolveSandboxCreateIntent({
+  basePolicyPath,
+  sandboxName,
+  channels,
+  enabledChannels,
+  disabledChannelNames,
+  messagingProviderRequests,
+  primaryMessagingCredentialEnvKeys,
+  reusableMessagingChannels,
+  reusableMessagingProviders,
+  extraProviders,
+  hermesToolGateways,
+  sandboxGpuConfig,
+  gpuCreateArgs,
+  useDockerGpuPatch,
+  sandboxGpuLogMessage,
+  agentName,
+  policyTier,
+}: ResolveSandboxCreateIntentInput): SandboxCreateIntent {
+  const enabledMessagingProviderRequests = filterMessagingProviderRequestsByEnabledChannel(
+    messagingProviderRequests,
+    disabledChannelNames,
+  );
+  const providerChannels = resolveTokenProviderChannelMap(messagingProviderRequests);
+  const activeMessagingChannels = resolveActiveMessagingChannels({
+    channels,
+    disabledChannelNames,
+    enabledChannels,
+    messagingProviderRequests: enabledMessagingProviderRequests,
+    primaryMessagingCredentialEnvKeys,
+    reusableMessagingChannels,
+  });
+  const enabledReusableMessagingProviders = filterMessagingProvidersByEnabledChannel(
+    [...new Set(reusableMessagingProviders)],
+    providerChannels,
+    disabledChannelNames,
+  );
+
+  return {
+    sandboxName,
+    activeMessagingChannels,
+    messagingProviderRequests: messagingProviderRequests.map((request) => ({ ...request })),
+    reusableMessagingProviders: enabledReusableMessagingProviders,
+    extraProviders: [...new Set(extraProviders ?? [])].filter(Boolean),
+    hermesToolGateways: [...hermesToolGateways],
+    policy: {
+      basePolicyPath,
+      activeMessagingChannels: [...activeMessagingChannels],
+      options: {
+        directGpu: sandboxGpuConfig.sandboxGpuEnabled,
+        dockerGpuPatch: useDockerGpuPatch,
+        additionalPresets: [...hermesToolGateways],
+        ...(agentName !== undefined ? { agentName } : {}),
+        policyTier,
+      },
+    },
+    gpuCreateArgs: [...gpuCreateArgs],
+    useDockerGpuPatch,
+    sandboxGpuLogMessage,
+    disabledChannelNames: [...disabledChannelNames],
+  };
+}
+
+function messagingProviderRequestKey(
+  request: Pick<SandboxCreateMessagingProviderRequest, "name" | "envKey">,
+): string {
+  // Tuple encoding stays collision-free even if either value contains a separator.
+  return JSON.stringify([request.name, request.envKey]);
+}
+
+function bindMessagingTokenDefs(
+  intent: SandboxCreateIntent,
+  messagingTokenDefs: readonly MessagingTokenDef[],
+): MessagingTokenDef[] {
+  const enabledRequests = filterMessagingProviderRequestsByEnabledChannel(
+    intent.messagingProviderRequests,
+    new Set(intent.disabledChannelNames),
+  );
+  const tokenDefsByRequest = new Map(
+    messagingTokenDefs.map((tokenDef) => [messagingProviderRequestKey(tokenDef), tokenDef]),
+  );
+
+  return enabledRequests.map((request) => {
+    const tokenDef = tokenDefsByRequest.get(messagingProviderRequestKey(request));
+    if (!tokenDef) {
+      throw new Error(
+        `Cannot materialize sandbox create intent; missing credential binding '${request.envKey}' for provider '${request.name}'.`,
+      );
+    }
+    if (Boolean(tokenDef.token) !== request.credentialConfigured) {
+      throw new Error(
+        `Cannot materialize sandbox create intent; credential availability changed for provider '${request.name}'.`,
+      );
+    }
+    // Default providers omit this field; normalize an empty or missing binding
+    // to the intent's `undefined` representation before comparing.
+    const boundProviderType = tokenDef.providerType || undefined;
+    if (boundProviderType !== request.providerType) {
+      throw new Error(
+        `Cannot materialize sandbox create intent; provider type changed for '${request.name}'.`,
+      );
+    }
+    return tokenDef;
+  });
+}
+
+export function materializeSandboxCreatePlan({
+  intent,
+  buildCtx,
+  messagingTokenDefs,
+  appendResourceFlags,
+  runProviderPreDeleteCleanup,
+  upsertMessagingProviders,
+  getHermesToolGatewayProviderName,
+  prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
+}: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
+  const enabledMessagingTokenDefs = bindMessagingTokenDefs(intent, messagingTokenDefs);
+  const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
+    intent.policy.basePolicyPath,
+    [...intent.policy.activeMessagingChannels],
+    {
+      directGpu: intent.policy.options.directGpu,
+      dockerGpuPatch: intent.policy.options.dockerGpuPatch,
+      additionalPresets: [...intent.policy.options.additionalPresets],
+      agentName: intent.policy.options.agentName,
+      policyTier: intent.policy.options.policyTier,
+    },
+  );
+  const createArgs = [
+    "--from",
+    `${buildCtx}/Dockerfile`,
+    "--name",
+    intent.sandboxName,
+    "--policy",
+    initialSandboxPolicy.policyPath,
+    ...intent.gpuCreateArgs,
+  ];
+
+  appendResourceFlags(createArgs);
+  runProviderPreDeleteCleanup();
+  const providerChannels = resolveTokenProviderChannelMap(intent.messagingProviderRequests);
+  const messagingProviders = filterMessagingProvidersByEnabledChannel(
+    [
+      ...new Set([
+        ...upsertMessagingProviders(enabledMessagingTokenDefs, { replaceExisting: true }),
+        ...intent.reusableMessagingProviders,
+      ]),
+    ],
+    providerChannels,
+    new Set(intent.disabledChannelNames),
+  );
+  for (const provider of messagingProviders) {
+    createArgs.push("--provider", provider);
+  }
+  if (intent.hermesToolGateways.length > 0) {
+    createArgs.push("--provider", getHermesToolGatewayProviderName(intent.sandboxName));
+  }
+  for (const provider of intent.extraProviders) {
+    if (messagingProviders.includes(provider)) continue;
+    createArgs.push("--provider", provider);
+  }
+
+  return {
+    activeMessagingChannels: [...intent.activeMessagingChannels],
+    initialSandboxPolicy,
+    createArgs,
+    messagingProviders,
+    useDockerGpuPatch: intent.useDockerGpuPatch,
+    sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
+  };
+}
+
 export function prepareSandboxCreatePlan({
   basePolicyPath,
   buildCtx,
@@ -196,6 +407,7 @@ export function prepareSandboxCreatePlan({
   messagingTokenDefs,
   reusableMessagingChannels,
   reusableMessagingProviders,
+  extraProviders,
   hermesToolGateways,
   sandboxGpuConfig,
   dockerDriverGateway,
@@ -205,73 +417,51 @@ export function prepareSandboxCreatePlan({
   getMessagingChannelForEnvKey,
   getHermesToolGatewayProviderName,
   agentName,
+  policyTier = readPolicyTierEnv(),
   deps = {},
 }: PrepareSandboxCreatePlanInput): SandboxCreatePlan {
-  const enabledMessagingTokenDefs = filterMessagingTokenDefsByEnabledChannel(
-    messagingTokenDefs,
-    disabledChannelNames,
-    getMessagingChannelForEnvKey,
-  );
-  const providerChannels = resolveTokenProviderChannelMap(
-    messagingTokenDefs,
-    getMessagingChannelForEnvKey,
-  );
-  const activeMessagingChannels = resolveActiveMessagingChannels({
-    channels,
-    disabledChannelNames,
-    enabledChannels,
-    getMessagingChannelForEnvKey,
-    messagingTokenDefs: enabledMessagingTokenDefs,
-    reusableMessagingChannels,
-  });
   const { useDockerGpuPatch, logMessage: sandboxGpuLogMessage } = (
     deps.resolveDockerGpuSandboxCreatePlan ?? getDockerGpuSandboxCreatePlan
   )(sandboxGpuConfig, { dockerDriverGateway });
-  const initialSandboxPolicy = (
-    deps.prepareInitialSandboxCreatePolicy ?? getInitialSandboxCreatePolicy
-  )(basePolicyPath, activeMessagingChannels, {
-    directGpu: sandboxGpuConfig.sandboxGpuEnabled,
-    dockerGpuPatch: useDockerGpuPatch,
-    additionalPresets: hermesToolGateways,
-    agentName,
-  });
-  const createArgs = [
-    "--from",
-    `${buildCtx}/Dockerfile`,
-    "--name",
-    sandboxName,
-    "--policy",
-    initialSandboxPolicy.policyPath,
-    ...(deps.buildSandboxGpuCreateArgs ?? buildSandboxGpuCreateArgs)(sandboxGpuConfig, {
+  const gpuCreateArgs = (deps.buildSandboxGpuCreateArgs ?? buildSandboxGpuCreateArgs)(
+    sandboxGpuConfig,
+    {
       suppressGpuFlag: useDockerGpuPatch,
-    }),
-  ];
-
-  appendResourceFlags(createArgs);
-  runProviderPreDeleteCleanup();
-  const messagingProviders = filterMessagingProvidersByEnabledChannel(
-    [
-      ...new Set([
-        ...upsertMessagingProviders(enabledMessagingTokenDefs, { replaceExisting: true }),
-        ...reusableMessagingProviders,
-      ]),
-    ],
-    providerChannels,
-    disabledChannelNames,
+    },
   );
-  for (const provider of messagingProviders) {
-    createArgs.push("--provider", provider);
-  }
-  if (hermesToolGateways.length > 0) {
-    createArgs.push("--provider", getHermesToolGatewayProviderName(sandboxName));
-  }
-
-  return {
-    activeMessagingChannels,
-    initialSandboxPolicy,
-    createArgs,
-    messagingProviders,
+  const messagingProviderRequests = resolveSandboxCreateMessagingProviderRequests(
+    messagingTokenDefs,
+    getMessagingChannelForEnvKey,
+  );
+  const intent = resolveSandboxCreateIntent({
+    basePolicyPath,
+    sandboxName,
+    channels,
+    enabledChannels,
+    disabledChannelNames,
+    messagingProviderRequests,
+    primaryMessagingCredentialEnvKeys: [...getPrimaryCredentialEnvKeys()],
+    reusableMessagingChannels,
+    reusableMessagingProviders,
+    extraProviders,
+    hermesToolGateways,
+    sandboxGpuConfig,
+    gpuCreateArgs,
     useDockerGpuPatch,
     sandboxGpuLogMessage,
-  };
+    agentName,
+    policyTier,
+  });
+
+  return materializeSandboxCreatePlan({
+    intent,
+    buildCtx,
+    messagingTokenDefs,
+    appendResourceFlags,
+    runProviderPreDeleteCleanup,
+    upsertMessagingProviders,
+    getHermesToolGatewayProviderName,
+    prepareInitialSandboxCreatePolicy:
+      deps.prepareInitialSandboxCreatePolicy ?? getInitialSandboxCreatePolicy,
+  });
 }

@@ -10,11 +10,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-type RebuildModule = typeof import("../../../../dist/lib/actions/sandbox/rebuild");
+type RebuildModule = typeof import("./rebuild");
 
 const requireDist = createRequire(import.meta.url);
 const { buildRefreshMutableOpenClawConfigHashCommand } = requireDist(
-  "../../../../dist/lib/actions/sandbox/rebuild.js",
+  "./rebuild.js",
 ) as RebuildModule;
 
 function sha256Hex(filePath: string): string {

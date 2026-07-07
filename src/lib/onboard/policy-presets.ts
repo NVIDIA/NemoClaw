@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getCredential } from "../credentials/store";
-import type { WebSearchConfig } from "../inference/web-search";
+import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import {
   listMessagingCredentialMetadata,
   listMessagingPolicyPresetMetadata,
@@ -78,7 +78,7 @@ export function getSuggestedPolicyPresets({
     );
   }
 
-  if (webSearchConfig) suggestions.push("brave");
+  if (webSearchConfig) suggestions.push(webSearchProviderForConfig(webSearchConfig));
 
   return suggestions;
 }

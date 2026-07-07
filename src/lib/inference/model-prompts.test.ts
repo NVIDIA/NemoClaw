@@ -10,8 +10,8 @@ import {
   promptManualModelId,
   promptRemoteModel,
   promptVllmModel,
-} from "../../../dist/lib/inference/model-prompts";
-import { VLLM_MODELS, modelsForPlatform } from "../../../dist/lib/inference/vllm-models";
+} from "./model-prompts";
+import { modelsForPlatform, VLLM_MODELS } from "./vllm-models";
 
 function promptSequence(responses: string[]) {
   const queue = [...responses];
@@ -33,14 +33,77 @@ describe("model prompt helpers", () => {
     expect(result).toBe("llama");
   });
 
-  it("returns DeepSeek V4 Pro from the default cloud model menu", async () => {
-    const promptFn = promptSequence(["8"]);
+  it("returns Minimax M3 from the default cloud model menu", async () => {
+    const promptFn = promptSequence(["4"]);
     const result = await promptCloudModel({
       promptFn,
       writeLine: vi.fn(),
     });
 
-    expect(result).toBe("deepseek-ai/deepseek-v4-pro");
+    expect(result).toBe("minimaxai/minimax-m3");
+  });
+
+  it("uses the effective live catalog default when the user presses enter", async () => {
+    const result = await promptCloudModel({
+      promptFn: promptSequence([""]),
+      writeLine: vi.fn(),
+      defaultModelId: "live/default",
+      cloudModelOptions: [
+        { id: "live/first", label: "First" },
+        { id: "live/default", label: "Default" },
+      ],
+    });
+
+    expect(result).toBe("live/default");
+  });
+
+  it("keeps a separate safe custom model as the Other prefill (#5827)", async () => {
+    const promptFn = promptSequence(["2", ""]);
+    const validateNvidiaEndpointModelFn = vi.fn((model: string) => ({
+      ok: model === "custom/provider-model",
+    }));
+    const result = await promptCloudModel({
+      promptFn,
+      writeLine: vi.fn(),
+      defaultModelId: "live/default",
+      manualDefaultModelId: "custom/provider-model",
+      cloudModelOptions: [{ id: "live/default", label: "Default" }],
+      getCredentialFn: () => "nvapi-test",
+      validateNvidiaEndpointModelFn,
+    });
+
+    expect(result).toBe("custom/provider-model");
+    expect(promptFn).toHaveBeenNthCalledWith(1, "  Choose model [1]: ");
+    expect(promptFn).toHaveBeenNthCalledWith(
+      2,
+      "  NVIDIA Endpoints model id [custom/provider-model]: ",
+    );
+    expect(validateNvidiaEndpointModelFn).toHaveBeenCalledWith(
+      "custom/provider-model",
+      "nvapi-test",
+    );
+  });
+
+  it("does not render or accept an unsafe manual-entry default (#5827)", async () => {
+    const promptFn = promptSequence(["2", "safe/provider-model"]);
+    const validateNvidiaEndpointModelFn = vi.fn((model: string) => ({
+      ok: model === "safe/provider-model",
+    }));
+    const result = await promptCloudModel({
+      promptFn,
+      writeLine: vi.fn(),
+      defaultModelId: "live/default",
+      manualDefaultModelId: "bad\n  1) spoof",
+      cloudModelOptions: [{ id: "live/default", label: "Default" }],
+      getCredentialFn: () => "nvapi-test",
+      validateNvidiaEndpointModelFn,
+    });
+
+    expect(result).toBe("safe/provider-model");
+    expect(promptFn).toHaveBeenNthCalledWith(2, "  NVIDIA Endpoints model id: ");
+    expect(promptFn.mock.calls.flat().join("\n")).not.toContain("spoof");
+    expect(validateNvidiaEndpointModelFn).toHaveBeenCalledOnce();
+    expect(validateNvidiaEndpointModelFn).toHaveBeenCalledWith("safe/provider-model", "nvapi-test");
   });
 
   it("validates manual cloud model ids against the saved NVIDIA key", async () => {
@@ -235,7 +298,7 @@ describe("promptVllmModel", () => {
   const sparkDefault = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4")!;
   const gatedModel = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b")!;
   const stationModels = modelsForPlatform("station");
-  const stationDefault = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b")!;
+  const stationDefault = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash")!;
 
   it("returns the profile default when the user presses Enter", async () => {
     const promptFn = promptSequence([""]);

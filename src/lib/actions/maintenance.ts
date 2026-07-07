@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
-import {
-  detectOpenShellStateRpcPreflightIssue,
-  detectOpenShellStateRpcResultIssue,
-  printOpenShellStateRpcIssue,
-} from "../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../cli/branding";
 import { prompt as askPrompt } from "../credentials/store";
 import {
@@ -14,10 +9,7 @@ import {
   normalizeGarbageCollectImagesOptions,
 } from "../domain/lifecycle/options";
 import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
-import {
-  captureSandboxListWithGatewayRecovery,
-  printSandboxListFailureWithRecoveryContext,
-} from "../openshell-sandbox-list";
+import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
@@ -31,6 +23,10 @@ const R = useColor ? "\x1b[0m" : "";
 const RD = useColor ? "\x1b[1;31m" : "";
 const YW = useColor ? "\x1b[1;33m" : "";
 
+export function shouldSkipUnreachableSandboxBackup(env: NodeJS.ProcessEnv): boolean {
+  return env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP === "1";
+}
+
 export async function backupAll(): Promise<void> {
   const { sandboxes } = registry.listSandboxes();
   if (sandboxes.length === 0) {
@@ -38,34 +34,17 @@ export async function backupAll(): Promise<void> {
     return;
   }
 
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
-  if (preflightIssue) {
-    printOpenShellStateRpcIssue(preflightIssue, {
-      action: "backing up registered sandboxes",
-      command: `${CLI_NAME} backup-all`,
-    });
-    process.exit(1);
-  }
-
-  const liveListRecovery = await captureSandboxListWithGatewayRecovery();
-  const liveList = liveListRecovery.result;
-  const resultIssue = detectOpenShellStateRpcResultIssue(liveList);
-  if (resultIssue) {
-    printOpenShellStateRpcIssue(resultIssue, {
-      action: "backing up registered sandboxes",
-      command: `${CLI_NAME} backup-all`,
-    });
-    process.exit(1);
-  }
-  if (liveList.status !== 0) {
-    printSandboxListFailureWithRecoveryContext(liveListRecovery);
-    process.exit(liveList.status || 1);
-  }
+  const liveList = await captureSandboxListWithGatewayPreflightOrExit({
+    action: "backing up registered sandboxes",
+    command: `${CLI_NAME} backup-all`,
+  });
   const readyNames = parseReadySandboxNames(liveList.output || "");
 
+  const skipUnreachable = shouldSkipUnreachableSandboxBackup(process.env);
   let backed = 0;
   let failed = 0;
   let skipped = 0;
+  let unreachableRunning = 0;
   for (const sb of sandboxes) {
     if (!readyNames.has(sb.name)) {
       console.log(`  ${D}Skipping '${sb.name}' (not running)${R}`);
@@ -122,6 +101,16 @@ export async function backupAll(): Promise<void> {
       );
       backed++;
     } else {
+      if (result.unreachable) {
+        if (skipUnreachable) {
+          console.log(
+            `  ${YW}⚠${R} Skipped '${sb.name}' (running but SSH-unreachable; NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 set). Any uncommitted state since the last successful backup will be lost.`,
+          );
+          skipped++;
+          continue;
+        }
+        unreachableRunning++;
+      }
       const failedItems = [...result.failedDirs, ...result.failedFiles];
       console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems.join(", ")})`);
       failed++;
@@ -133,6 +122,18 @@ export async function backupAll(): Promise<void> {
     console.log(`  Backups stored in: ~/.nemoclaw/rebuild-backups/`);
   }
   if (failed > 0) {
+    if (unreachableRunning > 0) {
+      console.error("");
+      console.error(
+        `  ${unreachableRunning} running sandbox(es) could not be backed up because their in-sandbox SSH endpoint did not answer.`,
+      );
+      console.error(
+        `  To upgrade now and recover them afterwards from their latest validated backup, re-run with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1. Any uncommitted state since the last successful backup will be lost.`,
+      );
+      console.error(
+        `  To preserve their current state first, stop the affected container (so it is skipped as not running) or restore its gateway health, then run '${CLI_NAME} backup-all' again.`,
+      );
+    }
     process.exit(1);
   }
 }

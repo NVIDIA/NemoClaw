@@ -5,6 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+export const SANDBOX_BUILD_CONTEXT_PREFIX = "nemoclaw-build-";
+export type SandboxBuildContextOrigin = "custom" | "generated";
+
 export interface StagedBuildContext {
   buildCtx: string;
   stagedDockerfile: string;
@@ -18,7 +21,7 @@ export interface BuildContextStats {
 type BuildContextStatsFilter = (entryPath: string) => boolean;
 
 function createBuildContextDir(tmpDir: string = os.tmpdir()): string {
-  return fs.mkdtempSync(path.join(tmpDir, "nemoclaw-build-"));
+  return fs.mkdtempSync(path.join(tmpDir, SANDBOX_BUILD_CONTEXT_PREFIX));
 }
 
 function normalizeReadModesForDockerCopy(rootDir: string): void {
@@ -37,6 +40,16 @@ function normalizeReadModesForDockerCopy(rootDir: string): void {
   }
 }
 
+function stageMcporterRuntime(rootDir: string, buildCtx: string): void {
+  const sourceDir = path.join(rootDir, "agents", "openclaw", "mcporter-runtime");
+  const stagedDir = path.join(buildCtx, "agents", "openclaw", "mcporter-runtime");
+  fs.mkdirSync(stagedDir, { recursive: true });
+  for (const fileName of ["package.json", "package-lock.json"]) {
+    fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
+  }
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "agents"));
+}
+
 function stageLegacySandboxBuildContext(
   rootDir: string,
   tmpDir: string = os.tmpdir(),
@@ -47,19 +60,31 @@ function stageLegacySandboxBuildContext(
     path.join(rootDir, "tsconfig.runtime-preloads.json"),
     path.join(buildCtx, "tsconfig.runtime-preloads.json"),
   );
-  fs.cpSync(path.join(rootDir, "nemoclaw"), path.join(buildCtx, "nemoclaw"), { recursive: true });
+  stageMcporterRuntime(rootDir, buildCtx);
+  fs.cpSync(path.join(rootDir, "nemoclaw"), path.join(buildCtx, "nemoclaw"), {
+    recursive: true,
+  });
   fs.cpSync(path.join(rootDir, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), {
     recursive: true,
   });
   normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw-blueprint"));
-  fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
+  fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), {
+    recursive: true,
+  });
   fs.cpSync(
     path.join(rootDir, "src", "lib", "messaging"),
     path.join(buildCtx, "src", "lib", "messaging"),
     { recursive: true },
   );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
+    path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
+  );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
-  fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
+  fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
+    recursive: true,
+    force: true,
+  });
   normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw"));
 
   return {
@@ -85,6 +110,7 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "tsconfig.runtime-preloads.json"),
     path.join(buildCtx, "tsconfig.runtime-preloads.json"),
   );
+  stageMcporterRuntime(rootDir, buildCtx);
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
   for (const fileName of [
@@ -128,9 +154,30 @@ function stageOptimizedSandboxBuildContext(
   normalizeReadModesForDockerCopy(stagedBlueprintDir);
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
+  fs.mkdirSync(path.join(stagedScriptsDir, "checks"), { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
+    path.join(stagedScriptsDir, "checks", "verify-openshell-policy-boundary-dependencies.mts"),
+  );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "gateway-control.sh"),
+    path.join(stagedScriptsDir, "gateway-control.sh"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-gateway-control.py"),
+    path.join(stagedScriptsDir, "managed-gateway-control.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "state-dir-guard.py"),
+    path.join(stagedScriptsDir, "state-dir-guard.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "openclaw-config-guard.py"),
+    path.join(stagedScriptsDir, "openclaw-config-guard.py"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "codex-acp-wrapper.sh"),
@@ -140,11 +187,19 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "generate-openclaw-config.mts"),
     path.join(stagedScriptsDir, "generate-openclaw-config.mts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "validate-openclaw-tool-search.mts"),
+    path.join(stagedScriptsDir, "validate-openclaw-tool-search.mts"),
+  );
   // Shared sandbox initialisation library sourced by the entrypoint (#2277)
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "sandbox-init.sh"),
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "gateway-supervisor.sh"),
+    path.join(stagedScriptsDir, "lib", "gateway-supervisor.sh"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "sandbox-rlimits.sh"),
@@ -158,11 +213,19 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "clean_runtime_shell_env_shim.py"),
     path.join(stagedScriptsDir, "lib", "clean_runtime_shell_env_shim.py"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
+    path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
+  );
   // Build-time messaging applier used by OpenClaw and Hermes Dockerfiles.
   fs.cpSync(
     path.join(rootDir, "src", "lib", "messaging"),
     path.join(buildCtx, "src", "lib", "messaging"),
     { recursive: true },
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
+    path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(
@@ -172,6 +235,14 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-chat-send.js"),
     path.join(stagedScriptsDir, "patch-openclaw-chat-send.js"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-issue-4434-diagnostics.ts"),
+    path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.ts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.ts"),
+    path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.ts"),
   );
 
   return { buildCtx, stagedDockerfile };

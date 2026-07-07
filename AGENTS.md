@@ -21,7 +21,7 @@ Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision gui
 |------|----------|---------|
 | `bin/` | JavaScript (CJS) | CLI launcher (`nemoclaw.js`) and small compatibility helpers |
 | `src/lib/` | TypeScript | Core CLI logic: onboard, credentials, inference, policies, preflight, runner |
-| `nemoclaw/` | TypeScript | Plugin project (Commander CLI extension for OpenClaw) |
+| `nemoclaw/` | TypeScript | Plugin registering `/nemoclaw` TUI slash commands inside OpenClaw; `openclaw nemoclaw <cmd>` shell subcommand path is descoped |
 | `nemoclaw/src/blueprint/` | TypeScript | Runner, snapshot, SSRF validation, state management |
 | `nemoclaw/src/commands/` | TypeScript | Slash commands, migration state |
 | `nemoclaw/src/onboard/` | TypeScript | Onboarding config |
@@ -29,7 +29,7 @@ Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision gui
 | `nemoclaw-blueprint/model-specific-setup/` | JSON | Agent-scoped model/provider compatibility registry |
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
-| `test/e2e/` | Bash/JS/TS | End-to-end tests, scenario-based runner (see `test/e2e/README.md`) |
+| `test/e2e/` | Bash/JS/TS | End-to-end tests, target registry, and live runner (see `test/e2e/README.md`) |
 | `docs/` | MDX/Markdown | User-facing Fern docs and Markdown routes for AI documentation clients |
 | `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
@@ -41,15 +41,23 @@ Package-specific guides:
 
 | Task | Command |
 |------|---------|
-| Install all deps | `npm install && npm link && cd nemoclaw && npm install && npm run build && cd .. && cd nemoclaw-blueprint && uv sync && cd ..` |
+| Set up contributor checkout | `npm run dev:setup` |
+| Check contributor environment | `npm run dev:doctor` |
+| Expose development CLI | `./scripts/dev-setup.sh --expose-cli` |
+| Launch pinned coding agent | `npm run agent` |
 | Build plugin | `cd nemoclaw && npm run build` |
 | Watch mode | `cd nemoclaw && npm run dev` |
-| Run all tests | `npm test` |
+| Run all tests for broad changes | `npm test` |
+| Render behavior-oriented test tree | `npm run test:spec` |
+| Run fast source tests | `npm run test:fast` |
+| Run integration tests | `npm run test:integration` |
+| Run package contracts | `npm run test:package` |
+| Run live E2E targets | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
-| Run all linters | `make check` |
-| Run all hooks manually | `npx prek run --all-files` |
+| Run repo-wide pre-commit and coverage checks | `npm run check` |
+| Reproduce `pre-commit`, `commit-msg`, and `pre-push` checks for the current diff | `npm run check:diff` |
 | Type-check CLI | `npm run typecheck:cli` |
-| Auto-format | `make format` |
+| Auto-format | `npm run format` |
 | Build docs | `npm run docs` |
 | Serve docs locally | `npm run docs:live` |
 
@@ -66,16 +74,24 @@ The `bin/` directory uses CommonJS intentionally for the launcher and a few comp
 
 ### Testing Strategy
 
-Tests are organized into three Vitest projects defined in `vitest.config.ts`:
+Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 
-1. **`cli`** — `test/**/*.test.{js,ts}` — integration tests for CLI behavior
-2. **`plugin`** — `nemoclaw/src/**/*.test.ts` — unit tests co-located with source
-3. **`e2e-branch-validation`** — `test/e2e/brev-e2e.test.ts` — validates a branch from source on ephemeral Brev instance (requires `BREV_API_TOKEN`)
+1. **`cli`** — `src/**/*.test.ts` — CLI unit tests importing source
+2. **`integration`** — `test/**/*.test.{js,ts}` — root integration tests importing source; excludes the explicit lanes below
+3. **`installer-integration`** — installer tests that spawn real `install.sh` processes
+4. **`package-contract`** — `test/package-contract/**/*.test.ts` — the only non-live lane that imports compiled CLI/plugin artifacts
+5. **`plugin`** — `nemoclaw/src/**/*.test.ts` — plugin unit tests co-located with source
+6. **`e2e-support`** — fast tests for the E2E fixture/support layer
+7. **`e2e-live`** — opt-in live targets that mutate real external state
+8. **`e2e-branch-validation`** — opt-in validation on an ephemeral Brev instance
 
 When writing tests:
 
 - Root-level tests (`test/`) use ESM imports
 - Plugin tests use TypeScript and are co-located with their source files
+- Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
+- Keep project globs disjoint; `npm run test:projects:check` derives membership from Vitest and rejects overlap.
+- Write behavior-oriented titles, put local issue references in a final `(#1234)` suffix, and use `npm run test:spec` for the hierarchical specification view.
 - Mock external dependencies; don't call real NVIDIA APIs in unit tests
 - E2E tests run on ephemeral Brev cloud instances
 
@@ -143,17 +159,19 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 | Hook | What runs |
 |------|-----------|
-| **pre-commit** | File fixers, formatters, linters, Vitest (plugin) |
+| **pre-commit** | Cheap structural and file-local checks, including fixers, formatters, and linters |
 | **commit-msg** | commitlint (Conventional Commits) |
-| **pre-push** | TypeScript type check (tsc --noEmit for plugin, JS, CLI) |
+| **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
 
 ## Working with This Repo
 
 ### Before Making Changes
 
 1. Read `CONTRIBUTING.md` for the full contributor guide
-2. Run `make check` to verify your environment is set up correctly
-3. Check that `npm test` passes before starting
+2. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
+3. Run `npm run dev:doctor` to verify the contributor environment without changing it
+4. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
+5. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
 
 ### Git and GitHub Access Failures
 
@@ -210,13 +228,13 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 ## PR Requirements
 
 - Create feature branch from `main`
-- Let normal commit and push hooks provide hook verification before submitting
+- Let normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide hook verification before submitting
 - Contributor-owned PRs must self-serve the DCO declaration and GitHub commit verification before opening a PR
 - Every contributor-owned PR description must include a valid `Signed-off-by:` declaration for the contributor, and every commit in the PR must appear as `Verified` in GitHub
 - Contributor agents must stop before `gh pr create` if the PR body will not include the DCO declaration or any commit is missing GitHub verification; tell the contributor to fix the issue before opening a PR
 - If force-push is not allowed and an already-published branch contains an unverified commit, require a fresh branch and fresh PR with a clean compliant history
-- Run targeted tests for changed behavior, and run `npm run docs` for doc changes
-- Use `npx prek run --from-ref main --to-ref HEAD` if hooks were skipped or unavailable
+- Run targeted tests once per relevant change set, rerunning after later behavior-affecting edits or hook autofixes, and run `npm run docs` for doc changes
+- Count successful normal hooks as verification; if hooks were skipped or unavailable, refresh `origin/main` and use `npm run check:diff`
 - Follow PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
 - No secrets, API keys, or credentials committed
 - Limit open PRs to fewer than 10

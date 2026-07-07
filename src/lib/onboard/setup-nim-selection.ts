@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+
+export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+
 export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
 
 export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
@@ -11,9 +15,12 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   hermesAuthMethod: THermesAuthMethod | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning?: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
   skipHostInferenceSmoke?: boolean;
+  reuseGatewayCredentialWithoutLocalKey?: boolean;
+  nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
 };
 
 export type CloudFallbackConfig = {
@@ -38,10 +45,35 @@ export function applyCloudFallbackSelection(
   state.nimContainer = null;
   state.allowToolsIncompatible = false;
   state.skipHostInferenceSmoke = false;
+  state.reuseGatewayCredentialWithoutLocalKey = false;
 }
 
 export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {
   state.nimContainer = null;
+}
+
+type CompatibleEndpointKind = "openai" | "anthropic";
+
+export async function resolveCompatibleEndpointInput(args: {
+  kind: CompatibleEndpointKind;
+  envUrl: string | null | undefined;
+  recoveredEndpointUrl: string | null | undefined;
+  nonInteractive: boolean;
+  prompt: (message: string) => Promise<string>;
+}): Promise<string> {
+  const envUrl = (args.envUrl || "").trim();
+  const recoveredUrl = (args.recoveredEndpointUrl || "").trim();
+  const defaultEndpointUrl = envUrl || recoveredUrl;
+  if (args.nonInteractive) return defaultEndpointUrl;
+  return (
+    (await args.prompt(
+      defaultEndpointUrl
+        ? `  ${args.kind === "openai" ? "OpenAI" : "Anthropic"}-compatible base URL [${defaultEndpointUrl}]: `
+        : args.kind === "openai"
+          ? "  OpenAI-compatible base URL (e.g., https://openrouter.ai): "
+          : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
+    )) || defaultEndpointUrl
+  );
 }
 
 type ProviderChoice = {
@@ -115,6 +147,8 @@ type RemoteModelValidatorDeps = {
   shouldRequireResponsesToolCalling: (provider: string) => boolean;
   shouldSkipResponsesProbe: (provider: string) => boolean;
   getProbeAuthMode: (provider: string) => ProbeAuthMode;
+  configureCompatibleEndpointReasoning?: () => Promise<"true" | "false">;
+  log?: (message: string) => void;
 };
 
 type ValidateSelectedRemoteModelArgs = {
@@ -150,6 +184,16 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         `Missing model for ${remoteConfig.label}`,
       );
       if (selected.key === "custom") {
+        // Reasoning mode is OpenAI-compatible only; Anthropic/native providers use other formats.
+        const reasoning = await deps.configureCompatibleEndpointReasoning?.();
+        if (reasoning) {
+          state.compatibleEndpointReasoning = reasoning;
+        }
+        if (reasoning === "true") {
+          (deps.log ?? console.log)(
+            "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
+          );
+        }
         const validation = await deps.validateCustomOpenAiLikeSelection(
           remoteConfig.label,
           state.endpointUrl || deps.OPENAI_ENDPOINT_URL,

@@ -3,64 +3,85 @@
 
 # NemoClaw E2E CI
 
-## Hermetic Compatible Inference for Direct Bash Jobs
+Direct E2E coverage runs through Vitest.
 
-Direct bash E2E jobs that need onboarding inference, but do not need the live NVIDIA hosted service, should use `test/e2e/lib/hermetic-compatible-inference.sh` instead of `test/e2e/lib/ci-compatible-inference.sh` or workflow-injected hosted inference secrets.
+Interactive TUI targets require `expect`. The unified workflow installs it
+before those targets run; local runners must provide it themselves.
 
-This pattern supports issue #5747 conversions:
+- `.github/workflows/e2e.yaml` is the scheduled and manually
+  dispatchable live target workflow.
+- `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
+  runs focused E2E targets from source on a clean machine.
+- Platform workflows such as macOS, WSL, Ollama proxy, sandbox image, and
+  regression E2E call their target E2E tests directly.
 
-1. Source `lib/hermetic-compatible-inference.sh` from the test script.
-2. Call `nemoclaw_e2e_start_hermetic_compatible_inference` during prerequisites.
-3. Run the onboarding behavior under test normally; the helper exports a fake `custom` OpenAI-compatible endpoint and fake `COMPATIBLE_API_KEY`.
-4. Assert the endpoint was actually used with `nemoclaw_e2e_assert_hermetic_compatible_inference_used`.
-5. Stop it from the test cleanup trap with `nemoclaw_e2e_stop_hermetic_compatible_inference`.
-6. In `.github/workflows/nightly-e2e.yaml`, install/build only the CLI and OpenShell needed by the script; do not inject `NVIDIA_INFERENCE_API_KEY`, `COMPATIBLE_API_KEY`, `NEMOCLAW_E2E_USE_HOSTED_INFERENCE`, or hosted model/env knobs into the converted job.
-7. Add/update workflow contract coverage in `test/e2e-script-workflow.test.ts` so the job cannot regress back to hosted inference secrets.
+The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
+shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
+E2E tests when those boundaries are the behavior under test.
 
-Use the lower-level `openai-compatible-api-proof.sh` directly only when a test needs raw fake-server lifecycle control without NemoClaw onboarding environment exports.
+## Scheduled operations
 
-## Nightly Onboard Trace Timing
+The consolidated workflow keeps its operational reporting in the same job
+graph as the live targets:
 
-The GitHub Actions workflow `.github/workflows/nightly-e2e.yaml` enables NemoClaw tracing for the `cloud-onboard-e2e` lane.
-That lane is the current GitHub E2E trace-timing scope; other E2E lanes keep their existing failure-log artifacts until they opt into a trusted timing-summary artifact.
-That job sets:
+- GitHub Actions run history is the authoritative record for scheduled and
+  manual E2E results.
+- Automated issue routing and the workflow's `issues: write` capability are
+  retired. Any future issue escalation should use a separately reviewed
+  exceptional threshold, such as the same lane failing twice consecutively or
+  remaining broken for 24 hours, rather than posting on every failed schedule.
+- `scorecard` writes the scheduled/manual result summary, compares the trusted
+  cloud-onboard timing summary with the latest prior-release `e2e.yaml` run,
+  and posts to the daily or full-run Slack route.
+- Selective dispatches remain silent unless they run on `main` with
+  `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
+  runs never receive Slack webhook secrets.
 
-```bash
-NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces
-```
+Raw cloud-onboard traces stay under the runner temporary directory. Before
+artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
+allowlisted `cloud-onboard-trace-timing-summary.json` timing schema and deletes
+the raw directory. Aggregation ratchets require `report-to-pr` and `scorecard`
+to wait for the same execution-job set.
 
-The reusable E2E runner does not upload `/tmp/nemoclaw-traces/` directly.
-After the target-ref script finishes, trusted workflow code reads candidate trace JSON files from that target-controlled directory and writes a timing-only summary under `/tmp/nemoclaw-trace-summary/`.
-Only that summary directory is uploaded after every run as the `cloud-onboard-traces` artifact.
-Failure-only logs continue to use each job's normal `artifact_name` and `artifact_path`.
-The uploaded timing summary keeps only the trace schema version, trace id, total duration, known `nemoclaw.onboard.phase.*` durations, and a bounded slowest-span timing list.
-It omits raw attributes, events, prompts, environment values, file names, arbitrary files, and unrecognized trace fields.
-NemoClaw also sanitizes trace files as they are written, but that in-process redaction is defense in depth rather than the artifact upload trust boundary.
+Registry-driven Vitest targets also enable onboard trace collection. Each live
+matrix target writes raw traces under the runner temporary directory, sanitizes
+them before upload, deletes the raw trace directory, and uploads only
+`e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json` with the
+target artifact. These per-target summaries are artifact evidence only; the
+Slack/GitHub scorecard comparison remains tied to the dedicated `cloud-onboard`
+artifact so baseline aggregation stays stable.
+Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
+map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
-The nightly `scorecard` job reads the `cloud-onboard-traces` artifact, selects the trusted `nemoclaw.trace_timing.v1` summary JSON, and reports:
+## Onboard performance budget
 
-- total onboard trace duration from `summary.total_duration_ms`
-- top matching `nemoclaw.onboard.phase.*` duration changes in Slack
-- a full phase timing table in the GitHub job summary
-- deltas against the latest completed `nightly-e2e` run for the prior semver release tag's commit
+The scheduled/manual scorecard evaluates the trusted `cloud-onboard` timing
+summary against `ci/onboard-performance-budget.json`. The budget covers the
+warm-system path and is advisory: exceeding the total-duration cap or a
+regression threshold emits a GitHub Actions warning and adds details to the run
+summary, but does not fail the scorecard job.
 
-Phase deltas and the full summary table are reported only when the same trace span names exist in both runs.
-If phase names change between runs, the scorecard reports only the total onboard duration change.
-If the artifact, prior release tag, prior run, or matching trace data is unavailable, the scorecard keeps the nightly result best-effort and reports the missing comparison in the Slack summary instead of failing CI.
+The config separates the absolute total-duration budget from total and phase
+regression thresholds. Phase regressions are diagnostic and are only compared
+when the current run and prior-release baseline contain the same known onboard
+phase names. Cold image pulls, first-time model downloads, provider outages,
+and runner or network incidents can still affect the signal, so maintainers
+should inspect the timing table before acting on a warning.
 
-## Slack Scorecard Configuration
+For PRs, E2E Advisor deterministically recommends the `cloud-onboard` target
+when changes affect onboard behavior, trace timing, scorecard analysis, budget
+configuration, or the unified E2E workflow. The scorecard remains the source
+of truth for advisory warm-system trend evaluation.
 
-`nightly-e2e.yaml` posts the scorecard through repository Actions secrets:
+The `full-e2e` target enforces a separate hard acceptance contract for the
+first fresh onboarding path in that job. It measures from the onboard root span
+(a conservative anchor before wizard step `[1/8]`) through the first non-empty
+agent response, requires the local BuildKit prebuild for the NemoClaw-generated
+context without a gateway-builder fallback, limits the total to 180 seconds,
+and limits the longest onboard output gap to 60 seconds. A violation fails
+`full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
 
-- `SLACK_WEBHOOK_URL_DAILY` for scheduled full nightly runs
-- `SLACK_WEBHOOK_URL_FULLRUN` for manual full runs
-- `SLACK_WEBHOOK_URL_PREVIEW` for selective dispatches when `post_to_slack=true`
-
-Scheduled nightly runs and manual full runs post the scorecard automatically.
-Selective dispatches are silent by default and post only when `post_to_slack=true`, so developers can run targeted checks without notifying Slack.
-The trace timing section is part of the same Slack scorecard message, but it stays compact: total duration, the three largest matching phase changes, and a pointer to the GitHub run summary for the full table.
-The scorecard counts passed, failed, cancelled, and skipped jobs separately.
-Runs with cancellations but no failures stay in the warning state instead of being reported as all passed, including mixed pass and cancelled selective dispatches.
-Slack no longer includes the legacy `Trend` context; trace timing is the only duration comparison in the scorecard.
-Slack does not post raw trace JSON, prompts, credentials, or environment values.
-The uploaded artifact is the trusted timing-only summary, not the raw target-ref trace directory.
+These assertions run inside the existing `full-e2e` lifecycle instead of a
+second standalone onboarding run. This keeps the measurement on the job's first
+sandbox build, avoids warming Docker layers before a duplicate performance
+test, and makes `full-e2e` the source of truth for the hard cold-path contract.

@@ -32,6 +32,11 @@ vi.mock("../../../agent/defs", () => ({
   listAgents: listAgentsMock,
   loadAgent: loadAgentMock,
 }));
+// Default to no recent shields auto-restore so tests that don't inject
+// getRecentShieldsAutoRestore don't read ~/.nemoclaw/state/shields-audit.jsonl.
+vi.mock("../../../shields/audit", () => ({
+  readRecentShieldsAutoRestore: vi.fn(() => ({ kind: "none" })),
+}));
 
 import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
 
@@ -147,22 +152,23 @@ describe("runAgentPassthrough", () => {
     );
   });
 
-  it("keeps --json after an unknown future value flag on the normal passthrough path", async () => {
+  it("keeps --json-something --json on the normal passthrough path", async () => {
     const execJson = vi.fn(((): never => {
       throw new Error("__unexpected-json");
     }) as NonNullable<AgentPassthroughDeps["execJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
+    // The first unknown flag selects conservative passthrough before the later --json token.
     await runAgentPassthrough(
       "alpha",
-      { extraArgs: ["--agent", "work", "--some-future-value-flag", "--json"] },
+      { extraArgs: ["--agent", "work", "--json-something", "--json"] },
       { execJson },
     );
 
     expect(execJson).not.toHaveBeenCalled();
     expect(execMock).toHaveBeenCalledWith(
       "alpha",
-      ["openclaw", "agent", "--agent", "work", "--some-future-value-flag", "--json"],
+      ["openclaw", "agent", "--agent", "work", "--json-something", "--json"],
       { tty: false },
     );
   });
@@ -402,7 +408,7 @@ describe("runAgentPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(2);
   });
 
-  it("prints recovery hints with exit 1 before selector rejection when the sandbox phase is non-Ready (covers the literal #5655 stopped-sandbox repro `agent -m ping`)", async () => {
+  it("prints recovery hints with exit 1 before selector rejection for the literal stopped-sandbox repro `agent -m ping` (#5655)", async () => {
     ensureLiveMock.mockResolvedValueOnce({ output: "Phase: Error" });
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     const { writes, exit, proc } = makeProcMock();

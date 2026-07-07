@@ -14,7 +14,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-test-"));
 process.env.HOME = tmpDir;
 
 const require = createRequire(import.meta.url);
-const registry = require("../dist/lib/state/registry");
+const registry = require("../src/lib/state/registry");
 
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
 
@@ -69,16 +69,62 @@ describe("registry", () => {
     expect(registry.getDefault()).toBe("alpha");
   });
 
-  it("stores provided model/provider at registration time", () => {
+  it("stores durable inference metadata at registration time", () => {
     registry.registerSandbox({
       name: "alpha",
       gpuEnabled: false,
       model: "nvidia/nemotron-3-super-120b-a12b",
       provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      nimContainer: null,
     });
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
     expect(data.sandboxes.alpha.model).toBe("nvidia/nemotron-3-super-120b-a12b");
     expect(data.sandboxes.alpha.provider).toBe("nvidia-prod");
+    expect(data.sandboxes.alpha.endpointUrl).toBe("https://integrate.api.nvidia.com/v1");
+    expect(data.sandboxes.alpha.credentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
+    expect(data.sandboxes.alpha.preferredInferenceApi).toBe("openai-completions");
+    expect(data.sandboxes.alpha.nimContainer).toBeNull();
+  });
+
+  it("stores rebuild fidelity metadata at registration time", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      webSearchEnabled: true,
+      toolDisclosure: "direct",
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "oauth",
+    });
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      webSearchEnabled: true,
+      toolDisclosure: "direct",
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "oauth",
+    });
+  });
+
+  it("preserves missing tool-disclosure state on reconstructed legacy rows", () => {
+    registry.registerSandbox({ name: "legacy" });
+
+    const entry = registry.getSandbox("legacy");
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(entry.toolDisclosure).toBeUndefined();
+    expect(data.sandboxes.legacy.toolDisclosure).toBeUndefined();
+  });
+
+  it("stores normalized compatible-endpoint reasoning state", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      provider: "compatible-endpoint",
+      model: "reasoning-model",
+      endpointUrl: "https://example.test/v1",
+      compatibleEndpointReasoning: "true",
+    });
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.alpha.compatibleEndpointReasoning).toBe("true");
+    expect(registry.getSandbox("alpha").compatibleEndpointReasoning).toBe("true");
   });
 
   it("persists distinct gateway bindings for two sandboxes on different ports (#4422)", () => {
@@ -121,6 +167,86 @@ describe("registry", () => {
     expect(data.sandboxes.alpha.livePhase).toBeUndefined();
   });
 
+  it("persists MCP server state without local proxy secrets", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      mcp: {
+        bridges: {
+          github: {
+            server: "github",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github",
+            providerId: "11111111-2222-4333-8444-555555555555",
+            policyName: "mcp-bridge-github",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    const entry = raw.sandboxes.alpha.mcp.bridges.github;
+
+    expect(entry).toMatchObject({
+      url: "https://api.githubcopilot.com/mcp/",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+    });
+    expect(entry.token).toBeUndefined();
+    expect(entry.command).toBeUndefined();
+    expect(entry.port).toBeUndefined();
+    expect(raw.sandboxes.alpha.mcp.managedServerNames).toEqual(["github"]);
+  });
+
+  it("retains sanitized managed MCP names after the active bridge map is emptied", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "hermes",
+      mcp: {
+        bridges: {},
+        managedServerNames: ["retired", "../invalid", "retired", "still_active"],
+      },
+    });
+
+    const stored = registry.getSandbox("alpha").mcp;
+    expect(stored).toEqual({
+      bridges: {},
+      managedServerNames: ["retired", "still_active"],
+    });
+    expect(JSON.parse(fs.readFileSync(regFile, "utf-8")).sandboxes.alpha.mcp).toEqual(stored);
+  });
+
+  it("normalizes MCP bridge maps by the recovered server name", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      mcp: {
+        bridges: {
+          stale_key: {
+            server: "github",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github",
+            policyName: "mcp-bridge-github",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(raw.sandboxes.alpha.mcp.bridges.github.server).toBe("github");
+    expect(raw.sandboxes.alpha.mcp.bridges.stale_key).toBeUndefined();
+  });
+
   it("normalizes configured inference fields into a discriminated view", () => {
     const configured = { name: "alpha", provider: "nvidia-prod", model: "nvidia/test" };
     const missingProvider = { name: "beta", provider: null, model: "nvidia/test" };
@@ -137,76 +263,6 @@ describe("registry", () => {
     expect(registry.getSandboxEntryInference(missingModel)).toEqual({ kind: "unconfigured" });
     expect(registry.getSandboxEntryInference(blankProvider)).toEqual({ kind: "unconfigured" });
     expect(registry.getSandboxEntryInference(blankModel)).toEqual({ kind: "unconfigured" });
-  });
-
-  it("normalizes gateway binding fields into a discriminated view", () => {
-    expect(
-      registry.getSandboxEntryGatewayBinding({
-        name: "alpha",
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-      }),
-    ).toEqual({ kind: "registered", gatewayName: "nemoclaw", gatewayPort: 8080 });
-    expect(
-      registry.getSandboxEntryGatewayBinding({ name: "missing-name", gatewayPort: 8080 }),
-    ).toEqual({ kind: "missing" });
-    expect(
-      registry.getSandboxEntryGatewayBinding({ name: "missing-port", gatewayName: "nemoclaw" }),
-    ).toEqual({ kind: "missing" });
-    expect(
-      registry.getSandboxEntryGatewayBinding({
-        name: "invalid-port",
-        gatewayName: "nemoclaw",
-        gatewayPort: 0,
-      }),
-    ).toEqual({ kind: "missing" });
-    expect(
-      registry.getSandboxEntryGatewayBinding({
-        name: "too-high-port",
-        gatewayName: "nemoclaw",
-        gatewayPort: 65536,
-      }),
-    ).toEqual({ kind: "missing" });
-    expect(
-      registry.getSandboxEntryGatewayBinding({
-        name: "blank-gateway",
-        gatewayName: "",
-        gatewayPort: 8080,
-      }),
-    ).toEqual({ kind: "missing" });
-  });
-
-  it("normalizes sandbox entries without mutating the raw registry entry", () => {
-    const raw = {
-      name: "alpha",
-      provider: "nvidia-prod",
-      model: "nvidia/test",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-    };
-
-    const normalized = registry.normalizeSandboxEntryView(raw);
-
-    expect(normalized).toEqual({
-      name: "alpha",
-      raw,
-      inference: { kind: "configured", provider: "nvidia-prod", model: "nvidia/test" },
-      gateway: { kind: "registered", gatewayName: "nemoclaw", gatewayPort: 8080 },
-    });
-    expect(normalized.raw).toBe(raw);
-  });
-
-  it("normalizes invalid typed fields to missing views", () => {
-    const normalized = registry.normalizeSandboxEntryView({
-      name: "invalid",
-      provider: "",
-      model: "nvidia/test",
-      gatewayName: "nemoclaw",
-      gatewayPort: 65536,
-    });
-
-    expect(normalized.inference).toEqual({ kind: "unconfigured" });
-    expect(normalized.gateway).toEqual({ kind: "missing" });
   });
 
   it("first registered becomes default", () => {
@@ -232,6 +288,124 @@ describe("registry", () => {
     const sb = registry.getSandbox("up");
     expect(sb.policies).toEqual(["pypi", "npm"]);
     expect(sb.model).toBe("new-model");
+  });
+
+  it("persists MCP env names without raw host env values", () => {
+    registry.registerSandbox({ name: "mcp-sb", agent: "openclaw" });
+    registry.updateSandbox("mcp-sb", {
+      mcp: {
+        bridges: {
+          github: {
+            server: "github",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "mcp-sb-mcp-github",
+            providerId: "11111111-2222-4333-8444-555555555555",
+            policyName: "mcp-bridge-github",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    const raw = fs.readFileSync(regFile, "utf-8");
+    const data = JSON.parse(raw);
+    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.env).toEqual(["GITHUB_TOKEN"]);
+    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.providerName).toBe("mcp-sb-mcp-github");
+    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.providerId).toBe(
+      "11111111-2222-4333-8444-555555555555",
+    );
+    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.token).toBeUndefined();
+    expect(raw).not.toContain("ghp_");
+    expect(raw).not.toContain("secret-value");
+  });
+
+  it("drops invalid persisted MCP bridge entries during registry serialization", () => {
+    registry.registerSandbox({ name: "mcp-safe", agent: "openclaw" });
+    registry.updateSandbox("mcp-safe", {
+      mcp: {
+        bridges: {
+          ok: {
+            server: "ok",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/#ignored",
+            env: ["GITHUB_TOKEN", "GITHUB_TOKEN"],
+            providerName: "mcp-safe-mcp-ok",
+            policyName: "mcp-bridge-ok",
+            addedAt: new Date(0).toISOString(),
+          },
+          credentialUrl: {
+            server: "credentialUrl",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://user:secret@example.test/mcp",
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-credential",
+            policyName: "mcp-bridge-credential",
+            addedAt: new Date(0).toISOString(),
+          },
+          privateIp: {
+            server: "privateIp",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "http://127.0.0.1:31337/mcp",
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-private",
+            policyName: "mcp-bridge-private",
+            addedAt: new Date(0).toISOString(),
+          },
+          invalidEnv: {
+            server: "invalidEnv",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["TOKEN=secret"],
+            providerName: "mcp-safe-mcp-invalid-env",
+            policyName: "mcp-bridge-invalid-env",
+            addedAt: new Date(0).toISOString(),
+          },
+          unknownAdapter: {
+            server: "unknownAdapter",
+            agent: "openclaw",
+            adapter: "unknown",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-unknown",
+            policyName: "mcp-bridge-unknown",
+            addedAt: new Date(0).toISOString(),
+          },
+          invalidProviderId: {
+            server: "invalidProviderId",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-invalid-provider-id",
+            providerId: "invalid provider id",
+            policyName: "mcp-bridge-invalid-provider-id",
+            addedAt: new Date(0).toISOString(),
+          },
+          oversizedUrl: {
+            server: "oversizedUrl",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: `https://api.githubcopilot.com/${"a".repeat(2_048)}`,
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-oversized",
+            policyName: "mcp-bridge-oversized",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    const bridges = registry.getSandbox("mcp-safe").mcp.bridges;
+    expect(Object.keys(bridges)).toEqual(["ok"]);
+    expect(bridges.ok.url).toBe("https://api.githubcopilot.com/mcp/");
+    expect(bridges.ok.env).toEqual(["GITHUB_TOKEN"]);
   });
 
   it("updateSandbox returns false for nonexistent sandbox", () => {
@@ -291,6 +465,207 @@ describe("registry", () => {
     expect(registry.removeSandbox("nope")).toBe(false);
   });
 
+  it("atomically returns the exact registry row it removes", () => {
+    registry.registerSandbox({ name: "receipt", model: "captured", imageTag: "old-image" });
+    const receipt = registry.removeSandboxWithReceipt("receipt");
+    expect(receipt?.entry).toMatchObject({
+      name: "receipt",
+      model: "captured",
+      imageTag: "old-image",
+    });
+    expect(receipt).toMatchObject({
+      wasDefault: true,
+      fallbackDefault: null,
+      postRemovalDefaultSelectionRevision: 2,
+    });
+    expect(registry.getSandbox("receipt")).toBeNull();
+    expect(registry.removeSandboxWithReceipt("receipt")).toBeNull();
+  });
+
+  it("restores a removed row after an intervening registry registration", () => {
+    registry.registerSandbox({ name: "alpha", model: "original", imageTag: "old-image" });
+    const receipt = registry.removeSandboxWithReceipt("alpha");
+    expect(receipt).not.toBeNull();
+
+    registry.registerSandbox({ name: "concurrent", model: "new" });
+    expect(registry.setDefault("concurrent")).toBe(true);
+
+    expect(registry.restoreSandboxEntryIfMissing(receipt!)).toBe(true);
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      name: "alpha",
+      model: "original",
+      imageTag: "old-image",
+    });
+    expect(registry.getSandbox("concurrent")).toMatchObject({
+      name: "concurrent",
+      model: "new",
+    });
+    expect(registry.getDefault()).toBe("concurrent");
+  });
+
+  it("serializes a spawned registration that starts during an atomic restore", () => {
+    const { spawnSync } = require("child_process");
+    registry.registerSandbox({ name: "alpha", model: "original", imageTag: "old-image" });
+    registry.registerSandbox({ name: "beta", model: "existing" });
+    registry.setDefault("alpha");
+    const receipt = registry.removeSandboxWithReceipt("alpha");
+    expect(receipt).not.toBeNull();
+    expect(registry.getDefault()).toBe("beta");
+
+    const registryPath = path.resolve(
+      path.join(import.meta.dirname, "..", "src", "lib", "state", "registry.ts"),
+    );
+    const homeDir = path.dirname(path.dirname(regFile));
+    const coordinationDir = fs.mkdtempSync(path.join(os.tmpdir(), "registry-restore-race-"));
+    const restoreEntered = path.join(coordinationDir, "restore-entered");
+    const writerBlocked = path.join(coordinationDir, "writer-blocked");
+    const releaseRestore = path.join(coordinationDir, "release-restore");
+    const pauseSource =
+      "const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);";
+    const restoreScript = `
+      process.env.HOME = ${JSON.stringify(homeDir)};
+      const fs = require("fs");
+      ${pauseSource}
+      const registry = require(${JSON.stringify(registryPath)});
+      const realReadFile = fs.readFileSync;
+      let pausedRegistryLoad = false;
+      fs.readFileSync = (target, options) => {
+        if (!pausedRegistryLoad && String(target) === registry.REGISTRY_FILE) {
+          pausedRegistryLoad = true;
+          fs.writeFileSync(${JSON.stringify(restoreEntered)}, "ready");
+          const deadline = Date.now() + 10_000;
+          while (!fs.existsSync(${JSON.stringify(releaseRestore)})) {
+            if (Date.now() >= deadline) throw new Error("timed out waiting to release restore");
+            pause(10);
+          }
+        }
+        return realReadFile(target, options);
+      };
+      const restored = registry.restoreSandboxEntryIfMissing(JSON.parse(process.argv[1]));
+      process.exit(restored ? 0 : 2);
+    `;
+    const writerScript = `
+      process.env.HOME = ${JSON.stringify(homeDir)};
+      const fs = require("fs");
+      const registry = require(${JSON.stringify(registryPath)});
+      const realMkdir = fs.mkdirSync;
+      fs.mkdirSync = (target, options) => {
+        try {
+          return realMkdir(target, options);
+        } catch (error) {
+          if (String(target) === registry.LOCK_DIR && error?.code === "EEXIST") {
+            fs.writeFileSync(
+              ${JSON.stringify(writerBlocked)},
+              fs.readFileSync(registry.LOCK_OWNER, "utf-8").trim(),
+            );
+          }
+          throw error;
+        }
+      };
+      registry.registerSandbox({ name: "concurrent", model: "new" });
+    `;
+    const orchestrator = `
+      const { spawn } = require("child_process");
+      const fs = require("fs");
+      ${pauseSource}
+      const waitForFile = (file) => {
+        const deadline = Date.now() + 10_000;
+        while (!fs.existsSync(file)) {
+          if (Date.now() >= deadline) throw new Error("timed out waiting for " + file);
+          pause(10);
+        }
+      };
+      const waitForExit = (child) => new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", (code, signal) => resolve({ code, signal }));
+      });
+      (async () => {
+        const restore = spawn(process.execPath, ["-e", ${JSON.stringify(restoreScript)}, ${JSON.stringify(JSON.stringify(receipt))}], { stdio: "inherit" });
+        const restoreExit = waitForExit(restore);
+        waitForFile(${JSON.stringify(restoreEntered)});
+        const writer = spawn(process.execPath, ["-e", ${JSON.stringify(writerScript)}], { stdio: "inherit" });
+        const writerExit = waitForExit(writer);
+        waitForFile(${JSON.stringify(writerBlocked)});
+        const lockOwnerPid = Number(fs.readFileSync(${JSON.stringify(writerBlocked)}, "utf-8"));
+        if (lockOwnerPid !== restore.pid) {
+          throw new Error(
+            "writer blocked on lock owner " + lockOwnerPid + ", expected restore pid " + restore.pid,
+          );
+        }
+        fs.writeFileSync(${JSON.stringify(releaseRestore)}, "go");
+        const [restoreResult, writerResult] = await Promise.all([
+          restoreExit,
+          writerExit,
+        ]);
+        if (restoreResult.code !== 0 || writerResult.code !== 0) {
+          console.error(JSON.stringify({ restoreResult, writerResult }));
+          process.exit(1);
+        }
+      })().catch((error) => {
+        console.error(error);
+        process.exit(1);
+      });
+    `;
+
+    try {
+      const result = spawnSync(process.execPath, ["-e", orchestrator], {
+        encoding: "utf-8",
+        timeout: 30_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(registry.getSandbox("alpha")).toMatchObject({ model: "original" });
+      expect(registry.getSandbox("beta")).toMatchObject({ model: "existing" });
+      expect(registry.getSandbox("concurrent")).toMatchObject({ model: "new" });
+      expect(registry.getDefault()).toBe("alpha");
+      const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+      expect(Object.keys(persisted.sandboxes).sort()).toEqual(["alpha", "beta", "concurrent"]);
+      expect(persisted.defaultSandbox).toBe("alpha");
+      expect(
+        fs.readdirSync(path.dirname(regFile)).filter((name) => name.includes(".tmp.")),
+      ).toEqual([]);
+    } finally {
+      fs.rmSync(coordinationDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a rebuild entry only while its name is unclaimed", () => {
+    registry.registerSandbox({ name: "alpha", model: "old", imageTag: "old-image" });
+    registry.registerSandbox({ name: "beta" });
+    registry.registerSandbox({ name: "gamma" });
+    registry.setDefault("alpha");
+    const original = registry.getSandbox("alpha");
+
+    const firstReceipt = registry.removeSandboxWithReceipt("alpha");
+    expect(firstReceipt).not.toBeNull();
+    expect(registry.getDefault()).toBe("beta");
+    expect(
+      registry.restoreSandboxEntryIfMissing({
+        ...firstReceipt!,
+        entry: { ...original, imageTag: null },
+      }),
+    ).toBe(true);
+    expect(registry.getDefault()).toBe("alpha");
+    expect(registry.getSandbox("alpha").imageTag).toBe(null);
+
+    registry.updateSandbox("alpha", {
+      model: "replacement",
+      imageTag: "replacement-image",
+    });
+    expect(registry.restoreSandboxEntryIfMissing(firstReceipt!)).toBe(false);
+    expect(registry.getSandbox("alpha").model).toBe("replacement");
+    expect(registry.getSandbox("alpha").imageTag).toBe("replacement-image");
+
+    const secondReceipt = registry.removeSandboxWithReceipt("alpha");
+    expect(secondReceipt).not.toBeNull();
+    registry.setDefault("gamma");
+    expect(registry.restoreSandboxEntryIfMissing(secondReceipt!)).toBe(true);
+    expect(registry.getDefault()).toBe("gamma");
+
+    registry.clearAll();
+    expect(registry.restoreSandboxEntryIfMissing(secondReceipt!)).toBe(true);
+    expect(registry.getDefault()).toBe("alpha");
+  });
+
   it("getSandbox returns null for nonexistent", () => {
     expect(registry.getSandbox("nope")).toBe(null);
   });
@@ -319,6 +694,7 @@ describe("registry", () => {
     expect(JSON.parse(fs.readFileSync(regFile, "utf-8"))).toEqual({
       sandboxes: {},
       defaultSandbox: null,
+      defaultSelectionRevision: 3,
     });
   });
 
@@ -569,6 +945,33 @@ describe("registry", () => {
     registry.registerSandbox({ name: "cp5" });
     expect(registry.getCustomPolicies("cp5")).toEqual([]);
   });
+
+  describe("extra providers", () => {
+    it("starts with an empty extra-provider list", () => {
+      expect(registry.listExtraProviders()).toEqual([]);
+    });
+
+    it("addExtraProvider persists a sorted, deduplicated list", () => {
+      expect(registry.addExtraProvider("tavily-search")).toBe(true);
+      expect(registry.addExtraProvider("custom-provider")).toBe(true);
+      expect(registry.addExtraProvider("tavily-search")).toBe(false);
+      expect(registry.listExtraProviders()).toEqual(["custom-provider", "tavily-search"]);
+    });
+
+    it("removeExtraProvider clears the entry and drops the field when empty", () => {
+      registry.addExtraProvider("tavily-search");
+      expect(registry.removeExtraProvider("tavily-search")).toBe(true);
+      expect(registry.listExtraProviders()).toEqual([]);
+      const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+      expect("extraProviders" in raw).toBe(false);
+      expect(registry.removeExtraProvider("tavily-search")).toBe(false);
+    });
+
+    it("survives a registry round-trip through disk", () => {
+      registry.addExtraProvider("tavily-search");
+      expect(registry.listExtraProviders()).toEqual(["tavily-search"]);
+    });
+  });
 });
 
 describe("atomic writes", () => {
@@ -707,7 +1110,7 @@ describe("advisory file locking", () => {
   it("concurrent writers do not corrupt the registry", () => {
     const { spawnSync } = require("child_process");
     const registryPath = path.resolve(
-      path.join(import.meta.dirname, "..", "dist", "lib", "state", "registry.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "state", "registry.ts"),
     );
     const homeDir = path.dirname(path.dirname(regFile));
     // Script that spawns 4 workers in parallel, each writing 5 sandboxes

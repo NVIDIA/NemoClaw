@@ -12,15 +12,15 @@
  * silently let the in-sandbox POLICY.md drift.
  */
 
+import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as fs from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const D = (p: string) => requireDist(`../../${p}`);
 
 type PresetInfo = { name: string };
 
@@ -96,6 +96,10 @@ beforeEach(() => {
   vi.spyOn(policies, "loadPreset").mockImplementation((name: unknown) => {
     return `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`;
   });
+  vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
+    (_sandboxName: unknown, name: unknown) =>
+      `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`,
+  );
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
   applyPresetContentMock = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);

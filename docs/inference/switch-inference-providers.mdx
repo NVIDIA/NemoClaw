@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Switch Inference Models at Runtime"
 sidebar-title: "Switch Inference Providers"
-description: "Change the active inference model without restarting the sandbox."
-description-agent: "Changes the active inference model without restarting the sandbox. Use when switching inference providers, changing the model runtime, or reconfiguring inference routing."
+description: "Change the active inference model for a running sandbox without restarting it."
+description-agent: "Changes the active inference model for a running sandbox without restarting it. Use when switching inference providers, changing the model runtime, or reconfiguring inference routing."
 keywords: ["switch nemoclaw inference model", "change inference runtime"]
 content:
   type: "how_to"
@@ -18,8 +18,25 @@ You do not need to restart the sandbox.
 
 ## Prerequisites
 
-- A running NemoClaw sandbox.
-- The OpenShell CLI on your `PATH`, which NemoClaw uses under the hood.
+- A running NemoClaw sandbox created or resumed with `$$nemoclaw onboard`.
+- A selected default sandbox, or pass `--sandbox <name>` to each `$$nemoclaw inference set` command when more than one sandbox is registered.
+- The OpenShell CLI on your `PATH`, which NemoClaw uses internally.
+
+<Note>
+If you run `$$nemoclaw inference set` before NemoClaw has a selected sandbox, the CLI exits with `No sandbox selected`.
+Run `$$nemoclaw onboard` first, then retry the switch.
+</Note>
+
+## Find the Provider Name
+
+The `--provider` value must match a provider already configured on the sandbox.
+If you are not sure of the exact name, list the configured providers first:
+
+```bash
+$$nemoclaw credentials list
+```
+
+Use the provider ID shown there in the `inference set` commands below.
 
 ## Switch to a Different Model
 
@@ -32,8 +49,7 @@ For OpenClaw, it updates `agents.defaults.model.primary` and the matching provid
 Use `$$nemoclaw inference set` with the provider and model that match the upstream you want to use.
 The command updates the OpenShell inference route and synchronizes the running agent config.
 For Hermes, it updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) without rebuilding or restarting Hermes.
-Pass `--sandbox <name>` when you do not want to use the default registered sandbox.
-Under `$$nemoclaw`, pass `--sandbox <name>` when you have registered more than one Hermes sandbox.
+Pass `--sandbox <name>` when you do not want to use the default registered sandbox or when you have registered more than one Hermes sandbox.
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
@@ -120,8 +136,7 @@ NEMOCLAW_PREFERRED_API=openai-responses $$nemoclaw onboard
 <Note>
 `NEMOCLAW_INFERENCE_API_OVERRIDE` patches the config at container startup but does not update the Dockerfile ARG baked into the image.
 If you recreate the sandbox without the override environment variable, the image reverts to the original API path.
-A fresh `$$nemoclaw onboard` is the reliable fix because it updates both the
-session and the baked image.
+A fresh `$$nemoclaw onboard` is the reliable fix because it updates both the session and the baked image.
 </Note>
 
 ## Cross-Provider Switching
@@ -148,6 +163,11 @@ $$nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6 --n
 ```
 
 </AgentOnly>
+
+Before you switch provider families, the target provider must already be registered through onboarding.
+If OpenShell cannot find the requested provider, NemoClaw leaves the route and sandbox state unchanged.
+The error includes a redacted OpenShell detail, lists the registered providers when available, and tells you to run onboarding.
+Run `$$nemoclaw onboard` to register the provider, then retry `$$nemoclaw inference set`.
 
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 
@@ -275,7 +295,7 @@ The status output includes the active provider, model, and endpoint with the res
 
 - The host keeps provider credentials.
 - The sandbox continues to use `inference.local`.
-- `$$nemoclaw inference set` patches the selected running OpenClaw or Hermes sandbox config and recomputes its config hash.
+- `$$nemoclaw inference set` patches the selected running OpenClaw sandbox config and recomputes its config hash.
 - Use `$$nemoclaw onboard --resume --recreate-sandbox` for build-time settings such as context window, max tokens, reasoning mode, heartbeat cadence, or image contents.
 - Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 

@@ -29,7 +29,7 @@ describe("onboard build recreate credential reuse (#5441)", () => {
       const home = path.join(tmpDir, "home");
       const scriptPath = path.join(tmpDir, "build-recreate.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
-      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
+      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(home, { recursive: true });
@@ -100,9 +100,10 @@ const { setupNim, setupInference } = require(${onboardPath});
     {
       allowToolsIncompatible: result.allowToolsIncompatible,
       skipHostInferenceSmoke: result.skipHostInferenceSmoke,
+      reuseGatewayCredentialWithoutLocalKey: result.reuseGatewayCredentialWithoutLocalKey,
     },
   );
-  console.log(JSON.stringify({ outcome: "resolved", provider: result.provider, skipHostInferenceSmoke: result.skipHostInferenceSmoke }));
+  console.log(JSON.stringify({ outcome: "resolved", provider: result.provider, skipHostInferenceSmoke: result.skipHostInferenceSmoke, reuseGatewayCredentialWithoutLocalKey: result.reuseGatewayCredentialWithoutLocalKey }));
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : error);
   console.log(JSON.stringify({ outcome: "rejected" }));
@@ -159,6 +160,11 @@ const { setupNim, setupInference } = require(${onboardPath});
           /"skipHostInferenceSmoke":true/,
           `setupNim did not mark the recovered gateway credential for host-smoke bypass; output:\n${output}`,
         );
+        assert.match(
+          output,
+          /"reuseGatewayCredentialWithoutLocalKey":true/,
+          `setupNim did not carry explicit gateway-credential reuse authorization; output:\n${output}`,
+        );
 
         const curlLog = fs.existsSync(curlLogPath) ? fs.readFileSync(curlLogPath, "utf8") : "";
         assert.ok(
@@ -180,7 +186,7 @@ const { setupNim, setupInference } = require(${onboardPath});
       const home = path.join(tmpDir, "home");
       const scriptPath = path.join(tmpDir, "build-explicit.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
-      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
+      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(home, { recursive: true });

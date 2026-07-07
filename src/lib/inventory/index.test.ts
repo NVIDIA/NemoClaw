@@ -135,7 +135,7 @@ describe("inventory commands", () => {
     expect(getLiveInference).not.toHaveBeenCalled();
   });
 
-  it("shows agent as 'unknown' for a gateway-recovered sandbox (#5714), not the OpenClaw default", async () => {
+  it("shows agent as 'unknown' instead of the OpenClaw default for a gateway-recovered sandbox (#5714)", async () => {
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({
         sandboxes: [
@@ -269,7 +269,7 @@ describe("inventory commands", () => {
     );
   });
 
-  it("#2753: suppresses last-onboarded hint when sandbox step never completed", async () => {
+  it("suppresses the last-onboarded hint when the sandbox step never completed (#2753)", async () => {
     // The session retains a sandbox name from an interrupted onboard
     // (pre-fix sessions on disk, or any in-progress write between steps).
     // Surfacing it as the "last onboarded sandbox" would resurrect the
@@ -752,6 +752,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
+    expect(lines).toContain("  Global status (registered sandboxes and host services):");
     expect(lines).toContain("  Sandboxes:");
     // Default sandbox shows the live gateway model (#2369), annotated with
     // the onboarded model when they differ.
@@ -763,7 +764,7 @@ describe("inventory commands", () => {
     expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 
-  describe("#1077 — env-resolved default sandbox", () => {
+  describe("env-resolved default sandbox (#1077)", () => {
     const savedSandboxName = process.env.SANDBOX_NAME;
     const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
     const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;

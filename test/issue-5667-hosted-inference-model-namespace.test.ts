@@ -18,11 +18,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const providers = require("../dist/lib/onboard/providers.js") as {
+const providers = require("../src/lib/onboard/providers.js") as {
   HOSTED_INFERENCE_MODEL: string;
   stageHostedInferenceSourceSecretEnv: () => boolean;
 };
-const { patchStagedDockerfile } = require("../dist/lib/onboard/dockerfile-patch.js") as {
+const { patchStagedDockerfile } = require("../src/lib/onboard/dockerfile-patch.js") as {
   patchStagedDockerfile: (
     dockerfilePath: string,
     model: string,
@@ -31,7 +31,7 @@ const { patchStagedDockerfile } = require("../dist/lib/onboard/dockerfile-patch.
   ) => void;
 };
 const { collectSandboxStatusSnapshot } =
-  require("../dist/lib/actions/sandbox/status-snapshot.js") as {
+  require("../src/lib/actions/sandbox/status-snapshot.js") as {
     collectSandboxStatusSnapshot: (
       sandboxName: string,
       opts: {
@@ -86,12 +86,23 @@ printf '200'
 
 function writeDcodeWrapperFixture(tmpDir: string, home: string): string {
   const wrapperPath = path.join(tmpDir, "dcode-wrapper.sh");
+  const managedMcpValidator = [
+    'managed_mcp_config="$(',
+    "  /opt/venv/bin/python3 -I -c \\",
+    "    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or \"\")'",
+    ')"',
+  ].join("\n");
   const wrapper = fs
     .readFileSync(
       path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "dcode-wrapper.sh"),
       "utf8",
     )
-    .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`);
+    .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`)
+    .replace(managedMcpValidator, 'managed_mcp_config=""')
+    .replace(
+      "exec /opt/venv/bin/python3 -I -m deepagents_code",
+      `exec env PYTHONPATH=${JSON.stringify(path.join(tmpDir, "python"))} python3 -m deepagents_code`,
+    );
   fs.writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
   return wrapperPath;
 }
@@ -113,7 +124,7 @@ function writeFakeDeepAgentsCodeModule(tmpDir: string): string {
       'match = re.search(r\'^default = "openai:([^"]+)"\', text, re.MULTILINE)',
       "if not match:",
       '    raise SystemExit("missing default model")',
-      'print(f"App: v0.1.12 | Agent: agent (default) | Model: {match.group(1)}")',
+      'print(f"App: v0.1.30 | Agent: agent (default) | Model: {match.group(1)}")',
       'print("ARGS:" + " ".join(sys.argv[1:]))',
     ].join("\n"),
     "utf8",
@@ -121,7 +132,7 @@ function writeFakeDeepAgentsCodeModule(tmpDir: string): string {
   return pythonPath;
 }
 
-describe("issue #5667: hosted inference default model namespace", () => {
+describe("hosted inference default model namespace (#5667)", () => {
   // Snapshot the whole environment and restore it wholesale so the teardown
   // stays linear (no per-key conditional): clear every key, then repopulate
   // from the snapshot. Keys added during a test are dropped; original values
@@ -182,8 +193,8 @@ describe("issue #5667: hosted inference default model namespace", () => {
     const fakeBin = path.join(tmpDir, "bin");
     const home = path.join(tmpDir, "home");
     const scriptPath = path.join(tmpDir, "setup-nim.cjs");
-    const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "runner.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.mkdirSync(home, { recursive: true });
@@ -336,7 +347,7 @@ const { setupNim } = require(${onboardPath});
       const dcodeOutput = `${dcodeResult.stdout}\n${dcodeResult.stderr}`;
       assert.equal(dcodeResult.status, 0, dcodeOutput);
       expect(dcodeOutput).toContain(
-        "App: v0.1.12 | Agent: agent (default) | Model: nvidia/nvidia/nemotron-3-ultra",
+        "App: v0.1.30 | Agent: agent (default) | Model: nvidia/nvidia/nemotron-3-ultra",
       );
       expect(dcodeOutput).toContain("ARGS:--sandbox none --no-mcp -n ping");
       expect(dcodeOutput).not.toContain("nvidia/nvidia/nvidia/");

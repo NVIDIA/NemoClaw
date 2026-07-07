@@ -7,19 +7,16 @@
 // Without this gate, a destructive sandbox rebuild can run and fail late at
 // Dockerfile patching.
 //
-// Why dist + vi.spyOn (matches policy-channel-conflict.test.ts): the source
-// policy-channel.ts loads several deps via runtime CommonJS `require()`. In
-// this repo's vitest setup, `vi.mock` only intercepts ESM `import`, not plain
-// `require()`. We `require()` the COMPILED module + its real compiled
-// dependency modules from dist/ (one shared require cache) and `vi.spyOn`
-// the dependency exports. Run `npm run build:cli` first.
+// policy-channel.ts loads several dependencies through CommonJS `require()`.
+// Load the source module and its dependencies through the shared source hook
+// so `vi.spyOn` observes one require cache without depending on a CLI build.
 
 import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const requireSource = createRequire(import.meta.url);
+const D = (p: string) => requireSource(`../../${p}`);
 
 const registry = D("state/registry.js");
 const providers = D("onboard/providers.js");
@@ -44,7 +41,7 @@ let upsertMock: MockInstance;
 let updateSandboxMock: MockInstance;
 let runOpenshellMock: MockInstance;
 let applyPresetMock: MockInstance;
-let loadPresetMock: MockInstance;
+let loadPresetForSandboxMock: MockInstance;
 let saveCredentialMock: MockInstance;
 let getCredentialMock: MockInstance;
 let promptMock: MockInstance;
@@ -71,8 +68,8 @@ beforeEach(() => {
   runOpenshellMock = vi
     .spyOn(runtime, "runOpenshell")
     .mockReturnValue({ status: 0, stdout: "", stderr: "" });
-  loadPresetMock = vi
-    .spyOn(policy, "loadPreset")
+  loadPresetForSandboxMock = vi
+    .spyOn(policy, "loadPresetForSandbox")
     .mockReturnValue("network_policies:\n  stub: {}\n");
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["stub"]);
   vi.spyOn(policy, "listPresets").mockReturnValue([]);
@@ -109,7 +106,7 @@ describe("addSandboxChannel agent gate", () => {
     expect(errorText).toMatch(/Channel-supported agents: openclaw, hermes/);
     expect(errorText).toMatch(/Channels supported by agent 'custom-agent': \(none\)/);
 
-    expect(loadPresetMock).not.toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
     expect(upsertMock).not.toHaveBeenCalled();
     expect(updateSandboxMock).not.toHaveBeenCalled();
@@ -133,7 +130,7 @@ describe("addSandboxChannel agent gate", () => {
     }
 
     expect(exitCodeFromError(caught)).toBe(1);
-    expect(loadPresetMock).not.toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
     expect(upsertMock).not.toHaveBeenCalled();
     expect(updateSandboxMock).not.toHaveBeenCalled();
@@ -156,7 +153,7 @@ describe("addSandboxChannel agent gate", () => {
       .map((call) => call.map(String).join(" "))
       .join("\n");
     expect(errorText).not.toMatch(/does not support agent/);
-    expect(loadPresetMock).toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).toHaveBeenCalled();
     void caught;
     void exitMock;
     void logSpy;

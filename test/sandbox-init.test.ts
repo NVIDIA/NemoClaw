@@ -475,7 +475,7 @@ EOF
     // Default (no NEMOCLAW_REQUIRE_CAP_DROP): warns and CONTINUES even though
     // dangerous caps remain — preserving the zero-regression posture for
     // CAP_SETPCAP-less hosts. report_residual_capabilities still names them.
-    it("warns but does NOT refuse to start when CAP_SETPCAP is unavailable (issue #3280)", () => {
+    it("warns without refusing to start when CAP_SETPCAP is unavailable (#3280)", () => {
       const { stdout } = runWithLib(
         [
           "TMP=$(mktemp -d)",
@@ -697,8 +697,8 @@ EOF
       }
     });
 
-    it("uses bash builtin ulimit for nproc and nofile enforcement and verification", () => {
-      const nprocLimit = process.platform === "darwin" ? 4000 : 512;
+    it("bypasses shadowed ulimit functions for nproc and nofile enforcement and verification", () => {
+      const nprocLimit = process.platform === "darwin" ? 4000 : 4096;
       const { stdout } = runWithLib(
         [
           `NEMOCLAW_SANDBOX_NPROC_LIMIT=${nprocLimit}`,
@@ -999,6 +999,10 @@ EOF
         join(libDir, "sandbox-init.sh"),
         "export NEMOCLAW_TEST_SANDBOX_INIT_LOADED=1\n",
       );
+      writeFileSync(
+        join(libDir, "gateway-supervisor.sh"),
+        "export NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED=1\n",
+      );
       const wrapperPath = join(scriptDir, "nemoclaw-start.sh");
       writeFileSync(
         wrapperPath,
@@ -1006,14 +1010,14 @@ EOF
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           src.slice(start, end),
-          'printf "LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}"',
+          'printf "INIT_LOADED=%s SUPERVISOR_LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}" "${NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED:-0}"',
         ].join("\n"),
         { mode: 0o700 },
       );
 
       try {
         const result = execFileSync("bash", [wrapperPath], { encoding: "utf-8" }).trim();
-        expect(result).toBe("LOADED=1");
+        expect(result).toBe("INIT_LOADED=1 SUPERVISOR_LOADED=1");
       } finally {
         rmSync(workDir, { recursive: true, force: true });
       }

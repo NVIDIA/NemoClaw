@@ -33,13 +33,11 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-terminal-${scenario}-`));
   const fakeBin = path.join(tmpDir, "bin");
   const scriptPath = path.join(tmpDir, `${scenario}.js`);
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-  const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-  const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "defs.js"));
-  const agentOnboardPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "agent", "onboard.js"),
-  );
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+  const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+  const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+  const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
+  const agentOnboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "onboard.ts"));
 
   fs.mkdirSync(fakeBin, { recursive: true });
   writeExecutable(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
@@ -90,7 +88,13 @@ runner.runCapture = (command) => {
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? { name: sandboxName, gpuEnabled: false, agent: "langchain-deepagents-code", dashboardPort: 18789 }
+    ? {
+        name: sandboxName,
+        gpuEnabled: false,
+        agent: "langchain-deepagents-code",
+        dashboardPort: 18789,
+        toolDisclosure: "progressive",
+      }
     : null;
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);

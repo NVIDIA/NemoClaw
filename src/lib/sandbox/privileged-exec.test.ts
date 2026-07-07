@@ -4,24 +4,24 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
-// Build must run before these tests (imports from dist/)
+// The shared source hook preserves the writable CommonJS cache used by these mocks.
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
-const helperPath = require.resolve("../../../dist/lib/sandbox/privileged-exec");
-const dockerRunPath = require.resolve("../../../dist/lib/adapters/docker/run");
-const registryPath = require.resolve("../../../dist/lib/state/registry");
+const helperPath = require.resolve("./privileged-exec");
+const dockerRunPath = require.resolve("../adapters/docker/run");
+const registryPath = require.resolve("../state/registry");
 const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(helperPath);
 
 function withPrivilegedExecMocks<T>(
   deps: {
-    dockerCapture: (args: readonly string[]) => string;
+    dockerCapture: (args: readonly string[], options?: { timeout?: number }) => string;
     getSandbox: (name: string) => { name?: string; openshellDriver?: string | null } | null;
     listSandboxes: () => {
       sandboxes?: Array<{ name?: string | null }>;
       defaultSandbox?: string | null;
     };
   },
-  run: (helper: typeof import("../../../dist/lib/sandbox/privileged-exec")) => T,
+  run: (helper: typeof import("./privileged-exec")) => T,
 ): T {
   const priorHelper = require.cache[helperPath];
   const priorDockerRun = require.cache[dockerRunPath];
@@ -66,48 +66,41 @@ describe("privileged sandbox exec routing", () => {
     expect(containerNameMatchesSandbox("openshell-gateway-nemoclaw", "demo")).toBe(false);
   });
 
-  it("prefers the exact direct sandbox container when present", () => {
-    const selected = selectDirectSandboxContainer(
-      "demo",
-      "openshell-demo-helper\nopenshell-demo\n",
-      ["demo"],
+  it("selects the immutable id of one labeled direct sandbox container", () => {
+    expect(selectDirectSandboxContainer("demo", "abc123\topenshell-demo-2026\n", ["demo"])).toBe(
+      "abc123",
     );
-
-    expect(selected).toBe("openshell-demo");
   });
 
-  it("falls back to a generated direct sandbox container suffix", () => {
-    const selected = selectDirectSandboxContainer(
-      "demo",
-      "openshell-other\nopenshell-demo-abc123\n",
-      ["demo"],
-    );
-
-    expect(selected).toBe("openshell-demo-abc123");
+  it("rejects ambiguous labeled running containers", () => {
+    expect(() =>
+      selectDirectSandboxContainer(
+        "demo",
+        "abc123\topenshell-demo-one\ndef456\topenshell-demo-two\n",
+        ["demo"],
+      ),
+    ).toThrow(/Multiple running OpenShell containers.*refusing ambiguous/);
   });
 
-  it("uses the longest registered sandbox-name match to avoid prefix collisions", () => {
-    const containerNames = [
-      "openshell-alpha-child",
-      "openshell-alpha-child-2026",
-      "openshell-alpha-abc123",
-    ].join("\n");
-
-    expect(selectDirectSandboxContainer("alpha", containerNames, ["alpha", "alpha-child"])).toBe(
-      "openshell-alpha-abc123",
+  it("rejects malformed Docker metadata", () => {
+    expect(() => selectDirectSandboxContainer("demo", "openshell-demo\n", ["demo"])).toThrow(
+      /malformed OpenShell sandbox container metadata/,
     );
-    expect(
-      selectDirectSandboxContainer("alpha-child", containerNames, ["alpha", "alpha-child"]),
-    ).toBe("openshell-alpha-child");
   });
 
-  it("does not consider unrelated OpenShell containers direct sandbox matches", () => {
-    expect(
-      selectDirectSandboxContainer("alpha", "openshell-gateway-nemoclaw\nopenshell-alpha-child\n", [
+  it("rejects an authoritative label and container-name mismatch", () => {
+    expect(() =>
+      selectDirectSandboxContainer("alpha", "gateway-id\topenshell-gateway-nemoclaw\n", ["alpha"]),
+    ).toThrow(/labels and names disagree.*refusing lifecycle execution/);
+  });
+
+  it("uses the longest registered sandbox-name match to reject prefix collisions", () => {
+    expect(() =>
+      selectDirectSandboxContainer("alpha", "child-id\topenshell-alpha-child\n", [
         "alpha",
         "alpha-child",
       ]),
-    ).toBeNull();
+    ).toThrow(/labels and names disagree.*refusing lifecycle execution/);
   });
 
   it("builds privileged docker exec argv through the registered direct sandbox container", () => {
@@ -118,7 +111,7 @@ describe("privileged sandbox exec routing", () => {
           sandboxes: [{ name: "alpha" }, { name: "alpha-child" }],
           defaultSandbox: "alpha",
         }),
-        dockerCapture: () => "openshell-alpha-child\nopenshell-alpha-abc123\n",
+        dockerCapture: () => "immutable-alpha-id\topenshell-alpha-abc123\n",
       },
       ({ privilegedSandboxExecArgv }) => {
         expect(privilegedSandboxExecArgv("alpha", ["id"], true)).toEqual([
@@ -126,8 +119,78 @@ describe("privileged sandbox exec routing", () => {
           "-i",
           "--user",
           "root",
-          "openshell-alpha-abc123",
+          "immutable-alpha-id",
           "id",
+        ]);
+      },
+    );
+  });
+
+  it("bounds direct sandbox container discovery", () => {
+    const discoveryCalls: Array<{
+      args: readonly string[];
+      timeout: number | undefined;
+    }> = [];
+
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: (args, options) => {
+          discoveryCalls.push({ args, timeout: options?.timeout });
+          return "immutable-alpha-id\topenshell-alpha\n";
+        },
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(privilegedSandboxExecArgv("alpha", ["id"])).toEqual([
+          "exec",
+          "--user",
+          "root",
+          "immutable-alpha-id",
+          "id",
+        ]);
+      },
+    );
+
+    expect(discoveryCalls).toEqual([
+      {
+        args: [
+          "ps",
+          "--no-trunc",
+          "--filter",
+          "label=openshell.ai/managed-by=openshell",
+          "--filter",
+          "label=openshell.ai/sandbox-name=alpha",
+          "--format",
+          "{{.ID}}\t{{.Names}}",
+        ],
+        timeout: 5000,
+      },
+    ]);
+  });
+
+  it("clears interpreter and dynamic-loader injection variables for root control", () => {
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: () => "immutable-alpha-id\topenshell-alpha\n",
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        const argv = privilegedSandboxExecArgv("alpha", ["/trusted/control"], false, true);
+        expect(argv.slice(0, 1)).toEqual(["exec"]);
+        expect(argv).toContain("LD_PRELOAD=");
+        expect(argv).toContain("LD_LIBRARY_PATH=");
+        expect(argv).toContain("LD_AUDIT=");
+        expect(argv).toContain("PYTHONPATH=");
+        expect(argv).toContain("PYTHONUSERBASE=");
+        expect(argv).toContain("PYTHONNOUSERSITE=1");
+        expect(argv).toContain("BASH_ENV=");
+        expect(argv.slice(-4)).toEqual([
+          "--user",
+          "root",
+          "immutable-alpha-id",
+          "/trusted/control",
         ]);
       },
     );
@@ -143,11 +206,31 @@ describe("privileged sandbox exec routing", () => {
         listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
         dockerCapture: () => {
           dockerPsCalls += 1;
-          return "openshell-alpha-child\n";
+          return "child-id\topenshell-alpha-child\n";
         },
       },
       ({ privilegedSandboxExecArgv }) => {
         expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow("registry corrupt");
+      },
+    );
+    expect(dockerPsCalls).toBe(0);
+  });
+
+  it("rejects a Kubernetes registry owner before stale local-container discovery", () => {
+    let dockerPsCalls = 0;
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "kubernetes" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: () => {
+          dockerPsCalls += 1;
+          return "stale-id\topenshell-alpha-stale\n";
+        },
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
+          /driver: kubernetes.*refusing local Docker discovery/i,
+        );
       },
     );
     expect(dockerPsCalls).toBe(0);
@@ -163,7 +246,7 @@ describe("privileged sandbox exec routing", () => {
         },
         dockerCapture: () => {
           dockerPsCalls += 1;
-          return "openshell-alpha-child\n";
+          return "child-id\topenshell-alpha-child\n";
         },
       },
       ({ privilegedSandboxExecArgv }) => {
@@ -200,12 +283,20 @@ describe("privileged sandbox exec routing", () => {
           sandboxes: [{ name: "alpha" }, { name: "alpha-child" }],
           defaultSandbox: "alpha",
         }),
-        dockerCapture: () => "openshell-alpha-child\n",
+        dockerCapture: () => "",
       },
-      ({ privilegedSandboxExecArgv }) => {
-        expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
+      ({ isDirectSandboxFallbackUnavailableError, privilegedSandboxExecArgv }) => {
+        let refusal: unknown;
+        try {
+          privilegedSandboxExecArgv("alpha", ["id"]);
+        } catch (error) {
+          refusal = error;
+        }
+        expect(refusal).toBeInstanceOf(Error);
+        expect(String(refusal)).toMatch(
           /No running direct OpenShell sandbox container found for 'alpha'/,
         );
+        expect(isDirectSandboxFallbackUnavailableError(refusal)).toBe(true);
       },
     );
   });

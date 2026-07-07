@@ -2,16 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  createBuiltInChannelManifestRegistry,
-  listSupportedMessagingChannelIdsForAgent,
-  tryGetMessagingAgentId,
-} from "../../../messaging";
-import type { MessagingAgentId, SandboxMessagingPlan } from "../../../messaging/manifest";
-import { hashCredential } from "../../../security/credential-hash";
-import type { Session, SessionUpdates } from "../../../state/onboard-session";
-import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
+  parseExplicitWebSearchProvider,
+  type WebSearchConfig as SharedWebSearchConfig,
+  WEB_SEARCH_PROVIDER_ENV,
+  webSearchConfigsEqual,
+  webSearchEnvFor,
+  webSearchLabelFor,
+  webSearchProviderForConfig,
+} from "../../../inference/web-search";
+import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import type { SandboxEntry } from "../../../state/registry";
+import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import { withSandboxPhaseTrace } from "../../tracing";
+import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
+import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
+import {
+  applySandboxResumeDecision,
+  decideSandboxResume,
+  resolveToolDisclosureResumeSignals,
+  type SandboxResumeDecision,
+} from "./sandbox-resume";
 
 export interface SandboxStateOptions<
   Gpu,
@@ -23,11 +35,15 @@ export interface SandboxStateOptions<
 > {
   resume: boolean;
   fresh: boolean;
+  /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
+  authoritativeResumeConfig?: boolean;
   resumeAgentChanged: boolean;
   session: Session | null;
   sandboxName: string | null;
   model: string;
   provider: string;
+  endpointUrl: string | null;
+  credentialEnv: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   selectedMessagingChannels: string[];
@@ -37,12 +53,20 @@ export interface SandboxStateOptions<
   preferredInferenceApi: string | null;
   sandboxGpuConfig: SandboxGpuConfig;
   hermesToolGateways: string[];
+  hermesAuthMethod: HermesAuthMethod | null;
   controlUiPort: number | null;
   rootDir: string;
+  env: NodeJS.ProcessEnv;
   deps: {
     resolvePath(value: string): string;
     agentSupportsWebSearch(
       agent: Agent,
+      dockerfilePathOverride: string | null,
+      rootDir: string,
+    ): boolean;
+    agentSupportsWebSearchProvider?(
+      agent: Agent,
+      provider: "brave" | "tavily",
       dockerfilePathOverride: string | null,
       rootDir: string,
     ): boolean;
@@ -62,11 +86,12 @@ export interface SandboxStateOptions<
     getSandboxReuseState(sandboxName: string | null): string;
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
+    getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
     normalizeHermesToolGatewaySelections(value: unknown): string[];
     stringSetsEqual(left: string[], right: string[]): boolean;
     removeSandboxFromRegistry(sandboxName: string): void;
     repairRecordedSandbox(sandboxName: string | null): void;
-    ensureValidatedBraveSearchCredential(): Promise<unknown>;
+    ensureValidatedWebSearchCredential(config: WebSearchConfig): Promise<unknown>;
     isBackToSelection(value: unknown): boolean;
     configureWebSearch(
       existingConfig: WebSearchConfig | null,
@@ -109,6 +134,8 @@ export interface SandboxStateOptions<
       sandboxGpuConfig: SandboxGpuConfig,
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
+      hermesAuthMethod: HermesAuthMethod | null,
+      createIntent: SandboxCreateIntent,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
@@ -130,6 +157,7 @@ export interface SandboxStateOptions<
         metadata?: Record<string, unknown> | null;
       },
     ): Promise<Session>;
+    withSandboxMutationLock?<T>(sandboxName: string, action: () => Promise<T>): Promise<T>;
     error(message?: string): void;
     exitProcess(code: number): never;
   };
@@ -138,105 +166,495 @@ export interface SandboxStateOptions<
 export interface SandboxStateResult<WebSearchConfig> {
   sandboxName: string;
   webSearchConfig: WebSearchConfig | null;
+  webSearchConfigChanged: boolean;
+  hermesToolGateways: string[];
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
   session: Session | null;
   stateResult: OnboardStateTransitionResult;
 }
 
-function refreshCredentialHashesFromEnv(plan: SandboxMessagingPlan): {
-  plan: SandboxMessagingPlan;
-  changed: boolean;
-} {
-  let changed = false;
-  const credentialBindings = plan.credentialBindings.map((binding) => {
-    if (binding.credentialAvailable !== true) return binding;
-    const credentialHash = hashCredential(process.env[binding.providerEnvKey]);
-    if (!credentialHash || credentialHash === binding.credentialHash) return binding;
-    changed = true;
-    return { ...binding, credentialHash };
-  });
-
-  return changed ? { plan: { ...plan, credentialBindings }, changed } : { plan, changed };
+interface SandboxStepState<WebSearchConfig> {
+  readonly session: Session | null;
+  readonly sandboxName: string | null;
+  readonly webSearchConfig: WebSearchConfig | null;
+  readonly webSearchConfigChanged: boolean;
+  readonly selectedMessagingChannels: string[];
+  readonly webSearchSupported: boolean;
+  readonly webSearchSupportDropped: boolean;
+  readonly webSearchSupportProbePath: string | null;
 }
 
-type MessagingAgentLike = {
-  readonly name?: string;
-};
+function resolveRequestedWebSearchConfig<WebSearchConfig>(
+  current: WebSearchConfig | null,
+  env: NodeJS.ProcessEnv,
+  authoritative: boolean,
+): WebSearchConfig | null {
+  if (authoritative) return current;
+  const explicit = parseExplicitWebSearchProvider(env[WEB_SEARCH_PROVIDER_ENV]);
+  if (!explicit.specified) return current;
+  if (!explicit.provider) return null;
+  return { fetchEnabled: true, provider: explicit.provider } as WebSearchConfig;
+}
 
-const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
-
-function resolveCurrentMessagingAgent(agent: unknown): {
-  readonly agentId: MessagingAgentId | null;
-  readonly supportedChannelIds: readonly string[] | null;
-} {
-  const descriptor = (agent ?? {}) as MessagingAgentLike;
-  const name = typeof descriptor.name === "string" ? descriptor.name.trim() : "";
-  if (!name) return { agentId: null, supportedChannelIds: null };
-  const manifests = messagingManifestRegistry.list();
-  const agentId = tryGetMessagingAgentId(descriptor, manifests);
-  if (agentId === null) {
-    return { agentId: null, supportedChannelIds: [] };
+function missingWebSearchFidelity(
+  existing: SandboxEntry | null,
+  webSearchConfig: SharedWebSearchConfig | null,
+): Partial<SandboxEntry> {
+  const fidelity: Partial<SandboxEntry> = {};
+  if (existing?.webSearchEnabled === undefined) {
+    fidelity.webSearchEnabled = Boolean(webSearchConfig);
   }
-  return {
-    agentId,
-    supportedChannelIds: listSupportedMessagingChannelIdsForAgent(manifests, agentId),
-  };
+  if (existing?.webSearchProvider === undefined) {
+    fidelity.webSearchProvider = webSearchConfig
+      ? webSearchProviderForConfig(webSearchConfig)
+      : null;
+  }
+  return fidelity;
 }
 
-function filterChannelNamesForCurrentAgent(
-  channelIds: readonly string[],
-  agent: unknown,
+function knownAgentSupportsWebSearchProvider(
+  agent: { name?: string } | null,
+  provider: "brave" | "tavily",
+): boolean {
+  return agent?.name?.trim().toLowerCase() !== "hermes" || provider === "tavily";
+}
+
+function effectiveHermesToolGatewaysForWebSearch(
+  agent: { name?: string } | null,
+  webSearchConfig: SharedWebSearchConfig | null,
+  gateways: string[],
 ): string[] {
-  const availability = resolveCurrentMessagingAgent(agent);
-  if (availability.supportedChannelIds === null) return [...channelIds];
-  if (availability.agentId === null || availability.supportedChannelIds.length === 0) return [];
-  const supported = new Set(availability.supportedChannelIds);
-  return channelIds.filter((channelId) => supported.has(channelId));
+  const isHermes = agent?.name?.trim().toLowerCase() === "hermes";
+  const tavilySelected =
+    webSearchConfig !== null && webSearchProviderForConfig(webSearchConfig) === "tavily";
+  return isHermes && tavilySelected
+    ? gateways.filter((gateway) => gateway !== "nous-web")
+    : [...gateways];
 }
 
-function filterMessagingPlanForCurrentAgent(
-  plan: SandboxMessagingPlan,
-  agent: unknown,
-): SandboxMessagingPlan | null {
-  const availability = resolveCurrentMessagingAgent(agent);
-  if (availability.supportedChannelIds === null) return plan;
-  if (availability.agentId === null || plan.agent !== availability.agentId) return null;
-  const supported = new Set(availability.supportedChannelIds);
-  const channels = plan.channels.filter((channel) => supported.has(channel.channelId));
-  if (channels.length === 0) return null;
-  if (channels.length === plan.channels.length) return plan;
+type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
 
-  const remainingChannelIds = new Set(channels.map((channel) => channel.channelId));
-  const keepEntry = <T extends { readonly channelId: string }>(entry: T): boolean =>
-    remainingChannelIds.has(entry.channelId);
-  const networkEntries = plan.networkPolicy.entries.filter(keepEntry);
-  const filterRuntimeSetup = <T extends { readonly channelId: string }>(entries?: readonly T[]) =>
-    (entries ?? []).filter(keepEntry);
+function mcpRegistryRemovalBlockReason(
+  decision: SandboxCreationDecision,
+  sandboxName: string | null,
+  webSearchConfig: SharedWebSearchConfig | null,
+  getSandboxRegistryEntry: (sandboxName: string) => SandboxEntry | null,
+): string | null {
+  if (decision.kind !== "recreate") return null;
+  if (!decision.removeRegistryEntry) return null;
+  if (!sandboxName) return null;
+  const mcpState = getSandboxRegistryEntry(sandboxName)?.mcp;
+  if (!mcpState) return null;
 
-  return {
-    ...plan,
-    channels,
-    disabledChannels: plan.disabledChannels.filter((channelId) =>
-      remainingChannelIds.has(channelId),
-    ),
-    credentialBindings: plan.credentialBindings.filter(keepEntry),
-    networkPolicy: {
-      presets: [...new Set(networkEntries.map((entry) => entry.presetName))].sort(),
-      entries: networkEntries,
-    },
-    agentRender: plan.agentRender.filter(keepEntry),
-    buildSteps: plan.buildSteps.filter(keepEntry),
-    runtimeSetup: plan.runtimeSetup
-      ? {
-          nodePreloads: filterRuntimeSetup(plan.runtimeSetup.nodePreloads),
-          envAliases: filterRuntimeSetup(plan.runtimeSetup.envAliases),
-          secretScans: filterRuntimeSetup(plan.runtimeSetup.secretScans),
-        }
-      : undefined,
-    stateUpdates: plan.stateUpdates.filter(keepEntry),
-    healthChecks: plan.healthChecks.filter(keepEntry),
-  };
+  const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
+  if (selectedProvider) {
+    const credentialEnv = webSearchEnvFor(selectedProvider);
+    const collidingBridge = Object.values(mcpState.bridges).find((entry) =>
+      entry.env.includes(credentialEnv),
+    );
+    if (collidingBridge) {
+      return `  Cannot enable ${webSearchLabelFor(selectedProvider)}: MCP server '${collidingBridge.server}' already owns ${credentialEnv}. Use a distinct credential name.`;
+    }
+  }
+
+  return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
+}
+
+class SandboxStateFlow<
+  Gpu,
+  Agent,
+  WebSearchConfig,
+  MessagingChannelConfig,
+  SandboxGpuConfig,
+  ResourceProfile,
+> {
+  constructor(
+    private readonly options: SandboxStateOptions<
+      Gpu,
+      Agent,
+      WebSearchConfig,
+      MessagingChannelConfig,
+      SandboxGpuConfig,
+      ResourceProfile
+    >,
+  ) {}
+
+  private get deps(): SandboxStateOptions<
+    Gpu,
+    Agent,
+    WebSearchConfig,
+    MessagingChannelConfig,
+    SandboxGpuConfig,
+    ResourceProfile
+  >["deps"] {
+    return this.options.deps;
+  }
+
+  private prepareWebSearchSupport(): SandboxStepState<WebSearchConfig> {
+    const probePath = this.options.fromDockerfile
+      ? this.deps.resolvePath(this.options.fromDockerfile)
+      : null;
+    const supported = this.deps.agentSupportsWebSearch(
+      this.options.agent,
+      probePath,
+      this.options.rootDir,
+    );
+    const requestedWebSearchConfig = resolveRequestedWebSearchConfig(
+      this.options.webSearchConfig,
+      this.options.env,
+      this.options.authoritativeResumeConfig === true,
+    );
+    const webSearchConfigChanged = !webSearchConfigsEqual(
+      this.options.session?.webSearchConfig,
+      requestedWebSearchConfig as unknown as SharedWebSearchConfig | null,
+    );
+    const provider = requestedWebSearchConfig
+      ? webSearchProviderForConfig(requestedWebSearchConfig as unknown as SharedWebSearchConfig)
+      : null;
+    const providerSupported = provider
+      ? (this.deps.agentSupportsWebSearchProvider?.(
+          this.options.agent,
+          provider,
+          probePath,
+          this.options.rootDir,
+        ) ??
+        knownAgentSupportsWebSearchProvider(
+          this.options.agent as { name?: string } | null,
+          provider,
+        ))
+      : true;
+    const dropped = Boolean(requestedWebSearchConfig) && (!supported || !providerSupported);
+    if (!dropped) {
+      return {
+        session: this.options.session,
+        sandboxName: this.options.sandboxName,
+        webSearchConfig: requestedWebSearchConfig,
+        webSearchConfigChanged,
+        selectedMessagingChannels: this.options.selectedMessagingChannels,
+        webSearchSupported: supported,
+        webSearchSupportDropped: false,
+        webSearchSupportProbePath: probePath,
+      };
+    }
+
+    this.deps.note(
+      `  ${provider ? webSearchLabelFor(provider) : "Web search"} is not yet supported by ${(this.options.agent as { displayName?: string } | null)?.displayName ?? "this sandbox image"}. Clearing stale config.`,
+    );
+    if (this.options.session) this.options.session.webSearchConfig = null;
+    const session = this.deps.updateSession((current) => {
+      current.webSearchConfig = null;
+      return current;
+    });
+    return {
+      session,
+      sandboxName: this.options.sandboxName,
+      webSearchConfig: null,
+      webSearchConfigChanged,
+      selectedMessagingChannels: this.options.selectedMessagingChannels,
+      webSearchSupported: supported,
+      webSearchSupportDropped: true,
+      webSearchSupportProbePath: probePath,
+    };
+  }
+
+  private resolveResumeDecision(state: SandboxStepState<WebSearchConfig>): SandboxResumeDecision {
+    const storedMessagingConfig = this.deps.getStoredMessagingChannelConfig(
+      state.sandboxName,
+      state.session,
+    );
+    const effectiveMessagingConfig = this.deps.hydrateMessagingChannelConfig(storedMessagingConfig);
+    const recordedToolGateways = state.sandboxName
+      ? this.deps.normalizeHermesToolGatewaySelections(
+          this.deps.getSandboxHermesToolGateways(state.sandboxName),
+        )
+      : [];
+    const effectiveToolGateways = effectiveHermesToolGatewaysForWebSearch(
+      this.options.agent as { name?: string } | null,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+      this.options.hermesToolGateways,
+    );
+    const toolDisclosureSignals = resolveToolDisclosureResumeSignals(
+      state.sandboxName ? this.deps.getSandboxRegistryEntry(state.sandboxName) : null,
+      state.session,
+    );
+    return decideSandboxResume({
+      resume: this.options.resume,
+      resumeAgentChanged: this.options.resumeAgentChanged,
+      sandboxStepComplete: state.session?.steps?.sandbox?.status === "complete",
+      sandboxReuseState: this.deps.getSandboxReuseState(state.sandboxName),
+      webSearchConfigChanged: state.webSearchSupportDropped || state.webSearchConfigChanged,
+      sandboxGpuConfigChanged: state.sandboxName
+        ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
+        : false,
+      messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
+        effectiveMessagingConfig,
+        storedMessagingConfig,
+      ),
+      hermesToolGatewayConfigChanged: !this.deps.stringSetsEqual(
+        recordedToolGateways,
+        effectiveToolGateways,
+      ),
+      ...toolDisclosureSignals,
+    });
+  }
+
+  private async reuseSandbox(
+    state: SandboxStepState<WebSearchConfig>,
+  ): Promise<SandboxStepState<WebSearchConfig>> {
+    if (state.webSearchConfig) {
+      const provider = webSearchProviderForConfig(
+        state.webSearchConfig as unknown as SharedWebSearchConfig,
+      );
+      this.deps.note(
+        `  [resume] Reusing ${webSearchLabelFor(provider)} configuration already baked into the sandbox.`,
+      );
+    }
+    const messaging = reconcileReusedSandboxMessaging(
+      state.session?.messagingPlan ?? null,
+      this.options.agent,
+      this.deps,
+    );
+    if (messaging.changed) {
+      this.deps.updateSession((current) => {
+        current.messagingPlan = messaging.plan;
+        return current;
+      });
+    }
+    this.backfillReusedSandboxFidelity(state);
+    this.deps.skippedStepMessage("sandbox", state.sandboxName);
+    const skippedSession = await this.deps.recordStateSkipped("sandbox", {
+      reason: "resume",
+      sandboxName: state.sandboxName,
+    });
+    return {
+      ...state,
+      session: skippedSession,
+      selectedMessagingChannels: messaging.selectedChannels,
+    };
+  }
+
+  private backfillReusedSandboxFidelity(state: SandboxStepState<WebSearchConfig>): void {
+    if (!state.sandboxName) return;
+    const existing = this.deps.getSandboxRegistryEntry(state.sandboxName);
+    const fidelity = missingWebSearchFidelity(
+      existing,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+    );
+    if (
+      existing?.fromDockerfile === undefined &&
+      (this.options.fromDockerfile || existing?.nemoclawVersion)
+    ) {
+      fidelity.fromDockerfile = this.options.fromDockerfile;
+    }
+    if (existing?.hermesAuthMethod === undefined && this.options.hermesAuthMethod) {
+      fidelity.hermesAuthMethod = this.options.hermesAuthMethod;
+    }
+    if (Object.keys(fidelity).length > 0) {
+      this.deps.updateSandboxRegistry(state.sandboxName, fidelity);
+    }
+  }
+
+  private async resolveWebSearchForCreation(
+    state: SandboxStepState<WebSearchConfig>,
+  ): Promise<WebSearchConfig | null> {
+    if (!state.webSearchConfig) {
+      if (this.options.authoritativeResumeConfig) return null;
+      return this.deps.configureWebSearch(
+        null,
+        this.options.agent,
+        state.webSearchSupportProbePath,
+      );
+    }
+    const provider = webSearchProviderForConfig(
+      state.webSearchConfig as unknown as SharedWebSearchConfig,
+    );
+    const label = webSearchLabelFor(provider);
+    this.deps.note(`  [resume] Revalidating ${label} configuration for sandbox recreation.`);
+    const credential = await this.deps.ensureValidatedWebSearchCredential(state.webSearchConfig);
+    if (this.deps.isBackToSelection(credential) || !credential) return null;
+    this.deps.note(`  [resume] Reusing ${label} configuration.`);
+    return state.webSearchConfig;
+  }
+
+  private async createAndRecordSandbox(
+    state: SandboxStepState<WebSearchConfig>,
+    requestedSandboxName: string,
+    messagingPlan: SandboxMessagingPlan | null,
+    decision: SandboxCreationDecision,
+  ): Promise<SandboxStepState<WebSearchConfig>> {
+    const effectiveHermesToolGateways = effectiveHermesToolGatewaysForWebSearch(
+      this.options.agent as { name?: string } | null,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+      this.options.hermesToolGateways,
+    );
+    const resourceProfile = await this.deps.selectResourceProfileForSandbox();
+    if (this.options.fresh) {
+      this.deps.stopStaleDashboardListenersForSandbox(
+        this.deps.listRegistrySandboxes().sandboxes,
+        requestedSandboxName,
+      );
+    }
+    const sandboxName = await withSandboxPhaseTrace(
+      requestedSandboxName,
+      this.options.provider,
+      this.options.model,
+      (this.options.agent as { name?: string } | null)?.name,
+      () =>
+        this.deps.createSandbox(
+          this.options.gpu,
+          this.options.model,
+          this.options.provider,
+          this.options.preferredInferenceApi,
+          requestedSandboxName,
+          state.webSearchConfig,
+          state.selectedMessagingChannels,
+          this.options.fromDockerfile,
+          this.options.agent,
+          this.options.controlUiPort,
+          this.options.sandboxGpuConfig,
+          resourceProfile,
+          effectiveHermesToolGateways,
+          this.options.hermesAuthMethod,
+          {
+            recreate: decision.kind !== "create",
+            toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+          },
+        ),
+    );
+    // createSandbox() owns the build fingerprint. In particular, reusing an
+    // image must not stamp it with the current version and hide build drift.
+    const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
+      this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
+    // Preserve the validated route and credential env-var name, never a credential value.
+    this.deps.updateSandboxRegistry(sandboxName, {
+      model: this.options.model,
+      provider: this.options.provider,
+      endpointUrl: this.options.endpointUrl,
+      credentialEnv: this.options.credentialEnv,
+      nimContainer: this.options.nimContainer,
+      preferredInferenceApi: this.options.preferredInferenceApi,
+      ...agentRegistryFields,
+    });
+    // Finalization marks the default so a cancelled onboarding cannot leave a
+    // partially configured sandbox selected as the default.
+    const completedSession = await this.deps.recordStepComplete(
+      "sandbox",
+      this.deps.toSessionUpdates({
+        sandboxName,
+        provider: this.options.provider,
+        model: this.options.model,
+        nimContainer: this.options.nimContainer,
+        webSearchConfig: state.webSearchConfig,
+        messagingPlan,
+        hermesToolGateways: effectiveHermesToolGateways,
+      }),
+    );
+    return { ...state, sandboxName, session: completedSession };
+  }
+
+  private async recreateSandbox(
+    state: SandboxStepState<WebSearchConfig>,
+    decision: SandboxCreationDecision,
+  ): Promise<SandboxStepState<WebSearchConfig>> {
+    const mcpBlockReason = mcpRegistryRemovalBlockReason(
+      decision,
+      state.sandboxName,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+      this.deps.getSandboxRegistryEntry,
+    );
+    if (mcpBlockReason) {
+      this.deps.error(mcpBlockReason);
+      return this.deps.exitProcess(1);
+    }
+    const webSearchConfig = await this.resolveWebSearchForCreation(state);
+    const webSearchConfigChanged =
+      state.webSearchConfigChanged ||
+      !webSearchConfigsEqual(
+        state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+        webSearchConfig as unknown as SharedWebSearchConfig | null,
+      );
+    // Validate the replacement provider before any resume cleanup removes the
+    // still-live sandbox from the registry. A bad or missing credential must
+    // leave the existing sandbox recoverable.
+    await applySandboxResumeDecision(decision, state.sandboxName, this.deps);
+    await this.deps.startRecordedStep("sandbox", {
+      provider: this.options.provider,
+      model: this.options.model,
+    });
+    const requestedSandboxName =
+      state.sandboxName ?? (await this.deps.promptValidatedSandboxName(this.options.agent));
+    const messaging = await reconcileSandboxMessaging({
+      resume: this.options.resume,
+      session: state.session,
+      sandboxName: requestedSandboxName,
+      agent: this.options.agent,
+      deps: this.deps,
+    });
+    const session = this.deps.updateSession((current) => {
+      current.messagingPlan = messaging.plan;
+      return current;
+    });
+    return this.createAndRecordSandbox(
+      {
+        ...state,
+        session,
+        sandboxName: requestedSandboxName,
+        webSearchConfig,
+        webSearchConfigChanged,
+        selectedMessagingChannels: messaging.selectedChannels,
+      },
+      requestedSandboxName,
+      messaging.plan,
+      decision,
+    );
+  }
+
+  private complete(state: SandboxStepState<WebSearchConfig>): SandboxStateResult<WebSearchConfig> {
+    if (!state.sandboxName) {
+      this.deps.error("  Onboarding state is incomplete after sandbox setup.");
+      return this.deps.exitProcess(1);
+    }
+    const hermesToolGateways = effectiveHermesToolGatewaysForWebSearch(
+      this.options.agent as { name?: string } | null,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+      this.options.hermesToolGateways,
+    );
+    if (
+      this.options.hermesToolGateways.includes("nous-web") &&
+      !hermesToolGateways.includes("nous-web")
+    ) {
+      this.deps.note(
+        "  Tavily Search replaces Hermes managed Web search/extract and removes the conflicting nous-web selection.",
+      );
+    }
+    return {
+      sandboxName: state.sandboxName,
+      webSearchConfig: state.webSearchConfig,
+      webSearchConfigChanged: state.webSearchConfigChanged,
+      hermesToolGateways,
+      selectedMessagingChannels: state.selectedMessagingChannels,
+      webSearchSupported: state.webSearchSupported,
+      session: state.session,
+      stateResult: branchTo(this.options.agent ? "agent_setup" : "openclaw", {
+        metadata: {
+          state: "sandbox",
+          sandboxName: state.sandboxName,
+          agent: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+        },
+      }),
+    };
+  }
+
+  async run(): Promise<SandboxStateResult<WebSearchConfig>> {
+    const initialState = this.prepareWebSearchSupport();
+    const decision = this.resolveResumeDecision(initialState);
+    const completedState =
+      decision.kind === "reuse"
+        ? await this.reuseSandbox(initialState)
+        : await this.recreateSandbox(initialState, decision);
+    return this.complete(completedState);
+  }
 }
 
 export async function handleSandboxState<
@@ -246,310 +664,18 @@ export async function handleSandboxState<
   MessagingChannelConfig,
   SandboxGpuConfig,
   ResourceProfile,
->({
-  resume,
-  fresh,
-  resumeAgentChanged,
-  session,
-  sandboxName,
-  model,
-  provider,
-  nimContainer,
-  webSearchConfig,
-  selectedMessagingChannels,
-  fromDockerfile,
-  agent,
-  gpu,
-  preferredInferenceApi,
-  sandboxGpuConfig,
-  hermesToolGateways,
-  controlUiPort,
-  rootDir,
-  deps,
-}: SandboxStateOptions<
-  Gpu,
-  Agent,
-  WebSearchConfig,
-  MessagingChannelConfig,
-  SandboxGpuConfig,
-  ResourceProfile
->): Promise<SandboxStateResult<WebSearchConfig>> {
-  const webSearchSupportProbePath = fromDockerfile ? deps.resolvePath(fromDockerfile) : null;
-  const webSearchSupported = deps.agentSupportsWebSearch(agent, webSearchSupportProbePath, rootDir);
-  const webSearchSupportDropped = Boolean(webSearchConfig) && !webSearchSupported;
-  if (webSearchSupportDropped) {
-    deps.note(
-      `  Web search is not yet supported by ${(agent as { displayName?: string } | null)?.displayName ?? "this sandbox image"}. Clearing stale config.`,
-    );
-    webSearchConfig = null;
-    if (session) session.webSearchConfig = null;
-    session = deps.updateSession((current) => {
-      current.webSearchConfig = null;
-      return current;
-    });
-  }
-
-  const storedMessagingChannelConfig = deps.getStoredMessagingChannelConfig(sandboxName, session);
-  const effectiveMessagingChannelConfig = deps.hydrateMessagingChannelConfig(
-    storedMessagingChannelConfig,
-  );
-  const messagingChannelConfigChanged = !deps.messagingChannelConfigsEqual(
-    effectiveMessagingChannelConfig,
-    storedMessagingChannelConfig,
-  );
-
-  const sandboxReuseState = deps.getSandboxReuseState(sandboxName);
-  const webSearchConfigChanged =
-    webSearchSupportDropped || Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
-  const sandboxGpuConfigChanged = sandboxName
-    ? deps.hasSandboxGpuDrift(sandboxName, sandboxGpuConfig)
-    : false;
-  const recordedHermesToolGateways = sandboxName
-    ? deps.normalizeHermesToolGatewaySelections(deps.getSandboxHermesToolGateways(sandboxName))
-    : [];
-  const hermesToolGatewayConfigChanged = !deps.stringSetsEqual(
-    recordedHermesToolGateways,
-    hermesToolGateways,
-  );
-  const resumeSandbox =
-    resume &&
-    !resumeAgentChanged &&
-    !webSearchConfigChanged &&
-    !sandboxGpuConfigChanged &&
-    !messagingChannelConfigChanged &&
-    !hermesToolGatewayConfigChanged &&
-    session?.steps?.sandbox?.status === "complete" &&
-    sandboxReuseState === "ready";
-
-  if (resumeSandbox) {
-    if (webSearchConfig)
-      deps.note("  [resume] Reusing Brave Search configuration already baked into the sandbox.");
-    const currentMessagingPlan = session?.messagingPlan ?? null;
-    const filteredPlan = currentMessagingPlan
-      ? filterMessagingPlanForCurrentAgent(currentMessagingPlan, agent)
-      : null;
-    if (filteredPlan !== currentMessagingPlan) {
-      deps.clearPlanEnv();
-      session = deps.updateSession((current) => {
-        current.messagingPlan = filteredPlan;
-        return current;
-      });
-    }
-    selectedMessagingChannels = getActiveChannelsFromPlan(filteredPlan) ?? [];
-    deps.skippedStepMessage("sandbox", sandboxName);
-    await deps.recordStateSkipped("sandbox", { reason: "resume", sandboxName });
-  } else {
-    if (resume && session?.steps?.sandbox?.status === "complete") {
-      if (resumeAgentChanged) {
-        deps.note("  [resume] Agent selection changed; revalidating sandbox compatibility.");
-      } else if (webSearchConfigChanged) {
-        deps.note("  [resume] Web Search configuration changed; recreating sandbox.");
-        if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
-      } else if (sandboxGpuConfigChanged) {
-        deps.note("  [resume] Sandbox GPU settings changed; recreating sandbox.");
-        if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
-      } else if (messagingChannelConfigChanged) {
-        deps.note("  [resume] Messaging channel configuration changed; recreating sandbox.");
-        if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
-      } else if (hermesToolGatewayConfigChanged) {
-        deps.note("  [resume] Hermes managed tool gateway selection changed; recreating sandbox.");
-        if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
-      } else if (sandboxReuseState === "not_ready") {
-        deps.note(
-          `  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`,
-        );
-        const repairMetadata = { repair: "recorded-sandbox-cleanup", sandboxName };
-        await deps.recordRepairEvent("state.repair.started", {
-          state: "sandbox",
-          metadata: repairMetadata,
-        });
-        try {
-          deps.repairRecordedSandbox(sandboxName);
-        } catch (err) {
-          await deps.recordRepairEvent("state.repair.failed", {
-            state: "sandbox",
-            error: err instanceof Error ? err.message : String(err),
-            metadata: repairMetadata,
-          });
-          throw err;
-        }
-        await deps.recordRepairEvent("state.repair.completed", {
-          state: "sandbox",
-          metadata: repairMetadata,
-        });
-      } else {
-        deps.note("  [resume] Recorded sandbox state is unavailable; recreating it.");
-        if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
-      }
-    }
-
-    let nextWebSearchConfig = webSearchConfig;
-    if (nextWebSearchConfig) {
-      deps.note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
-      const braveApiKey = await deps.ensureValidatedBraveSearchCredential();
-      if (deps.isBackToSelection(braveApiKey)) {
-        nextWebSearchConfig = null;
-      } else {
-        nextWebSearchConfig = braveApiKey ? webSearchConfig : null;
-      }
-      if (nextWebSearchConfig) deps.note("  [resume] Reusing Brave Search configuration.");
-    } else {
-      nextWebSearchConfig = await deps.configureWebSearch(null, agent, webSearchSupportProbePath);
-    }
-
-    await deps.startRecordedStep("sandbox", { provider, model });
-    if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
-    const recordedMessagingChannels = deps.getRecordedMessagingChannelsForResume(
-      resume,
-      session,
-      sandboxName,
-    );
-    let messagingPlan: SandboxMessagingPlan | null = null;
-    const envMessagingPlan = deps.readMessagingPlanFromEnv();
-    const registryMessagingPlan = sandboxName
-      ? deps.getRegistrySandboxMessagingPlan(sandboxName)
-      : null;
-    const reuseMessagingPlan = (plan: SandboxMessagingPlan, writeToEnv: boolean): void => {
-      const refreshed = refreshCredentialHashesFromEnv(plan);
-      const filtered = filterMessagingPlanForCurrentAgent(refreshed.plan, agent);
-      if (!filtered) {
-        deps.clearPlanEnv();
-        messagingPlan = null;
-        selectedMessagingChannels = [];
-        return;
-      }
-      messagingPlan = filtered;
-      selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
-      if (writeToEnv || refreshed.changed || filtered !== refreshed.plan) {
-        deps.writePlanToEnv(filtered);
-      }
-    };
-
-    if (recordedMessagingChannels) {
-      selectedMessagingChannels = filterChannelNamesForCurrentAgent(
-        recordedMessagingChannels,
-        agent,
-      );
-      if (envMessagingPlan) {
-        reuseMessagingPlan(envMessagingPlan, false);
-      } else if (registryMessagingPlan) {
-        reuseMessagingPlan(registryMessagingPlan, true);
-      }
-      if (selectedMessagingChannels.length > 0) {
-        deps.note(
-          `  [non-interactive] Reusing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`,
-        );
-      }
-    } else if (envMessagingPlan) {
-      reuseMessagingPlan(envMessagingPlan, false);
-    } else if (registryMessagingPlan) {
-      reuseMessagingPlan(registryMessagingPlan, true);
-    } else {
-      const existingChannels = getChannelsFromPlan(session?.messagingPlan);
-      const existing = existingChannels
-        ? filterChannelNamesForCurrentAgent(existingChannels, agent)
-        : existingChannels;
-      selectedMessagingChannels = await deps.setupMessagingChannels(agent, existing, sandboxName);
-      selectedMessagingChannels = filterChannelNamesForCurrentAgent(
-        selectedMessagingChannels,
-        agent,
-      );
-      messagingPlan = deps.readMessagingPlanFromEnv();
-      if (messagingPlan) {
-        const filtered = filterMessagingPlanForCurrentAgent(messagingPlan, agent);
-        if (!filtered) {
-          deps.clearPlanEnv();
-          messagingPlan = null;
-          selectedMessagingChannels = [];
-        } else if (filtered !== messagingPlan) {
-          messagingPlan = filtered;
-          selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
-          deps.writePlanToEnv(filtered);
-        }
-      }
-    }
-    session = deps.updateSession((current) => {
-      current.messagingPlan = messagingPlan;
-      return current;
-    });
-
-    const confirmedSandboxName = sandboxName;
-    const resourceProfile = await deps.selectResourceProfileForSandbox();
-    if (fresh)
-      deps.stopStaleDashboardListenersForSandbox(
-        deps.listRegistrySandboxes().sandboxes,
-        confirmedSandboxName,
-      );
-    sandboxName = await withSandboxPhaseTrace(
-      confirmedSandboxName,
-      provider,
-      model,
-      (agent as { name?: string } | null)?.name,
-      () =>
-        deps.createSandbox(
-          gpu,
-          model,
-          provider,
-          preferredInferenceApi,
-          confirmedSandboxName,
-          nextWebSearchConfig,
-          selectedMessagingChannels,
-          fromDockerfile,
-          agent,
-          controlUiPort,
-          sandboxGpuConfig,
-          resourceProfile,
-          hermesToolGateways,
-        ),
-    );
-    webSearchConfig = nextWebSearchConfig;
-    // createSandbox() already wrote the NemoClaw build fingerprint correctly:
-    // a fresh build stamps the current version, while reuse preserves the
-    // existing value (updateReusedSandboxMetadata never overwrites it). Drop it
-    // from this supplementary update so reusing a sandbox after a NemoClaw
-    // upgrade does not re-stamp a stale image as current and mask drift (#5026).
-    const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
-      deps.getSandboxAgentRegistryFields(agent, !fromDockerfile);
-    deps.updateSandboxRegistry(sandboxName, {
-      model,
-      provider,
-      ...agentRegistryFields,
-    });
-    // Default-marking is deferred to finalization so a cancelled onboard never
-    // leaves this sandbox registered as default (#4614).
-    await deps.recordStepComplete(
-      "sandbox",
-      deps.toSessionUpdates({
-        sandboxName,
-        provider,
-        model,
-        nimContainer,
-        webSearchConfig,
-        messagingPlan,
-        hermesToolGateways,
-      }),
-    );
-  }
-
-  if (!sandboxName) {
-    deps.error("  Onboarding state is incomplete after sandbox setup.");
-    deps.exitProcess(1);
-  }
-  const completedSandboxName = sandboxName;
-  if (!completedSandboxName) throw new Error("Sandbox name is required after sandbox setup");
-
-  return {
-    sandboxName: completedSandboxName,
-    webSearchConfig,
-    selectedMessagingChannels,
-    webSearchSupported,
-    session,
-    stateResult: branchTo(agent ? "agent_setup" : "openclaw", {
-      metadata: {
-        state: "sandbox",
-        sandboxName: completedSandboxName,
-        agent: (agent as { name?: string } | null)?.name ?? "openclaw",
-      },
-    }),
-  };
+>(
+  options: SandboxStateOptions<
+    Gpu,
+    Agent,
+    WebSearchConfig,
+    MessagingChannelConfig,
+    SandboxGpuConfig,
+    ResourceProfile
+  >,
+): Promise<SandboxStateResult<WebSearchConfig>> {
+  const run = () => new SandboxStateFlow(options).run();
+  return options.sandboxName && options.deps.withSandboxMutationLock
+    ? options.deps.withSandboxMutationLock(options.sandboxName, run)
+    : run();
 }

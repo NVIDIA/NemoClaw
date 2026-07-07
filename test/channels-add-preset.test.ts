@@ -14,6 +14,8 @@ import path from "node:path";
 import { describe, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
+const j = (p: string) =>
+  JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
 
 function runScript(
   scriptBody: string,
@@ -87,7 +89,6 @@ function buildPreamble({
   presetMissingNetworkPolicies?: boolean;
   presetMalformedYaml?: boolean;
 } = {}): string {
-  const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -175,12 +176,14 @@ const appliedCalls = [];
 const removedCalls = [];
 const callOrder = [];
 policies.listPresets = () => ${JSON.stringify(presetNamesAvailable.map((name) => ({ name })))};
-policies.loadPreset = (name) => {
+function stubPresetContent(name) {
   if (${JSON.stringify(presetFileMissing)}) return null;
   if (${JSON.stringify(presetMissingNetworkPolicies)}) return "name: " + name + "\ndescription: \"stub preset without network_policies\"\n";
   if (${JSON.stringify(presetMalformedYaml)}) return "network_policies:\n  - [unclosed\n";
   return "network_policies:\n  " + name + ":\n    egress:\n      - host: example.com";
-};
+}
+policies.loadPreset = (name) => stubPresetContent(name);
+policies.loadPresetForSandbox = (sandboxName, name) => { callOrder.push("loadPresetForSandbox:" + sandboxName + ":" + name); return stubPresetContent(name); };
 policies.applyPreset = (sandboxName, presetName) => {
   appliedCalls.push({ sandboxName, presetName });
   callOrder.push("applyPreset:" + presetName);
@@ -280,7 +283,7 @@ module.exports = {
 `;
 }
 
-describe("channels add applies matching policy preset (issue #3437)", () => {
+describe("channels add applies a matching policy preset (#3437)", () => {
   it("plans channel enrollment through the messaging manifest workflow", () => {
     const script = `${buildPreamble()}
 const ctx = module.exports;
@@ -338,10 +341,8 @@ const ctx = module.exports;
         [{ sandboxName: "test-sb", presetName: channel }],
         `expected applyPreset("test-sb", "${channel}") exactly once; got ${JSON.stringify(payload.appliedCalls)}`,
       );
+      assert.ok(payload.callOrder.includes(`loadPresetForSandbox:test-sb:${channel}`));
 
-      // Contract 2: ordering invariant — preset apply must precede rebuild,
-      // otherwise the rebuild's backup manifest will not capture it and
-      // Step 5.5 of rebuild.ts has nothing to restore.
       const applyIdx = payload.callOrder.indexOf(`applyPreset:${channel}`);
       const rebuildIdx = payload.callOrder.indexOf("promptAndRebuild");
       assert.ok(
@@ -1575,9 +1576,8 @@ const ctx = module.exports;
 // startup breadcrumb confirmation or an actionable warning. These tests
 // drive the verifier through stubbed sandbox-exec output so the contract
 // is pinned regardless of OpenClaw/OpenShell runtime availability.
-describe("channels add verifies bridge startup after rebuild (issue #4314, #4390)", () => {
+describe("channels add verifies bridge startup after rebuild (#4314, #4390)", () => {
   function buildInteractivePreamble(): string {
-    const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
     return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -1603,7 +1603,7 @@ processRecovery.executeSandboxExecCommand = (name, command) => {
 };
 processRecovery.executeSandboxCommand = () => null;
 
-const rebuild = require(${j("actions/sandbox/rebuild.js")});
+const rebuild = require(${j("actions/sandbox/rebuild-pipeline.js")});
 let rebuildCount = 0;
 rebuild.rebuildSandbox = async () => { rebuildCount += 1; };
 
@@ -1840,12 +1840,12 @@ global.__testLog = "";
 describe("channel preset source-of-truth", () => {
   it("every channel registered in KNOWN_CHANNELS ships a preset YAML that parsePresetPolicyKeys() accepts", () => {
     const { knownChannelNames } = require(
-      path.join(repoRoot, "dist", "lib", "sandbox", "channels.js"),
+      path.join(repoRoot, "src", "lib", "sandbox", "channels.ts"),
     ) as {
       knownChannelNames: () => string[];
     };
     const { loadPreset, parsePresetPolicyKeys } = require(
-      path.join(repoRoot, "dist", "lib", "policy", "index.js"),
+      path.join(repoRoot, "src", "lib", "policy", "index.ts"),
     ) as {
       loadPreset: (name: string) => string | null;
       parsePresetPolicyKeys: (content: string | null | undefined) => string[];

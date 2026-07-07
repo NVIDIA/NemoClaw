@@ -6,14 +6,9 @@
 // assert only on the mocked module boundaries — never on the private helper
 // names — so they survive a refactor of the internal conflict-check plumbing.
 //
-// Why dist + vi.spyOn (the rebuild-shields-finally.test.ts pattern): the source
-// policy-channel.ts loads several deps via runtime CommonJS `require()`
-// (../../onboard, ../../onboard/providers, ./rebuild, ../../runner, ...). In
-// this repo's vitest setup, `vi.mock` only intercepts ESM `import`, not plain
-// `require()`, and those modules do extensionless sibling requires the TS
-// transform cannot resolve. So we require the COMPILED module + its real
-// compiled dependency modules from dist/ (one shared require cache) and
-// `vi.spyOn` the dependency exports. Run `npm run build:cli` first.
+// policy-channel.ts loads several dependencies through CommonJS `require()`.
+// Load the source module and its dependencies through the shared source hook
+// so `vi.spyOn` observes one require cache without depending on a CLI build.
 //
 // isNonInteractive is destructured at module load (`const { isNonInteractive }
 // = require("../../onboard")`), so it cannot be spied after load; it reads
@@ -25,12 +20,12 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const requireSource = createRequire(import.meta.url);
+const D = (p: string) => requireSource(`../../${p}`);
 
 type SandboxEntry = import("../../state/registry").SandboxEntry;
 
-// Real compiled dependency modules (shared require cache with the SUT).
+// Real source dependency modules (shared require cache with the SUT).
 const store = D("credentials/store.js");
 const registry = D("state/registry.js");
 const providers = D("onboard/providers.js");
@@ -485,7 +480,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   // Scenario 4
-  it("--force bypasses the conflict even in non-interactive mode", async () => {
+  it("bypasses the conflict with --force even in non-interactive mode", async () => {
     arrangeRegistry({
       current: makeEmptyEntry("alpha"),
       others: [
@@ -571,7 +566,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   // Scenario 7
-  it("--dry-run never runs the conflict check or touches credentials", async () => {
+  it("avoids the conflict check and credentials with --dry-run", async () => {
     arrangeRegistry({
       current: makeEmptyEntry("alpha"),
       others: [
@@ -711,7 +706,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled();
   });
 
-  it("--force proceeds when the conflict check throws", async () => {
+  it("proceeds with --force when the conflict check throws", async () => {
     arrangeRegistry({ current: makeEmptyEntry("alpha"), others: [] });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
     listSandboxesMock.mockImplementation(() => {
@@ -1070,7 +1065,11 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
     await startSandboxChannel("alpha", { channel: "teams" });
 
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
+    expect(applyPresetMock.mock.invocationCallOrder[0]).toBeLessThan(
+      rebuildSandboxMock.mock.invocationCallOrder[0],
+    );
     expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(
       "alpha",
       expect.any(Object),
@@ -1083,6 +1082,55 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       port: 3978,
       label: "Microsoft Teams webhook",
     });
+  });
+
+  it("channels start reapplies its policy before a non-interactive rebuild is queued", async () => {
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+
+    await startSandboxChannel("alpha", { channel: "teams" });
+
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("Change queued");
+  });
+
+  it("channels start restores the disabled plan and skips rebuild when its policy preset fails", async () => {
+    const current = makeTeamsEntry("alpha", { disabled: true });
+    arrangeRegistry({ current });
+    getDisabledChannelsMock.mockImplementation(
+      () => current.messaging?.plan.disabledChannels ?? [],
+    );
+    updateSandboxMock.mockImplementation((_name: string, updates: Partial<SandboxEntry>) => {
+      Object.assign(current, updates);
+      return true;
+    });
+    applyPresetMock.mockReturnValue(false);
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
+    expect(registry.getDisabledChannels("alpha")).toContain("teams");
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("channels start teams");
+  });
+
+  it("channels start prints recovery guidance when policy and disabled-plan rollback both fail", async () => {
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+    applyPresetMock.mockReturnValue(false);
+    updateSandboxMock.mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("Could not restore 'teams' to disabled state");
+    expect(loggedText()).toContain("nemoclaw alpha channels stop teams");
   });
 });
 

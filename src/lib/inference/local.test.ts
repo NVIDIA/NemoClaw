@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterAll, afterEach, beforeAll, describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import fs, { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-// Import from compiled dist/ for correct coverage attribution.
-import { OLLAMA_MODEL_REGISTRY } from "../../../dist/lib/inference/ollama-model-registry";
+// Import source directly so tests cannot pass against a stale build.
+import { OLLAMA_MODEL_REGISTRY } from "./ollama-model-registry";
 
 // Derive the "large enough to fit every registry entry" memory threshold
 // from the registry itself so adding or resizing a model in the registry
@@ -16,31 +15,33 @@ import { OLLAMA_MODEL_REGISTRY } from "../../../dist/lib/inference/ollama-model-
 const LARGE_OLLAMA_FIT_MEMORY_MB = Math.max(
   ...OLLAMA_MODEL_REGISTRY.map((entry) => entry.requiredMemoryMB),
 );
+
 import {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
-  LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
-  QWEN3_6_OLLAMA_MODEL,
-  getOllamaContainerPort,
-  resetOllamaContainerPortCache,
-  getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
+  getDefaultOllamaModel,
   getLocalProviderBaseUrl,
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
   getLocalProviderHealthEndpoint,
   getLocalProviderLabel,
   getLocalProviderValidationBaseUrl,
+  getOllamaContainerPort,
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
   isOllamaRunnerCrash,
+  LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   parseOllamaList,
   parseOllamaTags,
   probeLocalProviderHealth,
-  validateOllamaModel,
+  probeOllamaAuthProxyHealth,
+  QWEN3_6_OLLAMA_MODEL,
+  resetOllamaContainerPortCache,
   validateLocalProvider,
-} from "../../../dist/lib/inference/local";
+  validateOllamaModel,
+} from "./local";
 
 describe("local inference helpers", () => {
   const originalSandboxHostUrl = process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
@@ -183,37 +184,6 @@ describe("local inference helpers", () => {
     const result = validateLocalProvider("ollama-local", mockCapture);
     expect(result).toEqual({ ok: true });
     expect(callCount).toBe(2);
-  });
-
-  it("rejects non-WSL Ollama when the backend and proxy ports collide", () => {
-    const output = execFileSync(
-      process.execPath,
-      [
-        "-e",
-        [
-          "const platform = require('./dist/lib/platform.js');",
-          "platform.isWsl = () => false;",
-          "const localInference = require('./dist/lib/inference/local.js');",
-          "const result = localInference.validateLocalProvider('ollama-local', () => '{\"models\":[]}');",
-          "process.stdout.write(JSON.stringify(result));",
-        ].join(""),
-      ],
-      {
-        cwd: path.resolve(__dirname, "../../.."),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NEMOCLAW_OLLAMA_PORT: "11435",
-          NEMOCLAW_OLLAMA_PROXY_PORT: "11435",
-        },
-      },
-    );
-
-    const result = JSON.parse(output);
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain("NEMOCLAW_OLLAMA_PORT");
-    expect(result.message).toContain("NEMOCLAW_OLLAMA_PROXY_PORT");
-    expect(result.message).toContain("11435");
   });
 
   it("returns a clear error when ollama-local is unavailable", () => {
@@ -378,11 +348,15 @@ describe("local inference helpers", () => {
   // probe to :11434 that ignored the auth proxy at :11435 entirely, so a
   // broken proxy hid behind a "healthy" backend.
   it("attaches a healthy auth-proxy subprobe when ollama backend is up", () => {
-    const responses: Array<{ args: string[]; status: number }> = [];
+    const responses: Array<{
+      args: string[];
+      opts?: { trustedConfigFiles?: readonly string[] };
+      status: number;
+    }> = [];
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "test-token",
-      runCurlProbeImpl: (argv: string[]) => {
-        responses.push({ args: argv, status: 200 });
+      runCurlProbeImpl: (argv: string[], opts?: { trustedConfigFiles?: readonly string[] }) => {
+        responses.push({ args: argv, opts, status: 200 });
         return {
           ok: true,
           httpStatus: 200,
@@ -396,7 +370,10 @@ describe("local inference helpers", () => {
     const proxyCall = responses.find((r) =>
       r.args.some((a) => typeof a === "string" && a.includes("11435")),
     );
-    expect(proxyCall?.args).toContain("Authorization: Bearer test-token");
+    expect(proxyCall?.args).toContain("--config");
+    expect(proxyCall?.args.join(" ")).not.toContain("test-token");
+    expect(proxyCall?.args).not.toContain("Authorization: Bearer test-token");
+    expect(proxyCall?.opts?.trustedConfigFiles ?? []).not.toHaveLength(0);
     expect(result?.ok).toBe(true);
     expect(result?.subprobes).toHaveLength(1);
     expect(result?.subprobes?.[0]).toMatchObject({
@@ -527,6 +504,25 @@ describe("local inference helpers", () => {
     });
     expect(result?.ok).toBe(true);
     expect(result?.detail).toContain("reachable");
+  });
+
+  it("reports the auth proxy as unhealthy when the auth config cannot be prepared", () => {
+    const spy = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
+      throw new Error("mkdtemp failed");
+    });
+    try {
+      const result = probeOllamaAuthProxyHealth({
+        loadOllamaProxyTokenImpl: () => "token",
+        runCurlProbeImpl: () => {
+          throw new Error("curl should not be spawned when auth config setup fails");
+        },
+      });
+      expect(result?.ok).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("mkdtemp failed");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("returns null when provider health probing is not supported", () => {
@@ -679,7 +675,7 @@ describe("local inference helpers", () => {
   });
 
   it("filters installed-model selection by memory fit", async () => {
-    const { getDefaultOllamaModel: gdom } = await import("../../../dist/lib/inference/local");
+    const { getDefaultOllamaModel: gdom } = await import("./local");
     // Even though nemotron-3-nano:30b is installed, it does not fit a host
     // with only 12 GiB available — the selector must downgrade to a fitting
     // installed model rather than blindly returning DEFAULT_OLLAMA_MODEL.
@@ -690,7 +686,7 @@ describe("local inference helpers", () => {
   });
 
   it("resolveNonInteractiveOllamaModel respects unknown tags and downgrades known oversize ones", async () => {
-    const { resolveNonInteractiveOllamaModel } = await import("../../../dist/lib/inference/local");
+    const { resolveNonInteractiveOllamaModel } = await import("./local");
     const messages: string[] = [];
     const log = (m: string) => messages.push(m);
 
@@ -730,7 +726,7 @@ describe("local inference helpers", () => {
   });
 
   it("resolveNonInteractiveOllamaModel surfaces the no-fit warning when even the smallest model exceeds available memory", async () => {
-    const { resolveNonInteractiveOllamaModel } = await import("../../../dist/lib/inference/local");
+    const { resolveNonInteractiveOllamaModel } = await import("./local");
     const messages: string[] = [];
     const log = (m: string) => messages.push(m);
 

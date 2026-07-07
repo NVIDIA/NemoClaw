@@ -1,25 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-type OnboardModule = typeof import("../dist/lib/onboard") & {
-  onboardSession: typeof import("../dist/lib/state/onboard-session");
+type OnboardModule = typeof import("../src/lib/onboard") & {
+  onboardSession: typeof import("../src/lib/state/onboard-session");
   registerIncompleteOnboardExitHandlerForSession: (
-    deps: typeof import("../dist/lib/state/onboard-session"),
+    deps: typeof import("../src/lib/state/onboard-session"),
     isComplete: () => boolean,
     processLike: { once(event: "exit", listener: (code: number) => void): unknown },
   ) => void;
 };
 
 const require = createRequire(import.meta.url);
-const onboard = require("../dist/lib/onboard.js") as OnboardModule;
+const onboard = require("../src/lib/onboard.js") as OnboardModule;
 const onboardSession = onboard.onboardSession;
 const originalHome = process.env.HOME;
 const restoreOriginalHome =
@@ -97,12 +97,12 @@ describe("onboard exit handler registration", () => {
   it("onboard() registers incomplete nonzero exit handling after bootstrap", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const scriptPath = path.join(tmpDir, "onboard-exit-registration.cjs");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const flowSlicesPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "machine", "flow-slices.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
     );
     const sessionPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
     );
 
     fs.writeFileSync(
@@ -192,21 +192,21 @@ const { onboard } = require(${onboardPath});
   it("onboard() does not mark a completed session failed on later nonzero exit", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const scriptPath = path.join(tmpDir, "onboard-exit-completed.cjs");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const initialPhasesPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "machine", "initial-flow-phases.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "initial-flow-phases.ts"),
     );
     const corePhasesPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "machine", "core-flow-phases.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "core-flow-phases.ts"),
     );
     const finalPhasesPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "machine", "final-flow-phases.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "final-flow-phases.ts"),
     );
     const resultPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "machine", "result.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
     );
     const sessionPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
     );
 
     fs.writeFileSync(

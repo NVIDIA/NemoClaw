@@ -50,7 +50,8 @@ function parseResultPayload<T extends Record<string, unknown>>(
 }
 
 function buildPreamble(agentName: string): string {
-  const d = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
+  const d = (p: string) =>
+    JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
   return String.raw`
 const resolver = require(${d("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -92,6 +93,7 @@ const policies = require(${d("policy/index.js")});
 const policyCalls = { loadPreset: [], applyPreset: [] };
 policies.listPresets = () => [];
 policies.loadPreset = (name) => { policyCalls.loadPreset.push(name); return "network_policies:\n  stub: {}\n"; };
+policies.loadPresetForSandbox = (_sandboxName, name) => policies.loadPreset(name);
 policies.parsePresetPolicyKeys = () => ["stub"];
 policies.applyPreset = (name, preset) => { policyCalls.applyPreset.push({ name, preset }); return true; };
 policies.getAppliedPresets = () => [];

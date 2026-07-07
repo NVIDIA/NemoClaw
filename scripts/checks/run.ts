@@ -32,9 +32,29 @@ const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/no-coverage-ignore.ts"],
   },
   {
+    name: "openshell-policy-mutation-read",
+    command: TSX,
+    args: ["scripts/checks/openshell-policy-mutation-read.ts"],
+  },
+  {
     name: "layer-import-boundaries",
     command: TSX,
     args: ["scripts/checks/layer-import-boundaries.ts"],
+  },
+  {
+    name: "no-test-dist-imports",
+    command: TSX,
+    args: ["scripts/checks/no-test-dist-imports.ts"],
+  },
+  {
+    name: "vitest-project-overlap",
+    command: TSX,
+    args: ["scripts/checks/vitest-project-overlap.ts"],
+  },
+  {
+    name: "test-title-style",
+    command: TSX,
+    args: ["scripts/checks/test-title-style.ts"],
   },
 ];
 

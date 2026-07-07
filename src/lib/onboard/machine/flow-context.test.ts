@@ -33,6 +33,7 @@ function baseContext(): OnboardFlowContext<null, { type: string }, { mode: strin
     hermesAuthMethod: null,
     hermesToolGateways: [],
     preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,
@@ -78,6 +79,7 @@ describe("onboard flow context helpers", () => {
       hermesAuthMethod: null,
       hermesToolGateways: [],
       preferredInferenceApi: "openai-responses",
+      compatibleEndpointReasoning: null,
       nimContainer: null,
       webSearchConfig: null,
     });
@@ -133,6 +135,7 @@ describe("onboard flow context helpers", () => {
       hermesAuthMethod: null,
       hermesToolGateways: [],
       preferredInferenceApi: null,
+      compatibleEndpointReasoning: null,
       nimContainer: null,
       webSearchConfig: null,
     });
@@ -140,6 +143,8 @@ describe("onboard flow context helpers", () => {
       session: createSession(),
       sandboxName: "my-assistant",
       webSearchConfig: null,
+      webSearchConfigChanged: false,
+      hermesToolGateways: [],
       selectedMessagingChannels: ["telegram"],
       webSearchSupported: true,
     });

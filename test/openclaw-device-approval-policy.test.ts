@@ -2,123 +2,95 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-const POLICY_PATH = path.join(
-  import.meta.dirname,
-  "..",
-  "scripts",
-  "lib",
-  "openclaw_device_approval_policy.py",
-);
+const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const POLICY_PATH = path.join(REPO_ROOT, "scripts", "lib", "openclaw_device_approval_policy.py");
 
-const COMPAT_APPROVE_OUTPUT =
-  "GatewayClientRequestError: scope upgrade pending approval for requestId request-1";
-
-function runRecovery(
-  stateDir: string,
-  requestId = "request-1",
-  approveOutput = COMPAT_APPROVE_OUTPUT,
-) {
+function evaluatePolicy(devices: unknown[], env: Record<string, string> = {}) {
   const script = `
 import importlib.util
 import json
 import sys
 
-policy_path, state_dir, request_id, approve_output = sys.argv[1:5]
+policy_path = sys.argv[1]
 spec = importlib.util.spec_from_file_location("openclaw_device_approval_policy", policy_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-result = module.recover_failed_scope_approval(request_id, state_dir, approve_output, None)
-print(json.dumps(result, sort_keys=True))
+devices = json.loads(sys.argv[2])
+payload = {
+    "decisions": [module.approval_request_decision(device) for device in devices],
+    "approval_env": module.gateway_approval_env({
+        "OPENCLAW_GATEWAY_URL": "ws://127.0.0.1:18789",
+        "OPENCLAW_GATEWAY_PORT": "18789",
+        "OPENCLAW_GATEWAY_TOKEN": "secret",
+        "KEEP_ME": "yes",
+    }),
+    "has_recovery": hasattr(module, "recover_failed_scope_approval"),
+}
+print(json.dumps(payload, default=lambda value: sorted(value)))
 `;
-  return spawnSync("python3", ["-", POLICY_PATH, stateDir, requestId, approveOutput], {
-    encoding: "utf-8",
-    input: script,
+  const result = spawnSync("python3", ["-c", script, POLICY_PATH, JSON.stringify(devices)], {
+    encoding: "utf8",
+    env: { ...process.env, ...env },
     timeout: 10_000,
   });
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout);
 }
 
-function writeOriginalPendingState(stateDir: string) {
-  const devicesDir = path.join(stateDir, "devices");
-  fs.mkdirSync(devicesDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(devicesDir, "pending.json"),
-    JSON.stringify({
-      original: {
-        requestId: "request-1",
-        deviceId: "device-1",
-        clientId: "openclaw-cli",
+describe("OpenClaw device approval policy", () => {
+  it("keeps allowlisting and gateway-environment stripping pure", () => {
+    const payload = evaluatePolicy([
+      {
+        requestId: "bounded-cli",
+        clientId: "cli",
+        clientMode: "cli",
+        scopes: ["operator.pairing", "operator.write"],
+      },
+      {
+        requestId: "admin-cli",
+        clientId: "cli",
+        clientMode: "cli",
+        scopes: ["operator.admin"],
+      },
+      {
+        requestId: "malformed",
+        clientId: "cli",
+        clientMode: "cli",
+        scopes: "operator.write",
+      },
+      {
+        requestId: "unknown-client",
+        clientId: "untrusted",
+        clientMode: "untrusted",
+        scopes: ["operator.read"],
+      },
+      {
+        requestId: "spoofed-cli-mode",
+        clientId: "evil",
         clientMode: "cli",
         scopes: ["operator.write"],
       },
-    }),
-  );
-  fs.writeFileSync(
-    path.join(devicesDir, "paired.json"),
-    JSON.stringify({
-      "device-1": {
-        deviceId: "device-1",
-        scopes: ["operator.pairing"],
-        approvedScopes: ["operator.pairing"],
-        tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
+      {
+        requestId: "spoofed-webchat-mode",
+        clientId: "evil",
+        clientMode: "webchat",
+        scopes: ["operator.read"],
       },
-    }),
-  );
-}
+    ]);
 
-describe("openclaw device approval policy (#4462)", () => {
-  it("recovers allowlisted upgrades when the failed approve leaves the original request pending", () => {
-    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
-      return;
-    }
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
-    try {
-      const stateDir = path.join(tmpDir, "state");
-      writeOriginalPendingState(stateDir);
-      const devicesDir = path.join(stateDir, "devices");
-      const pendingFile = path.join(devicesDir, "pending.json");
-      const pairedFile = path.join(devicesDir, "paired.json");
-
-      const result = runRecovery(stateDir);
-      expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout).compatibility).toBe("openclaw-approve-recovered-original");
-      expect(JSON.parse(fs.readFileSync(pendingFile, "utf-8"))).toEqual({});
-      const paired = JSON.parse(fs.readFileSync(pairedFile, "utf-8"));
-      const expectedScopes = ["operator.pairing", "operator.read", "operator.write"];
-      expect(paired["device-1"].approvedScopes).toEqual(expectedScopes);
-      expect(paired["device-1"].tokens.operator.scopes).toEqual(expectedScopes);
-      expect(JSON.stringify(paired)).not.toContain("operator.admin");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not recover original pending requests after unrelated approve errors", () => {
-    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
-      return;
-    }
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
-    try {
-      const stateDir = path.join(tmpDir, "state");
-      writeOriginalPendingState(stateDir);
-      const devicesDir = path.join(stateDir, "devices");
-      const pendingFile = path.join(devicesDir, "pending.json");
-      const pairedFile = path.join(devicesDir, "paired.json");
-      const pendingBefore = fs.readFileSync(pendingFile, "utf-8");
-      const pairedBefore = fs.readFileSync(pairedFile, "utf-8");
-
-      const result = runRecovery(stateDir, "request-1", "authorization denied");
-
-      expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout)).toBeNull();
-      expect(fs.readFileSync(pendingFile, "utf-8")).toBe(pendingBefore);
-      expect(fs.readFileSync(pairedFile, "utf-8")).toBe(pairedBefore);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    expect(payload.decisions.map((decision: { reason: string }) => decision.reason)).toEqual([
+      "allowlisted",
+      "disallowed-scopes",
+      "malformed-scopes",
+      "unknown-client",
+      "unknown-client",
+      "unknown-client",
+    ]);
+    expect(payload.approval_env).toEqual({ KEEP_ME: "yes" });
+    expect(payload.has_recovery).toBe(false);
   });
 });

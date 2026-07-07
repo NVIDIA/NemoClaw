@@ -17,6 +17,16 @@ const apiKey = process.env.NEMOCLAW_FAKE_OPENAI_API_KEY || "";
 const requireAuth = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH === "1";
 const chatContent = process.env.NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT || "ok";
 const responseText = process.env.NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT || chatContent;
+const forbiddenMarkers = (() => {
+  try {
+    const parsed = JSON.parse(process.env.NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS || "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === "string" && value.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+})();
 
 function log(message: string): void {
   if (logFile) {
@@ -102,12 +112,23 @@ function parseJsonBody(raw: Buffer): JsonObject {
   }
 }
 
+function forbiddenMarkerMatches(req: IncomingMessage, raw: Buffer): number {
+  const headerValues = Object.values(req.headers).flatMap((value) => value ?? []);
+  const requestMaterial = [req.url ?? "", ...headerValues, raw.toString("utf8")].join("\n");
+  return forbiddenMarkers.filter((marker) => requestMaterial.includes(marker)).length;
+}
+
 const server = createServer(async (req, res) => {
   const path = requestPath(req);
 
   if (req.method === "GET" && ["/v1/models", "/models"].includes(path)) {
     log(`GET ${path}`);
-    recordRequest({ method: "GET", path, bodyBytes: 0 });
+    recordRequest({
+      method: "GET",
+      path,
+      bodyBytes: 0,
+      forbiddenMarkerMatches: forbiddenMarkerMatches(req, Buffer.alloc(0)),
+    });
     sendJson(res, 200, { object: "list", data: [{ id: model, object: "model" }] });
     return;
   }
@@ -122,6 +143,7 @@ const server = createServer(async (req, res) => {
     auth,
     model: payload.model,
     stream: Boolean(payload.stream),
+    forbiddenMarkerMatches: forbiddenMarkerMatches(req, raw),
   });
 
   if (req.method === "POST" && ["/v1/chat/completions", "/chat/completions"].includes(path)) {
