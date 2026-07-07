@@ -542,6 +542,7 @@ onboardSession.loadSession = () => ({
 credentials.prompt = async () => "";
 credentials.ensureApiKey = async () => {};
 process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
 const { setupNim } = require(${onboardPath});
 
 (async () => {

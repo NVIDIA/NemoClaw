@@ -131,7 +131,7 @@ export function fetchCompatibleEndpointModels(
         ...authConfig.args,
         `${baseUrl}/models`,
       ],
-      { trustedConfigFiles: authConfig.trustedConfigFiles },
+      { trustedConfigFiles: authConfig.trustedConfigFiles, pinnedAddresses },
     );
     if (!result.ok || !result.body) return null;
     try {

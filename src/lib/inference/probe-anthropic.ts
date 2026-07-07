@@ -145,7 +145,10 @@ export function probeAnthropicEndpoint(
         anthropicMessagesPayload(model, false),
         messagesUrl,
       ],
-      { trustedConfigFiles: authConfig.trustedConfigFiles },
+      {
+        trustedConfigFiles: authConfig.trustedConfigFiles,
+        pinnedAddresses: options.pinnedAddresses,
+      },
     );
     if (!result.ok) {
       return {
@@ -177,7 +180,10 @@ export function probeAnthropicEndpoint(
           anthropicMessagesPayload(model, true),
           messagesUrl,
         ],
-        { trustedConfigFiles: authConfig.trustedConfigFiles },
+        {
+          trustedConfigFiles: authConfig.trustedConfigFiles,
+          pinnedAddresses: options.pinnedAddresses,
+        },
       );
       if (!streamResult.ok) {
         return {

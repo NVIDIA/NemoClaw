@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  assertEndpointResolvesPublic,
+  type EndpointDnsLookupFn,
+} from "../inference/endpoint-ssrf-preflight";
+import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
@@ -72,6 +76,8 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
+  /** Injectable resolver for resumed custom-endpoint SSRF preflight tests. */
+  resolveEndpointHost?: EndpointDnsLookupFn;
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
   withSandboxMutationLock: typeof withSandboxMutationLock;
@@ -235,6 +241,25 @@ export function createSetupInference(
           return deps.exitProcess(1);
         }
         deps.step(4, 8, "Setting up inference provider");
+        let endpointPinnedAddresses = options.endpointPinnedAddresses;
+        if (
+          (provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint") &&
+          endpointUrl &&
+          !endpointPinnedAddresses
+        ) {
+          const preflight = await assertEndpointResolvesPublic(
+            endpointUrl,
+            deps.resolveEndpointHost,
+          );
+          if (!preflight.ok) {
+            deps.error(
+              `  Endpoint SSRF preflight failed: ${preflight.reason ?? "endpoint is not safe to probe"}`,
+            );
+            if (deps.isNonInteractive()) return deps.exitProcess(1);
+            return { retry: "selection" };
+          }
+          endpointPinnedAddresses = preflight.addresses;
+        }
         const runGatewayOpenshell = createGatewayScopedOpenshellRunner(
           deps.runOpenshell,
           gatewayName,
@@ -261,7 +286,13 @@ export function createSetupInference(
             if (sandboxName) reserveRoute(sandboxName, selectedProvider, selectedModel);
             deps.verifyInferenceRoute(gatewayName, selectedProvider, selectedModel);
           },
-          verifyOnboardInferenceSmoke: deps.verifyOnboardInferenceSmoke,
+          verifyOnboardInferenceSmoke: (
+            input: Parameters<CommonDeps["verifyOnboardInferenceSmoke"]>[0],
+          ) =>
+            deps.verifyOnboardInferenceSmoke({
+              ...input,
+              pinnedAddresses: endpointPinnedAddresses,
+            }),
           isNonInteractive: deps.isNonInteractive,
           registry: {
             updateSandbox: (name: string) => reserveRoute(name, provider, model),
@@ -312,6 +343,7 @@ export function createSetupInference(
               reuseGatewayCredentialWithoutLocalKey:
                 options.reuseGatewayCredentialWithoutLocalKey === true,
               preferredInferenceApi: options.preferredInferenceApi ?? null,
+              pinnedAddresses: endpointPinnedAddresses,
             },
             {
               ...commonDeps,
@@ -389,7 +421,14 @@ export function createSetupInference(
         commonDeps.verifyInferenceRoute(provider, model);
         if (options.skipHostInferenceSmoke === true)
           deps.log("  Reusing existing gateway credential; skipping host inference smoke.");
-        else deps.verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
+        else
+          deps.verifyOnboardInferenceSmoke({
+            provider,
+            model,
+            endpointUrl,
+            credentialEnv,
+            pinnedAddresses: endpointPinnedAddresses,
+          });
         if (sandboxName) {
           commonDeps.registry.updateSandbox(sandboxName);
         }

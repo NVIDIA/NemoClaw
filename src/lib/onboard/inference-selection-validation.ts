@@ -30,7 +30,13 @@ import { summarizeProbeForDisplay } from "./probe-diagnostics";
 import { normalizeReasoningFlag } from "./reasoning-mode";
 
 export type EndpointValidationResult =
-  | { ok: true; api: string | null; retry?: undefined }
+  | {
+      ok: true;
+      api: string | null;
+      retry?: undefined;
+      /** Public addresses approved for this custom endpoint's host probes. */
+      pinnedAddresses?: string[];
+    }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
 
 export interface InferenceSelectionValidationDeps {
@@ -274,7 +280,7 @@ export function createInferenceSelectionValidationHelpers(
           `  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`,
         );
       }
-      return { ok: true, api: probe.api ?? "openai-completions" };
+      return { ok: true, api: probe.api ?? "openai-completions", pinnedAddresses };
     }
     printValidationFailure(label, probe);
     if (deps.isNonInteractive()) {
@@ -340,7 +346,7 @@ export function createInferenceSelectionValidationHelpers(
           `  ${probe.label} available — ${deps.agentProductName()} will use ${intendedApi}.`,
         );
       }
-      return { ok: true, api: intendedApi };
+      return { ok: true, api: intendedApi, pinnedAddresses };
     }
     printValidationFailure(label, probe);
     if (deps.isNonInteractive()) {

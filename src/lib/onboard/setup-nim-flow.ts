@@ -336,6 +336,7 @@ export function createSetupNim(
     let compatibleEndpointReasoning: string | null = null;
     let allowToolsIncompatible = false;
     let reuseGatewayCredential = false;
+    let endpointPinnedAddresses: string[] | undefined;
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
@@ -352,6 +353,7 @@ export function createSetupNim(
         compatibleEndpointReasoning,
         nimContainer,
         allowToolsIncompatible,
+        ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
         nvidiaFeaturedModels,
       };
       state.assertRouteCompatible = () => {
@@ -536,6 +538,7 @@ export function createSetupNim(
             hermesToolGateways,
             preferredInferenceApi,
             allowToolsIncompatible,
+            endpointPinnedAddresses,
           } = state);
           compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
           reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
@@ -713,6 +716,7 @@ export function createSetupNim(
       allowToolsIncompatible,
       skipHostInferenceSmoke: reuseGatewayCredential,
       reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
+      ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
     };
   };
 }

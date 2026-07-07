@@ -270,7 +270,10 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
         }),
         `${baseUrl}/responses`,
       ],
-      { trustedConfigFiles: authConfig.trustedConfigFiles },
+      {
+        trustedConfigFiles: authConfig.trustedConfigFiles,
+        pinnedAddresses: options.pinnedAddresses,
+      },
     );
 
     if (!result.ok) {
@@ -378,6 +381,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     const result = runCurlProbe(args, {
       timeoutMs: getProbeProcessTimeoutMs(args),
       trustedConfigFiles: authConfig.trustedConfigFiles,
+      pinnedAddresses: options.pinnedAddresses,
     });
 
     if (!result.ok) {
@@ -512,7 +516,7 @@ function runChatCompletionsProbe({
     isWsl: isWslOverride,
     pinnedAddresses,
   });
-  const probeOpts = { timeoutMs: getProbeProcessTimeoutMs(args) };
+  const probeOpts = { timeoutMs: getProbeProcessTimeoutMs(args), pinnedAddresses };
   if (trustedConfigFiles && trustedConfigFiles.length > 0) {
     probeOpts.trustedConfigFiles = trustedConfigFiles;
   }
@@ -560,6 +564,7 @@ function runDoubledTimeoutChatCompletionsRetry({
           return runCurlProbe(retryArgs, {
             timeoutMs: getProbeProcessTimeoutMs(retryArgs),
             trustedConfigFiles: authConfig.trustedConfigFiles,
+            pinnedAddresses: options.pinnedAddresses,
           });
         })();
   return runChatCompletionsRetryLoop(runRetryProbe);
@@ -683,7 +688,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
                   }),
                   `${baseUrl}/responses`,
                 ],
-                { trustedConfigFiles: authConfig.trustedConfigFiles },
+                { trustedConfigFiles: authConfig.trustedConfigFiles, pinnedAddresses },
               ),
           };
 
@@ -748,7 +753,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               }),
               `${baseUrl}/responses`,
             ],
-            { trustedConfigFiles: authConfig.trustedConfigFiles },
+            { trustedConfigFiles: authConfig.trustedConfigFiles, pinnedAddresses },
           );
           if (!streamResult.ok && streamResult.missingEvents.length > 0) {
             // Backend responds but lacks required streaming events — fall back
@@ -946,6 +951,7 @@ export function verifyOnboardInferenceSmoke(options: any) {
   const probe = probeOpenAiLikeEndpoint(endpointUrl, options.model, apiKey, {
     authMode: getProbeAuthMode(options.provider),
     skipResponsesProbe: true,
+    pinnedAddresses: options.pinnedAddresses,
   });
 
   if (probe.ok) {

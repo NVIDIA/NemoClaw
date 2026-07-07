@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { assertEndpointResolvesPublic, type EndpointDnsLookupFn } from "./endpoint-ssrf-preflight";
+import {
+  assertEndpointResolvesPublic,
+  buildResolvePinArgs,
+  type EndpointDnsLookupFn,
+} from "./endpoint-ssrf-preflight";
 
 const resolverTo = (address: string): EndpointDnsLookupFn =>
   vi.fn(async () => [{ address, family: address.includes(":") ? 6 : 4 }]);
@@ -51,7 +55,17 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     const lookup = vi.fn<EndpointDnsLookupFn>();
     const result = await assertEndpointResolvesPublic("https://93.184.216.34/v1", lookup);
     expect(result.ok).toBe(true);
+    expect(result.addresses).toBeUndefined();
     expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("keeps dual-stack addresses in one curl --resolve mapping (#6293)", () => {
+    expect(
+      buildResolvePinArgs("https://vllm.example/v1/models", [
+        "93.184.216.34",
+        "2606:2800:220:1:248:1893:25c8:1946",
+      ]),
+    ).toEqual(["--resolve", "vllm.example:443:93.184.216.34,[2606:2800:220:1:248:1893:25c8:1946]"]);
   });
 
   it("fails closed when the resolver throws (#6293)", async () => {

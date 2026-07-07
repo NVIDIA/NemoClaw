@@ -4741,7 +4741,7 @@ runner.runCapture = (cmd) => {
 process.env.COMPATIBLE_API_KEY = "test-key";
 const { setupInference } = require(${onboardPath});
 (async () => {
-  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://lan-server:11434/v1", "COMPATIBLE_API_KEY", null, [], { preferredInferenceApi: "openai-completions" });
+  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://public-server.example:11434/v1", "COMPATIBLE_API_KEY", null, [], { preferredInferenceApi: "openai-completions", endpointPinnedAddresses: ["93.184.216.34"] });
   process.exit(0);
 })().catch((err) => { console.error(err); process.exit(1); });
 `;

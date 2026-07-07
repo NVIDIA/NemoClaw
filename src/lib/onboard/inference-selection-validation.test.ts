@@ -170,7 +170,11 @@ describe("inference selection validation", () => {
         "model-a",
         "COMPATIBLE_API_KEY",
       ),
-    ).resolves.toEqual({ ok: true, api: "openai-completions" });
+    ).resolves.toEqual({
+      ok: true,
+      api: "openai-completions",
+      pinnedAddresses: ["93.184.216.34"],
+    });
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalled();
   });
 
@@ -198,7 +202,11 @@ describe("inference selection validation", () => {
           "nvidia/nemotron-3-super-v3",
           "COMPATIBLE_ANTHROPIC_API_KEY",
         ),
-      ).resolves.toEqual({ ok: true, api: "anthropic-messages" });
+      ).resolves.toEqual({
+        ok: true,
+        api: "anthropic-messages",
+        pinnedAddresses: ["93.184.216.34"],
+      });
       expect(probeAnthropicEndpoint).toHaveBeenCalledWith(
         "https://compatible.example",
         "nvidia/nemotron-3-super-v3",
@@ -249,7 +257,11 @@ describe("inference selection validation", () => {
           null,
           { intendedApi: "openai-completions" },
         ),
-      ).resolves.toEqual({ ok: true, api: "openai-completions" });
+      ).resolves.toEqual({
+        ok: true,
+        api: "openai-completions",
+        pinnedAddresses: ["93.184.216.34"],
+      });
       expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
         "https://compatible.example/v1",
         "nvidia/nemotron-3-super-v3",
@@ -365,7 +377,11 @@ exit 0
           "model-a",
           "COMPATIBLE_API_KEY",
         ),
-      ).resolves.toEqual({ ok: true, api: "openai-completions" });
+      ).resolves.toEqual({
+        ok: true,
+        api: "openai-completions",
+        pinnedAddresses: ["93.184.216.34"],
+      });
 
       const recordedArgs = fs.readFileSync(argsPath, "utf8").split("\n");
       const resolveIdx = recordedArgs.indexOf("--resolve");

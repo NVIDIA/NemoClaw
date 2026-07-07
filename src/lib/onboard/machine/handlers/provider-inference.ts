@@ -32,6 +32,8 @@ export interface ProviderInferenceSetupOptions {
    * compatible-anthropic-endpoint register type=openai).
    */
   preferredInferenceApi?: string | null;
+  /** Public addresses approved for custom endpoint host probes. */
+  endpointPinnedAddresses?: readonly string[];
 }
 
 export interface ProviderSelectionResult {
@@ -47,6 +49,7 @@ export interface ProviderSelectionResult {
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
+  endpointPinnedAddresses?: string[];
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -314,6 +317,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let allowToolsIncompatible = false;
   let skipHostInferenceSmoke = false;
   let reuseGatewayCredentialWithoutLocalKey = false;
+  let endpointPinnedAddresses: string[] | undefined;
   const effectiveResume = resume && !fresh;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
@@ -473,6 +477,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
       reuseGatewayCredentialWithoutLocalKey =
         selection.reuseGatewayCredentialWithoutLocalKey === true;
+      endpointPinnedAddresses = selection.endpointPinnedAddresses;
       shouldRecordProviderSelection = true;
     }
 
@@ -547,6 +552,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               ? { reuseGatewayCredentialWithoutLocalKey }
               : {}),
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
+            ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
           };
           await deps.startRecordedStep("inference", { provider, model });
           inferenceResult = await withInferenceTrace(
@@ -731,6 +737,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
+        ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
       };
       await deps.startRecordedStep("inference", { provider, model });
       inferenceResult = await withInferenceTrace(

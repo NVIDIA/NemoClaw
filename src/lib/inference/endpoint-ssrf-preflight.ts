@@ -103,10 +103,11 @@ export async function assertEndpointResolvesPublic(
     return { ok: false, reason: `endpoint host "${hostname}" is a private/internal address` };
   }
 
-  // A public IP literal needs no DNS resolution.
+  // A public IP literal needs neither DNS resolution nor connection pinning:
+  // the URL already contains the address curl will connect to.
   const bare =
     hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  if (isIP(bare)) return { ok: true, addresses: [bare] };
+  if (isIP(bare)) return { ok: true };
 
   let addresses: Array<{ address: string; family?: number }>;
   try {
@@ -164,10 +165,14 @@ export function buildResolvePinArgs(
     return [];
   }
   if (!host) return [];
-  const args: string[] = [];
-  for (const address of pinnedAddresses) {
-    if (!address) continue;
-    args.push("--resolve", `${host}:${port}:${address}`);
-  }
-  return args;
+  const addresses = [...new Set(pinnedAddresses.filter(Boolean))];
+  if (addresses.length === 0) return [];
+  // One --resolve entry preserves every accepted address. Repeating the same
+  // host:port entry makes curl retain only the last mapping, silently dropping
+  // dual-stack/failover addresses. Bracket IPv6 addresses in the comma list so
+  // curl can distinguish their colons from the host:port separators.
+  const encodedAddresses = addresses.map((address) =>
+    address.includes(":") ? `[${address}]` : address,
+  );
+  return ["--resolve", `${host}:${port}:${encodedAddresses.join(",")}`];
 }

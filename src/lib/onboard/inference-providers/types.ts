@@ -65,6 +65,7 @@ export type VerifyOnboardInferenceSmoke = (input: {
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   forceOpenAiLike?: boolean;
+  pinnedAddresses?: readonly string[];
 }) => void;
 
 export type PromptValidationRecovery = (

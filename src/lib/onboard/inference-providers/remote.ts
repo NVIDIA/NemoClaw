@@ -122,6 +122,7 @@ export async function setupRemoteProviderInference(
     credentialEnv: string | null;
     reuseGatewayCredentialWithoutLocalKey?: boolean;
     preferredInferenceApi?: string | null;
+    pinnedAddresses?: readonly string[];
   },
   deps: RemoteProviderDeps,
 ): Promise<{ done: true; result: SetupInferenceResult } | { done: false }> {
@@ -133,6 +134,7 @@ export async function setupRemoteProviderInference(
     credentialEnv,
     reuseGatewayCredentialWithoutLocalKey,
     preferredInferenceApi,
+    pinnedAddresses,
   } = args;
   const {
     runOpenshell,
@@ -243,6 +245,7 @@ export async function setupRemoteProviderInference(
           getCompatibleAnthropicOpenAiSurfaceBaseUrl(resolvedEndpointUrl);
         const surfaceProbe = probeOpenAiSurface(openAiSurfaceBaseUrl, model, credentialValue, {
           skipResponsesProbe: true,
+          pinnedAddresses,
         });
         if (!surfaceProbe.ok) {
           providerResult = {

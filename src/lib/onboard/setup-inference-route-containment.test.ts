@@ -7,6 +7,76 @@ import type { SandboxEntry } from "../state/registry";
 import { createSetupInference, type SetupInferenceDeps } from "./setup-inference";
 
 describe("onboard shared gateway route containment", () => {
+  it("preflights a resumed custom endpoint and pins the final host smoke (#6293)", async () => {
+    let lookupCount = 0;
+    const resolveEndpointHost = vi.fn(async () => {
+      lookupCount += 1;
+      return lookupCount === 1
+        ? [{ address: "93.184.216.34", family: 4 }]
+        : [{ address: "10.0.0.8", family: 4 }];
+    });
+    const verifyOnboardInferenceSmoke = vi.fn();
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox: vi.fn(() => true),
+      upsertProvider: vi.fn(() => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke,
+      resolveEndpointHost,
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      REMOTE_PROVIDER_CONFIG: {
+        custom: {
+          label: "Other OpenAI-compatible endpoint",
+          providerName: "compatible-endpoint",
+          providerType: "openai",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          endpointUrl: "https://public-name.example/v1",
+          helpUrl: null,
+          modelMode: "input",
+          defaultModel: "model-a",
+        },
+      },
+      hydrateCredentialEnv: vi.fn(() => "secret"),
+      promptValidationRecovery: vi.fn(),
+      classifyApplyFailure: vi.fn(),
+      localInferenceTimeoutSecs: 60,
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "sandbox-a",
+        "model-a",
+        "compatible-endpoint",
+        "https://public-name.example/v1",
+        "COMPATIBLE_API_KEY",
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(resolveEndpointHost).toHaveBeenCalledOnce();
+    expect(verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
+      expect.objectContaining({ pinnedAddresses: ["93.184.216.34"] }),
+    );
+    expect(JSON.stringify(verifyOnboardInferenceSmoke.mock.calls)).not.toContain("10.0.0.8");
+  });
+
   it("rejects a conflict before selecting the gateway or mutating provider state (#6315)", async () => {
     const events: string[] = [];
     const runOpenshell = vi.fn(() => {
