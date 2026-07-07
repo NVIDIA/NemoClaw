@@ -31,10 +31,7 @@ const reachableCloudHealth: ProviderHealthStatus = {
   detail: "reachable",
 };
 
-function createSnapshotHarness(options: {
-  provider: string | null;
-  inferenceOutput: string;
-}) {
+function createSnapshotHarness(options: { provider: string | null; inferenceOutput: string }) {
   delete require.cache[requireDist.resolve(snapshotModulePath)];
 
   const runtime = requireDist("../../adapters/openshell/runtime.js");
