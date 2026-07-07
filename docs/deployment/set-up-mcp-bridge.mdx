@@ -209,8 +209,9 @@ The JSON value `support.mode: "bridge"` identifies the agent's config-adapter ca
 
 Provider presence, attachment, and credential-key checks read OpenShell metadata only; they cannot prove that OpenShell actually rewrites the `openshell:resolve:env:KEY` placeholder when a request leaves the sandbox.
 `mcp status <server>` therefore also runs a differential wire-level credential-resolution probe by default: it sends the same idempotent MCP `initialize` request twice from inside the sandbox, wrapped in the adapter runtime so the generated `protocol: mcp` policy applies — once with the placeholder authorization header exactly as agent traffic carries it, and once with a deliberately-unresolvable literal control bearer that no gateway rewrite can touch.
-A working rewrite makes the two requests reach the endpoint with different bearers; a dead rewrite forwards both literally, so identical HTTP rejections for both requests indict the host's placeholder rewrite without misblaming an expired or revoked credential, which resolves correctly and is then rejected upstream with a different status than the control.
-The verdict appears as `provider.credentialResolution` in JSON (`ok` true, false, or null with the probe and control `httpStatus`/`controlHttpStatus` and a `detail`) and as a `credential resolution:` line in text output.
+A working rewrite makes the two requests reach the endpoint with different bearers; a dead rewrite forwards both literally.
+A placeholder response that differs from the control in the right direction verifies resolution; identical rejections are reported as inconclusive with both hypotheses named, because wire evidence alone cannot separate "placeholder forwarded verbatim" from "resolved but expired or revoked credential" — the identical-rejection warning tells you to verify the stored credential first and, if it is valid, to treat the result as the host not rewriting placeholders.
+The verdict appears as `provider.credentialResolution` in JSON (`ok` true or null with the probe and control `httpStatus`/`controlHttpStatus` and a `detail`) and as a `credential resolution:` line in text output.
 The probe never captures or prints endpoint response bodies — classification uses HTTP status and curl exit codes only — and it refuses to run against a persisted URL that no longer satisfies the current authenticated-endpoint boundary, so a legacy, private-alias, or plain-HTTP URL is never sent a header the gateway could rewrite into a live credential.
 `mcp add` runs the same probe once after the add commits and prints a warning on failure without failing the add.
 Pass `--no-probe` to skip the probe, or `--probe` to force it for every server in the multi-server status form; the bare `mcp list` and `mcp status` forms never probe so they stay fast.
@@ -268,8 +269,9 @@ For immediate revocation, revoke the upstream credential first, then run `$$nemo
 
 ## Troubleshooting
 
-If `mcp status <server>` reports `credential resolution: FAILED` while provider presence, attachment, credential readiness, and adapter registration are all healthy, the OpenShell gateway on this host is not rewriting the `openshell:resolve:env:KEY` placeholder on egress, and every agent request to that MCP server receives the same authentication failure.
-This is a host-side OpenShell defect rather than a NemoClaw registration problem: verify the OpenShell installation on the host, and compare against a known-good host if one is available (tracked upstream as OpenShell issue 2161).
+If `mcp status <server>` warns that credential resolution could not be verified because the placeholder probe and the unresolvable control probe were rejected identically, first confirm the stored credential is valid (rotate it with `mcp restart` if in doubt).
+If the credential is confirmed valid — for example the same credential works end-to-end on another host — the identical rejection means the OpenShell gateway on this host is not rewriting the `openshell:resolve:env:KEY` placeholder on egress, and every agent request to that MCP server receives the same authentication failure even while provider presence, attachment, credential readiness, and adapter registration all report healthy.
+That is a host-side OpenShell defect rather than a NemoClaw registration problem: verify the OpenShell installation on the host (tracked upstream as OpenShell issue 2161).
 A `credential resolution: unknown` verdict with an endpoint or policy detail means the probe could not reach a judgment; fix the reported endpoint or policy condition and rerun `mcp status <server>`.
 
 If `restart` reports a missing provider and the original credential is not registered in OpenShell, export the same variable name used during `add` and retry.

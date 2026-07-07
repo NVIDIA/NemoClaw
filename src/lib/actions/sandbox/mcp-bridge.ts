@@ -24,7 +24,7 @@ import {
 import { removeMcpBridge as removeMcpBridgeLifecycle } from "./mcp-bridge-remove";
 import { renderMcpBridgeList, renderMcpBridgeStatus } from "./mcp-bridge-render";
 import {
-  credentialResolutionFailureWarning,
+  credentialResolutionWarning,
   probeCredentialResolution,
 } from "./mcp-bridge-resolution-probe";
 import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
@@ -206,12 +206,13 @@ function reportAddCredentialResolution(sandboxName: string, server: string): voi
     ? entry.adapter
     : getSandboxAgent(sandbox).mcpCapability.adapter;
   const probe = probeCredentialResolution(sandboxName, entry, adapter);
+  const warning = credentialResolutionWarning(entry.env[0], probe);
   if (probe.ok === true) {
     console.log(
       `  Credential resolution verified on the wire (HTTP ${probe.httpStatus})${probe.detail ? `: ${probe.detail}` : "."}`,
     );
-  } else if (probe.ok === false) {
-    console.error(`  WARNING: ${credentialResolutionFailureWarning(entry.env[0], probe)}`);
+  } else if (warning) {
+    console.error(`  WARNING: ${warning}`);
   } else {
     console.log(
       `  Credential resolution probe was inconclusive${probe.detail ? `: ${probe.detail}` : "."}`,

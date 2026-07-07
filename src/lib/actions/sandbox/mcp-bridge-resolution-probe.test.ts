@@ -16,7 +16,7 @@ vi.mock("./process-recovery", () => ({
 import {
   buildCredentialResolutionProbeCommand,
   classifyCredentialResolutionProbe,
-  credentialResolutionFailureWarning,
+  credentialResolutionWarning,
   MCP_PROBE_CONTROL_BEARER,
   MCP_PROBE_CONTROL_EXIT_MARKER,
   MCP_PROBE_CONTROL_HTTP_MARKER,
@@ -130,7 +130,7 @@ describe("MCP credential-resolution probe classification", () => {
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
   });
 
-  it("classifies identical placeholder and control rejections as a resolution failure (#6379)", () => {
+  it("classifies identical placeholder and control rejections as inconclusive with both hypotheses (#6379)", () => {
     for (const httpStatus of [400, 401, 403]) {
       const probe = classifyCredentialResolutionProbe(
         {
@@ -145,9 +145,11 @@ describe("MCP credential-resolution probe classification", () => {
         },
         baseEntry,
       );
-      expect(probe.ok).toBe(false);
+      expect(probe.ok).toBeNull();
       expect(probe.httpStatus).toBe(httpStatus);
       expect(probe.controlHttpStatus).toBe(httpStatus);
+      expect(probe.detail).toContain("rejected identically");
+      expect(probe.detail).toContain("expired or revoked credential");
     }
   });
 
@@ -275,7 +277,7 @@ describe("MCP credential-resolution probe classification", () => {
       },
       baseEntry,
     );
-    expect(probe.ok).toBe(false);
+    expect(probe.ok).toBeNull();
     expect(JSON.stringify(probe)).not.toContain("ghp_super-secret-value-1234567890");
   });
 });
@@ -322,14 +324,40 @@ describe("MCP credential-resolution probe execution gates", () => {
   });
 });
 
-describe("MCP credential-resolution failure warning", () => {
-  it("names the placeholder, the differential evidence, and the OpenShell host remediation (#6379)", () => {
-    const warning = credentialResolutionFailureWarning("GITHUB_TOKEN", {
+describe("MCP credential-resolution warning", () => {
+  it("warns on identical 4xx with both hypotheses and the OpenShell host remediation (#6379)", () => {
+    const warning = credentialResolutionWarning("GITHUB_TOKEN", {
+      ok: null,
       httpStatus: 403,
       controlHttpStatus: 403,
     });
     expect(warning).toContain("openshell:resolve:env:GITHUB_TOKEN");
     expect(warning).toContain("identically (HTTP 403)");
+    expect(warning).toContain("If the stored credential is confirmed valid");
     expect(warning).toContain("OpenShell issue 2161");
+  });
+
+  it("stays silent for verified, differing, and 5xx outcomes (#6379)", () => {
+    expect(
+      credentialResolutionWarning("GITHUB_TOKEN", {
+        ok: true,
+        httpStatus: 200,
+        controlHttpStatus: 401,
+      }),
+    ).toBeUndefined();
+    expect(
+      credentialResolutionWarning("GITHUB_TOKEN", {
+        ok: null,
+        httpStatus: 400,
+        controlHttpStatus: 401,
+      }),
+    ).toBeUndefined();
+    expect(
+      credentialResolutionWarning("GITHUB_TOKEN", {
+        ok: null,
+        httpStatus: 500,
+        controlHttpStatus: 500,
+      }),
+    ).toBeUndefined();
   });
 });

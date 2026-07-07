@@ -22,7 +22,7 @@ import {
   providerShapeDetail,
 } from "./mcp-bridge-provider";
 import {
-  credentialResolutionFailureWarning,
+  credentialResolutionWarning,
   probeCredentialResolution,
 } from "./mcp-bridge-resolution-probe";
 import {
@@ -232,9 +232,10 @@ export async function statusMcpBridge(
             }
           : probeCredentialResolution(sandboxName, entry, support.adapter)
         : undefined;
-    if (credentialResolution?.ok === false) {
-      warnings.push(credentialResolutionFailureWarning(entry?.env[0], credentialResolution));
-    }
+    const resolutionWarning = credentialResolution
+      ? credentialResolutionWarning(entry?.env[0], credentialResolution)
+      : undefined;
+    if (resolutionWarning) warnings.push(resolutionWarning);
     return {
       server: name,
       agent: entry?.agent ?? agent.name,

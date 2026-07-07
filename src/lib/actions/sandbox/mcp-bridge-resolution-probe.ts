@@ -14,10 +14,12 @@
  * authorization header exactly as agent traffic carries it, and once with a
  * deliberately-unresolvable literal control bearer that no gateway rewrite can
  * ever touch. A working rewrite makes the two requests reach the endpoint with
- * different bearers; a dead rewrite forwards both literally. Comparing only
- * the two HTTP status codes therefore distinguishes "placeholder resolved" from
- * "placeholder forwarded verbatim" without misblaming an expired or revoked
- * credential (which resolves correctly and then fails upstream auth).
+ * different bearers; a dead rewrite forwards both literally. A placeholder
+ * response that differs from the control in the right direction verifies
+ * resolution. Identical responses are reported as inconclusive with both
+ * hypotheses named: wire evidence alone cannot separate "placeholder forwarded
+ * verbatim" from "resolved but expired or revoked credential", because both
+ * draw the same rejection from the endpoint.
  *
  * Response bodies are never captured or printed: they are untrusted
  * authenticated endpoint output, and redaction cannot be guaranteed once the
@@ -56,7 +58,12 @@ export const MCP_PROBE_CONTROL_BEARER = "nemoclaw-mcp-probe-control-unresolvable
 const PROBE_CURL_MAX_TIME_SECONDS = 6;
 
 export interface CredentialResolutionProbe {
-  /** true = placeholder resolved on the wire; false = placeholder forwarded verbatim; null = indeterminate or skipped. */
+  /**
+   * true = placeholder resolved on the wire; null = inconclusive or skipped
+   * (see detail). false is reserved for future evidence sources that can
+   * prove non-rewriting; wire statuses alone never can, so the current
+   * classifier never emits it.
+   */
   ok: boolean | null;
   httpStatus?: number;
   controlHttpStatus?: number;
@@ -223,10 +230,16 @@ export function classifyCredentialResolutionProbe(
     return { ok: true, ...shared };
   }
   if (httpStatus === controlHttpStatus) {
-    // Identical auth-shaped rejections indict the rewrite; an identical 5xx
-    // only proves the endpoint failed the same way twice.
+    // Identical statuses never prove non-rewriting: a correctly rewritten but
+    // expired or revoked credential and the bogus control can both draw the
+    // same 4xx, and an endpoint can fail both probes the same way. Report the
+    // evidence and let the operator rule out the credential.
     if (httpStatus >= 400 && httpStatus < 500) {
-      return { ok: false, ...shared };
+      return {
+        ok: null,
+        ...shared,
+        detail: `the placeholder probe and the unresolvable control probe were rejected identically (HTTP ${httpStatus}); this is consistent with the placeholder being forwarded verbatim, but also with an expired or revoked credential that resolved correctly — verify the stored credential value first`,
+      };
     }
     return {
       ok: null,
@@ -248,16 +261,22 @@ export function classifyCredentialResolutionProbe(
   };
 }
 
-export function credentialResolutionFailureWarning(
+/**
+ * Warning for the identical-4xx outcome. Wire evidence alone cannot separate
+ * "placeholder forwarded verbatim" from "resolved but expired or revoked
+ * credential", so the warning states both and tells the operator which check
+ * rules out which.
+ */
+export function credentialResolutionWarning(
   envName: string | undefined,
-  probe: Pick<CredentialResolutionProbe, "httpStatus" | "controlHttpStatus">,
-): string {
+  probe: Pick<CredentialResolutionProbe, "ok" | "httpStatus" | "controlHttpStatus">,
+): string | undefined {
+  if (probe.ok !== null) return undefined;
+  if (probe.httpStatus === undefined || probe.httpStatus !== probe.controlHttpStatus)
+    return undefined;
+  if (probe.httpStatus < 400 || probe.httpStatus >= 500) return undefined;
   const placeholder = envName ? `openshell:resolve:env:${envName}` : "openshell:resolve:env:<KEY>";
-  const evidence =
-    probe.httpStatus !== undefined
-      ? `the endpoint answered a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe identically (HTTP ${probe.httpStatus})`
-      : "a gateway-egress MCP initialize probe was rejected";
-  return `OpenShell did not resolve the credential placeholder '${placeholder}' on the wire: ${evidence}. Agent runtimes take this same path, receive the same auth failure, and will skip this MCP server. Verify the OpenShell installation on this host (see NVIDIA/OpenShell issue 2161).`;
+  return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP ${probe.httpStatus}). If the stored credential is confirmed valid, the OpenShell host is not rewriting the '${placeholder}' placeholder on egress and agent runtimes will hit the same auth failure and skip this MCP server (see NVIDIA/OpenShell issue 2161). Otherwise, rotate the credential with mcp restart and re-run mcp status.`;
 }
 
 export function probeCredentialResolution(

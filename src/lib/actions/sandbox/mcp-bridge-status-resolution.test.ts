@@ -148,18 +148,19 @@ describe("MCP status wire-level credential-resolution probe", () => {
     };
     expect(payload.probed).toBe(true);
     expect(payload.status.provider.credentialResolution).toMatchObject({
-      ok: false,
+      ok: null,
       httpStatus: 401,
+      controlHttpStatus: 401,
     });
     expect(
       payload.status.warnings.some((warning) =>
-        warning.includes("did not resolve the credential placeholder"),
+        warning.includes("Credential resolution could not be verified"),
       ),
     ).toBe(true);
     expect(payload.exitCode).toBe(0);
   });
 
-  it("renders the failed probe in the human-readable status output (#6379)", () => {
+  it("renders the identical-rejection probe in the human-readable status output (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-render-");
     const { stdout } = runHarness(
       home,
@@ -169,11 +170,11 @@ describe("MCP status wire-level credential-resolution probe", () => {
 `,
     );
     const payload = JSON.parse(stdout) as { lines: string[] };
+    expect(payload.lines.some((line) => line.includes("credential resolution: unknown"))).toBe(
+      true,
+    );
     expect(
-      payload.lines.some((line) => line.includes("credential resolution: FAILED (HTTP 401)")),
-    ).toBe(true);
-    expect(
-      payload.lines.some((line) => line.includes("did not resolve the credential placeholder")),
+      payload.lines.some((line) => line.includes("Credential resolution could not be verified")),
     ).toBe(true);
   });
 
@@ -229,7 +230,11 @@ describe("MCP status wire-level credential-resolution probe", () => {
     };
     expect(payload.probesAfterSkip).toBe(0);
     expect(payload.skippedResolution).toBeNull();
-    expect(payload.forcedResolution).toMatchObject({ ok: false, httpStatus: 401 });
+    expect(payload.forcedResolution).toMatchObject({
+      ok: null,
+      httpStatus: 401,
+      controlHttpStatus: 401,
+    });
   });
 
   it("rejects combining --probe with --no-probe (#6379)", () => {
@@ -250,7 +255,7 @@ describe("MCP status wire-level credential-resolution probe", () => {
 });
 
 describe("MCP add post-add credential-resolution probe", () => {
-  it("warns loudly on a wire failure without failing the committed add (#6379)", () => {
+  it("warns loudly on an identical-rejection probe without failing the committed add (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-add-");
     const { stdout } = runHarness(
       home,
@@ -279,7 +284,7 @@ describe("MCP add post-add credential-resolution probe", () => {
     expect(
       payload.errorLines.some(
         (line) =>
-          line.includes("WARNING") && line.includes("did not resolve the credential placeholder"),
+          line.includes("WARNING") && line.includes("Credential resolution could not be verified"),
       ),
     ).toBe(true);
     expect(payload.exitCode).toBe(0);
