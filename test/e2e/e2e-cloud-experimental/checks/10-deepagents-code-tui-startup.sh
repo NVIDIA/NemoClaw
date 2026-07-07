@@ -5,7 +5,7 @@
 # Case: Deep Agents Code interactive TUI startup (#5620).
 #
 # This live check runs against a real Deep Agents Code sandbox. It proves the
-# interactive `dcode` TUI starts in a PTY, reaches a prompt-like startup state,
+# interactive `dcode` TUI starts in a PTY, completes its queued `/help` probe,
 # exits after Ctrl-C, and leaves only sanitized, secret-free capture artifacts.
 #
 # shellcheck disable=SC2016
@@ -15,14 +15,17 @@ set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
-TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
+# DCode independently budgets up to 60 seconds for server health and another
+# 60 seconds for graph readiness. Leave headroom for cold CI startup.
+TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-150}"
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
 CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
-# Upstream dcode does not expose a stable machine-readable TUI ready marker.
-# Keep this localized heuristic prompt-shaped; do not match banner-only text.
-TUI_READY_PATTERN='(what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help)'
+# Pinned DCode 0.1.34 renders this exact heading for `/help`. The command is
+# queued until onboarding and server startup finish, so it is a stronger ready
+# signal than release-specific welcome copy or the always-visible app banner.
+TUI_READY_PATTERN='(interactive features:)'
 # NemoClaw configures DCode's model and managed provider before launch, so
 # the model picker is a regression. The name prompt is allowed on first run.
 TUI_FIRST_RUN_PATTERN='(choose a recommended model)'
@@ -169,18 +172,46 @@ proc append_marker {markers marker} {
 
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
-set ready_match ""
+
+# The name screen is mounted on the first frame when onboarding is pending.
+# Give it a short, bounded window; when it is absent, submit the readiness
+# command directly to the normal chat input.
+set timeout 10
 expect {
-  -nocase -re $ready_pattern {
-    set ready_match $expect_out(0,string)
-  }
   -nocase -re $name_prompt_pattern {
     append_marker $markers "$expect_out(0,string)"
     append_marker $markers "NEMOCLAW_TUI_NAME_PROMPT"
     puts "\nNEMOCLAW_TUI_NAME_PROMPT"
     # Pinned Deep Agents Code 0.1.34 accepts an empty optional name and continues.
     send -- "\r"
-    exp_continue
+    after 500
+    send -- "/help\r"
+    append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
+  }
+  -nocase -re $first_run_pattern {
+    append_marker $markers "$expect_out(0,string)"
+    append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+    puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+    send -- "\003"
+    exit 24
+  }
+  timeout {
+    append_marker $markers "NEMOCLAW_TUI_NO_NAME_PROMPT"
+    send -- "/help\r"
+    append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
+  }
+  eof {
+    append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
+    puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
+    exit 21
+  }
+}
+
+set ready_match ""
+set timeout $env(NEMOCLAW_TUI_TIMEOUT)
+expect {
+  -nocase -re $ready_pattern {
+    set ready_match $expect_out(0,string)
   }
   -nocase -re $first_run_pattern {
     append_marker $markers "$expect_out(0,string)"
@@ -353,9 +384,9 @@ main() {
   fi
 
   if grep -q "NEMOCLAW_TUI_READY" "$plain_capture_file" && is_tui_ready_capture <"$plain_capture_file"; then
-    pass "dcode TUI rendered a usable startup prompt signature"
+    pass "dcode TUI completed onboarding/server startup and rendered /help"
   else
-    fail_test "dcode TUI prompt-ready marker missing from capture"
+    fail_test "dcode TUI /help readiness marker missing from capture"
   fi
 
   assert_clean_exit_code "$plain_capture_file"
