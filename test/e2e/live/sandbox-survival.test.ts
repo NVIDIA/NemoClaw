@@ -88,9 +88,8 @@ test.skipIf(!shouldRunLiveE2E())(
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "sandbox-survival",
-      runner: "vitest",
       boundary: "install-sh-docker-openshell-gateway-sandbox-inference",
       contracts: [
         "install.sh --non-interactive creates the named OpenClaw sandbox",
@@ -304,7 +303,7 @@ test.skipIf(!shouldRunLiveE2E())(
       new RegExp(`(^|\\s)${SANDBOX_NAME}(\\s|$)`, "m"),
     );
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "sandbox-survival",
       status: "passed",
       assertions: {

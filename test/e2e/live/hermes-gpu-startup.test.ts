@@ -175,9 +175,8 @@ test.skipIf(!shouldRunLiveE2E())(
   "hermes-gpu-startup: selected OpenShell GPU route reaches stable Ready state",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "hermes-gpu-startup",
-      runner: "vitest",
       boundary: "install.sh --non-interactive --fresh + Hermes GPU-supervised startup",
       sandboxName: SANDBOX_NAME,
       inference: "hermetic fake OpenAI-compatible endpoint",
@@ -297,7 +296,7 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
     expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "hermes-gpu-startup",
       assertions: {
         selectedGpuRouteVerified: true,

@@ -13,7 +13,17 @@ export interface CommandRunner {
   run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult>;
 }
 
-export function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
+export interface CommandResultText {
+  stdout: string;
+  stderr: string;
+}
+
+export interface CommandExitResult extends CommandResultText {
+  exitCode: number | null;
+  signal?: NodeJS.Signals | null;
+}
+
+export function resultText(result: CommandResultText): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
@@ -40,12 +50,12 @@ export function outputContainsReadySandbox(
     });
 }
 
-export function assertExitZero(result: ShellProbeResult, label: string): void {
+export function assertExitZero(result: CommandExitResult, label: string): void {
   if (result.exitCode === 0) return;
   const fallback = result.signal
     ? `signal=${result.signal}`
     : `exit=${result.exitCode ?? "unknown"}`;
-  const detail = result.stderr.trim() || result.stdout.trim() || fallback;
+  const detail = resultText(result).trim() || fallback;
   throw new Error(`${label} failed: ${detail}`);
 }
 

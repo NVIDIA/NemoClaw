@@ -85,7 +85,7 @@ test.skipIf(!shouldRunLiveE2E())(
       slackApp: SLACK_APP_TOKEN,
     });
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "openclaw-slack-pairing",
       boundary:
         "install.sh Slack OpenClaw sandbox + fake Slack REST/websocket token rewrite + runtime pairing request + connect-shell approval",

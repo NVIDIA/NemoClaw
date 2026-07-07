@@ -4,8 +4,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -34,10 +34,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     OPENSHELL_GATEWAY: "nemoclaw",
     ...extra,
   };
-}
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 async function cleanup(
@@ -84,7 +80,7 @@ liveTest(
     const installCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-install-"));
     const redactionValues = [hosted.apiKey];
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "cloud-onboard",
       sandboxName: SANDBOX_NAME,
       installUrl,
@@ -176,6 +172,6 @@ liveTest(
     }
 
     await cleanup(host, sandbox, { label: "final-cleanup", verify: true });
-    await artifacts.writeJson("target-result.json", { id: "cloud-onboard", status: "passed" });
+    await artifacts.target.complete({ id: "cloud-onboard", status: "passed" });
   },
 );

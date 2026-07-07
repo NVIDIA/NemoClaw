@@ -4,8 +4,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -42,10 +42,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     OPENSHELL_GATEWAY: "nemoclaw",
     ...extra,
   };
-}
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 interface FreshAgentGatewaySnapshot {
@@ -1217,7 +1213,7 @@ liveTest(
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "issue-4462-scope-upgrade-approval",
       sandboxName: SANDBOX_NAME,
       contracts: [
@@ -1476,7 +1472,7 @@ liveTest(
     expect(adminConnectOutput).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
 
     await cleanup(host, sandbox);
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "issue-4462-scope-upgrade-approval",
       status: "passed",
     });

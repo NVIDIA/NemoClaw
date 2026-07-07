@@ -57,9 +57,8 @@ test.skipIf(!shouldRunLiveE2E())(
       model: INFERENCE_MODEL,
     };
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "device-auth-health",
-      runner: "vitest",
       boundary: "install.sh + OpenShell sandbox exec + NemoClaw status + host curl",
       sandboxName: SANDBOX_NAME,
       dashboardPort: DASHBOARD_PORT,

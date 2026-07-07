@@ -418,9 +418,8 @@ liveTest(
     const baseImage = `nemoclaw-hermes-sandbox-base-local:root-entrypoint-${runId}`;
     const containers: string[] = [];
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "hermes-root-entrypoint-smoke",
-      runner: "vitest",
       boundary: "docker-root-entrypoint",
       image,
       prebuiltImage: Boolean(process.env.NEMOCLAW_HERMES_TEST_IMAGE),
@@ -461,7 +460,7 @@ liveTest(
       throw error;
     }
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "hermes-root-entrypoint-smoke",
       image,
       assertions: {
