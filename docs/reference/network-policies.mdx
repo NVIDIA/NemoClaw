@@ -9,17 +9,38 @@ keywords: ["nemoclaw network policy", "sandbox egress control operator approval"
 content:
   type: "reference"
 ---
+import { AgentOnly } from "../_components/AgentGuide";
+
 NemoClaw runs with a deny-by-default network policy.
 The sandbox can only reach endpoints that are explicitly allowed.
 OpenShell intercepts any request to an unlisted destination and prompts the operator to approve or deny it in real time through the TUI.
 
 ## Baseline Policy
 
+<AgentOnly variant="openclaw">
+
 The baseline policy is defined in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml` so Hermes runtime binaries can reach the service endpoints they need while keeping the same deny-by-default model.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+Deep Agents sandboxes use an agent-specific baseline policy in `agents/langchain-deepagents-code/policy-additions.yaml` so the managed `dcode` runtime can reach inference, GitHub, and package endpoints while keeping the same deny-by-default model.
+Deep Agents uses strict Landlock compatibility, so sandbox startup fails when OpenShell cannot enforce the managed filesystem policy.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
 
 <Note>
 Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml` so Hermes runtime binaries can reach the service endpoints they need while keeping the same deny-by-default model.
 </Note>
+
+</AgentOnly>
 
 ### Filesystem
 
@@ -33,11 +54,22 @@ It is writable so PTY-based tools (`tmux`, `script`, and interactive shells) can
 Without it, those tools fail with `fork failed: Permission denied`.
 
 The sandbox process runs as a dedicated `sandbox` user and group.
+<AgentOnly variant="openclaw">
 Landlock LSM enforcement applies on a best-effort basis.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Landlock LSM enforcement applies on a best-effort basis.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+For Deep Agents, Landlock enforcement is strict.
+If the kernel or runtime cannot enforce the managed filesystem policy, sandbox startup fails closed.
+</AgentOnly>
 
 ### Network Policies
 
 The following endpoint groups are allowed by default:
+
+<AgentOnly variant="openclaw">
 
 | Policy | Endpoints | Binaries | Rules |
 | --- | --- | --- | --- |
@@ -47,7 +79,26 @@ The following endpoint groups are allowed by default:
 | `openclaw_docs` | `docs.openclaw.ai:443` | `/usr/local/bin/openclaw` | GET only |
 | `npm_registry` | `registry.npmjs.org:443` | `/usr/local/bin/openclaw` only (openclaw plugins install) | GET only |
 
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes baseline endpoint groups are declared by the Hermes agent policy additions.
+Use `$$nemoclaw <sandbox> policy-list` or `openshell policy get --base <sandbox>` on a live sandbox to inspect the exact applied baseline.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+| Policy | Endpoints | Binaries | Rules |
+| --- | --- | --- | --- |
+| `managed_inference` | `inference.local:443` | `/usr/local/bin/dcode`, `/opt/venv/bin/python3*`, `/opt/venv/lib/python3.13/**` | POST to OpenAI-compatible completion and embedding paths, GET to model listings |
+| `github` | `github.com:443`, `api.github.com:443` | `/usr/bin/git`, `/usr/local/bin/dcode`, `/opt/venv/bin/python3*` | Full access to the listed hosts |
+| `pypi` | `pypi.org:443`, `files.pythonhosted.org:443` | `/opt/venv/bin/python3*`, `/opt/venv/bin/pip3*` | GET and HEAD for package installation |
+
+</AgentOnly>
+
 All endpoints use TLS termination and are enforced at port 443.
+
+<AgentOnly variant="openclaw">
 
 <Note>
 GitHub access (`github.com`, `api.github.com`) is not included in the baseline policy.
@@ -60,6 +111,25 @@ WeChat and WhatsApp are experimental.
 Review [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
 </Note>
 
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+<Note>
+Messaging endpoints are not part of the common baseline policy.
+Enable the channel during onboarding or apply the matching preset so the sandbox can reach that platform.
+</Note>
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+<Note>
+Deep Agents is a terminal-oriented harness.
+NemoClaw does not configure messaging channel bridges for Deep Agents today, and the baseline policy does not include Tavily, LangSmith, MCP hosts, or arbitrary web endpoints.
+Apply maintained presets such as `github`, `pypi`, or `tavily` only when the sandbox needs that access.
+</Note>
+
+</AgentOnly>
+
 <a id="policy-tiers"></a>
 ## Policy Tiers
 
@@ -68,23 +138,35 @@ The baseline policy is always applied regardless of the selected tier.
 
 | Tier | Presets included | Description |
 |------|------------------|-------------|
-| Restricted | No tier defaults | Starts from the baseline policy. Web search or messaging integrations selected earlier can still suggest their required presets; deselect them during policy review for baseline-only access. Restricted suppresses other agent-required additions, such as OpenClaw pricing fetches; reapply them later with `policy-add` if needed. |
+| Restricted | No tier defaults | Starts from the baseline policy. Web search or messaging integrations selected earlier can still suggest their required presets; deselect them during policy review for baseline-only access. Restricted suppresses other agent-required additions; reapply them later with `policy-add` if needed. |
 | Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, selected `brave` or `tavily` web search preset | Full dev tooling and web search when you select a provider the active agent supports. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
 | Open | `npm`, `pypi`, `huggingface`, `brew`, selected `brave` or `tavily` web search preset, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. |
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent.
 NemoClaw filters tier defaults and built-in preset choices by the active agent's supported integrations.
+<AgentOnly variant="openclaw">
 OpenClaw can select `brave` or `tavily`, while Hermes can select `tavily` only.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Hermes can select `tavily` only.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Deep Agents can use the maintained `tavily` opt-in path, but messaging channel presets are omitted because the terminal harness does not run a NemoClaw messaging bridge today.
+</AgentOnly>
 NemoClaw automatically suggests the preset that matches the selected provider and removes stale web search presets during resume reconciliation when you switch providers or disable web search.
 Explicit custom preset lists and manual interactive selections remain operator-controlled.
+<AgentOnly variant="hermes">
 Hermes managed-tool gateway selections can add Hermes-specific presets, such as Nous-hosted web, image, audio, browser, or code tools, without applying unsupported OpenClaw-only presets.
 When Hermes uses Tavily, NemoClaw removes `nous-web` from the effective managed-tool selection while preserving other selected Nous tool presets.
+</AgentOnly>
+<AgentOnly variant="openclaw">
 OpenClaw onboarding also adds the `openclaw-pricing` preset on top of tier defaults so session-cost records can populate from LiteLLM and OpenRouter without manual configuration.
 When the OpenClaw OTEL diagnostics feature is enabled with a local endpoint, NemoClaw adds the `openclaw-diagnostics-otel-local` preset on the same basis.
+</AgentOnly>
 The applied set therefore reflects the chosen tier *plus* any agent-required presets, so `policy-list` may show one or more presets that do not appear in the tier table above.
 The `policy-list` provenance tags are inferred from the current tier YAML and the active agent at display time and are not persisted per preset.
-A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy-add` after onboarding; OpenClaw-only and Hermes-only preset names are only labelled `[from <agent> agent]` when the active agent matches.
+A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy-add` after onboarding; agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches.
 Claude Code direct egress is not included in any policy tier.
 If you install and run the Claude Code CLI inside the sandbox with its own credentials, apply the `claude-code` preset explicitly.
 Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.
@@ -129,7 +211,21 @@ This opens a split tmux session with the TUI on the left and the agent on the ri
 
 ### Static Changes
 
+<AgentOnly variant="openclaw">
+
 Edit `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and re-run the onboard wizard:
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Edit `agents/hermes/policy-additions.yaml` and re-run the onboard wizard:
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+Edit `agents/langchain-deepagents-code/policy-additions.yaml` and re-run the onboard wizard:
+
+</AgentOnly>
 
 ```bash
 $$nemoclaw onboard

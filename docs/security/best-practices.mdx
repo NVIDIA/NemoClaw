@@ -85,13 +85,13 @@ flowchart TB
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
 | Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
-| Gateway Authentication | Unauthorized devices or clients reaching the gateway and its dashboard. | OpenShell gateway | No. Set at image build / onboarding time. |
+| Gateway Authentication | Unauthorized devices or clients reaching the OpenShell gateway or dashboard surfaces when present. | OpenShell gateway | No. Set at image build / onboarding time. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use the NemoClaw inference switching command. |
 
 ## Network Controls
 
 NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets you approve or deny requests in real time.
-Network policy allowlists do not disable OpenShell's SSRF guard; refer to [Customize the Network Policy](/network-policy/customize-network-policy) for the interaction between egress rules and internal-address blocking.
+Network policy allowlists do not disable OpenShell's SSRF guard, so internal-address blocking remains active even when an endpoint matches an egress rule.
 
 OpenShell provides additional network enforcement mechanisms not covered here, including network namespace isolation, SSRF protection, TLS auto-detection and termination, and audit-vs-enforce modes.
 Refer to the [Network Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#network-controls) section of the OpenShell Security Best Practices.
@@ -147,6 +147,16 @@ NemoClaw's host-local Amazon Bedrock adapter runs outside this sandbox credentia
 NemoClaw configures Hermes with a custom provider through `inference.local`, and the shipped Hermes image does not install the optional native Bedrock dependency.
 AWS credential discovery for supported Bedrock inference therefore remains in NemoClaw's host-local adapter, outside the sandbox.
 If direct Hermes Bedrock support is added later, it must apply the same unavailable-metadata rule and include Hermes-specific credential-probe acceptance tests before it is enabled.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+#### Deep Agents Managed Inference Credential Discovery
+
+NemoClaw configures the managed `dcode` runtime with a generated OpenAI-compatible route through `inference.local`.
+The sandbox receives a placeholder route key, not the upstream provider credential.
+The managed launchers reject credential-shaped environment values and upstream auth files before Deep Agents Code starts, so provider discovery stays on the host-side OpenShell boundary.
+If you need a new sandbox-direct credential source, design it as an explicit provider or MCP integration instead of placing secrets in `/sandbox/.deepagents`.
 
 </AgentOnly>
 
@@ -216,7 +226,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | `outlook` | Microsoft 365, Outlook. | Gives agent access to email. |
 | `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
-| `tavily` | Tavily Search API. | Agent can submit search queries and extraction targets to Tavily. The preset allows only `POST /search` and `POST /extract` from the maintained agent runtimes and enables request-body credential rewriting for Hermes. |
+| `tavily` | Tavily Search API. | Agent can submit search queries and extraction targets to Tavily. The preset allows only `POST /search` and `POST /extract` from the maintained agent runtimes and enables request-body credential rewriting when the agent sends the placeholder in JSON. |
 | `telegram` | Telegram Bot API. | Agent can send messages to any chat the bot token has access to. |
 
 Apply presets only when the agent's task requires the integration.
@@ -225,10 +235,27 @@ Review the preset's YAML file before applying to understand the endpoints, metho
 ### Web Search Credential Rewriting
 
 NemoClaw registers each selected web search credential in a sandbox-scoped OpenShell provider and writes a resolver placeholder into the agent configuration.
+<AgentOnly variant="openclaw">
 OpenClaw sends Brave's placeholder in the `X-Subscription-Token` header and Tavily's placeholder in the `Authorization` header.
+</AgentOnly>
+<AgentOnly variant="hermes">
 Hermes sends the Tavily placeholder in the JSON `api_key` field, so the `tavily` policy preset enables `request_body_credential_rewrite` for `api.tavily.com`.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Deep Agents uses the NemoClaw-managed Tavily opt-in path.
+The managed `dcode` launchers reject direct `TAVILY_API_KEY` injection, and the sandbox can reach `api.tavily.com` only after you apply the `tavily` preset and attach the `tavily-search` OpenShell provider.
+Because OpenShell attributes these calls to the sandbox Python interpreter, the Tavily egress grant is process-wide for managed sandbox Python, not a `dcode`-only boundary.
+</AgentOnly>
 OpenShell replaces these placeholders only when the request reaches the matching egress policy path.
+<AgentOnly variant="openclaw">
 The raw `BRAVE_API_KEY` or `TAVILY_API_KEY` is not written into the sandbox configuration.
+</AgentOnly>
+<AgentOnly variant="hermes">
+The raw `TAVILY_API_KEY` is not written into the sandbox configuration.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The raw `TAVILY_API_KEY` is not written into the managed Deep Agents configuration.
+</AgentOnly>
 
 The `tavily` preset restricts agent egress to the maintained Python and Node.js paths used by the supported agents.
 Its exact curl paths are used only by onboarding's post-create verifier.
@@ -326,6 +353,24 @@ Messaging sessions such as WhatsApp pairing can remain mutable by design so they
 | Recommendation | For sensitive workloads, keep generated config under NemoClaw control and back up Hermes state before destructive operations. |
 
 </AgentOnly>
+<AgentOnly variant="deepagents">
+
+The `/sandbox/.deepagents` directory contains Deep Agents Code runtime state and NemoClaw-generated configuration.
+NemoClaw writes `config.toml` during onboarding and rebuilds.
+Direct edits to this file can be overwritten when NemoClaw regenerates the managed inference route.
+
+The managed Deep Agents image deliberately omits raw provider and service credentials from generated configuration.
+Credential-bearing files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are treated as user-managed files and are not included in NemoClaw snapshots.
+The managed `.deepagents/.nemoclaw-mcp.json` projection contains OpenShell placeholders and is reconstructed from host-side registry state.
+
+| Aspect | Detail |
+|---|---|
+| Default | The Deep Agents config tree contains NemoClaw-generated `config.toml`, managed MCP projection state, and mutable Deep Agents memory and skill state. |
+| What you can change | Use host-side NemoClaw commands for durable model, provider, managed MCP, and policy changes; inspect or edit memory and skills through `dcode` or direct file access when appropriate. |
+| Risk of direct edits | Direct edits to generated config can drift from the host registry and may be lost on rebuild. Storing credentials in `.deepagents/.env` or user `.mcp.json` moves them outside the managed credential boundary. |
+| Recommendation | Keep generated config under NemoClaw control. Use OpenShell providers and NemoClaw MCP commands for credentials, and back up Deep Agents state before destructive operations. |
+
+</AgentOnly>
 
 ### Writable Paths
 
@@ -342,12 +387,36 @@ The agent has read-write access to `/sandbox`, `/tmp`, `/dev/null`, and `/dev/pt
 
 Landlock is a Linux Security Module that enforces filesystem access rules at the kernel level.
 
+<AgentOnly variant="openclaw">
+
 | Aspect | Detail |
 |---|---|
 | Default | `compatibility: best_effort`. The entrypoint applies Landlock rules when the kernel supports them and silently skips them on older kernels. |
 | What you can change | This is a NemoClaw default, not a user-facing knob. |
 | Risk if relaxed | On kernels without Landlock support (pre-5.13), filesystem restrictions rely solely on container mount configuration, which is less granular. |
 | Recommendation | Run on a kernel that supports Landlock (5.13+). Ubuntu 22.04 LTS and later include Landlock support. |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+| Aspect | Detail |
+|---|---|
+| Default | `compatibility: best_effort`. The entrypoint applies Landlock rules when the kernel supports them and silently skips them on older kernels. |
+| What you can change | This is a NemoClaw default, not a user-facing knob. |
+| Risk if relaxed | On kernels without Landlock support (pre-5.13), filesystem restrictions rely solely on container mount configuration, which is less granular. |
+| Recommendation | Run on a kernel that supports Landlock (5.13+). Ubuntu 22.04 LTS and later include Landlock support. |
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+| Aspect | Detail |
+|---|---|
+| Default | `compatibility: strict`. Deep Agents sandbox startup fails closed when OpenShell cannot enforce the managed filesystem policy. |
+| What you can change | This is a NemoClaw Deep Agents invariant, not a user-facing knob. |
+| Risk if relaxed | Silent Landlock degradation would leave the terminal coding harness with weaker filesystem isolation while still reporting a successful sandbox. |
+| Recommendation | Run Deep Agents on a kernel and runtime that support Landlock enforcement. Rebuild or move hosts if startup reports an enforcement failure. |
+
+</AgentOnly>
 
 ## Process Controls
 
@@ -441,6 +510,23 @@ If the container runtime restricts `ulimit` modification, the entrypoint logs a 
 | Risk if relaxed | Without this cap, the sandbox inherits the Docker daemon default (`nofile` ~1048576). A runaway or hostile process can then open file descriptors until it exhausts them, causing a denial of service that can starve the gateway, the agent, or the host of file handles. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nofile limit`), the container runs without a file-descriptor cap. Ref [#4527](https://github.com/NVIDIA/NemoClaw/issues/4527). |
 | Recommendation | Keep the default at 65536. If the agent legitimately keeps many connections or files open, raise it deliberately and monitor host file-descriptor usage. If the entrypoint logs a warning about ulimit restrictions, set the limit through the container runtime instead. |
 
+<AgentOnly variant="deepagents">
+
+### Headless Deep Agents Approval Boundary
+
+Interactive `dcode` sessions keep destructive tools behind the Deep Agents Code approval UI.
+Headless `dcode -n` is an explicit automation boundary with no approval UI.
+The managed headless path automatically approves non-shell tool requests such as file writes and edits, while still disabling shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP files, nested remote sandboxes, remote async subagents, and alternate model routes.
+
+| Aspect | Detail |
+|---|---|
+| Default | Interactive `dcode` prompts for destructive tools. Headless `dcode -n` auto-approves non-shell tools and keeps shell execution disabled. |
+| What you can change | Choose interactive `dcode` when you need to review tool calls. Use `dcode -n` only for tasks where unattended file edits are acceptable. |
+| Risk if relaxed | Treating headless mode like an interactive approval session can let file edits happen without a human prompt. |
+| Recommendation | Use the interactive TUI for sensitive repositories or destructive tasks. Reserve `dcode -n` for bounded automation with a reviewed workspace and policy. |
+
+</AgentOnly>
+
 ### Non-Root User
 
 The sandbox runs agent processes as a dedicated `sandbox` user and group.
@@ -487,6 +573,8 @@ A registry compromise or accidental force-push cannot silently swap the sandbox 
 | Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
 | Recommendation | Always reference the sandbox image by digest. If you build a custom image with the onboarding `--from` path, the digest constraint does not apply to your local build. |
 
+<AgentOnly variant="openclaw">
+
 ### Auth Profile Permissions
 
 The entrypoint and migration flows enforce `chmod 600` on all `auth-profiles.json` files under `~/.openclaw`.
@@ -498,6 +586,8 @@ This prevents other users on the host from reading stored credentials.
 | What you can change | This is not a user-facing knob. The entrypoint enforces it. |
 | Risk if relaxed | Looser permissions let other users or processes on the host read provider API keys and tokens stored in auth profiles. |
 | Recommendation | No action needed. If you see a `permission denied` error when reading auth profiles, verify that you are running as the same user who created them. |
+
+</AgentOnly>
 
 ## Gateway Authentication Controls
 
@@ -618,9 +708,9 @@ The CLI automatically redacts secret patterns (API keys, bearer tokens, provider
 | Risk if relaxed | Without redaction, secrets could appear in terminal scrollback, log files, or debug output shared in bug reports. |
 | Recommendation | No action needed. If you share NemoClaw debug output, verify that no secrets appear in the collected diagnostics. |
 
-### Memory Secret Scanner
-
 <AgentOnly variant="openclaw">
+
+### Memory Secret Scanner
 
 The NemoClaw plugin blocks the agent from writing likely secrets (API keys, tokens, private keys) into persistent memory files.
 The scanner intercepts `Write`, `Edit`, and similar tool calls targeting memory and workspace paths before they reach disk.
@@ -636,8 +726,19 @@ The scanner intercepts `Write`, `Edit`, and similar tool calls targeting memory 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
+### Memory Secret Scanner
+
 Hermes does not use the OpenClaw NemoClaw plugin memory scanner.
 Keep secrets in environment variables or OpenShell providers, and avoid writing raw credentials to Hermes state files or workspace content.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+### Memory Secret Scanner
+
+Deep Agents does not use the OpenClaw NemoClaw plugin memory scanner.
+The managed `dcode` launchers reject credential-shaped environment values and upstream auth files before startup, but Deep Agents memory and skill files remain user-authored content.
+Keep secrets in OpenShell providers and avoid writing raw credentials to `/sandbox/.deepagents`, project `.deepagents/`, or skill files.
 
 </AgentOnly>
 
@@ -729,7 +830,7 @@ The following patterns weaken security without providing meaningful benefit.
 | Omitting `protocol: rest` on REST API endpoints without a compatibility reason | Endpoints without a `protocol` field use L4-only enforcement. The proxy allows the TCP stream through after checking host, port, and binary, but cannot see or filter individual HTTP requests. | Add `protocol: rest` with explicit `rules` to enable per-request method and path control on REST APIs. Use L4 pass-through only for documented cases such as npm/Yarn on Node 22, where the client requires a CONNECT tunnel that L7 inspection would break. |
 | Adding endpoints to the baseline policy for one-off requests | Adding an endpoint to the baseline policy makes it permanently reachable across all sandbox instances. | Use operator approval. Approved endpoints persist within the sandbox instance but reset when you destroy and recreate the sandbox. |
 | Relying solely on the entrypoint for capability drops | The entrypoint drops dangerous capabilities using `capsh`, but this is best-effort. If `capsh` is unavailable or `CAP_SETPCAP` is not in the bounding set, the container runs with the default capability set. | Pass `--cap-drop=ALL` at the container runtime level as defense-in-depth. |
-| Leaving generated agent config writable on sensitive workloads | The generated config tree contains model routing, channel settings, and runtime integration state (`/sandbox/.openclaw` for OpenClaw, `/sandbox/.hermes` for Hermes). Writable config lets the agent drift from host-managed policy and routing. | Keep generated config under NemoClaw control for always-on assistants handling sensitive data. |
+| Leaving generated agent config writable on sensitive workloads | The generated config tree contains model routing, channel settings, and runtime integration state (`/sandbox/.openclaw` for OpenClaw, `/sandbox/.hermes` for Hermes, `/sandbox/.deepagents` for Deep Agents). Writable config lets the agent drift from host-managed policy and routing. | Keep generated config under NemoClaw control for always-on assistants handling sensitive data. |
 | Adding inference provider hosts to the network policy for NemoClaw inference | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. Apply `claude-code` only when intentionally running the separate Claude Code CLI inside the sandbox. |
 | Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
 
@@ -744,11 +845,28 @@ The following patterns weaken security without providing meaningful benefit.
 
 ## Related Topics
 
+<AgentOnly variant="openclaw">
+
 - [Network Policies](../reference/network-policies) for the full baseline policy reference.
 - [Customize the Network Policy](../network-policy/customize-network-policy) for static and dynamic policy changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests) for the operator approval flow.
-<AgentOnly variant="openclaw">
 - [Sandbox Hardening](../manage-sandboxes/sandbox-hardening) for container-level security measures.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- [Network Policies](../reference/network-policies) for the full baseline policy reference.
+- [Customize the Network Policy](../network-policy/customize-network-policy) for static and dynamic policy changes.
+- [Approve or Deny Network Requests](../network-policy/approve-network-requests) for the operator approval flow.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+- [Network Policies](../reference/network-policies) for the full Deep Agents baseline policy reference.
+- [Credential Storage](credential-storage) for provider and managed MCP credential handling.
+- [Workspace Files](../manage-sandboxes/workspace-files) for Deep Agents state and credential-bearing file exclusions.
+- [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) for managed MCP credential replacement.
+
 </AgentOnly>
 - [Inference Options](../inference/inference-options) for provider configuration details.
 - [How It Works](../about/how-it-works) for the protection layer architecture.

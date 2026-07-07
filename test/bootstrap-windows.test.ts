@@ -1,69 +1,56 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
 
-import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
+import { testTimeout, testTimeoutOptions } from "./helpers/timeouts";
+import {
+  BOOTSTRAP_WINDOWS,
+  POWERSHELL_BATCH_EXEC_TIMEOUT_MS,
+  POWERSHELL_PROCESS_EXEC_TIMEOUT_MS,
+  type PowerShellBatchCase,
+  type PowerShellHarnessResult,
+  requirePowerShellBatchResult,
+  resolvePowerShell,
+  runPowerShellBatch,
+  runPowerShellProcess,
+} from "./support/bootstrap-windows-test-helpers";
 
-const BOOTSTRAP_WINDOWS = path.join(import.meta.dirname, "..", "scripts", "bootstrap-windows.ps1");
-const POWERSHELL_EXEC_TIMEOUT_MS = execTimeout(20_000);
 const POWERSHELL_TEST_TIMEOUT = testTimeoutOptions(
-  Math.max(30_000, POWERSHELL_EXEC_TIMEOUT_MS + 5_000),
+  Math.max(30_000, POWERSHELL_PROCESS_EXEC_TIMEOUT_MS + 5_000),
 );
-
-function resolvePowerShell() {
-  for (const command of ["pwsh", "powershell"]) {
-    const result = spawnSync(
-      command,
-      ["-NoLogo", "-NoProfile", "-Command", "$PSVersionTable.PSVersion"],
-      { encoding: "utf8" },
-    );
-    if (result.status === 0) return command;
-  }
-  return null;
-}
-
 const POWERSHELL = resolvePowerShell();
-const itPowerShell = (name: string, fn: () => void) =>
+const POWERSHELL_BATCH_CASES: PowerShellBatchCase[] = [];
+let powerShellBatchResults: ReadonlyMap<string, PowerShellHarnessResult> = new Map();
+const POWERSHELL_BATCH_TEST_TIMEOUT_MS = testTimeout(
+  Math.max(65_000, POWERSHELL_BATCH_EXEC_TIMEOUT_MS + 5_000),
+);
+const itPowerShellProcess = (name: string, fn: () => void) =>
   (POWERSHELL ? it : it.skip)(name, POWERSHELL_TEST_TIMEOUT, fn);
-
-function runPowerShellHarness(script: string) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-windows-"));
-  const harness = path.join(tmp, "harness.ps1");
-  try {
-    fs.writeFileSync(harness, script);
-    const result = spawnSync(
-      POWERSHELL ?? "pwsh",
-      ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", harness],
-      {
-        encoding: "utf8",
-        timeout: POWERSHELL_EXEC_TIMEOUT_MS,
-        env: {
-          ...process.env,
-          TEMP: process.env.TEMP ?? process.env.TMPDIR ?? os.tmpdir(),
-          TMP: process.env.TMP ?? process.env.TMPDIR ?? os.tmpdir(),
-          NEMOCLAW_BOOTSTRAP_WINDOWS_SOURCE_ONLY: "1",
-          SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
-        },
-      },
-    );
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      status: result.status ?? 1,
-    };
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
+const itPowerShell = (
+  name: string,
+  script: string,
+  assertions: (result: PowerShellHarnessResult) => void,
+) => {
+  POWERSHELL_BATCH_CASES.push({ id: name, script });
+  (POWERSHELL ? it : it.skip)(name, POWERSHELL_TEST_TIMEOUT, () =>
+    assertions(requirePowerShellBatchResult(powerShellBatchResults, name)),
+  );
+};
 
 describe("Windows bootstrap WSL distro preflight", () => {
-  itPowerShell("starts Docker Desktop without restart when it was not already running", () => {
-    const result = runPowerShellHarness(`
+  beforeAll(
+    POWERSHELL
+      ? () => {
+          powerShellBatchResults = runPowerShellBatch(POWERSHELL, POWERSHELL_BATCH_CASES);
+        }
+      : () => undefined,
+    POWERSHELL_BATCH_TEST_TIMEOUT_MS,
+  );
+
+  itPowerShell(
+    "starts Docker Desktop without restart when it was not already running",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -83,18 +70,18 @@ function Write-Status { param([string]$Message, [string]$Level = 'INFO') }
 Start-DockerDesktop
 
 $script:events | ConvertTo-Json -Compress
-`);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "[]");
-    expect(parsed).toEqual(["start-Docker Desktop.exe", "wait-ready", "minimize", "foreground"]);
-  });
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "[]");
+      expect(parsed).toEqual(["start-Docker Desktop.exe", "wait-ready", "minimize", "foreground"]);
+    },
+  );
 
   itPowerShell(
     "restarts Docker Desktop when it was already running before settings changed",
-    () => {
-      const result = runPowerShellHarness(`
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -114,8 +101,8 @@ function Write-Status { param([string]$Message, [string]$Level = 'INFO') }
 Start-DockerDesktop
 
 $script:events | ConvertTo-Json -Compress
-`);
-
+`,
+    (result) => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "[]");
@@ -123,8 +110,9 @@ $script:events | ConvertTo-Json -Compress
     },
   );
 
-  itPowerShell("repairs WSL when status reports the runtime is missing", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "repairs WSL when status reports the runtime is missing",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -170,22 +158,24 @@ try {
   requestReboot = $script:requestReboot
   outcome = $script:outcome
 } | ConvertTo-Json -Depth 5 -Compress
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Windows reports that the WSL runtime is not installed");
+      expect(result.stdout).toContain("Attempting WSL repair: wsl --install --no-distribution");
+      expect(result.stdout).toContain("WSL repair command completed successfully.");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--status"]);
+      expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--install --no-distribution"]);
+      expect(parsed.requestReboot).toBe(true);
+      expect(parsed.outcome).toContain("REBOOT_REQUESTED");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("Windows reports that the WSL runtime is not installed");
-    expect(result.stdout).toContain("Attempting WSL repair: wsl --install --no-distribution");
-    expect(result.stdout).toContain("WSL repair command completed successfully.");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--status"]);
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--install --no-distribution"]);
-    expect(parsed.requestReboot).toBe(true);
-    expect(parsed.outcome).toContain("REBOOT_REQUESTED");
-  });
-
-  itPowerShell("continues when WSL repair succeeds without a reboot-required message", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "continues when WSL repair succeeds without a reboot-required message",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -232,26 +222,26 @@ try {
   statusCalls = $script:statusCalls
   outcome = $script:outcome
 } | ConvertTo-Json -Depth 5 -Compress
-`);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("WSL repair command completed successfully.");
-    expect(result.stdout).toContain("WSL status verified after repair.");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.nativeCalls).toEqual([
-      ["wsl.exe", "--status"],
-      ["wsl.exe", "--install --no-distribution"],
-      ["wsl.exe", "--status"],
-    ]);
-    expect(parsed.statusCalls).toBe(2);
-    expect(parsed.outcome).toBe("success");
-  });
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("WSL repair command completed successfully.");
+      expect(result.stdout).toContain("WSL status verified after repair.");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.nativeCalls).toEqual([
+        ["wsl.exe", "--status"],
+        ["wsl.exe", "--install --no-distribution"],
+        ["wsl.exe", "--status"],
+      ]);
+      expect(parsed.statusCalls).toBe(2);
+      expect(parsed.outcome).toBe("success");
+    },
+  );
 
   itPowerShell(
     "stops when WSL repair succeeds without reboot but status remains unavailable",
-    () => {
-      const result = runPowerShellHarness(`
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -298,8 +288,8 @@ try {
   statusCalls = $script:statusCalls
   outcome = $script:outcome
 } | ConvertTo-Json -Depth 5 -Compress
-`);
-
+`,
+    (result) => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain(
@@ -321,8 +311,9 @@ try {
     },
   );
 
-  itPowerShell("prints repair instructions when automatic WSL repair fails", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "prints repair instructions when automatic WSL repair fails",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -359,39 +350,41 @@ try {
   nativeCalls = $script:nativeCalls
   outcome = $script:outcome
 } | ConvertTo-Json -Depth 5 -Compress
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Windows Subsystem for Linux could not be verified.");
+      expect(result.stdout).toContain(
+        "The command 'wsl --status' exited with code 50, so this script cannot safely install or run the Ubuntu-24.04 WSL distro yet.",
+      );
+      expect(result.stdout).toContain("Attempting WSL repair: wsl --install --no-distribution");
+      expect(result.stdout).toContain("Automatic WSL repair did not complete.");
+      const normalizedStdout = result.stdout.replace(/\r\n/g, "\n");
+      expect(normalizedStdout).toContain(
+        "Forbidden (403).\n\nAutomatic WSL repair did not complete.",
+      );
+      expect(normalizedStdout).not.toMatch(
+        /Forbidden \(403\)\.\n(?:[ \t]*\n){2,}Automatic WSL repair/,
+      );
+      expect(result.stdout).toContain(
+        "The command 'wsl --install --no-distribution' exited with code 1.",
+      );
+      expect(result.stdout).toContain("The online WSL installer returned Forbidden (403)");
+      expect(result.stdout).toContain(
+        "Offline install docs: https://learn.microsoft.com/en-us/windows/wsl/install#offline-install",
+      );
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--status"]);
+      expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--install --no-distribution"]);
+      expect(parsed.outcome).toContain("wsl --install --no-distribution failed");
+      expect(parsed.outcome).toContain("exit code 1");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("Windows Subsystem for Linux could not be verified.");
-    expect(result.stdout).toContain(
-      "The command 'wsl --status' exited with code 50, so this script cannot safely install or run the Ubuntu-24.04 WSL distro yet.",
-    );
-    expect(result.stdout).toContain("Attempting WSL repair: wsl --install --no-distribution");
-    expect(result.stdout).toContain("Automatic WSL repair did not complete.");
-    const normalizedStdout = result.stdout.replace(/\r\n/g, "\n");
-    expect(normalizedStdout).toContain(
-      "Forbidden (403).\n\nAutomatic WSL repair did not complete.",
-    );
-    expect(normalizedStdout).not.toMatch(
-      /Forbidden \(403\)\.\n(?:[ \t]*\n){2,}Automatic WSL repair/,
-    );
-    expect(result.stdout).toContain(
-      "The command 'wsl --install --no-distribution' exited with code 1.",
-    );
-    expect(result.stdout).toContain("The online WSL installer returned Forbidden (403)");
-    expect(result.stdout).toContain(
-      "Offline install docs: https://learn.microsoft.com/en-us/windows/wsl/install#offline-install",
-    );
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--status"]);
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--install --no-distribution"]);
-    expect(parsed.outcome).toContain("wsl --install --no-distribution failed");
-    expect(parsed.outcome).toContain("exit code 1");
-  });
-
-  itPowerShell("attempts WSL repair when WSL 2 cannot start", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "attempts WSL repair when WSL 2 cannot start",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -438,23 +431,26 @@ try {
   nativeCalls = $script:nativeCalls
   outcome = $script:outcome
 } | ConvertTo-Json -Depth 5 -Compress
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Windows reports that WSL 2 cannot start yet.");
+      expect(result.stdout).toContain("reboot");
+      expect(result.stdout).toContain("enable virtualization");
+      expect(result.stdout).toContain("Attempting WSL repair: wsl --install --no-distribution");
+      expect(result.stdout).toContain("Automatic WSL repair did not complete.");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--status"]);
+      expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--install --no-distribution"]);
+      expect(parsed.outcome).toContain("wsl --install --no-distribution failed");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("Windows reports that WSL 2 cannot start yet.");
-    expect(result.stdout).toContain("reboot");
-    expect(result.stdout).toContain("enable virtualization");
-    expect(result.stdout).toContain("Attempting WSL repair: wsl --install --no-distribution");
-    expect(result.stdout).toContain("Automatic WSL repair did not complete.");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--status"]);
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--install --no-distribution"]);
-    expect(parsed.outcome).toContain("wsl --install --no-distribution failed");
-  });
-
-  itPowerShell("prints a manual resume command before prompting for reboot", () => {
-    const result = runPowerShellHarness(`
+  itPowerShellProcess("prints a manual resume command before prompting for reboot", () => {
+    const result = runPowerShellProcess(
+      POWERSHELL ?? "pwsh",
+      `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -462,7 +458,8 @@ function Register-ResumeRunOnce { Write-Status 'Registered best-effort reboot re
 function Read-Host { param([string]$Prompt) Write-Host $Prompt; return 'n' }
 
 Request-Reboot
-`);
+`,
+    );
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
@@ -477,8 +474,7 @@ Request-Reboot
 
   itPowerShell(
     "installs missing Ubuntu 24.04 through first-run setup before Docker integration",
-    () => {
-      const result = runPowerShellHarness(`
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -517,8 +513,8 @@ Ensure-UbuntuWsl
   statusMessages = $script:statusMessages
   installDistroAtHandoff = $script:InstallDistroAtHandoff
 } | ConvertTo-Json -Compress
-`);
-
+`,
+    (result) => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
@@ -553,8 +549,9 @@ Ensure-UbuntuWsl
     },
   );
 
-  itPowerShell("requests reboot when Ubuntu install exits before distro registration", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "requests reboot when Ubuntu install exits before distro registration",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -619,50 +616,52 @@ try {
   requestReboot = $script:requestReboot
   outcome = $script:outcome
 } | ConvertTo-Json -Compress
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(result.stdout).toContain("WSL install output:");
+      expect(result.stdout).toContain(
+        "The requested operation is successful. Changes will not be effective until the system is rebooted.",
+      );
+      expect(result.stdout).toContain(
+        "Ubuntu installer command exited. This window will close automatically.",
+      );
+      expect(result.stdout).toContain("[PowerShell transcript metadata redacted.]");
+      expect(result.stdout).not.toContain("Windows PowerShell transcript");
+      expect(result.stdout).not.toContain("Username:");
+      expect(result.stdout).not.toContain("Machine:");
+      expect(result.stdout).not.toContain("Host Application:");
+      expect(result.stdout).not.toContain("PSVersion:");
+      expect(result.stdout).not.toContain("Benutzername:");
+      expect(result.stdout).not.toContain("Computer:");
+      expect(result.stdout).not.toContain("EXAMPLE\\bootstrap-user");
+      expect(result.stdout).not.toContain("TEST-HOST");
+      expect(result.stdout).not.toContain("$statusPath = 'status-file'");
+      expect(result.stdout).not.toContain("$transcriptStarted = $false");
+      expect(result.stdout).not.toContain("Start-Transcript");
+      expect(result.stdout).not.toContain("WriteAllText");
+      expect(result.stdout).not.toContain(
+        "& 'C:\\WINDOWS\\System32\\wsl.exe' --install -d 'Ubuntu-24.04'",
+      );
+      expect(result.stdout).not.toContain("Transcript started, output file is");
+      expect(result.stdout).not.toContain("Status file is");
+      expect(result.stdout).not.toContain("End time:");
+      expect(parsed.statusMessages).toContain(
+        "WARN:Ubuntu-24.04 install command completed, but the distro is not registered yet.",
+      );
+      expect(parsed.statusMessages).toContain(
+        "WARN:A reboot is required before WSL can finish registering the distro.",
+      );
+      expect(parsed.requestReboot).toBe(true);
+      expect(parsed.outcome).toContain("REBOOT_REQUESTED");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(result.stdout).toContain("WSL install output:");
-    expect(result.stdout).toContain(
-      "The requested operation is successful. Changes will not be effective until the system is rebooted.",
-    );
-    expect(result.stdout).toContain(
-      "Ubuntu installer command exited. This window will close automatically.",
-    );
-    expect(result.stdout).toContain("[PowerShell transcript metadata redacted.]");
-    expect(result.stdout).not.toContain("Windows PowerShell transcript");
-    expect(result.stdout).not.toContain("Username:");
-    expect(result.stdout).not.toContain("Machine:");
-    expect(result.stdout).not.toContain("Host Application:");
-    expect(result.stdout).not.toContain("PSVersion:");
-    expect(result.stdout).not.toContain("Benutzername:");
-    expect(result.stdout).not.toContain("Computer:");
-    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
-    expect(result.stdout).not.toContain("TEST-HOST");
-    expect(result.stdout).not.toContain("$statusPath = 'status-file'");
-    expect(result.stdout).not.toContain("$transcriptStarted = $false");
-    expect(result.stdout).not.toContain("Start-Transcript");
-    expect(result.stdout).not.toContain("WriteAllText");
-    expect(result.stdout).not.toContain(
-      "& 'C:\\\\WINDOWS\\\\System32\\\\wsl.exe' --install -d 'Ubuntu-24.04'",
-    );
-    expect(result.stdout).not.toContain("Transcript started, output file is");
-    expect(result.stdout).not.toContain("Status file is");
-    expect(result.stdout).not.toContain("End time:");
-    expect(parsed.statusMessages).toContain(
-      "WARN:Ubuntu-24.04 install command completed, but the distro is not registered yet.",
-    );
-    expect(parsed.statusMessages).toContain(
-      "WARN:A reboot is required before WSL can finish registering the distro.",
-    );
-    expect(parsed.requestReboot).toBe(true);
-    expect(parsed.outcome).toContain("REBOOT_REQUESTED");
-  });
-
-  itPowerShell("fails closed when a PowerShell transcript header is incomplete", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "fails closed when a PowerShell transcript header is incomplete",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -674,17 +673,19 @@ Machine: TEST-HOST
 '@
 
 Convert-WslInstallLogForDisplay -Log $log
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
+      expect(result.stdout).not.toContain("EXAMPLE\\bootstrap-user");
+      expect(result.stdout).not.toContain("TEST-HOST");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
-    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
-    expect(result.stdout).not.toContain("TEST-HOST");
-  });
-
-  itPowerShell("redacts transcript markers when separators are missing", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "redacts transcript markers when separators are missing",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -697,18 +698,20 @@ Log file: C:\\Users\\example\\install.log
 '@
 
 Convert-WslInstallLogForDisplay -Log $log
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
+      expect(result.stdout).not.toContain("EXAMPLE\\bootstrap-user");
+      expect(result.stdout).not.toContain("TEST-HOST");
+      expect(result.stdout).not.toContain("C:\\Users\\example\\install.log");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
-    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
-    expect(result.stdout).not.toContain("TEST-HOST");
-    expect(result.stdout).not.toContain("C:\\Users\\example\\install.log");
-  });
-
-  itPowerShell("recognizes transcript separators with a BOM and indentation", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "recognizes transcript separators with a BOM and indentation",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -726,34 +729,36 @@ $log = @(
 ) -join [Environment]::NewLine
 
 Convert-WslInstallLogForDisplay -Log $log
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("[PowerShell transcript metadata redacted.]");
+      expect(result.stdout).toContain("Useful WSL output");
+      expect(result.stdout).not.toContain("EXAMPLE\\bootstrap-user");
+      expect(result.stdout).not.toContain("TEST-HOST");
+      expect(result.stdout).not.toContain("Windows PowerShell transcript");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("[PowerShell transcript metadata redacted.]");
-    expect(result.stdout).toContain("Useful WSL output");
-    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
-    expect(result.stdout).not.toContain("TEST-HOST");
-    expect(result.stdout).not.toContain("Windows PowerShell transcript");
-  });
-
-  itPowerShell("preserves plain WSL output without transcript evidence", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "preserves plain WSL output without transcript evidence",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
 Convert-WslInstallLogForDisplay -Log 'Invalid distribution name: NotARealDistro'
-`);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout.trim()).toBe("Invalid distribution name: NotARealDistro");
-  });
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toBe("Invalid distribution name: NotARealDistro");
+    },
+  );
 
   itPowerShell(
     "does not request reboot when Ubuntu install exits without registering the distro",
-    () => {
-      const result = runPowerShellHarness(`
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -793,8 +798,8 @@ try {
   statusPathExists = Test-Path -LiteralPath $script:statusPath
   logPathExists = Test-Path -LiteralPath $script:logPath
 } | ConvertTo-Json -Compress
-`);
-
+`,
+    (result) => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("WSL install output:");
@@ -819,8 +824,9 @@ try {
     },
   );
 
-  itPowerShell("reports failed Ubuntu install output in the main window", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "reports failed Ubuntu install output in the main window",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -848,21 +854,23 @@ try {
   statusPathExists = Test-Path -LiteralPath $script:statusPath
   logPathExists = Test-Path -LiteralPath $script:logPath
 } | ConvertTo-Json -Compress
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("WSL install output:");
+      expect(result.stdout).toContain("Simulated WSL install failure");
+      expect(result.stdout).toContain("NemoClaw on Windows ARM requires WSL2 Ubuntu 24.04.");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.outcome).toContain("WSL distro install command failed with exit code 87");
+      expect(parsed.statusPathExists).toBe(false);
+      expect(parsed.logPathExists).toBe(false);
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("WSL install output:");
-    expect(result.stdout).toContain("Simulated WSL install failure");
-    expect(result.stdout).toContain("NemoClaw on Windows ARM requires WSL2 Ubuntu 24.04.");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.outcome).toContain("WSL distro install command failed with exit code 87");
-    expect(parsed.statusPathExists).toBe(false);
-    expect(parsed.logPathExists).toBe(false);
-  });
-
-  itPowerShell("verifies WSL startup even when Docker Desktop install is disabled", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "verifies WSL startup even when Docker Desktop install is disabled",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -886,18 +894,20 @@ Ensure-UbuntuWsl
   nativeCalls = $script:nativeCalls
   statusMessages = $script:statusMessages
 } | ConvertTo-Json -Depth 5 -Compress
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "-d Ubuntu-24.04 -- echo WSL_OK"]);
+      expect(parsed.statusMessages).toContain("Verified WSL distro 'Ubuntu-24.04' starts.");
+      expect(parsed.statusMessages).toContain("Ubuntu-24.04 is ready.");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "-d Ubuntu-24.04 -- echo WSL_OK"]);
-    expect(parsed.statusMessages).toContain("Verified WSL distro 'Ubuntu-24.04' starts.");
-    expect(parsed.statusMessages).toContain("Ubuntu-24.04 is ready.");
-  });
-
-  itPowerShell("fails an already registered distro that cannot start", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "fails an already registered distro that cannot start",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -927,18 +937,22 @@ try {
   statusMessages = $script:statusMessages
   outcome = $script:outcome
 } | ConvertTo-Json -Depth 5 -Compress
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "-d Ubuntu-24.04 -- echo WSL_OK"]);
+      expect(parsed.outcome).toContain(
+        "WSL distro 'Ubuntu-24.04' is registered but could not start",
+      );
+      expect(parsed.statusMessages).not.toContain("Ubuntu-24.04 is ready.");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "-d Ubuntu-24.04 -- echo WSL_OK"]);
-    expect(parsed.outcome).toContain("WSL distro 'Ubuntu-24.04' is registered but could not start");
-    expect(parsed.statusMessages).not.toContain("Ubuntu-24.04 is ready.");
-  });
-
-  itPowerShell("prints the issue 3974 guidance when the deferred Ubuntu launch fails", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "prints the issue 3974 guidance when the deferred Ubuntu launch fails",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -950,22 +964,24 @@ $script:InstallDistroAtHandoff = $true
 try {
   Open-UbuntuForInstaller
   Write-Host 'UNEXPECTED_SUCCESS'
-  exit 3
+  throw 'UNEXPECTED_SUCCESS'
 } catch {
   Write-Host "CAUGHT: $($_.Exception.Message)"
 }
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("NemoClaw on Windows ARM requires WSL2 Ubuntu 24.04.");
+      expect(result.stdout).toContain("Please run: wsl --install -d Ubuntu-24.04");
+      expect(result.stdout).toContain("Then re-run this installer.");
+      expect(result.stdout).toContain("CAUGHT: launch failed");
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("NemoClaw on Windows ARM requires WSL2 Ubuntu 24.04.");
-    expect(result.stdout).toContain("Please run: wsl --install -d Ubuntu-24.04");
-    expect(result.stdout).toContain("Then re-run this installer.");
-    expect(result.stdout).toContain("CAUGHT: launch failed");
-  });
-
-  itPowerShell("opens the final Ubuntu handoff as one plain PowerShell-hosted WSL launch", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "opens the final Ubuntu handoff as one plain PowerShell-hosted WSL launch",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -994,28 +1010,30 @@ Open-UbuntuForInstaller
   stopCalls = $script:stopCalls
   startProcessCalls = $script:startProcessCalls
 } | ConvertTo-Json -Compress
-`);
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.nativeCalls).toEqual([]);
+      expect(parsed.stopCalls).toEqual([]);
+      expect(parsed.startProcessCalls).toHaveLength(1);
+      expect(parsed.startProcessCalls[0][0]).toBe("powershell.exe");
+      expect(parsed.startProcessCalls[0][1]).toContain("-Command");
+      expect(parsed.startProcessCalls[0][1]).toContain("& 'wsl.exe' -d 'Ubuntu-24.04'");
+      for (const launch of parsed.startProcessCalls.map((call: string[]) => call[1])) {
+        expect(launch).not.toContain("-- ");
+        expect(launch).not.toContain("bash");
+        expect(launch).not.toContain("curl");
+        expect(launch).not.toContain("true");
+        expect(launch).not.toContain("nemoclaw.sh");
+      }
+    },
+  );
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.nativeCalls).toEqual([]);
-    expect(parsed.stopCalls).toEqual([]);
-    expect(parsed.startProcessCalls).toHaveLength(1);
-    expect(parsed.startProcessCalls[0][0]).toBe("powershell.exe");
-    expect(parsed.startProcessCalls[0][1]).toContain("-Command");
-    expect(parsed.startProcessCalls[0][1]).toContain("& 'wsl.exe' -d 'Ubuntu-24.04'");
-    for (const launch of parsed.startProcessCalls.map((call: string[]) => call[1])) {
-      expect(launch).not.toContain("-- ");
-      expect(launch).not.toContain("bash");
-      expect(launch).not.toContain("curl");
-      expect(launch).not.toContain("true");
-      expect(launch).not.toContain("nemoclaw.sh");
-    }
-  });
-
-  itPowerShell("repairs Docker Desktop WSL integration settings for the target distro", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "repairs Docker Desktop WSL integration settings for the target distro",
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -1041,22 +1059,22 @@ $result = [pscustomobject]@{
 }
 Remove-Item -Path $settingsDir -Recurse -Force
 $result | ConvertTo-Json -Compress
-`);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.wslEngineEnabled).toBe(true);
-    expect(parsed.enableIntegrationWithDefaultWslDistro).toBe(false);
-    expect(parsed.integratedWslDistros).toContain("Debian");
-    expect(parsed.integratedWslDistros).toContain("Ubuntu-24.04");
-    expect(parsed.backupCount).toBe(1);
-  });
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.wslEngineEnabled).toBe(true);
+      expect(parsed.enableIntegrationWithDefaultWslDistro).toBe(false);
+      expect(parsed.integratedWslDistros).toContain("Debian");
+      expect(parsed.integratedWslDistros).toContain("Ubuntu-24.04");
+      expect(parsed.backupCount).toBe(1);
+    },
+  );
 
   itPowerShell(
     "creates Docker Desktop WSL integration settings when the settings file is missing",
-    () => {
-      const result = runPowerShellHarness(`
+    `
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -1075,8 +1093,8 @@ $settings = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json
   integratedWslDistros = $settings.integratedWslDistros
   backupCount = @(Get-ChildItem -Path $dockerDir -Filter 'settings-store.json.bak.*' -ErrorAction SilentlyContinue).Count
 } | ConvertTo-Json -Compress
-`);
-
+`,
+    (result) => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
