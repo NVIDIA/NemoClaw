@@ -113,6 +113,7 @@ export function prepareRebuildTargetConfig(
   log: (message: string) => void,
   bail: RebuildBail,
   requestedToolDisclosure?: ToolDisclosure,
+  allowLegacyManagedImageRecovery = false,
 ): RebuildTargetConfig | null {
   const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
   if (!resumeConfig) return null;
@@ -127,6 +128,7 @@ export function prepareRebuildTargetConfig(
       model: resumeConfig.model,
     },
     requestedToolDisclosure,
+    allowLegacyManagedImageRecovery,
   );
   if (!validateRebuildDurableConfig(durableConfig, resumeConfig, bail)) return null;
   if (isDcodeRebuildAgent(rebuildAgent) && durableConfig.fromDockerfile) {

@@ -14,11 +14,13 @@ import os from "node:os";
 import path from "node:path";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildPreContractExternalProviderSkipEvidence,
@@ -26,8 +28,6 @@ import {
   type PreContractExternalProviderFailure,
 } from "./cloud-inference-provider-skip.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const REPO_SKILL_VALIDATOR = path.join(
   REPO_ROOT,
   "test",
@@ -71,10 +71,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 async function writePreContractExternalProviderSkip(
   artifacts: ArtifactSink,
   install: ShellProbeResult,
@@ -82,22 +78,11 @@ async function writePreContractExternalProviderSkip(
 ): Promise<void> {
   const evidence = buildPreContractExternalProviderSkipEvidence(install, classification);
   await artifacts.writeJson("transient-provider-validation.skip.json", evidence);
-  await artifacts.writeJson("target-result.json", evidence);
+  await artifacts.target.complete(evidence);
 }
 
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const base = buildAvailabilityProbeEnv();
-  return {
-    ...base,
-    HOME: home,
-    PATH: [path.join(home, ".local", "bin"), path.join(home, ".npm-global", "bin"), base.PATH]
-      .filter(Boolean)
-      .join(":"),
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    OPENSHELL_GATEWAY: "nemoclaw",
-    ...extra,
-  };
+  return testHomeEnvironment(home, extra, { ...process.env, OPENSHELL_GATEWAY: "nemoclaw" });
 }
 
 async function bestEffort(run: () => Promise<unknown>): Promise<void> {
@@ -227,7 +212,7 @@ async function expectLiveChatPong(
   throw new Error(`Live chat failed after ${MAX_ATTEMPTS} attempt(s): ${lastFailure}`);
 }
 
-test.skipIf(!shouldRunLiveE2E())(
+test(
   "cloud inference: inference.local chat and OpenClaw skill filesystem validate",
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const hosted = requireHostedInferenceConfig(secrets);
@@ -243,9 +228,8 @@ test.skipIf(!shouldRunLiveE2E())(
       `missing sandbox skill validator: ${SANDBOX_SKILL_VALIDATOR}`,
     ).toBe(true);
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "cloud-inference",
-      runner: "vitest",
       boundary: "install-sh-onboard-sandbox-inference-local-skill-filesystem",
       contracts: [
         "Docker is running before install/onboard",
@@ -339,7 +323,7 @@ test.skipIf(!shouldRunLiveE2E())(
         : "unknown";
     expect(sandboxSkillStatus, resultText(sandboxSkills)).not.toBe("unknown");
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "cloud-inference",
       status: "passed",
       assertions: {

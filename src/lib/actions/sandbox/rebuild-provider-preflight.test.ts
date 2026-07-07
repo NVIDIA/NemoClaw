@@ -4,8 +4,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
+  canRecreateMissingRebuildGatewayProvider,
   checkRebuildGatewayCredentialReuseOrBail,
   checkRebuildGatewayProviderOrBail,
+  classifyRebuildGatewayProviderRegistration,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
@@ -61,6 +63,131 @@ describe("shouldVerifyRebuildGatewayProvider", () => {
     expect(checkRebuildGatewayProviderOrBail("ollama-local", null, log, bail)).toBe(true);
     expect(log).not.toHaveBeenCalled();
     expect(bail).not.toHaveBeenCalled();
+  });
+});
+
+describe("canRecreateMissingRebuildGatewayProvider", () => {
+  it("requires a canonical provider and its exact credential binding (#6114)", () => {
+    expect(
+      canRecreateMissingRebuildGatewayProvider("compatible-endpoint", "COMPATIBLE_API_KEY"),
+    ).toBe(true);
+    expect(canRecreateMissingRebuildGatewayProvider("compatible-endpoint", "OPENAI_API_KEY")).toBe(
+      false,
+    );
+    expect(canRecreateMissingRebuildGatewayProvider("mystery-provider", "MYSTERY_API_KEY")).toBe(
+      false,
+    );
+    expect(canRecreateMissingRebuildGatewayProvider("nvidia-nim", "NVIDIA_INFERENCE_API_KEY")).toBe(
+      true,
+    );
+    expect(canRecreateMissingRebuildGatewayProvider("nvidia-nim", "NVIDIA_API_KEY")).toBe(false);
+  });
+});
+
+describe("classifyRebuildGatewayProviderRegistration", () => {
+  it("distinguishes explicit absence from an indeterminate lookup failure (#6114)", () => {
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr: "Error: provider 'compatible-endpoint' not found",
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("missing");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr:
+            "Error:   × code: 'Some requested entity was not found', message: \"provider not found\"",
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("missing");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr:
+            'Error: status: NotFound, message: "provider not found", details: [], metadata: MetadataMap { headers: {} }',
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("missing");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 7,
+          stderr: "gateway transport unavailable",
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 7,
+          stderr: "provider lookup failed because gateway was not found",
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        { status: 1, stderr: "provider lookup not found" },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        { status: 1, stderr: "provider 'other-provider' not found" },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 7,
+          stderr: 'Error: status: Unavailable, message: "provider not found"',
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr: 'Error: status: NotFound, message: "gateway not found"',
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr: [
+            'Error: status: NotFound, message: "gateway not found"',
+            'Error: status: Unavailable, message: "provider not found"',
+          ].join("\n"),
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr:
+            'Error: status: NotFound, message: "gateway not found"; status: Unavailable, message: "provider not found"',
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(classifyRebuildGatewayProviderRegistration({ status: 0 }, "compatible-endpoint")).toBe(
+      "registered",
+    );
   });
 });
 

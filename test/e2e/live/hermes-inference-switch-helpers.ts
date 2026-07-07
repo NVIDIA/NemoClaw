@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import http, { type Server } from "node:http";
+import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -18,10 +19,16 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import {
+  closeServer,
+  writeJsonResponse as jsonResponse,
+  writeSseEvents,
+} from "../fixtures/http-protocol.ts";
+import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
   runInferenceSetWithRetry,
 } from "../fixtures/inference-switch-retry.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -30,8 +37,9 @@ import {
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
 } from "./public-nvidia-switch-provider.ts";
 
-export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
+export { REPO_ROOT };
+
+export const CLI = CLI_ENTRYPOINT;
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-inference-switch";
 validateSandboxName(SANDBOX_NAME);
 const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
@@ -39,12 +47,20 @@ export const SWITCH_PROVIDER =
   process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
 export const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
+export const RUNTIME_SWITCH_API =
+  resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API;
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 
-interface MockAnthropicProvider {
+interface MockCompatibleAnthropicProvider {
   endpointUrl: string;
   close(): Promise<void>;
+}
+
+export function compatibleAnthropicMetadataArgs(endpointUrl: string | null): string[] {
+  return endpointUrl
+    ? ["--endpoint-url", endpointUrl, "--credential-env", "COMPATIBLE_ANTHROPIC_API_KEY"]
+    : [];
 }
 
 export function mockAnthropicEndpointUrl(
@@ -53,6 +69,11 @@ export function mockAnthropicEndpointUrl(
 ): string {
   const host = runtimeEnv.NEMOCLAW_SWITCH_MOCK_HOST ?? "host.openshell.internal";
   return `http://${host}:${port}`;
+}
+
+export function openAiSurfaceEndpointUrl(endpointUrl: string): string {
+  const trimmed = endpointUrl.replace(/\/+$/u, "");
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
 export function mockAnthropicSwitchEnabled(runtimeEnv: NodeJS.ProcessEnv = process.env): boolean {
@@ -181,6 +202,25 @@ export async function runHermesPongWithRetry(options: {
   throw new Error("Hermes live probe retry loop completed without running an attempt.");
 }
 
+export async function runHermesCliPongWithRetry(options: {
+  attempts?: number;
+  delay?: (milliseconds: number) => Promise<void>;
+  run: (attempt: number) => Promise<ShellProbeResult>;
+}): Promise<ShellProbeResult> {
+  const attempts = options.attempts ?? 3;
+  const delay =
+    options.delay ??
+    ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  let last: ShellProbeResult | undefined;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    last = await options.run(attempt);
+    if ((last.exitCode === 0 && /\bPONG\b/iu.test(last.stdout)) || attempt === attempts)
+      return last;
+    await delay(5_000);
+  }
+  throw new Error("Hermes CLI retry loop completed without running an attempt.");
+}
+
 export async function cleanupHermesSwitch(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -201,31 +241,19 @@ export async function cleanupHermesSwitch(
   );
 }
 
-function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "content-type": "application/json",
-    "content-length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
 function sseResponse(res: http.ServerResponse, events: Array<[string, unknown]>): void {
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-  for (const [name, payload] of events) {
-    res.write(`event: ${name}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  }
-  res.end();
+  writeSseEvents(res, events);
 }
 
-function closeServer(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
+function openAiSseResponse(res: http.ServerResponse, chunks: unknown[]): void {
+  writeSseEvents(
+    res,
+    chunks.map((chunk) => [undefined, chunk] as const),
+    true,
+  );
 }
 
-async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
+async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProvider> {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://mock.local");
     if (req.method === "GET" && url.pathname === "/health")
@@ -236,7 +264,9 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
     ) {
       return jsonResponse(res, 200, { data: [{ id: "mock-anthropic-model" }] });
     }
-    if (req.method !== "POST" || url.pathname !== "/v1/messages") {
+    const isAnthropicMessages = url.pathname === "/v1/messages";
+    const isOpenAiChatCompletions = url.pathname === "/v1/chat/completions";
+    if (req.method !== "POST" || (!isAnthropicMessages && !isOpenAiChatCompletions)) {
       return jsonResponse(res, 404, { error: "not found", path: url.pathname });
     }
     let raw = "";
@@ -247,6 +277,43 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
     req.on("end", () => {
       const payload = JSON.parse(raw || "{}") as { model?: unknown; stream?: unknown };
       const model = typeof payload.model === "string" ? payload.model : "mock-anthropic-model";
+      if (isOpenAiChatCompletions) {
+        if (payload.stream === true) {
+          return openAiSseResponse(res, [
+            {
+              id: "chatcmpl_mock",
+              object: "chat.completion.chunk",
+              created: 0,
+              model,
+              choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+            },
+            {
+              id: "chatcmpl_mock",
+              object: "chat.completion.chunk",
+              created: 0,
+              model,
+              choices: [{ index: 0, delta: { content: "PONG" }, finish_reason: null }],
+            },
+            {
+              id: "chatcmpl_mock",
+              object: "chat.completion.chunk",
+              created: 0,
+              model,
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+            },
+          ]);
+        }
+        return jsonResponse(res, 200, {
+          id: "chatcmpl_mock",
+          object: "chat.completion",
+          created: 0,
+          model,
+          choices: [
+            { index: 0, message: { role: "assistant", content: "PONG" }, finish_reason: "stop" },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        });
+      }
       if (payload.stream === true) {
         return sseResponse(res, [
           [
@@ -335,16 +402,15 @@ export async function ensureCompatibleAnthropicSwitchProvider(
   const providerScript = [
     "set -euo pipefail",
     "if openshell provider get -g nemoclaw compatible-anthropic-endpoint >/dev/null 2>&1; then",
-    '  openshell provider update -g nemoclaw compatible-anthropic-endpoint --credential COMPATIBLE_ANTHROPIC_API_KEY --config "ANTHROPIC_BASE_URL=${SWITCH_ENDPOINT_URL}"',
-    "else",
-    '  openshell provider create -g nemoclaw --name compatible-anthropic-endpoint --type anthropic --credential COMPATIBLE_ANTHROPIC_API_KEY --config "ANTHROPIC_BASE_URL=${SWITCH_ENDPOINT_URL}"',
+    "  openshell provider delete -g nemoclaw compatible-anthropic-endpoint",
     "fi",
+    'openshell provider create -g nemoclaw --name compatible-anthropic-endpoint --type openai --credential COMPATIBLE_ANTHROPIC_API_KEY --config "OPENAI_BASE_URL=${SWITCH_OPENAI_ENDPOINT_URL}"',
   ].join("\n");
   const result = await host.command("bash", ["-lc", providerScript], {
     artifactName: "register-compatible-anthropic-switch-provider",
     env: env(undefined, {
       COMPATIBLE_ANTHROPIC_API_KEY: compatibleKey,
-      SWITCH_ENDPOINT_URL: endpointUrl,
+      SWITCH_OPENAI_ENDPOINT_URL: openAiSurfaceEndpointUrl(endpointUrl),
     }),
     redactionValues: [compatibleKey],
     timeoutMs: 120_000,
@@ -450,12 +516,12 @@ export function maybeAssertPidStable(
 }
 
 export function expectedBaseUrl(): string {
-  return SWITCH_API === "anthropic-messages"
+  return RUNTIME_SWITCH_API === "anthropic-messages"
     ? "https://inference.local"
     : "https://inference.local/v1";
 }
 
-export function inferenceLocalMaxTokens(api: string = SWITCH_API): number {
+export function inferenceLocalMaxTokens(api: string = RUNTIME_SWITCH_API): number {
   return api === "anthropic-messages" ? 32 : 100;
 }
 
@@ -463,7 +529,7 @@ export function expectedApiMode(): string | undefined {
   return new Map<string, string>([
     ["anthropic-messages", "anthropic_messages"],
     ["openai-responses", "codex_responses"],
-  ]).get(SWITCH_API);
+  ]).get(RUNTIME_SWITCH_API);
 }
 
 // This live lane runs on ubuntu-latest and intentionally uses GNU grep's
@@ -528,7 +594,7 @@ function quotePayload(payload: string): string {
 }
 
 export function inferenceLocalCommand(payload: string): string {
-  return SWITCH_API === "anthropic-messages"
+  return RUNTIME_SWITCH_API === "anthropic-messages"
     ? `curl -sS --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`
     : `curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${quotePayload(payload)}'`;
 }

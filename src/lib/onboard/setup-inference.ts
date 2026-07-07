@@ -75,6 +75,11 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   ollamaProxyCredentialEnv: string;
   isRoutedInferenceProvider: (provider: string) => boolean;
   applyLocalInferenceRoute?: VllmDeps["applyLocalInferenceRoute"];
+  // #6294 optional overrides for the remote-provider OpenAI-surface branch;
+  // production omits these and remote.ts falls back to the real modules.
+  probeOpenAiLikeEndpoint?: RemoteProviderDeps["probeOpenAiLikeEndpoint"];
+  readGatewayProviderMetadata?: RemoteProviderDeps["readGatewayProviderMetadata"];
+  deleteGatewayProvider?: RemoteProviderDeps["deleteGatewayProvider"];
   log: (message: string) => void;
   error: (message: string) => void;
   exitProcess: (code: number) => never;
@@ -178,6 +183,7 @@ export function createSetupInference(
           credentialEnv,
           reuseGatewayCredentialWithoutLocalKey:
             options.reuseGatewayCredentialWithoutLocalKey === true,
+          preferredInferenceApi: options.preferredInferenceApi ?? null,
         },
         {
           ...commonDeps,
@@ -189,6 +195,9 @@ export function createSetupInference(
           bedrockRuntimeOnboard: deps.bedrockRuntimeOnboard,
           redact: deps.redact,
           compactText: deps.compactText,
+          probeOpenAiLikeEndpoint: deps.probeOpenAiLikeEndpoint,
+          readGatewayProviderMetadata: deps.readGatewayProviderMetadata,
+          deleteGatewayProvider: deps.deleteGatewayProvider,
         },
       );
       if (outcome.done) return outcome.result;

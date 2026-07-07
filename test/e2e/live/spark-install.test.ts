@@ -11,7 +11,7 @@ import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunInstallerIntegration, shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertRequiredInstallerEnv,
   assertSparkInstallSandboxName,
@@ -22,16 +22,12 @@ import {
   writeRedactedInstallLog,
 } from "./spark-install-helpers.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = assertSparkInstallSandboxName(
   process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SPARK_INSTALL_SANDBOX_NAME,
 );
 const LIVE_TIMEOUT_MS = 40 * 60_000;
 const INSTALL_TIMEOUT_MS = 30 * 60_000;
-const liveTest =
-  process.platform === "linux" && (shouldRunLiveE2E() || shouldRunInstallerIntegration())
-    ? test
-    : test.skip;
+const liveTest = process.platform === "linux" ? test : test.skip;
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -75,7 +71,7 @@ liveTest(
   "spark install path: standard non-interactive install leaves NemoClaw and OpenShell usable",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, secrets }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "spark-install",
       sandboxName: SANDBOX_NAME,
       contracts: [

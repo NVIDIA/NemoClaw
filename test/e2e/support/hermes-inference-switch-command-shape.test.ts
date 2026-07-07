@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
@@ -13,11 +14,13 @@ import {
   API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
   cleanupHermesSwitch,
+  compatibleAnthropicMetadataArgs,
   hostedInstallModel,
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicEndpointUrl,
   mockAnthropicSwitchEnabled,
+  openAiSurfaceEndpointUrl,
   openshellGatewayName,
   parseInferenceRoute,
   runHermesInferenceSetWithRetry,
@@ -36,6 +39,36 @@ describe("Hermes inference switch command shape", () => {
       }).status === 0
     );
   }
+
+  it("uses the OpenAI frontend for an Anthropic upstream in Hermes (#6289)", () => {
+    expect(
+      resolveAgentInferenceApi("hermes", "compatible-anthropic-endpoint", "anthropic-messages"),
+    ).toBe("openai-completions");
+  });
+
+  it("preserves the requested frontend for other Hermes upstreams (#6289)", () => {
+    expect(resolveAgentInferenceApi("hermes", "nvidia-prod", "openai-completions")).toBe(
+      "openai-completions",
+    );
+  });
+
+  it("omits the conflicting Anthropic frontend flag from Hermes switch metadata (#6289)", () => {
+    expect(compatibleAnthropicMetadataArgs("http://host.openshell.internal:18766")).toEqual([
+      "--endpoint-url",
+      "http://host.openshell.internal:18766",
+      "--credential-env",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ]);
+  });
+
+  it("normalizes the verified OpenAI surface URL for Hermes custom Anthropic routes (#6289)", () => {
+    expect(openAiSurfaceEndpointUrl("https://inference-api.nvidia.com/")).toBe(
+      "https://inference-api.nvidia.com/v1",
+    );
+    expect(openAiSurfaceEndpointUrl("https://inference-api.nvidia.com/v1")).toBe(
+      "https://inference-api.nvidia.com/v1",
+    );
+  });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
     const command = apiKeyShapeCommand();
