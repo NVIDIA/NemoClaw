@@ -182,7 +182,9 @@ expect {
     append_marker $markers "$expect_out(0,string)"
     append_marker $markers "NEMOCLAW_TUI_NAME_PROMPT"
     puts "\nNEMOCLAW_TUI_NAME_PROMPT"
-    # Pinned Deep Agents Code 0.1.34 accepts an empty optional name and continues.
+    # The prompt copy can render just before its input receives focus. Let the
+    # first frame settle, then submit the empty optional name accepted by 0.1.34.
+    after 500
     send -- "\r"
     after 500
     send -- "/help\r"
