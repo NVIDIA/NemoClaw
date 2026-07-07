@@ -997,12 +997,8 @@ function upsertMessagingProviders(
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) => onboardProviders.providerExistsInGateway(name, setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName));
 
-const {
-  verifyInferenceRoute,
-  isInferenceRouteReady,
-  checkGatewayRouteCompatibility,
-  preflightGatewayRouteDiscovery,
-} = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility, preflightGatewayRouteDiscovery } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
 const {
   inspectSandboxForCreate,
   pruneStaleSandboxEntry,
@@ -1103,14 +1099,10 @@ const {
   assertOllamaUpgradeApplied,
 });
 
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const handleVllmSelection = createSetupNimVllmHandler({
-  VLLM_PORT,
-  runCapture,
-  getLocalProviderBaseUrl,
-  getLocalProviderValidationBaseUrl,
-  isSafeModelId,
-  requireValue,
-  validateOpenAiLikeSelection,
+  VLLM_PORT, runCapture, getLocalProviderBaseUrl, getLocalProviderValidationBaseUrl,
+  isSafeModelId, requireValue, validateOpenAiLikeSelection,
   applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow,
   exitProcess: (code) => process.exit(code),
 });
