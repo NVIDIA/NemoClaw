@@ -3,7 +3,10 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
-import { OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET } from "../../onboard/observability-policy-presets";
+import {
+  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+  OBSERVABILITY_POLICY_BINDING,
+} from "../../onboard/observability-policy-presets";
 import * as policies from "../../policy";
 import * as sandboxState from "../../state/sandbox";
 import { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
@@ -35,7 +38,7 @@ function uniquePresetNames(names: readonly string[]): string[] {
 }
 
 function isManagedObservabilityPreset(name: string): boolean {
-  return name.trim().toLowerCase() === OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET;
+  return OBSERVABILITY_POLICY_BINDING.matchesPreset(name);
 }
 
 function finalRestoredPresetState(
@@ -43,25 +46,16 @@ function finalRestoredPresetState(
   restoredCustomPresets: readonly string[],
   includeManagedObservability: boolean,
 ): Pick<RebuildRestorePhaseResult, "finalPresets" | "finalBuiltinPresets"> {
-  const finalBuiltinPresets = uniquePresetNames([
-    ...restoredBuiltinPresets.filter((name) => !isManagedObservabilityPreset(name)),
-    ...(includeManagedObservability ? [OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET] : []),
-  ]);
+  const finalBuiltinPresets = uniquePresetNames(
+    OBSERVABILITY_POLICY_BINDING.setAttribution(
+      restoredBuiltinPresets,
+      includeManagedObservability,
+    ),
+  );
   return {
     finalBuiltinPresets,
     finalPresets: uniquePresetNames([...finalBuiltinPresets, ...restoredCustomPresets]),
   };
-}
-
-function exactPresetContentState(
-  sandboxName: string,
-  presetContent: string,
-): "match" | "absent" | "drift" | null {
-  try {
-    return policies.getPresetContentGatewayState(sandboxName, presetContent);
-  } catch {
-    return null;
-  }
 }
 
 function reconcileFinalManagedObservability(
@@ -80,7 +74,7 @@ function reconcileFinalManagedObservability(
   | "policyPresetReconciliationVerified"
 > {
   const customObservabilityStates = successfulCustomObservabilityContents.map((content) =>
-    exactPresetContentState(sandboxName, content),
+    OBSERVABILITY_POLICY_BINDING.inspectContent(sandboxName, content, policies),
   );
   const customObservabilityExpected = successfulCustomObservabilityContents.length > 0;
   const customObservabilityVerified = customObservabilityStates.includes("match");
@@ -92,15 +86,8 @@ function reconcileFinalManagedObservability(
     };
   }
 
-  let builtinContent: string | null = null;
-  try {
-    builtinContent = policies.loadPresetForSandbox(
-      sandboxName,
-      OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-    );
-  } catch {
-    builtinContent = null;
-  }
+  const loadedBinding = OBSERVABILITY_POLICY_BINDING.load(sandboxName, policies);
+  const builtinContent = loadedBinding.content;
   if (!builtinContent) {
     log("Could not load managed observability preset content after rebuild restore");
     console.error(
@@ -117,27 +104,29 @@ function reconcileFinalManagedObservability(
     };
   }
 
-  const liveBefore = exactPresetContentState(sandboxName, builtinContent);
+  const liveBefore = loadedBinding.state;
   const failedPresetRemovals: string[] = [];
   let liveAfter = liveBefore;
   if (!targetManagedObservability && liveBefore === "match") {
-    try {
-      log(`Removing unexpected live preset: ${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}`);
-      if (
-        !policies.removePreset(sandboxName, OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET, {
-          nonFatal: true,
-        })
-      ) {
-        failedPresetRemovals.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      log(
-        `Failed to remove unexpected live preset '${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}': ${message}`,
-      );
+    log(`Removing unexpected live preset: ${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}`);
+    const removal = OBSERVABILITY_POLICY_BINDING.removeExact(
+      sandboxName,
+      builtinContent,
+      policies,
+      {
+        knownBefore: liveBefore,
+        removeOptions: { nonFatal: true },
+      },
+    );
+    if (removal.reportedSuccess !== true) {
       failedPresetRemovals.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
     }
-    liveAfter = exactPresetContentState(sandboxName, builtinContent);
+    if (removal.errorMessage) {
+      log(
+        `Failed to remove unexpected live preset '${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}': ${removal.errorMessage}`,
+      );
+    }
+    liveAfter = removal.after;
   }
 
   const failedManagedAddition = failedBuiltinPresets.some(isManagedObservabilityPreset);
@@ -259,9 +248,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
           restoredCustomPresets.push(entry.name);
           if (
             reconcileManagedDcodeObservability &&
-            policies
-              .parsePresetPolicyKeys(entry.content)
-              .includes(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET)
+            OBSERVABILITY_POLICY_BINDING.ownsContent(entry.content)
           ) {
             successfulCustomObservabilityContents.push(entry.content);
           }

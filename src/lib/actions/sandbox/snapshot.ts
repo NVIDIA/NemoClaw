@@ -19,10 +19,10 @@ import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   isDcodeAgent,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+  OBSERVABILITY_POLICY_BINDING,
 } from "../../onboard/observability-policy-presets";
 import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import * as policies from "../../policy";
-import { parseNetworkPolicies } from "../../policy/preset-parsing";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
@@ -593,24 +593,13 @@ function reconcileSnapshotPolicyPresets(
     currentCustomPolicies.map((preset) => preset.name.trim().toLowerCase()),
   );
   const customPolicyNames = new Set([...snapshotCustomPolicyNames, ...currentCustomPolicyNames]);
-  const customOwnsObservability = currentCustomPolicies.some((entry) => {
-    const customNetworkPolicies = parseNetworkPolicies(entry.content) ?? {};
-    if (
-      !Object.prototype.hasOwnProperty.call(
-        customNetworkPolicies,
-        OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-      )
-    ) {
-      return false;
-    }
-    try {
-      return policies.getPresetContentGatewayState(targetSandbox, entry.content) === "match";
-    } catch {
-      return false;
-    }
-  });
+  const customOwnsObservability = OBSERVABILITY_POLICY_BINDING.hasLiveCustomOwner(
+    targetSandbox,
+    currentCustomPolicies.map((entry) => entry.content),
+    policies,
+  );
   const withoutBuiltinObservability = snapshotPresets.filter(
-    (preset) => preset.trim().toLowerCase() !== OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+    (preset) => !OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
   );
   const shouldEnableBuiltinObservability =
     !customOwnsObservability &&
@@ -624,27 +613,23 @@ function reconcileSnapshotPolicyPresets(
   const currentPresets = [...new Set(appliedPresetNames)].filter((preset: string) => {
     const normalized = preset.trim().toLowerCase();
     return (
-      normalized !== OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET && !customPolicyNames.has(normalized)
+      !OBSERVABILITY_POLICY_BINDING.matchesPreset(normalized) && !customPolicyNames.has(normalized)
     );
   });
-  const recordedBuiltinObservability = (targetEntry?.policies ?? []).some(
-    (preset) => preset.trim().toLowerCase() === OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+  const recordedBuiltinObservability = (targetEntry?.policies ?? []).some((preset) =>
+    OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
   );
   const setRecordedBuiltinObservability = (enabled: boolean, force = false): void => {
     const currentEntry = registry.getSandbox(targetSandbox);
     if (!currentEntry) return;
     const currentPolicies = currentEntry.policies ?? [];
-    const currentlyRecorded = currentPolicies.some(
-      (preset) => preset.trim().toLowerCase() === OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+    const currentlyRecorded = currentPolicies.some((preset) =>
+      OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
     );
-    const withoutObservability = currentPolicies.filter(
-      (preset) => preset.trim().toLowerCase() !== OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-    );
-    const registryPolicies = enabled
-      ? [...withoutObservability, OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET]
-      : withoutObservability;
     if (!force && enabled === currentlyRecorded) return;
-    registry.updateSandbox(targetSandbox, { policies: registryPolicies });
+    registry.updateSandbox(targetSandbox, {
+      policies: OBSERVABILITY_POLICY_BINDING.setAttribution(currentPolicies, enabled),
+    });
   };
   if (customOwnsObservability) {
     setRecordedBuiltinObservability(false);
@@ -661,24 +646,12 @@ function reconcileSnapshotPolicyPresets(
   // and live in the gateway. Reconcile the built-in from exact content state,
   // never from a name/key-only match that could delete drifted operator policy.
   let builtinObservabilityContent: string | null = null;
-  const inspectBuiltinObservability = (): "match" | "absent" | "drift" | null => {
-    if (!builtinObservabilityContent) return null;
-    try {
-      return policies.getPresetContentGatewayState(targetSandbox, builtinObservabilityContent);
-    } catch {
-      return null;
-    }
-  };
+  let builtinObservabilityState: "match" | "absent" | "drift" | null = null;
   if (!customOwnsObservability) {
-    try {
-      builtinObservabilityContent = policies.loadPresetForSandbox(
-        targetSandbox,
-        OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-      );
-    } catch {
-      builtinObservabilityContent = null;
-    }
-    const builtinState = inspectBuiltinObservability();
+    const loadedBinding = OBSERVABILITY_POLICY_BINDING.load(targetSandbox, policies);
+    builtinObservabilityContent = loadedBinding.content;
+    builtinObservabilityState = loadedBinding.state;
+    const builtinState = builtinObservabilityState;
     if (builtinState === "absent" && shouldEnableBuiltinObservability) {
       toAdd.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
     } else if (builtinState === "absent" && recordedBuiltinObservability) {
@@ -703,34 +676,23 @@ function reconcileSnapshotPolicyPresets(
 
   const failed: string[] = [];
   for (const preset of toRemove) {
-    if (
-      preset.trim().toLowerCase() === OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET &&
-      builtinObservabilityContent
-    ) {
-      let removalFailure: string | null = null;
-      try {
-        if (!policies.removePreset(targetSandbox, preset)) removalFailure = "remove failed";
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        removalFailure = `remove: ${message}`;
-      }
-      const postRemovalState = inspectBuiltinObservability();
-      if (postRemovalState === "absent") {
+    if (OBSERVABILITY_POLICY_BINDING.matchesPreset(preset) && builtinObservabilityContent) {
+      const removal = OBSERVABILITY_POLICY_BINDING.removeExact(
+        targetSandbox,
+        builtinObservabilityContent,
+        policies,
+        { knownBefore: builtinObservabilityState },
+      );
+      builtinObservabilityState = removal.after;
+      if (removal.verifiedAbsent) {
         setRecordedBuiltinObservability(false);
       } else {
         // removePreset updates the registry on a reported success. Restore
         // attribution whenever exact absence was not proven so recovery does
         // not forget built-in policy that may still be live.
         setRecordedBuiltinObservability(true, true);
-        const stateDetail =
-          postRemovalState === "match"
-            ? "exact content still live after remove"
-            : postRemovalState === "drift"
-              ? "post-remove content drifted"
-              : "post-remove state unavailable";
-        removalFailure = removalFailure ? `${removalFailure}; ${stateDetail}` : stateDetail;
       }
-      if (removalFailure) failed.push(`${preset} (${removalFailure})`);
+      if (removal.failureDetail) failed.push(`${preset} (${removal.failureDetail})`);
       continue;
     }
     try {
