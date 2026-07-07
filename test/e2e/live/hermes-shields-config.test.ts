@@ -13,6 +13,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { stripAnsi } from "./json-envelope.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-shields";
 const GATEWAY_NAME = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
@@ -201,7 +202,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   assertExitZero(status, "read fresh Hermes status");
-  expect(resultText(status)).toContain("Phase: Ready");
+  expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
 
   const trigger = await sandboxShell(
     sandbox,
@@ -238,7 +239,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   assertExitZero(finalStatus, "read Hermes status after two shields cycles");
-  expect(resultText(finalStatus)).toContain("Phase: Ready");
+  expect(stripAnsi(resultText(finalStatus))).toMatch(/Phase:\s*Ready/i);
 
   await artifacts.target.complete({
     id: "hermes-shields-config",
