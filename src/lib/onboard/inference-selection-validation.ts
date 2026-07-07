@@ -10,7 +10,7 @@ const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
       endpointUrl: string,
       model: string,
       apiKey: string | null | undefined,
-      options?: { probeStreaming?: boolean },
+      options?: { probeStreaming?: boolean; pinnedAddresses?: readonly string[] },
     ): any;
     probeOpenAiLikeEndpoint(
       endpointUrl: string,
