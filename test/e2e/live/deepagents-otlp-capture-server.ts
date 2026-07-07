@@ -283,11 +283,11 @@ export async function startOtlpCaptureServers(
         }
         finalize(true, null, 200);
       });
-      request.on("aborted", () => {
-        finalize(false, "request body aborted", 400);
-      });
       request.on("error", () => {
-        finalize(false, "request body stream failed", 400);
+        if (request.complete) finalize(false, "request body stream failed", 400);
+      });
+      request.on("close", () => {
+        if (!request.complete) finalize(false, "request body aborted", 400);
       });
     });
     await listen(server, options.bindIp, port);

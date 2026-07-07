@@ -103,11 +103,14 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       /grep -Fq 'CAPTURE_READY:'[\s\S]*COLLECTOR_PORT}\/health[\s\S]*DECOY_PORT}\/health/,
     );
     expect(script).toContain("urllib.request.urlopen(request, timeout=10)");
+    expect(script).toContain("except urllib.error.HTTPError as error:");
+    expect(script).toContain('body = error.read(512).decode("utf-8", "replace")');
     expect(script).not.toContain("urllib.request.ProxyHandler({})");
     expect(script).not.toContain("os.environ.pop");
     expect(script).toMatch(/\"\$CLI\" \"\$SANDBOX_NAME\" exec -- \\\n\s+\/opt\/venv\/bin\/python3/);
     expect(script).not.toContain("env -u ALL_PROXY");
     expect(script.match(/--noproxy '\*'/g)).toHaveLength(2);
+    expect(script).toContain("/usr/bin/curl --fail-with-body -sS");
     expect(script).toMatch(
       /run_deterministic_tool_trace\(\)[\s\S]*"\$CLI" "\$SANDBOX_NAME" exec --[\s\S]*\/opt\/venv\/bin\/python3/,
     );

@@ -107,6 +107,7 @@ request_count() {
 python_probe_source() {
   cat <<'PY'
 import sys
+import urllib.error
 import urllib.request
 
 # NemoClaw's exec wrapper sources the managed, credential-free OpenShell proxy
@@ -123,6 +124,10 @@ request = urllib.request.Request(
 try:
     with urllib.request.urlopen(request, timeout=10) as response:
         print(f"REACHED:{response.status}")
+except urllib.error.HTTPError as error:
+    body = error.read(512).decode("utf-8", "replace")
+    print(f"FAILED:HTTPError:{error}:{body}")
+    raise SystemExit(7)
 except Exception as error:
     print(f"FAILED:{type(error).__name__}:{error}")
     raise SystemExit(7)
@@ -208,7 +213,7 @@ openshell sandbox exec --name "$SANDBOX_NAME" -- test -x /usr/bin/curl >/dev/nul
 before_binary="$(request_count)"
 set +e
 binary_output="$("$CLI" "$SANDBOX_NAME" exec -- \
-  /usr/bin/curl -fsS --max-time 10 -X POST \
+  /usr/bin/curl --fail-with-body -sS --max-time 10 -X POST \
   -H 'content-type: application/x-protobuf' \
   --data-binary 'NEMOCLAW_OTLP_DENIED_BINARY_PROBE' \
   "http://${COLLECTOR_HOST}:${COLLECTOR_PORT}/v1/traces" 2>&1)"

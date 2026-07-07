@@ -238,6 +238,15 @@ describe("Deep Agents observability policy proof", () => {
     });
     expect(denial.status, denial.stderr).toBe(0);
     expect(denial.stdout.trim()).toBe("policy-denied");
+
+    const proxyDenial = spawnSync(tsx, [helper, "denial-state"], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+      input:
+        'FAILED:HTTPError:HTTP Error 403: Forbidden:{"error":"policy_denied","detail":"POST example.com:4318/v1/traces not permitted by policy"}\n',
+    });
+    expect(proxyDenial.status, proxyDenial.stderr).toBe(0);
+    expect(proxyDenial.stdout.trim()).toBe("policy-denied");
   });
 });
 
@@ -379,6 +388,52 @@ describe("bounded private OTLP capture server", () => {
       expect(started.snapshot()).toMatchObject({ capturedBytes: 12, reservedBytes: 0 });
     } finally {
       first.destroy();
+      await started.close();
+      fs.rmSync(captureDir, { force: true, recursive: true });
+    }
+  });
+
+  it("releases reserved bytes when a client disconnects before its body completes (#3915)", async () => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-abort-test-"));
+    const started = await startOtlpCaptureServers({
+      allowLoopback: true,
+      bindIp: "127.0.0.1",
+      captureDir,
+      collectorPort: 0,
+      decoyPort: 0,
+      maxBodyBytes: 16,
+      maxCaptureBytes: 16,
+      maxCaptureRequests: 10,
+    });
+    const partial = pendingRequest(started.collectorPort, 12);
+    try {
+      await waitForReservedBytes(started, 12);
+      partial.destroy();
+      await waitForMetadata(captureDir, 1);
+
+      expect(started.snapshot()).toEqual({
+        capturedBytes: 0,
+        requestCount: 1,
+        reservedBytes: 0,
+      });
+      const metadata = fs
+        .readdirSync(captureDir)
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => JSON.parse(fs.readFileSync(path.join(captureDir, name), "utf8")));
+      expect(metadata).toEqual([
+        {
+          accepted: false,
+          contentType: null,
+          method: null,
+          path: null,
+          port: started.collectorPort,
+          rejection: "request body aborted",
+        },
+      ]);
+      const bodyFiles = fs.readdirSync(captureDir).filter((name) => name.endsWith(".body"));
+      expect(bodyFiles.map((name) => fs.statSync(path.join(captureDir, name)).size)).toEqual([0]);
+    } finally {
+      partial.destroy();
       await started.close();
       fs.rmSync(captureDir, { force: true, recursive: true });
     }
