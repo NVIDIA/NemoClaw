@@ -15,6 +15,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -52,18 +53,7 @@ function singleLineSandboxScript(script: string) {
 }
 
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const base = buildAvailabilityProbeEnv();
-  return {
-    ...base,
-    HOME: home,
-    PATH: [path.join(home, ".local", "bin"), path.join(home, ".npm-global", "bin"), base.PATH]
-      .filter(Boolean)
-      .join(":"),
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-    ...extra,
-  };
+  return testHomeEnvironment(home, extra);
 }
 
 async function bestEffort(run: () => Promise<unknown>): Promise<void> {

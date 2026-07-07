@@ -19,6 +19,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import {
@@ -134,16 +135,7 @@ function assertAgent(value: string): asserts value is AgentName {
 }
 
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const base = buildAvailabilityProbeEnv({ ...process.env, HOME: home });
-  return {
-    ...base,
-    HOME: home,
-    PATH: [path.join(home, ".local", "bin"), base.PATH].filter(Boolean).join(":"),
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-    ...extra,
-  };
+  return testHomeEnvironment(home, extra);
 }
 
 function onboardEnv(home: string, agent: AgentName): NodeJS.ProcessEnv {

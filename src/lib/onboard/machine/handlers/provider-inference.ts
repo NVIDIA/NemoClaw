@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { coerceAgentInferenceApi, resolveAgentInferenceApi } from "../../../inference/config";
+import { resolveAgentProviderInferenceApi } from "../../../inference/config";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
@@ -262,10 +262,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   // selected agent cannot safely use. Normalize the seed before the resume
   // shortcut so the gateway provider is revalidated and, when necessary,
   // re-registered on the matching protocol surface before sandbox creation.
-  let preferredInferenceApi = resolveAgentInferenceApi(
+  let preferredInferenceApi = resolveAgentProviderInferenceApi(
     agentName(agent),
+    agent,
     provider,
-    coerceAgentInferenceApi(agent, initial.preferredInferenceApi),
+    initial.preferredInferenceApi,
   );
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
   let nimContainer = initial.nimContainer;
@@ -411,8 +412,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     const selectedModel = selected.model;
     provider = selectedProvider;
     model = selectedModel;
-    preferredInferenceApi = resolveAgentInferenceApi(
+    preferredInferenceApi = resolveAgentProviderInferenceApi(
       agentName(agent),
+      agent,
       provider,
       preferredInferenceApi,
     );

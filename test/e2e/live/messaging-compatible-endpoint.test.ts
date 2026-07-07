@@ -12,12 +12,18 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  closeServer,
+  writeJsonResponse as jsonResponse,
+  listenServer,
+  readRequestBody,
+  writeSseBody as sseResponse,
+} from "../fixtures/http-protocol.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -92,34 +98,6 @@ function redactionValues(): string[] {
   return [COMPATIBLE_KEY, TELEGRAM_TOKEN, process.env.GITHUB_TOKEN].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
-}
-
-function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-function sseResponse(res: http.ServerResponse, body: string): void {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Content-Length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-function readRequestBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve) => {
-    let body = "";
-    req.setEncoding("utf8");
-    req.on("data", (chunk: string) => {
-      body += chunk;
-    });
-    req.on("end", () => resolve(body));
-  });
 }
 
 function parseJsonBody(raw: string): Record<string, unknown> {
@@ -268,27 +246,12 @@ async function startCompatibleMock(
     jsonResponse(res, 404, { error: { message: "not found" } });
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "0.0.0.0", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("compatible endpoint mock did not bind to a TCP port");
-  }
-  const boundPort = (address as AddressInfo).port;
+  const boundPort = await listenServer(server, port);
   const mock = {
     requests,
     hopHeaderLogs,
     localBaseUrl: `http://127.0.0.1:${boundPort}/v1`,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
+    close: () => closeServer(server),
   };
 
   for (let attempt = 1; attempt <= 30; attempt += 1) {

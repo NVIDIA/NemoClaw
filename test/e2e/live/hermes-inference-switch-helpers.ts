@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import http, { type Server } from "node:http";
+import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +18,11 @@ import {
 import { expect } from "../fixtures/e2e-test.ts";
 import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
+import {
+  closeServer,
+  writeJsonResponse as jsonResponse,
+  writeSseEvents,
+} from "../fixtures/http-protocol.ts";
 import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
@@ -234,34 +239,16 @@ export async function cleanupHermesSwitch(
   );
 }
 
-function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "content-type": "application/json",
-    "content-length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
 function sseResponse(res: http.ServerResponse, events: Array<[string, unknown]>): void {
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-  for (const [name, payload] of events) {
-    res.write(`event: ${name}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  }
-  res.end();
+  writeSseEvents(res, events);
 }
 
 function openAiSseResponse(res: http.ServerResponse, chunks: unknown[]): void {
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-  for (const chunk of chunks) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-  res.end("data: [DONE]\n\n");
-}
-
-function closeServer(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
+  writeSseEvents(
+    res,
+    chunks.map((chunk) => [undefined, chunk] as const),
+    true,
+  );
 }
 
 async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProvider> {
