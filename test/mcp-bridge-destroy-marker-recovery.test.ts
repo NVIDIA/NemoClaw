@@ -213,6 +213,56 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
     expect(parsed.mcp?.destroyPendingAt).toBeUndefined();
   });
 
+  it("clears the prepared marker after removing the final committed bridge (#6376)", () => {
+    const home = createTempHome("nemoclaw-force-final-bridge-");
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
+const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
+const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+state.ensureSandboxGatewaySelected = async () => {};
+adapters.assertAgentMcpConfigMutationAllowed = () => {};
+adapters.assertAgentMcpTeardownRuntimeCapability = () => {};
+adapters.unregisterAgentAdapter = () => "removed";
+policy.assertGeneratedPolicyMutationSafe = () => {};
+policy.removeGeneratedPolicy = () => {};
+registry.registerSandbox({
+  name: "stuck-sandbox",
+  agent: "openclaw",
+  mcp: {
+    bridges: { github: ${GITHUB_BRIDGE} },
+    managedServerNames: ["github"],
+    destroyPreparedAt: "2026-06-27T01:00:00.000Z",
+  },
+});
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
+  () => {
+    const after = registry.getSandbox("stuck-sandbox");
+    process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({ mcp: after && after.mcp }));
+    process.exit(0);
+  },
+  (error) => {
+    process.stderr.write(String(error && error.message || error));
+    process.exit(1);
+  },
+);
+`;
+    const result = runNodeScript(home, script);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Removed MCP server 'github'");
+    expect(result.stdout).toContain("Cleared incomplete MCP destroy transaction");
+    const jsonMarker = "<<REPRO_JSON>>";
+    const parsed = JSON.parse(
+      result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
+    ) as { mcp: SandboxMcpSnapshot | undefined };
+    expect(parsed.mcp?.bridges).toEqual({});
+    expect(parsed.mcp?.managedServerNames).toEqual(["github"]);
+    expect(parsed.mcp?.destroyPreparedAt).toBeUndefined();
+    expect(parsed.mcp?.destroyPendingAt).toBeUndefined();
+  });
+
   it("does NOT clear the prepared marker on a wrong-server --force no-op (other entries remain)", async () => {
     const home = createTempHome("nemoclaw-force-wrong-server-");
     // PRA-2: `--force` removing a server that is NOT registered (while other
