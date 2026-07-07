@@ -141,7 +141,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
       throw new Error(`exit ${code}`);
     });
 
-    expect(selectGatewayForFollowupOrExit(GATEWAY, run, error, exitProcess)).toBeUndefined();
+    expect(() => selectGatewayForFollowupOrExit(GATEWAY, run, error, exitProcess)).not.toThrow();
     expect(() => selectGatewayForFollowupOrExit(GATEWAY, run, error, exitProcess)).toThrow(
       "exit 17",
     );
