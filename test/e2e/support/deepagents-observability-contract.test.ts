@@ -3,7 +3,6 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
@@ -21,13 +20,16 @@ import {
   decodeExportTraceServiceRequest,
   type OtlpAttributeValue,
 } from "../live/otlp-trace-decoder.ts";
+import {
+  pendingRequest,
+  request,
+  SERVICE_NAME,
+  type TestSpan,
+  traceRequest,
+  waitForMetadata,
+  waitForReservedBytes,
+} from "./deepagents-observability-contract-fixtures.ts";
 
-type TestSpan = {
-  attributes: Record<string, OtlpAttributeValue>;
-  name: string;
-};
-
-const SERVICE_NAME = "nemoclaw-langchain-deepagents-code";
 const DIRECT_PROMPT = "DIRECT_PROMPT";
 const DIRECT_RESPONSE = "DIRECT_RESPONSE";
 const LOGIN_PROMPT = "LOGIN_PROMPT";
@@ -36,69 +38,6 @@ const TOOL_NAME = "nemoclaw_otlp_e2e_tool";
 const TOOL_ARGUMENT = "TOOL_ARGUMENT";
 const TOOL_RESULT = "TOOL_RESULT";
 const AMBIENT_CANARY = "AMBIENT_CANARY";
-
-function varint(value: number): Buffer {
-  let remaining = BigInt(value);
-  const bytes: number[] = [];
-  do {
-    let byte = Number(remaining & 0x7fn);
-    remaining >>= 7n;
-    if (remaining > 0n) byte |= 0x80;
-    bytes.push(byte);
-  } while (remaining > 0n);
-  return Buffer.from(bytes);
-}
-
-function field(fieldNumber: number, wireType: number, value: Buffer): Buffer {
-  return Buffer.concat([varint((fieldNumber << 3) | wireType), value]);
-}
-
-function bytesField(fieldNumber: number, value: Buffer): Buffer {
-  return field(fieldNumber, 2, Buffer.concat([varint(value.length), value]));
-}
-
-function stringField(fieldNumber: number, value: string): Buffer {
-  return bytesField(fieldNumber, Buffer.from(value));
-}
-
-function anyValue(value: OtlpAttributeValue): Buffer {
-  if (value === null) return Buffer.alloc(0);
-  if (typeof value === "string") return stringField(1, value);
-  if (typeof value === "boolean") return field(2, 0, varint(value ? 1 : 0));
-  if (typeof value === "number") {
-    if (Number.isSafeInteger(value) && value >= 0) return field(3, 0, varint(value));
-    const double = Buffer.alloc(8);
-    double.writeDoubleLE(value);
-    return field(4, 1, double);
-  }
-  if (Array.isArray(value)) {
-    const array = Buffer.concat(value.map((item) => bytesField(1, anyValue(item))));
-    return bytesField(5, array);
-  }
-  const entries = Object.entries(value).map(([key, item]) => bytesField(1, keyValue(key, item)));
-  return bytesField(6, Buffer.concat(entries));
-}
-
-function keyValue(key: string, value: OtlpAttributeValue): Buffer {
-  return Buffer.concat([stringField(1, key), bytesField(2, anyValue(value))]);
-}
-
-function attributes(fieldNumber: number, values: Record<string, OtlpAttributeValue>): Buffer[] {
-  return Object.entries(values).map(([key, value]) =>
-    bytesField(fieldNumber, keyValue(key, value)),
-  );
-}
-
-function spanBytes(span: TestSpan): Buffer {
-  return Buffer.concat([stringField(5, span.name), ...attributes(9, span.attributes)]);
-}
-
-function traceRequest(spans: readonly TestSpan[], serviceName = SERVICE_NAME): Buffer {
-  const resource = Buffer.concat(attributes(1, { "service.name": serviceName }));
-  const scopeSpans = Buffer.concat(spans.map((span) => bytesField(2, spanBytes(span))));
-  const resourceSpans = Buffer.concat([bytesField(1, resource), bytesField(2, scopeSpans)]);
-  return bytesField(1, resourceSpans);
-}
 
 function validSpans(): TestSpan[] {
   return [
@@ -139,66 +78,6 @@ const expectations = {
   ],
   tool: { argumentMarker: TOOL_ARGUMENT, name: TOOL_NAME, resultMarker: TOOL_RESULT },
 } as const;
-
-function request(port: number, headers: Record<string, string>, body = ""): Promise<number | null> {
-  return new Promise((resolve) => {
-    const client = http.request(
-      { host: "127.0.0.1", method: "POST", path: "/v1/traces", port, headers },
-      (response) => {
-        response.resume();
-        response.on("end", () => resolve(response.statusCode ?? null));
-      },
-    );
-    client.on("error", () => resolve(null));
-    if (body) client.write(body);
-    client.end();
-  });
-}
-
-function pendingRequest(
-  port: number,
-  contentLength: number,
-): {
-  complete(body: string): void;
-  destroy(): void;
-  status: Promise<number | null>;
-} {
-  let finish: (status: number | null) => void = () => {};
-  const status = new Promise<number | null>((resolve) => {
-    finish = resolve;
-  });
-  const client = http.request(
-    {
-      host: "127.0.0.1",
-      method: "POST",
-      path: "/v1/traces",
-      port,
-      headers: {
-        "content-length": String(contentLength),
-        "content-type": "application/x-protobuf",
-      },
-    },
-    (response) => {
-      response.resume();
-      response.on("end", () => finish(response.statusCode ?? null));
-    },
-  );
-  client.on("error", () => finish(null));
-  client.flushHeaders();
-  return {
-    complete: (body) => client.end(body),
-    destroy: () => client.destroy(),
-    status,
-  };
-}
-
-async function waitForMetadata(captureDir: string, count: number): Promise<void> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (fs.readdirSync(captureDir).filter((name) => name.endsWith(".json")).length >= count) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`capture server did not write ${count} metadata files`);
-}
 
 describe("Deep Agents OTLP trace contract", () => {
   it("decodes the stable OTLP trace fields and recursive AnyValue shapes", () => {
@@ -483,10 +362,7 @@ describe("bounded private OTLP capture server", () => {
     });
     const first = pendingRequest(started.collectorPort, 12);
     try {
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        if (started.snapshot().reservedBytes === 12) break;
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForReservedBytes(started, 12);
       expect(started.snapshot()).toMatchObject({ capturedBytes: 0, reservedBytes: 12 });
 
       const rejectedStatus = await request(

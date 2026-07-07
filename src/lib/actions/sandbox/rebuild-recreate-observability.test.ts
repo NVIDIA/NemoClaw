@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
@@ -158,8 +159,7 @@ describe("runRebuildRecreatePhase observability handoff", () => {
       expect(observedTier).toBe("restricted");
       expect(process.env.NEMOCLAW_POLICY_TIER).toBe("open");
     } finally {
-      if (previousPolicyTier === undefined) delete process.env.NEMOCLAW_POLICY_TIER;
-      else process.env.NEMOCLAW_POLICY_TIER = previousPolicyTier;
+      restoreEnv("NEMOCLAW_POLICY_TIER", previousPolicyTier);
     }
   });
 

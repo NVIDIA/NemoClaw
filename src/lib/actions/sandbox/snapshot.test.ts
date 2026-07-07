@@ -279,6 +279,7 @@ describe("runSandboxSnapshot", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   function mockDcodeProbe(state: DcodeProbeState, output = "") {
@@ -910,8 +911,7 @@ describe("runSandboxSnapshot", () => {
     enabled,
     assignmentPresent,
   }) => {
-    const previousAmbientObservability = process.env.NEMOCLAW_OBSERVABILITY;
-    process.env.NEMOCLAW_OBSERVABILITY = "1";
+    vi.stubEnv("NEMOCLAW_OBSERVABILITY", "1");
     getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -936,26 +936,18 @@ describe("runSandboxSnapshot", () => {
     });
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    try {
-      await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
-      const [createCommandValue, createEnv] = streamSandboxCreateMock.mock.calls[0] ?? [];
-      const createCommand = String(createCommandValue ?? "");
-      expect(createCommand.includes("'NEMOCLAW_OBSERVABILITY=1'")).toBe(assignmentPresent);
-      expect(createEnv?.NEMOCLAW_OBSERVABILITY).toBeUndefined();
-      expect(registerSandboxMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: "beta",
-          observabilityEnabled: enabled,
-        }),
-      );
-    } finally {
-      if (previousAmbientObservability === undefined) {
-        delete process.env.NEMOCLAW_OBSERVABILITY;
-      } else {
-        process.env.NEMOCLAW_OBSERVABILITY = previousAmbientObservability;
-      }
-    }
+    const [createCommandValue, createEnv] = streamSandboxCreateMock.mock.calls[0] ?? [];
+    const createCommand = String(createCommandValue ?? "");
+    expect(createCommand.includes("'NEMOCLAW_OBSERVABILITY=1'")).toBe(assignmentPresent);
+    expect(createEnv?.NEMOCLAW_OBSERVABILITY).toBeUndefined();
+    expect(registerSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "beta",
+        observabilityEnabled: enabled,
+      }),
+    );
   });
 
   it("adds built-in OTLP egress when observability was enabled after the snapshot", async () => {
@@ -1029,10 +1021,22 @@ describe("runSandboxSnapshot", () => {
   });
 
   it.each([
-    { label: "returns false", removalResult: false as const },
-    { label: "throws", removalResult: "throw" as const },
-    { label: "claims success without removing", removalResult: true as const },
-  ])("retains built-in OTLP attribution when removal $label", async ({ removalResult }) => {
+    {
+      label: "returns false",
+      configureRemoval: () => removePresetMock.mockReturnValue(false),
+    },
+    {
+      label: "throws",
+      configureRemoval: () =>
+        removePresetMock.mockImplementation(() => {
+          throw new Error("remove exploded");
+        }),
+    },
+    {
+      label: "claims success without removing",
+      configureRemoval: () => removePresetMock.mockReturnValue(true),
+    },
+  ])("retains built-in OTLP attribution when removal $label", async ({ configureRemoval }) => {
     getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
@@ -1047,13 +1051,7 @@ describe("runSandboxSnapshot", () => {
     });
     getAppliedPresetsMock.mockReturnValue([]);
     getPresetContentGatewayStateMock.mockReturnValue("match");
-    if (removalResult === "throw") {
-      removePresetMock.mockImplementation(() => {
-        throw new Error("remove exploded");
-      });
-    } else {
-      removePresetMock.mockReturnValue(removalResult);
-    }
+    configureRemoval();
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -1087,15 +1085,16 @@ describe("runSandboxSnapshot", () => {
     });
     getAppliedPresetsMock.mockReturnValue(["github", "observability-otlp-local"]);
     getPresetContentGatewayStateMock.mockReturnValue("match");
-    removePresetMock.mockImplementation((_sandboxName, presetName) => {
-      if (presetName === "github") {
+    removePresetMock
+      .mockImplementationOnce((_sandboxName, presetName) => {
+        expect(presetName).toBe("github");
         registryEntry = {
           ...registryEntry,
           policies: registryEntry.policies.filter((name) => name !== "github"),
         };
-      }
-      return true;
-    });
+        return true;
+      })
+      .mockReturnValue(true);
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 

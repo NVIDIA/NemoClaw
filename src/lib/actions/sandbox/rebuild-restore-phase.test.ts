@@ -189,11 +189,19 @@ describe("rebuild policy restore fidelity", () => {
   it("accounts for known failed additions without treating a narrower live set as unverified", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(policies, "applyPreset").mockImplementation((_name, presetName) => {
-      if (presetName === "throw") throw new Error("apply failed");
-      if (presetName === "bad") return false;
-      return true;
-    });
+    vi.spyOn(policies, "applyPreset")
+      .mockImplementationOnce((_name, presetName) => {
+        expect(presetName).toBe("npm");
+        return true;
+      })
+      .mockImplementationOnce((_name, presetName) => {
+        expect(presetName).toBe("bad");
+        return false;
+      })
+      .mockImplementationOnce((_name, presetName) => {
+        expect(presetName).toBe("throw");
+        throw new Error("apply failed");
+      });
 
     const result = runRebuildRestorePhase({
       sandboxName: "alpha",

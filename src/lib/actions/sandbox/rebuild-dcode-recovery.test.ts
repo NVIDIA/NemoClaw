@@ -163,6 +163,7 @@ describe("rebuildSandbox DCode flow: recovery", () => {
       flag: "--observability",
       before: false,
       expected: true,
+      expectedObservabilityApplyCalls: [["alpha", "observability-otlp-local"]] as const,
       backupPresets: [] as string[],
       gatewayPresets: [] as string[],
     },
@@ -171,6 +172,7 @@ describe("rebuildSandbox DCode flow: recovery", () => {
       flag: "--no-observability",
       before: true,
       expected: false,
+      expectedObservabilityApplyCalls: [] as const,
       backupPresets: ["observability-otlp-local"],
       gatewayPresets: ["observability-otlp-local"],
     },
@@ -178,6 +180,7 @@ describe("rebuildSandbox DCode flow: recovery", () => {
     flag,
     before,
     expected,
+    expectedObservabilityApplyCalls,
     backupPresets,
     gatewayPresets,
   }) => {
@@ -216,11 +219,11 @@ describe("rebuildSandbox DCode flow: recovery", () => {
       expect.objectContaining({ observabilityEnabled: expected }),
     );
     expect(harness.session.observabilityEnabled).toBe(expected);
-    if (expected) {
-      expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "observability-otlp-local");
-    } else {
-      expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
-    }
+    const observabilityApplyCalls = harness.applyPresetSpy.mock.calls.filter(
+      ([sandboxName, presetName]) =>
+        sandboxName === "alpha" && presetName === "observability-otlp-local",
+    );
+    expect(observabilityApplyCalls).toEqual(expectedObservabilityApplyCalls);
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
       "alpha",
