@@ -76,6 +76,7 @@ export function checkRebuildGatewayProviderOrBail(
   credentialEnv: string | null,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
+  options: { allowMissingProvider?: boolean } = {},
 ): boolean {
   if (!shouldVerifyRebuildGatewayProvider(provider)) return true;
 
@@ -86,6 +87,12 @@ export function checkRebuildGatewayProviderOrBail(
     } in OpenShell`,
   );
   if (providerRegisteredInGateway) return true;
+  if (options.allowMissingProvider) {
+    log(
+      `Preflight gateway provider check: prepared recovery will recreate missing provider '${provider}' from its explicit host credential`,
+    );
+    return true;
+  }
 
   printMissingRebuildGatewayProvider(provider, credentialEnv);
   bail(`Missing gateway provider: ${provider}`);

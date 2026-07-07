@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import { createRebuildFlowHarness, installRebuildFlowTestHooks } from "./rebuild-flow-test-harness";
 
 type Harness = ReturnType<typeof createRebuildFlowHarness>;
@@ -148,6 +149,37 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
 
       expect(diagnostics(harness)).not.toContain("missing from gateway; recreating it");
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    });
+
+    it("recreates a missing provider from an explicit host credential during prepared recovery", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: MODEL,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          endpointUrl: "https://inference.example.test/v1",
+        },
+        hydrateCredentialEnv: () => "host-provider-key",
+        runOpenshell: providerRuntime([]),
+        sandboxListOutput: "alpha Error",
+      });
+      configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
+        endpointUrl: "https://inference.example.test/v1",
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["provider", "get", "compatible-endpoint"],
+        expect.anything(),
+      );
     });
 
     it("copies the staged Hermes messaging plan into the rebuild resume session", async () => {

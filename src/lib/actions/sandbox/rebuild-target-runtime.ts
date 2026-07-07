@@ -67,7 +67,10 @@ export async function preflightRebuildTargetRuntime(
   recreateOptions: RebuildRecreateOnboardOpts,
   log: RebuildLog,
   bail: RebuildBail,
-  options: { skipImagePreflight?: boolean } = {},
+  options: {
+    allowMissingGatewayProviderWithHostCredential?: boolean;
+    skipImagePreflight?: boolean;
+  } = {},
 ): Promise<RebuildTargetRuntimePreflightResult> {
   const webSearchConfig = target.durableConfig.webSearchConfig;
   const webSearchProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
@@ -186,6 +189,10 @@ export async function preflightRebuildTargetRuntime(
         },
         log,
         bail,
+        {
+          allowMissingGatewayProviderWithHostCredential:
+            options.allowMissingGatewayProviderWithHostCredential,
+        },
       )
     ) {
       return { ok: false };
@@ -203,10 +210,12 @@ export async function preflightAuthoritativeOnboardRuntime(
   resumeConfig: RebuildResumeConfig,
   recreateOptions: RebuildRecreateOnboardOpts,
   bail: RebuildBail,
+  options: { deferInferenceRouteUntilOnboard?: true } = {},
 ): Promise<boolean> {
   try {
     await rebuildOnboardDependencies.preflightAuthoritativeRebuildTarget({
       ...recreateOptions,
+      ...options,
       model: resumeConfig.model,
       provider: resumeConfig.provider,
       sandboxName,

@@ -49,11 +49,20 @@ export async function prepareRebuildTargetPreflights(args: {
   rebuildAgent: string | null;
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
+  preparedBackupRecovery?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
-  const { sandboxName, sandboxEntry, rebuildAgent, autoYes, requestedToolDisclosure, log, bail } =
-    args;
+  const {
+    sandboxName,
+    sandboxEntry,
+    rebuildAgent,
+    autoYes,
+    requestedToolDisclosure,
+    preparedBackupRecovery,
+    log,
+    bail,
+  } = args;
   hydrateMessagingConfigForRebuild(sandboxName, log);
   if (!(await ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail)))
     return null;
@@ -115,7 +124,13 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   });
   if (
-    !(await preflightAuthoritativeOnboardRuntime(sandboxName, resumeConfig, recreateOptions, bail))
+    !(await preflightAuthoritativeOnboardRuntime(
+      sandboxName,
+      resumeConfig,
+      recreateOptions,
+      bail,
+      preparedBackupRecovery ? { deferInferenceRouteUntilOnboard: true } : {},
+    ))
   ) {
     return null;
   }
@@ -142,7 +157,10 @@ export async function prepareRebuildTargetPreflights(args: {
       recreateOptions,
       log,
       bail,
-      { skipImagePreflight: rebuildsDcodeSandbox },
+      {
+        allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
+        skipImagePreflight: rebuildsDcodeSandbox,
+      },
     );
   } finally {
     restoreBaseImageOverride();
