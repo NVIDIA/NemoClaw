@@ -7,6 +7,7 @@ import {
   canRecreateMissingRebuildGatewayProvider,
   checkRebuildGatewayCredentialReuseOrBail,
   checkRebuildGatewayProviderOrBail,
+  classifyRebuildGatewayProviderRegistration,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
@@ -75,6 +76,57 @@ describe("canRecreateMissingRebuildGatewayProvider", () => {
     );
     expect(canRecreateMissingRebuildGatewayProvider("mystery-provider", "MYSTERY_API_KEY")).toBe(
       false,
+    );
+    expect(canRecreateMissingRebuildGatewayProvider("nvidia-nim", "NVIDIA_INFERENCE_API_KEY")).toBe(
+      true,
+    );
+    expect(canRecreateMissingRebuildGatewayProvider("nvidia-nim", "NVIDIA_API_KEY")).toBe(false);
+  });
+});
+
+describe("classifyRebuildGatewayProviderRegistration", () => {
+  it("distinguishes explicit absence from an indeterminate lookup failure (#6114)", () => {
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 1,
+          stderr: "Error: provider 'compatible-endpoint' not found",
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("missing");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 7,
+          stderr: "gateway transport unavailable",
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        {
+          status: 7,
+          stderr: "provider lookup failed because gateway was not found",
+        },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        { status: 1, stderr: "provider lookup not found" },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(
+      classifyRebuildGatewayProviderRegistration(
+        { status: 1, stderr: "provider 'other-provider' not found" },
+        "compatible-endpoint",
+      ),
+    ).toBe("indeterminate");
+    expect(classifyRebuildGatewayProviderRegistration({ status: 0 }, "compatible-endpoint")).toBe(
+      "registered",
     );
   });
 });

@@ -33,6 +33,7 @@ export type RebuildLog = (message: string) => void;
 export type RebuildCredentialPreflightOptions = {
   /** A validated prepared recovery may rebuild a missing provider from an exported host key. */
   allowGatewayProviderReconfigure?: boolean;
+  onGatewayProviderReconfigureRequired?: (provider: string, credentialEnv: string) => void;
 };
 
 function normalizeHermesRebuildAuthMethod(value: unknown): "oauth" | "api_key" | null {
@@ -180,6 +181,7 @@ export function preflightRebuildCredentials(
     !checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
       allowProviderReconfigure: options.allowGatewayProviderReconfigure,
       hostCredentialAvailable: Boolean(credentialValue),
+      onProviderReconfigureRequired: options.onGatewayProviderReconfigureRequired,
     })
   ) {
     return false;

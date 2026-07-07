@@ -13,15 +13,18 @@ import {
   isRecoveredProviderCredentialReuseSelectionKey,
 } from "../../onboard/recovered-provider-reuse";
 import * as registry from "../../state/registry";
+import {
+  OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+  openshellReportsProviderNotFound,
+} from "../inference-set-error";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { isLocalInferenceProvider } from "./rebuild-resume-config";
 
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
 };
-const { providerExistsInGateway, readGatewayProviderMetadata, REMOTE_PROVIDER_CONFIG } =
+const { readGatewayProviderMetadata, REMOTE_PROVIDER_CONFIG } =
   require("../../onboard/providers") as {
-    providerExistsInGateway: (name: string, runOpenshellFn: typeof runOpenshell) => boolean;
     readGatewayProviderMetadata: (
       name: string,
       runOpenshellFn: typeof runOpenshell,
@@ -35,6 +38,57 @@ const { providerExistsInGateway, readGatewayProviderMetadata, REMOTE_PROVIDER_CO
       }
     >;
   };
+
+export type RebuildGatewayProviderRegistration = "registered" | "missing" | "indeterminate";
+
+export function classifyRebuildGatewayProviderRegistration(
+  result: {
+    status: number | null;
+    stdout?: unknown;
+    stderr?: unknown;
+    output?: unknown;
+  },
+  provider: string,
+): RebuildGatewayProviderRegistration {
+  if (result.status === 0) return "registered";
+  const detail = [result.stderr, result.stdout, result.output]
+    .filter((value) => value !== undefined && value !== null)
+    .map(String)
+    .join("\n");
+  const explicitMissing =
+    openshellReportsProviderNotFound(detail, provider) ||
+    detail
+      .slice(0, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER)
+      .split(/\r?\n/)
+      .some((line) =>
+        /^(?:error:\s*)?provider\s+(?:(?:was|is)\s+)?not found(?:\s+in\s+(?:the\s+)?gateway)?[.!]?\s*$/i.test(
+          line.trim(),
+        ),
+      );
+  return explicitMissing ? "missing" : "indeterminate";
+}
+
+export function inspectRebuildGatewayProviderRegistration(
+  provider: string,
+  log: (msg: string) => void,
+  phase = "Preflight",
+): RebuildGatewayProviderRegistration {
+  const result = runOpenshell(["provider", "get", provider], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const registration = classifyRebuildGatewayProviderRegistration(result, provider);
+  log(
+    `${phase} gateway provider check: provider '${provider}' is ${
+      registration === "registered"
+        ? "registered"
+        : registration === "missing"
+          ? "explicitly missing"
+          : "indeterminate"
+    } in OpenShell`,
+  );
+  return registration;
+}
 
 type GatewayCredentialReusePreflightDeps = {
   hasBedrockRuntimeAwsAuth?(): boolean;
@@ -54,6 +108,16 @@ function printMissingRebuildGatewayProvider(provider: string, credentialEnv: str
   }
   console.error("");
   console.error("  Re-register the provider in OpenShell or rerun onboard, then retry rebuild.");
+  console.error("  Sandbox is untouched — no data was lost.");
+}
+
+function printIndeterminateRebuildGatewayProvider(provider: string): void {
+  console.error("");
+  console.error(
+    `  ${_RD}Rebuild preflight failed:${R} could not verify provider '${provider}' in OpenShell.`,
+  );
+  console.error("  The provider lookup did not return an explicit not-found response.");
+  console.error("  Check gateway connectivity and authentication, then retry rebuild.");
   console.error("  Sandbox is untouched — no data was lost.");
 }
 
@@ -92,26 +156,31 @@ export function checkRebuildGatewayProviderOrBail(
   options: {
     allowProviderReconfigure?: boolean;
     hostCredentialAvailable?: boolean;
+    onProviderReconfigureRequired?: (provider: string, credentialEnv: string) => void;
   } = {},
 ): boolean {
   if (!shouldVerifyRebuildGatewayProvider(provider)) return true;
 
-  const providerRegisteredInGateway = providerExistsInGateway(provider, runOpenshell);
-  log(
-    `Preflight gateway provider check: provider '${provider}' is ${
-      providerRegisteredInGateway ? "registered" : "missing"
-    } in OpenShell`,
-  );
-  if (providerRegisteredInGateway) return true;
+  const registration = inspectRebuildGatewayProviderRegistration(provider, log);
+  if (registration === "registered") return true;
   if (
+    registration === "missing" &&
     options.allowProviderReconfigure &&
     options.hostCredentialAvailable &&
+    credentialEnv &&
     canRecreateMissingRebuildGatewayProvider(provider, credentialEnv)
   ) {
+    options.onProviderReconfigureRequired?.(provider, credentialEnv);
     log(
       `Preflight gateway provider check: validated prepared recovery will recreate missing provider '${provider}' from ${credentialEnv ?? "the exported host credential"}`,
     );
     return true;
+  }
+
+  if (registration === "indeterminate") {
+    printIndeterminateRebuildGatewayProvider(provider);
+    bail(`Could not verify gateway provider: ${provider}`);
+    return false;
   }
 
   printMissingRebuildGatewayProvider(provider, credentialEnv);
