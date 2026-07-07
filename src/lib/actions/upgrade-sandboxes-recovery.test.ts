@@ -199,6 +199,29 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
+  it("fails closed for an absent same-gateway legacy sandbox without a managed fingerprint", async () => {
+    const harness = createRecoveryHarness(["legacy-box"], {
+      liveOutput: "other-box Ready",
+      registryOverrides: {
+        "legacy-box": { nemoclawVersion: null },
+      },
+      useRealManagedEvidence: true,
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.liveListSpy).toHaveBeenCalledTimes(2);
+    expect(harness.latestBackupSpy).toHaveBeenCalledWith("legacy-box");
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("registry has no NemoClaw-managed image fingerprint"),
+    );
+  });
+
   it("warns and does not recover a stale registered sandbox absent from the selected gateway", async () => {
     const harness = createRecoveryHarness(["registered-elsewhere"], {
       gatewayNames: { "registered-elsewhere": "gateway-b" },

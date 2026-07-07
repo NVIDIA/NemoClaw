@@ -16,5 +16,8 @@
     "noEmitOnError": true
   },
   "include": ["src/lib/messaging/channels/*/runtime/*.ts"],
-  "exclude": []
+  "exclude": [
+    "src/lib/messaging/channels/*/runtime/*.test.ts",
+    "src/lib/messaging/channels/*/runtime/*-test-helpers.ts"
+  ]
 }

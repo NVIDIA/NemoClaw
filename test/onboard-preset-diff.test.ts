@@ -8,176 +8,100 @@
 // previously-applied ones that are no longer selected.
 
 import assert from "node:assert/strict";
-import { type SpawnSyncReturns, spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+import { parsePolicyPresetEnv } from "../src/lib/core/url-utils";
+import {
+  type SetupPolicySelectionDeps,
+  type SetupPolicySelectionOptions,
+  setupPoliciesWithSelection,
+} from "../src/lib/onboard/policy-selection";
+import * as policy from "../src/lib/policy";
+import * as tiers from "../src/lib/policy/tiers";
 
-function runScript(scriptBody: string): SpawnSyncReturns<string> {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preset-diff-"));
-  const scriptPath = path.join(tmpDir, "script.js");
-  fs.writeFileSync(scriptPath, scriptBody);
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (
-      key.startsWith("DISCORD_") ||
-      key.startsWith("SLACK_") ||
-      key.startsWith("TELEGRAM_") ||
-      // Teams credentials span both prefixes: the core bot credentials use
-      // `MSTEAMS_*` (MSTEAMS_APP_ID/APP_PASSWORD/TENANT_ID/PORT) while a couple
-      // of config keys use `TEAMS_*` (TEAMS_ALLOWED_USERS/REQUIRE_MENTION).
-      // Scrub both so a real `MSTEAMS_*` token can't activate Teams in the child.
-      key.startsWith("TEAMS_") ||
-      key.startsWith("MSTEAMS_") ||
-      key.startsWith("WECHAT_") ||
-      key.startsWith("WHATSAPP_")
-    ) {
-      delete env[key];
-    }
-  }
-  const result = spawnSync(process.execPath, [scriptPath], {
-    cwd: repoRoot,
-    encoding: "utf-8",
-    env: {
-      ...env,
-      HOME: tmpDir,
-      NEMOCLAW_NON_INTERACTIVE: "1",
-    },
-    timeout: 15000,
-  });
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-  return result;
-}
+vi.mock("../src/lib/onboard/policy-context-seed", () => ({
+  seedInitialPolicyContext: vi.fn(),
+}));
+
+const builtInPresets = policy.listPresets();
+const builtInPresetNames = new Set(builtInPresets.map((preset) => preset.name));
+
+type PolicyScenarioOptions = {
+  tierEnv?: string;
+  policyMode?: string;
+  policyPresets?: string;
+  alreadyApplied?: string[];
+  selectionOptions?: SetupPolicySelectionOptions;
+};
+
+type PolicyScenarioResult = {
+  chosen: string[];
+  appliedCalls: string[];
+  removedCalls: string[];
+  finalApplied: string[];
+};
 
 /**
- * Build a preamble that:
- *   - seeds `applied` to simulate the user's prior onboard (Balanced defaults)
- *   - tracks every applyPreset / removePreset call so the test can assert
- *     exactly what the preset-diff logic did
- *   - stubs the heavy I/O surfaces the same way policy-tiers-onboard.test.ts does
+ * Exercise the typed policy-selection seam with in-memory policy state. The
+ * production selection, tier, support, clamping, and channel-merging logic stays
+ * real; only sandbox readiness and gateway mutation are replaced with fakes.
  */
-function buildPreamble({
-  tierEnv = "balanced",
-  policyMode = "custom",
-  policyPresets = "npm",
-  alreadyApplied = ["npm", "pypi", "huggingface", "brew", "brave"],
-} = {}): string {
-  const credPath = JSON.stringify(path.join(repoRoot, "src", "lib", "credentials", "store.ts"));
-  const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-  const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-  const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
-  const resolveOpenshellPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "adapters", "openshell", "resolve.ts"),
-  );
-  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-
-  return String.raw`
-// All stubs MUST be installed before requiring onboard so its module-level
-// destructuring picks up the patched functions.
-Object.defineProperty(process, "platform", { value: "darwin" });
-
-const resolver = require(${resolveOpenshellPath});
-resolver.resolveOpenshell = () => "/fake/openshell";
-
-const runner = require(${runnerPath});
-runner.run = () => {};
-runner.runCapture = (command) => {
-  const text = Array.isArray(command) ? command.join(" ") : String(command);
-  if (text.includes("sandbox list")) return "test-sb Ready";
-  return "Running";
-};
-
-const credentials = require(${credPath});
-credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + msg); };
-credentials.ensureApiKey = async () => {};
-credentials.getCredential = () => null;
-
-const registry = require(${registryPath});
-const updates = [];
-registry.registerSandbox = () => true;
-registry.updateSandbox = (_name, fields) => { updates.push(fields); return true; };
-registry.getSandbox = () => ({ name: "test-sb", model: null, provider: null, policies: ${JSON.stringify(alreadyApplied)} });
-
-const policies = require(${policiesPath});
-const appliedCalls = [];
-const removedCalls = [];
-let appliedState = ${JSON.stringify(alreadyApplied)}.slice();
-policies.getAppliedPresets = () => appliedState.slice();
-policies.applyPreset = (_name, preset) => {
-  appliedCalls.push(preset);
-  if (!appliedState.includes(preset)) appliedState.push(preset);
-  // Mirror production contract: real applyPreset returns true on success
-  // and false on recoverable errors (unknown preset, malformed YAML, etc).
-  return true;
-};
-policies.applyPresets = (_name, presets) => {
-  for (const preset of presets) {
-    appliedCalls.push(preset);
-    if (!appliedState.includes(preset)) appliedState.push(preset);
-  }
-  return true;
-};
-policies.removePreset = (_name, preset) => {
-  removedCalls.push(preset);
-  appliedState = appliedState.filter((p) => p !== preset);
-  return true;
-};
-
-process.env.NEMOCLAW_POLICY_TIER = ${JSON.stringify(tierEnv)};
-process.env.NEMOCLAW_POLICY_MODE = ${JSON.stringify(policyMode)};
-process.env.NEMOCLAW_POLICY_PRESETS = ${JSON.stringify(policyPresets)};
-
-const { setupPoliciesWithSelection } = require(${onboardPath});
-`;
-}
-
-/**
- * Run one `setupPoliciesWithSelection` scenario end-to-end in a child process:
- * build the stub preamble, drive the call with `selectionOptions`, and return
- * the parsed `{ chosen, appliedCalls, removedCalls, finalApplied }` payload after
- * asserting the script ran cleanly. Collapses the identical preamble + IIFE +
- * run/parse boilerplate each scenario would otherwise repeat; callers keep only
- * their scenario-specific assertions.
- */
-function runPolicyScenario({
+async function runPolicyScenario({
   tierEnv,
   policyMode,
   policyPresets,
   alreadyApplied,
   selectionOptions = {},
-}: {
-  tierEnv?: string;
-  policyMode?: string;
-  policyPresets?: string;
-  alreadyApplied?: string[];
-  selectionOptions?: Record<string, unknown>;
-} = {}): {
-  chosen: string[];
-  appliedCalls: string[];
-  removedCalls: string[];
-  finalApplied: string[];
-} {
-  const script =
-    buildPreamble({ tierEnv, policyMode, policyPresets, alreadyApplied }) +
-    String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", ${JSON.stringify(selectionOptions)});
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-  const result = runScript(script);
-  assert.equal(result.status, 0, result.stderr);
-  const payload = JSON.parse(result.stdout.trim());
-  assert.ok(!payload.error, `unexpected error: ${payload.error}`);
-  return payload;
+}: PolicyScenarioOptions = {}): Promise<PolicyScenarioResult> {
+  const effectiveTier = tierEnv ?? "balanced";
+  const effectiveApplied = alreadyApplied ?? ["npm", "pypi", "huggingface", "brew", "brave"];
+  const customPresets = effectiveApplied
+    .filter((name) => !builtInPresetNames.has(name))
+    .map((name) => ({ name }));
+  const appliedCalls: string[] = [];
+  const removedCalls: string[] = [];
+  let appliedState = [...effectiveApplied];
+  const env: NodeJS.ProcessEnv = {
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_POLICY_TIER: effectiveTier,
+    NEMOCLAW_POLICY_MODE: policyMode ?? "custom",
+    NEMOCLAW_POLICY_PRESETS: policyPresets ?? "npm",
+  };
+
+  const deps: SetupPolicySelectionDeps = {
+    policies: {
+      setupPolicyPresetSupported: policy.setupPolicyPresetSupported,
+      listSetupPolicyPresets: (_sandboxName, options = {}) => [
+        ...policy.filterSetupPolicyPresets(builtInPresets, options),
+        ...customPresets,
+      ],
+      listCustomPresets: () => customPresets,
+      getAppliedPresets: () => [...appliedState],
+      clampSetupPolicyPresetNames: policy.clampSetupPolicyPresetNames,
+    },
+    tiers,
+    localInferenceProviders: ["ollama-local", "vllm-local"],
+    step: () => undefined,
+    note: () => undefined,
+    isNonInteractive: () => true,
+    waitForSandboxReady: () => true,
+    syncPresetSelection: (_sandboxName, current, selected) => {
+      const currentSet = new Set(current);
+      const selectedSet = new Set(selected);
+      removedCalls.push(...current.filter((name) => !selectedSet.has(name)));
+      appliedCalls.push(...selected.filter((name) => !currentSet.has(name)));
+      appliedState = [...selected];
+    },
+    selectPolicyTier: async () => effectiveTier,
+    selectTierPresetsAndAccess: async () => {
+      throw new Error("unexpected interactive policy selection");
+    },
+    parsePolicyPresetEnv,
+    env,
+  };
+
+  const chosen = await setupPoliciesWithSelection(deps, "test-sb", selectionOptions);
+  return { chosen, appliedCalls, removedCalls, finalApplied: appliedState };
 }
 
 describe("setupPoliciesWithSelection preset diff (#2177)", () => {
@@ -185,8 +109,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // defaults (applies 5 presets), second with NEMOCLAW_POLICY_PRESETS=npm —
   // expects the final sandbox to have ONLY npm. Previously-applied presets
   // must be removed.
-  it("non-interactive narrow selection removes previously-applied presets", () => {
-    const payload = runPolicyScenario({ policyMode: "custom", policyPresets: "npm" });
+  it("non-interactive narrow selection removes previously-applied presets", async () => {
+    const payload = await runPolicyScenario({ policyMode: "custom", policyPresets: "npm" });
 
     // User asked for only npm.
     assert.deepEqual(payload.chosen, ["npm"]);
@@ -213,8 +137,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // onboard. Tier defaults are recomputed against the current provider, so a
   // user-added preset such as `local-inference` is not in `suggestions` on a
   // cloud-provider sandbox — without the additive guard it would be removed.
-  it("non-interactive suggested re-onboard preserves user-added presets", () => {
-    const payload = runPolicyScenario({
+  it("non-interactive suggested re-onboard preserves user-added presets", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
       // Balanced defaults plus a manually-added preset.
@@ -252,8 +176,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // recorded on the sandbox alongside built-in presets. They must survive a
   // non-interactive re-onboard the same way named built-ins do — even though
   // they do not appear in `policies.listPresets()`.
-  it("non-interactive suggested re-onboard preserves custom presets", () => {
-    const payload = runPolicyScenario({
+  it("non-interactive suggested re-onboard preserves custom presets", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
       alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
@@ -271,8 +195,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     );
   });
 
-  it("non-interactive suggested re-onboard removes unsupported Brave preset", () => {
-    const payload = runPolicyScenario({
+  it("non-interactive suggested re-onboard removes unsupported Brave preset", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
       alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
@@ -298,8 +222,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     ]);
   });
 
-  it("resume selection removes unsupported Brave preset", () => {
-    const payload = runPolicyScenario({
+  it("resume selection removes unsupported Brave preset", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
       alreadyApplied: ["npm", "brave"],
@@ -311,8 +235,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied, ["npm"]);
   });
 
-  it("resume selection preserves the Slack policy required by a recorded Slack channel", () => {
-    const payload = runPolicyScenario({
+  it("resume selection preserves the Slack policy required by a recorded Slack channel", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
       alreadyApplied: ["slack"],
@@ -328,8 +252,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
   });
 
-  it("custom non-interactive selection preserves the Slack policy required by Slack messaging", () => {
-    const payload = runPolicyScenario({
+  it("custom non-interactive selection preserves the Slack policy required by Slack messaging", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "custom",
       policyPresets: "npm,pypi",
       alreadyApplied: ["slack"],
@@ -353,8 +277,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // `policy-list` shows `○ discord` even though Discord was configured during
   // onboard. The Slack tests above pass purely because Slack happens to be
   // requiredAtCreate; these tests guard the channels that are not.
-  it("resume selection applies the Discord policy required by a configured Discord channel (#5967)", () => {
-    const payload = runPolicyScenario({
+  it("resume selection applies the Discord policy required by a configured Discord channel (#5967)", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
       // Discord is not injected at create time, so it is absent from the
@@ -371,8 +295,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied.slice().sort(), ["discord", "npm", "pypi"]);
   });
 
-  it("custom non-interactive selection applies the Discord policy required by Discord messaging (#5967)", () => {
-    const payload = runPolicyScenario({
+  it("custom non-interactive selection applies the Discord policy required by Discord messaging (#5967)", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "custom",
       policyPresets: "npm,pypi",
       alreadyApplied: [],
@@ -387,8 +311,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied.slice().sort(), ["discord", "npm", "pypi"]);
   });
 
-  it("custom non-interactive selection removes disabled Discord while honoring the explicit preset list (#5967)", () => {
-    const payload = runPolicyScenario({
+  it("custom non-interactive selection removes disabled Discord while honoring the explicit preset list (#5967)", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "custom",
       policyPresets: "npm",
       alreadyApplied: ["npm", "pypi", "discord"],
@@ -406,8 +330,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // exercising it end-to-end through the real `setupPoliciesWithSelection` path
   // guards the security-critical egress-policy application for a second, distinct
   // non-required channel (not just Discord).
-  it("resume selection applies the Telegram policy required by a configured Telegram channel (#5967)", () => {
-    const payload = runPolicyScenario({
+  it("resume selection applies the Telegram policy required by a configured Telegram channel (#5967)", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
       alreadyApplied: [],
@@ -422,8 +346,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "telegram"]);
   });
 
-  it("custom non-interactive selection removes disabled Telegram while honoring the explicit preset list (#5967)", () => {
-    const payload = runPolicyScenario({
+  it("custom non-interactive selection removes disabled Telegram while honoring the explicit preset list (#5967)", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "custom",
       policyPresets: "npm",
       alreadyApplied: ["npm", "pypi", "telegram"],
@@ -441,8 +365,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // case guards the egress-policy application for every shipped channel — not
   // only the two already covered above (#5967).
   for (const channel of ["teams", "whatsapp", "wechat"]) {
-    it(`resume selection applies the ${channel} policy required by a configured ${channel} channel (#5967)`, () => {
-      const payload = runPolicyScenario({
+    it(`resume selection applies the ${channel} policy required by a configured ${channel} channel (#5967)`, async () => {
+      const payload = await runPolicyScenario({
         policyMode: "suggested",
         policyPresets: "",
         alreadyApplied: [],
@@ -457,8 +381,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", channel].sort());
     });
 
-    it(`custom non-interactive selection removes disabled ${channel} while honoring the explicit preset list (#5967)`, () => {
-      const payload = runPolicyScenario({
+    it(`custom non-interactive selection removes disabled ${channel} while honoring the explicit preset list (#5967)`, async () => {
+      const payload = await runPolicyScenario({
         policyMode: "custom",
         policyPresets: "npm",
         alreadyApplied: ["npm", "pypi", channel],
@@ -471,8 +395,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     });
   }
 
-  it("custom non-interactive selection removes disabled Slack while honoring the explicit preset list", () => {
-    const payload = runPolicyScenario({
+  it("custom non-interactive selection removes disabled Slack while honoring the explicit preset list", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "custom",
       policyPresets: "npm",
       alreadyApplied: ["npm", "pypi", "slack"],
@@ -484,8 +408,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied, ["npm"]);
   });
 
-  it("suggested non-interactive selection removes disabled Slack from tier defaults", () => {
-    const payload = runPolicyScenario({
+  it("suggested non-interactive selection removes disabled Slack from tier defaults", async () => {
+    const payload = await runPolicyScenario({
       tierEnv: "open",
       policyMode: "suggested",
       policyPresets: "",
@@ -506,8 +430,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
 
   // Widening the selection (user re-enables a preset they'd previously dropped)
   // must apply the new one and not re-apply things that are already applied.
-  it("non-interactive widen selection applies only new presets", () => {
-    const payload = runPolicyScenario({
+  it("non-interactive widen selection applies only new presets", async () => {
+    const payload = await runPolicyScenario({
       policyMode: "custom",
       policyPresets: "npm,pypi",
       alreadyApplied: ["npm"],
