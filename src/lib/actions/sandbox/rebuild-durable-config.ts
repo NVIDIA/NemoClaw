@@ -126,6 +126,7 @@ export function resolveRebuildDurableConfig(
     model: entry.model ?? null,
   },
   requestedToolDisclosure?: ToolDisclosure,
+  allowLegacyManagedImageRecovery = false,
 ): RebuildDurableConfig {
   const matchingSession =
     session?.sandboxName === sandboxName &&
@@ -207,9 +208,14 @@ export function resolveRebuildDurableConfig(
     recordedFromDockerfile !== undefined &&
     (typeof recordedFromDockerfile !== "string" || recordedFromDockerfile.length === 0)
       ? "recorded value is not a non-empty path"
-      : entry.fromDockerfile === undefined && !recordedFromDockerfile && !entry.nemoclawVersion
-        ? "legacy registry entry cannot distinguish a managed image from a custom --from image"
-        : null;
+      : allowLegacyManagedImageRecovery && recordedFromDockerfile
+        ? "confirmed legacy managed-image recovery conflicts with a recorded custom --from image"
+        : entry.fromDockerfile === undefined &&
+            !recordedFromDockerfile &&
+            !entry.nemoclawVersion &&
+            !allowLegacyManagedImageRecovery
+          ? "legacy registry entry cannot distinguish a managed image from a custom --from image"
+          : null;
   let hermesAuthMethod =
     entry.hermesAuthMethod !== undefined
       ? normalizeHermesAuthMethod(entry.hermesAuthMethod)

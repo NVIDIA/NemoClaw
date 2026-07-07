@@ -63,6 +63,21 @@ describe("vLLM profile detection", () => {
     expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
     expect(profile!.defaultModel.envValue).toBe("nemotron-3-nano-4b");
   });
+
+  it("generic-Linux default model pins the tool-call flags (#6314)", () => {
+    // Regression for #6314: without --enable-auto-tool-choice + --tool-call-parser,
+    // agent requests that set `tool_choice: "auto"` fail HTTP 400 out of the box
+    // on the generic-Linux managed vLLM default. The Spark and Station defaults
+    // already carry their own tool-call parsers; this asserts the Linux default
+    // does too, matching the vLLM launch example on the model card.
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const args = profile!.defaultModel.modelArgs;
+    expect(args).toContain("--enable-auto-tool-choice");
+    const parserIdx = args.indexOf("--tool-call-parser");
+    expect(parserIdx).toBeGreaterThanOrEqual(0);
+    expect(args[parserIdx + 1]).toBe("qwen3_coder");
+  });
 });
 
 describe("vLLM image pull", () => {

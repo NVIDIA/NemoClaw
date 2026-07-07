@@ -227,6 +227,9 @@ export function prepareRebuildResumeConfig(
     model: trustedSelection.model,
     nimContainer: trustedSelection.nimContainer,
     credentialEnv,
+    // Preserve the recorded API family through the handoff. The provider
+    // inference state compares it with the agent-required route and must see
+    // the stale value to re-arm gateway provider setup before recreation.
     preferredInferenceApi: trustedSelection.preferredInferenceApi,
     compatibleEndpointReasoning,
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,

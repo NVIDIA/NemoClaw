@@ -5,10 +5,16 @@
 // dependencies it needs. Lives outside `src/lib/onboard.ts` so the wiring
 // doesn't count against the entrypoint-budget gate.
 
-import { DEFAULT_ROUTE_CREDENTIAL_ENV } from "../inference/config";
-import { hydrateCredentialEnv } from "./credential-env";
-import { validateNvidiaApiKeyValue } from "../validation";
+import { runOpenshell } from "../adapters/openshell/runtime";
 import { D, R } from "../cli/terminal-style";
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
+import { DEFAULT_ROUTE_CREDENTIAL_ENV } from "../inference/config";
+import { validateNvidiaApiKeyValue } from "../validation";
+import { hydrateCredentialEnv } from "./credential-env";
+import {
+  matchesGatewayProviderBinding,
+  readGatewayProviderMetadata,
+} from "./gateway-provider-metadata";
 import {
   ensureResumeProviderReady as ensureResumeProviderReadyImpl,
   type ResumeProviderRecoveryDeps,
@@ -51,5 +57,31 @@ export async function ensureResumeProviderReady(
     log: (m) => console.log(m),
     warn: (m) => console.error(m),
     exit: (c) => process.exit(c),
+  });
+}
+
+export function isResumeProviderSurfaceReady(
+  provider: string | null | undefined,
+  preferredInferenceApi: string | null | undefined,
+  credentialEnv: string | null | undefined,
+  endpointUrl: string | null | undefined,
+): boolean {
+  if (
+    provider !== "compatible-anthropic-endpoint" ||
+    preferredInferenceApi !== "openai-completions" ||
+    isBedrockRuntimeEndpoint(endpointUrl)
+  ) {
+    return true;
+  }
+
+  const metadata = readGatewayProviderMetadata(
+    provider,
+    runOpenshell as unknown as Parameters<typeof readGatewayProviderMetadata>[1],
+  );
+  return matchesGatewayProviderBinding(metadata, {
+    name: provider,
+    type: "openai",
+    credentialKey: credentialEnv ?? "COMPATIBLE_ANTHROPIC_API_KEY",
+    configKey: "OPENAI_BASE_URL",
   });
 }

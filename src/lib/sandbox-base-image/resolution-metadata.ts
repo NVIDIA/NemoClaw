@@ -29,6 +29,7 @@ export function validateSandboxBaseImageResolutionMetadata(input: {
   metadata: SandboxBaseImageResolutionMetadata;
   expectedKey: string;
   imageName: string;
+  pinnedRemoteRef?: string;
   requireOpenshellSandboxAbi: boolean;
   minGlibcVersion: string;
   inspected: LocalImageMetadata | null;
@@ -36,6 +37,9 @@ export function validateSandboxBaseImageResolutionMetadata(input: {
   const { metadata, inspected } = input;
   if (metadata.key !== input.expectedKey || metadata.imageName !== input.imageName) {
     return { ok: false, reason: "key_mismatch" };
+  }
+  if (metadata.source === "pinned" && metadata.pinnedRemoteRef !== input.pinnedRemoteRef) {
+    return { ok: false, reason: "pinned_ref_mismatch" };
   }
   if (
     metadata.requireOpenshellSandboxAbi !== input.requireOpenshellSandboxAbi ||
@@ -95,6 +99,7 @@ export function createSandboxBaseImageResolutionMetadata(
     ref: resolution.ref,
     digest: resolution.digest,
     source: resolution.source,
+    ...(resolution.pinnedRemoteRef ? { pinnedRemoteRef: resolution.pinnedRemoteRef } : {}),
     imageId,
     os: osName,
     architecture,
@@ -123,6 +128,7 @@ export function reuseSandboxBaseImageResolutionHint(
     metadata: hint,
     expectedKey: key,
     imageName: options.imageName,
+    pinnedRemoteRef: options.pinnedRemoteRef,
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
     minGlibcVersion: options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC,
     inspected: inspectLocalImageMetadata(hint.ref),
@@ -147,6 +153,7 @@ export function reuseSandboxBaseImageResolutionHint(
     ref: hint.ref,
     digest: hint.digest,
     source: hint.source,
+    ...(hint.pinnedRemoteRef ? { pinnedRemoteRef: hint.pinnedRemoteRef } : {}),
     glibcVersion: hint.glibcVersion,
     metadata: hint,
   };

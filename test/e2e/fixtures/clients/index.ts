@@ -3,25 +3,27 @@
 
 export {
   assertExitZero,
+  type CommandExitResult,
+  type CommandResultText,
+  type CommandRunner,
   outputContainsSandbox,
   resultText,
   shellQuote,
-  type CommandRunner,
 } from "./command.ts";
 export { GatewayClient } from "./gateway.ts";
 export { HostCliClient } from "./host.ts";
 export {
   ProviderClient,
-  trustedProviderEndpoint,
   type ProviderJsonRequestOptions,
   type ProviderJsonResponse,
   type TrustedProviderEndpoint,
+  trustedProviderEndpoint,
 } from "./provider.ts";
 export {
   SandboxClient,
   sandboxAccessEnv,
-  trustedSandboxShellScript,
   type TrustedSandboxShellScript,
+  trustedSandboxShellScript,
   validateSandboxName,
 } from "./sandbox.ts";
 export { StateClient } from "./state.ts";

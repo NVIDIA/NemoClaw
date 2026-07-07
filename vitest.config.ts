@@ -9,6 +9,7 @@ import {
   shouldRunBranchValidationE2E,
   shouldRunLiveE2E,
 } from "./test/e2e/fixtures/live-project-gate.ts";
+import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
@@ -16,7 +17,6 @@ const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === 
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2E = shouldRunLiveE2E();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
-const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
@@ -31,9 +31,7 @@ const typedSourceTransform = {
     include: /\.(?:[cm]?ts|[jt]sx)$/,
   },
 };
-const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
-  .filter(Boolean)
-  .join(" ");
+const sourceNodeOptions = sourceLoaderNodeOptions(process.env.NODE_OPTIONS);
 
 export default defineConfig({
   test: {
@@ -142,6 +140,13 @@ export default defineConfig({
         test: {
           name: "e2e-live",
           alias: canonicalOpenShellPolicyAlias,
+          // Register the typed-source require hook in the worker so live suites
+          // can import source modules that resolve siblings via a runtime
+          // `require("../module")` (e.g. inference/ollama-runtime-context.ts).
+          // Use setupFiles rather than NODE_OPTIONS so the hook stays in-process
+          // and never leaks `--require` into the real CLI subprocesses under
+          // test. Mirrors the `cli` project.
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
           // Live targets mutate host, Docker, gateway, and sandbox state. A
           // whole-test retry reuses that state and can hide the first failure
