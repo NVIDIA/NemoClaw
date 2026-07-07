@@ -76,6 +76,7 @@ function describeStaleUpgrade(s: UpgradeSandboxCandidate): string {
 type PreparedBackupRecovery = {
   sandbox: registry.SandboxEntry;
   manifest: sandboxState.RebuildManifest;
+  allowLegacyManagedImageRecovery: boolean;
 };
 
 type RejectedBackupRecovery = {
@@ -85,6 +86,7 @@ type RejectedBackupRecovery = {
 
 function prepareBackupRecovery(
   sandbox: registry.SandboxEntry,
+  allowLegacyManagedImageRecovery: boolean,
 ): PreparedBackupRecovery | RejectedBackupRecovery {
   try {
     const latest = sandboxState.getLatestBackup(sandbox.name);
@@ -100,14 +102,19 @@ function prepareBackupRecovery(
     if (!validation.ok) {
       return { sandbox, reason: validation.reason };
     }
-    if (!sandboxState.hasPositiveManagedImageEvidence(sandbox)) {
+    const hasManagedImageEvidence = sandboxState.hasPositiveManagedImageEvidence(sandbox);
+    if (!sandboxState.isManagedImageRecoveryAllowed(sandbox, allowLegacyManagedImageRecovery)) {
       return {
         sandbox,
         reason:
-          "registry has no NemoClaw-managed image fingerprint (pre-fingerprint and custom images are not auto-recreated)",
+          "registry has no NemoClaw-managed image fingerprint (pre-fingerprint images require explicit managed-image confirmation; custom images are not auto-recreated)",
       };
     }
-    return { sandbox, manifest: validation.manifest };
+    return {
+      sandbox,
+      manifest: validation.manifest,
+      allowLegacyManagedImageRecovery: !hasManagedImageEvidence,
+    };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return { sandbox, reason: `backup recovery assessment failed: ${detail}` };
@@ -118,6 +125,20 @@ function isPreparedBackupRecovery(
   candidate: PreparedBackupRecovery | RejectedBackupRecovery,
 ): candidate is PreparedBackupRecovery {
   return "manifest" in candidate;
+}
+
+function confirmedLegacyManagedRecoveryNames(): Set<string> {
+  const raw = process.env.NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES;
+  if (!raw) return new Set();
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.every((name) => typeof name === "string")) {
+      return new Set();
+    }
+    return new Set(parsed);
+  } catch {
+    return new Set();
+  }
 }
 
 // Under installer restore intent, a registry sandbox the selected gateway does
@@ -225,14 +246,26 @@ export async function upgradeSandboxes(
   // already-registered sandboxes in Provisioning/Error after the host upgrade.
   // That state comes from the already-installed legacy CLI/gateway and cannot be
   // prevented at its source by this candidate. install.sh exports this signal only
-  // after that CLI completes backup-all, or after an operator asserts prepared
-  // upgrade state. Recovery remains limited to registry entries with a managed-image
-  // fingerprint; pre-fingerprint entries cannot prove provenance and fail closed.
+  // after the current CLI completes a strict backup, or after an operator asserts
+  // prepared upgrade state. Pre-fingerprint OpenClaw/Hermes rows require a separate,
+  // exact-name confirmation that they used a managed image; custom-image evidence
+  // still fails closed.
   // upgrade-sandboxes-recovery.test.ts and
   // install-preexisting-sandbox-recovery.test.ts guard the handoff. Remove this
   // bridge with onboard's matching consumer once prepared-backup installer recovery
   // is no longer supported.
   const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
+  const confirmedLegacyManagedNames = recoverPreparedBackups
+    ? confirmedLegacyManagedRecoveryNames()
+    : new Set<string>();
+  const registeredSandboxNames = new Set(sandboxes.map((sandbox) => sandbox.name));
+  for (const name of confirmedLegacyManagedNames) {
+    if (registeredSandboxNames.has(name)) continue;
+    console.warn(
+      `  Warning: confirmed legacy managed-image sandbox ${JSON.stringify(name)} is not registered; ignoring it.`,
+    );
+    confirmedLegacyManagedNames.delete(name);
+  }
   let recoveryCandidates: registry.SandboxEntry[] = [];
   if (recoverPreparedBackups) {
     const gatewayEligible = sandboxes.filter((sandbox) =>
@@ -250,7 +283,13 @@ export async function upgradeSandboxes(
     );
     recoveryCandidates = [...nonReadyCandidates, ...confirmedAbsentCandidates];
   }
-  const backupRecoveryAssessments = recoveryCandidates.map(prepareBackupRecovery);
+  const backupRecoveryAssessments = recoveryCandidates.map((sandbox) =>
+    prepareBackupRecovery(
+      sandbox,
+      confirmedLegacyManagedNames.has(sandbox.name) &&
+        (sandbox.agent == null || sandbox.agent === "openclaw" || sandbox.agent === "hermes"),
+    ),
+  );
   const preparedRecoveries = backupRecoveryAssessments.filter(isPreparedBackupRecovery);
   const rejectedRecoveries = backupRecoveryAssessments.filter(
     (candidate): candidate is RejectedBackupRecovery => !isPreparedBackupRecovery(candidate),
@@ -345,6 +384,9 @@ export async function upgradeSandboxes(
     ...preparedRecoveries.map((recovery) => ({
       sandbox: { name: recovery.sandbox.name },
       manifest: recovery.manifest,
+      ...(recovery.allowLegacyManagedImageRecovery
+        ? { allowLegacyManagedImageRecovery: true as const }
+        : {}),
     })),
   ];
   for (const item of work) {
@@ -361,6 +403,9 @@ export async function upgradeSandboxes(
       await rebuildSandbox(sandbox.name, ["--yes"], {
         throwOnError: true,
         recoveryManifest: manifest ?? undefined,
+        ...("allowLegacyManagedImageRecovery" in item
+          ? { allowLegacyManagedImageRecovery: true }
+          : {}),
       });
       rebuilt++;
     } catch (err) {
