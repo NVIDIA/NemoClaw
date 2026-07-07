@@ -100,8 +100,13 @@ function ownedPolicy(server: "github" | "slack") {
 }
 
 function restoreEnv(name: string, value: string | undefined): void {
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
+  switch (value) {
+    case undefined:
+      delete process.env[name];
+      break;
+    default:
+      process.env[name] = value;
+  }
 }
 
 async function captureMessage(action: () => Promise<unknown>): Promise<string> {
@@ -156,84 +161,91 @@ beforeEach(() => {
 
   testState.runOpenshellProviderCommand.mockImplementation((args: string[]) => {
     testState.calls.push(args.join(" "));
-    if (args.join(" ") === "status --output json") {
-      return { status: 0, stdout: "ready", stderr: "" };
+    switch (args.join(" ")) {
+      case "status --output json":
+        return { status: 0, stdout: "ready", stderr: "" };
     }
-    if (args[0] === "provider" && args[1] === "get") {
-      const provider = testState.providers.get(args[2]);
-      return provider
-        ? {
-            status: 0,
-            stdout: `Id: ${provider.id}\nType: generic\nResource version: 1\nCredential keys: ${provider.credential}\n`,
-            stderr: "",
-          }
-        : { status: 1, stdout: "", stderr: "Provider not found" };
-    }
-    if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
-      const names = [...testState.attachedProviders];
-      const danglingName = names.find((name) => !testState.providers.has(name));
-      if (danglingName) {
-        return {
-          status: 9,
-          stdout: "",
-          stderr: `FailedPrecondition: provider '${danglingName}' not found`,
-        };
+    switch (true) {
+      case args[0] === "provider" && args[1] === "get": {
+        const provider = testState.providers.get(args[2]);
+        return provider
+          ? {
+              status: 0,
+              stdout: `Id: ${provider.id}\nType: generic\nResource version: 1\nCredential keys: ${provider.credential}\n`,
+              stderr: "",
+            }
+          : { status: 1, stdout: "", stderr: "Provider not found" };
       }
-      return {
-        status: 0,
-        stdout:
-          names.length > 0
-            ? `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n${names
-                .map((name) => `${name} generic 1 0`)
-                .join("\n")}\n`
-            : `No providers attached to sandbox ${args[3]}.\n`,
-        stderr: "",
-      };
     }
-    if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
-      if (testState.failProviderDetach === args[4]) {
+    switch (true) {
+      case args[0] === "sandbox" && args[1] === "provider" && args[2] === "list": {
+        const names = [...testState.attachedProviders];
+        const danglingName = names.find((name) => !testState.providers.has(name));
+        return danglingName
+          ? {
+              status: 9,
+              stdout: "",
+              stderr: `FailedPrecondition: provider '${danglingName}' not found`,
+            }
+          : {
+              status: 0,
+              stdout:
+                names.length > 0
+                  ? `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n${names
+                      .map((name) => `${name} generic 1 0`)
+                      .join("\n")}\n`
+                  : `No providers attached to sandbox ${args[3]}.\n`,
+              stderr: "",
+            };
+      }
+    }
+    switch (true) {
+      case args[0] === "sandbox" &&
+        args[1] === "provider" &&
+        args[2] === "detach" &&
+        testState.failProviderDetach === args[4]:
         return { status: 9, stdout: "", stderr: "provider detach failed" };
-      }
-      testState.attachedProviders.delete(args[4]);
-      return { status: 0, stdout: "Detached provider", stderr: "" };
-    }
-    if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach") {
-      testState.attachedProviders.add(args[4]);
-      return { status: 0, stdout: "Attached provider", stderr: "" };
-    }
-    if (args[0] === "provider" && args[1] === "delete") {
-      if (testState.failProviderDelete === args[2]) {
+      case args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach":
+        testState.attachedProviders.delete(args[4]);
+        return { status: 0, stdout: "Detached provider", stderr: "" };
+      case args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach":
+        testState.attachedProviders.add(args[4]);
+        return { status: 0, stdout: "Attached provider", stderr: "" };
+      case args[0] === "provider" &&
+        args[1] === "delete" &&
+        testState.failProviderDelete === args[2]:
         return { status: 9, stdout: "", stderr: "provider delete failed" };
-      }
-      testState.attachedProviders.delete(args[2]);
-      testState.providers.delete(args[2]);
-      return { status: 0, stdout: "Deleted provider", stderr: "" };
+      case args[0] === "provider" && args[1] === "delete":
+        testState.attachedProviders.delete(args[2]);
+        testState.providers.delete(args[2]);
+        return { status: 0, stdout: "Deleted provider", stderr: "" };
+      default:
+        throw new Error(`Unexpected OpenShell call: ${args.join(" ")}`);
     }
-    throw new Error(`Unexpected OpenShell call: ${args.join(" ")}`);
   });
 
   testState.executeSandboxCommand.mockImplementation((_sandbox: string, command: string) => {
     testState.adapterCalls.push(command);
-    if (command.includes("'config' 'add'")) {
-      testState.adapterRegistered = true;
-      return { status: 0, stdout: "", stderr: "" };
+    switch (true) {
+      case command.includes("'config' 'add'"):
+        testState.adapterRegistered = true;
+        return { status: 0, stdout: "", stderr: "" };
+      case command.includes('["config", "remove"'):
+        testState.adapterRegistered = false;
+        return { status: 0, stdout: "", stderr: "" };
+      case command.includes('["config", "get"'):
+        return {
+          status: 0,
+          stdout: testState.adapterRegistered ? "registered\n" : "absent\n",
+          stderr: "",
+        };
+      default:
+        return {
+          status: 0,
+          stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "",
+          stderr: "",
+        };
     }
-    if (command.includes('["config", "remove"')) {
-      testState.adapterRegistered = false;
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    if (command.includes('["config", "get"')) {
-      return {
-        status: 0,
-        stdout: testState.adapterRegistered ? "registered\n" : "absent\n",
-        stderr: "",
-      };
-    }
-    return {
-      status: 0,
-      stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "",
-      stderr: "",
-    };
   });
 
   testState.executeSandboxExecCommand.mockImplementation((_sandbox: string, command: string) => {

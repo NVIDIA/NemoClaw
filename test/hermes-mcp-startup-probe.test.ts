@@ -55,11 +55,12 @@ function runHermesProbe(
           ? (optionsOrTimeout.maxAttempts ?? Number.POSITIVE_INFINITY)
           : Number.POSITIVE_INFINITY;
       let attempts = 0;
-      while (calls < results.length && attempts < maxAttempts) {
+      let ready = false;
+      while (!ready && calls < results.length && attempts < maxAttempts) {
         attempts += 1;
-        if (condition()) return true;
+        ready = condition();
       }
-      return false;
+      return ready;
     },
   );
   mocks.isShieldsDown.mockReturnValue(shieldsDown);

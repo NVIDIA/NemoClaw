@@ -73,10 +73,12 @@ function lifecycleResult() {
 }
 
 function restoreEnvironmentVariable(name: string, value: string | undefined): void {
-  if (value === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
+  switch (value) {
+    case undefined:
+      delete process.env[name];
+      break;
+    default:
+      process.env[name] = value;
   }
 }
 
@@ -102,41 +104,38 @@ beforeEach(() => {
 
   mocks.runOpenshellProviderCommand.mockReset().mockImplementation((args: string[]) => {
     const command = args.join(" ");
-    if (command === "status --output json") {
-      return { status: 0, stdout: "ready", stderr: "" };
+    switch (true) {
+      case command === "status --output json":
+        return { status: 0, stdout: "ready", stderr: "" };
+      case args[0] === "provider" && args[1] === "get":
+        return providerExists
+          ? {
+              status: 0,
+              stdout: `Id: ${providerId}\nType: generic\nResource version: 1\nCredential keys: GITHUB_TOKEN\n`,
+              stderr: "",
+            }
+          : { status: 1, stdout: "", stderr: "Provider not found" };
+      case args[0] === "sandbox" && args[1] === "provider" && args[2] === "list":
+        return {
+          status: 0,
+          stdout: attached
+            ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github generic 1 0\n"
+            : "No providers attached to sandbox alpha.\n",
+          stderr: "",
+        };
+      case args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach":
+        attached = false;
+        return { status: 0, stdout: "Detached provider", stderr: "" };
+      case args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach":
+        attached = true;
+        return { status: 0, stdout: "Attached provider", stderr: "" };
+      case args[0] === "provider" && args[1] === "delete":
+        providerExists = false;
+        attached = false;
+        return { status: 0, stdout: "Deleted provider", stderr: "" };
+      default:
+        throw new Error(`Unexpected OpenShell call: ${command}`);
     }
-    if (args[0] === "provider" && args[1] === "get") {
-      return providerExists
-        ? {
-            status: 0,
-            stdout: `Id: ${providerId}\nType: generic\nResource version: 1\nCredential keys: GITHUB_TOKEN\n`,
-            stderr: "",
-          }
-        : { status: 1, stdout: "", stderr: "Provider not found" };
-    }
-    if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
-      return {
-        status: 0,
-        stdout: attached
-          ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github generic 1 0\n"
-          : "No providers attached to sandbox alpha.\n",
-        stderr: "",
-      };
-    }
-    if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
-      attached = false;
-      return { status: 0, stdout: "Detached provider", stderr: "" };
-    }
-    if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach") {
-      attached = true;
-      return { status: 0, stdout: "Attached provider", stderr: "" };
-    }
-    if (args[0] === "provider" && args[1] === "delete") {
-      providerExists = false;
-      attached = false;
-      return { status: 0, stdout: "Deleted provider", stderr: "" };
-    }
-    throw new Error(`Unexpected OpenShell call: ${command}`);
   });
 
   mocks.recoverNamedGatewayRuntime.mockReset().mockResolvedValue({
@@ -162,40 +161,40 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation((_sandbox: string, command: string) => {
       adapterCalls.push(command);
-      if (command === "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability") {
-        return deepAgentsCapability
-          ? { status: 0, stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n", stderr: "" }
-          : { status: 2, stdout: "", stderr: "unknown option" };
+      switch (true) {
+        case command === "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability":
+          return deepAgentsCapability
+            ? { status: 0, stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n", stderr: "" }
+            : { status: 2, stdout: "", stderr: "unknown option" };
+        case command.includes("servers.pop(payload['server'])"): {
+          const outcome = adapterRemovalOutcome || (adapterRegistered ? "removed" : "absent");
+          adapterRegistered = outcome === "unowned" ? adapterRegistered : false;
+          return {
+            status: 0,
+            stdout: `NEMOCLAW_DEEPAGENTS_MCP_REMOVAL=${outcome}\n`,
+            stderr: "",
+          };
+        }
+        case command.includes("data = {'mcpServers': payload['expectedServers']}"):
+          adapterRegistered = true;
+          return {
+            status: 0,
+            stdout: command.includes("NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED")
+              ? "NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1\n"
+              : "",
+            stderr: "",
+          };
+        case command.includes(
+          "print('registered' if ok else ('mismatch' if present else 'absent'))",
+        ):
+          return {
+            status: 0,
+            stdout: adapterRegistered ? "registered\n" : "absent\n",
+            stderr: "",
+          };
+        default:
+          return { status: 0, stdout: "", stderr: "" };
       }
-      if (command.includes("servers.pop(payload['server'])")) {
-        const outcome = adapterRemovalOutcome || (adapterRegistered ? "removed" : "absent");
-        if (outcome !== "unowned") adapterRegistered = false;
-        return {
-          status: 0,
-          stdout: `NEMOCLAW_DEEPAGENTS_MCP_REMOVAL=${outcome}\n`,
-          stderr: "",
-        };
-      }
-      if (command.includes("data = {'mcpServers': payload['expectedServers']}")) {
-        adapterRegistered = true;
-        return {
-          status: 0,
-          stdout: command.includes("NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED")
-            ? "NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1\n"
-            : "",
-          stderr: "",
-        };
-      }
-      if (
-        command.includes("print('registered' if ok else ('mismatch' if present else 'absent'))")
-      ) {
-        return {
-          status: 0,
-          stdout: adapterRegistered ? "registered\n" : "absent\n",
-          stderr: "",
-        };
-      }
-      return { status: 0, stdout: "", stderr: "" };
     });
 
   mocks.executeSandboxExecCommand
