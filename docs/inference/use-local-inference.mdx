@@ -86,11 +86,13 @@ NemoClaw lists installed models or offers starter models if you have not install
 On hosts where the larger starter models fit the currently available GPU memory, the starter list includes `qwen3.6:35b` and selects it by default.
 When another GPU workload is using most of the memory at onboard time, NemoClaw downgrades the menu to the largest model that still fits.
 It pulls the selected model, loads it into memory, and validates it before continuing.
+<AgentOnly variant="openclaw">
 When Ollama reports a loaded-model context length, NemoClaw uses that value for the `contextWindow` baked into `openclaw.json` unless you set `NEMOCLAW_CONTEXT_WINDOW` yourself.
 If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
 The validation also requires structured chat-completions tool calls.
 If the model leaks tool-call JSON as plain message text, onboarding stops so you can choose a model that returns tool calls in the expected response field.
 If a host-side validation probe times out, NemoClaw retries the Ollama tool-call validation with a larger timeout before failing the setup.
+</AgentOnly>
 On WSL, if you choose the Windows-host Ollama path, NemoClaw uses `host.docker.internal:11434` and pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
 
 ### WSL with Windows-Host Ollama
@@ -194,8 +196,10 @@ After a selected model fails validation, NemoClaw excludes that tag from the nex
 On Windows on Arm N1X systems with a Snapdragon X processor, NemoClaw treats the integrated GPU as compute-constrained even when its shared-memory total appears large enough for a bigger model.
 Automatic Ollama bootstrap selection omits `qwen3.6:35b` and `nemotron-3-nano:30b` and selects `qwen3.5:9b` instead.
 This is a model-selection safeguard only.
+<AgentOnly variant="openclaw">
 It does not make 30B or 35B models usable on N1X, add a general refusal for an explicitly selected large model, or resolve the OpenClaw `1006` disconnect, embedded fallback, and model-timeout behavior tracked in [issue #3707](https://github.com/NVIDIA/NemoClaw/issues/3707).
 When Ollama reports a loaded-model context length below `16384` and `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw raises the baked `contextWindow` to `16384` so the agent prompt and tool definitions fit better than the stock daemon default.
+</AgentOnly>
 If the initial Ollama validation probe times out during a cold load, NemoClaw retries once with a 300-second probe budget.
 This applies beyond DGX Spark, including tight-VRAM dGPU hosts where warm-up can spill from GPU to CPU.
 
@@ -213,8 +217,11 @@ Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt th
 ## Compatible Local Servers
 
 Use **Other OpenAI-compatible endpoint** for vLLM, TensorRT-LLM, llama.cpp, LocalAI, NIM, SGLang, or another server that implements `/v1/chat/completions`.
-For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default because some local backends accept `/v1/responses` but drop system prompts or tool definitions.
+For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default.
+<AgentOnly variant="openclaw">
+This avoids local backends that accept `/v1/responses` but drop system prompts or tool definitions.
 Set `NEMOCLAW_PREFERRED_API=openai-responses` only after you have verified that the backend streams the events OpenClaw requires.
+</AgentOnly>
 
 Use this path when you already have a local server for a raw model file, such as a GGUF model served by `llama-server`.
 The Ollama picker accepts Ollama model tags, not a filesystem path to a `.gguf` file.

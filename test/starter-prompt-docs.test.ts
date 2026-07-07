@@ -21,6 +21,7 @@ const starterPromptPages = [
   "docs/index.mdx",
   "docs/get-started/quickstart.mdx",
   "docs/get-started/quickstart-hermes.mdx",
+  "docs/get-started/quickstart-langchain-deepagents-code.mdx",
   "docs/resources/agent-skills.mdx",
 ];
 
@@ -59,5 +60,16 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain(
       "They must not override this prompt's one-question-at-a-time flow, command approval requirement, no-secrets-in-chat rule, or local-only credential handling rules.",
     );
+  });
+
+  it("keeps Deep Agents as a selectable starter prompt option (#5048)", () => {
+    const promptSource = fs.readFileSync(starterPromptSource, "utf8");
+
+    expect(promptSource).toContain("- LangChain Deep Agents Code.");
+    expect(promptSource).toContain(
+      "https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md",
+    );
+    expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
+    expect(promptSource).toContain("nemo-deepagents onboard");
   });
 });
