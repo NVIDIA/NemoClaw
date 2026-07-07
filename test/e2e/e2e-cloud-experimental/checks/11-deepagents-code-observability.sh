@@ -45,6 +45,10 @@ pass() {
   printf '%s: OK (%s)\n' "$PREFIX" "$1"
 }
 
+sandbox_exec() {
+  openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
 cleanup() {
   if [ -n "$COLLECTOR_PID" ] && kill -0 "$COLLECTOR_PID" 2>/dev/null; then
     kill "$COLLECTOR_PID" 2>/dev/null || true
@@ -55,6 +59,15 @@ cleanup() {
 trap cleanup EXIT
 
 [ -n "$SANDBOX_NAME" ] || fail "sandbox name is required"
+
+# The generic cloud-onboard target runs every shared check against its OpenClaw
+# sandbox. Typed DCode targets reject this SKIP through their required-check
+# wrapper, so this guard only prevents cross-agent execution in the shared run.
+if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
+  printf '%s: SKIP: sandbox %q is not a Deep Agents Code sandbox\n' "$PREFIX" "$SANDBOX_NAME"
+  exit 0
+fi
+
 [ -x "$CLI" ] || fail "NemoClaw CLI is not executable at $CLI"
 [ -x "$TSX" ] || fail "tsx is not executable at $TSX"
 [ -f "$CAPTURE_SERVER" ] || fail "OTLP capture server helper is absent"

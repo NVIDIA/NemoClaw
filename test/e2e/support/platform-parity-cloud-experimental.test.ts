@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -114,6 +115,58 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toMatch(
       /run_deterministic_tool_trace\(\)[\s\S]*"\$CLI" "\$SANDBOX_NAME" exec --[\s\S]*\/opt\/venv\/bin\/python3/,
     );
+  });
+
+  it("skips the DCode observability probe before host prerequisites on other agents", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-observability-skip-"));
+    try {
+      const invocationLog = path.join(tempDir, "openshell-args.txt");
+      const openshell = path.join(tempDir, "openshell");
+      fs.writeFileSync(
+        openshell,
+        '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$NEMOCLAW_FAKE_OPENSHELL_LOG"\nexit 1\n',
+        { mode: 0o755 },
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          path.join(
+            process.cwd(),
+            "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+          ),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            NEMOCLAW_CLI_BIN: path.join(tempDir, "missing-nemoclaw"),
+            NEMOCLAW_FAKE_OPENSHELL_LOG: invocationLog,
+            PATH: `${tempDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+            REPO: path.join(tempDir, "missing-repo"),
+            SANDBOX_NAME: "openclaw-sandbox",
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain(
+        "11-deepagents-code-observability: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+      expect(fs.readFileSync(invocationLog, "utf8")).toBe(
+        [
+          "sandbox",
+          "exec",
+          "--name",
+          "openclaw-sandbox",
+          "--",
+          "bash",
+          "-c",
+          "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1",
+          "",
+        ].join("\n"),
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
   });
 
   it("fails required Deep Agents cloud-experimental checks when scripts print SKIP", () => {
