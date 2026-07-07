@@ -90,9 +90,22 @@ export async function removeMcpBridge(
   server: string,
   options: { force?: boolean; allowResidual?: boolean } = {},
 ): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () =>
-    removeMcpBridgeUnlocked(sandboxName, server, options),
-  );
+  return withMcpLifecycleLock(sandboxName, async () => {
+    // #6376: capture the recoverable prepared-destroy phase BEFORE the removal.
+    const before = getSandboxOrThrow(sandboxName).mcp;
+    const recoverPreparedDestroy =
+      !!options.force && !!before?.destroyPreparedAt && !before?.destroyPendingAt;
+    await removeMcpBridgeUnlocked(sandboxName, server, options);
+    // Clear the phase-one destroy marker only AFTER the removal succeeded, so a
+    // mid-recovery failure (thrown above) preserves the durable retry marker for
+    // a later `sandbox destroy` or retry. `setBridgeState` preserves the marker
+    // across the removal's own writes until this explicit, phase-aware clear.
+    if (recoverPreparedDestroy && clearMcpDestroyMarkers(sandboxName)) {
+      console.log(
+        `  Cleared incomplete MCP destroy transaction on sandbox '${sandboxName}' (--force).`,
+      );
+    }
+  });
 }
 
 async function removeMcpBridgeUnlocked(
@@ -102,28 +115,25 @@ async function removeMcpBridgeUnlocked(
 ): Promise<void> {
   validateSandboxName(sandboxName);
   validateMcpServerName(server);
-  let sandbox = getSandboxOrThrow(sandboxName);
-  // #6376: `--force` on `mcp remove` is the documented non-destructive
-  // recovery for a stuck MCP destroy transaction (`destroyPreparedAt` /
-  // `destroyPendingAt` set from a crash mid-teardown). Before this fix,
-  // the guard below fired first — so the only way to escape the
-  // incomplete-destroy state was `nemoclaw <sandbox> destroy` (full
-  // sandbox destruction). Clear the markers when `--force` is set, log
-  // what happened, and re-fetch the sandbox so the rest of this function
-  // sees the cleared state. External resources are not touched: the
-  // downstream provider/adapter/policy branches below re-discover their
-  // true state via their own inspection helpers.
-  if (
-    options.force &&
-    (sandbox.mcp?.destroyPreparedAt || sandbox.mcp?.destroyPendingAt) &&
-    clearMcpDestroyMarkers(sandboxName)
-  ) {
-    console.log(
-      `  Cleared incomplete MCP destroy transaction on sandbox '${sandboxName}' (--force).`,
-    );
-    sandbox = getSandboxOrThrow(sandboxName);
+  const sandbox = getSandboxOrThrow(sandboxName);
+  // #6376: `--force` on `mcp remove` is the documented non-destructive recovery
+  // for a stuck MCP destroy transaction. It is PHASE-AWARE: only the prepared
+  // (phase-one) marker — in-sandbox scrub + provider detach done, sandbox NOT
+  // yet deleted — is recoverable here, because the sandbox still exists. In that
+  // case skip the guard and run the requested removal; removeMcpBridge clears the
+  // marker only after this function returns successfully, so a failure preserves
+  // the durable retry state. Every other state still hits the guard:
+  //   - no `--force`: refuse (the guard's normal behavior);
+  //   - the pending (phase-two) marker: the sandbox was already deleted from
+  //     OpenShell, so the guard's phase-aware message points at `nemoclaw
+  //     <name> destroy` — `mcp remove` cannot recover a deleted sandbox and
+  //     clearing that marker would abandon the still-owed provider/policy
+  //     cleanup.
+  const recoverPreparedDestroy =
+    !!options.force && !!sandbox.mcp?.destroyPreparedAt && !sandbox.mcp?.destroyPendingAt;
+  if (!recoverPreparedDestroy) {
+    assertMcpDestroyNotPending(sandbox);
   }
-  assertMcpDestroyNotPending(sandbox);
   const entry = bridgeState(sandbox)[server];
   if (!entry) {
     if (!options.force) {

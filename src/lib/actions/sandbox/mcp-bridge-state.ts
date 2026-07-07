@@ -99,35 +99,56 @@ export function setBridgeState(sandboxName: string, bridges: Record<string, McpB
 
 export function assertMcpDestroyNotPending(sandbox: SandboxEntry): void {
   if (!sandbox.mcp?.destroyPreparedAt && !sandbox.mcp?.destroyPendingAt) return;
+  // Phase-aware recovery guidance. `destroyPendingAt` is written only after
+  // OpenShell confirmed the sandbox was deleted (mcp-bridge-destroy.ts), so at
+  // that phase the sandbox no longer exists and the only correct recovery is to
+  // finish the (idempotent) destroy — a non-destructive `mcp remove --force`
+  // cannot operate on a deleted sandbox. The prepared-only phase still has a
+  // live sandbox and is recoverable in place.
+  if (sandbox.mcp?.destroyPendingAt) {
+    throw new McpBridgeError(
+      `Sandbox '${sandbox.name}' is mid-destroy past the point of no return — the sandbox was already deleted from OpenShell. Run \`nemoclaw ${sandbox.name} destroy\` to finish the (idempotent) cleanup.`,
+    );
+  }
   throw new McpBridgeError(
-    `Sandbox '${sandbox.name}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup, or clear the incomplete-destroy markers non-destructively with \`nemoclaw ${sandbox.name} mcp remove <server> --force\`.`,
+    `Sandbox '${sandbox.name}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup, or recover non-destructively (the sandbox still exists) with \`nemoclaw ${sandbox.name} mcp remove <server> --force\`.`,
   );
 }
 
 /**
- * Non-destructive recovery for a stuck MCP destroy transaction.
+ * Non-destructive recovery for a stuck MCP destroy transaction — PHASE-AWARE.
  *
- * When a prior destroy leaves `destroyPreparedAt` / `destroyPendingAt`
- * markers behind (crash mid-teardown, aborted destroy, etc.) every MCP
- * command is refused by `assertMcpDestroyNotPending`, and rebuild refuses
- * up front with the same guard. Before #6376 the only advertised recovery
- * was `nemoclaw <name> destroy` — full sandbox destruction — because
- * `mcp remove <server> --force` itself ran the guard before its `--force`
- * branch.
+ * When a prior destroy leaves a `destroyPreparedAt` marker behind (phase one:
+ * in-sandbox scrub + provider detach done, sandbox NOT yet deleted) every MCP
+ * command is refused by `assertMcpDestroyNotPending`, and rebuild refuses up
+ * front with the same guard. Before #6376 the only advertised recovery was
+ * `nemoclaw <name> destroy` — full sandbox destruction.
  *
- * This helper clears the two markers in place so a `--force` caller can
- * proceed with the requested removal. The sandbox's external resources
- * (providers, adapters, policies) are not touched — the marker file is
- * the only mutable state — and downstream operations will re-discover the
- * true resource state through their own inspection.
+ * This helper clears ONLY the prepared (phase-one) marker, in place, so a
+ * `--force` caller can proceed with the requested removal on a sandbox that
+ * still exists. It deliberately refuses the pending (phase-two) marker: that
+ * marker is written only after OpenShell deleted the sandbox, and it is the
+ * durable retry state that keeps the still-owed provider/policy cleanup
+ * idempotent. Erasing it would silently abandon that cleanup, so a pending
+ * transaction must be finished with `nemoclaw <name> destroy`, not cleared.
  *
- * Returns whether markers were actually cleared, so callers can log
+ * Callers clear the prepared marker only AFTER the requested removal succeeds
+ * (see removeMcpBridge), so a failed recovery preserves the retry marker.
+ * `setBridgeState` preserves the marker across the removal's own writes until
+ * then.
+ *
+ * Returns whether the marker was actually cleared, so callers can log
  * accurately (no-op vs. cleared).
  */
 export function clearMcpDestroyMarkers(sandboxName: string): boolean {
   const sandbox = registry.getSandbox(sandboxName);
   const mcpState = sandbox?.mcp;
   if (!mcpState?.destroyPreparedAt && !mcpState?.destroyPendingAt) return false;
+  if (mcpState.destroyPendingAt) {
+    throw new McpBridgeError(
+      `Sandbox '${sandboxName}' is mid-destroy past the point of no return — the sandbox was already deleted from OpenShell. Run \`nemoclaw ${sandboxName} destroy\` to finish cleanup; the pending-destroy marker cannot be cleared non-destructively.`,
+    );
+  }
   const bridges = mcpState.bridges ?? {};
   const managedServerNames = mcpState.managedServerNames ?? [];
   const updated = registry.updateSandbox(sandboxName, {

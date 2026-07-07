@@ -51,10 +51,14 @@ export function createRebuildCommandContext(
         // no output at all — leaving the user with the last stage's spinner
         // line and no diagnosis. Emit the reason on stderr before exit so
         // `$?`-gated automation and interactive users see WHY rebuild
-        // aborted. `console.error` inherits the pipeline's existing
-        // rebuild-diagnostic formatting (leading two spaces).
+        // aborted. The message can carry a wrapped lower-level error
+        // (`bail("...: " + error.message)`), so route it through the same
+        // `redact` boundary `log` already uses (line above) before surfacing —
+        // a bailed rebuild must not be the one path that leaks a URL/token.
+        // `console.error` inherits the rebuild-diagnostic formatting (leading
+        // two spaces).
         (message: string, code = 1) => {
-          if (message) console.error(`  ${message}`);
+          if (message) console.error(`  ${redact(message)}`);
           process.exit(code);
         },
   };
