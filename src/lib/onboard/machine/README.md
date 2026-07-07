@@ -119,3 +119,7 @@ The FSM migration is considered complete when:
 4. the runner applies all handler results through `OnboardRuntime`;
 5. step helpers no longer implicitly own machine transitions;
 6. `src/lib/onboard.ts` contains entrypoint setup and dependency wiring rather than state sequencing.
+
+## Characterization traces
+
+`transition-traces.test.ts` in this directory pins fresh, resumed, recreate, and failed path-level event streams that the unit suites (`transitions.test.ts`, `runtime.test.ts`, `runner.test.ts`) do not already cover (#6225). The recreate trace composes the runner with the real sandbox handler seam; detailed selection and repair cases remain in `handlers/sandbox-resume.test.ts` and `handlers/sandbox.test.ts`. Update a pinned trace only in the same PR as an intentional behavior change (for example #6226, #6227, or #6228), never as a side effect. The journey-level lifecycle contract map lives in [`../lifecycle-contracts.md`](../lifecycle-contracts.md).

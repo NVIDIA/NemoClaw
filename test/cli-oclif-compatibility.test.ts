@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import SandboxStatusCommand from "../src/commands/sandbox/status";
 import StatusCommand from "../src/commands/status";
+import { withDirectPublicDispatch } from "./support/public-dispatch-test-harness.js";
 
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
@@ -17,163 +18,6 @@ const requireCache: Record<string, unknown> = require.cache as any;
 function restoreCache(path: string, prior: unknown): void {
   if (prior) requireCache[path] = prior;
   else delete requireCache[path];
-}
-
-type DirectStatusDispatchHarness = {
-  dispatchCli: (argv: string[]) => Promise<void>;
-  exitSpy: ReturnType<typeof vi.spyOn>;
-  runOclifArgv: ReturnType<typeof vi.fn>;
-  runOclifCommandById: ReturnType<typeof vi.fn>;
-  stderr: string[];
-};
-
-async function withDirectStatusDispatch(
-  run: (harness: DirectStatusDispatchHarness) => Promise<void>,
-): Promise<void> {
-  const publicDispatchPath = require.resolve("../src/lib/cli/public-dispatch.js");
-  const oclifRunnerPath = require.resolve("../src/lib/cli/oclif-runner.js");
-  const sandboxConnectPath = require.resolve("../src/lib/actions/sandbox/connect.js");
-  const priorPublicDispatch = require.cache[publicDispatchPath];
-  const priorOclifRunner = require.cache[oclifRunnerPath];
-  const priorSandboxConnect = require.cache[sandboxConnectPath];
-  const runOclifArgv = vi.fn(async () => undefined);
-  const runOclifCommandById = vi.fn(async () => undefined);
-  const stderr: string[] = [];
-  const errorSpy = vi.spyOn(console, "error").mockImplementation((message = "") => {
-    stderr.push(String(message));
-  });
-  const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
-    throw new Error(`process.exit:${String(code)}`);
-  }) as never);
-
-  requireCache[oclifRunnerPath] = {
-    id: oclifRunnerPath,
-    filename: oclifRunnerPath,
-    loaded: true,
-    exports: { runOclifArgv, runOclifCommandById },
-  } as any;
-  requireCache[sandboxConnectPath] = {
-    id: sandboxConnectPath,
-    filename: sandboxConnectPath,
-    loaded: true,
-    exports: {
-      isSandboxConnectFlag: vi.fn(() => false),
-      parseSandboxConnectArgs: vi.fn(),
-      printSandboxConnectHelp: vi.fn(),
-    },
-  } as any;
-
-  try {
-    delete require.cache[publicDispatchPath];
-    const { dispatchCli } = require(publicDispatchPath);
-    await run({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr });
-  } finally {
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
-    restoreCache(publicDispatchPath, priorPublicDispatch);
-    restoreCache(oclifRunnerPath, priorOclifRunner);
-    restoreCache(sandboxConnectPath, priorSandboxConnect);
-  }
-}
-
-type DirectSandboxRecoveryDispatchHarness = {
-  dispatchCli: (argv: string[]) => Promise<void>;
-  exitSpy: ReturnType<typeof vi.spyOn>;
-  getSandbox: ReturnType<typeof vi.fn>;
-  listSandboxes: ReturnType<typeof vi.fn>;
-  recoverRegistryEntries: ReturnType<typeof vi.fn>;
-  runOclifArgv: ReturnType<typeof vi.fn>;
-  runOclifCommandById: ReturnType<typeof vi.fn>;
-  sandboxes: Map<string, { name: string }>;
-  stderr: string[];
-};
-
-async function withDirectSandboxRecoveryDispatch(
-  run: (harness: DirectSandboxRecoveryDispatchHarness) => Promise<void>,
-): Promise<void> {
-  const publicDispatchPath = require.resolve("../src/lib/cli/public-dispatch.js");
-  const oclifRunnerPath = require.resolve("../src/lib/cli/oclif-runner.js");
-  const sandboxConnectPath = require.resolve("../src/lib/actions/sandbox/connect.js");
-  const registryPath = require.resolve("../src/lib/state/registry.js");
-  const registryRecoveryPath = require.resolve("../src/lib/registry-recovery-action.js");
-  const priorPublicDispatch = require.cache[publicDispatchPath];
-  const priorOclifRunner = require.cache[oclifRunnerPath];
-  const priorSandboxConnect = require.cache[sandboxConnectPath];
-  const priorRegistry = require.cache[registryPath];
-  const priorRegistryRecovery = require.cache[registryRecoveryPath];
-  const sandboxes = new Map<string, { name: string }>();
-  const getSandbox = vi.fn((name: string) => sandboxes.get(name) ?? null);
-  const listSandboxes = vi.fn(() => ({
-    sandboxes: [...sandboxes.values()],
-    defaultSandbox: null,
-  }));
-  const recoverRegistryEntries = vi.fn(async () => ({
-    ...listSandboxes(),
-    recoveredFromSession: false,
-    recoveredFromGateway: 0,
-  }));
-  const runOclifArgv = vi.fn(async () => undefined);
-  const runOclifCommandById = vi.fn(async () => undefined);
-  const stderr: string[] = [];
-  const errorSpy = vi.spyOn(console, "error").mockImplementation((message = "") => {
-    stderr.push(String(message));
-  });
-  const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
-    throw new Error(`process.exit:${String(code)}`);
-  }) as never);
-
-  requireCache[registryPath] = {
-    id: registryPath,
-    filename: registryPath,
-    loaded: true,
-    exports: { getSandbox, listSandboxes },
-  } as any;
-  requireCache[registryRecoveryPath] = {
-    id: registryRecoveryPath,
-    filename: registryRecoveryPath,
-    loaded: true,
-    exports: { recoverRegistryEntries },
-  } as any;
-  requireCache[oclifRunnerPath] = {
-    id: oclifRunnerPath,
-    filename: oclifRunnerPath,
-    loaded: true,
-    exports: { runOclifArgv, runOclifCommandById },
-  } as any;
-  requireCache[sandboxConnectPath] = {
-    id: sandboxConnectPath,
-    filename: sandboxConnectPath,
-    loaded: true,
-    exports: {
-      isSandboxConnectFlag: vi.fn(() => false),
-      parseSandboxConnectArgs: vi.fn(),
-      printSandboxConnectHelp: vi.fn(),
-    },
-  } as any;
-
-  try {
-    delete require.cache[publicDispatchPath];
-    const { dispatchCli } = require(publicDispatchPath);
-    await run({
-      dispatchCli,
-      exitSpy,
-      getSandbox,
-      listSandboxes,
-      recoverRegistryEntries,
-      runOclifArgv,
-      runOclifCommandById,
-      sandboxes,
-      stderr,
-    });
-  } finally {
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
-    restoreCache(publicDispatchPath, priorPublicDispatch);
-    restoreCache(oclifRunnerPath, priorOclifRunner);
-    restoreCache(sandboxConnectPath, priorSandboxConnect);
-    restoreCache(registryPath, priorRegistry);
-    restoreCache(registryRecoveryPath, priorRegistryRecovery);
-  }
 }
 
 describe("oclif compatibility dispatch", () => {
@@ -382,7 +226,7 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("recovers a requested sandbox, rereads the registry, and dispatches connect", async () => {
-    await withDirectSandboxRecoveryDispatch(
+    await withDirectPublicDispatch(
       async ({
         dispatchCli,
         getSandbox,
@@ -424,7 +268,7 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("guides a missing requested sandbox after recovery finds a different live sandbox", async () => {
-    await withDirectSandboxRecoveryDispatch(
+    await withDirectPublicDispatch(
       async ({
         dispatchCli,
         exitSpy,
@@ -637,7 +481,7 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("corrects a single sandbox-like global status argument without a CLI subprocess", async () => {
-    await withDirectStatusDispatch(
+    await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
         const cases = [
           { argv: ["status", "alpha"], command: "nemoclaw alpha status" },
@@ -675,7 +519,7 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("leaves ambiguous or unsafe global status arguments to the strict parser", async () => {
-    await withDirectStatusDispatch(
+    await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
         const cases = [
           ["status", "--bogus"],
@@ -729,7 +573,7 @@ describe("oclif compatibility dispatch", () => {
   });
 
   it("routes sandbox status help directly and keeps its JSON help metadata", async () => {
-    await withDirectStatusDispatch(async ({ dispatchCli, runOclifArgv, runOclifCommandById }) => {
+    await withDirectPublicDispatch(async ({ dispatchCli, runOclifArgv, runOclifCommandById }) => {
       await dispatchCli(["alpha", "status", "--help"]);
       expect(runOclifCommandById).toHaveBeenCalledWith(
         "sandbox:status",

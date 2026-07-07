@@ -145,6 +145,18 @@ def cli_main():
   );
   writeFixtureFile(
     packageDir,
+    "onboarding.py",
+    `
+from __future__ import annotations
+
+
+def should_run_onboarding(state_dir=None):
+    del state_dir
+    return True
+`,
+  );
+  writeFixtureFile(
+    packageDir,
     "app.py",
     fs.readFileSync(
       path.join(process.cwd(), "test", "fixtures", "langchain-deepagents-code", "app.py"),
@@ -1191,6 +1203,13 @@ async def validate():
     assert instance._rubric_model is None
     assert instance._server_kwargs["rubric_model"] is None
     await instance._prompt_launch_tavily()
+    dep_continued, dep_result = await instance._prompt_launch_dependencies_then_model()
+    assert dep_continued is False
+    assert dep_result is None
+    dep_screen, dep_future = instance._build_launch_dependencies_prompt()
+    assert dep_screen is None
+    assert dep_future.done()
+    assert dep_future.result() == (False, None)
     assert await instance._prompt_model_auth_if_needed("provider:model") is False
     await instance._show_auth_manager(initial_provider="provider")
     await instance._enter_service_api_key(None, None)

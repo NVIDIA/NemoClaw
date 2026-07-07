@@ -36,6 +36,7 @@ import {
   checkRebuildGatewaySchemaPreflight,
   getRebuildSandboxEntryOrBail,
   isSingleAgentRebuildSupported,
+  runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
@@ -83,10 +84,13 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
+  const allowLegacyManagedImageRecovery =
+    opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
   const recoveryManifest = validatePreparedRecoveryManifest(
     sandboxName,
     sandboxEntry,
     opts.recoveryManifest,
+    allowLegacyManagedImageRecovery,
     bail,
   );
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
@@ -113,19 +117,13 @@ export async function runRebuildPreflightPhase(
   let preparedImage: PreparedRebuildImage | null = null;
   let retainPreparedImage = false;
   try {
-    if (
-      !isDcodeRebuildAgent(rebuildAgent) &&
-      !checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)
-    ) {
-      return null;
-    }
-    const versionCheck = await confirmRebuildIntent(
-      sandboxName,
-      agentName,
-      skipConfirm,
-      activeSessionCount,
-      bail,
-    );
+    const versionCheck = await runRebuildGatewayIntentPreflight({
+      checkGatewaySchema: () =>
+        isDcodeRebuildAgent(rebuildAgent) ||
+        checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail),
+      confirmIntent: () =>
+        confirmRebuildIntent(sandboxName, agentName, skipConfirm, activeSessionCount, bail),
+    });
     if (!versionCheck) return null;
 
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
@@ -140,6 +138,11 @@ export async function runRebuildPreflightPhase(
         // succeeded, matching the previous `skipConfirm || confirmed` contract.
         autoYes: true,
         requestedToolDisclosure,
+        allowLegacyManagedImageRecovery,
+        // A validated prepared backup is the only path allowed to reconstruct
+        // a missing gateway provider and route during recreate. The exact
+        // endpoint, credential, image, and registry checks still run before
+        // deletion; ordinary rebuilds continue to require the live bindings.
         preparedBackupRecovery: recoveryManifest !== null,
         log,
         bail,

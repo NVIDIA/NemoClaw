@@ -120,6 +120,9 @@ describe("runInferenceSet OpenClaw routing", () => {
         agent: "openclaw",
         provider: "compatible-anthropic-endpoint",
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        endpointUrl: "https://inference.local/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
       },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",

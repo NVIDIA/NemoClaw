@@ -6,6 +6,7 @@
 // onboard.setupInference (#767). Bedrock Runtime is delegated to
 // `onboard/bedrock-runtime.ts` exactly as the inline branch did.
 
+import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/config";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
@@ -238,10 +239,8 @@ export async function setupRemoteProviderInference(
         // to <OPENAI_BASE_URL>/v1/chat/completions, deduping only bases that
         // already end in /v1. Re-add the suffix so the probe and the runtime
         // route exercise the identical URL.
-        const trimmedSurfaceBase = String(resolvedEndpointUrl ?? "").replace(/\/+$/, "");
-        const openAiSurfaceBaseUrl = trimmedSurfaceBase.endsWith("/v1")
-          ? trimmedSurfaceBase
-          : `${trimmedSurfaceBase}/v1`;
+        const openAiSurfaceBaseUrl =
+          getCompatibleAnthropicOpenAiSurfaceBaseUrl(resolvedEndpointUrl);
         const surfaceProbe = probeOpenAiSurface(openAiSurfaceBaseUrl, model, credentialValue, {
           skipResponsesProbe: true,
         });

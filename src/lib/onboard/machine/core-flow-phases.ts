@@ -25,7 +25,9 @@ export interface CoreOnboardFlowPhaseOptions<
   MessagingChannelConfig = unknown,
   ResourceProfile = unknown,
 > {
+  gatewayName: string;
   forceProviderSelection: boolean;
+  forceInferenceSetup?: boolean;
   authoritativeResumeConfig?: boolean;
   env: NodeJS.ProcessEnv;
   constants: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["constants"];
@@ -55,6 +57,7 @@ export function createCoreOnboardFlowPhases<
 ): [OnboardSequencePhase<Context>, OnboardSequencePhase<Context>] {
   const providerInferencePhase = createProviderInferencePhase<Context>(async (context) => {
     const providerInferenceResult = await handleProviderInferenceState({
+      gatewayName: options.gatewayName,
       resume: context.resume,
       fresh: context.fresh,
       session: context.session,
@@ -62,6 +65,7 @@ export function createCoreOnboardFlowPhases<
       sandboxName: context.sandboxName,
       agent: context.agent,
       forceProviderSelection: options.forceProviderSelection,
+      forceInferenceSetup: options.forceInferenceSetup,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       initial: {
         model: context.model,
@@ -104,6 +108,7 @@ export function createCoreOnboardFlowPhases<
     const sandboxStateResult = await handleSandboxState({
       resume: context.resume,
       fresh: context.fresh,
+      gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
       session: context.session,

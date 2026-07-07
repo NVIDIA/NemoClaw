@@ -98,6 +98,12 @@ describe("auto-pair approval pass behaviour (#4616)", () => {
           requestedScopes: ["operator.pairing"],
         },
         {
+          requestId: "ok-agent-cli",
+          clientId: "cli",
+          clientMode: "cli",
+          requestedScopes: ["operator.pairing"],
+        },
+        {
           requestId: "deny-unknown",
           clientId: "evil",
           clientMode: "unknown",
@@ -169,10 +175,10 @@ process.exit(2);
         ? fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n").filter(Boolean)
         : [];
 
-      expect(approvals).toEqual(["ok-webchat", "ok-cli"]);
+      expect(approvals).toEqual(["ok-webchat", "ok-cli", "ok-agent-cli"]);
       // Gateway env stripped on the approve subprocess (#4462 workaround).
-      expect(approveEnv).toEqual(["unset:unset:unset", "unset:unset:unset"]);
-      expect(result.stdout).toContain(`${SUMMARY_MARKER}=2`);
+      expect(approveEnv).toEqual(["unset:unset:unset", "unset:unset:unset", "unset:unset:unset"]);
+      expect(result.stdout).toContain(`${SUMMARY_MARKER}=3`);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

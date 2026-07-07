@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -530,6 +531,57 @@ describe("onboard session", () => {
     expect(loaded.credentialEnv).toBe("OPENAI_API_KEY");
     expect(loaded.provider).toBe("openai");
   });
+
+  // ── Session secret boundary, consolidated from #6225 (epic #6224) ──
+
+  it("round-trips writer-shaped legacy migration hashes and drops non-string entries (#6225)", () => {
+    // Digest shape mirrors legacyValueHash() in src/lib/onboard.ts, the only
+    // production writer of this map. This test covers session filtering and
+    // persistence; the writer owns converting credential values to digests.
+    const legacyValue = "nvapi-sentinel6225-legacy-value-do-not-persist";
+    const digest = createHash("sha256").update(legacyValue).digest("hex");
+    session.saveSession(session.createSession());
+    expect(
+      JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).migratedLegacyValueHashes,
+    ).toBeNull();
+
+    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+      migratedLegacyValueHashes: {
+        NVIDIA_API_KEY: digest,
+        BROKEN_NUMERIC: 123,
+        BROKEN_NULL: null,
+      } as unknown as Record<string, string>,
+    });
+
+    const raw = fs.readFileSync(session.SESSION_FILE, "utf8");
+    expect(raw).toContain(digest);
+    expect(raw).not.toContain("BROKEN_NUMERIC");
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.migratedLegacyValueHashes).toEqual({ NVIDIA_API_KEY: digest });
+    expect(loaded.migratedLegacyValueHashes?.NVIDIA_API_KEY).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("serializes missing and explicit-null credentialEnv identically (#6224)", () => {
+    // #6224 contract gap: the schema cannot distinguish "never prompted",
+    // "user declined", and "explicitly cleared" once they become null.
+    session.saveSession(session.createSession());
+    const unset = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).credentialEnv;
+
+    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    });
+    markStepCompleteLegacy(session, stepMutation, "provider_selection", { credentialEnv: null });
+    const declined = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).credentialEnv;
+
+    expect(unset).toBeNull();
+    expect(declined).toBeNull();
+    expect(declined).toBe(unset);
+    expect(requireLoadedSession(session.loadSession()).credentialEnv).toBeNull();
+  });
+
+  // Desired behavior tracked by #6224. redactUrl() currently masks sensitive
+  // parameter names but not token-shaped values under otherwise benign names.
+  it.todo("redacts token-shaped values under benign endpoint query param names (#6224)");
 
   it("only persists known Hermes auth methods", () => {
     session.saveSession(session.createSession());

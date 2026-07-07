@@ -167,6 +167,10 @@ class CodexAuthScreen:
 class ModelSelectorScreen:
     def _select_with_auth_check(self, model_spec, provider): pass
 `,
+  "onboarding.py": `from __future__ import annotations
+
+def should_run_onboarding(state_dir=None): return True
+`,
   "widgets/approval.py": `from __future__ import annotations
 
 class ApprovalMenu:
@@ -476,7 +480,8 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
     expect(snapshot(managedPaths)).toEqual(firstBytes);
 
     for (const file of fixture.sourcePaths.filter(
-      (sourcePath) => !sourcePath.endsWith("/__init__.py"),
+      (sourcePath) =>
+        !sourcePath.endsWith("/__init__.py") && !sourcePath.endsWith("/onboarding.py"),
     )) {
       expect(
         firstBytes[file].match(new RegExp(HARDENING_MARKER.replaceAll(".", "\\."), "g")),
@@ -485,6 +490,10 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
     expect(
       firstBytes[fixture.agentPath].match(/NemoClaw-managed progressive tool disclosure\./g),
     ).toHaveLength(1);
+    // Retain onboarding in the full-package snapshot to prove it stays untouched and idempotent.
+    expect(firstBytes[path.join(fixture.packageDir, "onboarding.py")]).not.toContain(
+      HARDENING_MARKER,
+    );
     expect(
       firstBytes[fixture.agentPath].match(/ProgressiveToolDisclosureMiddleware\(\)/g),
     ).toHaveLength(2);

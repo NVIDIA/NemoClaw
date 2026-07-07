@@ -76,9 +76,10 @@ function defaultProbeLogs(sandboxName: string): string {
 /**
  * Emit a denial-adjacent hint after a failed exec. Every dependency is
  * best-effort: failures return null and never replace the command's exit code.
- * Exec inherits stdio byte-for-byte, so proxy error text is intentionally not
- * captured for a cheaper prefilter; nonzero status is the only safe pre-probe
- * gate, and the timestamp-correlated structured denial is the confirmation.
+ * Exec leaves stdout and stderr inherited byte-for-byte, so proxy error text is
+ * intentionally not captured for a cheaper prefilter; nonzero status is the
+ * only safe pre-probe gate, and the timestamp-correlated structured denial is
+ * the confirmation.
  * Log-read failures are terminal rather than retried, while successful empty
  * reads get two 120 ms settling retries (240 ms total).
  */

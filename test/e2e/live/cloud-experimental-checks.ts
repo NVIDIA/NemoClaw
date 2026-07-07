@@ -7,10 +7,10 @@ import { expect } from "vitest";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { DEEPAGENTS_FRESH_REONBOARD_CHECK } from "./cloud-experimental-check-list.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const REQUIRED_CHECK_SKIP_PATTERN = /(^|\n).*\bSKIP\b/i;
 const DEFAULT_CHECK_TIMEOUT_MS = 180_000;
 const FRESH_REONBOARD_TIMEOUT_MS = 15 * 60_000;

@@ -53,12 +53,13 @@ function secretFixture(...parts: string[]): string {
   return parts.join("");
 }
 
-type TuiExpectEvent = "eof" | "exit" | "onboarding" | "ready" | "timeout";
+type TuiExpectEvent = "eof" | "exit" | "firstRun" | "namePrompt" | "ready" | "timeout";
 
 const tclEventLiterals: Record<TuiExpectEvent, string> = {
   eof: "{eof}",
   exit: "{exit}",
-  onboarding: "{onboarding}",
+  firstRun: "{firstRun}",
+  namePrompt: "{namePrompt}",
   ready: "{ready}",
   timeout: "{timeout}",
 };
@@ -97,40 +98,60 @@ proc send {args} {
     set ::fake_closed 1
   }
 }
+proc exp_continue {} {
+  return -code continue
+}
 proc expect {branches} {
-  if {[llength $::fake_events] == 0} {
-    error "fake Expect event queue exhausted"
+  while {1} {
+    if {[llength $::fake_events] == 0} {
+      error "fake Expect event queue exhausted"
+    }
+    set event [lindex $::fake_events 0]
+    set ::fake_events [lrange $::fake_events 1 end]
+    switch -- $event {
+      namePrompt {
+        set branch_index [lsearch -exact $branches {$name_prompt_pattern}]
+        set ::expect_out(0,string) "What should Deep Agents call you"
+      }
+      firstRun {
+        set branch_index [lsearch -exact $branches {$first_run_pattern}]
+        set ::expect_out(0,string) "Choose a Recommended Model"
+      }
+      ready {
+        set branch_index [lsearch -exact $branches {$ready_pattern}]
+        set ::expect_out(0,string) "What would you like to build?"
+      }
+      exit {
+        set branch_index [lsearch -glob $branches {NEMOCLAW_TUI_EXIT:*}]
+        set ::expect_out(0,string) "NEMOCLAW_TUI_EXIT:0"
+        set ::expect_out(1,string) "0"
+      }
+      timeout {
+        set branch_index [lsearch -exact $branches timeout]
+      }
+      eof {
+        set branch_index [lsearch -exact $branches eof]
+      }
+      default {
+        error "unsupported fake Expect event: $event"
+      }
+    }
+    if {$branch_index < 0} {
+      error "fake Expect event $event has no matching branch"
+    }
+    set branch_result ""
+    set branch_options {}
+    set branch_code [catch {
+      uplevel 1 [lindex $branches [expr {$branch_index + 1}]]
+    } branch_result branch_options]
+    if {$branch_code == 0} {
+      return $branch_result
+    }
+    if {$branch_code == 4} {
+      continue
+    }
+    return -options $branch_options $branch_result
   }
-  set event [lindex $::fake_events 0]
-  set ::fake_events [lrange $::fake_events 1 end]
-  switch -- $event {
-    onboarding {
-      set branch_index [lsearch -exact $branches {$onboarding_pattern}]
-      set ::expect_out(0,string) "Your name (optional)"
-    }
-    ready {
-      set branch_index [lsearch -exact $branches {$ready_pattern}]
-      set ::expect_out(0,string) "What would you like to build?"
-    }
-    exit {
-      set branch_index [lsearch -glob $branches {NEMOCLAW_TUI_EXIT:*}]
-      set ::expect_out(0,string) "NEMOCLAW_TUI_EXIT:0"
-      set ::expect_out(1,string) "0"
-    }
-    timeout {
-      set branch_index [lsearch -exact $branches timeout]
-    }
-    eof {
-      set branch_index [lsearch -exact $branches eof]
-    }
-    default {
-      error "unsupported fake Expect event: $event"
-    }
-  }
-  if {$branch_index < 0} {
-    error "fake Expect event $event has no matching branch"
-  }
-  uplevel 1 [lindex $branches [expr {$branch_index + 1}]]
 }
 proc exit {{code 0}} {
   set trace_file [open $::env(NEMOCLAW_TUI_TRACE) w]
@@ -146,7 +167,8 @@ proc exit {{code 0}} {
       NEMOCLAW_TUI_CAPTURE: capture,
       NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C: options.closeAfterFirstCtrlC ? "1" : "0",
       NEMOCLAW_TUI_MARKERS: markers,
-      NEMOCLAW_TUI_ONBOARDING_PATTERN:
+      NEMOCLAW_TUI_FIRST_RUN_PATTERN: "(choose a recommended model)",
+      NEMOCLAW_TUI_NAME_PROMPT_PATTERN:
         "(your name \\(optional\\)|what should deep agents call you)",
       NEMOCLAW_TUI_READY_PATTERN:
         "(what would you like|enter (your )?(task|message|prompt)|how can i help)",
@@ -222,50 +244,70 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(readiness("How can I help with the codebase today?")).toBe("ready");
   });
 
-  it("matches only the pinned first-run onboarding name screen", () => {
-    const isOnboarding = (capture: string) =>
+  it("matches the pinned first-run model picker that managed DCode must suppress (#6410)", () => {
+    const isFirstRun = (capture: string) =>
       runTuiStartupCheckHelper(
-        'if printf "%s" "$CAPTURE" | grep -Eiq "$TUI_ONBOARDING_PATTERN"; then printf onboarding; else printf other; fi',
+        'if printf "%s" "$CAPTURE" | grep -Eiq "$TUI_FIRST_RUN_PATTERN"; then printf first-run; else printf other; fi',
         { CAPTURE: capture },
       );
 
-    expect(isOnboarding("Your name (optional)")).toBe("onboarding");
-    expect(isOnboarding("What should Deep Agents call you?")).toBe("onboarding");
-    expect(isOnboarding("Your project name")).toBe("other");
-    expect(isOnboarding("What would you like to build?")).toBe("other");
+    expect(isFirstRun("Choose a Recommended Model")).toBe("first-run");
+    expect(isFirstRun("Your name (optional)")).toBe("other");
+    expect(isFirstRun("What should Deep Agents call you?")).toBe("other");
+    expect(isFirstRun("Your project name")).toBe("other");
+    expect(isFirstRun("What would you like to build?")).toBe("other");
   });
 
-  itWithTclsh("skips first-run onboarding before marking the real TUI prompt ready (tclsh)", () => {
-    const { markerText, result, traceText } = runTuiExpectStateMachine([
-      "onboarding",
-      "ready",
-      "exit",
-    ]);
+  it("matches the name prompt pattern that managed DCode allows on first run", () => {
+    const isNamePrompt = (capture: string) =>
+      runTuiStartupCheckHelper(
+        'if printf "%s" "$CAPTURE" | grep -Eiq "$TUI_NAME_PROMPT_PATTERN"; then printf name-prompt; else printf other; fi',
+        {
+          CAPTURE: capture,
+          TUI_NAME_PROMPT_PATTERN: "(your name \\(optional\\)|what should deep agents call you)",
+        },
+      );
+
+    expect(isNamePrompt("Your name (optional)")).toBe("name-prompt");
+    expect(isNamePrompt("What should Deep Agents call you?")).toBe("name-prompt");
+    expect(isNamePrompt("Choose a Recommended Model")).toBe("other");
+    expect(isNamePrompt("What would you like to build?")).toBe("other");
+  });
+
+  itWithTclsh("fails before readiness when a first-run model picker appears (#6410)", () => {
+    const { markerText, result, traceText } = runTuiExpectStateMachine(["firstRun"]);
+
+    expect(result.status, result.stderr).toBe(24);
+    expect(traceText).toBe("03");
+    expect(markerText).toContain("Choose a Recommended Model");
+    expect(markerText).toContain("NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN");
+    expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
+  });
+
+  itWithTclsh("allows the first-run name prompt and proceeds to ready state", () => {
+    const { markerText, result, traceText } = runTuiExpectStateMachine(
+      ["namePrompt", "ready", "exit"],
+      { closeAfterFirstCtrlC: true },
+    );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(traceText).toBe("1b,03,03");
-    expect(markerText).toContain("Your name (optional)");
-    expect(markerText).toContain("What would you like to build?");
-    expect(markerText).toContain("NEMOCLAW_TUI_ONBOARDING_SKIPPED");
+    expect(traceText).toBe("0d,03");
+    expect(markerText).toContain("What should Deep Agents call you");
+    expect(markerText).toContain("NEMOCLAW_TUI_NAME_PROMPT");
     expect(markerText).toContain("NEMOCLAW_TUI_READY");
-    expect(markerText.indexOf("NEMOCLAW_TUI_ONBOARDING_SKIPPED")).toBeLessThan(
-      markerText.indexOf("NEMOCLAW_TUI_READY"),
-    );
-    expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
+    expect(markerText).not.toContain("NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN");
   });
 
-  itWithTclsh(
-    "does not mark the TUI ready when the coding prompt times out after onboarding (tclsh)",
-    () => {
-      const { markerText, result, traceText } = runTuiExpectStateMachine(["onboarding", "timeout"]);
+  itWithTclsh("still rejects the model picker when it appears after the name prompt", () => {
+    const { markerText, result, traceText } = runTuiExpectStateMachine(["namePrompt", "firstRun"]);
 
-      expect(result.status, result.stderr).toBe(20);
-      expect(traceText).toBe("1b,03");
-      expect(markerText).toContain("NEMOCLAW_TUI_ONBOARDING_SKIPPED");
-      expect(markerText).toContain("NEMOCLAW_TUI_TIMEOUT");
-      expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
-    },
-  );
+    expect(result.status, result.stderr).toBe(24);
+    expect(traceText).toBe("0d,03");
+    expect(markerText).toContain("NEMOCLAW_TUI_NAME_PROMPT");
+    expect(markerText).toContain("Choose a Recommended Model");
+    expect(markerText).toContain("NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN");
+    expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
+  });
 
   itWithTclsh("captures a clean exit when dcode closes after the first Ctrl-C (tclsh)", () => {
     const { markerText, result, traceText } = runTuiExpectStateMachine(["ready", "exit"], {
@@ -312,7 +354,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\n'; }",
           "ensure_expect_available() { return 0; }",
           "run_tui_expect() {",
-          '  printf "Your name (optional)\\nNEMOCLAW_TUI_ONBOARDING_SKIPPED\\nWhat would you like to do next?\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
+          '  printf "What would you like to do next?\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
           "  return 0",
           "}",
           "main",
@@ -325,7 +367,6 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       expect(result.stdout).toContain("finite expect harness reached startup and observed exit");
       expect(result.stdout).toContain("dcode TUI rendered a usable startup prompt signature");
       expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
-      expect(sanitizedText).toContain("NEMOCLAW_TUI_ONBOARDING_SKIPPED");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
     } finally {

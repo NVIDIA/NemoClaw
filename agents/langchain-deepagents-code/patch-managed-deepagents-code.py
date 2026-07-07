@@ -4,8 +4,9 @@
 
 # Source-of-truth review for this pinned third-party patch boundary:
 # invalidState: upstream entrypoints can independently enable credential stores,
-# ambient MCP discovery, update/install flows, or child-process config paths that
-# bypass NemoClaw's managed inference, policy, and integrity-bound MCP boundaries.
+# ambient MCP discovery, update/install flows, first-run model selection, or
+# child-process config paths that bypass NemoClaw's managed inference, policy,
+# and integrity-bound MCP boundaries.
 # sourceBoundary: deepagents-code owns those Python entrypoints; NemoClaw owns the
 # sandbox image posture and therefore validates every patched symbol before build.
 # whyNotSourceFix: upstream 0.1.30 has no single managed-runtime hook that can
@@ -274,6 +275,29 @@ async def _nemoclaw_skip_launch_tavily(self) -> None:
     return None
 
 
+async def _nemoclaw_skip_launch_model(
+    self,
+) -> "tuple[bool, tuple[str, str] | None]":
+    """Skip model picker during first-run; NemoClaw owns model configuration."""
+    return (False, None)
+
+
+def _nemoclaw_skip_launch_dependencies_prompt(self):
+    """Return a pre-resolved dependency result that skips the model picker.
+
+    The mount path pre-builds the model screen and passes it as
+    continue_screen to the name prompt, bypassing
+    _prompt_launch_dependencies_then_model. This override returns None
+    as the screen (so no model picker is pushed after the name prompt)
+    and a pre-resolved future with (False, None).
+    """
+    import asyncio
+    loop = asyncio.get_running_loop()
+    result_future = loop.create_future()
+    result_future.set_result((False, None))
+    return None, result_future
+
+
 async def _nemoclaw_block_model_auth(self, model_spec: str) -> bool:
     del model_spec
     self.notify(_NEMOCLAW_MANAGED_UI_MESSAGE, severity="warning", markup=False)
@@ -315,6 +339,8 @@ DeepAgentsApp._on_auto_approve_enabled = _nemoclaw_block_auto_approve
 DeepAgentsApp.action_toggle_auto_approve = _nemoclaw_block_auto_approve
 DeepAgentsApp._set_rubric_model = _nemoclaw_block_rubric_model
 DeepAgentsApp._prompt_launch_tavily = _nemoclaw_skip_launch_tavily
+DeepAgentsApp._prompt_launch_dependencies_then_model = _nemoclaw_skip_launch_model
+DeepAgentsApp._build_launch_dependencies_prompt = _nemoclaw_skip_launch_dependencies_prompt
 DeepAgentsApp._prompt_model_auth_if_needed = _nemoclaw_block_model_auth
 DeepAgentsApp._show_auth_manager = _nemoclaw_block_auth_manager
 DeepAgentsApp._enter_service_api_key = _nemoclaw_block_service_key
@@ -1018,6 +1044,8 @@ def main() -> None:
             "_handle_update_action",
             "_handle_update_command",
             "_install_extra",
+            "_prompt_launch_dependencies_then_model",
+            "_build_launch_dependencies_prompt",
             "_prompt_launch_tavily",
             "_prompt_model_auth_if_needed",
             "_show_auth_manager",
