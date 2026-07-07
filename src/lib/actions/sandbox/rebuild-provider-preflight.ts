@@ -47,7 +47,7 @@ function openshellReportsStructuredProviderNotFound(detail: string): boolean {
   return bounded
     .split(/\r?\n/)
     .some((line) =>
-      /\bstatus:\s*NotFound\b[^\r\n]*\bmessage:\s*["']provider not found["']/i.test(line),
+      /\bstatus:\s*NotFound\s*,\s*message:\s*["']provider not found["'](?:\s*,|$)/i.test(line),
     );
 }
 
