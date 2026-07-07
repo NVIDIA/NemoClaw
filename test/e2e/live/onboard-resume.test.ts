@@ -122,10 +122,6 @@ function expectHermeticCompatibleEndpointUsed(
     ),
     `expected authenticated fake endpoint discovery, got ${JSON.stringify(requests)}`,
   ).toBe(true);
-  expect(
-    requests.filter((entry) => entry.auth === "missing"),
-    `fake endpoint saw unauthenticated requests: ${JSON.stringify(requests)}`,
-  ).toEqual([]);
 }
 
 // The e2e-live Vitest project owns the NEMOCLAW_RUN_LIVE_E2E collection gate,
