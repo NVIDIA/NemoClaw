@@ -244,6 +244,14 @@ const TEST_CUSTOM_OPENAI_CONFIG = {
   endpointUrl: TEST_OPENAI_ENDPOINT_URL,
   helpUrl: null,
 };
+// Shared expected 4th arg for probeOpenAiLikeEndpoint; pinnedAddresses is what
+// the injected resolveEndpointHost returns via the SSRF preflight (#6293).
+const EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS = {
+  requireResponsesToolCalling: true,
+  skipResponsesProbe: false,
+  probeStreaming: true,
+  pinnedAddresses: ["93.184.216.34"],
+};
 const TEST_CUSTOM_ANTHROPIC_CONFIG = {
   label: "Other Anthropic-compatible endpoint",
   endpointUrl: TEST_ANTHROPIC_ENDPOINT_URL,
@@ -3032,11 +3040,7 @@ const { setupNim } = require(${onboardPath});
         "https://ollama.public.test:11434/v1",
         "my-model",
         "ollama-key",
-        {
-          requireResponsesToolCalling: true,
-          skipResponsesProbe: false,
-          probeStreaming: true,
-        },
+        EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS,
       );
     } finally {
       restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);
@@ -3093,11 +3097,7 @@ const { setupNim } = require(${onboardPath});
         "https://openai-proxy.example.com/v1",
         "gpt-4o",
         "sk-test",
-        {
-          requireResponsesToolCalling: true,
-          skipResponsesProbe: false,
-          probeStreaming: true,
-        },
+        EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS,
       );
     } finally {
       restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);
