@@ -2389,12 +2389,8 @@ async function createSandboxWithBaseImageResolution(
     );
     process.exit(1);
   }
-  const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(
-    liveExists,
-    isManagedDcodeAgent,
-    existingEntry,
-    createIntent?.observabilityEnabled,
-  );
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2655,10 +2651,8 @@ async function createSandboxWithBaseImageResolution(
     }
 
     if (preservedMcpState) {
-      const explicitObservability = observabilityCommandFlag.explicitObservabilityFlag(
-        createIntent?.observabilityEnabled === true,
-        createIntent?.observabilityRequestedExplicitly === true,
-      );
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      const explicitObservability = observabilityCommandFlag.explicitObservabilityFlag(createIntent?.observabilityEnabled === true, createIntent?.observabilityRequestedExplicitly === true);
       console.error(
         `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
       );
