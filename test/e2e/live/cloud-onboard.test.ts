@@ -72,24 +72,63 @@ async function assertPackagedInitialCliPairing(sandbox: SandboxClient): Promise<
     trustedSandboxShellScript(String.raw`
 set -euo pipefail
 auto_pair_log=/tmp/auto-pair.log
+device_id="$(python3 - <<'PY'
+import json
+from pathlib import Path
+
+identity = json.loads(
+    Path("/sandbox/.openclaw/identity/device.json").read_text(encoding="utf-8")
+)
+device_id = str(identity.get("deviceId") or "").strip()
+if not device_id:
+    raise SystemExit("CLI identity has no deviceId")
+print(device_id)
+PY
+)"
+marker_count_before="$(grep -c 'approved initial CLI pairing request=' "$auto_pair_log" 2>/dev/null || true)"
+if ! (
+  unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN
+  openclaw devices remove "$device_id" --json
+) >/tmp/nemoclaw-6113-device-remove.json 2>/tmp/nemoclaw-6113-device-remove.err; then
+  echo "CANONICAL_DEVICE_REMOVE_FAILED" >&2
+  cat /tmp/nemoclaw-6113-device-remove.err >&2
+  exit 20
+fi
+
+devices_json=/tmp/nemoclaw-6113-devices.json
+devices_err=/tmp/nemoclaw-6113-devices.err
 attempt=0
-while ! grep -q 'approved initial CLI pairing request=' "$auto_pair_log" 2>/dev/null; do
+while :; do
+  (
+    unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN
+    openclaw devices list --json
+  ) >"$devices_json" 2>"$devices_err" || true
+  marker_count_after="$(grep -c 'approved initial CLI pairing request=' "$auto_pair_log" 2>/dev/null || true)"
+  if [ "$marker_count_after" -gt "$marker_count_before" ]; then
+    break
+  fi
   if [ "$attempt" -ge 30 ]; then
     echo "INITIAL_CLI_PAIRING_MARKER_MISSING" >&2
     cat "$auto_pair_log" >&2 2>/dev/null || true
-    exit 20
+    exit 21
   fi
   attempt=$((attempt + 1))
   sleep 1
 done
 
-devices_json=/tmp/nemoclaw-6113-devices.json
-devices_err=/tmp/nemoclaw-6113-devices.err
-if ! openclaw devices list --json >"$devices_json" 2>"$devices_err"; then
-  echo "POST_BOOTSTRAP_DEVICES_LIST_FAILED" >&2
-  cat "$devices_err" >&2
-  exit 21
-fi
+attempt=0
+while ! (
+  unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN
+  openclaw devices list --json
+) >"$devices_json" 2>"$devices_err"; do
+  if [ "$attempt" -ge 10 ]; then
+    echo "POST_BOOTSTRAP_DEVICES_LIST_FAILED" >&2
+    cat "$devices_err" >&2
+    exit 22
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
 
 python3 - "$devices_json" <<'PY'
 import json
@@ -126,8 +165,8 @@ approved = {
     for scope in (matches[0].get("approvedScopes") or matches[0].get("scopes") or [])
     if str(scope).strip()
 }
-if "operator.pairing" not in approved:
-    raise SystemExit(f"paired local CLI device lacks operator.pairing: {sorted(approved)}")
+if approved != {"operator.pairing"}:
+    raise SystemExit(f"initial paired local CLI scopes are not bounded: {sorted(approved)}")
 PY
 
 gateway_log=/tmp/gateway.log
@@ -139,29 +178,29 @@ if ! openclaw agent --agent main --json --thinking off --session-id "$session_id
   >"$agent_log" 2>&1; then
   echo "PACKAGED_GATEWAY_AGENT_FAILED" >&2
   cat "$agent_log" >&2
-  exit 22
+  exit 23
 fi
 if grep -Eiq 'EMBEDDED FALLBACK|gateway connect failed|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' "$agent_log"; then
   echo "PACKAGED_GATEWAY_AGENT_FELL_BACK" >&2
   cat "$agent_log" >&2
-  exit 23
+  exit 24
 fi
 if [ ! -s "$agent_log" ]; then
   echo "PACKAGED_GATEWAY_AGENT_EMPTY" >&2
-  exit 24
+  exit 25
 fi
 after_runs="$(grep -Ec '\[agent\] run [^ ]+ ended with stopReason=' "$gateway_log" 2>/dev/null || true)"
 if [ "$after_runs" -le "$before_runs" ]; then
   echo "PACKAGED_GATEWAY_RUN_NOT_RECORDED before=$before_runs after=$after_runs" >&2
   cat "$agent_log" >&2
-  exit 25
+  exit 26
 fi
 echo "NEMOCLAW_6113_PACKAGED_BOOTSTRAP_OK"
 `),
     {
       artifactName: "phase-2-packaged-initial-cli-pairing",
       env: env(),
-      timeoutMs: 180_000,
+      timeoutMs: 300_000,
     },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
