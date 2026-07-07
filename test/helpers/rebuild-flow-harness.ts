@@ -100,6 +100,7 @@ export type RebuildFlowOverrides = {
   recoveryManifestValidation?: (
     manifest: Record<string, unknown>,
   ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
+  managedImageEvidence?: boolean;
   updateSession?: () => void;
   dcodeRouteResults?: Array<{ ok: true } | { ok: false; detail: string }>;
   gatewayRecoveryResult?: Record<string, unknown>;
@@ -112,6 +113,7 @@ export type RebuildFlowOverrides = {
     | { ok: false; detail: string };
   openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
   preflightMessagingConflicts?: () => Promise<void> | void;
+  preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
@@ -445,7 +447,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         ? makePreparedRecoveryManifest()
         : overrides.preDeleteLatestManifest) as ReturnType<typeof sandboxState.getLatestBackup>,
   );
-  vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(true);
+  vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(
+    overrides.managedImageEvidence ?? true,
+  );
   const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
     overrides.restoreSandboxState ??
       (() => ({
@@ -487,7 +491,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   );
   const preflightAuthoritativeRebuildTargetSpy = vi
     .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")
-    .mockResolvedValue(undefined);
+    .mockImplementation(async (options: unknown) => {
+      await overrides.preflightAuthoritativeRebuildTarget?.(
+        (options ?? {}) as Record<string, unknown>,
+      );
+    });
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
     .mockImplementation((_sandboxName: unknown, presetName: unknown) => {

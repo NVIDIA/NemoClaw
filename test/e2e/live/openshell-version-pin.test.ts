@@ -310,9 +310,8 @@ async function runVersionPinTarget(
   artifacts: ArtifactSink,
   options: { ghDownloadMode: GhDownloadMode },
 ): Promise<void> {
-  await artifacts.writeJson("target.json", {
+  await artifacts.target.declare({
     id: "openshell-version-pin",
-    runner: "vitest",
     boundary: "installer-script-unit",
     regressionTarget: "#3474",
     ghDownloadMode: options.ghDownloadMode,

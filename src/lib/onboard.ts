@@ -3171,7 +3171,7 @@ type SetupNimSelectionState =
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-type RemoteProviderSelectionArgs = { selected: ProviderChoice; requestedModel: string | null; recoveredFromSandbox: boolean; recoveredModel: string | null; sandboxName: string | null };
+type RemoteProviderSelectionArgs = { selected: ProviderChoice; requestedModel: string | null; recoveredFromSandbox: boolean; recoveredModel: string | null; sandboxName: string | null; intendedInferenceApi: string | null };
 
 async function handleVllmSelection(
   state: SetupNimSelectionState,
@@ -3434,7 +3434,7 @@ async function handleNimLocalSelection(
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, state: SetupNimSelectionState, recoveredRegistryRoute: RebuildRouteHandoff["route"] | null): Promise<SetupNimSelectionResult> {
-  const { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName } = args;
+  const { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName, intendedInferenceApi } = args;
   const remoteConfig = REMOTE_PROVIDER_CONFIG[selected.key];
   state.provider = remoteConfig.providerName;
   state.credentialEnv = remoteConfig.credentialEnv;
@@ -3673,12 +3673,10 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
 
       const validationResult = state.reuseGatewayCredentialWithoutLocalKey
         ? "selected"
-        : await validateSelectedRemoteModel({
-            selected,
-            remoteConfig,
-            state,
-            selectedCredentialEnv,
-          });
+        : await validateSelectedRemoteModel(
+            // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+            { selected, remoteConfig, state, selectedCredentialEnv, intendedInferenceApi },
+          );
       if (validationResult === "selected") break;
       if (validationResult === "retry-selection") return "retry-selection";
     }
@@ -4447,8 +4445,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       process.exit(1);
     }
 
-    type CoreOnboardFlowContext = InitialOnboardFlowContext;
-    const coreFlowContext: CoreOnboardFlowContext = {
+    const coreFlowContext: InitialOnboardFlowContext = {
       ...initialContext,
       session,
       sandboxName,
@@ -4459,9 +4456,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
 
     const [providerInferencePhase, sandboxPhase] =
-      createCoreOnboardFlowPhases<CoreOnboardFlowContext>({
+      createCoreOnboardFlowPhases<InitialOnboardFlowContext>({
         forceProviderSelection: forceProviderSelectionForAgentChange,
-        authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+        ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
         env: process.env,
         constants: {
           hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
@@ -4599,7 +4596,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
     const webSearchSupported = coreContext.webSearchSupported;
 
-    const finalFlowContext: CoreOnboardFlowContext = {
+    const finalFlowContext: InitialOnboardFlowContext = {
       ...coreContext,
       session,
       sandboxName,
@@ -4617,7 +4614,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     let liveFinalFlowContext = finalFlowContext;
 
     const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
-      CoreOnboardFlowContext,
+      InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,
       import("./verify-deployment").VerifyDeploymentResult
     >({

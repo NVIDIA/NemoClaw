@@ -8,9 +8,16 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  readJsonFileOr,
+  restoreFile,
+  snapshotFile,
+  writeJsonFile,
+} from "../fixtures/file-state.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -69,11 +76,6 @@ const SANDBOX_CREATE_TIMEOUT_MS = 10 * 60_000;
 const REBUILD_TIMEOUT_MS = 45 * 60_000;
 const LIVE_TIMEOUT_MS = 100 * 60_000;
 
-interface FileSnapshot {
-  exists: boolean;
-  content?: string;
-}
-
 interface RegistryData {
   sandboxes?: Record<string, Record<string, unknown>>;
   defaultSandbox?: string;
@@ -121,32 +123,8 @@ function testEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
   });
 }
 
-function snapshotFile(file: string): FileSnapshot {
-  return fs.existsSync(file)
-    ? { exists: true, content: fs.readFileSync(file, "utf8") }
-    : { exists: false };
-}
-
 function fail(message: string): never {
   throw new Error(message);
-}
-
-function restoreFile(file: string, snapshot: FileSnapshot): void {
-  snapshot.exists ? restoreExistingFile(file, snapshot) : fs.rmSync(file, { force: true });
-}
-
-function restoreExistingFile(file: string, snapshot: FileSnapshot): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, snapshot.content ?? "", "utf8");
-}
-
-function readJsonFile<T>(file: string, fallback: T): T {
-  return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as T) : fallback;
-}
-
-function writeJsonFile(file: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function expectedHermesVersion(): string {
@@ -156,10 +134,6 @@ function expectedHermesVersion(): string {
     expect.any(String),
   );
   return match![1].trim();
-}
-
-function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
 }
 
 function expectEqual(actual: string | undefined, expected: string, message: string): void {
@@ -251,7 +225,7 @@ async function waitForSandboxReady(host: HostCliClient, apiKey: string): Promise
 }
 
 function seedRegistryAndSession(dashboardPort: number): SessionArtifactSummary {
-  const registry = readJsonFile<RegistryData>(REGISTRY_FILE, {});
+  const registry = readJsonFileOr<RegistryData>(REGISTRY_FILE, {});
   registry.sandboxes = registry.sandboxes ?? {};
 
   const credentialHash = createHash("sha256").update(DISCORD_FAKE_TOKEN).digest("hex");
@@ -361,7 +335,7 @@ function registryVersion(): unknown {
 }
 
 function registrySandbox(): Record<string, unknown> {
-  const sandbox = readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME];
+  const sandbox = readJsonFileOr<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME];
   expect(sandbox, `registry entry missing for ${SANDBOX_NAME}`).toBeDefined();
   return sandbox as Record<string, unknown>;
 }

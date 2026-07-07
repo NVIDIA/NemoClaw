@@ -959,7 +959,7 @@ runner.runCapture = (command) => {
       "  Provider: hermes-provider",
       "  Model: moonshotai/kimi-k2.6",
       "  Version: 1",
-    ].join("\\n");
+    ].join("\n");
   }
   return "";
 };

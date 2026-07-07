@@ -70,7 +70,7 @@ liveTest(
   "Jetson nvmap GPU onboard grants device-node group and reports verified CUDA",
   { timeout: TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, skip }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "jetson-nvmap-gpu",
       issue: 4231,
       boundary:

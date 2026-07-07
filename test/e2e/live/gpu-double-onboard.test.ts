@@ -4,9 +4,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -37,10 +37,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     OPENSHELL_GATEWAY: "nemoclaw",
     ...extra,
   };
-}
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 async function nemoclaw(
@@ -151,7 +147,7 @@ liveTest(
   "gpu double onboard keeps Ollama auth proxy token consistent after re-onboard",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, skip }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "gpu-double-onboard",
       sandboxName: SANDBOX_NAME,
       proxyPort: PROXY_PORT,
@@ -287,7 +283,7 @@ liveTest(
     const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
     const registryText = fs.existsSync(registryFile) ? fs.readFileSync(registryFile, "utf8") : "";
     expect(registryText).not.toContain(SANDBOX_NAME);
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "gpu-double-onboard",
       status: "passed",
     });

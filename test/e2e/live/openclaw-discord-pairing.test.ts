@@ -46,7 +46,7 @@ test.skipIf(!shouldRunLiveE2E())(
     });
     const redactions = pairingRedactions({ apiKey, discordToken: DISCORD_TOKEN });
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "openclaw-discord-pairing",
       boundary:
         "install.sh Discord OpenClaw sandbox + fake Discord Gateway token rewrite + runtime pairing request + connect-shell approval",
