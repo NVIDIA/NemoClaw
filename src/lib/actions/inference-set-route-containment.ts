@@ -11,6 +11,18 @@ import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import { InferenceSetError } from "./inference-set-error";
 
+/**
+ * Custom-route compatibility is intentionally checked twice. The invalid state
+ * is a requested endpoint whose DNS-pinned identity differs from the route that
+ * passed the preliminary registry check. The source boundary is the
+ * operator-supplied `--endpoint-url`; DNS validation is asynchronous, so the
+ * synchronous preparation phase cannot safely pin it. Finalization therefore
+ * validates the pinned URL against a fresh registry snapshot before any route,
+ * config, or registry mutation. The DNS-change regression test in
+ * inference-set-gateway-route-containment.test.ts protects this boundary.
+ * Collapse these phases only when preparation can consume fully DNS-validated
+ * metadata without introducing an earlier mutation or endpoint probe.
+ */
 export type RegistryInferenceMetadata = Pick<
   SandboxEntry,
   "endpointUrl" | "credentialEnv" | "preferredInferenceApi" | "nimContainer"

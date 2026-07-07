@@ -339,6 +339,17 @@ An aligned group cannot move to a wholly new route one sandbox at a time because
 Back up each workspace, remove or migrate the peer sandboxes, switch the last sandbox on the original gateway, then re-onboard the peers with that same route or with separate gateway ports.
 
 If the error names incomplete legacy custom-route metadata, back up and remove the affected sandbox, then re-onboard it with an explicit custom endpoint and API family.
+For an OpenAI-compatible route, replace the example endpoint, model, and sandbox name in this recovery sequence:
+
+```bash
+$$nemoclaw legacy-sandbox destroy
+NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=https://endpoint.example/v1 \
+  NEMOCLAW_MODEL=your-model-id \
+  NEMOCLAW_PREFERRED_API=openai-completions \
+  $$nemoclaw onboard --name legacy-sandbox
+```
+
 If the error names an invalid gateway binding, restore the affected row's known-good `gatewayName` and `gatewayPort` metadata from a trusted backup; otherwise back up and remove the sandbox, then re-onboard it.
 Do not guess or copy a binding from another sandbox because lifecycle commands use it to select the gateway.
 

@@ -10,6 +10,10 @@ import type { ConfigObject } from "../security/credential-filter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
+import {
+  finalizeInferenceSetRoute,
+  prepareInferenceSetRoute,
+} from "./inference-set-route-containment";
 
 const entry = (name: string, overrides: Partial<SandboxEntry> = {}): SandboxEntry => ({
   name,
@@ -240,6 +244,48 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("catches a DNS change between the preliminary and finalized gateway route checks", async () => {
+    const firstEndpoint = "https://first.example.test/v1";
+    const secondEndpoint = "https://second.example.test/v1";
+    const customRoute = {
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: firstEndpoint,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    } as const;
+    const alpha = entry("alpha", customRoute);
+    const peer = entry("custom-peer", customRoute);
+    const prepared = prepareInferenceSetRoute({
+      entry: alpha,
+      sandboxName: alpha.name,
+      provider: customRoute.provider,
+      model: customRoute.model,
+      customRoute: {
+        endpointUrl: firstEndpoint,
+        credentialEnv: customRoute.credentialEnv,
+        inferenceApi: customRoute.preferredInferenceApi,
+      },
+      session: null,
+      sandboxes: [alpha, peer],
+    });
+    const rewriteUrlWithDnsPinning = vi.fn().mockResolvedValueOnce(secondEndpoint);
+
+    await expect(
+      finalizeInferenceSetRoute({
+        prepared,
+        sandboxName: alpha.name,
+        provider: customRoute.provider,
+        model: customRoute.model,
+        getSandboxes: () => [alpha, peer],
+        rewriteUrlWithDnsPinning,
+      }),
+    ).rejects.toThrow("custom-peer");
+
+    expect(rewriteUrlWithDnsPinning).toHaveBeenCalledOnce();
+    expect(rewriteUrlWithDnsPinning).toHaveBeenCalledWith(firstEndpoint);
   });
 
   it("blocks an incomplete legacy custom target even without a peer (#6315)", async () => {
