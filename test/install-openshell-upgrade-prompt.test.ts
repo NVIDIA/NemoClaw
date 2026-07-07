@@ -119,8 +119,12 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain("requires explicit opt-in");
-    expect(result.stdout + result.stderr).toContain(
-      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1",
+    const output = result.stdout + result.stderr;
+    expect(output).toContain(
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash",
+    );
+    expect(output).not.toContain(
+      "NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE=1",
     );
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("");

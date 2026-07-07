@@ -77,9 +77,7 @@ export function revalidatePreparedRecoveryBeforeDelete(
 } {
   if (!candidate) return { manifest: null, registrySnapshot };
 
-  const refreshedRegistrySnapshot = JSON.parse(
-    JSON.stringify(registry.load()),
-  ) as registry.SandboxRegistry;
+  const refreshedRegistrySnapshot = registry.load();
   const currentEntry = refreshedRegistrySnapshot.sandboxes[sandboxName];
   if (!currentEntry) {
     return failPreparedRecoveryPreDelete(

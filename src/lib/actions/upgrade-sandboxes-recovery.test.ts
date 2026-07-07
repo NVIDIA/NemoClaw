@@ -264,6 +264,9 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
 
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(console.warn).toHaveBeenCalledWith(
+      '  Warning: confirmed legacy managed-image sandbox "other-box" is not registered; ignoring it.',
+    );
   });
 
   it.each([

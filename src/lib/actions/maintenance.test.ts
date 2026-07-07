@@ -385,7 +385,10 @@ describe("backupAll", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("fails with actionable guidance when a running sandbox is unreachable and the skip flag is unset", async () => {
+  it.each([
+    ["standalone backup", "", true],
+    ["installer-strict backup", "1", false],
+  ])("emits mode-appropriate unreachable guidance for %s (#6114)", async (_mode, requireAll, expectSkipGuidance) => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-bad" }],
       defaultSandbox: null,
@@ -405,6 +408,7 @@ describe("backupAll", () => {
     }));
 
     delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = requireAll;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
@@ -413,7 +417,10 @@ describe("backupAll", () => {
     await expect(backupAll()).rejects.toThrow("exit:1");
 
     const errorOutput = errorSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(errorOutput).toContain("NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1");
+    expect(errorOutput.includes("NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1")).toBe(
+      expectSkipGuidance,
+    );
+    expect(errorOutput.includes("Strict pre-upgrade backup cannot skip")).toBe(!expectSkipGuidance);
 
     errorSpy.mockRestore();
     exitSpy.mockRestore();

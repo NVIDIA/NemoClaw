@@ -1867,8 +1867,13 @@ print_openshell_upgrade_manual_commands() {
     NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all
     openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy
     sudo pkill -f openshell-gateway  # if a privileged host gateway process remains
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE=1 bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
     ${_CLI_BIN} upgrade-sandboxes --check
+
+  The prepared installer rerun lists pre-fingerprint sandboxes and asks you to
+  confirm their managed-image provenance. For a non-interactive rerun, set
+  NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE=1 only after verifying every listed
+  sandbox used a NemoClaw-managed image.
 
   Use NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to allow the installer
   to run the backup, gateway retirement, and restore preparation automatically.

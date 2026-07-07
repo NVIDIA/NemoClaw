@@ -262,6 +262,14 @@ export async function upgradeSandboxes(
   const confirmedLegacyManagedNames = recoverPreparedBackups
     ? confirmedLegacyManagedRecoveryNames()
     : new Set<string>();
+  const registeredSandboxNames = new Set(sandboxes.map((sandbox) => sandbox.name));
+  for (const name of confirmedLegacyManagedNames) {
+    if (registeredSandboxNames.has(name)) continue;
+    console.warn(
+      `  Warning: confirmed legacy managed-image sandbox ${JSON.stringify(name)} is not registered; ignoring it.`,
+    );
+    confirmedLegacyManagedNames.delete(name);
+  }
   let recoveryCandidates: registry.SandboxEntry[] = [];
   if (recoverPreparedBackups) {
     const gatewayEligible = sandboxes.filter((sandbox) =>

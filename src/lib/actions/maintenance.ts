@@ -128,12 +128,18 @@ export async function backupAll(): Promise<void> {
       console.error(
         `  ${unreachableRunning} running sandbox(es) could not be backed up because their in-sandbox SSH endpoint did not answer.`,
       );
-      console.error(
-        `  To upgrade now and recover them afterwards from their latest validated backup, re-run with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1. Any uncommitted state since the last successful backup will be lost.`,
-      );
-      console.error(
-        `  To preserve their current state first, stop the affected container (so it is skipped as not running) or restore its gateway health, then run '${CLI_NAME} backup-all' again.`,
-      );
+      if (requireAll) {
+        console.error(
+          `  Strict pre-upgrade backup cannot skip these sandboxes. Restore their gateway health, then run '${CLI_NAME} backup-all' again. To accept an existing validated backup instead, prepare the upgrade manually.`,
+        );
+      } else {
+        console.error(
+          `  To upgrade now and recover them afterwards from their latest validated backup, re-run with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1. Any uncommitted state since the last successful backup will be lost.`,
+        );
+        console.error(
+          `  To preserve their current state first, stop the affected container (so it is skipped as not running) or restore its gateway health, then run '${CLI_NAME} backup-all' again.`,
+        );
+      }
     }
   }
   if (requireAll && skipped > 0) {
