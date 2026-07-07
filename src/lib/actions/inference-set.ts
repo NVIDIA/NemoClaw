@@ -549,6 +549,11 @@ function normalizeEndpointUrlShape(value: string): { url: URL; normalized: strin
   };
 }
 
+// Message prefix for the SSRF/DNS-pinning rejection thrown below. Kept as a
+// shared constant so the catch in explicitCustomProviderMetadata can recognise
+// exactly this case (and only this case) when it appends switch-model guidance.
+export const ENDPOINT_URL_NOT_ALLOWED_PREFIX = "endpoint-url is not allowed:";
+
 export async function normalizeCustomEndpointUrl(
   value: string | null | undefined,
   rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
@@ -588,7 +593,7 @@ export async function normalizeCustomEndpointUrl(
     return normalizeEndpointUrlShape(validated).normalized;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new InferenceSetError(`endpoint-url is not allowed: ${message}`, 2);
+    throw new InferenceSetError(`${ENDPOINT_URL_NOT_ALLOWED_PREFIX} ${message}`, 2);
   }
 }
 
@@ -664,7 +669,16 @@ async function explicitCustomProviderMetadata(
     // same-provider model switch. Genuinely changing to a different endpoint
     // still (correctly) goes through onboard/rebuild, where the change is
     // reviewed against the intended provider setup.
-    if (sandboxAlreadyOnProvider && error instanceof InferenceSetError) {
+    // Only augment the SSRF/DNS-pinning rejection (the `endpoint-url is not
+    // allowed: ...` case). Other InferenceSetErrors from normalizeCustomEndpointUrl
+    // — a missing URL ("endpoint-url is required ...") or a malformed one — would
+    // read as contradictory advice ("required ... omit --endpoint-url"), so leave
+    // those untouched.
+    if (
+      sandboxAlreadyOnProvider &&
+      error instanceof InferenceSetError &&
+      error.message.startsWith(ENDPOINT_URL_NOT_ALLOWED_PREFIX)
+    ) {
       throw new InferenceSetError(
         `${error.message} This sandbox is already configured for '${provider}'. ` +
           `To switch only the model, omit --endpoint-url — inference set reuses the endpoint ` +

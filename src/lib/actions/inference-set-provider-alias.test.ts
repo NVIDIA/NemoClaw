@@ -277,6 +277,40 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     );
     await expect(attempt).rejects.not.toThrow(/omit --endpoint-url/);
   });
+
+  it("does NOT append the switch-model hint to a non-SSRF endpoint error (missing URL is not contradicted)", async () => {
+    // Passing --credential-env without --endpoint-url on a same-provider sandbox
+    // makes hasExplicitCustomMetadata true, so normalizeCustomEndpointUrl throws
+    // "endpoint-url is required ...". The guidance is scoped to the SSRF/blocked
+    // case only, so that message must NOT gain a contradictory "omit
+    // --endpoint-url" tail.
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
+    });
+
+    const attempt = runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "nvidia/model-b",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        noVerify: true,
+      },
+      deps,
+    );
+    await expect(attempt).rejects.toThrow(/endpoint-url is required/);
+    await expect(attempt).rejects.not.toThrow(/omit --endpoint-url/);
+    // The guard is never consulted — the missing-URL check trips first.
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+  });
 });
 
 describe("installer alias parity with onboard provider config — facet 1 drift guard (#6321)", () => {
