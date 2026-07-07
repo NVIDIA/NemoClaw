@@ -66,11 +66,9 @@ describe("createRebuildCommandContext bail behaviour (#6376)", () => {
     // 'X' has an incomplete MCP destroy transaction ...`) exited 1 with NO
     // output, leaving the user without a diagnosis.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code ?? 0})`);
-      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
 
     const ctx = createRebuildCommandContext([], { throwOnError: false });
     expect(() => ctx.bail("Failed to preserve MCP bridges before rebuild: reason X", 1)).toThrow(
@@ -87,11 +85,9 @@ describe("createRebuildCommandContext bail behaviour (#6376)", () => {
 
   it("still exits with the requested code even when the message is empty (backward compat)", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code ?? 0})`);
-      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
 
     const ctx = createRebuildCommandContext([], { throwOnError: false });
     expect(() => ctx.bail("", 2)).toThrow("process.exit(2)");

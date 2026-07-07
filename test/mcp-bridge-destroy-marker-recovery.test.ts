@@ -37,7 +37,10 @@ interface SandboxMcpSnapshot {
   destroyPendingAt?: string;
 }
 
-function runNodeScript(home: string, script: string): { status: number | null; stdout: string; stderr: string } {
+function runNodeScript(
+  home: string,
+  script: string,
+): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
     encoding: "utf8",
