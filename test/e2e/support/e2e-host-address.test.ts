@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { parseHostAddressProbe } from "../fixtures/host-address.ts";
+import { type CommandRunner } from "../fixtures/clients/command.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { discoverHostAddress, parseHostAddressProbe } from "../fixtures/host-address.ts";
 
 describe("host address discovery", () => {
   it.each([
@@ -12,4 +14,22 @@ describe("host address discovery", () => {
     ["darwin-ifconfig 10.1.2.3\n", { source: "darwin-ifconfig", address: "10.1.2.3" }],
     ["", { source: "loopback", address: "127.0.0.1" }],
   ])("parses %j", (output, expected) => expect(parseHostAddressProbe(output)).toEqual(expected));
+
+  it("rejects failed host probes before parsing fallback output", async () => {
+    const runner: CommandRunner = {
+      run: async (command) => ({
+        command: [command.command, ...command.args],
+        exitCode: 127,
+        signal: null,
+        timedOut: false,
+        stdout: "loopback 127.0.0.1\n",
+        stderr: "bash: command not found\n",
+        artifacts: { stdout: "stdout.txt", stderr: "stderr.txt", result: "result.json" },
+      }),
+    };
+
+    await expect(discoverHostAddress(new HostCliClient(runner))).rejects.toThrow(
+      /host address discovery failed/,
+    );
+  });
 });
