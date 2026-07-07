@@ -146,12 +146,14 @@ make_capture_dir() {
 run_tui_expect() {
   local raw_capture_file="$1"
   local marker_capture_file="$2"
+  local expect_name_prompt="$3"
   env \
     NEMOCLAW_TUI_CAPTURE="$raw_capture_file" \
     NEMOCLAW_TUI_MARKERS="$marker_capture_file" \
     NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN" \
     NEMOCLAW_TUI_NAME_PROMPT_PATTERN="$TUI_NAME_PROMPT_PATTERN" \
     NEMOCLAW_TUI_READY_PATTERN="$TUI_READY_PATTERN" \
+    NEMOCLAW_TUI_EXPECT_NAME_PROMPT="$expect_name_prompt" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
     expect <<'EXPECT'
@@ -162,6 +164,7 @@ set markers $env(NEMOCLAW_TUI_MARKERS)
 set first_run_pattern $env(NEMOCLAW_TUI_FIRST_RUN_PATTERN)
 set name_prompt_pattern $env(NEMOCLAW_TUI_NAME_PROMPT_PATTERN)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
+set expect_name_prompt $env(NEMOCLAW_TUI_EXPECT_NAME_PROMPT)
 log_file -a $capture
 
 proc append_marker {markers marker} {
@@ -173,40 +176,48 @@ proc append_marker {markers marker} {
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
 
-# The name screen is mounted on the first frame when onboarding is pending.
-# Give it a short, bounded window; when it is absent, submit the readiness
-# command directly to the normal chat input.
-set timeout 10
-expect {
-  -nocase -re $name_prompt_pattern {
-    append_marker $markers "$expect_out(0,string)"
-    append_marker $markers "NEMOCLAW_TUI_NAME_PROMPT"
-    puts "\nNEMOCLAW_TUI_NAME_PROMPT"
-    # The prompt copy can render just before its input receives focus. Let the
-    # first frame settle, then submit the empty optional name accepted by 0.1.34.
-    after 500
-    send -- "\r"
-    after 500
-    send -- "/help\r"
-    append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
+# DCode's own onboarding predicate is sampled immediately before launch. This
+# avoids guessing from a short negative observation while imports/first paint
+# are still in flight (which could otherwise type `/help` into the name field).
+if {$expect_name_prompt eq "1"} {
+  set timeout $env(NEMOCLAW_TUI_TIMEOUT)
+  expect {
+    -nocase -re $name_prompt_pattern {
+      append_marker $markers "$expect_out(0,string)"
+      append_marker $markers "NEMOCLAW_TUI_NAME_PROMPT"
+      puts "\nNEMOCLAW_TUI_NAME_PROMPT"
+      # The prompt copy can render just before its input receives focus. Let the
+      # first frame settle, then submit the empty optional name accepted by 0.1.34.
+      after 500
+      send -- "\r"
+      after 500
+      send -- "/help\r"
+      append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
+    }
+    -nocase -re $first_run_pattern {
+      append_marker $markers "$expect_out(0,string)"
+      append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+      puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+      send -- "\003"
+      exit 24
+    }
+    timeout {
+      append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
+      puts "\nNEMOCLAW_TUI_TIMEOUT"
+      send -- "\003"
+      exit 20
+    }
+    eof {
+      append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
+      puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
+      exit 21
+    }
   }
-  -nocase -re $first_run_pattern {
-    append_marker $markers "$expect_out(0,string)"
-    append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
-    puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
-    send -- "\003"
-    exit 24
-  }
-  timeout {
-    append_marker $markers "NEMOCLAW_TUI_NO_NAME_PROMPT"
-    send -- "/help\r"
-    append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
-  }
-  eof {
-    append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
-    puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
-    exit 21
-  }
+} else {
+  append_marker $markers "NEMOCLAW_TUI_NO_NAME_PROMPT"
+  after 1000
+  send -- "/help\r"
+  append_marker $markers "NEMOCLAW_TUI_HELP_SUBMITTED"
 }
 
 set ready_match ""
@@ -313,14 +324,15 @@ main() {
     exit 1
   fi
 
-  local probe_output
-  if ! probe_output="$(sandbox_exec 'if test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1; then printf "NEMOCLAW_DCODE_PROBE:deepagents\n"; else printf "NEMOCLAW_DCODE_PROBE:other\n"; fi')"; then
+  local probe_output expect_name_prompt
+  if ! probe_output="$(sandbox_exec 'if test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1; then printf "NEMOCLAW_DCODE_PROBE:deepagents\n"; python3 -c "from deepagents_code.onboarding import should_run_onboarding; print(\"NEMOCLAW_DCODE_ONBOARDING:\" + (\"pending\" if should_run_onboarding() else \"complete\"))"; else printf "NEMOCLAW_DCODE_PROBE:other\n"; fi')"; then
     fail_test "unable to probe sandbox '${SANDBOX_NAME}' for Deep Agents Code markers"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
   fi
   case "$probe_output" in
-    *NEMOCLAW_DCODE_PROBE:deepagents*) ;;
+    *NEMOCLAW_DCODE_PROBE:deepagents*NEMOCLAW_DCODE_ONBOARDING:pending*) expect_name_prompt=1 ;;
+    *NEMOCLAW_DCODE_PROBE:deepagents*NEMOCLAW_DCODE_ONBOARDING:complete*) expect_name_prompt=0 ;;
     *NEMOCLAW_DCODE_PROBE:other*)
       info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
       exit 0
@@ -360,7 +372,7 @@ main() {
 
   local expect_rc
   set +e
-  run_tui_expect "$raw_capture_file" "$marker_capture_file" >"$expect_log_file" 2>&1
+  run_tui_expect "$raw_capture_file" "$marker_capture_file" "$expect_name_prompt" >"$expect_log_file" 2>&1
   expect_rc=$?
   set -e
 
