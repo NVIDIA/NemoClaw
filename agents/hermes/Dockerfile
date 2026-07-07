@@ -181,6 +181,7 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # prove the SessionDB list contract at build time so a Hermes update cannot
 # silently drift.
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
+    && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python - <<'PY'
 from hermes_state import SessionDB
 
@@ -202,7 +203,7 @@ PY
 # chain tampering of the build context (an attacker rewriting the file has to
 # also rewrite the Dockerfile-committed hash, which reviewers gate). Regenerate
 # with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py}`.
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=100a1bcafeabf815d07b1d5dd707246a402111515936763af9d365b253d1a88f
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=34ef50ea993c776f28312bcf659e908eeae3c07e4094a49e513cb320eee6538f
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=970d7ff03bc409ff1d5ca46bfdbd2a42ac28a32a810ccc147a508301bff38496
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \

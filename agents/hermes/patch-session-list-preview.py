@@ -14,7 +14,8 @@ Source-of-truth note for this localized Hermes runtime patch:
     published Hermes runtime; the source fix belongs upstream in Hermes, not in
     NemoClaw's TypeScript or wrapper code.
   - Regression test: this script's exact occurrence count fails closed when the
-    pinned source shape drifts, and the Dockerfile smoke test creates a
+    pinned source shape drifts, the Dockerfile greps for the patched query
+    pattern after patching, and the Dockerfile smoke test creates a
     `SessionDB`, appends first/latest user turns, and asserts the list preview
     returns `NEMOCLAW_PREVIEW_LATEST`.
   - Removal condition: delete this patch when the pinned Hermes runtime

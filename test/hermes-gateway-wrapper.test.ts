@@ -218,15 +218,14 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     ]);
   });
 
-  it("routes continued one-shot invocations through chat query while preserving model/tool flags (#5254)", () => {
+  it("routes continued one-shot invocations through chat query while preserving provider/skill flags (#5254)", () => {
     const run = runWrapper(
       [
         "-c",
         "daily check",
         "--oneshot=Summarize the latest turn",
-        "--model",
-        "anthropic/claude-sonnet-4",
-        "--toolsets=memory,session_search",
+        "--provider=custom",
+        "--skills=memory,session_search",
         "--ignore-rules",
       ],
       {},
@@ -240,9 +239,9 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       "--quiet",
       "--continue",
       "daily check",
-      "--model",
-      "anthropic/claude-sonnet-4",
-      "--toolsets",
+      "--provider",
+      "custom",
+      "--skills",
       "memory,session_search",
       "--ignore-rules",
     ]);
@@ -318,12 +317,12 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   });
 
   it("routes equals-style resumed one-shot invocations through chat query (#5254)", () => {
-    const run = runWrapper(["--resume=20260612_050401_aa9d27", "--oneshot=Repeat it"], {});
+    const run = runWrapper(["--resume=20260612_050401_aa9d27", "--oneshot=Repeat a=b"], {});
 
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
-    expect(run.realArgs).toBe("chat --query Repeat it --quiet --resume 20260612_050401_aa9d27");
+    expect(run.realArgs).toBe("chat --query Repeat a=b --quiet --resume 20260612_050401_aa9d27");
   });
 
   it("passes positional subcommands through instead of translating nested one-shot flags (#5254)", () => {
@@ -356,10 +355,10 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("--resume 20260612_050401_aa9d27 -- -z Repeat it");
   });
 
-  it("passes multiple resume selectors through instead of translating ambiguous targets (#5254)", () => {
+  it("passes mixed resume selectors through instead of translating ambiguous targets (#5254)", () => {
     const run = runWrapper(
       [
-        "--resume",
+        "--continue",
         "20260612_050401_aa9d27",
         "--resume",
         "20260612_050446_924bd8",
@@ -373,7 +372,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe(
-      "--resume 20260612_050401_aa9d27 --resume 20260612_050446_924bd8 -z Repeat it",
+      "--continue 20260612_050401_aa9d27 --resume 20260612_050446_924bd8 -z Repeat it",
     );
   });
 
