@@ -202,6 +202,23 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(openshellLog).toBe("");
   });
 
+  it("uses generic backup remediation outside the legacy gateway path (#6114)", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+      },
+      { currentBackupSucceeds: false, openshellVersion: "0.0.44" },
+    );
+
+    const output = result.stdout + result.stderr;
+    expect(result.status).not.toBe(0);
+    expect(output).toContain("Resolve every reported sandbox backup failure");
+    expect(output).not.toContain("NEMOCLAW_OPENSHELL_UPGRADE_PREPARED");
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(openshellLog).toBe("");
+  });
+
   it("handles the v0.0.55 OpenShell 0.0.44 shape without an old CLI (#6114)", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       {

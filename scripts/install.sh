@@ -1998,7 +1998,7 @@ preinstall_backup_and_retire_legacy_gateway() {
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
-    error "Pre-upgrade backup failed. Restore every registered sandbox to Ready state and rerun the installer, or manually verify backups and use NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 where supported."
+    error "Pre-upgrade backup failed. Resolve every reported sandbox backup failure and rerun the installer."
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 

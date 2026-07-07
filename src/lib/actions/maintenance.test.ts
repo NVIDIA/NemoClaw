@@ -166,6 +166,9 @@ describe("backupAll", () => {
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(
       "requires every registered sandbox to be backed up",
     );
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Resolve each skipped sandbox using its reason above",
+    );
   });
 
   it("continues backup loop when backupSandboxState throws for one sandbox", async () => {

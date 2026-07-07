@@ -148,7 +148,7 @@ export async function backupAll(): Promise<void> {
       `  Strict pre-upgrade backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
     );
     console.error(
-      "  Restore each sandbox to Ready state and retry. To accept an existing backup instead, prepare the upgrade manually.",
+      "  Resolve each skipped sandbox using its reason above and retry. To accept an existing validated backup instead, prepare the upgrade manually.",
     );
   }
   if (failed > 0 || (requireAll && skipped > 0)) process.exit(1);
