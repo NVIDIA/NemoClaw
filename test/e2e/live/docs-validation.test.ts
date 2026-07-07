@@ -7,16 +7,14 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
 // keeps the old docs E2E phases, but runs them directly through Vitest instead
 // of a former shell wrapper: CLI/docs parity, then local-only Markdown links.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CHECK_DOCS = path.join(REPO_ROOT, "test", "e2e", "e2e-cloud-experimental", "check-docs.sh");
 const BUILD_TIMEOUT_MS = 120_000;
 const DOCS_CHECK_TIMEOUT_MS = 120_000;
-const runDocsValidationTest = shouldRunLiveE2E() ? test : test.skip;
 
 function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
@@ -28,7 +26,7 @@ async function writeNemoclawPathShim(binDir: string): Promise<string> {
   writeExecutable(
     shim,
     `#!/usr/bin/env bash
-exec node ${JSON.stringify(path.join(REPO_ROOT, "bin", "nemoclaw.js"))} "$@"
+exec node ${JSON.stringify(CLI_ENTRYPOINT)} "$@"
 `,
   );
   return shim;
@@ -67,81 +65,76 @@ async function expectNoStaleDistCommandOutputs(): Promise<void> {
   ).toEqual([]);
 }
 
-runDocsValidationTest(
-  "docs validation matches CLI help and local documentation links",
-  { timeout: BUILD_TIMEOUT_MS + DOCS_CHECK_TIMEOUT_MS * 2 },
-  async ({ artifacts, host }) => {
-    await artifacts.writeJson("target.json", {
-      id: "docs-validation",
-      runner: "vitest",
-      boundary: "checkout-local-docs-checks",
-      phases: ["cli-docs-parity", "local-markdown-links"],
-    });
+test("docs validation matches CLI help and local documentation links", {
+  timeout: BUILD_TIMEOUT_MS + DOCS_CHECK_TIMEOUT_MS * 2,
+}, async ({ artifacts, host }) => {
+  await artifacts.target.declare({
+    id: "docs-validation",
+    boundary: "checkout-local-docs-checks",
+    phases: ["cli-docs-parity", "local-markdown-links"],
+  });
 
-    const build = await host.command("npm", ["run", "build:cli"], {
-      artifactName: "docs-validation-build-cli",
-      cwd: REPO_ROOT,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: BUILD_TIMEOUT_MS,
-    });
-    expect(build.exitCode, `CLI build failed\n${build.stdout}${build.stderr}`).toBe(0);
-    await expectNoStaleDistCommandOutputs();
+  const build = await host.command("npm", ["run", "build:cli"], {
+    artifactName: "docs-validation-build-cli",
+    cwd: REPO_ROOT,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: BUILD_TIMEOUT_MS,
+  });
+  expect(build.exitCode, `CLI build failed\n${build.stdout}${build.stderr}`).toBe(0);
+  await expectNoStaleDistCommandOutputs();
 
-    const shimBin = artifacts.pathFor("bin");
-    const homeDir = artifacts.pathFor("home");
-    await fsp.mkdir(homeDir, { recursive: true });
-    const shim = await writeNemoclawPathShim(shimBin);
-    const env = {
-      HOME: homeDir,
-      PATH: `${shimBin}${path.delimiter}${process.env.PATH ?? ""}`,
-      CHECK_DOC_LINKS_REMOTE: "0",
-      NODE: process.execPath,
-    };
+  const shimBin = artifacts.pathFor("bin");
+  const homeDir = artifacts.pathFor("home");
+  await fsp.mkdir(homeDir, { recursive: true });
+  const shim = await writeNemoclawPathShim(shimBin);
+  const env = {
+    HOME: homeDir,
+    PATH: `${shimBin}${path.delimiter}${process.env.PATH ?? ""}`,
+    CHECK_DOC_LINKS_REMOTE: "0",
+    NODE: process.execPath,
+  };
 
-    const prerequisite = await host.command(
-      "bash",
-      ["-lc", "command -v nemoclaw && nemoclaw --version"],
-      {
-        artifactName: "docs-validation-prerequisite",
-        cwd: REPO_ROOT,
-        env,
-        timeoutMs: DOCS_CHECK_TIMEOUT_MS,
-      },
-    );
-    expect(
-      prerequisite.exitCode,
-      `nemoclaw PATH prerequisite failed\n${prerequisite.stdout}${prerequisite.stderr}`,
-    ).toBe(0);
-    const resolvedNemoclaw = prerequisite.stdout
-      .split(/\r?\n/)
-      .find((line) => line.trim().length > 0)
-      ?.trim();
-    expect(resolvedNemoclaw).toBe(shim);
-
-    const cliParity = await host.command("bash", [CHECK_DOCS, "--only-cli"], {
-      artifactName: "docs-validation-cli-parity",
+  const prerequisite = await host.command(
+    "bash",
+    ["-lc", "command -v nemoclaw && nemoclaw --version"],
+    {
+      artifactName: "docs-validation-prerequisite",
       cwd: REPO_ROOT,
       env,
       timeoutMs: DOCS_CHECK_TIMEOUT_MS,
-    });
-    expect(
-      cliParity.exitCode,
-      `CLI / docs parity failed\n${cliParity.stdout}${cliParity.stderr}`,
-    ).toBe(0);
-    expect(cliParity.stdout).toContain("check-docs: running: [cli]");
-    expect(cliParity.stdout).toContain("command-level parity OK");
+    },
+  );
+  expect(
+    prerequisite.exitCode,
+    `nemoclaw PATH prerequisite failed\n${prerequisite.stdout}${prerequisite.stderr}`,
+  ).toBe(0);
+  const resolvedNemoclaw = prerequisite.stdout
+    .split(/\r?\n/)
+    .find((line) => line.trim().length > 0)
+    ?.trim();
+  expect(resolvedNemoclaw).toBe(shim);
 
-    const links = await host.command("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
-      artifactName: "docs-validation-local-links",
-      cwd: REPO_ROOT,
-      env,
-      timeoutMs: DOCS_CHECK_TIMEOUT_MS,
-    });
-    expect(links.exitCode, `Markdown link validation failed\n${links.stdout}${links.stderr}`).toBe(
-      0,
-    );
-    expect(links.stdout).toContain("check-docs: running: [links]");
-    expect(links.stdout).toContain("remote: skipped (local paths only)");
-    expect(links.stdout).toContain("phase 2/2: skipped");
-  },
-);
+  const cliParity = await host.command("bash", [CHECK_DOCS, "--only-cli"], {
+    artifactName: "docs-validation-cli-parity",
+    cwd: REPO_ROOT,
+    env,
+    timeoutMs: DOCS_CHECK_TIMEOUT_MS,
+  });
+  expect(
+    cliParity.exitCode,
+    `CLI / docs parity failed\n${cliParity.stdout}${cliParity.stderr}`,
+  ).toBe(0);
+  expect(cliParity.stdout).toContain("check-docs: running: [cli]");
+  expect(cliParity.stdout).toContain("command-level parity OK");
+
+  const links = await host.command("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
+    artifactName: "docs-validation-local-links",
+    cwd: REPO_ROOT,
+    env,
+    timeoutMs: DOCS_CHECK_TIMEOUT_MS,
+  });
+  expect(links.exitCode, `Markdown link validation failed\n${links.stdout}${links.stderr}`).toBe(0);
+  expect(links.stdout).toContain("check-docs: running: [links]");
+  expect(links.stdout).toContain("remote: skipped (local paths only)");
+  expect(links.stdout).toContain("phase 2/2: skipped");
+});

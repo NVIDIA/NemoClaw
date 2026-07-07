@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import { resolveAgentProviderInferenceApi } from "../inference/config";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
@@ -36,6 +37,7 @@ export interface SetupNimRemoteSelectionArgs {
   recoveredFromSandbox: boolean;
   recoveredModel: string | null;
   sandboxName: string | null;
+  intendedInferenceApi: string | null;
 }
 
 export type SetupNim = (
@@ -155,6 +157,20 @@ function requireSelectedProvider(
     deps.exitProcess(1);
   }
   return selected;
+}
+
+function resolveValidationInferenceApi(
+  selectedKey: string,
+  provider: string,
+  agent: AgentDefinition | null,
+): string | null {
+  if (selectedKey !== "anthropicCompatible") return null;
+  return resolveAgentProviderInferenceApi(
+    agent?.name ?? "openclaw",
+    agent,
+    provider,
+    "anthropic-messages",
+  );
 }
 
 function clearReasoningUnlessCompatible(
@@ -491,6 +507,11 @@ export function createSetupNim(
               recoveredModel,
               sandboxName,
               gatewayName,
+              intendedInferenceApi: resolveValidationInferenceApi(
+                selected.key,
+                deps.remoteProviderConfig[selected.key].providerName,
+                agent,
+              ),
             },
             state,
             recoveredRegistryRoute,

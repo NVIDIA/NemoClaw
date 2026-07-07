@@ -16,12 +16,18 @@ export function createInferenceRouteHelpers(
   runCaptureOpenshell: RunCaptureOpenshell,
   listSandboxesFn: typeof listSandboxes = listSandboxes,
 ) {
-  function verifyInferenceRoute(gatewayName: string, _provider: string, _model: string): void {
-    const output = runCaptureOpenshell(["inference", "get", "-g", gatewayName], {
-      ignoreError: true,
-    });
-    if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
+  function verifyInferenceRoute(gatewayName: string, provider: string, model: string): void {
+    const live = parseGatewayInference(
+      runCaptureOpenshell(["inference", "get", "-g", gatewayName], { ignoreError: true }),
+    );
+    if (!live) {
       console.error("  OpenShell inference route was not configured.");
+      process.exit(1);
+    }
+    if (live.provider !== provider || live.model !== model) {
+      console.error(
+        `  OpenShell inference route does not match provider '${provider}' and model '${model}'.`,
+      );
       process.exit(1);
     }
   }

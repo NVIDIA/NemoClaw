@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ArtifactSink } from "../artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
-import { artifactLabel, assertExitZero } from "../clients/command.ts";
+import { artifactLabel, assertExitZero, resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
 import {
@@ -130,10 +130,6 @@ exit 1
 
 function prependPath(pathEntry: string, currentPath?: string): string {
   return currentPath ? `${pathEntry}:${currentPath}` : pathEntry;
-}
-
-function resultText(result: ShellProbeResult): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 function redactExplicitValues(text: string, values: string[]): string {

@@ -9,6 +9,7 @@ import path from "node:path";
 import { expect, test } from "vitest";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // reporter-workflow coverage guard for #4522 installs the exact OpenClaw /
 // @openclaw/whatsapp versions bundled by Dockerfile.base and measures the real
@@ -16,7 +17,6 @@ import { testTimeoutOptions } from "../../helpers/timeouts";
 // It intentionally does not require a WhatsApp account, phone scan, sandbox,
 // Docker, or NVIDIA_INFERENCE_API_KEY: the the contract is the renderer boundary.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
 const PRELOAD = path.join(
   REPO_ROOT,

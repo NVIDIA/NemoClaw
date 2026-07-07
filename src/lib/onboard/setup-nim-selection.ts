@@ -129,6 +129,9 @@ type RemoteModelValidatorDeps = {
     model: string,
     credentialEnv: string,
     helpUrl: string | null,
+    options?: {
+      intendedApi?: "anthropic-messages" | "openai-completions";
+    },
   ) => Promise<ValidationResult>;
   validateAnthropicSelectionWithRetryMessage: (
     label: string,
@@ -159,6 +162,7 @@ type ValidateSelectedRemoteModelArgs = {
   remoteConfig: RemoteProviderConfig;
   state: SetupNimSelectionState;
   selectedCredentialEnv: string;
+  intendedInferenceApi?: string | null;
 };
 
 function shouldRetryModel(validation: ValidationResult): boolean {
@@ -168,6 +172,13 @@ function shouldRetryModel(validation: ValidationResult): boolean {
       validation.retry === "retry" ||
       validation.retry === "model")
   );
+}
+
+function requireCustomAnthropicRuntimeApi(
+  value: string | null,
+): "anthropic-messages" | "openai-completions" {
+  if (value === "anthropic-messages" || value === "openai-completions") return value;
+  throw new Error(`Unsupported custom Anthropic runtime API: ${String(value)}`);
 }
 
 export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
@@ -181,6 +192,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
       remoteConfig,
       state,
       selectedCredentialEnv,
+      intendedInferenceApi = "anthropic-messages",
     }) => {
       const selectedModel = deps.requireValue(
         deps.isBackToSelection(state.model) ? null : state.model,
@@ -229,12 +241,14 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
       }
 
       if (selected.key === "anthropicCompatible") {
+        const intendedApi = requireCustomAnthropicRuntimeApi(intendedInferenceApi);
         const validation = await deps.validateCustomAnthropicSelection(
           remoteConfig.label,
           state.endpointUrl || deps.ANTHROPIC_ENDPOINT_URL,
           selectedModel,
           selectedCredentialEnv,
           remoteConfig.helpUrl,
+          { intendedApi },
         );
         if (validation.ok) {
           state.preferredInferenceApi = validation.api;

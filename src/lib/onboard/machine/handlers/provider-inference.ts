@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { coerceAgentInferenceApi, resolveAgentInferenceApi } from "../../../inference/config";
+import { resolveAgentProviderInferenceApi } from "../../../inference/config";
 import type {
   CurrentGatewayRouteCompatibilityCheck,
   CurrentGatewayRouteDiscoveryPreflight,
@@ -57,6 +57,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   sandboxName: string | null;
   agent: Agent;
   forceProviderSelection?: boolean;
+  /** Force setup for a provider that authoritative rebuild preflight observed missing. */
+  forceInferenceSetup?: boolean;
   /** Trust the rebuild-preflighted session selection even if its old step marker is incomplete. */
   authoritativeResumeConfig?: boolean;
   initial: {
@@ -275,6 +277,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   sandboxName,
   agent,
   forceProviderSelection: initialForceProviderSelection = false,
+  forceInferenceSetup: initialForceInferenceSetup = false,
   authoritativeResumeConfig = false,
   initial,
   selectedMessagingChannels,
@@ -293,13 +296,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       ? constants.hermesApiKeyAuthMethod
       : null);
   let hermesToolGateways = initial.hermesToolGateways;
-  // Normalize stale #6294/#6289 API metadata before the resume shortcut so
-  // the gateway provider is revalidated and, when necessary, re-registered
-  // on the matching protocol surface before sandbox creation.
-  let preferredInferenceApi = resolveAgentInferenceApi(
+  // Sessions persisted before #6294/#6289 can carry an API family that the
+  // selected agent cannot safely use. Normalize the seed before the resume
+  // shortcut so the gateway provider is revalidated and, when necessary,
+  // re-registered on the matching protocol surface before sandbox creation.
+  let preferredInferenceApi = resolveAgentProviderInferenceApi(
     agentName(agent),
+    agent,
     provider,
-    coerceAgentInferenceApi(agent, initial.preferredInferenceApi),
+    initial.preferredInferenceApi,
   );
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
   let nimContainer = initial.nimContainer;
@@ -313,7 +318,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
   while (true) {
-    let forceInferenceSetup = false;
+    let forceInferenceSetup = initialForceInferenceSetup;
     const resumeProviderSelection =
       !forceProviderSelection &&
       effectiveResume &&
@@ -329,7 +334,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         preferredInferenceApi,
       });
       const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
-      forceInferenceSetup = recovery.forceInferenceSetup;
+      forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
       // completed even though the pre-delete registry selection was validated
@@ -472,8 +477,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     const selectedModel = selected.model;
     provider = selectedProvider;
     model = selectedModel;
-    preferredInferenceApi = resolveAgentInferenceApi(
+    preferredInferenceApi = resolveAgentProviderInferenceApi(
       agentName(agent),
+      agent,
       provider,
       preferredInferenceApi,
     );

@@ -10,13 +10,12 @@
  */
 
 import { test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   runTunnelLifecycleContract,
   TUNNEL_LIFECYCLE_TEST_TIMEOUT_MS,
 } from "./tunnel-lifecycle-helpers.ts";
 
-test.skipIf(!shouldRunLiveE2E())(
+test(
   "tunnel-lifecycle: cloudflared quick tunnel starts, serves OpenClaw, and stops cleanly",
   { timeout: TUNNEL_LIFECYCLE_TEST_TIMEOUT_MS },
   runTunnelLifecycleContract,
