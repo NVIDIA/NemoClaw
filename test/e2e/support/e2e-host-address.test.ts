@@ -1,0 +1,15 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+import { parseHostAddressProbe } from "../fixtures/host-address.ts";
+
+describe("host address discovery", () => {
+  it.each([
+    ["route 10.0.0.2\n", { source: "route", address: "10.0.0.2" }],
+    ["hostname 192.168.1.5\n", { source: "hostname", address: "192.168.1.5" }],
+    ["darwin-interface 192.168.64.1\n", { source: "darwin-interface", address: "192.168.64.1" }],
+    ["darwin-ifconfig 10.1.2.3\n", { source: "darwin-ifconfig", address: "10.1.2.3" }],
+    ["", { source: "loopback", address: "127.0.0.1" }],
+  ])("parses %j", (output, expected) => expect(parseHostAddressProbe(output)).toEqual(expected));
+});
