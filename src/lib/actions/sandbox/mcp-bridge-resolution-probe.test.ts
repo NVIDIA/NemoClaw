@@ -358,7 +358,7 @@ describe("MCP credential-resolution probe execution gates", () => {
 });
 
 describe("MCP credential-resolution warning", () => {
-  it("warns on identical 4xx with both hypotheses and the OpenShell host remediation (#6379)", () => {
+  it("warns on identical auth rejections with both hypotheses and the OpenShell host remediation (#6379)", () => {
     const warning = credentialResolutionWarning("GITHUB_TOKEN", {
       ok: null,
       httpStatus: 403,
@@ -382,7 +382,7 @@ describe("MCP credential-resolution warning", () => {
     expect(warning).not.toContain("the OpenShell host is not rewriting");
   });
 
-  it("stays silent for verified, differing, and 5xx outcomes (#6379)", () => {
+  it("stays silent for verified, differing, non-auth 4xx, and 5xx outcomes (#6379)", () => {
     expect(
       credentialResolutionWarning("GITHUB_TOKEN", {
         ok: true,
@@ -395,6 +395,13 @@ describe("MCP credential-resolution warning", () => {
         ok: null,
         httpStatus: 400,
         controlHttpStatus: 401,
+      }),
+    ).toBeUndefined();
+    expect(
+      credentialResolutionWarning("GITHUB_TOKEN", {
+        ok: null,
+        httpStatus: 404,
+        controlHttpStatus: 404,
       }),
     ).toBeUndefined();
     expect(
