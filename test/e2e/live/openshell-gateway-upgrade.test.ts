@@ -154,7 +154,6 @@ import sys
 path = Path(sys.argv[1])
 version = sys.argv[2]
 text = path.read_text(encoding="utf-8")
-marker = "RUN set -eu; \\\n    MIN_VER=$(grep -m 1 'min_openclaw_version'"
 injection = (
     "# E2E old-upgrade fixture: force the historical OpenClaw before the old Dockerfile's version gate.\n"
     "RUN rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw \\\n"
@@ -162,9 +161,18 @@ injection = (
     "    && openclaw --version\n\n"
 )
 if injection not in text:
-    if marker not in text:
-        raise SystemExit(f"{path}: old OpenClaw version gate not found")
-    text = text.replace(marker, injection + marker, 1)
+    arg_markers = [
+        line for line in text.splitlines(keepends=True)
+        if line.startswith("ARG OPENCLAW_VERSION=")
+    ]
+    if len(arg_markers) == 1:
+        marker = arg_markers[0]
+        text = text.replace(marker, marker + "\n" + injection, 1)
+    else:
+        marker = "RUN set -eu; \\\n    MIN_VER=$(grep -m 1 'min_openclaw_version'"
+        if marker not in text:
+            raise SystemExit(f"{path}: old OpenClaw version gate not found")
+        text = text.replace(marker, injection + marker, 1)
     path.write_text(text, encoding="utf-8")
 print(f"INFO: Forced OpenClaw {version} in old upgrade fixture Dockerfile", flush=True)
 NEMOCLAW_OLD_DOCKERFILE_PIN_PY
