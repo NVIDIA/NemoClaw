@@ -3,14 +3,25 @@
 
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import { resolveAgentProviderInferenceApi } from "../../../inference/config";
+import type {
+  CurrentGatewayRouteCompatibilityCheck,
+  CurrentGatewayRouteDiscoveryPreflight,
+  GatewayRouteDiscoveryConstraints,
+} from "../../../inference/gateway-route-compatibility";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
+import {
+  assertProviderInferenceRouteCompatible,
+  guardProviderInferenceRouteSelection,
+  type ProviderInferenceProbeRoute,
+} from "./provider-inference-route-containment";
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
 
 export interface ProviderInferenceSetupOptions {
+  gatewayName?: string;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
@@ -39,6 +50,7 @@ export interface ProviderSelectionResult {
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
+  gatewayName: string;
   resume: boolean;
   fresh: boolean;
   session: Session | null;
@@ -70,12 +82,23 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hermesApiKeyCredentialEnv: string;
   };
   deps: {
+    checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
+    preflightGatewayRouteDiscovery: CurrentGatewayRouteDiscoveryPreflight;
+    withGatewayRouteMutationLock<T>(
+      gatewayName: string,
+      operation: () => Promise<T> | T,
+    ): Promise<T>;
     normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null;
     setupNim(
       gpu: Gpu,
       sandboxName: string | null,
       agent: Agent,
       allowRecordedProviderRecovery?: boolean,
+      gatewayName?: string,
+      assertRouteCompatible?: (
+        route: ProviderInferenceProbeRoute,
+      ) => GatewayRouteDiscoveryConstraints,
+      canProbeRoute?: (provider: string) => boolean,
     ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
@@ -95,10 +118,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     ensureResumeProviderReady(
+      gatewayName: string,
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
     isResumeProviderSurfaceReady(
+      gatewayName: string,
       provider: string | null | undefined,
       preferredInferenceApi: string | null | undefined,
       credentialEnv: string | null | undefined,
@@ -126,14 +151,26 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     isNonInteractive(): boolean;
     getOpenshellBinary(): string;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
-    isInferenceRouteReady(provider: string, model: string): boolean;
+    isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean;
     isRoutedInferenceProvider(provider: string): boolean;
     reconcileModelRouter(): Promise<void>;
     reupsertRoutedProvider(
+      gatewayName: string,
       provider: string,
       endpointUrl: string | null,
       credentialEnv: string | null,
     ): { ok: boolean; endpointUrl: string; message?: string; status?: number };
+    reserveSandboxInferenceRoute(
+      sandboxName: string,
+      route: {
+        provider: string;
+        model: string;
+        endpointUrl: string | null;
+        credentialEnv: string | null;
+        preferredInferenceApi: string | null;
+        gatewayName: string;
+      },
+    ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     assessHost(): Host;
@@ -233,6 +270,7 @@ function shouldRefreshCompatibleEndpointRouteForMessaging(
 }
 
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
+  gatewayName,
   resume,
   fresh,
   session,
@@ -297,7 +335,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       typeof model === "string";
     let shouldRecordProviderSelection = false;
     if (resumeProviderSelection) {
-      const recovery = await deps.ensureResumeProviderReady(provider, credentialEnv);
+      assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
+        provider,
+        model,
+        endpointUrl,
+        preferredInferenceApi,
+      });
+      const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -315,6 +359,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
       if (
         !deps.isResumeProviderSurfaceReady(
+          gatewayName,
           provider,
           preferredInferenceApi,
           credentialEnv,
@@ -393,7 +438,27 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const selection = await withProviderSelectionTrace(
         sandboxName,
         (agent as { name?: string } | null)?.name,
-        () => deps.setupNim(gpu, sandboxName, agent, !fresh),
+        () =>
+          deps.setupNim(
+            gpu,
+            sandboxName,
+            agent,
+            !fresh,
+            gatewayName,
+            (route) => guardProviderInferenceRouteSelection(deps, gatewayName, sandboxName, route),
+            (provider) =>
+              deps.preflightGatewayRouteDiscovery({
+                gatewayName,
+                sandboxName,
+                route: {
+                  provider,
+                  model: null,
+                  endpointUrl: null,
+                  preferredInferenceApi: null,
+                  credentialEnv: null,
+                },
+              }).ok,
+          ),
       );
       model = selection.model;
       provider = selection.provider;
@@ -426,6 +491,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       provider,
       preferredInferenceApi,
     );
+    if (!resumeProviderSelection) {
+      assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
+        provider,
+        model,
+        endpointUrl,
+        preferredInferenceApi,
+      });
+    }
     if (shouldRecordProviderSelection) {
       session = await deps.recordStepComplete(
         "provider_selection",
@@ -459,7 +532,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       !forceProviderSelection &&
       !forceInferenceSetup &&
       effectiveResume &&
-      deps.isInferenceRouteReady(provider, model);
+      deps.isInferenceRouteReady(gatewayName, provider, model);
     if (resumeInference) {
       if (provider === constants.hermesProviderName) {
         let inferenceResult: ProviderInferenceRetry;
@@ -467,6 +540,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
           const confirmedSandboxName = sandboxName;
           const inferenceOptions = {
+            gatewayName,
             allowToolsIncompatible,
             ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
             ...(reuseGatewayCredentialWithoutLocalKey
@@ -517,26 +591,87 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         );
         break;
       }
-      if (deps.isRoutedInferenceProvider(provider)) {
-        try {
-          await deps.reconcileModelRouter();
-        } catch (err) {
-          deps.error(
-            `  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          deps.exitProcess(1);
-        }
+      const authoritativeReservationName = authoritativeResumeConfig
+        ? (sandboxName ?? (await deps.promptValidatedSandboxName(agent)))
+        : null;
+      if (authoritativeReservationName) sandboxName = authoritativeReservationName;
+      const routedInferenceProvider = deps.isRoutedInferenceProvider(provider);
+      if (routedInferenceProvider) {
         // #4564: re-upsert the gateway provider with the sandbox-facing
         // endpoint so a stale localhost base URL recorded by an earlier run is
         // repaired on resume instead of surviving and breaking inference.local.
-        const reupserted = deps.reupsertRoutedProvider(provider, endpointUrl, credentialEnv);
+        const routedRepair = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
+          assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl,
+            preferredInferenceApi,
+          });
+          try {
+            await deps.reconcileModelRouter();
+          } catch (err) {
+            deps.error(
+              `  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            deps.exitProcess(1);
+          }
+          const reupserted = deps.reupsertRoutedProvider(
+            gatewayName,
+            selectedProvider,
+            endpointUrl,
+            credentialEnv,
+          );
+          const reserved =
+            reupserted.ok && authoritativeReservationName
+              ? deps.reserveSandboxInferenceRoute(authoritativeReservationName, {
+                  provider: selectedProvider,
+                  model: selectedModel,
+                  endpointUrl: reupserted.endpointUrl,
+                  credentialEnv,
+                  preferredInferenceApi,
+                  gatewayName,
+                })
+              : null;
+          return { reupserted, reserved };
+        });
+        const { reupserted, reserved } = routedRepair;
         if (!reupserted.ok) {
           deps.error(
             `  ${reupserted.message ?? "Failed to update the routed inference provider."}`,
           );
           deps.exitProcess(reupserted.status ?? 1);
         }
+        if (reserved === false) {
+          deps.error(
+            `  Failed to reserve inference route for sandbox '${authoritativeReservationName}'.`,
+          );
+          deps.exitProcess(1);
+        }
         endpointUrl = reupserted.endpointUrl;
+      }
+      if (authoritativeReservationName && !routedInferenceProvider) {
+        const reserved = await deps.withGatewayRouteMutationLock(gatewayName, () => {
+          assertProviderInferenceRouteCompatible(deps, gatewayName, authoritativeReservationName, {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl,
+            preferredInferenceApi,
+          });
+          return deps.reserveSandboxInferenceRoute(authoritativeReservationName, {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl,
+            credentialEnv,
+            preferredInferenceApi,
+            gatewayName,
+          });
+        });
+        if (!reserved) {
+          deps.error(
+            `  Failed to reserve inference route for sandbox '${authoritativeReservationName}'.`,
+          );
+          deps.exitProcess(1);
+        }
       }
       deps.skippedStepMessage("inference", `${provider} / ${model}`);
       await deps.recordStateSkipped("inference", {
@@ -591,6 +726,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
 
       const inferenceOptions = {
+        gatewayName,
         allowToolsIncompatible,
         ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),

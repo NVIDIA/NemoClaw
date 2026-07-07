@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
+import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
 
 export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
@@ -22,6 +23,8 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
   nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
+  /** Attempt-wide shared-gateway guard, invoked after identity selection and before probes. */
+  assertRouteCompatible?: () => GatewayRouteDiscoveryConstraints;
 };
 
 export type CloudFallbackConfig = {

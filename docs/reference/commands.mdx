@@ -645,8 +645,10 @@ If another terminal is already connected to the sandbox, `connect` prints a note
 An unknown model slug, malformed extra-args JSON, or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
 Unset the managed-vLLM variable, or fix the value, before retrying.
 
-When the live OpenShell gateway inference route differs from the route recorded in the NemoClaw registry, `connect` prints an explicit warning and realigns the shared gateway to the recorded route.
-Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional route change.
+When the live OpenShell gateway inference route differs from the route recorded in the NemoClaw registry, `connect` checks every registered sandbox on that gateway before attempting a repair.
+It realigns the route only when those registry entries are compatible with the requested provider and model.
+If another sandbox records a conflicting route, `connect` exits non-zero without changing the gateway and names the affected sandboxes.
+Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional compatible route change.
 If the sandbox is registered locally but missing from a healthy gateway, `connect` preserves the registry entry and points you to `rebuild --yes`, `onboard`, or `destroy` instead of deleting the metadata needed for recovery.
 
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
@@ -2380,6 +2382,12 @@ By default, the command syncs the default registered sandbox.
 The command refuses before changing the OpenShell route when the selected sandbox has shields up.
 Run `$$nemoclaw <name> shields down`, apply the inference change, then run `$$nemoclaw <name> shields up` again.
 
+Each OpenShell gateway exposes one inference route to every sandbox registered on that gateway.
+Before changing the route, NemoClaw compares the requested provider and model with every same-gateway registry entry, including stopped sandboxes.
+Custom compatible routes must also have matching normalized endpoint URLs and API families.
+If a route conflicts or a legacy custom route lacks enough endpoint or API-family metadata to prove compatibility, the command exits non-zero before changing the OpenShell route, agent config, or host registry and names the conflicting sandboxes.
+Align those sandboxes to the same route, remove the conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
+
 ```bash
 $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
 ```
@@ -2392,19 +2400,21 @@ $$nemoclaw my-assistant inference set --provider nvidia-prod --model nvidia/nemo
 ```
 
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
-If you only want the lower-level OpenShell route operation, run `openshell inference set -g nemoclaw --model <model> --provider <provider>` directly.
-When either flag is missing, `$$nemoclaw inference set` prints that OpenShell command instead of an oclif flag-validation error.
+NemoClaw resolves the OpenShell gateway from the target sandbox's recorded gateway binding, including non-default `NEMOCLAW_GATEWAY_PORT` deployments.
+Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses registry compatibility checks and can break other sandboxes.
+When either flag is missing, `$$nemoclaw inference set` reports both required flags without suggesting a raw OpenShell command.
 The command updates the host registry immediately after the gateway route changes.
 If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry aligned, warns that the running image may still need a rebuild, and points you to `$$nemoclaw <name> rebuild`.
 
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
-When switching to `compatible-endpoint` or `compatible-anthropic-endpoint` from a different provider family, pass `--endpoint-url` with the trusted custom provider URL so NemoClaw can persist durable rebuild metadata.
+When switching to `compatible-endpoint` or `compatible-anthropic-endpoint` from a different provider family, pass `--endpoint-url` with the trusted custom provider URL and, except for the Hermes case below, `--inference-api` with its API family so NemoClaw can persist a complete route identity for rebuild and shared-gateway checks.
+For a Hermes `compatible-anthropic-endpoint` target, `--inference-api` may be omitted because NemoClaw deterministically selects `openai-completions`; an explicit different API family is rejected.
 NemoClaw rejects loopback, link-local, private, and internal endpoint addresses, including public hostnames that resolve to a private address.
 For public HTTP URLs, NemoClaw stores the validated IP address to prevent DNS rebinding.
 DNS-backed HTTPS URLs are rejected because NemoClaw cannot pin the downstream peer address while preserving TLS SNI and host validation across the OpenShell runtime boundary; HTTPS IP-literal URLs remain supported.
 NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
-`--credential-env` and `--inference-api` may also be supplied for the compatible provider metadata; supported API values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
+`--credential-env` may also be supplied for compatible provider metadata; supported `--inference-api` values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
 
 ### `$$nemoclaw setup`
 

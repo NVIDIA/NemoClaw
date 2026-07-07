@@ -13,6 +13,11 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import {
+  checkGatewayRouteCompatibility,
+  formatGatewayRouteConflict,
+} from "../../inference/gateway-route-compatibility";
+import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
 import { listMessagingProviderSuffixes } from "../../messaging/channels";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
@@ -27,6 +32,7 @@ import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import * as sandboxState from "../../state/sandbox";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
 import {
@@ -780,16 +786,69 @@ async function runSnapshotRestoreUnlocked(
           snapshotExit(1);
         }
       }
-      if (targetEntry) {
-        verifyRestoreDestinationOnOwnGateway(targetSandbox);
-      }
-      deleteSandboxForRestore(targetSandbox);
-      requireLiveSandboxesOnSandboxGateway(
-        sandboxName,
-        "  Failed to re-select source sandbox gateway after deleting destination.",
-      );
     }
-    await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry, fromImage);
+    const sourceGatewayName = resolveSandboxGatewayName(srcEntry);
+    await withGatewayRouteMutationLock(sourceGatewayName, async () => {
+      if (!targetExists && registry.getSandbox(targetSandbox)) {
+        console.error(
+          `  Destination sandbox '${targetSandbox}' was registered while this restore was waiting. Retry with --force only after reviewing that sandbox.`,
+        );
+        snapshotExit(1);
+      }
+      const lockedSourceEntry = registry.getSandbox(sandboxName);
+      if (!lockedSourceEntry) {
+        console.error(
+          `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' has no durable inference route metadata.`,
+        );
+        snapshotExit(1);
+      }
+      if (getSandboxEntryInference(lockedSourceEntry).kind !== "configured") {
+        console.error(
+          `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' has no complete durable inference route.`,
+        );
+        snapshotExit(1);
+      }
+      const lockedFromImage = resolveSrcPodImage(sandboxName, lockedSourceEntry);
+      if (!lockedFromImage) {
+        console.error(
+          `  Cannot resolve the current image for source sandbox '${sandboxName}' — aborting before changing '${targetSandbox}'.`,
+        );
+        snapshotExit(1);
+      }
+      const lockedGatewayName = resolveSandboxGatewayName(lockedSourceEntry);
+      if (lockedGatewayName !== sourceGatewayName) {
+        console.error(
+          `  Source sandbox '${sandboxName}' changed OpenShell gateways while waiting to restore. Retry the command.`,
+        );
+        snapshotExit(1);
+      }
+      const compatibility = checkGatewayRouteCompatibility({
+        gatewayName: sourceGatewayName,
+        sandboxName: targetSandbox,
+        route: lockedSourceEntry,
+        sandboxes: registry.listSandboxes().sandboxes,
+      });
+      if (!compatibility.ok) {
+        console.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+        snapshotExit(1);
+      }
+      if (targetExists) {
+        if (targetEntry) {
+          verifyRestoreDestinationOnOwnGateway(targetSandbox);
+        }
+        deleteSandboxForRestore(targetSandbox);
+        requireLiveSandboxesOnSandboxGateway(
+          sandboxName,
+          "  Failed to re-select source sandbox gateway after deleting destination.",
+        );
+      }
+      await autoCreateSandboxFromSource(
+        sandboxName,
+        targetSandbox,
+        lockedSourceEntry,
+        lockedFromImage,
+      );
+    });
   }
   withTimerBoundShieldsMutationLock(targetSandbox, "restore sandbox snapshot", () => {
     // Serialize filesystem restore, mutable-permission repair, and policy

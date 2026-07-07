@@ -163,6 +163,23 @@ describe("translatePublicSandboxArgv", () => {
       "sandbox:gateway:token",
       ["alpha", "--quiet"],
     );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "hosts-add", [
+        "searxng.local",
+        "192.168.1.105",
+        "--dry-run",
+      ]),
+      "sandbox:hosts:add",
+      ["alpha", "searxng.local", "192.168.1.105", "--dry-run"],
+    );
+    expectNative(translatePublicSandboxArgv("alpha", "hosts-list", []), "sandbox:hosts:list", [
+      "alpha",
+    ]);
+    expectNative(
+      translatePublicSandboxArgv("alpha", "hosts-remove", ["searxng.local", "--dry-run"]),
+      "sandbox:hosts:remove",
+      ["alpha", "searxng.local", "--dry-run"],
+    );
   });
 
   it("translates sandbox help to native oclif argv", () => {

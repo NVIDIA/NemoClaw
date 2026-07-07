@@ -323,6 +323,46 @@ $$nemoclaw list
 
 `$$nemoclaw list` prints the recorded dashboard URL for each sandbox.
 
+OpenShell currently exposes one inference route per gateway.
+Sandboxes that share a gateway must record the same provider and model.
+Custom compatible routes must also record the same normalized endpoint and API family.
+An OpenClaw sandbox using the native Anthropic Messages frontend and a Hermes sandbox using the managed OpenAI frontend need separate gateway ports, even when they use the same custom endpoint and model.
+NemoClaw includes stopped sandboxes in this check because they use the gateway route when restarted.
+
+If onboarding, `inference set`, or connect-time route repair reports a shared-gateway conflict, choose one of these recovery paths:
+
+- Align every named sandbox to the same route.
+- Remove a conflicting sandbox with `$$nemoclaw <name> destroy` when you no longer need it.
+- Onboard the sandbox against another gateway port when it needs a different route.
+
+An aligned group cannot move to a wholly new route one sandbox at a time because the first change would conflict with the remaining registry rows.
+Back up each workspace, remove or migrate the peer sandboxes, switch the last sandbox on the original gateway, then re-onboard the peers with that same route or with separate gateway ports.
+
+If the error names incomplete legacy custom-route metadata, back up and remove the affected sandbox, then re-onboard it with an explicit custom endpoint and API family.
+For an OpenAI-compatible route, replace the example endpoint, model, and sandbox name in this recovery sequence:
+
+```bash
+$$nemoclaw legacy-sandbox destroy
+NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=https://endpoint.example/v1 \
+  NEMOCLAW_MODEL=your-model-id \
+  NEMOCLAW_PREFERRED_API=openai-completions \
+  $$nemoclaw onboard --name legacy-sandbox
+```
+
+If the error names an invalid gateway binding, restore the affected row's known-good `gatewayName` and `gatewayPort` metadata from a trusted backup; otherwise back up and remove the sandbox, then re-onboard it.
+Do not guess or copy a binding from another sandbox because lifecycle commands use it to select the gateway.
+
+For example, keep the first sandbox on the default gateway and assign a separate gateway to the second sandbox:
+
+```bash
+$$nemoclaw onboard --name first-sandbox
+NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard --name second-sandbox
+```
+
+NemoClaw derives a separate gateway name and state directory from the second port.
+Using a different dashboard port alone does not create a separate inference route.
+
 ## Onboarding
 
 ### Cgroup v2 errors during onboard
@@ -1366,6 +1406,8 @@ $$nemoclaw <sandbox> doctor --fix
 
 `$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
 Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step.
+For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that exact posture under the expected sandbox-owned parent.
+Other root-owned layouts, links, mounts, and ambiguous metadata fail closed so startup cannot mistake a shields-locked or unsafe tree for mutable drift.
 If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
 Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
 

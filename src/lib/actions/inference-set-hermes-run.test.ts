@@ -287,6 +287,8 @@ describe("runInferenceSet Hermes routing", () => {
         provider: "compatible-anthropic-endpoint",
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
         endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
       },
       defaultSandbox: "hermes",
       target: HERMES_TARGET,
@@ -327,8 +329,20 @@ describe("runInferenceSet Hermes routing", () => {
     const deps = createDeps({
       config,
       entries: [
-        { name: "alpha", agent: "openclaw" },
-        { name: "hermes-one", agent: "hermes" },
+        {
+          name: "alpha",
+          agent: "openclaw",
+          gatewayName: "nemoclaw-9090",
+          gatewayPort: 9090,
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+        },
+        {
+          name: "hermes-one",
+          agent: "hermes",
+          provider: "hermes-provider",
+          model: "z-ai/glm-5.1",
+        },
       ],
       defaultSandbox: "alpha",
       requestedAgent: "hermes",

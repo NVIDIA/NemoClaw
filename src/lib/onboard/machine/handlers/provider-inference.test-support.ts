@@ -8,6 +8,10 @@
 
 import { vi } from "vitest";
 
+import type {
+  CurrentGatewayRouteCompatibilityCheck,
+  CurrentGatewayRouteDiscoveryPreflight,
+} from "../../../inference/gateway-route-compatibility";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import type { ProviderInferenceStateOptions, ProviderSelectionResult } from "./provider-inference";
 
@@ -31,13 +35,26 @@ export function createDeps(
   overrides: Partial<ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]> = {},
 ) {
   const calls = {
+    checkGatewayRouteCompatibility: vi.fn<CurrentGatewayRouteCompatibilityCheck>(() => ({
+      ok: true,
+    })),
+    preflightGatewayRouteDiscovery: vi.fn<CurrentGatewayRouteDiscoveryPreflight>(() => ({
+      ok: true,
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    })),
     setupNim: vi.fn(async () => ({ ...baseSelection })),
     setupInference: vi.fn(async () => ({ ok: true as const })),
     startStep: vi.fn(async () => undefined),
     complete: vi.fn(async () => createSession()),
     skipped: vi.fn(),
     recoverProvider: vi.fn(
-      async (_provider: string | null | undefined, credentialEnv: string | null | undefined) => ({
+      async (
+        _gatewayName: string,
+        _provider: string | null | undefined,
+        credentialEnv: string | null | undefined,
+      ) => ({
         forceInferenceSetup: false,
         credentialEnv: credentialEnv ?? null,
       }),
@@ -47,14 +64,20 @@ export function createDeps(
     repairEvent: vi.fn(async () => createSession()),
     hydrate: vi.fn(),
     repair: vi.fn(),
-    routeReady: vi.fn(() => false),
+    routeReady: vi.fn((_gatewayName: string, _provider: string, _model: string) => false),
     reconcileRouter: vi.fn(async () => undefined),
     reupsertRoutedProvider: vi.fn(
-      (_provider: string, endpointUrl: string | null, _credentialEnv: string | null) => ({
+      (
+        _gatewayName: string,
+        _provider: string,
+        endpointUrl: string | null,
+        _credentialEnv: string | null,
+      ) => ({
         ok: true as const,
         endpointUrl: "http://host.openshell.internal:4000/v1",
       }),
     ),
+    reserveRoute: vi.fn(() => true),
     updateSandbox: vi.fn(),
     promptName: vi.fn(async () => "my-assistant"),
     promptYesNo: vi.fn(async () => true),
@@ -68,6 +91,12 @@ export function createDeps(
   return {
     calls,
     deps: {
+      checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
+      preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
+      withGatewayRouteMutationLock: async <T>(
+        _gatewayName: string,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
       normalizeHermesAuthMethod: (value: string | null | undefined) =>
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: calls.setupNim,
@@ -92,6 +121,7 @@ export function createDeps(
       isRoutedInferenceProvider: (provider: string) => provider === "nvidia-router",
       reconcileModelRouter: calls.reconcileRouter,
       reupsertRoutedProvider: calls.reupsertRoutedProvider,
+      reserveSandboxInferenceRoute: calls.reserveRoute,
       registryUpdateSandbox: calls.updateSandbox,
       promptValidatedSandboxName: calls.promptName,
       assessHost: () => ({ cpus: 8 }),
@@ -117,6 +147,7 @@ export function baseOptions(
   session: Session | null = createSession(),
 ): ProviderInferenceStateOptions<Gpu, Agent, Host> {
   return {
+    gatewayName: "nemoclaw",
     resume: false,
     fresh: false,
     session,
