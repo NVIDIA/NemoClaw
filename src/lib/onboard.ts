@@ -1106,7 +1106,6 @@ const handleVllmSelection = createSetupNimVllmHandler({
   applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow,
   exitProcess: (code) => process.exit(code),
 });
-
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
 
 function isOpenshellInstalled(): boolean {
