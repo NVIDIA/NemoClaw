@@ -107,36 +107,6 @@ function containsExactJsonToken(value: unknown, token: string): boolean {
   return false;
 }
 
-async function hostAddressForSandbox(host: HostCliClient): Promise<string> {
-  const probe = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        'ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk \'{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}\')"',
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "ip_addr=\"$(hostname -I 2>/dev/null | awk '{print $1}')\"",
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        'if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then',
-        "  for iface in en0 en1 bridge100; do",
-        '    ip_addr="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"',
-        '    if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "  done",
-        "  ip_addr=\"$(ifconfig 2>/dev/null | awk '/inet / && $2 !~ /^127\\./ {print $2; exit}')\"",
-        '  if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "fi",
-        "echo 127.0.0.1",
-      ].join("\n"),
-    ],
-    {
-      artifactName: "host-ip-for-onboard-resume-compatible-endpoint",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  return probe.stdout.trim().split(/\s+/)[0] || "127.0.0.1";
-}
-
 function expectHermeticCompatibleInferenceUsed(fake: FakeOpenAiCompatibleServer): void {
   const requests = fake.requests();
   const inferencePosts = requests.filter(
@@ -205,7 +175,7 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
   // pass hosted NVIDIA inference secrets. Instead, this test exposes a local
   // fake OpenAI-compatible endpoint at a host address the OpenShell gateway and
   // sandbox can route to, matching test/e2e/lib/hermetic-compatible-inference.sh.
-  const fakePublicHost = await hostAddressForSandbox(host);
+  const fakePublicHost = "host.openshell.internal";
   const fake = await startFakeOpenAiCompatibleServer({
     apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
     host: "0.0.0.0",
@@ -222,7 +192,9 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
     model: FAKE_COMPATIBLE_MODEL,
     publicHost: fakePublicHost,
   });
-  const modelsResponse = await fetch(`${fake.baseUrl}/models`);
+  const localModelsUrl = new URL(`${fake.baseUrl}/models`);
+  localModelsUrl.hostname = "127.0.0.1";
+  const modelsResponse = await fetch(localModelsUrl);
   expect(modelsResponse.ok, `fake endpoint ${fake.baseUrl}/models should be reachable`).toBe(true);
 
   // ──────────────────────────────────────────────────────────────────

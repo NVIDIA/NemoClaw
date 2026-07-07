@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
@@ -242,9 +243,16 @@ export function createSetupInference(
         }
         deps.step(4, 8, "Setting up inference provider");
         let endpointPinnedAddresses = options.endpointPinnedAddresses;
+        // Strictly classified AWS Bedrock Runtime hostnames use the dedicated
+        // SigV4/bearer adapter rather than the generic curl probe path. Their
+        // hostname is constrained to AWS-owned suffixes by the classifier, so
+        // do not apply the custom-origin curl pinning contract here.
+        const usesBedrockRuntimeAdapter =
+          provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
         if (
           (provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint") &&
           endpointUrl &&
+          !usesBedrockRuntimeAdapter &&
           !endpointPinnedAddresses
         ) {
           const preflight = await assertEndpointResolvesPublic(
