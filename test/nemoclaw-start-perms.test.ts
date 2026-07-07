@@ -473,24 +473,27 @@ describe("nemoclaw-start mutable config seal classification", () => {
     }
   });
 
-  it("requires both fixed files to match the exact root-owned sealed posture (#6300)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-owner-"));
-    const configDir = path.join(root, ".openclaw");
-    fs.mkdirSync(configDir, 0o755);
-    const configFile = path.join(configDir, "openclaw.json");
-    const hashFile = path.join(configDir, ".config-hash");
-    fs.writeFileSync(configFile, "{}\n");
-    fs.writeFileSync(hashFile, "hash\n");
-    fs.chmodSync(configFile, 0o444);
-    fs.chmodSync(hashFile, 0o444);
-    try {
-      expect(runClassify(configDir).stdout).toContain(runningAsRoot ? "rc=0" : "rc=2");
-    } finally {
-      fs.chmodSync(configFile, 0o644);
-      fs.chmodSync(hashFile, 0o644);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+  it.runIf(runningAsRoot)(
+    "requires both fixed files to match the exact root-owned sealed posture (#6300)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-owner-"));
+      const configDir = path.join(root, ".openclaw");
+      fs.mkdirSync(configDir, 0o755);
+      const configFile = path.join(configDir, "openclaw.json");
+      const hashFile = path.join(configDir, ".config-hash");
+      fs.writeFileSync(configFile, "{}\n");
+      fs.writeFileSync(hashFile, "hash\n");
+      fs.chmodSync(configFile, 0o444);
+      fs.chmodSync(hashFile, 0o444);
+      try {
+        expect(runClassify(configDir).stdout).toContain("rc=0");
+        fs.rmSync(hashFile);
+        expect(runClassify(configDir).stdout).toContain("rc=2");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("reports a missing config directory as indeterminate (#6300)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-missing-"));
