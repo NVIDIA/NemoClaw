@@ -3,37 +3,22 @@
 
 preset:
   name: gmail
-  description: "Gmail API access via Google OAuth2"
+  description: "Gmail IMAP and SMTP access for Python App Password workflows"
 
 network_policies:
-  gmail_api:
-    name: gmail_api
+  gmail_mail:
+    name: gmail_mail
     endpoints:
-      - host: gmail.googleapis.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-          - allow: { method: PUT, path: "/**" }
-          - allow: { method: DELETE, path: "/**" }
-          - allow: { method: PATCH, path: "/**" }
-      - host: oauth2.googleapis.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: accounts.google.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+      # IMAP and SMTP use TLS protocols that OpenShell cannot inspect as
+      # HTTP. Keep the encrypted bytes end-to-end and constrain egress by
+      # exact Gmail host, port, and interpreter instead.
+      - host: imap.gmail.com
+        port: 993
+        access: full
+        tls: skip
+      - host: smtp.gmail.com
+        port: 465
+        access: full
+        tls: skip
     binaries:
-      - { path: /usr/local/bin/node }
       - { path: /usr/bin/python3 }
-      - { path: /usr/local/bin/python3 }

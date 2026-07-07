@@ -151,7 +151,7 @@ describe("policies", () => {
         .listPresets()
         .map((p: { name: string }) => p.name)
         .sort();
-      const expected = [
+      expect(names).toEqual([
         "brave",
         "brew",
         "claude-code",
@@ -179,8 +179,7 @@ describe("policies", () => {
         "weather",
         "wechat",
         "whatsapp",
-      ];
-      expect(names).toEqual(expected);
+      ]);
     });
   });
 
@@ -212,8 +211,9 @@ describe("policies", () => {
       // returns 405/400 because there is no 101 Switching Protocols flow
       // over h2). `access: full` + `tls: skip` keeps OpenShell out of the
       // bytes so Baileys does the TLS handshake end-to-end and gets h1.
-      // Apex and *.web.whatsapp.com (fallback nodes w1/w2.web.whatsapp.com)
-      // share the same shape so reconnects do not surprise the operator.
+      // Apex and *.web.whatsapp.com (fallback nodes w1.web.whatsapp.com,
+      // w2.web.whatsapp.com, ...) share the same shape so reconnects do
+      // not surprise the operator.
       const parsed = parsePresetYaml("whatsapp");
       const endpoints: Array<Record<string, unknown>> =
         parsed?.network_policies?.whatsapp?.endpoints ?? [];
