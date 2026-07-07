@@ -223,7 +223,16 @@ export function classifyCredentialResolutionProbe(
     return { ok: true, ...shared };
   }
   if (httpStatus === controlHttpStatus) {
-    return { ok: false, ...shared };
+    // Identical auth-shaped rejections indict the rewrite; an identical 5xx
+    // only proves the endpoint failed the same way twice.
+    if (httpStatus >= 400 && httpStatus < 500) {
+      return { ok: false, ...shared };
+    }
+    return {
+      ok: null,
+      ...shared,
+      detail: `both probes received HTTP ${httpStatus}; the endpoint failed identically and credential resolution could not be judged`,
+    };
   }
   if (httpStatus === 401 || httpStatus === 403) {
     return {

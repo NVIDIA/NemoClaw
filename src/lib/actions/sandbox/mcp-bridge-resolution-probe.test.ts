@@ -151,6 +151,24 @@ describe("MCP credential-resolution probe classification", () => {
     }
   });
 
+  it("classifies identical 5xx responses as indeterminate endpoint failure (#6379)", () => {
+    const probe = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: probeStdout({
+          httpStatus: 500,
+          curlExit: 0,
+          controlHttpStatus: 500,
+          controlExit: 0,
+        }),
+        stderr: "",
+      },
+      baseEntry,
+    );
+    expect(probe.ok).toBeNull();
+    expect(probe.detail).toContain("failed identically");
+  });
+
   it("classifies a placeholder 401 that differs from the control as resolved but rejected upstream (#6379)", () => {
     const probe = classifyCredentialResolutionProbe(
       {
