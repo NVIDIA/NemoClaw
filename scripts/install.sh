@@ -632,8 +632,8 @@ usage() {
   printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                  Continue after manually backing up and retiring old gateway\n"
-  printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE=1\n"
-  printf "                                  Confirm pre-fingerprint sandboxes used managed images\n"
+  printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
+  printf "                                  Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: %s)\n" "$DEFAULT_INSTALL_REF"
   printf "                                  In curl pipes, set this on bash or export it first.\n"
@@ -1776,28 +1776,47 @@ installer_non_interactive() {
 
 legacy_ambiguous_sandbox_names_json() {
   local reg_file="$1"
-  python3 - "$reg_file" <<'PY'
-import json
-import sys
+  node - "$reg_file" <<'NODE'
+const fs = require("node:fs");
 
-with open(sys.argv[1], encoding="utf-8") as handle:
-    registry = json.load(handle)
-sandboxes = registry.get("sandboxes", {})
-if not isinstance(sandboxes, dict):
-    raise SystemExit(1)
+const registry = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const sandboxes = registry?.sandboxes;
+if (!sandboxes || typeof sandboxes !== "object" || Array.isArray(sandboxes)) process.exit(1);
 
-ambiguous = []
-for name, entry in sandboxes.items():
-    if not isinstance(entry, dict):
-        ambiguous.append(name)
-        continue
-    version = entry.get("nemoclawVersion")
-    has_fingerprint = isinstance(version, str) and bool(version.strip())
-    if not has_fingerprint and "fromDockerfile" not in entry:
-        ambiguous.append(name)
+const ambiguous = [];
+for (const [name, entry] of Object.entries(sandboxes)) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    ambiguous.push(name);
+    continue;
+  }
+  const version = entry.nemoclawVersion;
+  const hasFingerprint = typeof version === "string" && version.trim().length > 0;
+  const hasNoCustomImageEvidence =
+    entry.fromDockerfile === undefined || entry.fromDockerfile === null;
+  if (!hasFingerprint && hasNoCustomImageEvidence) ambiguous.push(name);
+}
 
-print(json.dumps(sorted(ambiguous)))
-PY
+process.stdout.write(JSON.stringify(ambiguous.sort()));
+NODE
+}
+
+normalize_legacy_managed_confirmation_json() {
+  node -e '
+    let names;
+    try {
+      names = JSON.parse(process.argv[1]);
+    } catch {
+      process.exit(1);
+    }
+    if (
+      !Array.isArray(names) ||
+      names.some((name) => typeof name !== "string" || name.length === 0) ||
+      new Set(names).size !== names.length
+    ) {
+      process.exit(1);
+    }
+    process.stdout.write(JSON.stringify([...names].sort()));
+  ' "$1"
 }
 
 confirm_legacy_managed_image_recovery() {
@@ -1805,15 +1824,9 @@ confirm_legacy_managed_image_recovery() {
   if ! ambiguous_json="$(legacy_ambiguous_sandbox_names_json "$reg_file")"; then
     error "Could not inspect legacy sandbox image provenance. Existing sandboxes were left unchanged."
   fi
-  ambiguous_count="$(python3 -c 'import json, sys; print(len(json.loads(sys.argv[1])))' "$ambiguous_json")"
+  ambiguous_count="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$ambiguous_json")"
   if [ "$ambiguous_count" -eq 0 ] 2>/dev/null; then
     _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
-    return 0
-  fi
-
-  if [[ "${NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE:-}" == "1" ]]; then
-    info "Confirmed ${ambiguous_count} pre-fingerprint sandbox(es) used NemoClaw-managed images."
-    _LEGACY_MANAGED_RECOVERY_NAMES_JSON="$ambiguous_json"
     return 0
   fi
 
@@ -1823,7 +1836,7 @@ confirm_legacy_managed_image_recovery() {
 EOF
   while IFS= read -r sandbox_name; do
     [[ -n "$sandbox_name" ]] && printf "    %s\n" "$sandbox_name"
-  done < <(python3 -c 'import json, sys; [print(json.dumps(name)) for name in json.loads(sys.argv[1])]' "$ambiguous_json")
+  done < <(node -e 'for (const name of JSON.parse(process.argv[1])) console.log(JSON.stringify(name))' "$ambiguous_json")
   cat <<EOF
 
   Continue only if every sandbox above was created with NemoClaw's standard
@@ -1832,8 +1845,21 @@ EOF
 
 EOF
 
+  if [[ -n "${NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE:-}" ]]; then
+    local confirmed_json=""
+    if ! confirmed_json="$(normalize_legacy_managed_confirmation_json "$NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE")"; then
+      error "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE must be a JSON array containing the exact sandbox names listed above."
+    fi
+    if [[ "$confirmed_json" != "$ambiguous_json" ]]; then
+      error "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE must exactly match the listed sandbox names: ${ambiguous_json}"
+    fi
+    info "Confirmed ${ambiguous_count} exact pre-fingerprint sandbox name(s) used NemoClaw-managed images."
+    _LEGACY_MANAGED_RECOVERY_NAMES_JSON="$ambiguous_json"
+    return 0
+  fi
+
   if installer_non_interactive; then
-    error "Legacy sandbox recovery requires explicit confirmation. Set NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE=1 only after verifying the listed sandboxes used managed images."
+    error "Legacy sandbox recovery requires explicit confirmation. Set NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE='${ambiguous_json}' only after verifying those exact sandboxes used managed images."
   fi
 
   local answer=""
@@ -1846,7 +1872,7 @@ EOF
     IFS= read -r answer <&3 || answer=""
     exec 3<&-
   else
-    error "Legacy sandbox recovery requires a TTY prompt or NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE=1."
+    error "Legacy sandbox recovery requires a TTY prompt or an exact JSON name array in NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE."
   fi
 
   answer="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
@@ -1872,8 +1898,8 @@ print_openshell_upgrade_manual_commands() {
 
   The prepared installer rerun lists pre-fingerprint sandboxes and asks you to
   confirm their managed-image provenance. For a non-interactive rerun, set
-  NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE=1 only after verifying every listed
-  sandbox used a NemoClaw-managed image.
+  NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE to the exact JSON array printed by
+  the installer only after verifying every listed sandbox used a managed image.
 
   Use NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to allow the installer
   to run the backup, gateway retirement, and restore preparation automatically.

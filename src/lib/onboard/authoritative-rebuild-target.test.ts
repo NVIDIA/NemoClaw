@@ -121,6 +121,15 @@ describe("authoritative rebuild target preflight", () => {
     ).rejects.toThrow("inference route does not match");
   });
 
+  it("allows a prepared recovery to repair a mismatched route during recreate (#6114)", async () => {
+    await expect(
+      preflightAuthoritativeRebuildTarget(
+        { ...target, allowInferenceRouteReconfigure: true },
+        deps({ inferenceRouteReady: vi.fn(() => false) }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it("rejects a dashboard forward owned by another sandbox", async () => {
     await expect(
       preflightAuthoritativeRebuildTarget(

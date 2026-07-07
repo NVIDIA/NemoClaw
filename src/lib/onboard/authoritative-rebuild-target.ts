@@ -19,6 +19,8 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort"
 > & {
   authoritativeResumeConfig: true;
+  /** Internal prepared-backup recovery may repair the selected route during recreate. */
+  allowInferenceRouteReconfigure?: boolean;
   model: string;
   provider: string;
   sandboxName: string;
@@ -60,6 +62,7 @@ export function resolveAuthoritativeOnboardGatewayBinding(
 }
 
 export type AuthoritativeRebuildTarget = {
+  allowInferenceRouteReconfigure?: boolean;
   sandboxName: string;
   provider: string;
   model: string;
@@ -90,7 +93,10 @@ export async function preflightAuthoritativeRebuildTarget(
   try {
     deps.runFatalRuntimePreflight();
     deps.ensureOpenshell();
-    if (!deps.inferenceRouteReady(target.provider, target.model)) {
+    if (
+      !deps.inferenceRouteReady(target.provider, target.model) &&
+      target.allowInferenceRouteReconfigure !== true
+    ) {
       fail(
         `OpenShell inference route does not match provider '${target.provider}' and model '${target.model}'.`,
       );

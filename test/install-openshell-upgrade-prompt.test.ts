@@ -21,6 +21,7 @@ function runPreinstallUpgradeGuard(
     currentCliAvailable?: boolean;
     hasOldCli?: boolean;
     openshellVersion?: string;
+    registryJson?: string;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-upgrade-prompt-"));
@@ -34,7 +35,10 @@ function runPreinstallUpgradeGuard(
 
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
-  fs.writeFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), '{"sandboxes":{"alpha":{}}}');
+  fs.writeFileSync(
+    path.join(home, ".nemoclaw", "sandboxes.json"),
+    options.registryJson ?? '{"sandboxes":{"alpha":{}}}',
+  );
   const currentCliAvailable = options.currentCliAvailable === false ? "0" : "1";
   const currentBackupSucceeds = options.currentBackupSucceeds === false ? "0" : "1";
   const openshellVersion = options.openshellVersion ?? "0.0.36";
@@ -149,12 +153,13 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
       NON_INTERACTIVE: "1",
       NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
-      NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: "1",
+      NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
     });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("RESTORE=1");
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
+    expect(result.stdout).toContain('"alpha"');
     expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
@@ -167,7 +172,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
-        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
       },
       { currentCliAvailable: false },
     );
@@ -184,7 +189,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
-        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
       },
       { currentBackupSucceeds: false },
     );
@@ -201,7 +206,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
-        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
       },
       { hasOldCli: false, openshellVersion: "0.0.44" },
     );
@@ -216,7 +221,26 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(openshellLog).toBe("");
   });
 
-  it("accepts only the exact managed-image confirmation value 1 (#6114)", () => {
+  it("confirms a normalized legacy row whose custom-image marker is null (#6114)", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+      },
+      {
+        hasOldCli: false,
+        openshellVersion: "0.0.44",
+        registryJson: '{"sandboxes":{"alpha":{"nemoclawVersion":null,"fromDockerfile":null}}}',
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(openshellLog).toBe("");
+  });
+
+  it("rejects a managed-image confirmation that is not a JSON name array (#6114)", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
@@ -227,8 +251,23 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain(
-      "Legacy sandbox recovery requires explicit confirmation",
+      "must be a JSON array containing the exact sandbox names",
     );
+    expect(cliLog).toBe("");
+    expect(openshellLog).toBe("");
+  });
+
+  it("rejects a managed-image confirmation that does not match the listed names (#6114)", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["beta"]',
+      },
+      { openshellVersion: "0.0.44" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("must exactly match the listed sandbox names");
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("");
   });
@@ -238,7 +277,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1",
-        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
       },
       { hasOldCli: false },
     );

@@ -113,6 +113,7 @@ export type RebuildFlowOverrides = {
     | { ok: false; detail: string };
   openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
   preflightMessagingConflicts?: () => Promise<void> | void;
+  preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
@@ -134,6 +135,7 @@ export type RebuildFlowHarness = {
   markStepFailedSpy: MockInstance;
   openShieldsSpy: MockInstance;
   onboardSpy: MockInstance;
+  preflightAuthoritativeRebuildTargetSpy: MockInstance;
   preflightMessagingConflictsSpy: MockInstance;
   preflightDcodeRouteSpy: MockInstance;
   prepareManagedDcodeRebuildImageSpy: MockInstance;
@@ -487,9 +489,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv").mockImplementation(
     (...args: unknown[]) => onboardCredentialEnv.hydrateCredentialEnv(String(args[0] ?? "")),
   );
-  vi.spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget").mockResolvedValue(
-    undefined,
-  );
+  const preflightAuthoritativeRebuildTargetSpy = vi
+    .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")
+    .mockImplementation(async (options: unknown) => {
+      await overrides.preflightAuthoritativeRebuildTarget?.(
+        (options ?? {}) as Record<string, unknown>,
+      );
+    });
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
     .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
@@ -559,6 +565,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     markStepFailedSpy,
     openShieldsSpy,
     onboardSpy,
+    preflightAuthoritativeRebuildTargetSpy,
     preflightMessagingConflictsSpy,
     preflightDcodeRouteSpy,
     prepareManagedDcodeRebuildImageSpy,

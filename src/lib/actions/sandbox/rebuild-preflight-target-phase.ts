@@ -50,6 +50,7 @@ export async function prepareRebuildTargetPreflights(args: {
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
   allowLegacyManagedImageRecovery?: boolean;
+  allowInferenceRouteReconfigure?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
@@ -60,6 +61,7 @@ export async function prepareRebuildTargetPreflights(args: {
     autoYes,
     requestedToolDisclosure,
     allowLegacyManagedImageRecovery,
+    allowInferenceRouteReconfigure,
     log,
     bail,
   } = args;
@@ -125,7 +127,9 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   });
   if (
-    !(await preflightAuthoritativeOnboardRuntime(sandboxName, resumeConfig, recreateOptions, bail))
+    !(await preflightAuthoritativeOnboardRuntime(sandboxName, resumeConfig, recreateOptions, bail, {
+      allowInferenceRouteReconfigure,
+    }))
   ) {
     return null;
   }

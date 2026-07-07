@@ -48,10 +48,7 @@ export function validatePreparedRecoveryManifest(
     bail(`Invalid recovery manifest: ${validation.reason}`);
     return null;
   }
-  if (
-    !sandboxState.hasPositiveManagedImageEvidence(sandboxEntry) &&
-    !(allowLegacyManagedImageRecovery && sandboxEntry.fromDockerfile === undefined)
-  ) {
+  if (!sandboxState.isManagedImageRecoveryAllowed(sandboxEntry, allowLegacyManagedImageRecovery)) {
     console.error("");
     console.error(
       `  ${_RD}Recovery preflight failed:${R} registry has no NemoClaw-managed image fingerprint.`,
@@ -119,10 +116,7 @@ export function revalidatePreparedRecoveryBeforeDelete(
       bail,
     );
   }
-  if (
-    !sandboxState.hasPositiveManagedImageEvidence(currentEntry) &&
-    !allowLegacyManagedImageRecovery
-  ) {
+  if (!sandboxState.isManagedImageRecoveryAllowed(currentEntry, allowLegacyManagedImageRecovery)) {
     return failPreparedRecoveryPreDelete(
       "registry no longer has a NemoClaw-managed image fingerprint",
       "Recovery registry entry has no NemoClaw-managed image fingerprint.",

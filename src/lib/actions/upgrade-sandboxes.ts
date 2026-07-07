@@ -103,11 +103,7 @@ function prepareBackupRecovery(
       return { sandbox, reason: validation.reason };
     }
     const hasManagedImageEvidence = sandboxState.hasPositiveManagedImageEvidence(sandbox);
-    const allowLegacyManagedRecovery =
-      !hasManagedImageEvidence &&
-      allowLegacyManagedImageRecovery &&
-      sandbox.fromDockerfile === undefined;
-    if (!hasManagedImageEvidence && !allowLegacyManagedRecovery) {
+    if (!sandboxState.isManagedImageRecoveryAllowed(sandbox, allowLegacyManagedImageRecovery)) {
       return {
         sandbox,
         reason:
@@ -117,7 +113,7 @@ function prepareBackupRecovery(
     return {
       sandbox,
       manifest: validation.manifest,
-      allowLegacyManagedImageRecovery: allowLegacyManagedRecovery,
+      allowLegacyManagedImageRecovery: !hasManagedImageEvidence,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

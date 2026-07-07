@@ -121,7 +121,7 @@ If registered sandboxes already exist, the installer prepares the current NemoCl
 After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto` to rebuild stale sandboxes and restore validated backups for registered sandboxes that are not Ready.
 Successful recovery completes the existing-sandbox upgrade and skips generic onboarding, so the installer does not create an extra sandbox or ask for a new provider credential.
 For pre-fingerprint OpenClaw and Hermes registry entries, the installer asks you to confirm that every listed sandbox used a NemoClaw-managed image before it permits recovery onto the current managed image.
-In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to exactly `1` only after you verify the listed sandboxes used managed images.
+In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
 Registry entries with recorded custom-image evidence remain blocked from automatic recreation.
 If any backup is skipped or fails, the installer exits with a nonzero status before it changes the gateway.
 If an automatic rebuild fails or a non-Ready recovery is blocked or fails, the installer exits with a nonzero status and does not start generic onboarding.

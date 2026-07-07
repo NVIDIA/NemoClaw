@@ -45,6 +45,21 @@ describe("prepared rebuild recovery", () => {
       "alpha",
       recoveryManifest.backupPath,
     );
+    expect(harness.preflightAuthoritativeRebuildTargetSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ allowInferenceRouteReconfigure: true }),
+    );
+  });
+
+  it("does not authorize route reconfiguration for an ordinary rebuild (#6114)", async () => {
+    const harness = createRebuildFlowHarness({ applyPreset: () => true });
+
+    await expect(harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).resolves.toBe(
+      undefined,
+    );
+
+    expect(harness.preflightAuthoritativeRebuildTargetSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ allowInferenceRouteReconfigure: false }),
+    );
   });
 
   it("carries confirmed legacy managed-image recovery through the delete edge (#6114)", async () => {

@@ -531,7 +531,7 @@ async function installCurrentNemoclawUpgrade(
     COMPATIBLE_API_KEY: "dummy",
     GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
     NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
-    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: "1",
+    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify([SURVIVOR_SANDBOX]),
     NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
     NEMOCLAW_INSTALL_REF: resolvedRef,
     NEMOCLAW_INSTALL_TAG: resolvedRef,
@@ -554,7 +554,7 @@ async function installCurrentNemoclawUpgrade(
   );
 
   const currentLog = fs.readFileSync(currentInstallLog, "utf8");
-  expect(currentLog).toContain("Confirmed 1 pre-fingerprint sandbox(es)");
+  expect(currentLog).toContain("Confirmed 1 exact pre-fingerprint sandbox name(s)");
   expect(currentLog).toContain("Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped");
   expect(currentLog).toContain("Existing sandboxes recovered; skipping generic onboarding");
 
@@ -681,7 +681,7 @@ runLinuxOpenShellGatewayUpgrade(
       boundary: [
         "real old install.sh fetched from v0.0.36",
         "real Docker/OpenShell gateway and OpenClaw sandbox",
-        "test-only positive provenance for the known-managed legacy fixture",
+        "exact-name confirmation for the known-managed legacy fixture",
         "current scripts/install.sh gateway upgrade path",
         "sandbox exec /proc process probe",
         "NemoClaw registry and durable workspace restore",
