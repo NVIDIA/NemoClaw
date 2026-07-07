@@ -207,11 +207,11 @@ function reportAddCredentialResolution(sandboxName: string, server: string): voi
     : getSandboxAgent(sandbox).mcpCapability.adapter;
   const probe = probeCredentialResolution(sandboxName, entry, adapter);
   if (probe.ok === true) {
-    console.log(`  Credential resolution verified on the wire (HTTP ${probe.httpStatus}).`);
-  } else if (probe.ok === false) {
-    console.error(
-      `  WARNING: ${credentialResolutionFailureWarning(entry.env[0], probe.httpStatus)}`,
+    console.log(
+      `  Credential resolution verified on the wire (HTTP ${probe.httpStatus})${probe.detail ? `: ${probe.detail}` : "."}`,
     );
+  } else if (probe.ok === false) {
+    console.error(`  WARNING: ${credentialResolutionFailureWarning(entry.env[0], probe)}`);
   } else {
     console.log(
       `  Credential resolution probe was inconclusive${probe.detail ? `: ${probe.detail}` : "."}`,

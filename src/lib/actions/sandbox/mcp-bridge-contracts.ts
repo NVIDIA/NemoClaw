@@ -58,6 +58,7 @@ export interface McpBridgeStatus {
     credentialResolution?: {
       ok: boolean | null;
       httpStatus?: number;
+      controlHttpStatus?: number;
       detail?: string;
     };
   };

@@ -1275,9 +1275,10 @@ unset GITHUB_MCP_TOKEN
 Inspect MCP server state for one server or for all configured servers.
 Status includes OpenShell provider presence and credential-key shape, provider attachment, generated policy content match, adapter registration, current host-variable availability, and the selected agent's MCP support mode.
 While a managed provider is attached, text and JSON status warn that its credential is sandbox-scoped until OpenShell supports endpoint-exclusive binding plus Host, scheme, and query enforcement.
-When a single server is named, status also runs a wire-level credential-resolution probe: an MCP `initialize` sent from inside the sandbox with the `openshell:resolve:env:KEY` placeholder header, reported as `provider.credentialResolution` in JSON and a `credential resolution:` line in text output.
-A `FAILED` verdict means OpenShell returned provider metadata as healthy but never rewrote the placeholder on egress, so agent runtimes receive the same auth failure and skip the server.
-Ambiguous rejections (HTTP 400), endpoint outages (HTTP 5xx), policy denials, and unreachable sandboxes report as `unknown` rather than blaming the credential rewrite.
+When a single server is named, status also runs a differential wire-level credential-resolution probe: the same MCP `initialize` is sent from inside the sandbox once with the `openshell:resolve:env:KEY` placeholder header and once with a deliberately-unresolvable control bearer, and only the two HTTP status codes are compared — response bodies are never captured or printed.
+A `FAILED` verdict means the endpoint answered both requests identically, so OpenShell forwarded the placeholder verbatim instead of rewriting it on egress, and agent runtimes receive the same auth failure and skip the server.
+An expired or revoked credential does not produce `FAILED`: it resolves on the wire and is rejected with a different status than the control, which reports as verified with a detail asking you to check the stored credential value.
+Ambiguous differing rejections, endpoints that skip authentication, endpoint outages, policy denials, and unreachable sandboxes report as `unknown` rather than blaming the credential rewrite, and a persisted URL that fails the current authenticated-endpoint boundary is never probed.
 
 ```bash
 nemohermes my-assistant mcp status [server] [--json] [--probe|--no-probe]

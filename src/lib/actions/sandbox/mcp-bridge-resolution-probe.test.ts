@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { McpBridgeEntry } from "../../state/registry";
 
@@ -17,6 +17,9 @@ import {
   buildCredentialResolutionProbeCommand,
   classifyCredentialResolutionProbe,
   credentialResolutionFailureWarning,
+  MCP_PROBE_CONTROL_BEARER,
+  MCP_PROBE_CONTROL_EXIT_MARKER,
+  MCP_PROBE_CONTROL_HTTP_MARKER,
   MCP_PROBE_EXIT_MARKER,
   MCP_PROBE_HTTP_MARKER,
   probeCredentialResolution,
@@ -34,12 +37,22 @@ const baseEntry: McpBridgeEntry = {
   addedAt: new Date(0).toISOString(),
 };
 
-function probeStdout(parts: { httpStatus?: number; curlExit: number; body?: string }): string {
+function probeStdout(parts: {
+  httpStatus?: number;
+  curlExit: number;
+  controlHttpStatus?: number;
+  controlExit?: number;
+}): string {
   return [
     "",
     ...(parts.httpStatus !== undefined ? [`${MCP_PROBE_HTTP_MARKER}${parts.httpStatus}`] : []),
     `${MCP_PROBE_EXIT_MARKER}${parts.curlExit}`,
-    ...(parts.body !== undefined ? [parts.body] : []),
+    ...(parts.controlHttpStatus !== undefined
+      ? [`${MCP_PROBE_CONTROL_HTTP_MARKER}${parts.controlHttpStatus}`]
+      : []),
+    ...(parts.controlExit !== undefined
+      ? [`${MCP_PROBE_CONTROL_EXIT_MARKER}${parts.controlExit}`]
+      : []),
   ].join("\n");
 }
 
@@ -47,28 +60,28 @@ beforeEach(() => {
   mocks.executeSandboxCommand.mockReset();
 });
 
-afterEach(() => {
-  delete process.env.GITHUB_TOKEN;
-});
-
 describe("MCP credential-resolution probe command", () => {
-  it("wraps curl in the node runtime with the placeholder header and initialize body for mcporter (#6379)", () => {
+  it("wraps placeholder and control curls in the node runtime for mcporter (#6379)", () => {
     const command = buildCredentialResolutionProbeCommand(baseEntry, "mcporter");
     expect(command).not.toBeNull();
     expect(command).toContain("[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh");
     expect(command).toContain("nemoclaw-start node -e");
     expect(command).toContain("'authorization: Bearer openshell:resolve:env:GITHUB_TOKEN'");
+    expect(command).toContain(`'authorization: Bearer ${MCP_PROBE_CONTROL_BEARER}'`);
     expect(command).toContain('"method":"initialize"');
     expect(command).toContain(MCP_PROBE_HTTP_MARKER);
-    expect(command).toContain(MCP_PROBE_EXIT_MARKER);
-    expect(command).toContain(
-      'response_path="$(mktemp /tmp/nemoclaw-mcp-credential-probe.XXXXXX)"',
-    );
-    expect(command).toContain("trap 'rm -f \"$response_path\"' EXIT");
+    expect(command).toContain(MCP_PROBE_CONTROL_HTTP_MARKER);
     expect(command?.trimEnd().endsWith("exit 0")).toBe(true);
   });
 
-  it("wraps curl in the venv python runtimes for hermes-config and deepagents-config (#6379)", () => {
+  it("never captures or prints the endpoint response body (#6379)", () => {
+    const command = buildCredentialResolutionProbeCommand(baseEntry, "mcporter");
+    expect(command).toContain("'/dev/null'");
+    expect(command).not.toContain("head -c");
+    expect(command).not.toContain("mktemp");
+  });
+
+  it("wraps curls in the venv python runtimes for hermes-config and deepagents-config (#6379)", () => {
     const hermes = buildCredentialResolutionProbeCommand(baseEntry, "hermes-config");
     expect(hermes).toContain("/opt/hermes/.venv/bin/python -c");
     const deepagents = buildCredentialResolutionProbeCommand(baseEntry, "deepagents-config");
@@ -82,47 +95,127 @@ describe("MCP credential-resolution probe command", () => {
   it("returns null when the entry has no credential binding (#6379)", () => {
     expect(buildCredentialResolutionProbeCommand({ ...baseEntry, env: [] }, "mcporter")).toBeNull();
   });
+
+  it("returns null when the stored URL fails the authenticated-endpoint boundary (#6379)", () => {
+    expect(
+      buildCredentialResolutionProbeCommand(
+        { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
+        "mcporter",
+      ),
+    ).toBeNull();
+    expect(
+      buildCredentialResolutionProbeCommand(
+        { ...baseEntry, url: "https://host.openshell.internal:31337/mcp" },
+        "mcporter",
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("MCP credential-resolution probe classification", () => {
-  it("classifies HTTP 200 as resolved on the wire (#6379)", () => {
+  it("classifies placeholder 2xx with rejected control as resolved on the wire (#6379)", () => {
     const probe = classifyCredentialResolutionProbe(
-      { status: 0, stdout: probeStdout({ httpStatus: 200, curlExit: 0 }), stderr: "" },
+      {
+        status: 0,
+        stdout: probeStdout({
+          httpStatus: 200,
+          curlExit: 0,
+          controlHttpStatus: 401,
+          controlExit: 0,
+        }),
+        stderr: "",
+      },
       baseEntry,
     );
-    expect(probe).toEqual({ ok: true, httpStatus: 200 });
+    expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
   });
 
-  it("classifies HTTP 401 and 403 as resolution failures with the status (#6379)", () => {
-    for (const httpStatus of [401, 403]) {
+  it("classifies identical placeholder and control rejections as a resolution failure (#6379)", () => {
+    for (const httpStatus of [400, 401, 403]) {
       const probe = classifyCredentialResolutionProbe(
-        { status: 0, stdout: probeStdout({ httpStatus, curlExit: 0 }), stderr: "" },
+        {
+          status: 0,
+          stdout: probeStdout({
+            httpStatus,
+            curlExit: 0,
+            controlHttpStatus: httpStatus,
+            controlExit: 0,
+          }),
+          stderr: "",
+        },
         baseEntry,
       );
       expect(probe.ok).toBe(false);
       expect(probe.httpStatus).toBe(httpStatus);
+      expect(probe.controlHttpStatus).toBe(httpStatus);
     }
   });
 
-  it("classifies HTTP 400 as indeterminate while naming the placeholder hypothesis (#6379)", () => {
+  it("classifies a placeholder 401 that differs from the control as resolved but rejected upstream (#6379)", () => {
     const probe = classifyCredentialResolutionProbe(
-      { status: 0, stdout: probeStdout({ httpStatus: 400, curlExit: 0 }), stderr: "" },
+      {
+        status: 0,
+        stdout: probeStdout({
+          httpStatus: 401,
+          curlExit: 0,
+          controlHttpStatus: 400,
+          controlExit: 0,
+        }),
+        stderr: "",
+      },
+      baseEntry,
+    );
+    expect(probe.ok).toBe(true);
+    expect(probe.detail).toContain("verify the stored credential value");
+  });
+
+  it("classifies dual 2xx as an endpoint that does not enforce authentication (#6379)", () => {
+    const probe = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: probeStdout({
+          httpStatus: 200,
+          curlExit: 0,
+          controlHttpStatus: 200,
+          controlExit: 0,
+        }),
+        stderr: "",
+      },
       baseEntry,
     );
     expect(probe.ok).toBeNull();
-    expect(probe.httpStatus).toBe(400);
-    expect(probe.detail).toContain("unresolved credential placeholder");
+    expect(probe.detail).toContain("does not enforce authentication");
+  });
+
+  it("classifies differing non-auth statuses as indeterminate (#6379)", () => {
+    const probe = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: probeStdout({
+          httpStatus: 400,
+          curlExit: 0,
+          controlHttpStatus: 401,
+          controlExit: 0,
+        }),
+        stderr: "",
+      },
+      baseEntry,
+    );
+    expect(probe.ok).toBeNull();
     expect(probe.detail).toContain("known-good host");
   });
 
-  it("classifies HTTP 502 as indeterminate instead of blaming the credential rewrite (#6379)", () => {
+  it("classifies a failed control probe as indeterminate (#6379)", () => {
     const probe = classifyCredentialResolutionProbe(
-      { status: 0, stdout: probeStdout({ httpStatus: 502, curlExit: 0 }), stderr: "" },
+      {
+        status: 0,
+        stdout: probeStdout({ httpStatus: 401, curlExit: 0, controlExit: 28 }),
+        stderr: "",
+      },
       baseEntry,
     );
     expect(probe.ok).toBeNull();
-    expect(probe.httpStatus).toBe(502);
-    expect(probe.detail).toContain("could not be judged");
+    expect(probe.detail).toContain("control probe failed");
   });
 
   it("classifies a CONNECT-level proxy 403 as an indeterminate policy denial (#6379)", () => {
@@ -154,16 +247,18 @@ describe("MCP credential-resolution probe classification", () => {
     });
   });
 
-  it("redacts credential material from the failure detail excerpt (#6379)", () => {
-    process.env.GITHUB_TOKEN = "ghp_super-secret-value-1234567890";
-    const body = `{"error":"bad token ghp_super-secret-value-1234567890"}`;
+  it("never includes endpoint response text in the verdict (#6379)", () => {
+    const body = '{"error":"bad token ghp_super-secret-value-1234567890"}';
     const probe = classifyCredentialResolutionProbe(
-      { status: 0, stdout: probeStdout({ httpStatus: 401, curlExit: 0, body }), stderr: "" },
+      {
+        status: 0,
+        stdout: `${probeStdout({ httpStatus: 401, curlExit: 0, controlHttpStatus: 401, controlExit: 0 })}\n${body}`,
+        stderr: "",
+      },
       baseEntry,
     );
     expect(probe.ok).toBe(false);
-    expect(probe.detail).not.toContain("ghp_super-secret-value-1234567890");
-    expect(probe.detail).toContain("***REDACTED***");
+    expect(JSON.stringify(probe)).not.toContain("ghp_super-secret-value-1234567890");
   });
 });
 
@@ -184,31 +279,39 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("skips without contacting the sandbox when no credential binding exists (#6379)", () => {
-    const probe = probeCredentialResolution("alpha", { ...baseEntry, env: [] }, "mcporter");
-    expect(probe).toEqual({ ok: null, detail: "no credential binding to probe" });
+  it("skips without contacting the sandbox when the stored URL is unsafe (#6379)", () => {
+    const probe = probeCredentialResolution(
+      "alpha",
+      { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
+      "mcporter",
+    );
+    expect(probe).toEqual({ ok: null, detail: "no credential binding or safe endpoint to probe" });
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
   it("executes the probe in the sandbox and classifies the outcome (#6379)", () => {
     mocks.executeSandboxCommand.mockReturnValue({
       status: 0,
-      stdout: probeStdout({ httpStatus: 200, curlExit: 0 }),
+      stdout: probeStdout({ httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 }),
       stderr: "",
     });
     const probe = probeCredentialResolution("alpha", baseEntry, "mcporter");
-    expect(probe).toEqual({ ok: true, httpStatus: 200 });
+    expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
     expect(mocks.executeSandboxCommand).toHaveBeenCalledTimes(1);
     const [, command] = mocks.executeSandboxCommand.mock.calls[0];
     expect(command).toContain("openshell:resolve:env:GITHUB_TOKEN");
+    expect(command).toContain(MCP_PROBE_CONTROL_BEARER);
   });
 });
 
 describe("MCP credential-resolution failure warning", () => {
-  it("names the placeholder, the probe verdict, and the OpenShell host remediation (#6379)", () => {
-    const warning = credentialResolutionFailureWarning("GITHUB_TOKEN", 403);
+  it("names the placeholder, the differential evidence, and the OpenShell host remediation (#6379)", () => {
+    const warning = credentialResolutionFailureWarning("GITHUB_TOKEN", {
+      httpStatus: 403,
+      controlHttpStatus: 403,
+    });
     expect(warning).toContain("openshell:resolve:env:GITHUB_TOKEN");
-    expect(warning).toContain("HTTP 403");
+    expect(warning).toContain("identically (HTTP 403)");
     expect(warning).toContain("OpenShell issue 2161");
   });
 });

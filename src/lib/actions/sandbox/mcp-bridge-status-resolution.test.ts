@@ -64,7 +64,13 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
   if (command.includes("NEMOCLAW_MCP_PROBE")) {
     return {
       status: 0,
-      stdout: "\nNEMOCLAW_MCP_PROBE_HTTP_CODE=401\nNEMOCLAW_MCP_PROBE_CURL_EXIT=0\n{\"error\":\"unauthorized\"}",
+      stdout: [
+        "",
+        "NEMOCLAW_MCP_PROBE_HTTP_CODE=401",
+        "NEMOCLAW_MCP_PROBE_CURL_EXIT=0",
+        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=401",
+        "NEMOCLAW_MCP_CONTROL_CURL_EXIT=0",
+      ].join("\n"),
       stderr: "",
     };
   }

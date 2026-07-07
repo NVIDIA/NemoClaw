@@ -208,12 +208,13 @@ An existing valid provider can remain ready when that host variable is unset bec
 The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
 
 Provider presence, attachment, and credential-key checks read OpenShell metadata only; they cannot prove that OpenShell actually rewrites the `openshell:resolve:env:KEY` placeholder when a request leaves the sandbox.
-`mcp status <server>` therefore also runs a wire-level credential-resolution probe by default: it sends one idempotent MCP `initialize` request from inside the sandbox, wrapped in the adapter runtime so the generated `protocol: mcp` policy applies, carrying the placeholder authorization header exactly as agent traffic does.
-The verdict appears as `provider.credentialResolution` in JSON (`ok` true, false, or null with an optional `httpStatus` and redacted `detail`) and as a `credential resolution:` line in text output.
+`mcp status <server>` therefore also runs a differential wire-level credential-resolution probe by default: it sends the same idempotent MCP `initialize` request twice from inside the sandbox, wrapped in the adapter runtime so the generated `protocol: mcp` policy applies — once with the placeholder authorization header exactly as agent traffic carries it, and once with a deliberately-unresolvable literal control bearer that no gateway rewrite can touch.
+A working rewrite makes the two requests reach the endpoint with different bearers; a dead rewrite forwards both literally, so identical HTTP rejections for both requests indict the host's placeholder rewrite without misblaming an expired or revoked credential, which resolves correctly and is then rejected upstream with a different status than the control.
+The verdict appears as `provider.credentialResolution` in JSON (`ok` true, false, or null with the probe and control `httpStatus`/`controlHttpStatus` and a `detail`) and as a `credential resolution:` line in text output.
+The probe never captures or prints endpoint response bodies — classification uses HTTP status and curl exit codes only — and it refuses to run against a persisted URL that no longer satisfies the current authenticated-endpoint boundary, so a legacy, private-alias, or plain-HTTP URL is never sent a header the gateway could rewrite into a live credential.
 `mcp add` runs the same probe once after the add commits and prints a warning on failure without failing the add.
 Pass `--no-probe` to skip the probe, or `--probe` to force it for every server in the multi-server status form; the bare `mcp list` and `mcp status` forms never probe so they stay fast.
-An HTTP 2xx verdict proves end-to-end resolution and HTTP 401 or 403 means the upstream rejected the request on the same path agents use; an HTTP 400, endpoint outages, policy denials, timeouts, and unreachable sandboxes report `ok: null` so an endpoint problem is never blamed on the host's credential rewrite.
-Because some endpoints answer a literal placeholder bearer with HTTP 400, that verdict's detail names both hypotheses and recommends comparing against a known-good host.
+Endpoints that accept both probes without enforcing authentication, differing non-auth rejections, endpoint outages, policy denials, timeouts, and unreachable sandboxes all report `ok: null` with the evidence in `detail`, so an endpoint problem is never blamed on the host's credential rewrite.
 
 ### Rotate a Credential
 

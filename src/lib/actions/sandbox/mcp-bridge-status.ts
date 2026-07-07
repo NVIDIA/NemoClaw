@@ -233,9 +233,7 @@ export async function statusMcpBridge(
           : probeCredentialResolution(sandboxName, entry, support.adapter)
         : undefined;
     if (credentialResolution?.ok === false) {
-      warnings.push(
-        credentialResolutionFailureWarning(entry?.env[0], credentialResolution.httpStatus),
-      );
+      warnings.push(credentialResolutionFailureWarning(entry?.env[0], credentialResolution));
     }
     return {
       server: name,
