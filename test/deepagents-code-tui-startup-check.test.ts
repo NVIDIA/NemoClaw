@@ -231,6 +231,9 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(tuiStartupCheckSource).toContain(
       "from deepagents_code.onboarding import should_run_onboarding",
     );
+    expect(tuiStartupCheckSource).toContain(
+      "env -u PYTHONHOME -u PYTHONPATH HOME=/sandbox /opt/venv/bin/python3 -I -c",
+    );
     expect(tuiExpectProgram).toContain('if {$expect_name_prompt eq "1"}');
     expect(tuiExpectProgram).not.toContain("set timeout 10");
   });

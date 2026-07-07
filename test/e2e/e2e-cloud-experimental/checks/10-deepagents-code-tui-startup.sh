@@ -325,7 +325,7 @@ main() {
   fi
 
   local probe_output expect_name_prompt
-  if ! probe_output="$(sandbox_exec 'if test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1; then printf "NEMOCLAW_DCODE_PROBE:deepagents\n"; python3 -c "from deepagents_code.onboarding import should_run_onboarding; print(\"NEMOCLAW_DCODE_ONBOARDING:\" + (\"pending\" if should_run_onboarding() else \"complete\"))"; else printf "NEMOCLAW_DCODE_PROBE:other\n"; fi')"; then
+  if ! probe_output="$(sandbox_exec 'if test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1; then printf "NEMOCLAW_DCODE_PROBE:deepagents\n"; env -u PYTHONHOME -u PYTHONPATH HOME=/sandbox /opt/venv/bin/python3 -I -c "from deepagents_code.onboarding import should_run_onboarding; print(\"NEMOCLAW_DCODE_ONBOARDING:\" + (\"pending\" if should_run_onboarding() else \"complete\"))"; else printf "NEMOCLAW_DCODE_PROBE:other\n"; fi')"; then
     fail_test "unable to probe sandbox '${SANDBOX_NAME}' for Deep Agents Code markers"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
