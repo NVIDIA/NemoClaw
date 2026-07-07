@@ -237,6 +237,8 @@ def reclaim_dir(
             continue
         if not stat.S_ISREG(before.st_mode):
             continue
+        if top_level and name == BASELINE_NAME:
+            continue
         child_fd, opened = open_pinned(directory_fd, name, file_flags(), before)
         try:
             os.fchown(child_fd, sandbox_uid, sandbox_gid)

@@ -475,7 +475,7 @@ const nobodyGid = spawnSync("id", ["-g", "nobody"], { encoding: "utf-8" }).stdou
 
 describe("nemoclaw-start mutable config reclaim", () => {
   it.skipIf(runningAsRoot)(
-    "leaves the tree untouched when it cannot reclaim ownership without root",
+    "leaves the tree untouched when it cannot reclaim ownership without root (#6300)",
     () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-nonroot-"));
       const configDir = path.join(root, ".openclaw");
@@ -547,6 +547,53 @@ describe("nemoclaw-start mutable config reclaim", () => {
           path.join(configDir, "nemoclaw-write-check"),
         ]);
         expect(writeCheck.status).toBe(0);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(runningAsRoot)(
+    "leaves a root-owned recovery baseline untouched during reclaim (#6307)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-baseline-"));
+      const configDir = path.join(root, ".openclaw");
+      fs.mkdirSync(configDir);
+      fs.chmodSync(configDir, 0o700);
+      const configFile = path.join(configDir, "openclaw.json");
+      const hashFile = path.join(configDir, ".config-hash");
+      const baselineFile = path.join(configDir, "openclaw.json.nemoclaw-baseline");
+      fs.writeFileSync(configFile, "{}\n");
+      fs.chmodSync(configFile, 0o600);
+      fs.writeFileSync(hashFile, "hash\n");
+      fs.chmodSync(hashFile, 0o600);
+      fs.writeFileSync(baselineFile, "{}\n");
+      fs.chmodSync(baselineFile, 0o440);
+      const beforeBaselineUid = fs.statSync(baselineFile).uid;
+      const beforeBaselineGid = fs.statSync(baselineFile).gid;
+
+      const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+        'local config_dir="/sandbox/.openclaw"',
+        `local config_dir=${JSON.stringify(configDir)}`,
+      );
+      const patchedReclaimFunction = reclaimFunction
+        .replace("id -u sandbox", `echo ${JSON.stringify(nobodyUid)}`)
+        .replace("id -g sandbox", `echo ${JSON.stringify(nobodyGid)}`);
+      const script = [
+        "set -euo pipefail",
+        resolveNormalizerFunction,
+        classifyFunction,
+        patchedReclaimFunction,
+        normalizeFunction,
+        "normalize_mutable_config_perms",
+      ].join("\n");
+
+      try {
+        const result = runBash(script);
+        expect(result.status).toBe(0);
+        expect(mode(baselineFile)).toBe(0o440);
+        expect(fs.statSync(baselineFile).uid).toBe(beforeBaselineUid);
+        expect(fs.statSync(baselineFile).gid).toBe(beforeBaselineGid);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
