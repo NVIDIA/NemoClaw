@@ -25,7 +25,12 @@ import {
   execSandbox,
   findMultilineExecArg,
   multilineExecMessage,
+  wrapExecCommandWithRuntimeEnv,
 } from "./exec";
+
+function expectedExecArgs(sandboxName: string, command: readonly string[]): string[] {
+  return buildOpenshellExecArgs(sandboxName, wrapExecCommandWithRuntimeEnv(command));
+}
 
 describe("findMultilineExecArg", () => {
   it("returns -1 when every argument is single-line", () => {
@@ -150,16 +155,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
       ),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "bash",
-      "-lc",
-      "echo line1; echo line2",
-    ]);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      expectedExecArgs("bug5980test", ["bash", "-lc", "echo line1; echo line2"]),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -183,15 +182,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
       ),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "printf",
-      "a\u2028b",
-    ]);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      expectedExecArgs("bug5980test", ["printf", "a\u2028b"]),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -268,14 +262,7 @@ describe("execSandbox multi-line guard (#5980)", () => {
       execSandbox("bug5980test", ["bash"], {}, { run, resolveBinary: () => "openshell" }),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "bash",
-    ]);
+    expect(run).toHaveBeenCalledWith("openshell", expectedExecArgs("bug5980test", ["bash"]));
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -308,11 +295,9 @@ describe("execSandbox multi-line guard (#5980)", () => {
       execSandbox("bug5980test", ["bash"], {}, { resolveBinary: () => "openshell" }),
     ).rejects.toThrow("exit:0");
 
-    expect(spawn).toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "exec", "--name", "bug5980test", "--", "bash"],
-      { stdio: "inherit" },
-    );
+    expect(spawn).toHaveBeenCalledWith("openshell", expectedExecArgs("bug5980test", ["bash"]), {
+      stdio: "inherit",
+    });
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -334,15 +319,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
       ),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "bash",
-      "/sandbox/run.sh",
-    ]);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      expectedExecArgs("bug5980test", ["bash", "/sandbox/run.sh"]),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 

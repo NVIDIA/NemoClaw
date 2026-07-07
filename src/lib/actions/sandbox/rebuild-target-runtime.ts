@@ -23,24 +23,11 @@ import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import type { RebuildTargetConfig } from "./rebuild-target-config";
-
-const onboardModule = require("../../onboard") as {
-  ensureValidatedWebSearchCredential: (
-    config: NonNullable<RebuildDurableConfig["webSearchConfig"]>,
-    nonInteractive?: boolean,
-  ) => Promise<unknown>;
-  preflightAuthoritativeRebuildTarget: (
-    options: RebuildRecreateOnboardOpts & {
-      model: string;
-      provider: string;
-      sandboxName: string;
-    },
-  ) => Promise<void>;
-};
 
 async function preflightRebuildWebSearchCredential(
   durableConfig: RebuildDurableConfig,
@@ -51,7 +38,10 @@ async function preflightRebuildWebSearchCredential(
   const provider = webSearchProviderForConfig(config);
   const label = webSearchLabelFor(provider);
   try {
-    const credential = await onboardModule.ensureValidatedWebSearchCredential(config, true);
+    const credential = await rebuildOnboardDependencies.ensureValidatedWebSearchCredential(
+      config,
+      true,
+    );
     if (typeof credential !== "string" || !credential.trim()) {
       throw new Error(`${label} credential validation did not return a usable key.`);
     }
@@ -77,7 +67,10 @@ export async function preflightRebuildTargetRuntime(
   recreateOptions: RebuildRecreateOnboardOpts,
   log: RebuildLog,
   bail: RebuildBail,
-  options: { skipImagePreflight?: boolean } = {},
+  options: {
+    allowMissingGatewayProviderWithHostCredential?: boolean;
+    skipImagePreflight?: boolean;
+  } = {},
 ): Promise<RebuildTargetRuntimePreflightResult> {
   const webSearchConfig = target.durableConfig.webSearchConfig;
   const webSearchProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
@@ -196,6 +189,10 @@ export async function preflightRebuildTargetRuntime(
         },
         log,
         bail,
+        {
+          allowMissingGatewayProviderWithHostCredential:
+            options.allowMissingGatewayProviderWithHostCredential,
+        },
       )
     ) {
       return { ok: false };
@@ -213,10 +210,12 @@ export async function preflightAuthoritativeOnboardRuntime(
   resumeConfig: RebuildResumeConfig,
   recreateOptions: RebuildRecreateOnboardOpts,
   bail: RebuildBail,
+  options: { deferInferenceRouteUntilOnboard?: true } = {},
 ): Promise<boolean> {
   try {
-    await onboardModule.preflightAuthoritativeRebuildTarget({
+    await rebuildOnboardDependencies.preflightAuthoritativeRebuildTarget({
       ...recreateOptions,
+      ...options,
       model: resumeConfig.model,
       provider: resumeConfig.provider,
       sandboxName,

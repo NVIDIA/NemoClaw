@@ -17,10 +17,12 @@ import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
+import * as dcodeResume from "./sandbox-dcode-resume";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
 import {
   applySandboxResumeDecision,
   decideSandboxResume,
+  hasHermesCompatibleAnthropicInferenceRouteDrift,
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
@@ -57,7 +59,7 @@ export interface SandboxStateOptions<
   controlUiPort: number | null;
   rootDir: string;
   env: NodeJS.ProcessEnv;
-  deps: {
+  deps: dcodeResume.Deps & {
     resolvePath(value: string): string;
     agentSupportsWebSearch(
       agent: Agent,
@@ -158,8 +160,6 @@ export interface SandboxStateOptions<
       },
     ): Promise<Session>;
     withSandboxMutationLock?<T>(sandboxName: string, action: () => Promise<T>): Promise<T>;
-    error(message?: string): void;
-    exitProcess(code: number): never;
   };
 }
 
@@ -374,15 +374,30 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
-    const toolDisclosureSignals = resolveToolDisclosureResumeSignals(
-      state.sandboxName ? this.deps.getSandboxRegistryEntry(state.sandboxName) : null,
-      state.session,
+    const registryEntry = state.sandboxName
+      ? this.deps.getSandboxRegistryEntry(state.sandboxName)
+      : null;
+    const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
+    const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
+    const dcodeResumeSignals = dcodeResume.resolveSignals(
+      this.options,
+      state,
+      sandboxReuseState,
+      registryEntry,
+      this.deps,
     );
-    return decideSandboxResume({
+    const decision = decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
       sandboxStepComplete: state.session?.steps?.sandbox?.status === "complete",
-      sandboxReuseState: this.deps.getSandboxReuseState(state.sandboxName),
+      sandboxReuseState,
+      inferenceRouteConfigChanged: hasHermesCompatibleAnthropicInferenceRouteDrift({
+        agentName: (this.options.agent as { name?: string } | null)?.name,
+        provider: this.options.provider,
+        model: this.options.model,
+        preferredInferenceApi: this.options.preferredInferenceApi,
+        registryEntry,
+      }),
       webSearchConfigChanged: state.webSearchSupportDropped || state.webSearchConfigChanged,
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
@@ -396,7 +411,9 @@ class SandboxStateFlow<
         effectiveToolGateways,
       ),
       ...toolDisclosureSignals,
+      ...dcodeResumeSignals,
     });
+    return dcodeResume.preserveManagedDcodeRegistryEntry(this.options, decision);
   }
 
   private async reuseSandbox(
@@ -450,6 +467,7 @@ class SandboxStateFlow<
     if (existing?.hermesAuthMethod === undefined && this.options.hermesAuthMethod) {
       fidelity.hermesAuthMethod = this.options.hermesAuthMethod;
     }
+    Object.assign(fidelity, dcodeResume.selectionFidelity(this.options, existing));
     if (Object.keys(fidelity).length > 0) {
       this.deps.updateSandboxRegistry(state.sandboxName, fidelity);
     }
