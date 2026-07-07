@@ -91,15 +91,14 @@ exit 0
   `;
 
   const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, ...env };
-  for (const key of [
+  const inheritedControlKeys = [
     "NON_INTERACTIVE",
     "NEMOCLAW_NON_INTERACTIVE",
     "NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE",
     "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE",
     "NEMOCLAW_OPENSHELL_UPGRADE_PREPARED",
-  ]) {
-    if (!(key in env)) delete childEnv[key];
-  }
+  ].filter((key) => !(key in env));
+  for (const key of inheritedControlKeys) delete childEnv[key];
   const result = spawnSync("bash", ["-c", snippet], {
     encoding: "utf-8",
     env: childEnv,
