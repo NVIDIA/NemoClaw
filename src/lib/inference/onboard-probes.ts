@@ -43,6 +43,13 @@ const {
   runChatCompletionsRetryLoop,
 } = require("./probe-retry");
 const { probeAnthropicEndpoint } = require("./probe-anthropic");
+const {
+  getValidationProbeCurlArgs,
+  getDeepSeekV4ProValidationProbeCurlArgs,
+  getKimiK26ValidationProbeCurlArgs,
+  getExtendedNvidiaEndpointValidationProbeCurlArgs,
+  getProbeProcessTimeoutMs,
+} = require("./probe-http-helpers");
 
 const {
   getCurlTimingArgs,
@@ -81,7 +88,6 @@ function openAiLikeFailureFromError(error) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-const ONBOARD_VALIDATION_TIMEOUT_ENV = "NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS";
 const EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS = new Set([
   "qwen/qwen3.5-397b-a17b",
   "deepseek-ai/deepseek-v4-flash",
@@ -224,61 +230,6 @@ function shouldRequireResponsesToolCalling(provider) {
 // probes default to Bearer auth and Gemini onboarding succeeds.
 function getProbeAuthMode(_provider) {
   return undefined;
-}
-
-// Per-validation-probe curl timing. Tighter than the default 60s in
-// getCurlTimingArgs() because validation must not hang the wizard for a
-// minute on a misbehaving model. See issue #1601 (Bug 3).
-function getValidationProbeCurlArgs(opts) {
-  const args = isWsl(opts)
-    ? ["--connect-timeout", "20", "--max-time", "30"]
-    : ["--connect-timeout", "10", "--max-time", "15"];
-  return withValidationMaxTimeOverride(args);
-}
-
-function getDeepSeekV4ProValidationProbeCurlArgs(opts) {
-  const args = isWsl(opts)
-    ? ["--connect-timeout", "30", "--max-time", "150"]
-    : ["--connect-timeout", "20", "--max-time", "120"];
-  return withValidationMaxTimeOverride(args);
-}
-
-function getKimiK26ValidationProbeCurlArgs(opts) {
-  const args = isWsl(opts)
-    ? ["--connect-timeout", "20", "--max-time", "90"]
-    : ["--connect-timeout", "10", "--max-time", "60"];
-  return withValidationMaxTimeOverride(args);
-}
-
-function getExtendedNvidiaEndpointValidationProbeCurlArgs(opts) {
-  const args = isWsl(opts)
-    ? ["--connect-timeout", "30", "--max-time", "300"]
-    : ["--connect-timeout", "10", "--max-time", "300"];
-  return withValidationMaxTimeOverride(args);
-}
-
-function getCurlMaxTimeSeconds(args) {
-  const maxTimeIndex = args.indexOf("--max-time");
-  if (maxTimeIndex === -1) return 30;
-  const value = Number(args[maxTimeIndex + 1]);
-  return Number.isFinite(value) && value > 0 ? value : 30;
-}
-
-function withValidationMaxTimeOverride(args) {
-  const raw = (process.env[ONBOARD_VALIDATION_TIMEOUT_ENV] || "").trim();
-  if (!raw) return args;
-  const overrideSeconds = Math.ceil(Number(raw));
-  if (!Number.isFinite(overrideSeconds) || overrideSeconds <= 0) return args;
-  if (overrideSeconds <= getCurlMaxTimeSeconds(args)) return args;
-  const maxTimeIndex = args.indexOf("--max-time");
-  if (maxTimeIndex === -1) return args;
-  const next = [...args];
-  next[maxTimeIndex + 1] = String(overrideSeconds);
-  return next;
-}
-
-function getProbeProcessTimeoutMs(args) {
-  return (getCurlMaxTimeSeconds(args) + 5) * 1000;
 }
 
 // ── Responses API probe ──────────────────────────────────────────

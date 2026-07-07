@@ -19,7 +19,6 @@ const {
   getChatCompletionsProbePayload,
   getDeepSeekV4ProValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
-  getValidationProbeCurlArgs,
   hasChatCompletionsToolCall,
   hasChatCompletionsToolCallLeak,
   hasResponsesToolCall,
@@ -27,17 +26,6 @@ const {
   probeOpenAiLikeEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
 } = require("./onboard-probes");
-
-// Restore an env var to its pre-test value without branching at the call
-// site. Centralizing the conditional keeps test bodies linear and keeps the
-// codebase-growth-guardrails "if count" steady; see PR #5975 review.
-function restoreEnv(name: string, original: string | undefined): void {
-  if (original === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = original;
-  }
-}
 
 const FAKE_CONFIG_PATH = "/tmp/nemoclaw-test-credential.conf";
 const FAKE_CREDENTIAL_ARGS = ["--config", FAKE_CONFIG_PATH] as const;
@@ -319,27 +307,6 @@ describe("OpenAI-compatible inference probes", () => {
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
       max_tokens: 8,
     });
-  });
-
-  it("allows onboard validation max-time to be raised from the environment", () => {
-    const original = process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS;
-    process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS = "300";
-    try {
-      expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
-        "--connect-timeout",
-        "10",
-        "--max-time",
-        "300",
-      ]);
-      expect(getKimiK26ValidationProbeCurlArgs({ isWsl: false })).toEqual([
-        "--connect-timeout",
-        "10",
-        "--max-time",
-        "300",
-      ]);
-    } finally {
-      restoreEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", original);
-    }
   });
 
   it("uses an extended validation budget for slow NVIDIA Build models", () => {
