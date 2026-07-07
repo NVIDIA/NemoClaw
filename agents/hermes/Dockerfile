@@ -233,7 +233,7 @@ RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
     fi \
     && if [ "$hermes_semver" != "0.17.0" ] \
         && { grep -q '_translate_resumed_oneshot' /usr/local/lib/nemoclaw/hermes-wrapper.py \
-          || grep -q 'patch-session-list-preview' /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py; }; then \
+          || grep -q 'EXPECTED_OCCURRENCES' /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py; }; then \
         echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.17.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
         exit 1; \
     fi
