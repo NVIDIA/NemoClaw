@@ -124,6 +124,52 @@ const SUPPORTED_PROVIDER_NAMES = [
   "vllm-local",
 ] as const;
 
+// #6321: `nemoclaw onboard` accepts installer-style provider keys
+// (`anthropicCompatible`, `build`, `openai`, …) while `inference set` only
+// accepted the OpenShell provider names (`compatible-anthropic-endpoint`,
+// `nvidia-prod`, `openai-api`, …). A user who onboarded with
+// `NEMOCLAW_PROVIDER=anthropicCompatible` could not switch the same sandbox
+// with `inference set --provider anthropicCompatible` — the two commands used
+// different vocabularies for the same provider. Normalize the installer alias
+// to its OpenShell provider name before validation so both commands accept the
+// same names. Keys are lowercased; values must each be a SUPPORTED_PROVIDER_NAMES
+// entry (asserted by the sync test in inference-set-provider-alias.test.ts).
+// This mirrors REMOTE_PROVIDER_CONFIG[key].providerName and
+// getEffectiveProviderName() in src/lib/onboard/providers.ts; kept as a small
+// local map rather than importing that @ts-nocheck onboard module into this
+// hot action path.
+const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
+  anthropiccompatible: "compatible-anthropic-endpoint",
+  build: "nvidia-prod",
+  cloud: "nvidia-prod",
+  openai: "openai-api",
+  anthropic: "anthropic-prod",
+  gemini: "gemini-api",
+  hermesprovider: "hermes-provider",
+  custom: "compatible-endpoint",
+  ollama: "ollama-local",
+  vllm: "vllm-local",
+  nim: "nvidia-nim",
+  "nim-local": "nvidia-nim",
+  routed: "nvidia-router",
+};
+
+/**
+ * Map an installer-style provider key (the vocabulary `nemoclaw onboard`
+ * accepts) to its OpenShell provider name (the vocabulary `inference set`
+ * validates against). Inputs that are already OpenShell provider names — or
+ * any unrecognized value — pass through unchanged so validation still rejects
+ * genuinely unsupported providers. See #6321.
+ */
+export function normalizeInferenceSetProvider(provider: string): string {
+  const trimmed = provider.trim();
+  return INSTALLER_PROVIDER_ALIASES[trimmed.toLowerCase()] ?? trimmed;
+}
+
+/** Exposed for the alias-sync regression test. */
+export const INFERENCE_SET_SUPPORTED_PROVIDER_NAMES = SUPPORTED_PROVIDER_NAMES;
+export const INFERENCE_SET_INSTALLER_PROVIDER_ALIASES = INSTALLER_PROVIDER_ALIASES;
+
 function defaultDeps(): InferenceSetDeps {
   return {
     getDefaultSandbox: registry.getDefault,
@@ -662,7 +708,10 @@ async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
 ): Promise<InferenceMutation<InferenceSetResult>> {
-  const provider = trimRequired(options.provider, "provider");
+  // #6321: accept the installer-style provider name onboard uses (e.g.
+  // `anthropicCompatible`) as well as the OpenShell provider name, by
+  // normalizing to the OpenShell name before validation and all downstream use.
+  const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
   assertSupportedProvider(provider, model);
   if (!isSafeModelId(model)) {
@@ -674,8 +723,19 @@ async function runInferenceSetWithoutHostLock(
 
   const { sandboxName, entry, agentName } = resolveTargetSandbox(options.sandboxName, deps);
   if (agentName !== "openclaw" && agentName !== "hermes") {
+    // #6321: Deep Agents Code (langchain-deepagents-code) bakes its model into
+    // the sandbox image at build time (agents/langchain-deepagents-code/Dockerfile
+    // ARG NEMOCLAW_MODEL → ~/.deepagents/config.toml), so — unlike OpenClaw and
+    // Hermes — it has no runtime inference-set config-mutation path. The blunt
+    // "supports OpenClaw and Hermes" message left dcode users with no next step;
+    // point them at the only way to change a Deep Agents model: re-onboard with
+    // a new selection.
+    const dcodeHint =
+      agentName === "langchain-deepagents-code"
+        ? ` Deep Agents Code bakes its model into the sandbox image at build time, so it has no runtime inference-set path. To change the model, re-onboard with the new selection: \`${CLI_NAME} onboard --agent dcode --name ${sandboxName} --fresh\` (set NEMOCLAW_PROVIDER / NEMOCLAW_MODEL for the target model).`
+        : "";
     throw new InferenceSetError(
-      `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.`,
+      `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.${dcodeHint}`,
       2,
     );
   }
