@@ -431,9 +431,16 @@ function normalizeRecord(value: unknown, sandboxName: string): RebuildTransactio
 }
 
 function syncDirectory(dirPath: string): void {
-  // Linux persists the directory entry after fsync. Node does not expose
-  // macOS F_FULLFSYNC, so macOS provides best-effort rather than power-loss
-  // durability; schema validation still fails closed after any torn record.
+  // Durability boundary review:
+  // - Invalid state: a published directory entry can be lost after power loss.
+  // - Source boundary: filesystem/device-specific fsync semantics, outside NemoClaw.
+  // - Constraint: Node exposes fsync but not macOS F_FULLFSYNC/fcntl.
+  // - Regression evidence: atomicity and torn-record validation are testable;
+  //   physical power-loss persistence requires platform/storage fault injection.
+  // - Removal condition: use F_FULLFSYNC when Node exposes it (or a native
+  //   adapter is adopted). Until then macOS power-loss durability is best-effort.
+  // Linux ext4/xfs directory fsync commonly persists entries; other filesystems
+  // and storage devices may provide weaker guarantees.
   const fd = fs.openSync(dirPath, fs.constants.O_RDONLY);
   try {
     fs.fsyncSync(fd);
@@ -465,18 +472,19 @@ function durablePublish(
     fs.closeSync(fd);
     fd = null;
     if (createOnly) {
-      // Both directory entries are in dirPath. Verify the invariant before the
-      // atomic no-replace link; a copy/rename fallback would reintroduce the
-      // concurrent-creator overwrite this path exists to prevent.
-      if (fs.statSync(candidatePath).dev !== fs.statSync(dirPath).dev) {
-        throw new Error("Rebuild transaction candidate crossed a filesystem boundary");
-      }
+      // Publication boundary review:
+      // - Invalid state: a second creator overwrites the first transaction.
+      // - Source boundary: both names are created directly inside dirPath, so a
+      //   hard link is same-directory and same-filesystem by construction.
+      // - Constraint: copy/rename cannot preserve link(2)'s atomic no-replace.
+      // - Regression evidence: EEXIST and injected EXDEV both fail closed.
+      // - Removal condition: replace this when Node exposes renameat2(RENAME_NOREPLACE).
       try {
         fs.linkSync(candidatePath, filePath);
       } catch (error) {
         if (isErrnoException(error) && error.code === "EXDEV") {
           throw new Error(
-            "Rebuild transaction state directory changed filesystem during atomic publication",
+            "Rebuild transaction atomic-publication invariant failed: candidate and record must share a filesystem",
             { cause: error },
           );
         }
@@ -496,7 +504,9 @@ function durablePublish(
     try {
       fs.unlinkSync(candidatePath);
     } catch {
-      // Best-effort cleanup; the canonical record is published only by link/rename.
+      // A persistent cleanup failure can leave a 0600 dotfile hard link inside
+      // the 0700 state directory. It is inert: only the canonical hashed path is
+      // loaded, and publication already fsynced the same inode.
     }
   }
 }
@@ -557,8 +567,11 @@ function assertReceiptHistoryUnchanged(
 
 /** Durable state for the rebuild coordinator. Each mutation acquires the
  * existing per-sandbox lifecycle lock before revision validation and durable
- * publication. AsyncLocalStorage makes nested calls reentrant within one
- * process; separate processes always contend on the filesystem lock.
+ * publication. Reentrancy is intra-process only via AsyncLocalStorage;
+ * cross-process callers always contend on the filesystem lock.
+ *
+ * On macOS, Node's lack of F_FULLFSYNC means strict power-loss durability is
+ * unsupported; atomic publication and fail-closed record validation still hold.
  */
 export class RebuildTransactionStore {
   private readonly stateDir: string;
