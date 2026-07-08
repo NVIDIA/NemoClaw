@@ -235,7 +235,8 @@ export async function runRebuildPostRestorePhase(
     // - Source-fix constraint: retain replacement_created and retry the same
     //   authoritative update instead of introducing a second registry writer.
     // - Regression evidence: rebuild-transaction-finalization-boundary.test.ts
-    //   covers a throwing update, redacted cause, guidance, and durable failure.
+    //   covers false and throwing updates, redacted cause, guidance, and
+    //   durable failure.
     // - Removal condition: remove this adapter only when the registry boundary
     //   returns a typed failure carrying equivalent redacted diagnostics.
     console.error(

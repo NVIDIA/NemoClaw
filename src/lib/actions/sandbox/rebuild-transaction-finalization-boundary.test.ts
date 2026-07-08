@@ -71,6 +71,20 @@ describe("rebuild transaction finalization boundary", () => {
     expectRetainedFailure(harness, "REGISTRY_RECONCILIATION_UNVERIFIED");
   });
 
+  it("retains replacement_created when registry reconciliation returns false", async () => {
+    const updateSandbox = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    const harness = createRebuildFlowHarness({ updateSandbox });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("REGISTRY_RECONCILIATION_UNVERIFIED");
+
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Rebuilt registry metadata was not verified",
+    );
+    expectRetainedFailure(harness, "REGISTRY_RECONCILIATION_UNVERIFIED");
+  });
+
   it("retains replacement_created when shields relock is unverified", async () => {
     const harness = createRebuildFlowHarness({
       shieldsWasLocked: true,
