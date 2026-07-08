@@ -20,8 +20,8 @@ import { join } from "node:path";
 import { containsReplyTokenAllowingWhitespace } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
-  sandboxAccessEnv,
   type SandboxClient,
+  sandboxAccessEnv,
   trustedSandboxShellScript,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -581,8 +581,22 @@ test(
       );
 
       const combined = `${resultText(tui)}\n${plainCapture}`;
-      await artifacts.writeText("issue6194-openclaw-tui-capture.log", redactedCapture);
-      await artifacts.writeText("issue6194-openclaw-tui-capture.plain.log", plainCapture);
+      const redactedArtifact = await artifacts.writeText(
+        "issue6194-openclaw-tui-capture.log",
+        redactedCapture,
+      );
+      const plainArtifact = await artifacts.writeText(
+        "issue6194-openclaw-tui-capture.plain.log",
+        plainCapture,
+      );
+      expect(
+        readFileSync(redactedArtifact, "utf8"),
+        "published ANSI capture must redact API key",
+      ).not.toContain(apiKey);
+      expect(
+        readFileSync(plainArtifact, "utf8"),
+        "published plain capture must redact API key",
+      ).not.toContain(apiKey);
       await artifacts.writeJson("issue6194-target-result.json", {
         id: "issue-6194-tui-post-connected-idle",
         expectExitCode: tui.exitCode,

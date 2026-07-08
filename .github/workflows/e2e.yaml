@@ -3851,6 +3851,13 @@ jobs:
       # The #6194 terminal regression uses Expect as its PTY driver. Keep this
       # privileged host setup inline in the reviewed workflow: the selected
       # target ref may consume expect but cannot expand the package allowlist.
+      # invalidState: hosted-runner Ubuntu mirrors can fail transiently during update.
+      # sourceBoundary: only this trusted workflow chooses the exact root-installed package.
+      # whyNotSourceFix: GitHub's Ubuntu image and configured repository move together, so a
+      # fixed package version would make the target brittle across routine runner refreshes.
+      # The runner's configured Ubuntu repository is therefore an accepted trust source.
+      # regressionTest: e2e-host-dependency-workflow-boundary rejects package or order drift.
+      # removalCondition: remove this step when the hosted image provides Expect itself.
       - name: Install OpenClaw TUI host dependencies
         shell: bash
         run: |

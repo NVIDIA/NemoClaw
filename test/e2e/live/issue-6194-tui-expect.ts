@@ -33,19 +33,21 @@ send -- "Reply with the three fragments joined by underscores: NEMOCLAW6194, CHA
 expect_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply 20 21
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23
 send -- "/nemoclaw status\\r"
-expect_or_exit "Sandbox:[^\\r\\n]*$sandbox" slash_status_output 30 31
+set slashStatusPattern [format {Sandbox:[^\\r\\n]*%s} $sandbox]
+expect_or_exit $slashStatusPattern slash_status_output 30 31
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33
-# Use the same policy-relevant external HTTPS origin from the historical issue
-# repro to trigger the real OpenClaw network approval UI. A local endpoint can
-# bypass that egress approval boundary; this test only needs the prompt and
-# approval handling, not a successful third-party response body.
+# Use a public HTTPS origin outside the target's baseline policy to trigger the
+# real OpenClaw network approval UI. A local endpoint can bypass that boundary.
+# The assertion consumes only the local prompt and approval state, never the
+# remote status or body, so endpoint availability is not a test oracle.
 send -- "Use an available tool to call $networkEndpoint now. Do not describe it.\\r"
+set networkApprovalPattern [format {(Sandbox:[^\\r\\n]*%s[^\\r\\n]*Network Rules[^\\r\\n]*(approve|allow)|Network Rules[^\\r\\n]*(approve|allow)[^\\r\\n]*Sandbox:[^\\r\\n]*%s)} $sandbox $sandbox]
 expect {
   -nocase -re {(blocked|denied|rejected)} {
     send "\\003"
     exit 50
   }
-  -nocase -re "(Sandbox:[^\\r\\n]*$sandbox[^\\r\\n]*(Network Rules|pending|approve)|(Network Rules|pending|approve)[^\\r\\n]*Sandbox:[^\\r\\n]*$sandbox)" { mark network_approval_prompt }
+  -nocase -re $networkApprovalPattern { mark network_approval_prompt }
   timeout {
     send "\\003"
     exit 51
@@ -70,20 +72,16 @@ expect {
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_network_approval 56 57
 send "\\003"
 expect {
-  eof {
-    mark clean_exit
-    exit 0
-  }
+  eof {}
   timeout {
     send "\\003"
     expect {
-      eof {
-        mark clean_exit
-        exit 0
-      }
+      eof {}
       timeout { exit 40 }
     }
   }
 }
+mark clean_exit
+exit 0
 `;
 }

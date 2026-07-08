@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
+import { SecretStore } from "../fixtures/secrets.ts";
 import {
   buildIssue6194TuiExpectScript,
   ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
   ISSUE6194_TUI_SESSION_PREFIX,
   ISSUE6194_TUI_TIMEOUT_SEC,
 } from "../live/issue-6194-tui-expect.ts";
-import { SecretStore } from "../fixtures/secrets.ts";
 import { stripTerminalControl } from "./issue-4434-tui-capture.ts";
 
 describe("live TUI post-idle coverage contract (#6194)", () => {
@@ -37,14 +36,15 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23",
     );
     expect(script).toContain("/nemoclaw status");
-    expect(script).toContain("Sandbox:[^\\r\\n]*$sandbox");
-    expect(script).toContain(
-      'expect_or_exit "Sandbox:[^\\r\\n]*$sandbox" slash_status_output 30 31',
-    );
+    expect(script).toContain("set slashStatusPattern [format {Sandbox:[^\\r\\n]*%s} $sandbox]");
+    expect(script).toContain("expect_or_exit $slashStatusPattern slash_status_output 30 31");
     expect(script).toContain(
       "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33",
     );
     expect(script).toContain("call $networkEndpoint now");
+    expect(script).toContain("set networkApprovalPattern [format");
+    expect(script).toContain("Network Rules[^\\r\\n]*(approve|allow)");
+    expect(script).toContain("-nocase -re $networkApprovalPattern");
     expect(script).toContain("mark network_approval_prompt");
     expect(script).toContain("mark network_approval_processed");
     expect(script).toContain(
@@ -52,7 +52,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     );
     expect(script).toContain("mark clean_exit");
 
-    const order = [
+    const markers = [
       "connected_idle_initial",
       "chat_reply",
       "connected_idle_after_chat",
@@ -62,7 +62,11 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "network_approval_processed",
       "connected_idle_after_network_approval",
       "clean_exit",
-    ].map((marker) => script.indexOf(marker));
+    ];
+    for (const marker of markers) {
+      expect(script.match(new RegExp(`\\b${marker}\\b`, "gu")) ?? []).toHaveLength(1);
+    }
+    const order = markers.map((marker) => script.indexOf(marker));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });

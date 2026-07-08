@@ -65,4 +65,28 @@ describe("inline E2E host dependency boundary", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("rejects installing the OpenClaw TUI host dependency after workspace preparation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-host-dependency-order-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow();
+    const steps = workflow.jobs["openclaw-tui-chat-correlation"]?.steps ?? [];
+    const installIndex = steps.findIndex(
+      (step) => step.name === "Install OpenClaw TUI host dependencies",
+    );
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    if (installIndex < 0 || prepareIndex < 0) {
+      throw new Error("fixture must contain OpenClaw TUI install and workspace preparation steps");
+    }
+    [steps[installIndex], steps[prepareIndex]] = [steps[prepareIndex]!, steps[installIndex]!];
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        "openclaw-tui-chat-correlation host dependencies must be installed before workspace prep",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
