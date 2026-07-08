@@ -564,6 +564,27 @@ def load_async_subagents(config_path=None):
     """Disable mutable remote subagents and their arbitrary HTTP headers."""
     del config_path
     return []
+
+
+_nemoclaw_original_build_model_identity_section = build_model_identity_section
+
+
+def build_model_identity_section(
+    name,
+    provider=None,
+    context_limit=None,
+    unsupported_modalities=frozenset(),
+):
+    """Report the onboard-selected upstream provider in the model identity."""
+    from deepagents_code._nemoclaw_managed import managed_display_provider
+
+    display_provider = managed_display_provider(provider) if provider else provider
+    return _nemoclaw_original_build_model_identity_section(
+        name,
+        provider=display_provider,
+        context_limit=context_limit,
+        unsupported_modalities=unsupported_modalities,
+    )
 '''
 
 SUBAGENTS_PATCH = r'''
@@ -931,6 +952,47 @@ def _nemoclaw_select_with_auth_check(self, model_spec: str, provider: str) -> No
 ModelSelectorScreen._select_with_auth_check = _nemoclaw_select_with_auth_check
 '''
 
+STATUS_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+_nemoclaw_original_status_bar_set_model = StatusBar.set_model
+
+
+def _nemoclaw_status_bar_set_model(self, *, provider, model, effort=""):
+    """Report the onboard-selected upstream provider in the status bar."""
+    from deepagents_code._nemoclaw_managed import managed_display_provider
+
+    _nemoclaw_original_status_bar_set_model(
+        self,
+        provider=managed_display_provider(provider),
+        model=model,
+        effort=effort,
+    )
+
+
+StatusBar.set_model = _nemoclaw_status_bar_set_model
+'''
+
+WELCOME_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+_nemoclaw_original_welcome_banner_update_model = WelcomeBanner.update_model
+
+
+def _nemoclaw_welcome_banner_update_model(self, *, provider, model):
+    """Report the onboard-selected upstream provider in the welcome banner."""
+    from deepagents_code._nemoclaw_managed import managed_display_provider
+
+    _nemoclaw_original_welcome_banner_update_model(
+        self,
+        provider=managed_display_provider(provider),
+        model=model,
+    )
+
+
+WelcomeBanner.update_model = _nemoclaw_welcome_banner_update_model
+'''
+
 
 def _top_level_functions(tree: ast.Module) -> set[str]:
     return {
@@ -1051,6 +1113,8 @@ def main() -> None:
         "codex_ui": root / "tui" / "widgets" / "codex_auth.py",
         "model_selector": root / "tui" / "widgets" / "model_selector.py",
         "approval": root / "tui" / "widgets" / "approval.py",
+        "status": root / "tui" / "widgets" / "status.py",
+        "welcome": root / "tui" / "widgets" / "welcome.py",
         "server": root / "client" / "launch" / "server.py",
         "server_config": root / "_server_config.py",
         "mcp_tools": root / "mcp_tools.py",
@@ -1157,7 +1221,12 @@ def main() -> None:
     _require_functions(
         paths["agent"],
         texts["agent"],
-        {"create_cli_agent", "_resolve_ptc_option", "load_async_subagents"},
+        {
+            "create_cli_agent",
+            "_resolve_ptc_option",
+            "load_async_subagents",
+            "build_model_identity_section",
+        },
     )
     update_tree = _require_functions(
         paths["update_check"],
@@ -1200,6 +1269,18 @@ def main() -> None:
         texts["approval"],
         "ApprovalMenu",
         {"_handle_selection"},
+    )
+    _require_methods(
+        paths["status"],
+        texts["status"],
+        "StatusBar",
+        {"set_model"},
+    )
+    _require_methods(
+        paths["welcome"],
+        texts["welcome"],
+        "WelcomeBanner",
+        {"update_model"},
     )
     _require_functions(paths["server"], texts["server"], {"_build_server_env"})
     _require_functions(
@@ -1271,6 +1352,12 @@ def main() -> None:
     )
     transformed["approval"] = _append_patch(
         paths["approval"], texts["approval"], APPROVAL_PATCH
+    )
+    transformed["status"] = _append_patch(
+        paths["status"], texts["status"], STATUS_PATCH
+    )
+    transformed["welcome"] = _append_patch(
+        paths["welcome"], texts["welcome"], WELCOME_PATCH
     )
     if texts["server"].count(SERVER_POPEN_MARKER) != 1:
         raise RuntimeError(
