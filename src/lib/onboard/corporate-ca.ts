@@ -143,6 +143,17 @@ export class CorporateCaValidationError extends Error {
 }
 
 /**
+ * Emit an operator-facing warning about a skipped corporate-CA import source.
+ * These paths are intentionally non-fatal (they must not break an onboard that
+ * never asked for a corporate CA), but staying fully silent hides a
+ * misconfiguration from an operator who *did* expect the import — so we surface
+ * a one-line notice. Messages carry only public paths, never certificate bytes.
+ */
+function warnCorporateCa(message: string): void {
+  console.error(`[nemoclaw] WARNING: ${message} (#6210)`);
+}
+
+/**
  * Join validated PEM CERTIFICATE blocks into a normalized bundle.
  *
  * Returns *only* the certificate blocks — each trimmed of surrounding
@@ -257,8 +268,9 @@ function isDisabled(env: NodeJS.ProcessEnv): boolean {
  *
  * Returns `null` when no corporate CA env var is configured (or import is
  * disabled). Throws {@link CorporateCaValidationError} only when the *explicit*
- * `NEMOCLAW_CORPORATE_CA_BUNDLE` is set to an invalid path; invalid fallback
- * env vars are skipped silently. Does not touch the host trust store — see
+ * `NEMOCLAW_CORPORATE_CA_BUNDLE` is set to an invalid path; an invalid fallback
+ * env var is skipped (not fatal) but logs a warning so the operator can see it.
+ * Does not touch the host trust store — see
  * {@link resolveCorporateCaFromHostAnchors} and {@link resolveCorporateCa}.
  */
 export function resolveCorporateCaFromEnv(
@@ -282,9 +294,16 @@ export function resolveCorporateCaFromEnv(
     try {
       const pem = validateCorporateCaFile(sourcePath);
       return { pem, sourcePath, sourceEnv: name };
-    } catch {
+    } catch (err) {
       // A conventional CA env var pointing at a missing/invalid file must not
-      // break onboard for users who never asked for a corporate CA import.
+      // break onboard for users who never asked for a corporate CA import — but
+      // warn, since an operator who set it for the corporate proxy would
+      // otherwise get no signal that it was skipped.
+      warnCorporateCa(
+        `${name} is set (${sourcePath}) but was skipped for corporate CA import: ${
+          (err as Error).message
+        }; set ${CORPORATE_CA_EXPLICIT_ENV} for fail-loud behavior`,
+      );
     }
   }
   return null;
@@ -355,13 +374,33 @@ export function resolveCorporateCaFromHostAnchors(
         // Skip an unreadable/invalid anchor file rather than fail discovery.
       }
     }
-    if (blocks.length === 0) continue;
+    if (blocks.length === 0) {
+      // Warn only when the directory actually held candidate anchor files (an
+      // admin dropped certs that failed validation); an empty anchor dir is the
+      // normal case on most hosts and must stay silent.
+      if (files.length > 0) {
+        warnCorporateCa(
+          `host trust-store anchor directory ${dir} has ${files.length} candidate file(s) but none were valid corporate CA certificates; skipping`,
+        );
+      }
+      continue;
+    }
     const pem = normalizeCertificateBlocks(blocks);
     // Aggregate caps: keep the imported trust scoped to a corporate chain. A
     // directory that would exceed the caps is skipped, never truncated.
     const certCount = pem.match(PEM_CERTIFICATE_RE_GLOBAL)?.length ?? 0;
-    if (certCount === 0 || certCount > MAX_CORPORATE_CA_CERTS) continue;
-    if (Buffer.byteLength(pem, "utf8") > MAX_CORPORATE_CA_BYTES) continue;
+    if (certCount === 0 || certCount > MAX_CORPORATE_CA_CERTS) {
+      warnCorporateCa(
+        `host trust-store anchor directory ${dir} yields ${certCount} certificate(s) (max ${MAX_CORPORATE_CA_CERTS}); skipping to avoid a broad trust import`,
+      );
+      continue;
+    }
+    if (Buffer.byteLength(pem, "utf8") > MAX_CORPORATE_CA_BYTES) {
+      warnCorporateCa(
+        `host trust-store anchor directory ${dir} exceeds ${MAX_CORPORATE_CA_BYTES} bytes; skipping`,
+      );
+      continue;
+    }
     return { pem, sourcePath: dir, sourceEnv: CORPORATE_CA_HOST_ANCHOR_SOURCE };
   }
   return null;

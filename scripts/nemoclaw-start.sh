@@ -2726,6 +2726,12 @@ export no_proxy="$_NO_PROXY_VAL"
 # #1828 OpenShell CA behavior stays intact) — and repoint the CA env vars at
 # the merged bundle so curl/python/git/node all trust both roots.
 _NEMOCLAW_CORPORATE_CA_FILE="/usr/local/share/nemoclaw/corporate-ca.pem"
+# Concise, secret-free warning when a baked corporate CA fails to merge at
+# runtime. Names the failed step + target path only (never certificate bytes)
+# so an operator can distinguish "no CA was baked" from "runtime merge failed".
+_nemoclaw_ca_merge_warn() {
+  echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
+}
 merge_corporate_proxy_ca() {
   [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
   _base_bundle=""
@@ -2739,19 +2745,25 @@ merge_corporate_proxy_ca() {
   # write, then atomically rename into place. If any step fails we bail without
   # exporting anything, leaving the OpenShell-only trust intact rather than
   # pointing tools at a partial/empty bundle.
-  _tmp="$(mktemp "${_merged}.XXXXXX" 2>/dev/null)" || return 0
+  _tmp="$(mktemp "${_merged}.XXXXXX" 2>/dev/null)" || {
+    _nemoclaw_ca_merge_warn "create temp bundle (${_merged})"
+    return 0
+  }
   if [ -n "$_base_bundle" ]; then
     cat "$_base_bundle" >>"$_tmp" 2>/dev/null || {
       rm -f "$_tmp"
+      _nemoclaw_ca_merge_warn "append OpenShell bundle"
       return 0
     }
     printf '\n' >>"$_tmp" 2>/dev/null || {
       rm -f "$_tmp"
+      _nemoclaw_ca_merge_warn "append OpenShell bundle"
       return 0
     }
   fi
   cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_tmp" 2>/dev/null || {
     rm -f "$_tmp"
+    _nemoclaw_ca_merge_warn "append corporate CA"
     return 0
   }
   chmod 0444 "$_tmp" 2>/dev/null || true
@@ -2763,6 +2775,7 @@ merge_corporate_proxy_ca() {
   fi
   mv -f "$_tmp" "$_merged" 2>/dev/null || {
     rm -f "$_tmp"
+    _nemoclaw_ca_merge_warn "install merged bundle (${_merged})"
     return 0
   }
   export SSL_CERT_FILE="$_merged"

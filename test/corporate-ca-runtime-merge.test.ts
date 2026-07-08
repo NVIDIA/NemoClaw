@@ -188,6 +188,46 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     expect(existsSync(merged)).toBe(false);
   });
 
+  it("warns on stderr when the OpenClaw merge fails (#6210)", () => {
+    const dir = tmpDir("nemoclaw-corp-merge-warn-openclaw-");
+    const openshell = join(dir, "openshell-ca.pem");
+    const corp = join(dir, "corporate-ca.pem");
+    const merged = join(dir, "no-such-dir", "merged-ca.pem");
+    writeFileSync(openshell, OPENSHELL_PEM);
+    writeFileSync(corp, CORPORATE_PEM);
+
+    // exec 2>&1 folds the merge's stderr warning into captured stdout.
+    const out = runShellLines(dir, [
+      "exec 2>&1",
+      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+      mergeBlock(OPENCLAW_START, "# Git TLS CA bundle fix (NemoClaw#2270).", corp, merged),
+    ]);
+    expect(out).toContain("corporate proxy CA merge failed");
+    expect(out).not.toContain("BEGIN CERTIFICATE");
+  });
+
+  it("warns on stderr when the Hermes merge fails (#6210)", () => {
+    const dir = tmpDir("nemoclaw-corp-merge-warn-hermes-");
+    const openshell = join(dir, "openshell-ca.pem");
+    const corp = join(dir, "corporate-ca.pem");
+    const merged = join(dir, "no-such-dir", "merged-ca.pem");
+    writeFileSync(openshell, OPENSHELL_PEM);
+    writeFileSync(corp, CORPORATE_PEM);
+
+    const out = runShellLines(dir, [
+      "exec 2>&1",
+      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+      mergeBlock(
+        HERMES_START,
+        "# OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA.",
+        corp,
+        merged,
+      ),
+    ]);
+    expect(out).toContain("corporate proxy CA merge failed");
+    expect(out).not.toContain("BEGIN CERTIFICATE");
+  });
+
   it("persists the merged CA env into OpenClaw connect sessions only after a merge (#6210)", () => {
     const dir = tmpDir("nemoclaw-corp-connect-");
     const block = sliceBlock(

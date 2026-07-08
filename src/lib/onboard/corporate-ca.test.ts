@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   CORPORATE_CA_ANCHOR_DIRS_ENV,
@@ -200,19 +200,31 @@ describe("resolveCorporateCaFromEnv", () => {
     expect(resolveCorporateCaFromEnv({ CURL_CA_BUNDLE: p })?.sourceEnv).toBe("CURL_CA_BUNDLE");
   });
 
-  it("skips an invalid fallback env var silently and tries the next", () => {
+  it("warns and continues past an invalid fallback env var to the next", () => {
     const p = writeCa(tmpDir());
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const resolved = resolveCorporateCaFromEnv({
       REQUESTS_CA_BUNDLE: "/does/not/exist.pem",
       CURL_CA_BUNDLE: p,
     });
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
     expect(resolved?.sourceEnv).toBe("CURL_CA_BUNDLE");
+    expect(messages.some((m) => m.includes("REQUESTS_CA_BUNDLE") && m.includes("WARNING"))).toBe(
+      true,
+    );
   });
 
-  it("returns null when every fallback env var is invalid", () => {
-    expect(
-      resolveCorporateCaFromEnv({ REQUESTS_CA_BUNDLE: "/missing.pem", SSL_CERT_FILE: "/nope.pem" }),
-    ).toBeNull();
+  it("returns null and warns when every fallback env var is invalid", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const resolved = resolveCorporateCaFromEnv({
+      REQUESTS_CA_BUNDLE: "/missing.pem",
+      SSL_CERT_FILE: "/nope.pem",
+    });
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
+    expect(resolved).toBeNull();
+    expect(messages.filter((m) => m.includes("WARNING"))).toHaveLength(2);
   });
 
   it("honors the disable opt-out", () => {
@@ -273,6 +285,17 @@ describe("resolveCorporateCaFromHostAnchors host trust-store path (#6210)", () =
     const anchorDir = tmpDir();
     writeAnchor(anchorDir, "corp-root.pem");
     expect(resolveCorporateCaFromHostAnchors([anchorDir])?.pem).toContain("BEGIN CERTIFICATE");
+  });
+
+  it("warns when an anchor directory has candidate files but no valid CA", () => {
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "broken.crt", BAD_PEM);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const resolved = resolveCorporateCaFromHostAnchors([anchorDir]);
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
+    expect(resolved).toBeNull();
+    expect(messages.some((m) => m.includes(anchorDir) && m.includes("WARNING"))).toBe(true);
   });
 
   it("discovers a corporate root nested in an anchor subdirectory", () => {
