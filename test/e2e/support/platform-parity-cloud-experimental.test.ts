@@ -23,6 +23,11 @@ import {
   cloudExperimentalCheckTimeoutMs,
 } from "../live/cloud-experimental-checks.ts";
 
+const dcodeTavilyCheck = path.join(
+  process.cwd(),
+  "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+);
+
 function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
   return {
     command: [],
@@ -299,62 +304,48 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
-  it("restores Tavily denial while preserving the runtime marker for later ordered checks", () => {
-    const result = spawnSync(
-      "bash",
-      [
-        path.join(
-          process.cwd(),
-          "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-        ),
-      ],
-      {
-        encoding: "utf8",
-        env: {
-          NEMOCLAW_E2E_TAVILY_SELF_TEST: "policy-cleanup-order",
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
-        },
+  it.each([
+    [
+      "BLOCKED:policy denied",
+      "ok",
+      "preserve",
+      0,
+      /returns to the default Tavily denial/,
+      /remains enabled/,
+    ],
+    [
+      "REACHED:403",
+      "ok",
+      "preserve",
+      1,
+      /did not restore the default Tavily denial/,
+      /remains enabled/,
+    ],
+    [
+      "BLOCKED:policy denied",
+      "fail",
+      "preserve",
+      1,
+      /policy-remove tavily failed/,
+      /remains enabled/,
+    ],
+    ["BLOCKED:policy denied", "ok", "lose", 1, /marker was lost/, /restored for ordered cleanup/],
+  ])("restores Tavily denial after opt-in (%s/%s/%s)", (fixture, removeFixture, markerFixture, status, expected, markerExpected) => {
+    const result = spawnSync("bash", [dcodeTavilyCheck], {
+      encoding: "utf8",
+      env: {
+        NEMOCLAW_E2E_TAVILY_MARKER_FIXTURE: markerFixture,
+        NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
+        NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        SANDBOX_NAME: "deepagents-sandbox",
       },
-    );
+    });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain(
-      "managed Deep Agents Code python is blocked again after policy-remove",
-    );
-    expect(result.stdout).toContain(
-      "managed observability state remains enabled after policy-remove",
-    );
-    expect(result.stdout.split("\n").filter((line) => line.startsWith("TRACE:"))).toEqual([
-      "TRACE:opt-in-proof",
-      "TRACE:policy-remove",
-      "TRACE:post-remove-blocked",
-    ]);
-  });
-
-  it("removes Tavily when the first post-add probe exits early", () => {
-    const result = spawnSync(
-      "bash",
-      [
-        path.join(
-          process.cwd(),
-          "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-        ),
-      ],
-      {
-        encoding: "utf8",
-        env: {
-          NEMOCLAW_E2E_TAVILY_SELF_TEST: "policy-cleanup-on-probe-failure",
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
-        },
-      },
-    );
-
-    expect(result.status, result.stderr).toBe(23);
-    expect(result.stdout.split("\n").filter((line) => line.startsWith("TRACE:"))).toEqual([
-      "TRACE:opt-in-proof",
-      "TRACE:probe-failure",
-      "TRACE:policy-remove",
-    ]);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
+    expect(result.stdout).toMatch(markerExpected);
   });
 
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
