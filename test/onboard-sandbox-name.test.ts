@@ -248,9 +248,12 @@ const onboardModule = require(${onboardPath});
             HOME: tmpDir,
             NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
           }),
+          timeout: 10_000,
+          killSignal: "SIGKILL",
         },
       );
 
+      assert.ifError(result.error);
       assert.equal(result.status, 1, result.stderr);
       assert.match(
         result.stderr,
