@@ -45,7 +45,10 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
 // inherited descriptor can emit probe evidence. Removal condition: use a raw
 // probe only when OpenShell provides the same trusted proxy environment to every
 // sandbox exec process without shell startup.
-const DCODE_MANAGED_RUNTIME_LAUNCHER = "/usr/local/bin/nemoclaw-start";
+// This separate regular-file install is intentionally absent from older images:
+// a newer CLI probing one fails before the stateful entrypoint or dcode wrapper
+// can run, so version skew cannot mutate observability state.
+const DCODE_MANAGED_RUNTIME_LAUNCHER = "/usr/local/lib/nemoclaw/dcode-managed-exec";
 
 /**
  * Classify a route result that is already known not to be healthy.
@@ -64,7 +67,8 @@ export function buildSandboxInferenceRouteProbeArgs(
     agent?.name === "langchain-deepagents-code"
       ? [
           // The trusted launcher ignores ambient proxy overrides and does not
-          // source sandbox-user startup files before executing this probe.
+          // source sandbox-user startup files or rewrite persistent runtime
+          // state before executing this probe.
           DCODE_MANAGED_RUNTIME_LAUNCHER,
           "/bin/sh",
           "-c",
