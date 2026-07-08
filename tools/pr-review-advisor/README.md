@@ -105,10 +105,11 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 - `retry-prompts/` — retry synthesis prompt and synthetic tool results when the first output is malformed or low quality.
 - `retry-turns/` — assistant output and settled status from the optional retry synthesis conversation.
 - `context/drift-context.json` — deterministic drift, overlap, monolith, and previous-review context.
-- `context/security-context.json` — deterministic security-risk and exact-SHA risk-plan context.
+- `context/security-context.json` — deterministic security-risk context and the risk plan for the
+  PR head commit.
 - `context/validation-context.json` — deterministic acceptance, source-of-truth, static
-  test-inventory, simplification-signal, and exact-SHA risk-plan context, including the regression
-  invariants reviewed for the PR.
+  test-inventory, simplification-signal, and risk plan for the PR head commit, including the
+  regression invariants reviewed for the PR.
 - `context/pr.diff` — truncated PR diff used by the advisor.
 - `context/previous-advisor-review.md` — previous sticky PR Review Advisor comment when one exists and its hidden run/comment metadata validates.
 - `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.

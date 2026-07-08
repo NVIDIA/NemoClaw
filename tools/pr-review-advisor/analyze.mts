@@ -37,6 +37,7 @@ import {
   type RunAdvisorResult,
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
+import { PR_HEAD_COMMIT_PROSE_GUIDANCE } from "../advisors/terminology.mts";
 
 const root = process.cwd();
 export const DEFAULT_ADVISOR_COMMENT_MARKER = "<!-- nemoclaw-pr-review-advisor -->";
@@ -1553,6 +1554,7 @@ export function buildSystemPrompt(): string {
     "10. Simplification review: apply this ladder before accepting new code shape: does this need to exist; does Node/Python/shell/browser/OpenShell/GitHub already provide it; does an already-installed dependency cover it; can one line or fewer files do it; only then accept a custom abstraction. Use tags delete, stdlib, native, yagni, or shrink. Never simplify away trust-boundary validation, credential redaction, SSRF/sandbox/network-policy defenses, data-loss prevention, required regression tests, DCO/signature gates, or accessibility/user-safety behavior.",
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet acceptance or security fail and severity=warning for security warnings.",
     "Every finding must be probe-shaped: include concrete impact, a verificationHint that names the shortest read-only check or test evidence to confirm the issue, and a missingRegressionTest describing the automated coverage to add or the existing coverage that already proves it.",
+    PR_HEAD_COMMIT_PROSE_GUIDANCE,
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "Set summary.topItem to the most important actionable finding title or short description for first-review comments. Keep it concise and code-focused.",
     "Finding severity mapping: blocker renders as 'Required before merge'; warning renders as 'Resolve or justify before merge'; suggestion renders as 'In-scope improvements'.",

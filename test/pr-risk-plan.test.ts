@@ -13,7 +13,7 @@ function plan(...changedFiles: string[]) {
 }
 
 describe("deterministic PR risk plan", () => {
-  it("emits a stable exact-SHA plan and hash", () => {
+  it("emits a stable plan and digest for equivalent inputs", () => {
     const first = plan("src/lib/state/registry.ts", "src/lib/onboard.ts");
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 

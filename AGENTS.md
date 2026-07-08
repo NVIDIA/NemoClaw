@@ -108,6 +108,14 @@ Security-sensitive code paths require extra test coverage.
 
 ## Code Style and Conventions
 
+### Commit References
+
+In human-facing prose, call the Git object at a pull request's head the **PR head commit**.
+Say **current PR head commit** only when freshness matters and **same PR head commit** when
+comparing evidence. Use **full commit SHA** only when the identifier format matters. Do not use
+**exact head**, **exact-head**, **exact SHA**, or **exact-SHA**. Keep `headSha`, `head_sha`, and
+similar established names unchanged in machine-readable fields.
+
 ### Commit Messages
 
 Conventional Commits required. Enforced by commitlint via prek `commit-msg` hook.
