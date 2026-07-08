@@ -237,7 +237,7 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
-  it("runs the dcode inference route probe through its login-shell proxy contract (#6191)", async () => {
+  it("runs the DCode route probe through its managed runtime boundary (#6191)", async () => {
     const harness = createConnectHarness({
       agentName: "langchain-deepagents-code",
       sessionAgent: {
@@ -280,10 +280,9 @@ describe("connectSandbox flow", () => {
         "--name",
         "alpha",
         "--",
-        "sh",
+        "/usr/local/bin/nemoclaw-start",
+        "/bin/sh",
         "-c",
-        expect.stringContaining('bash -lc "$1" "$CA_BUNDLE"'),
-        "nemoclaw-ca-capture",
         expect.stringContaining("/usr/bin/curl"),
       ],
       expect.objectContaining({ ignoreError: true }),
