@@ -116,6 +116,35 @@ describe("handleSandboxState live DCode selection", () => {
     );
   });
 
+  it("repairs a not-ready DCode sandbox before recreating for mode drift (#6478)", async () => {
+    const session = completedSession();
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRegistryEntry: (name: string) => ({
+        ...dcodeRegistryEntry(name),
+        dcodeAutoApprovalMode: "disabled",
+      }),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...dcodeOptions(deps),
+      requestedDcodeAutoApprovalMode: "thread-opt-in",
+    });
+
+    expect(calls.repairSandbox).toHaveBeenCalledWith("saved");
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
+      state: "sandbox",
+      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+    });
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      recreate: true,
+      dcodeAutoApprovalMode: "thread-opt-in",
+    });
+  });
+
   it("rejects malformed recorded DCode auto-approval state (#6478)", async () => {
     const { deps, calls } = createDeps({
       getSandboxRegistryEntry: (name: string) => ({

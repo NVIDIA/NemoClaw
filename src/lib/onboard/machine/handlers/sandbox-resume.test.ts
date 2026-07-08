@@ -128,6 +128,17 @@ describe("decideSandboxResume", () => {
     });
   });
 
+  it("repairs a not-ready sandbox before recreating for DCode auto-approval drift", () => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          dcodeAutoApprovalChanged: true,
+        }),
+      ),
+    ).toEqual({ kind: "repair-and-recreate" });
+  });
+
   it("creates without resume-specific cleanup when the step is incomplete", () => {
     expect(
       decideSandboxResume(

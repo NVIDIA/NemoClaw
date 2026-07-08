@@ -232,7 +232,7 @@ function runtimeConfigurationResumeDecision(
       removeRegistryEntry: false,
     };
   }
-  if (signals.dcodeAutoApprovalChanged) {
+  if (signals.dcodeAutoApprovalChanged && signals.sandboxReuseState !== "not_ready") {
     return {
       kind: "recreate",
       note: "  [resume] DCode auto-approval capability changed; recreating sandbox.",
