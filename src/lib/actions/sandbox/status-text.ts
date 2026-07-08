@@ -5,7 +5,7 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
-import { sanitizeRouteValueForDisplay } from "../../inference/config";
+import { formatInferenceRouteDriftForDisplay } from "../../inference/config";
 import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
@@ -258,12 +258,13 @@ function printInferenceRouteDrift(
   sandboxName: string,
 ): void {
   if (!drift) return;
-  const liveProvider = sanitizeRouteValueForDisplay(drift.live.provider);
-  const liveModel = sanitizeRouteValueForDisplay(drift.live.model);
-  const recordedRoute = `${sanitizeRouteValueForDisplay(drift.recorded.provider)}/${sanitizeRouteValueForDisplay(drift.recorded.model)}`;
-  console.log(
-    `    ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) differs from the recorded route for this sandbox (${recordedRoute}).${R}`,
+  const display = formatInferenceRouteDriftForDisplay(
+    drift.live,
+    drift.recorded,
+    "for this sandbox",
   );
+  const { liveProvider, liveModel, recordedRoute } = display;
+  console.log(`    ${YW}Warning: ${display.warning}${R}`);
   console.log(
     `    ${YW}'${CLI_NAME} ${sandboxName} connect' realigns the gateway to ${recordedRoute}; to adopt the live route instead:${R}`,
   );
