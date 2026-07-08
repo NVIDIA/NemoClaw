@@ -38,6 +38,7 @@ export {
   collectSandboxStatusSnapshot,
   getSandboxStatusInferenceHealth,
   getSandboxStatusReport,
+  isInferenceHealthFailing,
   maybeGetSandboxStatusInferenceHealth,
   type SandboxStatusReport,
   type SandboxStatusSnapshot,

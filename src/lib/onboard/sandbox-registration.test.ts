@@ -26,6 +26,13 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       schemaVersion: 1 as const,
       plan: { sandboxName: "demo" },
     };
+    const openclawImagePluginInstalls = [
+      {
+        id: "weather",
+        installPath: "/sandbox/.openclaw/extensions/weather",
+        loadPaths: ["/opt/weather-plugin"],
+      },
+    ];
 
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
@@ -42,6 +49,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:123",
+      openclawImagePluginInstalls,
       appliedPolicies: ["discord", "slack"],
       observabilityEnabled: true,
       policyTier: "restricted",
@@ -67,6 +75,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
+      openclawImagePluginInstalls,
       policies: ["discord", "slack"],
       toolDisclosure: "progressive",
       observabilityEnabled: true,
@@ -89,6 +98,11 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.agent).toBeNull();
     expect(entry.agentVersion).toBeTruthy();
     expect(entry.nemoclawVersion).toBeTruthy();
+    expect(entry.openclawImagePluginInstalls).not.toBe(openclawImagePluginInstalls);
+    expect(entry.openclawImagePluginInstalls?.[0]).not.toBe(openclawImagePluginInstalls[0]);
+    expect(entry.openclawImagePluginInstalls?.[0]?.loadPaths).not.toBe(
+      openclawImagePluginInstalls[0]?.loadPaths,
+    );
     expect(entry.messaging).toBe(plannedMessagingState);
     const rawEntry = entry as unknown as Record<string, unknown>;
     expect(rawEntry.messagingChannels).toBeUndefined();
@@ -323,6 +337,7 @@ describe("registerCreatedSandbox", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: null,
+      openclawImagePluginInstalls: [],
       appliedPolicies: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
@@ -335,5 +350,6 @@ describe("registerCreatedSandbox", () => {
 
     expect(registerSandbox).toHaveBeenCalledWith(entry);
     expect(entry.name).toBe("demo");
+    expect(entry.openclawImagePluginInstalls).toEqual([]);
   });
 });

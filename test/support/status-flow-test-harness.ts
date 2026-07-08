@@ -140,18 +140,17 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
           ? {
               ok: true,
               probed: true,
-              providerLabel: "Ollama",
-              endpoint: "http://127.0.0.1:11434/v1/chat/completions",
-              detail: "chat completions probe passed",
+              providerLabel: "Inference route",
+              endpoint: "https://inference.local/v1/models",
+              detail: "inference route reachable",
               subprobes: [
                 {
-                  ok: false,
+                  ok: true,
                   probed: true,
-                  providerLabel: "Inference gateway chain",
-                  endpoint: "http://127.0.0.1:19000/v1/chat/completions",
-                  detail: "gateway refused connection",
-                  probeLabel: "gateway",
-                  failureLabel: "unreachable",
+                  providerLabel: "Ollama",
+                  endpoint: "http://127.0.0.1:11434/v1/chat/completions",
+                  detail: "chat completions probe passed",
+                  probeLabel: "ollama backend",
                 },
               ],
             }

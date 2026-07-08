@@ -372,7 +372,8 @@ After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-
 If an existing sandbox is not Ready, the automatic path requires a validated latest backup whose sandbox and agent identity match the registry and positive evidence that NemoClaw managed the image.
 For a listed pre-fingerprint OpenClaw or Hermes registry entry, you can provide that evidence through the installer's explicit managed-image confirmation.
 In a non-interactive run, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
-Recorded custom-image evidence remains blocked from automatic recreation.
+Legacy managed-image confirmation never overrides recorded custom-image evidence.
+A custom OpenClaw sandbox can be recovered only when the selected validated backup independently carries complete authoritative image-plugin provenance; otherwise recovery stops before deletion.
 The installer attempts every eligible recovery, exits with a nonzero status if any recovery fails, and skips generic onboarding after successful recovery.
 For manual upgrade flows, create a snapshot first and then run the update or rebuild command you need:
 

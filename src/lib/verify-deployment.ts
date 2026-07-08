@@ -17,10 +17,17 @@
  * "Health Offline" in the dashboard.
  */
 
-import type { DashboardDeliveryChain } from "./dashboard/contract";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
+import type { DashboardDeliveryChain } from "./dashboard/contract";
 import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
+import {
+  buildCustomOpenClawRuntimeFailureHints,
+  classifyOpenClawRuntimeFailure,
+  type SandboxCommandExecutor,
+} from "./onboard/custom-openclaw-runtime-diagnosis";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
+
+export { shouldDiagnoseCustomOpenClawRuntime } from "./onboard/custom-openclaw-runtime-diagnosis";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -72,10 +79,7 @@ export interface VerifyDeploymentResult {
 
 export interface VerifyDeploymentDeps {
   /** Execute a command inside the sandbox via SSH. Returns null if sandbox unreachable. */
-  executeSandboxCommand: (
-    name: string,
-    script: string,
-  ) => { status: number; stdout: string; stderr: string } | null;
+  executeSandboxCommand: SandboxCommandExecutor;
 
   /** Probe an HTTP endpoint on the host. Returns the HTTP status code or 0 on failure. */
   probeHostPort: (port: number, path: string) => number;
@@ -118,6 +122,12 @@ export interface VerifyDeploymentOptions {
   retryDelaysMs?: number[];
   /** Sleep helper, injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Inspect a failed custom OpenClaw image for the managed runtime contract.
+   * Keep this disabled for stock images and other agents, whose config and
+   * startup paths intentionally differ.
+   */
+  diagnoseCustomOpenClawRuntime?: boolean;
 }
 
 const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 5000, 7000, 10000];
@@ -137,7 +147,8 @@ const CREDENTIALLESS_MESSAGING_CHANNELS = new Set(listMessagingChannelsWithoutCr
 // sandbox log is the first thing to check. If the sandbox itself never
 // came up, the host-side OpenShell gateway log is the right place to
 // look — see gatewayLogCandidates() in onboard/sandbox-create-failure.ts.
-function buildGatewayLogHint(sandboxName: string): string {
+function buildGatewayLogHint(sandboxName: string, customRuntimeHint: string | null): string {
+  if (customRuntimeHint) return customRuntimeHint;
   return (
     `The gateway probe failed after retrying. Inspect the in-sandbox gateway log with ` +
     `\`nemoclaw ${sandboxName} logs\` (the gateway writes to /tmp/gateway.log inside the sandbox when it starts). ` +
@@ -466,25 +477,41 @@ export async function verifyDeployment(
 
   // 1. Gateway reachable inside sandbox
   const gateway = await verifyGatewayInSandbox(sandboxName, chain, deps, retryDelaysMs, sleep);
+  // Diagnose only after the normal startup budget. A slow custom runtime should
+  // get the same recovery window as the stock image, and an early unreachable
+  // exec cannot safely prove that image artifacts are absent.
+  const runtimeDiagnosis =
+    !gateway.reachable && options.diagnoseCustomOpenClawRuntime
+      ? classifyOpenClawRuntimeFailure(sandboxName, deps.executeSandboxCommand)
+      : null;
+  const customRuntimeHints = runtimeDiagnosis
+    ? buildCustomOpenClawRuntimeFailureHints(runtimeDiagnosis)
+    : null;
   diagnostics.push({
     link: "gateway",
     status: gateway.reachable ? "ok" : "fail",
     detail: gateway.detail,
-    hint: gateway.reachable ? "" : buildGatewayLogHint(sandboxName),
+    hint: gateway.reachable
+      ? ""
+      : buildGatewayLogHint(sandboxName, customRuntimeHints?.gateway ?? null),
   });
 
   // 2. Gateway version (cosmetic — not a health signal)
   const gatewayVersion = gateway.reachable ? fetchGatewayVersion(sandboxName, deps) : null;
 
   // 3. Dashboard reachable from host (port forward)
-  const dashboard = await verifyDashboardFromHost(chain, deps, retryDelaysMs, sleep);
+  // A port forward cannot repair an image that has no managed gateway runtime,
+  // so avoid spending a second retry budget on the dependent dashboard probe.
+  const dashboardRetryDelays = customRuntimeHints ? [] : retryDelaysMs;
+  const dashboard = await verifyDashboardFromHost(chain, deps, dashboardRetryDelays, sleep);
   diagnostics.push({
     link: "dashboard",
     status: dashboard.reachable ? "ok" : "fail",
     detail: dashboard.detail,
     hint: dashboard.reachable
       ? ""
-      : `Port forward on ${chain.port} is not working. Run: openshell forward start ${chain.forwardTarget} ${sandboxName}`,
+      : (customRuntimeHints?.dashboard ??
+        `Port forward on ${chain.port} is not working. Run: openshell forward start ${chain.forwardTarget} ${sandboxName}`),
   });
 
   // 4. Inference route

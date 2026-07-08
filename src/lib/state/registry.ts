@@ -18,6 +18,7 @@ import {
   normalizeExtraProviders,
   readExtraProviders,
 } from "./extra-providers";
+import type { OpenClawImagePluginInstall } from "./openclaw-plugin-restore";
 import {
   normalizeSandboxMcpState,
   type SandboxMcpState,
@@ -111,6 +112,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
+  /** Plugin install baseline captured before state is restored into a fresh OpenClaw image. */
+  openclawImagePluginInstalls?: OpenClawImagePluginInstall[];
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
   // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
   // it against the running NemoClaw build so an image/build change with an
@@ -505,6 +508,12 @@ export function registerSandbox(entry: SandboxEntry): void {
       // cannot inherit a stale finalized marker. See #4621.
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
+      openclawImagePluginInstalls: Array.isArray(entry.openclawImagePluginInstalls)
+        ? entry.openclawImagePluginInstalls.map((install) => ({
+            ...install,
+            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
+          }))
+        : undefined,
       nemoclawVersion: entry.nemoclawVersion || null,
       fromDockerfile: entry.fromDockerfile || null,
       hermesAuthMethod:
