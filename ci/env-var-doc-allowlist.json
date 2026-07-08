@@ -20,6 +20,10 @@
     "reason": "Internal child-process setting used only when launching the hidden Bedrock Runtime adapter. Users should configure Bedrock through the existing custom Anthropic endpoint flow instead."
   },
   {
+    "name": "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+    "reason": "Internal child-process setting used only when launching the hidden OpenRouter Runtime header adapter. Users should configure OpenRouter through the managed OpenRouter provider flow instead."
+  },
+  {
     "name": "NEMOCLAW_BEDROCK_RUNTIME_ENDPOINT_URL",
     "reason": "Internal child-process setting used only to pass the auto-detected Bedrock Runtime endpoint to the hidden local adapter. Not a public user-facing configuration knob."
   },

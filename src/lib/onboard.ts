@@ -145,6 +145,8 @@ const {
 }: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
   require("./onboard/bedrock-runtime");
+const openrouterRuntimeOnboard: typeof import("./onboard/openrouter-runtime") =
+  require("./onboard/openrouter-runtime");
 const {
   installOllamaOnLinux,
 }: typeof import("./onboard/install-ollama-linux") = require("./onboard/install-ollama-linux");
@@ -3786,6 +3788,7 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     classifyApplyFailure,
     localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
     bedrockRuntimeOnboard,
+    openrouterRuntimeOnboard,
     validateLocalProvider,
     getLocalProviderHealthCheck,
     getLocalProviderBaseUrl,
@@ -4473,8 +4476,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           isNonInteractive,
           getOpenshellBinary,
           needsBedrockRuntimeAdapter: (providerName, url) =>
-            providerName === "compatible-anthropic-endpoint" &&
-            bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
+            (providerName === "compatible-anthropic-endpoint" &&
+              bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url)) ||
+            openrouterRuntimeOnboard.needsOpenRouterRuntimeAdapter(providerName),
           isInferenceRouteReady,
           isRoutedInferenceProvider,
           reconcileModelRouter,

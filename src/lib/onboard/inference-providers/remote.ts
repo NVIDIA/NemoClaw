@@ -150,6 +150,7 @@ export async function setupRemoteProviderInference(
     classifyApplyFailure,
     LOCAL_INFERENCE_TIMEOUT_SECS,
     bedrockRuntimeOnboard,
+    openrouterRuntimeOnboard,
     redact,
     compactText,
   } = deps;
@@ -179,6 +180,25 @@ export async function setupRemoteProviderInference(
     log,
   });
   if (bedrockSetup.handled) return { done: true, result: bedrockSetup.result };
+  const openrouterSetup = await openrouterRuntimeOnboard.setupOpenRouterRuntimeInference({
+    sandboxName,
+    provider,
+    model,
+    credentialEnv,
+    reuseGatewayCredentialWithoutLocalKey,
+    isNonInteractive,
+    runOpenshell,
+    upsertProvider,
+    verifyInferenceRoute,
+    verifyOnboardInferenceSmoke,
+    hydrateCredentialEnv,
+    updateSandbox: registry.updateSandbox,
+    exitProcess,
+    error,
+    log,
+    redact,
+  });
+  if (openrouterSetup.handled) return { done: true, result: openrouterSetup.result };
   // #6294: an OpenAI-/chat/completions-only agent (dcode) coerced off Anthropic
   // Messages must talk to the gateway route over the openai_chat_completions
   // protocol, and OpenShell routes that protocol only for providers registered

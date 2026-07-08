@@ -14,6 +14,7 @@ import {
   GATEWAY_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
+  OPENROUTER_RUNTIME_ADAPTER_PORT,
   validateGatewayPort,
   VLLM_PORT,
 } from "../core/ports";
@@ -88,6 +89,7 @@ function resolveGatewayRecoveryTarget(options: StartGatewayForRecoveryOptions = 
     ollamaPort: OLLAMA_PORT,
     ollamaProxyPort: OLLAMA_PROXY_PORT,
     bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+    openRouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
   });
   return { gatewayName, gatewayPort };
 }
