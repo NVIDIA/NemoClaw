@@ -234,6 +234,37 @@ describe("sandbox base-image warm resolution", () => {
     });
   });
 
+  it("tracks agent dependency locks in dirty and main-divergence checks (#6456)", () => {
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+    const options = resolutionOptions();
+    const lockfile = path.join(
+      process.cwd(),
+      "agents",
+      "langchain-deepagents-code",
+      "requirements.lock",
+    );
+
+    expect(
+      resolveSandboxBaseImage({
+        ...options,
+        inputPaths: [lockfile],
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
+        },
+      }),
+    ).toBeNull();
+    expect(sourceMocks.inputsDirty).toHaveBeenCalledWith(process.cwd(), expect.any(Object), [
+      options.dockerfilePath,
+      lockfile,
+    ]);
+    expect(sourceMocks.inputsChanged).toHaveBeenCalledWith(process.cwd(), expect.any(Object), [
+      options.dockerfilePath,
+      lockfile,
+    ]);
+  });
+
   it("fails closed instead of trusting an existing local tag when base inputs are dirty (#4680)", () => {
     sourceMocks.inputsDirty.mockReturnValue(true);
     dockerMocks.imageInspect.mockReturnValue({ status: 0 });

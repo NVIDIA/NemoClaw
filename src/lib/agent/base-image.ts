@@ -30,6 +30,7 @@ import {
 import type { AgentDefinition } from "./defs";
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
+const DEEPAGENTS_CODE_DISTRIBUTION = "deepagents-code";
 // Matches the official Hermes base repository for both Dockerfile manifest-list
 // pins and Docker-normalized platform manifest digests.
 const HERMES_OFFICIAL_BASE_DIGEST_REF =
@@ -157,17 +158,55 @@ export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
   return output.trim() === HERMES_MCP_RUNTIME_PROBE_OK;
 }
 
+/**
+ * Reject a published or cached Deep Agents Code base whose installed package
+ * does not match the active manifest. The final image patchers intentionally
+ * require this exact source pairing, so accepting a merely runnable older base
+ * only defers the failure until the expensive final-image build (#6456).
+ */
+function deepAgentsCodeBaseImageMatchesVersion(imageRef: string, expectedVersion: string): boolean {
+  const output = dockerCapture(
+    [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "/opt/venv/bin/python3",
+      imageRef,
+      "-I",
+      "-c",
+      `import importlib.metadata; print(importlib.metadata.version("${DEEPAGENTS_CODE_DISTRIBUTION}"))`,
+    ],
+    { ignoreError: true, timeout: 20_000 },
+  );
+  return output.trim() === expectedVersion;
+}
+
 function createAgentBaseImageResolutionOptions(
   agent: AgentDefinition,
   dockerfilePath: string,
   options: EnsureAgentBaseImageOptions,
 ): ResolveBaseImageOptions {
   const imageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
-  const validateImage = agent.name === "hermes" ? hermesBaseImageSupportsMcp : undefined;
+  const deepAgentsCodeExpectedVersion =
+    agent.name === "langchain-deepagents-code" ? agent.expectedVersion : null;
+  if (agent.name === "langchain-deepagents-code" && !deepAgentsCodeExpectedVersion) {
+    throw new Error("LangChain Deep Agents Code manifest is missing expected_version");
+  }
+  const validateImage =
+    agent.name === "hermes"
+      ? hermesBaseImageSupportsMcp
+      : deepAgentsCodeExpectedVersion
+        ? (imageRef: string) =>
+            deepAgentsCodeBaseImageMatchesVersion(imageRef, deepAgentsCodeExpectedVersion)
+        : undefined;
   const pinnedRemoteRef = getHermesPinnedRemoteBaseRef(agent) ?? undefined;
   return {
     imageName,
     dockerfilePath,
+    inputPaths:
+      agent.name === "langchain-deepagents-code"
+        ? [path.join(path.dirname(dockerfilePath), "requirements.lock")]
+        : undefined,
     localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
     envVar: getAgentSandboxBaseImageEnvVar(agent.name),
     label: `${agent.displayName} sandbox base image`,
@@ -179,7 +218,11 @@ function createAgentBaseImageResolutionOptions(
     preferPinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
     validateImage,
     validationDescription:
-      agent.name === "hermes" ? "the required MCP Streamable HTTP runtime" : undefined,
+      agent.name === "hermes"
+        ? "the required MCP Streamable HTTP runtime"
+        : deepAgentsCodeExpectedVersion
+          ? `${DEEPAGENTS_CODE_DISTRIBUTION}==${deepAgentsCodeExpectedVersion}`
+          : undefined,
   };
 }
 
