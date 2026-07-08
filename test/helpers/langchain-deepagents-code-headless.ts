@@ -52,8 +52,10 @@ export function makeStartScriptFixture(
   const scriptPath = path.join(tempDir, "start.sh");
   const hostFile = path.join(tempDir, "trusted-proxy-host");
   const portFile = path.join(tempDir, "trusted-proxy-port");
+  const markerDir = path.join(tempDir, "persistent-dcode-state");
   expect(original).toContain("local target=/tmp/nemoclaw-proxy-env.sh");
   expect(original).toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
+  expect(original).toContain("local marker_dir=/sandbox/.deepagents");
   const fixture = original
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
@@ -71,11 +73,14 @@ export function makeStartScriptFixture(
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
       `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
-    );
+    )
+    .replace("local marker_dir=/sandbox/.deepagents", `local marker_dir="${markerDir}"`);
   expect(fixture).toContain(`local target="${envFile}"`);
   expect(fixture).toContain(`tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`);
   expect(fixture).not.toContain("local target=/tmp/nemoclaw-proxy-env.sh");
   expect(fixture).not.toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
+  expect(fixture).toContain(`local marker_dir="${markerDir}"`);
+  expect(fixture).not.toContain("local marker_dir=/sandbox/.deepagents");
   fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
   fs.writeFileSync(portFile, "3128\n", "utf8");
   fs.chmodSync(hostFile, 0o444);
