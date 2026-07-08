@@ -11,6 +11,7 @@ import YAML from "yaml";
 import { TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
 import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
 import {
+  ANALYTICS_DISABLE_ENV_NAMES,
   DCODE_CANONICAL_PATH,
   headlessCheckPath,
   makeStartScriptFixture as makeHeadlessStartScriptFixture,
@@ -238,6 +239,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const inheritedTracingFlags = Object.fromEntries(
       TRACING_ENABLE_ENV_NAMES.map((name) => [name, "true"]),
     );
+    const inheritedAnalyticsFlags = Object.fromEntries(
+      ANALYTICS_DISABLE_ENV_NAMES.map((name) => [name, "0"]),
+    );
     const { envFileText, output } = runStartScriptProxyProbe(scriptPath, envFile, {
       HTTP_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
       HTTPS_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
@@ -250,6 +254,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       OPENAI_PROXY: "http://openai-user:openai-password@attacker.example:8080",
       ...inheritedSecrets,
       ...inheritedTracingFlags,
+      ...inheritedAnalyticsFlags,
     });
     const managedProxy = "http://10.200.0.1:3128";
     const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
@@ -271,6 +276,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(outputLines).toContain(`RUNTIME_${name}=false`);
       expect(outputLines).toContain(`SOURCED_${name}=false`);
       expect(envFileLines).toContain(`export ${name}=false`);
+    }
+    for (const name of ANALYTICS_DISABLE_ENV_NAMES) {
+      expect(outputLines).toContain(`RUNTIME_${name}=1`);
+      expect(outputLines).toContain(`SOURCED_${name}=1`);
+      expect(envFileLines).toContain(`export ${name}=1`);
     }
     expect(envFileLines).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
     expect(
@@ -447,6 +457,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
     expect(policy).not.toContain("api.tavily.com");
     expect(policy).not.toContain("api.smith.langchain.com");
+    expect(policy).not.toContain("supabase.co");
     expect(policy).toContain("    - /usr\n");
     expect(policy).toContain("    - /opt/venv\n");
     expect(policy).toContain("    - /etc\n");

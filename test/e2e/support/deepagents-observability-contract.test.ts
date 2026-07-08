@@ -38,6 +38,8 @@ const TOOL_NAME = "nemoclaw_otlp_e2e_tool";
 const TOOL_ARGUMENT = "TOOL_ARGUMENT";
 const TOOL_RESULT = "TOOL_RESULT";
 const AMBIENT_CANARY = "AMBIENT_CANARY";
+const RAW_CREDENTIAL = "sk-EXAMPLE0000000000000000000000";
+const REDACTION_MARKER = "<redacted-secret>";
 
 function validSpans(): TestSpan[] {
   return [
@@ -45,7 +47,11 @@ function validSpans(): TestSpan[] {
       name: "direct model",
       attributes: {
         "openinference.span.kind": "LLM",
-        "input.value": JSON.stringify({ prompt: DIRECT_PROMPT, requested: DIRECT_RESPONSE }),
+        "input.value": JSON.stringify({
+          prompt: DIRECT_PROMPT,
+          redaction: REDACTION_MARKER,
+          requested: DIRECT_RESPONSE,
+        }),
         "output.value": JSON.stringify({ content: DIRECT_RESPONSE }),
       },
     },
@@ -71,9 +77,15 @@ function validSpans(): TestSpan[] {
 
 const expectations = {
   ambientCanary: AMBIENT_CANARY,
+  redaction: { marker: REDACTION_MARKER, rawCredential: RAW_CREDENTIAL },
   serviceName: SERVICE_NAME,
   llmExchanges: [
-    { label: "direct", promptMarker: DIRECT_PROMPT, responseMarker: DIRECT_RESPONSE },
+    {
+      label: "direct",
+      promptMarker: DIRECT_PROMPT,
+      redactionMarker: REDACTION_MARKER,
+      responseMarker: DIRECT_RESPONSE,
+    },
     { label: "login", promptMarker: LOGIN_PROMPT, responseMarker: LOGIN_RESPONSE },
   ],
   tool: { argumentMarker: TOOL_ARGUMENT, name: TOOL_NAME, resultMarker: TOOL_RESULT },
@@ -124,6 +136,7 @@ describe("Deep Agents OTLP trace contract", () => {
     const misplacedToolArgument = validSpans();
     misplacedToolArgument[0].attributes["input.value"] = JSON.stringify({
       prompt: DIRECT_PROMPT,
+      redaction: REDACTION_MARKER,
       requested: DIRECT_RESPONSE,
       unrelatedToolArgument: TOOL_ARGUMENT,
     });
@@ -134,6 +147,27 @@ describe("Deep Agents OTLP trace contract", () => {
     expect(() =>
       assertDeepAgentsTraceContract([traceRequest(misplacedToolArgument)], expectations),
     ).toThrow(/not associated on one managed TOOL span/);
+  });
+
+  it("requires credential-shaped content to be replaced on the OTLP wire", () => {
+    const rawCredential = validSpans();
+    rawCredential[0].attributes["input.value"] = JSON.stringify({
+      prompt: DIRECT_PROMPT,
+      rawCredential: RAW_CREDENTIAL,
+      requested: DIRECT_RESPONSE,
+    });
+    expect(() =>
+      assertDeepAgentsTraceContract([traceRequest(rawCredential)], expectations),
+    ).toThrow(/credential-shaped prompt content reached OTLP/);
+
+    const missingMarker = validSpans();
+    missingMarker[0].attributes["input.value"] = JSON.stringify({
+      prompt: DIRECT_PROMPT,
+      requested: DIRECT_RESPONSE,
+    });
+    expect(() =>
+      assertDeepAgentsTraceContract([traceRequest(missingMarker)], expectations),
+    ).toThrow(/credential-shaped OTLP content lacks the redaction marker/);
   });
 
   it("fails closed on malformed requests, wrong service identity, and ambient canaries", () => {

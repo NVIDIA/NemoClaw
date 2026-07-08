@@ -183,6 +183,34 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
+  it.each([
+    "No active forward",
+    "forward 18789 not found",
+    "forward stop failed: not running",
+  ])("host client accepts canonical already-absent forward output: %s", async (stderr) => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.cleanupForward(18789);
+
+    expect(runner.calls.map((call) => call.args)).toEqual([["forward", "stop", "18789"]]);
+  });
+
+  it.each([
+    "permission denied",
+    "daemon not running",
+    "some unrelated error: not running",
+  ])("host client surfaces unexpected forward cleanup failure: %s", async (stderr) => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupForward(18789)).rejects.toThrow(
+      `cleanup forward 18789 failed: ${stderr}`,
+    );
+  });
+
   it("host client does not hide a current gateway remove failure behind the legacy verb", async () => {
     const runner = new FakeRunner();
     runner.enqueue({ exitCode: 1, stderr: "permission denied" });

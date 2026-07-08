@@ -234,20 +234,24 @@ Trace export is off by default and requires an explicit onboarding choice.
 When enabled, the managed exporter can include bounded prompts, model responses, tool arguments, tool results, operation names, model and tool names, and success or error information.
 Treat the resulting traces as sensitive application data even when your normal prompts do not contain secrets.
 
-Managed capture limits each string to 8,000 characters, each mapping or sequence to 50 items, and nesting to 8 levels.
+Managed capture selects at most 8,000 source characters from each captured string before adding truncation metadata, limits each mapping or sequence to 50 items, and limits nesting to 8 levels.
 Each captured value also has an aggregate budget of 2,048 traversed nodes and 50,000 source string characters.
 Repeated or cyclic containers are replaced with a reference-omission marker instead of being expanded again.
 After bounding a value, a JSON encoding longer than 50,000 characters is replaced by a constant opaque marker and a 16,000-character serialized preview.
 Other opaque objects are replaced by the same constant marker without reading their class name or string representation.
-It replaces binary values with their byte count and redacts recognized credential, header, cookie, password, token, checkpoint, resume, and interrupt keys.
+It replaces binary values with their byte count and bounds dictionary key names, replacing credential-shaped matches in those names with `<redacted-secret>`.
+When a dictionary key matches a recognized credential, header, cookie, password, token, checkpoint, resume, or interrupt class, it replaces the associated value with `<redacted>`.
 It also replaces original exception text with a stable redacted error.
 Model request traces include only the bounded messages and sanitized model identifier.
 They exclude request headers, `model_settings`, `response_format`, and tool definitions or schemas.
 Model and tool spans carry the bounded content used for debugging.
 LangGraph node scopes export only bounded node names, a static LangGraph integration label, and success or error status.
 They omit raw graph inputs and outputs, callback metadata, checkpoint payloads, and interrupt or resume values so a node span does not duplicate the full conversation and graph state.
-These controls bound payload shape and remove recognized key classes, but they do not classify arbitrary text values.
-A secret pasted into a prompt, model response, shell command, tool result, file body, or unrecognized field can still be exported.
+These controls bound payload shape and remove recognized key classes.
+As a best-effort second layer, the managed exporter also scrubs recognized credential-shaped tokens, such as provider API keys, bearer tokens, and private key blocks, from bounded prompt, response, tool, and other captured string content and replaces each match with `<redacted-secret>`.
+Identifier fields are scrubbed before sanitization and carry the identifier-safe text `redacted-secret` instead.
+This value scrubbing is pattern-based and not exhaustive: a secret in an obfuscated or unrecognized form, or any sensitive text that does not match a known credential shape, can still be exported.
+Complete redaction depends on upstream content controls and on the redaction processors you run in the host collector.
 
 The sandbox sends OTLP/HTTP protobuf requests only to `http://host.openshell.internal:4318/v1/traces` and reports `service.name=nemoclaw-langchain-deepagents-code`.
 The OTLP library adds standard transport headers such as content type and content length, but the managed exporter cannot add operator-supplied custom or authentication headers.
