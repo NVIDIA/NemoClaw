@@ -15,6 +15,7 @@ export interface FakeOpenAiCompatibleRequest {
   readonly path: string;
   readonly bodyBytes: number;
   readonly auth?: string;
+  readonly authorizationSent?: boolean;
   readonly model?: string;
   readonly stream?: boolean;
   readonly forbiddenMarkerMatches?: number;
@@ -33,10 +34,12 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly chatContent?: string;
   readonly forbiddenMarkers?: readonly string[];
   readonly host?: string;
+  readonly maxModelLen?: number;
   readonly model?: string;
   readonly port?: number;
   readonly publicHost?: string;
   readonly requireAuth?: boolean;
+  readonly requireAuthModels?: boolean;
   readonly responseText?: string;
 }
 
@@ -77,7 +80,9 @@ function canReachModels(host: string, port: number): Promise<boolean> {
       },
       (res) => {
         res.resume();
-        resolve(res.statusCode === 200);
+        // 401 still means the server is up — it just enforces auth on
+        // /v1/models (requireAuthModels), which the readiness probe omits.
+        resolve(res.statusCode === 200 || res.statusCode === 401);
       },
     );
     req.on("error", () => resolve(false));
@@ -129,11 +134,14 @@ export async function startFakeOpenAiCompatibleServer(
       NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
       NEMOCLAW_FAKE_OPENAI_HOST: host,
       NEMOCLAW_FAKE_OPENAI_LOG_FILE: logFile,
+      NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN:
+        options.maxModelLen !== undefined ? String(options.maxModelLen) : "",
       NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",
       NEMOCLAW_FAKE_OPENAI_PORT: String(options.port ?? 0),
       NEMOCLAW_FAKE_OPENAI_PORT_FILE: portFile,
       NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE: requestsFile,
       NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH: options.requireAuth ? "1" : "0",
+      NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS: options.requireAuthModels ? "1" : "0",
       NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT: options.responseText ?? options.chatContent ?? "ok",
     },
     stdio: "ignore",

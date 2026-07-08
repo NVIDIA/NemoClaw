@@ -8,13 +8,17 @@ import { CLOUD_MODEL_OPTIONS, DEFAULT_CLOUD_MODEL } from "./config";
 
 export const NVIDIA_FEATURED_MODELS_URL =
   "https://assets.ngc.nvidia.com/products/api-catalog/featured-models.json";
-// GLM 5.1 retirement contract (#6069): the external featured feed may lag an
-// NVIDIA Endpoints retirement. The repository authority is CLOUD_MODEL_OPTIONS
-// plus the provider-boundary assertion in test/inference-options-docs.test.ts,
-// which retain GLM 5.1 only for Hermes. Keep this policy deny-list until a
-// deliberate product change reverses #6069; a transient feed omission alone is
-// not a removal signal.
-const RETIRED_NVIDIA_FEATURED_MODEL_IDS = new Set(["z-ai/glm-5.1"]);
+// NVIDIA Endpoints retirement contract: the public featured feed and
+// authenticated /models catalog can lag a runtime retirement. The repository
+// authority is CLOUD_MODEL_OPTIONS plus the provider-boundary assertion in
+// test/inference-options-docs.test.ts, which keeps independently available
+// Hermes Provider models separate from NVIDIA Endpoints choices. Keep entries
+// in this policy deny-list until a deliberate product change confirms that the
+// NVIDIA chat-completions route is available again or names a live successor.
+const RETIRED_NVIDIA_FEATURED_MODEL_IDS = new Set([
+  "z-ai/glm-5.1", // Retired from NVIDIA Endpoints in #6069.
+  "moonshotai/kimi-k2.6", // Catalogs still list it after its backing route was removed.
+]);
 const MAX_NVIDIA_FEATURED_CATALOG_BYTES = 1024 * 1024;
 const MAX_NVIDIA_FEATURED_MODELS = 100;
 const MAX_NVIDIA_FEATURED_MODEL_ID_LENGTH = 256;

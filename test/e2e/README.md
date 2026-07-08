@@ -64,7 +64,7 @@ shadow controller. It builds the deterministic risk plan from the exact
 matches the pushed commit. If the plan matches runtime regression families,
 the controller dispatches at most three `automaticJobs` through `e2e.yaml`.
 The workflow definition stays on `main`, while every E2E checkout uses the
-exact merged commit supplied through `checkout_sha`. GitHub returns the
+merged commit supplied through `checkout_sha`. GitHub returns the
 dispatched workflow's run ID directly, and the controller uses that ID as the
 sole child-run selector for waiting, evidence download, and completion.
 
@@ -84,7 +84,7 @@ signal travels in the selected job's existing E2E artifact.
 The controller reports `E2E / Post-merge Risk Gate (shadow)` on the merged
 commit. It reports success only when every expected shard produces a complete,
 unskipped pass and the three-job cap did not omit required jobs. Selected E2E
-workflow or exact-SHA test failures report failure. Missing, partial, skipped,
+workflow or test failures for the merged commit report failure. Missing, partial, skipped,
 ambiguous, or manual-expansion evidence reports neutral. A plan with no matched
 runtime risk reports success without dispatching live E2E. This shadow check runs
 after merge and is not a required PR check. It disables PR comments and the
@@ -107,12 +107,12 @@ phase names. Cold image pulls, first-time model downloads, provider outages,
 and runner or network incidents can still affect the signal, so maintainers
 should inspect the timing table before acting on a warning.
 
-For PRs, E2E Advisor builds a stable exact-SHA risk plan. It deterministically
-recommends required jobs for known regression families and still requires
-`cloud-onboard` when changes affect onboard behavior, trace timing, scorecard
-analysis, budget configuration, or the unified E2E workflow. Model advice is
-additive and cannot downgrade the deterministic floor. The scorecard remains
-the source of truth for advisory warm-system trend evaluation.
+For PRs, E2E Advisor builds a deterministic risk plan from the PR head commit
+and changed-file set. It recommends required jobs for known regression families
+and still requires `cloud-onboard` when changes affect onboard behavior, trace
+timing, scorecard analysis, budget configuration, or the unified E2E workflow.
+Model advice is additive and cannot downgrade the deterministic floor. The
+scorecard remains the source of truth for advisory warm-system trend evaluation.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span

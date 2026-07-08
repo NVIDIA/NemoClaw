@@ -46,7 +46,23 @@ export function createRebuildCommandContext(
       ? (message: string) => {
           throw new Error(message);
         }
-      : (_message: string, code = 1) => process.exit(code),
+      : // #6376: previously discarded `message` entirely, so any bail() call
+        // that raised an actionable reason (e.g. `Failed to preserve MCP
+        // bridges before rebuild: Sandbox 'X' has an incomplete MCP destroy
+        // transaction. Re-run the sandbox destroy command …`) exited 1 with
+        // no output at all — leaving the user with the last stage's spinner
+        // line and no diagnosis. Emit the reason on stderr before exit so
+        // `$?`-gated automation and interactive users see WHY rebuild
+        // aborted. The message can carry a wrapped lower-level error
+        // (`bail("...: " + error.message)`), so route it through the same
+        // `redact` boundary `log` already uses (line above) before surfacing —
+        // a bailed rebuild must not be the one path that leaks a URL/token.
+        // `console.error` inherits the rebuild-diagnostic formatting (leading
+        // two spaces).
+        (message: string, code = 1) => {
+          if (message) console.error(`  ${redact(message)}`);
+          process.exit(code);
+        },
   };
 }
 

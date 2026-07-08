@@ -11,6 +11,7 @@ import {
   kimiOnboardEnv,
   requirePublicNvidiaApiKey,
   resolveKimiInferenceMode,
+  startKimiMock,
 } from "../live/kimi-inference-compat-helpers.ts";
 
 describe("Kimi inference compatibility mode selection", () => {
@@ -95,6 +96,46 @@ describe("Kimi inference compatibility mode selection", () => {
       toolMetaInvalidValues: [],
       toolMetasCount: 3,
     });
+  });
+
+  it("emits separate safe exec calls from the streaming Kimi mock", async () => {
+    const mock = await startKimiMock();
+    try {
+      const endpoint = new URL(`${mock.baseUrl}/chat/completions`);
+      endpoint.hostname = "127.0.0.1";
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test-kimi-key",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "moonshotai/kimi-k2.6",
+          stream: true,
+          messages: [{ role: "user", content: "Run the checks" }],
+          tools: [{ type: "function", function: { name: "exec" } }],
+        }),
+      });
+
+      expect(response.ok).toBe(true);
+      const events = (await response.text())
+        .split("\n")
+        .filter((line) => line.startsWith("data: {"))
+        .map((line) => JSON.parse(line.slice("data: ".length)));
+      const toolCalls = events.flatMap((event) => event.choices?.[0]?.delta?.tool_calls ?? []);
+      expect(toolCalls.map((toolCall) => toolCall.index)).toEqual([0, 1, 2]);
+      expect(toolCalls.every((toolCall) => toolCall.type === "function")).toBe(true);
+      expect(toolCalls.every((toolCall) => toolCall.function.name === "exec")).toBe(true);
+      expect(toolCalls.map((toolCall) => JSON.parse(toolCall.function.arguments).command)).toEqual([
+        "hostname",
+        "date",
+        "uptime",
+      ]);
+      expect(new Set(toolCalls.map((toolCall) => toolCall.id)).size).toBe(3);
+      expect(events.at(-1)?.choices?.[0]?.finish_reason).toBe("tool_calls");
+    } finally {
+      await mock.close();
+    }
   });
 
   it("allows public Kimi trajectories with fewer safe exec calls but no combined shell", () => {

@@ -341,7 +341,7 @@ export function classifyRiskEvidence(options: {
     return {
       conclusion: "failure",
       title: "Selected E2E jobs reported test failures",
-      summary: "At least one exact-SHA job shard reported a test failure or unhandled error.",
+      summary: "At least one selected job shard reported a test failure or unhandled error.",
     };
   }
   const partial = expectedEvidence.filter((key) => {
@@ -368,7 +368,7 @@ export function classifyRiskEvidence(options: {
   return {
     conclusion: "success",
     title: "All risk-selected E2E jobs passed",
-    summary: "Every expected exact-SHA job shard produced complete, unskipped evidence.",
+    summary: "Every expected job shard produced complete, unskipped evidence.",
   };
 }
 

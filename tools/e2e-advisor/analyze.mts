@@ -421,7 +421,9 @@ export function applyDeterministicRecommendations(
     ...result,
     classifiedDomains,
     requiredTests,
-    optionalTests: result.optionalTests.filter((test) => !test.id || !requiredIds.has(test.id)),
+    optionalTests: result.optionalTests.filter(
+      (test) => ![test.id, test.job].some((value) => value && requiredIds.has(value)),
+    ),
     noE2eReason: requiredTests.length > 0 ? null : result.noE2eReason,
     confidence: result.confidence === "low" ? "medium" : result.confidence,
   };

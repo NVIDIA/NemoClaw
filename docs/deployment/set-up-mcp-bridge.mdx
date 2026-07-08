@@ -275,6 +275,28 @@ Provider deletion and registry cleanup happen only after OpenShell confirms that
 NemoClaw prechecks the recorded provider ID and credential-key shape before mutation and uses a random per-add provider-name suffix to avoid accidental name reuse.
 The stable OpenShell limitations section describes why these ownership checks do not form an atomic identity binding.
 
+An interrupted MCP destroy can leave durable transaction state.
+A prepared-only transaction means deletion is not durably confirmed.
+If the sandbox is still live, recover without destroying it by removing the affected server with `--force`.
+
+```bash
+$$nemoclaw my-sandbox mcp remove <server> --force
+```
+
+NemoClaw clears the prepared marker only after cleanup succeeds without residuals and no bridge entries remain.
+For a sandbox with multiple bridge entries, repeat the command with each registered server name until the manifest is empty.
+A failed cleanup, a wrong server name, residual resources, or any remaining bridge entry preserves the marker for another retry.
+
+A pending marker, including a transaction with both prepared and pending markers, means the registry records that OpenShell deletion was already confirmed.
+`mcp remove --force` refuses this state because provider or policy cleanup can still be owed.
+Finish the idempotent destroy instead.
+
+```bash
+$$nemoclaw my-sandbox destroy
+```
+
+While either marker remains, `rebuild` refuses during preflight before backup or deletion and prints a redacted diagnostic with the applicable recovery command.
+
 `remove --force` may remove a modified same-name agent adapter entry so an operator can clear local config.
 Provider deletion still requires the exact recorded provider ID, type, and credential key, and policy deletion still requires exact owned content; force never claims an unowned or drifted provider or same-key live policy.
 If any cleanup step leaves a residual, the command exits nonzero and preserves the managed MCP registry entry so cleanup can be retried.

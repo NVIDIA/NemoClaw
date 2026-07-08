@@ -110,7 +110,7 @@ _MANAGED_MCP_READY = False
 # Regression gate: test/langchain-deepagents-code-secret-pattern-parity.test.ts
 # fingerprints all canonical groups and runs one shared positive corpus through
 # both those groups and _contains_secret_shape; the Bash wrapper consumes the
-# same corpus in test/langchain-deepagents-code-image.test.ts.
+# same corpus in test/langchain-deepagents-code-image-credentials.test.ts.
 # Removal condition: delete this mirror only when the managed runtime can consume
 # the canonical patterns directly or upstream rejects these shapes before boot.
 _SECRET_PATTERNS = tuple(

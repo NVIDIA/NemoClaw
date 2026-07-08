@@ -38,6 +38,10 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 11. Writes artifacts under the model-specific artifact directory, for example `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
 12. Posts or updates model-specific sticky PR comments marked by `<!-- nemoclaw-pr-review-advisor -->` and `<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->` plus hidden head-SHA, run, and comment-id metadata for follow-up reviews.
 
+The ordered stage array in `buildPromptTurns` is the source of truth for stage order, evidence, and
+prompt text. Runtime numbering and prompt artifact names derive from that array, so adding or
+reordering a stage does not require parallel orchestration changes.
+
 Provider failures and timeouts settle the active turn before the analysis fails, so its status and
 partial response remain available beside the raw transcript. Turn-artifact persistence failures are
 also fatal; the advisor does not publish a result whose per-turn trace is incomplete.
@@ -103,15 +107,11 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 - `retry-prompts/` — retry synthesis prompt and synthetic tool results when the first output is malformed or low quality.
 - `retry-turns/` — assistant output and settled status from the optional retry synthesis conversation.
 - `context/drift-context.json` — deterministic drift, overlap, monolith, and previous-review context.
-- `context/scope-risk-context.json` — the first turn's deterministic drift and exact-SHA risk map.
-- `context/correctness-state-context.json` — linked acceptance, localized-patch, source-of-truth, and simplification evidence.
-- `context/security-context.json` — deterministic security-risk and exact-SHA risk-plan context.
-- `context/tests-regressions-context.json` — exact-SHA invariants, required-job floors, test depth, and static test inventory.
-- `context/ci-operations-context.json` — workflow, operational, and monolith evidence.
-- `context/reconciliation-context.json` — compact prior-review, risk-plan, and linked-issue metadata used to reconcile candidate findings.
+- `context/security-context.json` — deterministic security-risk context and the risk plan for the
+  PR head commit.
 - `context/validation-context.json` — deterministic acceptance, source-of-truth, static
-  test-inventory, simplification-signal, and exact-SHA risk-plan context, including the regression
-  invariants reviewed for the PR.
+  test-inventory, simplification-signal, and risk plan for the PR head commit, including the
+  regression invariants reviewed for the PR.
 - `context/pr.diff` — truncated PR diff used by the advisor.
 - `context/previous-advisor-review.md` — previous sticky PR Review Advisor comment when one exists and its hidden run/comment metadata validates.
 - `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.

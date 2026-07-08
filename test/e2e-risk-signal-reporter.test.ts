@@ -67,7 +67,7 @@ describe("E2E risk signal reporter", () => {
     expect(() => configuredEnvironment(env, () => "c".repeat(40))).toThrow(/checked-out HEAD/u);
   });
 
-  it("writes exact-SHA pass, failure, skip, and pending counts", () => {
+  it("writes pass, failure, skip, and pending counts for the tested commit", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
     try {
       const signal = writeRiskSignal(

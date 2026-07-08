@@ -172,7 +172,7 @@ describe("post-merge E2E risk gate", () => {
     }
   });
 
-  it("accepts only the deterministic exact-SHA plan", () => {
+  it("accepts only the deterministic plan for the tested commit", () => {
     const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
 
     expect(validateRiskPlan(plan, ALLOWED)).toEqual(plan);
@@ -406,7 +406,7 @@ describe("post-merge E2E risk gate", () => {
     expect(verdict.summary).not.toContain("onboard-repair");
   });
 
-  it("reports failed exact-SHA test evidence as failure even when the workflow is green", () => {
+  it("reports failed test evidence as failure even when the workflow is green", () => {
     const verdict = classifyRiskEvidence({
       workflowConclusion: "success",
       expectedJobs: ["onboard-repair"],

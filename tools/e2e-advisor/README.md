@@ -23,7 +23,7 @@ the trusted timing signal.
 2. Skips user-fork PRs; it only analyzes PRs whose head repo is `NVIDIA/NemoClaw`.
 3. Installs the pinned Pi SDK package.
 4. Runs `tools/e2e-advisor/analyze.mts` and `tools/e2e-advisor/targets.mts`.
-5. Writes the exact-SHA `risk-plan.json` and advisor artifacts under `artifacts/e2e-advisor/`.
+5. Writes `risk-plan.json` and advisor artifacts under `artifacts/e2e-advisor/`.
 6. Posts or updates sticky PR comments marked by `<!-- nemoclaw-e2e-advisor -->` and `<!-- nemoclaw-e2e-target-advisor -->`.
 
 ## Safety model
@@ -62,7 +62,7 @@ shard.
 
 The controller writes a check on the merged commit without posting a PR
 comment or running the scheduled/manual scorecard. Complete unskipped evidence
-reports success, selected E2E workflow or exact-SHA test failures report
+reports success, selected E2E workflow or test failures for the merged commit report
 failure, and incomplete, ambiguous, skipped, or cap-limited evidence that
 requires manual expansion reports neutral. If no runtime risk family matches,
 it reports success without dispatching E2E. This is post-merge shadow evidence,
@@ -91,10 +91,11 @@ dispatch commands; it does not trigger E2E workflows automatically.
 ## Artifacts
 
 - `e2e-advisor-prompt.md` — task prompt sent to the advisor. Diff, changed files, metadata, and schema are injected into the Pi session as deterministic synthetic tool results and captured in the session transcript.
-- `risk-plan.json` — stable exact-SHA risk families, invariants, required jobs, a capped
-  `automaticJobs` subset, manual-expansion state, and the plan hash. Both E2E advisor
-  projections consume the required-job floor, while the separate post-merge controller
-  rebuilds the plan and dispatches the automatic subset.
+- `risk-plan.json` — deterministic risk families, invariants, and required jobs for the PR
+  head commit and changed-file set, plus a capped `automaticJobs` subset,
+  manual-expansion state, and the plan digest. Both E2E advisor projections consume the
+  required-job floor, while the separate post-merge controller rebuilds the plan and
+  dispatches the automatic subset.
 - `e2e-advisor-raw-output.txt` — raw advisor transcript and diagnostics.
 - `e2e-advisor-result.json` — parsed advisor response or execution metadata.
 - `e2e-advisor-session.html` — exported advisor session transcript.
@@ -127,5 +128,5 @@ secret. Run `npm install` first so the Pi SDK dependency is available.
 `tools/e2e-advisor/targets-schema.json` defines the normalized target recommendation shape used by the `targets` and `jobs` dispatch commands.
 
 The post-merge shadow check does not establish pre-merge enforcement. Any future required check
-must verify complete E2E evidence for the same PR head SHA without making model availability part
+must verify complete E2E evidence for the same PR head commit without making model availability part
 of the merge authority.

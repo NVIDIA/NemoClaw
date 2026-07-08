@@ -14,18 +14,18 @@ import {
   GATEWAY_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
-  validateGatewayPort,
   VLLM_PORT,
+  validateGatewayPort,
 } from "../core/ports";
-import { sleepSeconds } from "../core/wait";
+import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { shouldPatchCoredns } from "../platform";
 import { run, SCRIPTS } from "../runner";
 import { isGatewayHealthy } from "../state/gateway";
+import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import { envInt } from "./env";
 import { resolveGatewayName, resolveGatewayPortFromName } from "./gateway-binding";
 import { isGatewayHttpReady } from "./gateway-http-readiness";
 import { getContainerRuntime } from "./local-inference-topology";
-import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 
 export type StartGatewayForRecoveryOptions = {
   gatewayName?: string;
@@ -53,6 +53,17 @@ export type GatewayRecoveryDeps = {
   runOpenshell(args: string[], opts?: RunOpenshellOptions): GatewayStartResult;
   startGatewayWithOptions(gpu: never, options: { exitOnFailure: false }): Promise<void>;
   isLinuxDockerDriverGatewayEnabled?(): boolean;
+  sleepSeconds?(seconds: number): void;
+  // Injected so caller-level tests can exercise the success + retry-success
+  // paths at unit-test speed without standing up a real gateway. Defaults
+  // to the production implementations.
+  isGatewayHealthy?: typeof isGatewayHealthy;
+  isGatewayHttpReady?: typeof isGatewayHttpReady;
+  // Injected clock reader for deadline-driven tests. Defaults to Date.now.
+  // A test can pair a virtual sleeper (that advances a captured value) with
+  // this reader to drive deterministic deadline expiration without real
+  // wall-clock waits or global fake-timer state.
+  now?(): number;
 };
 
 function isValidGatewayRecoveryPort(port: number | null | undefined): port is number {
@@ -134,6 +145,21 @@ function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
   };
 }
 
+function getGatewayRecoveryWaitBudgetMs(pollCount: number, pollIntervalSeconds: number): number {
+  const normalizedCount = Number.isFinite(pollCount) ? Math.max(0, pollCount) : 0;
+  const normalizedIntervalSeconds = Number.isFinite(pollIntervalSeconds)
+    ? Math.max(0, pollIntervalSeconds)
+    : 0;
+  return Math.max(1, normalizedCount * normalizedIntervalSeconds * 1000);
+}
+
+function formatGatewayRecoveryWaitBudget(budgetMs: number): string {
+  if (!Number.isFinite(budgetMs) || budgetMs <= 0) return "0s";
+  if (budgetMs < 1000) return `${Math.ceil(budgetMs)}ms`;
+  const seconds = budgetMs / 1000;
+  return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`;
+}
+
 async function startTargetGatewayForRecovery(
   { gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number },
   deps: GatewayRecoveryDeps,
@@ -160,30 +186,66 @@ async function startTargetGatewayForRecovery(
     ? recoveryWait.interval
     : envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
   const targetGatewayUrl = `${getGatewayHttpEndpoint(gatewayPort)}/`;
-  for (let i = 0; i < recoveryPollCount; i++) {
-    const status = deps.runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-      ignoreError: true,
-    });
-    const currentInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (
-      status.includes("Connected") &&
-      isGatewayHealthy(status, namedInfo, currentInfo, gatewayName) &&
-      (await isGatewayHttpReady(undefined, targetGatewayUrl))
-    ) {
-      process.env.OPENSHELL_GATEWAY = gatewayName;
-      const runtime = getContainerRuntime();
-      if (shouldPatchCoredns(runtime)) {
-        run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), gatewayName], {
+  const waitBudgetMs = getGatewayRecoveryWaitBudgetMs(recoveryPollCount, recoveryPollInterval);
+  const sleeper = deps.sleepSeconds ?? sleepSeconds;
+  const gatewayHealthyImpl = deps.isGatewayHealthy ?? isGatewayHealthy;
+  const gatewayHttpReadyImpl = deps.isGatewayHttpReady ?? isGatewayHttpReady;
+  const nowImpl = deps.now ?? Date.now;
+  const healthy =
+    recoveryPollCount > 0 &&
+    (await waitUntilAsync(
+      async () => {
+        const status = deps.runCaptureOpenshell(["status"], { ignoreError: true });
+        const namedInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
           ignoreError: true,
         });
-      }
-      return;
+        const currentInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+        return (
+          status.includes("Connected") &&
+          gatewayHealthyImpl(status, namedInfo, currentInfo, gatewayName) &&
+          (await gatewayHttpReadyImpl(undefined, targetGatewayUrl))
+        );
+      },
+      {
+        // #3768 wants a SINGLE clear deadline budget rather than the legacy
+        // fixed attempt cap. Do NOT pass `maxAttempts` here: with maxAttempts
+        // set, a fast-failing probe sequence would exit after `count`
+        // attempts even though the deadline still permits more polling, and
+        // the operator would see a timeout that under-reports the wait the
+        // system was willing to spend. Let waitUntilAsync run until the
+        // deadline; the interval and probe cost naturally bound the total
+        // attempt count.
+        deadlineMs: nowImpl() + waitBudgetMs,
+        initialIntervalMs: Math.max(0, recoveryPollInterval * 1000),
+        maxIntervalMs: Math.max(0, recoveryPollInterval * 1000),
+        backoffFactor: 1,
+        now: nowImpl,
+        // waitUntilAsync passes durations in milliseconds to `sleep`, while
+        // the injected sleeper (sleepSeconds) expects a second-granular
+        // number. Adapt at this boundary only.
+        sleep: (ms) => sleeper(ms / 1000),
+      },
+    ));
+
+  if (healthy) {
+    process.env.OPENSHELL_GATEWAY = gatewayName;
+    const runtime = getContainerRuntime();
+    if (shouldPatchCoredns(runtime)) {
+      run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), gatewayName], {
+        ignoreError: true,
+      });
     }
-    if (i < recoveryPollCount - 1) sleepSeconds(recoveryPollInterval);
+    return;
   }
 
-  throw new Error(`Gateway '${gatewayName}' failed to start`);
+  // Pure deadline-based semantics per #3768: report the actual budget the
+  // loop was allowed to spend. Include the interval only as diagnostic
+  // context so an operator scanning the message understands the poll cadence.
+  throw new Error(
+    `Gateway '${gatewayName}' did not become ready within the configured ${formatGatewayRecoveryWaitBudget(
+      waitBudgetMs,
+    )} recovery deadline (${recoveryPollInterval}s poll interval)`,
+  );
 }
 
 export async function startGatewayForRecovery(

@@ -96,7 +96,7 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     expect(collectStrings(workflow).some((value) => value.includes("/tmp/"))).toBe(false);
   });
 
-  it("binds every E2E checkout and test signal to the exact merged commit", () => {
+  it("binds every E2E checkout and test signal to the merged commit", () => {
     const workflow = readYaml<
       Workflow & {
         env?: Record<string, string>;
