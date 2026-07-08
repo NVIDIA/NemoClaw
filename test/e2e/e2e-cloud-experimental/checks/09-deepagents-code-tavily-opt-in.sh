@@ -200,5 +200,29 @@ else
   fail_test "project venv under /sandbox did not expose a usable python3 executable: $PROJECT_OUT"
 fi
 
+# Restore the deny-by-default posture for later checks in this ordered live
+# suite. Rebuild validation intentionally preserves active policy presets, so
+# leaving Tavily enabled here would make a later baseline egress check claim
+# that thread auto-approval widened network access when it only retained this
+# explicit opt-in.
+REMOVE_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)" || {
+  fail_test "policy-remove tavily failed: $REMOVE_OUTPUT"
+  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+  exit 1
+}
+pass "tavily policy preset removes after the opt-in proof"
+
+sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
+
+REMOVED_PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search" || true)"
+if echo "$REMOVED_PROBE_OUTPUT" | grep -q "BLOCKED:" \
+  && ! echo "$REMOVED_PROBE_OUTPUT" | grep -q "REACHED:"; then
+  pass "managed Deep Agents Code python is blocked again after policy-remove"
+elif echo "$REMOVED_PROBE_OUTPUT" | grep -q "REACHED:"; then
+  fail_test "managed Deep Agents Code python still reached Tavily after policy-remove: $REMOVED_PROBE_OUTPUT"
+else
+  fail_test "post-remove Tavily probe lacked denial evidence: $REMOVED_PROBE_OUTPUT"
+fi
+
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ] || exit 1
