@@ -1013,32 +1013,62 @@ def _managed_fetch_proxy_url_from_files() -> str:
     return f"http://{host}:{port}"
 
 
-def _managed_fetch_ca_bundle() -> str:
-    """Validate fixed OpenShell TLS trust without granting network authority."""
+def _managed_fetch_ca_bundle() -> tuple[int, str]:
+    """Open and validate fixed OpenShell TLS trust without a pathname race."""
     path = _MANAGED_FETCH_CA_BUNDLE_FILE
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:
+        raise RuntimeError("managed fetch CA bundle is invalid")
+    flags = os.O_RDONLY | no_follow | getattr(os, "O_CLOEXEC", 0)
     try:
-        link_metadata = path.lstat()
+        descriptor = os.open(path, flags)
     except FileNotFoundError:
         raise RuntimeError("managed fetch CA bundle is unavailable") from None
     except OSError:
         raise RuntimeError("managed fetch CA bundle is invalid") from None
-    if stat.S_ISLNK(link_metadata.st_mode):
-        raise RuntimeError("managed fetch CA bundle is invalid")
+
     try:
-        metadata = path.stat()
-    except FileNotFoundError:
-        raise RuntimeError("managed fetch CA bundle is unavailable") from None
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != _MANAGED_FILE_OWNER_UID
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+            or metadata.st_size <= 0
+        ):
+            raise RuntimeError("managed fetch CA bundle is invalid")
+        descriptor_path = next(
+            (
+                candidate
+                for root in ("/proc/self/fd", "/dev/fd")
+                if os.path.exists(candidate := f"{root}/{descriptor}")
+            ),
+            None,
+        )
+        if descriptor_path is None:
+            raise RuntimeError("managed fetch CA bundle is invalid")
+        return descriptor, descriptor_path
+    except OSError:
+        os.close(descriptor)
+        raise RuntimeError("managed fetch CA bundle is invalid") from None
+    except RuntimeError:
+        os.close(descriptor)
+        raise
+
+
+def _close_managed_fetch_ca_bundle(descriptor: int) -> None:
+    try:
+        os.close(descriptor)
+    except OSError:
+        # Closing the read-only trust snapshot cannot expand authority.
+        pass
+
+
+def _rewind_managed_fetch_ca_bundle(descriptor: int) -> None:
+    """Reset fd-backed trust before each synchronous transport read."""
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
     except OSError:
         raise RuntimeError("managed fetch CA bundle is invalid") from None
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != _MANAGED_FILE_OWNER_UID
-        or stat.S_IMODE(metadata.st_mode) & 0o022
-        or metadata.st_size <= 0
-        or not os.access(path, os.R_OK)
-    ):
-        raise RuntimeError("managed fetch CA bundle is invalid")
-    return str(path)
 
 
 def managed_fetch_with_redirects(
@@ -1074,7 +1104,7 @@ def managed_fetch_with_redirects(
             "managed fetch transport dependency is unavailable"
         ) from None
     try:
-        ca_bundle = _managed_fetch_ca_bundle()
+        ca_descriptor, ca_bundle = _managed_fetch_ca_bundle()
     except RuntimeError as exc:
         raise validation_error(str(exc)) from None
 
@@ -1103,44 +1133,49 @@ def managed_fetch_with_redirects(
             raise validation_error("URL credentials are not allowed")
         try:
             hostname.encode("idna").decode("ascii")
-        except UnicodeError as exc:
-            raise validation_error(
-                f"Could not encode hostname {hostname!r} as IDNA: {exc}"
-            ) from exc
+        except UnicodeError:
+            raise validation_error("URL hostname is not valid IDNA") from None
 
     current_url = url
     proxies = {"http": proxy_url, "https": proxy_url}
-    with requests.Session() as session:
-        # Disable every requests environment-derived session setting, including
-        # proxy/NO_PROXY, netrc, and CA-bundle discovery. Each request receives
-        # the sole root-verified proxy mapping explicitly below. The separately
-        # selected CA bundle establishes TLS transport trust only; it cannot
-        # choose a proxy or authorize a destination under OpenShell policy.
-        session.trust_env = False
-        for _hop in range(max_redirects + 1):
-            validate_url(current_url)
-            response = session.get(
-                current_url,
-                timeout=timeout,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
-                allow_redirects=False,
-                proxies=proxies,
-                verify=ca_bundle,
-            )
-            if 300 <= response.status_code < 400:
-                location = response.headers.get("Location")
-                if not location:
-                    raise validation_error(
-                        f"Redirect response (status {response.status_code}) is missing a Location header"
-                    )
-                current_url = urljoin(current_url, location)
-                continue
-            response.raise_for_status()
-            return response
+    try:
+        with requests.Session() as session:
+            # Disable every requests environment-derived session setting, including
+            # proxy/NO_PROXY, netrc, and CA-bundle discovery. Each request receives
+            # the sole root-verified proxy mapping explicitly below. The separately
+            # selected CA bundle establishes TLS transport trust only; it cannot
+            # choose a proxy or authorize a destination under OpenShell policy.
+            session.trust_env = False
+            for _hop in range(max_redirects + 1):
+                validate_url(current_url)
+                try:
+                    _rewind_managed_fetch_ca_bundle(ca_descriptor)
+                except RuntimeError as exc:
+                    raise validation_error(str(exc)) from None
+                response = session.get(
+                    current_url,
+                    timeout=timeout,
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
+                    allow_redirects=False,
+                    proxies=proxies,
+                    verify=ca_bundle,
+                )
+                if 300 <= response.status_code < 400:
+                    location = response.headers.get("Location")
+                    if not location:
+                        raise validation_error(
+                            f"Redirect response (status {response.status_code}) is missing a Location header"
+                        )
+                    current_url = urljoin(current_url, location)
+                    continue
+                response.raise_for_status()
+                return response
 
-    raise requests.exceptions.TooManyRedirects(
-        f"Exceeded {max_redirects} redirects"
-    )
+        raise requests.exceptions.TooManyRedirects(
+            f"Exceeded {max_redirects} redirects"
+        )
+    finally:
+        _close_managed_fetch_ca_bundle(ca_descriptor)
 
 
 def _disabled_auto_approval(reason: str) -> str:

@@ -184,10 +184,12 @@ import sys
 import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Thread
 
 calls = []
 responses = []
 sessions = []
+ca_swap_thread = None
 
 class ProxyPolicyDenied(RuntimeError):
     pass
@@ -207,6 +209,7 @@ class Session:
     def __init__(self):
         self.trust_env = True
         self.calls = []
+        self.ca_contents = []
         self.closed = False
         sessions.append(self)
 
@@ -217,6 +220,14 @@ class Session:
         self.closed = True
 
     def get(self, url, **kwargs):
+        global ca_swap_thread
+        if ca_swap_thread is not None:
+            thread = ca_swap_thread
+            ca_swap_thread = None
+            thread.start()
+            thread.join()
+            assert not thread.is_alive()
+        self.ca_contents.append(Path(kwargs["verify"]).read_text(encoding="utf-8"))
         call = (self.trust_env, url, kwargs)
         self.calls.append(call)
         calls.append(call)
@@ -233,11 +244,13 @@ from deepagents_code._nemoclaw_managed import managed_fetch_proxy_url
 proxy_host_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-host"
 proxy_port_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-port"
 managed_ca_file = Path(${JSON.stringify(tempDir)}) / "managed-ca.pem"
+attacker_ca_file = Path(${JSON.stringify(tempDir)}) / "attacker-ca.pem"
 writable_ca_file = Path(${JSON.stringify(tempDir)}) / "writable-sensitive-ca.pem"
 symlink_ca_file = Path(${JSON.stringify(tempDir)}) / "symlink-sensitive-ca.pem"
 proxy_host_file.write_text("managed-proxy.internal\\n", encoding="utf-8")
 proxy_port_file.write_text("3128\\n", encoding="utf-8")
 managed_ca_file.write_text("test CA bundle\\n", encoding="utf-8")
+attacker_ca_file.write_text("attacker CA bundle\\n", encoding="utf-8")
 writable_ca_file.write_text("unsafe CA bundle\\n", encoding="utf-8")
 writable_ca_file.chmod(0o666)
 symlink_ca_file.symlink_to(managed_ca_file)
@@ -257,11 +270,18 @@ def forbidden_direct_dns(*_args, **_kwargs):
 tools._validate_url = forbidden_direct_dns
 expected_proxies = {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}}
 
+def assert_fd_ca_path(candidate):
+    assert candidate.startswith(("/proc/self/fd/", "/dev/fd/"))
+
 def assert_managed_hops(expected_urls):
     assert [url for _, url, _ in calls] == expected_urls
     assert all(trust_env is False for trust_env, _, _ in calls)
     assert all(kwargs["proxies"] == expected_proxies for _, _, kwargs in calls)
-    assert all(kwargs["verify"] == str(managed_ca_file) for _, _, kwargs in calls)
+    assert all(
+        kwargs["verify"].startswith(("/proc/self/fd/", "/dev/fd/"))
+        for _, _, kwargs in calls
+    )
+    assert sessions[-1].ca_contents == ["test CA bundle\\n"] * len(expected_urls)
 
 def expect_redirect_policy_denial(initial_url, redirect_url, label):
     calls.clear()
@@ -279,17 +299,20 @@ def expect_redirect_policy_denial(initial_url, redirect_url, label):
 response = tools._fetch_with_redirects("https://raw.githubusercontent.com/example/repo/main/README.md", timeout=8)
 assert response.status_code == 200
 assert len(sessions) == 1 and sessions[0].closed
-assert calls == [(
-    False,
-    "https://raw.githubusercontent.com/example/repo/main/README.md",
-    {
-        "timeout": 8,
-        "headers": {"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
-        "allow_redirects": False,
-        "proxies": {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}},
-        "verify": str(managed_ca_file),
-    },
-)]
+assert len(calls) == 1
+trust_env, called_url, call_kwargs = calls[0]
+assert trust_env is False
+assert called_url == "https://raw.githubusercontent.com/example/repo/main/README.md"
+assert {
+    key: value for key, value in call_kwargs.items() if key != "verify"
+} == {
+    "timeout": 8,
+    "headers": {"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
+    "allow_redirects": False,
+    "proxies": {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}},
+}
+assert_fd_ca_path(call_kwargs["verify"])
+assert sessions[0].ca_contents == ["test CA bundle\\n"]
 
 calls.clear()
 path_data_url = "https://raw.githubusercontent.com/example/path@segment:ordinary-data"
@@ -372,6 +395,35 @@ else:
     raise AssertionError("credentialed redirect escaped validation")
 assert len(calls) == 1
 
+sensitive_idna_label = "sk-EXAMPLE-DO-NOT-REFLECT"
+invalid_idna_url = f"https://{sensitive_idna_label}{chr(0xD800)}.invalid/private"
+calls.clear()
+try:
+    tools._fetch_with_redirects(invalid_idna_url, timeout=8)
+except tools._UrlValidationError as exc:
+    assert str(exc) == "URL hostname is not valid IDNA"
+    assert sensitive_idna_label not in str(exc)
+    assert "Unicode" not in str(exc)
+    assert exc.__cause__ is None
+    assert exc.__suppress_context__ is True
+else:
+    raise AssertionError("invalid initial IDNA hostname escaped validation")
+assert calls == []
+
+calls.clear()
+responses.append(Response(302, invalid_idna_url))
+try:
+    tools._fetch_with_redirects("https://raw.githubusercontent.com/idna-redirect", timeout=8)
+except tools._UrlValidationError as exc:
+    assert str(exc) == "URL hostname is not valid IDNA"
+    assert sensitive_idna_label not in str(exc)
+    assert "Unicode" not in str(exc)
+    assert exc.__cause__ is None
+    assert exc.__suppress_context__ is True
+else:
+    raise AssertionError("invalid redirect IDNA hostname escaped validation")
+assert len(calls) == 1
+
 calls.clear()
 responses.append(Response(302, "https://raw.githubusercontent.com/next"))
 tools._MAX_FETCH_REDIRECTS = 0
@@ -452,6 +504,30 @@ else:
 finally:
     builtins.__import__ = original_import
 
+# Atomically replace the validated pathname after the managed helper opens it,
+# but before the transport consumes the CA input. The fd-backed verify path
+# must remain pinned to the original root-owned trust bytes.
+def replace_managed_ca_path():
+    replacement = managed_ca_file.with_name("managed-ca-replacement")
+    if replacement.exists() or replacement.is_symlink():
+        replacement.unlink()
+    replacement.symlink_to(attacker_ca_file)
+    os.replace(replacement, managed_ca_file)
+
+calls.clear()
+ca_swap_thread = Thread(target=replace_managed_ca_path)
+response = tools._fetch_with_redirects(
+    "https://raw.githubusercontent.com/example/ca-swap",
+    timeout=8,
+)
+assert response.status_code == 200
+assert managed_ca_file.is_symlink()
+assert managed_ca_file.read_text(encoding="utf-8") == "attacker CA bundle\\n"
+assert sessions[-1].ca_contents == ["test CA bundle\\n"]
+assert_fd_ca_path(calls[0][2]["verify"])
+managed_ca_file.unlink()
+managed_ca_file.write_text("test CA bundle\\n", encoding="utf-8")
+
 for invalid_ca_bundle, expected_error in (
     (
         Path(${JSON.stringify(tempDir)}) / "missing-sensitive-ca.pem",
@@ -505,7 +581,11 @@ assert all(
     for session in concurrent_sessions
 )
 assert all(
-    session.calls[0][2]["verify"] == str(managed_ca_file)
+    session.calls[0][2]["verify"].startswith(("/proc/self/fd/", "/dev/fd/"))
+    for session in concurrent_sessions
+)
+assert all(
+    session.ca_contents == ["test CA bundle\\n"]
     for session in concurrent_sessions
 )
 assert len({id(session.calls[0][2]["proxies"]) for session in concurrent_sessions}) == len(
