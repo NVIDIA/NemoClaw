@@ -51,16 +51,27 @@ function reportRecovery(
     return;
   }
 
-  if (result.reason === "already-loaded") {
-    proc.stderr.write(`  Ollama model '${model}' is already loaded.\n`);
-  } else if (result.reason === "unreachable") {
-    proc.stderr.write(
-      "  Ollama was unreachable during the restart check; continuing to OpenClaw dispatch.\n",
-    );
-  } else if (result.reason === "missing-model") {
-    proc.stderr.write(
-      "  No Ollama model is recorded for this sandbox; continuing to OpenClaw dispatch.\n",
-    );
+  const reason = result.reason;
+  switch (reason) {
+    case "already-loaded":
+      proc.stderr.write(`  Ollama model '${model}' is already loaded.\n`);
+      break;
+    case "unreachable":
+      proc.stderr.write(
+        "  Ollama was unreachable during the restart check; continuing to OpenClaw dispatch.\n",
+      );
+      break;
+    case "missing-model":
+      proc.stderr.write(
+        "  No Ollama model is recorded for this sandbox; continuing to OpenClaw dispatch.\n",
+      );
+      break;
+    case "not-ollama":
+      break;
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
   }
 }
 

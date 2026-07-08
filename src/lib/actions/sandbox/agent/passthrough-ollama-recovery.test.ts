@@ -81,17 +81,20 @@ describe("runOllamaRestartRecovery", () => {
     expect(writes.join("")).toContain(message);
   });
 
-  it("reports an unreachable daemon without blocking dispatch", () => {
+  it.each([
+    ["already-loaded", "Ollama model 'qwen3.6:35b' is already loaded"],
+    ["unreachable", "Ollama was unreachable during the restart check"],
+    ["missing-model", "No Ollama model is recorded for this sandbox"],
+    ["not-ollama", "Checking Ollama model readiness after daemon restart"],
+  ] as const)("handles the %s skip reason", (reason, message) => {
     const { writes, proc } = makeProcMock();
 
     runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, () => ({
       kind: "skipped",
-      reason: "unreachable",
+      reason,
     }));
 
-    expect(writes.join("")).toContain(
-      "Ollama was unreachable during the restart check; continuing to OpenClaw dispatch",
-    );
+    expect(writes.join("")).toContain(message);
   });
 
   it("contains an unexpected recovery exception", () => {
