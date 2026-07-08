@@ -265,6 +265,27 @@ ${script}`;
     },
   );
 
+  it.runIf(process.platform === "linux")(
+    "treats a trusted record for a dead PID as not running",
+    () => {
+      const fixturePid = spawnWithArgv0("openclawish");
+      const script = stopScriptWithGatewayIdentity(fixturePid, 0o600, "99999999 1\n");
+      expect(runStopScript(script, [])).toBe(1);
+      expect(isAlive(fixturePid)).toBe(true);
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "still stops an explicit gateway argv when the trusted PID record is stale",
+    async () => {
+      const gateway = spawnWithArgv0("openclaw-gateway");
+      const script = stopScriptWithGatewayIdentity(gateway, 0o600, "99999999 1\n");
+      expect(runStopScript(script, [gateway])).toBe(0);
+      await new Promise((r) => setTimeout(r, 300));
+      expect(isAlive(gateway)).toBe(false);
+    },
+  );
+
   it.runIf(process.platform === "linux")("spares non-gateway processes", () => {
     const decoy = spawnWithArgv0("openclawish");
     expect(runStopScript()).toBe(1);
