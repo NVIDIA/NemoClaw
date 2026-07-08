@@ -5,6 +5,7 @@ import childProcess from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as curlArgs from "../adapters/http/curl-args";
 import {
   sleepMs,
   sleepMsAsync,
@@ -242,10 +243,19 @@ describe("waitForPort", () => {
 
 describe("waitForHttp", () => {
   it("returns true when curl reaches the endpoint", () => {
+    const buildArgs = vi.spyOn(curlArgs, "buildValidatedCurlCommandArgs");
     const spawnSync = vi.spyOn(childProcess, "spawnSync").mockReturnValue(spawnResult(0));
     const url = "http://127.0.0.1:8080/health";
 
     expect(waitForHttp(url, 1)).toBe(true);
+    expect(buildArgs).toHaveBeenCalledWith([
+      "-sf",
+      "--connect-timeout",
+      "1",
+      "--max-time",
+      "1",
+      url,
+    ]);
     expect(spawnSync.mock.calls[0]?.[0]).toBe("curl");
     expect(spawnSync.mock.calls[0]?.[1]).toEqual([
       "-sf",
