@@ -22,6 +22,12 @@ const managedRuntimePath = path.join(
   "langchain-deepagents-code",
   "managed-dcode-runtime.py",
 );
+const observabilityPath = path.join(
+  repoRoot,
+  "agents",
+  "langchain-deepagents-code",
+  "nemoclaw_observability.py",
+);
 
 const canonicalPatterns: Record<CanonicalSecretPatternGroup, readonly RegExp[]> = {
   token: TOKEN_PREFIX_PATTERNS,
@@ -119,5 +125,63 @@ json.dump([managed._contains_secret_shape(value) for value in values], sys.stdou
     });
 
     expect(JSON.parse(output)).toEqual(CANONICAL_SECRET_POSITIVE_VECTORS.map(() => true));
+  });
+
+  it("scrubs every shared positive vector in managed observability (#6452)", () => {
+    const probe = `
+import importlib.util
+import json
+import sys
+
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("_nemoclaw_observability_parity", sys.argv[1])
+if spec is None or spec.loader is None:
+    raise RuntimeError("observability module could not be loaded")
+observability = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(observability)
+values = json.load(sys.stdin)
+json.dump([observability._scrub_secret_values(value) for value in values], sys.stdout)
+`;
+    const values = CANONICAL_SECRET_POSITIVE_VECTORS.map((vector) => vector.value);
+    const output = execFileSync("python3", ["-I", "-c", probe, observabilityPath], {
+      encoding: "utf8",
+      input: JSON.stringify(values),
+    });
+    const scrubbed = JSON.parse(output) as string[];
+
+    for (const [index, value] of values.entries()) {
+      expect(scrubbed[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).toContain(
+        "<redacted-secret>",
+      );
+      expect(scrubbed[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).not.toContain(value);
+    }
+  });
+
+  it("preserves benign near-misses in managed observability (#6452)", () => {
+    const probe = `
+import importlib.util
+import json
+import sys
+
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("_nemoclaw_observability_near_miss", sys.argv[1])
+if spec is None or spec.loader is None:
+    raise RuntimeError("observability module could not be loaded")
+observability = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(observability)
+values = json.load(sys.stdin)
+json.dump([observability._scrub_secret_values(value) for value in values], sys.stdout)
+`;
+    const values = [
+      "sk-too-short",
+      "Bearer short",
+      "-----BEGIN PUBLIC KEY-----\\nnot-private\\n-----END PUBLIC KEY-----",
+    ];
+    const output = execFileSync("python3", ["-I", "-c", probe, observabilityPath], {
+      encoding: "utf8",
+      input: JSON.stringify(values),
+    });
+
+    expect(JSON.parse(output)).toEqual(values);
   });
 });
