@@ -779,13 +779,13 @@ install_nemoclaw_node_guards() {
     echo "[gateway] WARNING: NemoClaw preload guards not found — recover may refuse relaunch (#2478)" >&2
     return 0
   fi
-  if emit_sandbox_sourced_file /tmp/nemoclaw-sandbox-safety-net.js < "$_nemoclaw_guard_dir/sandbox-safety-net.js" 2>/dev/null && [ -s /tmp/nemoclaw-sandbox-safety-net.js ]; then
+  if emit_sandbox_sourced_file /tmp/nemoclaw-sandbox-safety-net.js <"$_nemoclaw_guard_dir/sandbox-safety-net.js" 2>/dev/null && [ -s /tmp/nemoclaw-sandbox-safety-net.js ]; then
     _SANDBOX_SAFETY_NET=/tmp/nemoclaw-sandbox-safety-net.js
     export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET"
   else
     echo "[gateway] WARNING: could not install sandbox-safety-net preload (#2478)" >&2
   fi
-  if emit_sandbox_sourced_file /tmp/nemoclaw-ciao-network-guard.js < "$_nemoclaw_guard_dir/ciao-network-guard.js" 2>/dev/null && [ -s /tmp/nemoclaw-ciao-network-guard.js ]; then
+  if emit_sandbox_sourced_file /tmp/nemoclaw-ciao-network-guard.js <"$_nemoclaw_guard_dir/ciao-network-guard.js" 2>/dev/null && [ -s /tmp/nemoclaw-ciao-network-guard.js ]; then
     _CIAO_GUARD_SCRIPT=/tmp/nemoclaw-ciao-network-guard.js
     export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT"
   else
