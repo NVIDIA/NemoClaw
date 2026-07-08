@@ -75,18 +75,18 @@ function createMockApi(): OpenClawPluginApi {
   };
 }
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockStderrWrite();
+  mockMissingOpenClawConfig();
+  mockedLoadOnboardConfig.mockReturnValue(null);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("plugin registration", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockStderrWrite();
-    mockMissingOpenClawConfig();
-    mockedLoadOnboardConfig.mockReturnValue(null);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it("registers a slash command", () => {
     const api = createMockApi();
     register(api);
@@ -209,17 +209,6 @@ describe("plugin registration", () => {
 });
 
 describe("before_tool_call secret scanner hook (#1233)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockStderrWrite();
-    mockMissingOpenClawConfig();
-    mockedLoadOnboardConfig.mockReturnValue(null);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   function getHookHandler(api: OpenClawPluginApi) {
     register(api);
     const onCalls = vi.mocked(api.on).mock.calls;
