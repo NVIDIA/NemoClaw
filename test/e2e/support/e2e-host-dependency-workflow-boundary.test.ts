@@ -25,6 +25,15 @@ function readWorkflow(): Workflow {
   return YAML.parse(fs.readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
 }
 
+function throwMissingStep(stepName: string): never {
+  throw new Error(`${stepName} step is missing`);
+}
+
+function requireStepIndex(steps: WorkflowStep[], stepName: string): number {
+  const index = steps.findIndex((step) => step.name === stepName);
+  return index >= 0 ? index : throwMissingStep(stepName);
+}
+
 describe("inline E2E host dependency boundary", () => {
   it.each([
     {
@@ -71,19 +80,12 @@ describe("inline E2E host dependency boundary", () => {
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow();
     const steps = workflow.jobs["cloud-onboard"].steps;
-    const installIndex = steps.findIndex(
-      (step) => step.name === "Install cloud-onboard DCode TUI host dependencies",
+    const installIndex = requireStepIndex(
+      steps,
+      "Install cloud-onboard DCode TUI host dependencies",
     );
-    expect(
-      installIndex,
-      "cloud-onboard DCode TUI host dependency step is missing",
-    ).toBeGreaterThanOrEqual(0);
     const install = steps.splice(installIndex, 1)[0]!;
-    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-    expect(
-      prepareIndex,
-      "cloud-onboard workspace preparation step is missing",
-    ).toBeGreaterThanOrEqual(0);
+    const prepareIndex = requireStepIndex(steps, "Prepare E2E workspace");
     steps.splice(prepareIndex + 1, 0, install);
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
