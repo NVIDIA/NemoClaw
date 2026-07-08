@@ -1642,7 +1642,7 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
   // Shared late-CLI poll timeline:
   //   1-2:  first-time browser pairing request pending.
   //   3-6:  browser paired, nothing pending (watcher converges to slow mode).
-  //   7-10: late CLI scope upgrade arrives after browser pairing converges.
+  //   7-10: late CLI scope upgrade arrives.
   //   11+:  cli paired alongside browser.
   function setupLateCliFixture(prefix: string): {
     tmpDir: string;

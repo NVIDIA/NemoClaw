@@ -4,8 +4,6 @@
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 
-import { restoreRequireCache } from "../../helpers/require-cache.ts";
-
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
 
@@ -18,37 +16,21 @@ function deferred<T>() {
 }
 
 describe("config set CLI dispatch", () => {
-  it("awaits config set command dispatch before completing the dispatcher", async () => {
+  it("awaits configSet before completing the dispatcher", async () => {
     const cliPath = require.resolve("../../../dist/nemoclaw.js");
-    const publicDispatchPath = require.resolve("../../../dist/lib/cli/public-dispatch.js");
-    const oclifRunnerPath = require.resolve("../../../dist/lib/cli/oclif-runner.js");
     const registryPath = require.resolve("../../../dist/lib/state/registry.js");
     const sandboxConfigPath = require.resolve("../../../dist/lib/sandbox/config.js");
     const runnerPath = require.resolve("../../../dist/lib/runner.js");
 
     const priorCli = require.cache[cliPath];
-    const priorPublicDispatch = require.cache[publicDispatchPath];
-    const priorOclifRunner = require.cache[oclifRunnerPath];
     const priorRegistry = require.cache[registryPath];
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorRunner = require.cache[runnerPath];
     const priorDisableAutoDispatch = process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
 
-    const expectedConfigSetDispatchArgs = [
-      "test-sandbox",
-      "--key",
-      "inference.endpoints",
-      "--value",
-      "HTTP://93.184.216.34/v1",
-      "--config-accept-new-path",
-    ];
-    const commandDispatchDeferred = deferred<void>();
+    const configSetDeferred = deferred<void>();
     const validateName = vi.fn();
-    const configSet = vi.fn();
-    const runOclifArgv = vi.fn(async () => {
-      throw new Error("config set should dispatch by command id");
-    });
-    const runOclifCommandById = vi.fn(async () => commandDispatchDeferred.promise);
+    const configSet = vi.fn(() => configSetDeferred.promise);
 
     process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
 
@@ -65,23 +47,6 @@ describe("config set CLI dispatch", () => {
           get(target, prop) {
             if (prop in target) return target[prop as keyof typeof target];
             return vi.fn();
-          },
-        },
-      ),
-    } as any;
-
-    requireCache[oclifRunnerPath] = {
-      id: oclifRunnerPath,
-      filename: oclifRunnerPath,
-      loaded: true,
-      exports: new Proxy(
-        {
-          runOclifArgv,
-          runOclifCommandById,
-        },
-        {
-          get(target, prop) {
-            return prop in target ? target[prop as keyof typeof target] : vi.fn();
           },
         },
       ),
@@ -110,7 +75,6 @@ describe("config set CLI dispatch", () => {
 
     try {
       delete require.cache[cliPath];
-      delete require.cache[publicDispatchPath];
       const { dispatchCli } = require(cliPath);
 
       const dispatchPromise = dispatchCli([
@@ -129,24 +93,17 @@ describe("config set CLI dispatch", () => {
         settled = true;
       });
 
-      await vi.waitFor(() => expect(runOclifCommandById).toHaveBeenCalledTimes(1), {
-        timeout: 4_000,
+      await vi.waitFor(() => expect(configSet).toHaveBeenCalledTimes(1), { timeout: 4_000 });
+      expect(configSet).toHaveBeenCalledTimes(1);
+      expect(configSet).toHaveBeenCalledWith("test-sandbox", {
+        key: "inference.endpoints",
+        value: "HTTP://93.184.216.34/v1",
+        restart: false,
+        acceptNewPath: true,
       });
-      expect(runOclifArgv).not.toHaveBeenCalled();
-      expect(runOclifCommandById).toHaveBeenCalledTimes(1);
-      expect(runOclifCommandById).toHaveBeenCalledWith(
-        "sandbox:config:set",
-        expectedConfigSetDispatchArgs,
-        expect.objectContaining({
-          error: expect.any(Function),
-          exit: expect.any(Function),
-          rootDir: process.cwd(),
-        }),
-      );
-      expect(configSet).not.toHaveBeenCalled();
       expect(settled).toBe(false);
 
-      commandDispatchDeferred.resolve();
+      configSetDeferred.resolve();
       await expect(dispatchPromise).resolves.toBeUndefined();
       expect(settled).toBe(true);
     } finally {
@@ -156,12 +113,17 @@ describe("config set CLI dispatch", () => {
         process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = priorDisableAutoDispatch;
       }
 
-      restoreRequireCache(requireCache, cliPath, priorCli);
-      restoreRequireCache(requireCache, publicDispatchPath, priorPublicDispatch);
-      restoreRequireCache(requireCache, oclifRunnerPath, priorOclifRunner);
-      restoreRequireCache(requireCache, registryPath, priorRegistry);
-      restoreRequireCache(requireCache, sandboxConfigPath, priorSandboxConfig);
-      restoreRequireCache(requireCache, runnerPath, priorRunner);
+      if (priorCli) requireCache[cliPath] = priorCli;
+      else delete requireCache[cliPath];
+
+      if (priorRegistry) requireCache[registryPath] = priorRegistry;
+      else delete requireCache[registryPath];
+
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
+      else delete requireCache[sandboxConfigPath];
+
+      if (priorRunner) requireCache[runnerPath] = priorRunner;
+      else delete requireCache[runnerPath];
     }
   });
 });
