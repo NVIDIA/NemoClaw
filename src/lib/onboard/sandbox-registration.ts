@@ -10,6 +10,7 @@ import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restor
 import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
+import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -39,6 +40,7 @@ export interface CreatedSandboxRegistryEntryInput {
   appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
+  dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   policyTier?: SandboxEntry["policyTier"];
   webSearchEnabled?: boolean;
   webSearchProvider?: SandboxEntry["webSearchProvider"];
@@ -126,6 +128,9 @@ export function buildCreatedSandboxRegistryEntry(
     policies: input.appliedPolicies,
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
+    ...(input.dcodeAutoApprovalMode !== undefined
+      ? { dcodeAutoApprovalMode: input.dcodeAutoApprovalMode }
+      : {}),
     ...(input.policyTier !== undefined ? { policyTier: input.policyTier } : {}),
     webSearchEnabled: input.webSearchEnabled === true,
     webSearchProvider:

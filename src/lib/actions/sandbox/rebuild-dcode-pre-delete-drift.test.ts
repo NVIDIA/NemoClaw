@@ -46,6 +46,7 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
           ambient: { presentVars: [], agentMismatch: null },
         },
         toolDisclosure: "direct",
+        dcodeAutoApprovalMode: "disabled",
         skipLiveRoute: true,
         gatewayPort: 8080,
         log: vi.fn(),
@@ -57,6 +58,7 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
           buildContext: {} as never,
           gatewayName: "nemoclaw",
           toolDisclosure: "progressive",
+          dcodeAutoApprovalMode: "disabled",
           verify,
           dispose,
         },
@@ -66,6 +68,56 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
     expect(checkGatewaySchema).not.toHaveBeenCalled();
     expect(verify).not.toHaveBeenCalled();
     expect(dispose).not.toHaveBeenCalled();
+  });
+
+  it("rejects prepared-image DCode auto-approval drift before gateway or mutation work (#6478)", async () => {
+    const checkGatewaySchema = vi.fn(() => true);
+    const verify = vi.fn(() => true);
+
+    await expect(
+      revalidateDcodeReplacementAtMutationEdge({
+        sandboxName: "alpha",
+        entry: {
+          name: "alpha",
+          agent: "langchain-deepagents-code",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+        },
+        resumeConfig: {
+          agent: "langchain-deepagents-code",
+          provider: "compatible-endpoint",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          endpointUrl: "https://inference-api.nvidia.com/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: "false",
+          nimContainer: null,
+          pinEndpoint: true,
+          registryInferenceRoute: null,
+          ambient: { presentVars: [], agentMismatch: null },
+        },
+        toolDisclosure: "progressive",
+        dcodeAutoApprovalMode: "thread-opt-in",
+        skipLiveRoute: true,
+        gatewayPort: 8080,
+        log: vi.fn(),
+        bail: (message): never => {
+          throw new Error(message);
+        },
+        checkGatewaySchema,
+        replacement: {
+          buildContext: {} as never,
+          gatewayName: "nemoclaw",
+          toolDisclosure: "progressive",
+          dcodeAutoApprovalMode: "disabled",
+          verify,
+          dispose: vi.fn(() => true),
+        },
+      }),
+    ).rejects.toThrow("prepared DCode auto-approval mode changed before deletion");
+
+    expect(checkGatewaySchema).not.toHaveBeenCalled();
+    expect(verify).not.toHaveBeenCalled();
   });
 
   it("rejects registry drift during the final DCode preflight before shields and backup (#6195)", async () => {

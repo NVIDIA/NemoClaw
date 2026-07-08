@@ -23,6 +23,7 @@ const OUTPUT_ATTRIBUTE_KEYS = ["output.value", "llm.output_messages"] as const;
 const TOOL_INPUT_ATTRIBUTE_KEYS = ["tool.parameters", "input.value"] as const;
 const CONFIRMED_EXEC_HINT =
   /^[a-z][a-z0-9-]*: recent network policy denial detected(?: for [^\r\n]+)? inside sandbox '[a-zA-Z0-9][a-zA-Z0-9_-]*'\.$/mu;
+const EMBEDDED_STRUCTURED_PROXY_JSON_RE = /\{[^{}\r\n]{1,4094}\}/gu;
 export type LlmTraceExpectation = {
   label: string;
   promptMarker: string;
@@ -152,7 +153,14 @@ export function assertDeepAgentsTraceContract(
 }
 
 export function hasConfirmedOpenShellPolicyDenial(output: string): boolean {
-  return output.split(/\r?\n/u).some(isPolicyDenialLine) || CONFIRMED_EXEC_HINT.test(output);
+  if (output.split(/\r?\n/u).some(isPolicyDenialLine) || CONFIRMED_EXEC_HINT.test(output)) {
+    return true;
+  }
+  // curl writes the response body to stdout and its error to stderr. Once the
+  // E2E harness merges those descriptors, the exact OpenShell JSON object can
+  // land between two curl error fragments. Keep this fallback bounded to one
+  // flat object and delegate the payload validation to the production parser.
+  return (output.match(EMBEDDED_STRUCTURED_PROXY_JSON_RE) ?? []).some(isPolicyDenialLine);
 }
 
 export function observabilityPresetState(output: string): string {

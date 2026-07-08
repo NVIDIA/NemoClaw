@@ -36,6 +36,7 @@ export function dcodeInput(
     provider: "compatible-endpoint",
     preferredInferenceApi: "openai-completions",
     compatibleEndpointReasoning: "false",
+    dcodeAutoApprovalMode: "disabled",
     toolDisclosure: "progressive",
     webSearchConfig: null,
     sandboxGpuConfig: {

@@ -62,6 +62,7 @@ ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
+ARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
@@ -70,6 +71,10 @@ ARG NEMOCLAW_PROXY_PORT=3128
 RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
         progressive|direct) ;; \
         *) echo "ERROR: NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct" >&2; exit 1 ;; \
+    esac \
+    && case "$NEMOCLAW_DCODE_AUTO_APPROVAL" in \
+        disabled|thread-opt-in) ;; \
+        *) echo "ERROR: NEMOCLAW_DCODE_AUTO_APPROVAL must be disabled or thread-opt-in" >&2; exit 1 ;; \
     esac
 
 # The launcher and startup script read these root-owned files instead of
@@ -81,8 +86,9 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_PROXY_HOST" > /usr/local/share/nemoclaw/dcode-proxy-host \
     && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
     && printf '%s\n' "$NEMOCLAW_INFERENCE_BASE_URL" > /usr/local/share/nemoclaw/dcode-inference-base-url \
-    && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url \
-    && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url \
+    && printf '%s\n' "$NEMOCLAW_DCODE_AUTO_APPROVAL" > /usr/local/share/nemoclaw/dcode-auto-approval \
+    && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
+    && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 /usr/local/bin/dcode -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && test "$empty_prompt_status" -eq 2 \

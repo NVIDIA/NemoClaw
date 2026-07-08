@@ -34,6 +34,7 @@ const inferenceInputCapability = require("./onboard/inference-input-capability")
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
 const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = require("./onboard/tool-disclosure-flow");
 const runtimeControlFlow: typeof import("./onboard/runtime-control-flow") = require("./onboard/runtime-control-flow");
+const dcodeAutoApprovalFlow: typeof import("./onboard/dcode-auto-approval") = require("./onboard/dcode-auto-approval");
 const observabilityPolicy: typeof import("./onboard/observability-policy-presets") = require("./onboard/observability-policy-presets");
 const observabilityCommandFlag: typeof import("./onboard/observability-command-flag") = require("./onboard/observability-command-flag");
 const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
@@ -2377,17 +2378,10 @@ async function createSandboxWithBaseImageResolution(
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
-  if (liveExists && isManagedDcodeAgent && !existingEntry) {
-    console.error(
-      `  Sandbox '${sandboxName}' is live but missing its NemoClaw registry record; refusing unverified DCode reuse or recreation.`,
-    );
-    console.error(
-      "  Choose a different sandbox name, or remove the orphan explicitly with OpenShell.",
-    );
-    process.exit(1);
-  }
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const dcodeAutoApprovalPlan = dcodeAutoApprovalFlow.prepareDcodeAutoApprovalCreatePlan({ sandboxName, liveExists, managedDcodeAgent: isManagedDcodeAgent, registryEntry: existingEntry, requestedMode: createIntent?.dcodeAutoApprovalMode }, { error: console.error, exitProcess: (code) => process.exit(code) });
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2483,7 +2477,8 @@ async function createSandboxWithBaseImageResolution(
       !hermesToolGatewayDrift &&
       !hermesDashboardDrift &&
       !toolDisclosureMigrationNeeded &&
-      !observabilityDrift
+      !observabilityDrift &&
+      !dcodeAutoApprovalPlan.hasDrift
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -2638,6 +2633,8 @@ async function createSandboxWithBaseImageResolution(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
     } else if (observabilityDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply observability settings.`);
+    } else if (dcodeAutoApprovalPlan.hasDrift) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to apply DCode auto-approval settings.`);
     } else if (toolDisclosureMigrationNote) {
       note(toolDisclosureMigrationNote);
     } else if (credentialRotation.changed) {
@@ -2655,7 +2652,7 @@ async function createSandboxWithBaseImageResolution(
         `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
       );
       console.error(
-        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}${explicitObservability ? ` ${explicitObservability}` : ""}\` so MCP providers and adapter state are preserved transactionally.`,
+        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}${explicitObservability ? ` ${explicitObservability}` : ""}${dcodeAutoApprovalPlan.rebuildFlag}\` so MCP providers and adapter state are preserved transactionally.`,
       );
       process.exit(1);
     }
@@ -2805,6 +2802,7 @@ async function createSandboxWithBaseImageResolution(
     preferredInferenceApi,
     webSearchConfig,
     toolDisclosure: effectiveToolDisclosure,
+    ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
@@ -3015,6 +3013,7 @@ async function createSandboxWithBaseImageResolution(
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
+          ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
           policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
@@ -4511,6 +4510,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         sandbox: {
           resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
+          requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
           authoritativePolicyTier:
             opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
           controlUiPort: _preflightDashboardPort,

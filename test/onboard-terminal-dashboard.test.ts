@@ -63,7 +63,10 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 agentOnboard.createAgentSandbox = () => {
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-terminal-agent-"));
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.writeFileSync(stagedDockerfile, "FROM scratch\nCMD [\"/bin/sh\"]\n");
+  fs.writeFileSync(
+    stagedDockerfile,
+    "FROM scratch\nARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled\nCMD [\"/bin/sh\"]\n",
+  );
   return { buildCtx, stagedDockerfile };
 };
 
