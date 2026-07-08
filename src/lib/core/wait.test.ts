@@ -247,9 +247,14 @@ describe("waitForHttp", () => {
 
     expect(waitForHttp(url, 1)).toBe(true);
     expect(spawnSync.mock.calls[0]?.[0]).toBe("curl");
-    expect(spawnSync.mock.calls[0]?.[1]).toEqual(
-      expect.arrayContaining(["-sf", "--connect-timeout", "1", "--max-time", "1", url]),
-    );
+    expect(spawnSync.mock.calls[0]?.[1]).toEqual([
+      "-sf",
+      "--connect-timeout",
+      "1",
+      "--max-time",
+      "1",
+      url,
+    ]);
   });
 
   it("returns false after an unsuccessful request reaches its deadline", () => {
