@@ -58,7 +58,7 @@ describe("sandbox connect inference route probe argv", () => {
     const args = buildSandboxInferenceRouteProbeArgs("alpha", { name: "openclaw" });
     const script = args.at(-1) ?? "";
 
-    expect(script).toContain("/usr/bin/curl -s -o /dev/null");
+    expect(script).toContain("/usr/bin/curl -q -s -o /dev/null");
     expect(script).toContain('CA_BUNDLE="${CURL_CA_BUNDLE:-${SSL_CERT_FILE:-}}"');
     expect(script).toContain('--cacert "$CA_BUNDLE"');
     expect(script).toContain("printf 'UNAVAILABLE OpenShell CA bundle missing or unreadable'");
@@ -89,15 +89,22 @@ describe("sandbox connect inference route probe argv", () => {
   it.each([
     "OK 200",
     "BROKEN 503",
-  ])("does not run a hostile DCode profile that writes %s to fd 3 (#6192)", (spoof) => {
+  ])("does not run hostile DCode startup or curl config for a %s spoof (#6192)", (spoof) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
     const profileMarker = path.join(home, "profile-ran");
     try {
+      const caBundle = path.join(home, "openshell-ca.pem");
       const profile = path.join(home, ".bash_profile");
       const launcher = path.join(home, "nemoclaw-start");
+      const curlConfigMarker = path.join(home, "curl-config-ran");
+      fs.writeFileSync(caBundle, "test CA boundary", "utf8");
       fs.writeFileSync(
         profile,
         `printf '%s' ${JSON.stringify(spoof)} >&3; printf ran > ${JSON.stringify(profileMarker)}; exit 0`,
+      );
+      fs.writeFileSync(
+        path.join(home, ".curlrc"),
+        `trace-ascii = ${JSON.stringify(curlConfigMarker)}\n`,
       );
       fs.writeFileSync(launcher, '#!/bin/bash -p\nset -eu\nunset BASH_ENV ENV\nexec "$@"\n', {
         mode: 0o755,
@@ -107,17 +114,32 @@ describe("sandbox connect inference route probe argv", () => {
       });
       const command = args.slice(5);
       command[0] = launcher;
-      command[command.length - 1] = "printf 'BROKEN 000'";
 
       const result = spawnSync(command[0], command.slice(1), {
         encoding: "utf8",
-        env: { ...process.env, BASH_ENV: profile, ENV: profile, HOME: home },
+        env: {
+          ...process.env,
+          ALL_PROXY: "",
+          BASH_ENV: profile,
+          CURL_CA_BUNDLE: caBundle,
+          ENV: profile,
+          HOME: home,
+          HTTP_PROXY: "http://127.0.0.1:9",
+          HTTPS_PROXY: "http://127.0.0.1:9",
+          NO_PROXY: "",
+          SSL_CERT_FILE: "",
+          all_proxy: "",
+          http_proxy: "http://127.0.0.1:9",
+          https_proxy: "http://127.0.0.1:9",
+          no_proxy: "",
+        },
       });
 
       expect(result.status).toBe(0);
       expect(result.stdout).toBe("BROKEN 000");
       expect(result.stdout).not.toContain(spoof);
       expect(fs.existsSync(profileMarker)).toBe(false);
+      expect(fs.existsSync(curlConfigMarker)).toBe(false);
     } finally {
       fs.rmSync(home, { force: true, recursive: true });
     }
