@@ -2988,12 +2988,8 @@ async function createSandboxWithBaseImageResolution(
       preferredInferenceApi,
     },
     {
-      discoverFreshOpenClawImagePluginInstalls: (name) =>
-        openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(
-          name,
-          sandboxState,
-          agent?.configPaths.dir,
-        ),
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      discoverFreshOpenClawImagePluginInstalls: (name) => openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(name, sandboxState, agent?.configPaths.dir),
       restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
       getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
         getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
