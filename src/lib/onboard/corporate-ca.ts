@@ -290,6 +290,12 @@ export function resolveCorporateCaFromEnv(
     return { pem, sourcePath, sourceEnv: CORPORATE_CA_EXPLICIT_ENV };
   }
 
+  // These conventional-CA-env-var fallbacks and the host-anchor scan are
+  // intentional, permanent convenience sources (the reporter's proxy already
+  // exports one of these) — not a transitional workaround with a removal
+  // milestone. NemoClaw owns onboard trust configuration, so there is no
+  // upstream boundary to migrate to and no removal condition; the fail-loud
+  // explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` remains the recommended source.
   for (const name of CORPORATE_CA_FALLBACK_ENV_VARS) {
     const value = env[name];
     if (!value || !value.trim()) continue;
@@ -365,6 +371,14 @@ function collectAnchorFiles(root: string, extensions: RegExp): string[] {
 export function resolveCorporateCaFromHostAnchors(
   dirs: readonly string[] = CORPORATE_CA_HOST_ANCHOR_DIRS,
 ): ResolvedCorporateCa | null {
+  // #6210 acceptance note: the issue text mentions the host `/etc/ssl/certs/`.
+  // We intentionally do NOT scan `/etc/ssl/certs/` (nor its merged
+  // `ca-certificates.crt`): that view interleaves the corporate root with the
+  // distro's public root bundle, and importing it would bake broad, unrelated
+  // trust into the sandbox. Instead we read the administrator anchor *source*
+  // directories that populate `/etc/ssl/certs/`, so a corporate root installed
+  // via `update-ca-certificates`/`update-ca-trust` is detected without the
+  // trust-bloat. See docs/reference/troubleshooting.mdx for the operator contract.
   for (const dir of dirs) {
     const files = collectAnchorFiles(dir, anchorExtensionsFor(dir));
     const blocks: string[] = [];
