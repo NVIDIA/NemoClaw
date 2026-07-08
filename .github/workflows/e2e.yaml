@@ -1736,12 +1736,96 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Prepare no-GPU native fallback fixture
+        if: ${{ matrix.scenario == 'fallback' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          state_dir="$RUNNER_TEMP/hermes-gpu-fallback-docker-runtime"
+          daemon_json=/etc/docker/daemon.json
+          mkdir -p "$state_dir" "$E2E_ARTIFACT_DIR"
+          sudo -n true
+
+          # OpenShell leaves Runtime unset after the wrapper strips --gpu, so
+          # Docker otherwise substitutes its daemon default. Force runc here
+          # so production can prove the real partial container has no GPU
+          # attachment even on runners whose default runtime is nvidia.
+          original_runtime="$(docker info --format '{{.DefaultRuntime}}')"
+          printf '%s\n' "$original_runtime" >"$state_dir/default-runtime.original"
+          printf '%s\n' "$original_runtime" >"$E2E_ARTIFACT_DIR/docker-default-runtime-before.txt"
+          if sudo test -f "$daemon_json"; then
+            sudo cat "$daemon_json" >"$state_dir/daemon.json.original"
+          else
+            : >"$state_dir/daemon.json.absent"
+            printf '{}\n' >"$state_dir/daemon.json.original"
+          fi
+
+          if [ "$original_runtime" != runc ]; then
+            node - "$state_dir/daemon.json.original" "$state_dir/daemon.json.runc" <<'NODE'
+          const fs = require("node:fs");
+          const [inputPath, outputPath] = process.argv.slice(2);
+          const source = fs.readFileSync(inputPath, "utf8").trim();
+          const config = source ? JSON.parse(source) : {};
+          if (config === null || Array.isArray(config) || typeof config !== "object") {
+            throw new Error("Docker daemon.json must contain a top-level object");
+          }
+          config["default-runtime"] = "runc";
+          fs.writeFileSync(outputPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+            : >"$state_dir/default-runtime.modified"
+            sudo install -m 0644 "$state_dir/daemon.json.runc" "$daemon_json"
+            sudo systemctl restart docker
+            for attempt in $(seq 1 30); do
+              docker info >/dev/null 2>&1 && break
+              if [ "$attempt" -eq 30 ]; then
+                echo "Docker did not recover after selecting the runc default runtime" >&2
+                exit 1
+              fi
+              sleep 2
+            done
+          fi
+          test "$(docker info --format '{{.DefaultRuntime}}')" = runc
+          docker info --format '{{json .Runtimes}}' | grep -q 'nvidia'
+          printf '%s\n' runc >"$E2E_ARTIFACT_DIR/docker-default-runtime-during.txt"
+
       - name: Run Hermes GPU startup live Vitest test
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/hermes-gpu-startup.test.ts \
             --silent=false --reporter=default
+
+      - name: Restore Docker default runtime after fallback fixture
+        if: ${{ always() && matrix.scenario == 'fallback' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          state_dir="$RUNNER_TEMP/hermes-gpu-fallback-docker-runtime"
+          daemon_json=/etc/docker/daemon.json
+          test -f "$state_dir/default-runtime.original" || exit 0
+
+          if [ -f "$state_dir/default-runtime.modified" ]; then
+            if [ -f "$state_dir/daemon.json.absent" ]; then
+              sudo rm -f "$daemon_json"
+            else
+              sudo install -m 0644 "$state_dir/daemon.json.original" "$daemon_json"
+            fi
+            sudo systemctl restart docker
+            for attempt in $(seq 1 30); do
+              docker info >/dev/null 2>&1 && break
+              if [ "$attempt" -eq 30 ]; then
+                echo "Docker did not recover while restoring its original default runtime" >&2
+                exit 1
+              fi
+              sleep 2
+            done
+          fi
+          original_runtime="$(cat "$state_dir/default-runtime.original")"
+          restored_runtime="$(docker info --format '{{.DefaultRuntime}}')"
+          test "$restored_runtime" = "$original_runtime"
+          mkdir -p "$E2E_ARTIFACT_DIR"
+          printf '%s\n' "$restored_runtime" >"$E2E_ARTIFACT_DIR/docker-default-runtime-restored.txt"
 
       - name: Upload Hermes GPU startup artifacts
         if: always()
