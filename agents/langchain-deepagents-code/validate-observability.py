@@ -550,6 +550,17 @@ def _assert_capture_traversal_bounds(observability: ModuleType) -> None:
         raise AssertionError("projected model response did not record truncation")
 
 
+def _assert_secret_value_redaction(observability: ModuleType) -> None:
+    probe = {"content": "My key is sk-EXAMPLE0000000000000000000000 - do not repeat."}
+    encoded = repr(observability._bounded_capture(probe))
+    if "sk-EXAMPLE0000000000000000000000" in encoded:
+        raise AssertionError("secret-shaped content value survived capture redaction")
+    if observability._REDACTED_SECRET_VALUE not in encoded:
+        raise AssertionError(
+            "secret-shaped content value was not replaced by the redaction marker"
+        )
+
+
 def _exercise_graph(observability: ModuleType, raw_graph_name: str) -> None:
     callback = observability.new_metadata_only_callback_handler()
     callback.on_chain_start(
@@ -887,6 +898,7 @@ def main() -> None:
 
         _assert_callback_manager_boundary(observability)
         _assert_capture_traversal_bounds(observability)
+        _assert_secret_value_redaction(observability)
         middleware = observability.new_relay_middleware()
         asyncio.run(
             _exercise_async_boundaries(observability, middleware, raw_names)

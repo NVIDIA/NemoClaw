@@ -126,6 +126,52 @@ def _safe_identifier(value: Any, fallback: str) -> str:
     return normalized or fallback
 
 
+_REDACTED_SECRET_VALUE = "<redacted-secret>"
+_STANDALONE_SECRET_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"nvapi-[A-Za-z0-9_-]{10,}",
+        r"nvcf-[A-Za-z0-9_-]{10,}",
+        r"ghp_[A-Za-z0-9_-]{10,}",
+        r"github_pat_[A-Za-z0-9_]{30,}",
+        r"sk-proj-[A-Za-z0-9_-]{10,}",
+        r"sk-ant-[A-Za-z0-9_-]{10,}",
+        r"sk-[A-Za-z0-9_-]{20,}",
+        r"(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}",
+        r"A(?:K|S)IA[A-Z0-9]{16}",
+        r"hf_[A-Za-z0-9]{10,}",
+        r"glpat-[A-Za-z0-9_-]{10,}",
+        r"gsk_[A-Za-z0-9]{10,}",
+        r"pypi-[A-Za-z0-9_-]{10,}",
+        r"\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b",
+        r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b",
+        r"\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b",
+        r"tvly-[A-Za-z0-9_-]{10,}",
+        r"lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*",
+        r"(?s)-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----",
+    )
+)
+_ANCHORED_SECRET_PATTERNS = (
+    re.compile(r"(Bearer\s+)[A-Za-z0-9_.+/=-]{10,}", re.IGNORECASE),
+    re.compile(
+        r"((?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['\"]?)"
+        r"[A-Za-z0-9_.+/=-]{10,}",
+        re.IGNORECASE,
+    ),
+)
+_ANCHORED_SECRET_REPLACEMENT = rf"\g<1>{_REDACTED_SECRET_VALUE}"
+
+
+def _scrub_secret_values(value: str) -> str:
+    """Best-effort redaction of recognized credential-shaped tokens in text."""
+    scrubbed = value
+    for pattern in _STANDALONE_SECRET_PATTERNS:
+        scrubbed = pattern.sub(_REDACTED_SECRET_VALUE, scrubbed)
+    for pattern in _ANCHORED_SECRET_PATTERNS:
+        scrubbed = pattern.sub(_ANCHORED_SECRET_REPLACEMENT, scrubbed)
+    return scrubbed
+
+
 def _bounded_string(value: str, budget: _CaptureBudget | None = None) -> str:
     limit = min(len(value), _MAX_CAPTURE_STRING_CHARS)
     if budget is not None:
@@ -209,7 +255,7 @@ def _capture_jsonable(
     if type(value) is float:
         return value if math.isfinite(value) else "<non-finite float>"
     if type(value) is str:
-        return _bounded_string(value, budget)
+        return _bounded_string(_scrub_secret_values(value), budget)
     if type(value) in (bytes, bytearray):
         return f"<{len(value)} bytes>"
     if type(value) is dict:

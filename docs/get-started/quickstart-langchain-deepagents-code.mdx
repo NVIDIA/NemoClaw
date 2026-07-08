@@ -246,8 +246,10 @@ They exclude request headers, `model_settings`, `response_format`, and tool defi
 Model and tool spans carry the bounded content used for debugging.
 LangGraph node scopes export only bounded node names, a static LangGraph integration label, and success or error status.
 They omit raw graph inputs and outputs, callback metadata, checkpoint payloads, and interrupt or resume values so a node span does not duplicate the full conversation and graph state.
-These controls bound payload shape and remove recognized key classes, but they do not classify arbitrary text values.
-A secret pasted into a prompt, model response, shell command, tool result, file body, or unrecognized field can still be exported.
+These controls bound payload shape and remove recognized key classes.
+As a best-effort second layer, the managed exporter also scrubs recognized credential-shaped tokens, such as provider API keys, bearer tokens, and private key blocks, from captured text values and replaces each match with a redaction marker.
+This value scrubbing is pattern-based and not exhaustive: a secret in an obfuscated or unrecognized form, or any sensitive text that does not match a known credential shape, can still be exported.
+Complete redaction depends on upstream content controls and on the redaction processors you run in the host collector.
 
 The sandbox sends OTLP/HTTP protobuf requests only to `http://host.openshell.internal:4318/v1/traces` and reports `service.name=nemoclaw-langchain-deepagents-code`.
 The OTLP library adds standard transport headers such as content type and content length, but the managed exporter cannot add operator-supplied custom or authentication headers.
