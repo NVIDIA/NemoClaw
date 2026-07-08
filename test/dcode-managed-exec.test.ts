@@ -37,7 +37,7 @@ function makeLauncherFixture(tempDir: string): {
       `readonly MANAGED_EXEC_LAUNCHER="${launcherPath}"`,
     )
     .replace(
-      'readonly MANAGED_OBSERVABILITY_MARKER="/tmp/nemoclaw-observability-enabled"',
+      'readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.deepagents/.nemoclaw-observability-enabled"',
       `readonly MANAGED_OBSERVABILITY_MARKER="${markerPath}"`,
     )
     .replace(

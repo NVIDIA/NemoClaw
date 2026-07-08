@@ -169,8 +169,12 @@ describe("prepareSandboxCreateLaunch", () => {
     });
 
     expect(result.effectiveDashboardPort).toBe("0");
-    expect(result.envArgs).toEqual([]);
-    expect(result.sandboxStartupCommand).toEqual(["env", "nemoclaw-start"]);
+    expect(result.envArgs).toEqual(["NEMOCLAW_OBSERVABILITY=0"]);
+    expect(result.sandboxStartupCommand).toEqual([
+      "env",
+      "NEMOCLAW_OBSERVABILITY=0",
+      "nemoclaw-start",
+    ]);
   });
 
   it("drops credential-bearing proxy URLs from Deep Agents Code sandbox create env", () => {

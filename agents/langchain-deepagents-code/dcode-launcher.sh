@@ -13,7 +13,7 @@ unset _nemoclaw_auto_approval_env
 
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
 readonly MANAGED_EXEC_LAUNCHER="/usr/local/lib/nemoclaw/dcode-managed-exec"
-readonly MANAGED_OBSERVABILITY_MARKER="/tmp/nemoclaw-observability-enabled"
+readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.deepagents/.nemoclaw-observability-enabled"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 

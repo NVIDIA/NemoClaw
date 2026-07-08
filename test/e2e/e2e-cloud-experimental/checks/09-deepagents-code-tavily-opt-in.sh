@@ -33,7 +33,7 @@ observability_marker_value() {
   # Expansion is intentionally deferred to the sandbox shell.
   # shellcheck disable=SC2016
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    sh -c 'marker=/tmp/nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
+    sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
     2>/dev/null
 }
 
@@ -123,31 +123,34 @@ python_probe() {
 }
 
 restore_observability_state() {
-  local marker_after restore_output
-  [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ] || return 0
-
+  local marker_after restore_output state_invalid=0
   marker_after="$(observability_marker_value || true)"
-  if [ "$marker_after" != "1" ]; then
-    if ! restore_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+  if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ] && [ "$marker_after" = "1" ]; then
+    pass "managed observability state remains enabled after policy-remove"
+    return 0
+  fi
+  if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ]; then
+    fail_test "managed observability marker was lost after policy-remove"
+  fi
+  state_invalid=1
+
+  if [ "$marker_after" != "1" ] \
+    && ! restore_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
       /usr/bin/env NEMOCLAW_OBSERVABILITY=1 \
       /usr/local/bin/nemoclaw-start /usr/bin/true 2>&1)"; then
-      fail_test "could not restore managed observability after policy-remove: $restore_output"
-      return 1
-    fi
+    fail_test "could not restore managed observability for ordered cleanup: $restore_output"
+    return 1
   fi
-
-  marker_after="$(observability_marker_value || true)"
-  if [ "$marker_after" = "1" ]; then
-    pass "managed observability state restores after policy-remove"
-  else
+  if [ "$(observability_marker_value || true)" != "1" ]; then
     fail_test "managed observability marker was not restored after policy-remove"
     return 1
   fi
+  pass "managed observability state restored for ordered cleanup"
+  return "$state_invalid"
 }
 
 restore_tavily_denial() {
   local cleanup_status=0 remove_output post_remove_probe_output
-  OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
   if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
     fail_test "policy-remove tavily failed after the opt-in proof: $remove_output"
     cleanup_status=1
@@ -189,6 +192,7 @@ fi
 
 if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
   OBSERVABILITY_MARKER_FIXTURE="$(mktemp)"
+  OBSERVABILITY_MARKER_BEFORE=1
   printf '%s\n' "1" >"$OBSERVABILITY_MARKER_FIXTURE"
   trap 'rm -f "$OBSERVABILITY_MARKER_FIXTURE"' EXIT
   observability_marker_value() {
@@ -197,16 +201,18 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
   nemoclaw_cli() {
     [[ "$*" == "$SANDBOX_NAME policy-remove tavily --yes" ]] || return 1
     [ "${NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE:-ok}" = "ok" ] || return 1
-    printf '%s\n' "absent" >"$OBSERVABILITY_MARKER_FIXTURE"
+    if [ "${NEMOCLAW_E2E_TAVILY_MARKER_FIXTURE:-preserve}" = "lose" ]; then
+      printf '%s\n' "absent" >"$OBSERVABILITY_MARKER_FIXTURE"
+    fi
   }
   openshell() {
     [[ "$*" == "sandbox exec --name $SANDBOX_NAME -- /usr/bin/env NEMOCLAW_OBSERVABILITY=1 /usr/local/bin/nemoclaw-start /usr/bin/true" ]] || return 1
     printf '%s\n' "1" >"$OBSERVABILITY_MARKER_FIXTURE"
   }
-  NEMOCLAW_E2E_POLICY_SETTLE_SECONDS=0 restore_tavily_denial
+  cleanup_status=0
+  NEMOCLAW_E2E_POLICY_SETTLE_SECONDS=0 restore_tavily_denial || cleanup_status=$?
   [ "$(cat "$OBSERVABILITY_MARKER_FIXTURE")" = "1" ]
-  [ "$FAILED" -eq 0 ]
-  exit 0
+  exit "$cleanup_status"
 fi
 
 if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
@@ -240,6 +246,10 @@ APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
+OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
+if [ "$OBSERVABILITY_MARKER_BEFORE" != "1" ]; then
+  fail_test "managed observability marker is absent after policy-add"
+fi
 trap restore_tavily_denial EXIT
 pass "tavily policy preset applies"
 
