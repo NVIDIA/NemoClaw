@@ -64,7 +64,9 @@ shadow controller. It builds the deterministic risk plan from the exact
 matches the pushed commit. If the plan matches runtime regression families,
 the controller dispatches at most three `automaticJobs` through `e2e.yaml`.
 The workflow definition stays on `main`, while every E2E checkout uses the
-exact merged commit supplied through `checkout_sha`.
+exact merged commit supplied through `checkout_sha`. GitHub returns the
+dispatched workflow's run ID directly, and the controller uses that ID as the
+sole child-run selector for waiting, evidence download, and completion.
 
 Before E2E preparation or selected jobs can use repository secrets,
 `e2e.yaml` verifies that the requested SHA equals the workflow's own current

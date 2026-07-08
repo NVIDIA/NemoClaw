@@ -78,7 +78,9 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     expect(start.run).toContain('--commit "${{ github.event.after }}"');
     expect(start.run).toContain('--work-dir "${{ steps.workspace.outputs.work_dir }}"');
     expect(wait.run).toContain("timeout --signal=TERM --kill-after=30s 105m");
+    expect(wait.env?.RUN_ID).toBe("${{ steps.start.outputs.run_id }}");
     expect(download.run).toContain('--dir "${{ steps.workspace.outputs.work_dir }}/evidence"');
+    expect(download.env?.RUN_ID).toBe("${{ steps.start.outputs.run_id }}");
     expect(finish.id).toBe("finish");
     expect(finish.if).toContain("always()");
     expect(finish["continue-on-error"]).toBe(true);

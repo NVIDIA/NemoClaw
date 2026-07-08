@@ -45,7 +45,9 @@ does not consume model output or the advisor artifact. Instead,
 `tools/e2e-advisor/post-merge-risk-gate.mts` confirms the trusted controller checkout,
 builds a new plan from the exact `github.event.before` and `github.event.after` range,
 and dispatches at most three `automaticJobs` to `e2e.yaml` against the merged
-commit.
+commit. The controller opts into GitHub's workflow-dispatch run details and
+uses the returned run ID as the sole child-run selector, so a lookalike run
+cannot win a polling race for the same correlation ID.
 
 The child workflow validates that the exact checkout SHA equals the workflow's
 own current `main` commit, verifies its reachability, and checks selective-job

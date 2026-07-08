@@ -121,10 +121,12 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  Exact-commit shadow dispatches validate that the requested checkout is
-  reachable from `main` before preparation, attach
-  `test/e2e/risk-signal-reporter.ts` to live Vitest invocations, and suppress
-  PR reporting and scorecards.
+  Exact-commit shadow dispatches require the requested checkout to equal the
+  workflow's current `main` commit and verify its reachability before
+  preparation. The controller uses GitHub's returned workflow-dispatch run ID
+  as the sole child-run selector for waiting, evidence download, and
+  completion, attaches `test/e2e/risk-signal-reporter.ts` to live Vitest
+  invocations, and suppresses PR reporting and scorecards.
 - `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
   `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and `regression-e2e.yaml` call
   focused E2E targets directly for their E2E coverage.

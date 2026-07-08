@@ -60,6 +60,12 @@ type WorkflowRun = {
 
 type CheckRun = { id: number };
 
+type WorkflowDispatchDetails = {
+  workflow_run_id: number;
+  run_url: string;
+  html_url: string;
+};
+
 export type RiskGateState = {
   version: 1;
   commitSha: string;
@@ -534,34 +540,65 @@ export function expectedRiskSignalShards(
   );
 }
 
-async function findCorrelatedRun(
+export function validateWorkflowDispatchDetails(
+  value: unknown,
   repository: string,
-  token: string,
-  correlationId: string,
-  dispatchedAt: number,
-): Promise<WorkflowRun> {
-  const expectedTitle = `E2E risk ${correlationId}`;
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const payload = await githubApi<{ workflow_runs: WorkflowRun[] }>(
-      `repos/${repository}/actions/workflows/${E2E_WORKFLOW}/runs?event=workflow_dispatch&branch=main&per_page=50`,
-      token,
-      { userAgent: "nemoclaw-e2e-risk-gate" },
-    );
-    const match = payload.workflow_runs.find(
-      (run) =>
-        run.display_title === expectedTitle &&
-        run.name === "E2E" &&
-        run.event === "workflow_dispatch" &&
-        SHA_PATTERN.test(run.head_sha) &&
-        Number.isSafeInteger(run.id) &&
-        run.id > 0 &&
-        run.html_url === `https://github.com/${repository}/actions/runs/${run.id}` &&
-        Date.parse(run.created_at) >= dispatchedAt - 5000,
-    );
-    if (match) return match;
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+): WorkflowDispatchDetails {
+  if (!isRecord(value)) throw new Error("GitHub returned invalid workflow dispatch details");
+  const runId = value.workflow_run_id;
+  if (!Number.isSafeInteger(runId) || (runId as number) < 1) {
+    throw new Error("GitHub returned an invalid dispatched workflow run id");
   }
-  throw new Error("timed out locating the correlated E2E workflow run");
+  const expectedApiUrl = `https://api.github.com/repos/${repository}/actions/runs/${runId}`;
+  const expectedHtmlUrl = `https://github.com/${repository}/actions/runs/${runId}`;
+  if (value.run_url !== expectedApiUrl || value.html_url !== expectedHtmlUrl) {
+    throw new Error("GitHub returned mismatched workflow dispatch URLs");
+  }
+  return value as WorkflowDispatchDetails;
+}
+
+export async function dispatchRiskWorkflow(options: {
+  repository: string;
+  token: string;
+  jobs: readonly string[];
+  commitSha: string;
+  planHash: string;
+  correlationId: string;
+}): Promise<number> {
+  if (
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(options.repository) ||
+    !options.token ||
+    options.jobs.length < 1 ||
+    options.jobs.length > 3 ||
+    new Set(options.jobs).size !== options.jobs.length ||
+    options.jobs.some((job) => !JOB_PATTERN.test(job)) ||
+    !SHA_PATTERN.test(options.commitSha) ||
+    !HASH_PATTERN.test(options.planHash) ||
+    !CORRELATION_PATTERN.test(options.correlationId)
+  ) {
+    throw new Error("risk workflow dispatch inputs are invalid");
+  }
+  const details = await githubApi<unknown>(
+    `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/dispatches`,
+    options.token,
+    {
+      method: "POST",
+      body: {
+        ref: "main",
+        inputs: {
+          jobs: options.jobs.join(","),
+          checkout_sha: options.commitSha,
+          risk_plan_hash: options.planHash,
+          risk_correlation: options.correlationId,
+          risk_shadow: "true",
+        },
+        // GitHub REST 2022-11-28 otherwise returns no run identity.
+        return_run_details: true,
+      },
+      userAgent: "nemoclaw-e2e-risk-gate",
+    },
+  );
+  return validateWorkflowDispatchDetails(details, options.repository).workflow_run_id;
 }
 
 async function start(options: {
@@ -620,22 +657,14 @@ async function start(options: {
     if (!CORRELATION_PATTERN.test(correlationId)) {
       throw new Error("generated correlation id is invalid");
     }
-    const dispatchedAt = Date.now();
-    await githubApi(`repos/${repository}/actions/workflows/${E2E_WORKFLOW}/dispatches`, token, {
-      method: "POST",
-      body: {
-        ref: "main",
-        inputs: {
-          jobs: plan.automaticJobs.join(","),
-          checkout_sha: options.commitSha,
-          risk_plan_hash: plan.planHash,
-          risk_correlation: correlationId,
-          risk_shadow: "true",
-        },
-      },
-      userAgent: "nemoclaw-e2e-risk-gate",
+    const childRunId = await dispatchRiskWorkflow({
+      repository,
+      token,
+      jobs: plan.automaticJobs,
+      commitSha: options.commitSha,
+      planHash: plan.planHash,
+      correlationId,
     });
-    const child = await findCorrelatedRun(repository, token, correlationId, dispatchedAt);
     const state: RiskGateState = {
       version: 1,
       commitSha: options.commitSha,
@@ -646,7 +675,7 @@ async function start(options: {
       requiresManualExpansion: plan.requiresManualExpansion,
     };
     writePrivateRegularFile(options.statePath, `${JSON.stringify(state, null, 2)}\n`);
-    appendOutput("run_id", String(child.id));
+    appendOutput("run_id", String(childRunId));
     appendOutput("dispatched", "true");
   } catch (error) {
     const finalized = await completeNeutralAfterControllerError(
@@ -714,7 +743,7 @@ export function findSignalFiles(
   return files.sort((left, right) => left.localeCompare(right));
 }
 
-async function finish(options: {
+export async function finishRiskGate(options: {
   statePath: string;
   evidencePath: string;
   checkRunId: number;
@@ -796,7 +825,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command.mode === "finish") {
-    await finish({
+    await finishRiskGate({
       statePath: command.statePath,
       evidencePath: command.evidencePath,
       checkRunId: command.checkRunId,

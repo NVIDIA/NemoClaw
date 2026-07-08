@@ -6,24 +6,32 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildRiskPlan, RISK_RULES } from "../tools/advisors/risk-plan.mts";
 import {
   assertTrustedMainPush,
   changedFilesBetween,
   classifyRiskEvidence,
+  dispatchRiskWorkflow,
   expectedRiskSignalShards,
   findSignalFiles,
+  finishRiskGate,
   parseControllerCommand,
   type RiskGateState,
   validateRiskGateState,
   validateRiskPlan,
   validateSignal,
+  validateWorkflowDispatchDetails,
 } from "../tools/e2e-advisor/post-merge-risk-gate.mts";
 import type { E2eRiskSignal } from "../tools/e2e-advisor/risk-signal.ts";
 
 const HEAD_SHA = "a".repeat(40);
 const ALLOWED = new Set(["onboard-repair", "onboard-resume"]);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 function state(): RiskGateState {
   return {
@@ -183,6 +191,103 @@ describe("post-merge E2E risk gate", () => {
       /expected jobs/u,
     );
     expect(() => validateRiskGateState({ ...gate, expectedShards: {} })).toThrow(/shard jobs/u);
+  });
+
+  it("uses the workflow run identity returned by the exact dispatch request", async () => {
+    const gate = state();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          workflow_run_id: 23,
+          run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
+          html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+        }),
+    } as Response);
+
+    const runId = await dispatchRiskWorkflow({
+      repository: "NVIDIA/NemoClaw",
+      token: "token",
+      jobs: ["onboard-repair"],
+      commitSha: gate.commitSha,
+      planHash: gate.planHash,
+      correlationId: gate.correlationId,
+    });
+
+    expect(runId).toBe(23);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://api.github.com/repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/dispatches",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      ref: "main",
+      return_run_details: true,
+      inputs: {
+        jobs: "onboard-repair",
+        checkout_sha: gate.commitSha,
+        risk_plan_hash: gate.planHash,
+        risk_correlation: gate.correlationId,
+        risk_shadow: "true",
+      },
+    });
+    expect(() =>
+      validateWorkflowDispatchDetails(
+        {
+          workflow_run_id: 23,
+          run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/24",
+          html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+        },
+        "NVIDIA/NemoClaw",
+      ),
+    ).toThrow(/mismatched workflow dispatch URLs/u);
+  });
+
+  it("finish reports the directly dispatched child failure when main advances", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-finish-"));
+    const statePath = path.join(workDir, "e2e-risk-gate-state.json");
+    const gate = state();
+    const childRunId = 23;
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    fs.writeFileSync(statePath, `${JSON.stringify(gate)}\n`, { mode: 0o600 });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            id: childRunId,
+            name: "E2E",
+            event: "workflow_dispatch",
+            head_sha: "b".repeat(40),
+            status: "completed",
+            conclusion: "failure",
+            created_at: "2026-07-08T00:00:00.000Z",
+            display_title: `E2E risk ${gate.correlationId}`,
+            html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${childRunId}`,
+          }),
+      } as Response)
+      .mockResolvedValueOnce({ ok: true, text: async () => "{}" } as Response);
+
+    try {
+      await finishRiskGate({
+        statePath,
+        evidencePath: path.join(workDir, "evidence"),
+        checkRunId: 17,
+        childRunId,
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain("check-runs/17");
+      expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: { title: "Selected E2E workflow failed" },
+      });
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
   it("bounds downloaded risk-evidence traversal by entries, depth, and signals", () => {
