@@ -728,7 +728,11 @@ export function classifyTestDepth(
         .map((family) => family.id)
         .join(", ")}.`,
       suggestedTests: riskPlan.requiredJobs.map(
-        (job) => `Run the \`${job.id}\` E2E job for ${job.reasons.join("; ")}.`,
+        (job) =>
+          `Run the \`${job.id}\` E2E job for ${job.reasons.join("; ")} Matched files: ${job.matchedFiles
+            .slice(0, 5)
+            .map((file) => `\`${file}\``)
+            .join(", ")}.`,
       ),
     };
   }
@@ -1701,6 +1705,7 @@ function buildDriftTurnContext(context: DeterministicReviewContext): Record<stri
 
 function buildSecurityTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
   return {
+    riskPlan: context.riskPlan,
     riskyAreas: context.riskyAreas,
     workflowSignals: context.workflowSignals,
   };

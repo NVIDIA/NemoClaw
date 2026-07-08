@@ -39,6 +39,7 @@ import {
   type RunAdvisorResult,
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
+import { readFreeStandingJobsInventory } from "../e2e/workflow-boundary.mts";
 
 const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
@@ -107,6 +108,7 @@ export type E2eWorkflowJob = {
 type E2eTargetNormalizationContext = {
   e2eWorkflowText?: string;
   freeStandingJobs: E2eWorkflowJob[];
+  allowedJobIds: Set<string>;
   liveTestToJobs: Map<string, string[]>;
 };
 
@@ -428,7 +430,7 @@ export function normalizeE2eTargetAdvisorResult(
   const deterministicRiskJobs = deterministicRiskJobRecommendations(riskPlan, context);
   const deterministicRequired = mergeRecommendations(deterministicRiskJobs, deterministicJobs);
   const required = suppressFanout
-    ? []
+    ? deterministicRequired
     : mergeRecommendations(
         deterministicRequired,
         suppressFanoutForFocusedJobs(
@@ -445,18 +447,19 @@ export function normalizeE2eTargetAdvisorResult(
         metadata.changedFiles,
       );
   const reasonField = object.noTargetE2eReason;
-  const noTargetE2eReason = suppressFanout
-    ? missingFreeStandingLiveWiringReason(unwiredFreeStandingLiveTests)
-    : typeof reasonField === "string" &&
-        reasonField.trim() &&
-        required.length === 0 &&
-        optional.length === 0
-      ? reasonField.trim()
-      : required.length === 0 && optional.length === 0
-        ? unwiredFreeStandingLiveTests.length > 0
-          ? missingFreeStandingLiveWiringReason(unwiredFreeStandingLiveTests)
-          : "Advisor reported no E2E target impact."
-        : null;
+  const noTargetE2eReason =
+    suppressFanout && required.length === 0
+      ? missingFreeStandingLiveWiringReason(unwiredFreeStandingLiveTests)
+      : typeof reasonField === "string" &&
+          reasonField.trim() &&
+          required.length === 0 &&
+          optional.length === 0
+        ? reasonField.trim()
+        : required.length === 0 && optional.length === 0
+          ? unwiredFreeStandingLiveTests.length > 0
+            ? missingFreeStandingLiveWiringReason(unwiredFreeStandingLiveTests)
+            : "Advisor reported no E2E target impact."
+          : null;
 
   return {
     version: 1,
@@ -476,7 +479,7 @@ export function normalizeE2eTargetAdvisorResult(
     ),
     noTargetE2eReason,
     confidence:
-      deterministicRequired.length > 0 && object.confidence === "low"
+      required.length > 0 && object.confidence === "low"
         ? "medium"
         : enumValue<["low", "medium", "high"]>(
             object.confidence,
@@ -498,6 +501,7 @@ function buildE2eTargetNormalizationContext(
   e2eWorkflowText = readE2eWorkflowText(),
 ): E2eTargetNormalizationContext {
   const freeStandingJobs = extractFreeStandingE2eJobs(e2eWorkflowText ?? "");
+  const allowedJobIds = new Set(readFreeStandingJobsInventory().allowedJobs);
   const liveTestToJobs = new Map<string, string[]>();
   for (const job of freeStandingJobs) {
     for (const file of job.liveTestFiles) {
@@ -506,7 +510,7 @@ function buildE2eTargetNormalizationContext(
       liveTestToJobs.set(file, jobs);
     }
   }
-  return { e2eWorkflowText, freeStandingJobs, liveTestToJobs };
+  return { e2eWorkflowText, freeStandingJobs, allowedJobIds, liveTestToJobs };
 }
 
 export function extractFreeStandingE2eJobs(workflowText: string): E2eWorkflowJob[] {
@@ -598,9 +602,8 @@ function deterministicRiskJobRecommendations(
   riskPlan: RiskPlan,
   context: E2eTargetNormalizationContext,
 ): E2eTargetRecommendation[] {
-  const allowedJobs = new Set(context.freeStandingJobs.map((job) => job.id));
   return riskPlan.requiredJobs
-    .filter((job) => allowedJobs.has(job.id))
+    .filter((job) => context.allowedJobIds.has(job.id))
     .map((job) => ({
       id: job.id,
       workflow: E2E_WORKFLOW,
@@ -651,7 +654,7 @@ function sanitizeRecommendations(
 ): E2eTargetRecommendation[] {
   const seen = new Set<string>();
   const output: E2eTargetRecommendation[] = [];
-  const allowedJobIds = new Set(context.freeStandingJobs.map((job) => job.id));
+  const allowedJobIds = context.allowedJobIds;
   for (const item of recordItems(value)) {
     const id = stringOrUndefined(item.id);
     const reason = stringOrUndefined(item.reason);

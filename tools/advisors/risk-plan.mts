@@ -54,6 +54,9 @@ const STATEFUL_SANDBOX_FILE =
   /^src\/lib\/actions\/sandbox\/.*(?:gateway|lifecycle|recovery|repair|resume|sandbox|status|survival)/;
 const MUTATION_FILE = /(?:upgrade|rebuild|snapshot|backup|restore)/;
 const INSTALL_SCRIPT = /^(?:install\.sh|scripts\/(?:install|setup|dev-setup)[^/]*\.(?:sh|js|ts))$/;
+const INFERENCE_POLICY_FILE = /(?:^|[/.-])(?:inference|network-policy)(?:[/.-]|$)/;
+const CREDENTIAL_SECURITY_FILE =
+  /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|shields|security)(?:[/.-]|$)/i;
 
 export const RISK_RULES: readonly RiskRule[] = [
   {
@@ -123,7 +126,7 @@ export const RISK_RULES: readonly RiskRule[] = [
       file.startsWith("src/lib/actions/inference") ||
       file.startsWith("nemoclaw-blueprint/policies/") ||
       /^src\/lib\/actions\/sandbox\/.*policy/.test(file) ||
-      /(?:provider|inference|network-policy)/.test(file),
+      INFERENCE_POLICY_FILE.test(file),
   },
   {
     id: "messaging-lifecycle",
@@ -178,7 +181,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     ],
     matches: (file) =>
       file.startsWith("src/lib/credentials/") ||
-      /(?:credential|secret|redact|ssrf|shields|security)/i.test(file) ||
+      CREDENTIAL_SECURITY_FILE.test(file) ||
       file.startsWith("nemoclaw/src/blueprint/ssrf"),
   },
 ] as const;

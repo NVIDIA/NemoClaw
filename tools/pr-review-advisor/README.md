@@ -29,7 +29,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 2. Checks out advisor implementation code from trusted `main` into `advisor/`.
 3. Checks out PR content into `pr-workdir/` as inert read-only analysis data.
 4. Installs a pinned Pi SDK package with lifecycle scripts disabled.
-5. Builds the same deterministic regression risk plan used by E2E Advisor and injects it into the validation review context.
+5. Builds the same deterministic regression risk plan used by E2E Advisor and injects it into the security and validation review contexts.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for each configured model variant: the primary GPT-5.5 lane and the Nemotron Ultra lane.
 8. Opens one Pi session per model variant and reviews the PR as a short conversation: orientation/drift, security, acceptance/correctness/tests, then final JSON synthesis.
@@ -42,6 +42,10 @@ deterministic plan as review context but does not run its jobs. E2E Advisor emit
 plan-backed recommendations separately and likewise does not dispatch E2E. Model availability must
 not become the authority for whether a pull request can merge.
 
+Required-check status is point-in-time context, not a settled-CI gate. Earlier
+`PR_REVIEW_ADVISOR_WAIT_*` workflow variables were inert and have been removed; any future waiting
+behavior must be implemented and tested before the workflow claims to provide it.
+
 ## Author and agent follow-up
 
 Authors and coding agents should follow the shared [PR CI and Automated Review Follow-Up](../../.agents/skills/_shared/pr-follow-up.md) workflow after opening a PR or pushing follow-up commits. If SSH, authentication, remote access, authorization, or permission problems prevent reading comments or pushing fixes, follow [Git and GitHub Access Hard Stop](../../.agents/skills/_shared/git-github-hard-stop.md).
@@ -52,6 +56,7 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 - PR-provided scripts, tests, package lifecycle hooks, and build tools are never executed.
 - The advisor receives only read-only tools: `read`, `grep`, `find`, and `ls`.
 - PR bodies, comments, titles, branch names, and diffs are treated as untrusted evidence, never as instructions.
+- Manual target analysis validates the repository token, decimal PR number, and base-ref token before running any `git` command.
 - Generated advisor credential config is written under `/tmp`, not uploaded artifacts.
 - The job is limited to upstream `NVIDIA/NemoClaw` PRs when model secrets are in scope.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
@@ -88,14 +93,14 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 - `prompts/01-orient-drift.md` — orientation, codebase drift, overlaps, monolith, and localized-patch scan.
 - `prompts/01-orient-drift.synthetic-tool-results/` — deterministic drift context and truncated diff injected as synthetic tool results.
 - `prompts/02-security.md` — security-review turn.
-- `prompts/02-security.synthetic-tool-results/` — deterministic security context injected before the security turn.
+- `prompts/02-security.synthetic-tool-results/` — deterministic security and exact-SHA risk-plan context injected before the security turn.
 - `prompts/03-acceptance-correctness-tests.md` — acceptance, correctness, tests, and source-of-truth turn.
 - `prompts/03-acceptance-correctness-tests.synthetic-tool-results/` — deterministic validation/GitHub context injected before the validation turn.
 - `prompts/04-synthesize-json.md` — final JSON synthesis turn.
 - `prompts/04-synthesize-json.synthetic-tool-results/` — exact metadata fields and response schema injected before final synthesis.
 - `retry-prompts/` — retry synthesis prompt and synthetic tool results when the first output is malformed or low quality.
 - `context/drift-context.json` — deterministic drift, overlap, monolith, and previous-review context.
-- `context/security-context.json` — deterministic security-risk context.
+- `context/security-context.json` — deterministic security-risk and exact-SHA risk-plan context.
 - `context/validation-context.json` — deterministic acceptance, source-of-truth, static
   test-inventory, simplification-signal, and exact-SHA risk-plan context, including the regression
   invariants reviewed for the PR.

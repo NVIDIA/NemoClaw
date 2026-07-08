@@ -32,6 +32,13 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiresManualExpansion).toBe(false);
   });
 
+  it("does not infer security or inference risk from unrelated path substrings", () => {
+    const result = plan("src/lib/actions/sandbox/mcp-bridge-provider.ts", "src/lib/secretary.ts");
+
+    expect(result.families.map((family) => family.id)).toEqual(["shared-agent"]);
+    expect(riskPlanRequiredJobIds(result)).toEqual(["full-e2e", "hermes-e2e"]);
+  });
+
   it.each([
     {
       file: "src/lib/onboard.ts",
@@ -95,6 +102,7 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.verdict).toBe("runtime_validation_recommended");
     expect(result.suggestedTests.join("\n")).toContain("onboard-resume");
+    expect(result.suggestedTests.join("\n")).toContain("`src/lib/state/registry.ts`");
   });
 
   it("keeps every catalog job wired into the canonical E2E workflow", () => {

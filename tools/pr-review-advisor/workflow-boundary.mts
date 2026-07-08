@@ -220,6 +220,30 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   requireStepWith(errors, dispatchCheckout, "path", "pr-workdir");
   requireStepWith(errors, dispatchCheckout, "persist-credentials", false);
 
+  const targetCheckout = requireStep(errors, steps, "Prepare target PR checkout");
+  requireRunContains(errors, targetCheckout, '[[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/');
+  requireRunContains(errors, targetCheckout, '[[ ! "$TARGET_PR" =~ ^[0-9]+$ ]]');
+  requireRunContains(errors, targetCheckout, '"$TARGET_BASE" == *:*');
+  requireRunContains(errors, targetCheckout, '"$TARGET_BASE" == *..*');
+  requireRunOrders(
+    errors,
+    targetCheckout,
+    '[[ ! "$TARGET_REPO" =~',
+    'git -C "$TARGET_DIR" remote add target',
+  );
+  requireRunOrders(
+    errors,
+    targetCheckout,
+    '[[ ! "$TARGET_PR" =~',
+    'git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head',
+  );
+  requireRunOrders(
+    errors,
+    targetCheckout,
+    '"$TARGET_BASE" == *:*',
+    'git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"',
+  );
+
   const install = requireStep(errors, steps, "Install Pi SDK");
   requireRunContains(errors, install, "--ignore-scripts");
   requireRunContains(errors, install, "$ADVISOR_DIR/node_modules");

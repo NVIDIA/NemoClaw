@@ -142,6 +142,17 @@ describe("E2E target advisor — normalization contract", () => {
     expect(normalized.optional.map((item) => item.id)).not.toContain("upgrade-stale-sandbox");
   });
 
+  it("preserves indirectly selected Hermes jobs in the deterministic risk floor", () => {
+    const normalized = normalizeE2eTargetAdvisorResult(
+      { required: [], optional: [], confidence: "low" },
+      metadata({ changedFiles: ["src/lib/actions/sandbox/agents/apply.ts"] }),
+    );
+
+    expect(normalized.required.map((item) => item.id)).toEqual(["full-e2e", "hermes-e2e"]);
+    expect(normalized.required.every((item) => item.selectorType === "job")).toBe(true);
+    expect(normalized.confidence).toBe("medium");
+  });
+
   it("preserves valid recommendations and canonicalizes the dispatch command", () => {
     const raw = {
       version: 1,
@@ -415,6 +426,34 @@ describe("E2E target advisor — normalization contract", () => {
     expect(normalized.noTargetE2eReason).toContain("test/e2e/live/rebuild-openclaw.test.ts");
   });
 
+  it("keeps the deterministic floor while suppressing unwired-test fan-out", () => {
+    const normalized = normalizeE2eTargetAdvisorResult(
+      {
+        required: [
+          {
+            id: "e2e-all",
+            workflow: E2E_WORKFLOW,
+            selectorType: "all",
+            reason: "model tried to fan out for an unwired free-standing test",
+          },
+        ],
+        optional: [],
+        confidence: "low",
+      },
+      metadata({
+        changedFiles: [
+          "src/lib/actions/sandbox/agents/apply.ts",
+          "test/e2e/live/new-unwired-agent-proof.test.ts",
+        ],
+      }),
+      { e2eWorkflowText: "jobs:\n  live-targets:\n    steps: []\n" },
+    );
+
+    expect(normalized.required.map((item) => item.id)).toEqual(["full-e2e", "hermes-e2e"]);
+    expect(normalized.noTargetE2eReason).toBeNull();
+    expect(normalized.confidence).toBe("medium");
+  });
+
   it("extracts free-standing E2E jobs from workflow job selectors", () => {
     expect(
       extractFreeStandingE2eJobs(String.raw`
@@ -467,9 +506,10 @@ jobs:
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
+      ["job", "cloud-onboard"],
       ["job", "token-rotation"],
     ]);
-    expect(normalized.required[0]?.dispatchCommand).toBe(
+    expect(normalized.required.find((item) => item.id === "token-rotation")?.dispatchCommand).toBe(
       "gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=token-rotation",
     );
     expect(normalized.noTargetE2eReason).toBeNull();

@@ -1,17 +1,113 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
+function prepareTargetCheckoutScript(): string {
+  const workflow = YAML.parse(
+    fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
+  ) as { jobs?: { review?: { steps?: Array<{ name?: string; run?: string }> } } };
+  const step = workflow.jobs?.review?.steps?.find(
+    (candidate) => candidate.name === "Prepare target PR checkout",
+  );
+  expect(step?.run).toEqual(expect.any(String));
+  return step!.run!;
+}
+
+function runPrepareTargetCheckout(env: {
+  TARGET_REPO: string;
+  TARGET_PR: string;
+  TARGET_BASE: string;
+}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-workflow-"));
+  const binDir = path.join(tmp, "bin");
+  const gitLog = path.join(tmp, "git.log");
+  const githubEnv = path.join(tmp, "github-env");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "git"),
+    '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$FAKE_GIT_LOG"\n',
+    { mode: 0o755 },
+  );
+  const result = spawnSync("bash", ["-c", prepareTargetCheckoutScript()], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ...env,
+      FAKE_GIT_LOG: gitLog,
+      GITHUB_ENV: githubEnv,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    },
+  });
+  return {
+    ...result,
+    cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }),
+    gitCalls: fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf8").trim().split(/\r?\n/u) : [],
+    githubEnv: fs.existsSync(githubEnv) ? fs.readFileSync(githubEnv, "utf8") : "",
+  };
+}
+
 describe("PR review advisor workflow boundary", () => {
   it("keeps the workflow inside the trusted-code boundary", () => {
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
+  });
+
+  it("rejects malformed manual target inputs before invoking git", () => {
+    const invalidCases = [
+      {
+        TARGET_REPO: "NVIDIA/NemoClaw --upload-pack=x",
+        TARGET_PR: "5756",
+        TARGET_BASE: "main",
+      },
+      { TARGET_REPO: "NVIDIA/NemoClaw", TARGET_PR: "12:refs/heads/x", TARGET_BASE: "main" },
+      {
+        TARGET_REPO: "NVIDIA/NemoClaw",
+        TARGET_PR: "5756",
+        TARGET_BASE: "main:refs/heads/x",
+      },
+      { TARGET_REPO: "NVIDIA/NemoClaw", TARGET_PR: "5756", TARGET_BASE: "../main" },
+      { TARGET_REPO: "NVIDIA/NemoClaw", TARGET_PR: "5756", TARGET_BASE: "-main" },
+    ];
+
+    for (const invalid of invalidCases) {
+      const result = runPrepareTargetCheckout(invalid);
+      try {
+        expect(result.status).toBe(1);
+        expect(result.gitCalls).toEqual([]);
+      } finally {
+        result.cleanup();
+      }
+    }
+
+    const valid = runPrepareTargetCheckout({
+      TARGET_REPO: "NVIDIA/NemoClaw",
+      TARGET_PR: "5756",
+      TARGET_BASE: "main",
+    });
+    try {
+      expect(valid.status).toBe(0);
+      expect(valid.gitCalls).toEqual([
+        "-C /tmp/pr-review-advisor-target init",
+        "-C /tmp/pr-review-advisor-target remote add target https://github.com/NVIDIA/NemoClaw.git",
+        "-C /tmp/pr-review-advisor-target fetch --no-tags target main",
+        "-C /tmp/pr-review-advisor-target fetch --no-tags target pull/5756/head:refs/remotes/target/pr-5756",
+        "-C /tmp/pr-review-advisor-target checkout --detach refs/remotes/target/pr-5756",
+      ]);
+      expect(valid.githubEnv).toBe(
+        "ADVISOR_WORKDIR=/tmp/pr-review-advisor-target\nPR_NUMBER=5756\n",
+      );
+    } finally {
+      valid.cleanup();
+    }
   });
 
   it("flags advisor matrix isolation workflow regressions", () => {

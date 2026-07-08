@@ -344,6 +344,7 @@ describe("PR review advisor", () => {
     ]);
     expect(turns[1]?.prompt).toContain("sandbox escape");
     expect(turns[1]?.syntheticToolResults?.[0]?.toolName).toBe("pr_review_security_context");
+    expect(turns[1]?.syntheticToolResults?.[0]?.content).toContain("riskPlan");
     expect(turns[2]?.prompt).toContain("source-of-truth questions");
     expect(turns[2]?.prompt).toContain("staticTestInventory");
     expect(turns[2]?.prompt).toContain("simplificationSignals");
