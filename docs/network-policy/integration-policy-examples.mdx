@@ -4,7 +4,7 @@
 title: "Common NemoClaw Integration Policy Examples"
 sidebar-title: "Integration Policy Examples"
 description: "Guided examples for adding post-install integration policy access to a NemoClaw sandbox."
-description-agent: "Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Jira, Brave and Tavily web search, package managers, Hugging Face, local inference, and OpenShell approval workflows."
+description-agent: "Guides users through common post-install integration policy setup for maintained NemoClaw presets and a custom Gmail policy, including Outlook, messaging channels, GitHub, Jira, Brave and Tavily web search, package managers, Hugging Face, local inference, and OpenShell approval workflows."
 keywords: ["nemoclaw integration policy examples", "post-install policy setup", "openshell approval workflow", "policy preset"]
 content:
   type: "how_to"
@@ -14,7 +14,8 @@ skill:
 import { AgentOnly } from "../_components/AgentGuide";
 
 Use these examples when a sandbox is already installed and an integration needs network access.
-This page covers only integrations that NemoClaw currently ships as maintained policy preset YAML under `nemoclaw-blueprint/policies/presets/`.
+Most examples use maintained policy preset YAML that NemoClaw ships under `nemoclaw-blueprint/policies/presets/`.
+The Gmail example shows how to author a custom preset because NemoClaw does not ship a maintained Gmail preset.
 For complete blueprint examples that combine a model, agent harness, OpenShell policy, and integration workflow, refer to [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community).
 Integration setup usually has two separate parts:
 
@@ -110,21 +111,124 @@ If the blocked endpoint is not covered by the maintained `outlook` preset, treat
 
 NemoClaw does not currently ship a maintained `gmail` preset.
 Do not reuse the `outlook` preset for Gmail: Microsoft Graph and Gmail use different hosts, authentication flows, and API paths.
-For Gmail or Google Workspace mail tools, first decide whether the tool uses the Gmail REST API, IMAP/SMTP, or another Google API, then create a custom preset with only the endpoints and binaries that workflow needs.
+First determine whether your tool uses the Gmail REST API, IMAP, or SMTP.
+Apply only the custom preset for the protocol your tool uses.
 
-Keep Google OAuth client secrets, refresh tokens, app passwords, and downloaded credential JSON files out of policy YAML.
-Store credentials through the integration you are running in the sandbox, or through an OpenShell provider path when the integration supports placeholder resolution.
+### Gmail REST API
 
-Use the standard custom-preset flow:
+The following `gmail-rest.yaml` preset supports listing and reading messages, downloading attachments, sending messages, refreshing an OAuth token, and loading the Gmail discovery document.
+It restricts egress to the documented Gmail and OAuth paths and to the Python executable that opens the connection.
 
-```bash
-$$nemoclaw my-assistant policy-add --from-file ./gmail.yaml --dry-run
-$$nemoclaw my-assistant policy-add --from-file ./gmail.yaml --yes
+```yaml
+preset:
+  name: gmail-rest
+  description: "Gmail REST API access for Python mail tools"
+network_policies:
+  gmail-rest:
+    name: gmail-rest
+    endpoints:
+      - host: gmail.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/$discovery/rest" }
+          - allow: { method: GET, path: "/gmail/v1/users/**/messages" }
+          - allow: { method: GET, path: "/gmail/v1/users/**/messages/**" }
+          - allow: { method: POST, path: "/gmail/v1/users/**/messages/send" }
+          - allow: { method: POST, path: "/upload/gmail/v1/users/**/messages/send" }
+      - host: oauth2.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/token" }
+      - host: www.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/discovery/v1/apis/gmail/v1/rest" }
+    binaries:
+      - { path: /usr/bin/python3* }
 ```
 
-After applying the custom preset, run the Gmail workflow with `openshell term` open and inspect any blocked requests.
-Add only endpoints you can explain, and prefer method/path-restricted REST rules when the workflow uses HTTPS APIs.
-If the tool falls back to IMAP or SMTP, review the security impact separately because those connections cannot be narrowed to HTTP methods and paths.
+Preview and apply the REST preset:
+
+```bash
+$$nemoclaw my-assistant policy-add --from-file ./gmail-rest.yaml --dry-run
+$$nemoclaw my-assistant policy-add --from-file ./gmail-rest.yaml --yes
+```
+
+If the TUI reports a different Python executable, replace `/usr/bin/python3*` with that executable instead of adding unrelated binaries.
+Add other Gmail methods or paths only when your workflow requires them.
+
+### Gmail IMAP
+
+Use IMAP for a Python downloader that connects to `imap.gmail.com`, including a tool that authenticates with an app password and downloads attachments.
+Save the following preset as `gmail-imap.yaml`.
+
+```yaml
+preset:
+  name: gmail-imap
+  description: "Gmail IMAP access for a Python mail downloader"
+network_policies:
+  gmail-imap:
+    name: gmail-imap
+    endpoints:
+      - host: imap.gmail.com
+        port: 993
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/bin/python3* }
+```
+
+Preview and apply the IMAP preset:
+
+```bash
+$$nemoclaw my-assistant policy-add --from-file ./gmail-imap.yaml --dry-run
+$$nemoclaw my-assistant policy-add --from-file ./gmail-imap.yaml --yes
+```
+
+### Gmail SMTP
+
+Add SMTP only when the tool sends mail through SMTP instead of the Gmail REST API.
+Use `smtp.gmail.com:465` for implicit TLS or `smtp.gmail.com:587` for STARTTLS, but do not authorize both ports unless the tool needs both.
+The SMTP entry uses the same L4 shape as the IMAP entry:
+
+```yaml
+preset:
+  name: gmail-smtp
+  description: "Gmail SMTP access for a Python mail sender"
+network_policies:
+  gmail-smtp:
+    name: gmail-smtp
+    endpoints:
+      - host: smtp.gmail.com
+        port: 465
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/bin/python3* }
+```
+
+Replace port `465` with `587` when the client uses STARTTLS.
+Preview and apply the resulting file:
+
+```bash
+$$nemoclaw my-assistant policy-add --from-file ./gmail-smtp.yaml --dry-run
+$$nemoclaw my-assistant policy-add --from-file ./gmail-smtp.yaml --yes
+```
+
+<Warning>
+Keep OAuth client secrets, refresh tokens, app passwords, and downloaded credential JSON files out of policy YAML.
+IMAP and SMTP use opaque L4 tunnels, so OpenShell cannot inspect or restrict their methods, paths, commands, or message contents after the connection is allowed.
+Authorize only the host, port, and connection-opening binary that your workflow requires.
+</Warning>
+
+Run the Gmail workflow with `openshell term` open after applying the selected preset.
+Inspect blocked requests and add only endpoints and binaries you can explain.
 
 ## Telegram Bot Messaging
 
