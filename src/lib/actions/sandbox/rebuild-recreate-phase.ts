@@ -5,6 +5,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
+import { redactFull } from "../../security/redact";
 import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
@@ -204,7 +205,12 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
 
   if (!onboardFailed) await onCreated();
   if (onboardFailed) {
-    await onFailed?.();
+    try {
+      await onFailed?.();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      log(`Failed to persist rebuild retry metadata: ${redactFull(detail)}`);
+    }
     try {
       markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
     } catch {

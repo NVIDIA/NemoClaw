@@ -122,6 +122,29 @@ describe("rebuild transaction boundary", () => {
     expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
   });
 
+  it("keeps recovery guidance when failure-metadata persistence also fails", async () => {
+    const harness = createRebuildFlowHarness({
+      onboard: () => {
+        throw new Error("simulated recreate failure");
+      },
+    });
+    const failureWrite = vi
+      .spyOn(harness.transactionStore, "recordFailure")
+      .mockRejectedValueOnce(new Error("simulated journal write failure"));
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recreate failed");
+
+    expect(failureWrite).toHaveBeenCalledOnce();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("Backup is preserved at:");
+    expect(harness.transactionStore.load("alpha")).toMatchObject({
+      status: "active",
+      phase: "old_deleted",
+      failure: null,
+    });
+  });
+
   it("leaves a prepared transaction when delete fails after compensation", async () => {
     const harness = createRebuildFlowHarness({
       runOpenshell: (args) =>
