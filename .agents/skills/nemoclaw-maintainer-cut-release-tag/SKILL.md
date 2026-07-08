@@ -171,6 +171,8 @@ Load and follow `nemoclaw-maintainer-release-notes`, then use its output as the 
 <release-dir>/release-note-draft.md
 ```
 
+Before continuing to Step 7, verify the draft has exactly three lead paragraphs, categorized shipped changes, one what-changed-and-why-it-matters bullet with a visible `#NNNN` link for every included change, and thanks for external contributors only.
+
 Do not create or update a GitHub Discussion.
 
 ### Step 7: Wait for Maintainer-Published Announcement
