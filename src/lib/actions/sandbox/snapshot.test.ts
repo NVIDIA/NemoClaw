@@ -952,11 +952,11 @@ describe("runSandboxSnapshot", () => {
   });
 
   it.each([
-    { enabled: true, assignmentPresent: true },
-    { enabled: false, assignmentPresent: false },
+    { enabled: true, expectedValue: "1" },
+    { enabled: false, expectedValue: "0" },
   ])("starts a snapshot clone with the authoritative source observability state when enabled=$enabled", async ({
     enabled,
-    assignmentPresent,
+    expectedValue,
   }) => {
     let registeredClone: SandboxRecord | null = null;
     registerSandboxMock.mockImplementation((entry) => (registeredClone = entry as SandboxRecord));
@@ -986,7 +986,7 @@ describe("runSandboxSnapshot", () => {
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
     const [createCommandValue, createEnv] = streamSandboxCreateMock.mock.calls[0] ?? [];
     const createCommand = String(createCommandValue ?? "");
-    expect(createCommand.includes("'NEMOCLAW_OBSERVABILITY=1'")).toBe(assignmentPresent);
+    expect(createCommand).toContain(`'NEMOCLAW_OBSERVABILITY=${expectedValue}'`);
     expect(createEnv?.NEMOCLAW_OBSERVABILITY).toBeUndefined();
     expect(registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({

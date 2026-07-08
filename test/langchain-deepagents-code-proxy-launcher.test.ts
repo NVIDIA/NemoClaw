@@ -274,11 +274,29 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(fs.readFileSync(markerFile, "utf8")).toBe("1\n");
     expect(fs.statSync(markerFile).mode & 0o777).toBe(0o444);
 
+    const policyRestart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      encoding: "utf8",
+    });
+    expect(policyRestart.status, policyRestart.stderr).toBe(0);
+    expect(fs.readFileSync(markerFile, "utf8")).toBe("1\n");
+
     fs.rmSync(ephemeralDir, { recursive: true, force: true });
     expect(fs.existsSync(markerFile)).toBe(true);
     const enabledLaunch = runLauncher(launcherPath, [], {});
     expect(enabledLaunch.status, enabledLaunch.stderr).toBe(0);
     expect(enabledLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=1");
+
+    fs.mkdirSync(ephemeralDir, { recursive: true });
+    const disabledStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        NEMOCLAW_OBSERVABILITY: "0",
+      },
+      encoding: "utf8",
+    });
+    expect(disabledStart.status, disabledStart.stderr).toBe(0);
+    expect(fs.existsSync(markerFile)).toBe(false);
   });
 
   it("ignores tampered, symlinked, and non-regular observability markers", () => {
@@ -318,10 +336,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     fs.symlinkSync(symlinkTarget, markerFile);
     const symlinkedLaunch = runLauncher(launcherPath, [], {});
     const symlinkedStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
-      env: {
-        PATH: process.env.PATH ?? "/usr/bin:/bin",
-        NEMOCLAW_OBSERVABILITY: "1",
-      },
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
       encoding: "utf8",
     });
     expect(symlinkedLaunch.status, symlinkedLaunch.stderr).toBe(0);

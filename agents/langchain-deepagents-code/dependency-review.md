@@ -159,11 +159,13 @@ authorization gap. OpenShell policy replacement can clear ephemeral `/tmp`, and
 independent sandbox exec/login processes do not inherit the entrypoint's
 environment, while the host registry and the active OTLP network policy remain
 enabled. OpenShell owns those lifecycle semantics; NemoClaw owns the DCode
-startup and launcher boundary but does not modify OpenShell here. The startup
-script therefore writes only the credential-free enable bit to the persistent
-`/sandbox/.deepagents/.nemoclaw-observability-enabled` workspace path. The
-launcher accepts only a non-symlink regular marker containing exactly `1`, and
-the network policy remains the authority for OTLP access.
+startup and launcher boundary but does not modify OpenShell here. Create,
+rebuild, and snapshot-clone paths pass an explicit `1` or `0`; an environment-
+less policy restart preserves the validated durable state. The startup script
+writes only the credential-free enable bit to persistent
+`/sandbox/.deepagents/.nemoclaw-observability-enabled`. The launcher accepts
+only a non-symlink regular marker containing exactly `1`, and the network policy
+remains the authority for OTLP access.
 
 Focused launcher fixtures delete unrelated ephemeral state and prove the marker
 survives, reject unsafe directory and marker types, and cover enabled and

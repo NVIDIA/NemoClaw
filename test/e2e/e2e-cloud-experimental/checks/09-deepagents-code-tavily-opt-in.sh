@@ -205,7 +205,6 @@ if [[ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" =~ ^policy-cleanup-(order|on-probe-fa
         ;;
       policy-remove:tavily:--yes)
         printf '%s\n' "removed" >"$POLICY_CLEANUP_STATE"
-        printf '%s\n' "absent" >"$POLICY_CLEANUP_MARKER"
         printf '%s\n' "TRACE:policy-remove" >>"$POLICY_CLEANUP_TRACE"
         ;;
       *)
@@ -232,18 +231,6 @@ if [[ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" =~ ^policy-cleanup-(order|on-probe-fa
     else
       printf '%s\n' "ERROR:unexpected fixture policy state"
     fi
-  }
-  openshell() {
-    case "$*" in
-      *"NEMOCLAW_OBSERVABILITY=1"*"/usr/local/bin/nemoclaw-start /usr/bin/true"*)
-        printf '%s\n' "1" >"$POLICY_CLEANUP_MARKER"
-        printf '%s\n' "TRACE:observability-restore" >>"$POLICY_CLEANUP_TRACE"
-        ;;
-      *)
-        printf '%s\n' "unexpected OpenShell action in Tavily cleanup self-test" >&2
-        return 93
-        ;;
-    esac
   }
   sleep() {
     :
@@ -319,9 +306,13 @@ else
   fail_test "project venv under /sandbox did not expose a usable python3 executable: $PROJECT_OUT"
 fi
 
-# The Tavily policy-add rebuild materializes the configured observability
-# marker, so preserve the state immediately before removing that policy.
+# Policy replacement must retain the configured observability marker. Require
+# that invariant here so an absent marker cannot silently skip the end-state
+# proof below.
 OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
+if [ "$OBSERVABILITY_MARKER_BEFORE" != "1" ]; then
+  fail_test "managed observability marker is absent after policy-add"
+fi
 
 # Restore the deny-by-default posture for later checks in this ordered live
 # suite. Rebuild validation intentionally preserves active policy presets, so
@@ -349,23 +340,12 @@ else
 fi
 
 # The temporary Tavily policy belongs only to this check. Policy replacement
-# can reset ephemeral /tmp state, while the managed observability bit lives in
-# the persistent /sandbox workspace. If an older runtime loses that bit, repair
-# it through the canonical startup helper instead of manufacturing it here.
-if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ]; then
-  OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
-  if [ "$OBSERVABILITY_MARKER_AFTER" != "1" ]; then
-    RESTORE_OUTPUT="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-      /usr/bin/env NEMOCLAW_OBSERVABILITY=1 \
-      /usr/local/bin/nemoclaw-start /usr/bin/true 2>&1)" \
-      || fail_test "could not restore managed observability after policy-remove: $RESTORE_OUTPUT"
-  fi
-  OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
-  if [ "$OBSERVABILITY_MARKER_AFTER" = "1" ]; then
-    pass "managed observability state remains enabled after policy-remove"
-  else
-    fail_test "managed observability marker was not restored after policy-remove"
-  fi
+# may reset ephemeral /tmp, but it must preserve the managed bit in /sandbox.
+OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
+if [ "$OBSERVABILITY_MARKER_AFTER" = "1" ]; then
+  pass "managed observability state remains enabled after policy-remove"
+else
+  fail_test "managed observability marker was lost after policy-remove"
 fi
 
 if [ -n "$POLICY_CLEANUP_TRACE" ]; then
