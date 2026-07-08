@@ -623,7 +623,7 @@ export class RebuildTransactionStore {
     receipts: RebuildTransactionReceiptsV1,
   ): RebuildTransactionRecordV1 {
     const current = this.requireActive(sandboxName, expectedRevision);
-    if (NEXT_PHASE[current.phase as Exclude<RebuildTransactionPhaseV1, "completed">] !== phase) {
+    if (current.phase === "completed" || NEXT_PHASE[current.phase] !== phase) {
       throw transactionError(
         "INVALID_TRANSITION",
         sandboxName,
@@ -667,8 +667,8 @@ export class RebuildTransactionStore {
 
   complete(sandboxName: string, expectedRevision: number): RebuildTransactionRecordV1 {
     const current = this.require(sandboxName);
-    if (current.status === "completed") return current;
     this.assertRevision(current, expectedRevision);
+    if (current.status === "completed") return current;
     if (current.phase !== "replacement_created") {
       throw transactionError(
         "INVALID_TRANSITION",

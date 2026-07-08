@@ -86,7 +86,10 @@ function replacementReceipts(): RebuildTransactionReceiptsV1 {
   };
 }
 
-function makeStore(root = tempDir()): { stateDir: string; store: RebuildTransactionStore } {
+function makeStore(root = tempDir()): {
+  stateDir: string;
+  store: RebuildTransactionStore;
+} {
   let tick = 0;
   const stateDir = path.join(root, ".nemoclaw", "state");
   return {
@@ -227,13 +230,34 @@ describe("RebuildTransactionStore", () => {
     const replacement = advanceToReplacement(store);
     const completed = store.complete(SANDBOX, replacement.revision);
 
-    expect(store.complete(SANDBOX, replacement.revision)).toEqual(completed);
+    expect(store.complete(SANDBOX, completed.revision)).toEqual(completed);
+    expectCode(() => store.complete(SANDBOX, replacement.revision), "REVISION_CONFLICT");
     expectCode(
       () =>
         store.transition(SANDBOX, completed.revision, "replacement_created", replacementReceipts()),
       "INVALID_TRANSITION",
     );
     expect(store.load(SANDBOX)).toEqual(completed);
+  });
+
+  it("persists a failure after deletion and clears it when replacement is observed", () => {
+    const { store } = makeStore();
+    const prepared = store.create(intent(), preparedReceipts());
+    const deleted = store.transition(SANDBOX, prepared.revision, "old_deleted", deletedReceipts());
+    const failed = store.recordFailure(SANDBOX, deleted.revision, {
+      code: "REPLACEMENT_RETRY_REQUIRED",
+      recordedAt: "2026-07-08T00:01:30.000Z",
+      retryable: true,
+    });
+
+    expect(store.load(SANDBOX)).toEqual(failed);
+    const replacement = store.transition(
+      SANDBOX,
+      failed.revision,
+      "replacement_created",
+      replacementReceipts(),
+    );
+    expect(replacement.failure).toBeNull();
   });
 
   it("rejects skipped, reversed, and prematurely completed transitions", () => {
@@ -268,7 +292,9 @@ describe("RebuildTransactionStore", () => {
     const { stateDir, store } = makeStore();
     const prepared = store.create(intent(), preparedReceipts());
     vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
-      throw Object.assign(new Error("simulated rename failure"), { code: "EIO" });
+      throw Object.assign(new Error("simulated rename failure"), {
+        code: "EIO",
+      });
     });
 
     expect(() =>
