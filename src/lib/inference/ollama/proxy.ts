@@ -766,6 +766,16 @@ async function pullOllamaModel(model) {
 const PULLED_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 const PULLED_MODEL_DISCOVERY_ATTEMPTS = 8;
 
+function normalizeOllamaModelRef(model: string): string {
+  const ref = String(model || "").trim();
+  const lastSegment = ref.slice(ref.lastIndexOf("/") + 1);
+  return ref && !lastSegment.includes(":") ? `${ref}:latest` : ref;
+}
+
+function ollamaModelRefsMatch(left: string, right: string): boolean {
+  return normalizeOllamaModelRef(left) === normalizeOllamaModelRef(right);
+}
+
 /**
  * Confirm that Ollama exposes a just-pulled model before onboarding continues.
  *
@@ -789,7 +799,7 @@ function waitForPulledOllamaModel(
 ): boolean {
   const getModelOptions = deps.getModelOptions ?? getOllamaModelOptions;
   const now = deps.now ?? Date.now;
-  return waitUntil(() => getModelOptions().includes(model), {
+  return waitUntil(() => getModelOptions().some((listed) => ollamaModelRefsMatch(listed, model)), {
     deadlineMs: now() + PULLED_MODEL_DISCOVERY_TIMEOUT_MS,
     initialIntervalMs: 250,
     maxIntervalMs: 2_000,
@@ -904,7 +914,7 @@ async function prepareOllamaModel(
   allowToolsIncompatible?: boolean;
   daemonFailure?: boolean;
 }> {
-  const alreadyInstalled = installedModels.includes(model);
+  const alreadyInstalled = installedModels.some((listed) => ollamaModelRefsMatch(listed, model));
   if (!alreadyInstalled) {
     console.log(`  Pulling Ollama model: ${model}`);
     if (!(await pullOllamaModel(model))) {

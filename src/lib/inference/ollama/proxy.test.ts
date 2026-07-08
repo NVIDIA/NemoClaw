@@ -158,6 +158,23 @@ describe("waitForPulledOllamaModel", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["llama3.2", "llama3.2:latest"],
+    ["registry.example:5000/acme/model", "registry.example:5000/acme/model:latest"],
+    ["acme/model:7b", "acme/model:7b"],
+    ["acme/model@sha256:abc", "acme/model@sha256:abc"],
+  ])("matches pulled model reference %s to listed reference %s", (requested, listed) => {
+    const proxy: typeof import("./proxy") = require(PROXY_DIST);
+
+    expect(
+      proxy.waitForPulledOllamaModel(requested, {
+        getModelOptions: () => [listed],
+        now: () => 0,
+        sleep: () => {},
+      }),
+    ).toBe(true);
+  });
+
   it("retries model discovery with bounded backoff after a completed pull (#6038)", () => {
     const proxy: typeof import("./proxy") = require(PROXY_DIST);
     const sleeps: number[] = [];
