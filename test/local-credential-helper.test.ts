@@ -287,6 +287,7 @@ function helperArgs(
   executionProfile: "account-home" | "isolated" = "isolated",
   commandCwd?: string,
 ): string[] {
+  const cwdArgs = commandCwd === undefined ? [] : ["--cwd", commandCwd];
   const args = [
     "--experimental-strip-types",
     HELPER_PATH,
@@ -294,8 +295,8 @@ function helperArgs(
     executionProfile,
     "--form",
     formPath,
+    ...cwdArgs,
   ];
-  if (commandCwd !== undefined) args.push("--cwd", commandCwd);
   return [...args, ...fields.flatMap((field) => ["--field", field]), "--", ...command];
 }
 
@@ -475,6 +476,14 @@ function expectRejected(result: HttpResult): void {
   expect(result.body).not.toContain(TEST_SECRET);
 }
 
+function expectHttpStatus(result: HttpResult, expected: number): void {
+  expect(result.status).toBe(expected);
+}
+
+async function expectCompletionCode(completion: Promise<number>, expected: number): Promise<void> {
+  expect(await completion).toBe(expected);
+}
+
 function commandRunCount(markerPath: string): number {
   try {
     return fs.readFileSync(markerPath, "utf8").split("\n").filter(Boolean).length;
@@ -491,10 +500,9 @@ async function expectSuccessfulCompletion(
   expect(result).toEqual({ code: 0, signal: null });
   expect(commandRunCount(markerPath)).toBe(1);
   const privateRootMarker = `${markerPath}.private-root`;
-  if (fs.existsSync(privateRootMarker)) {
-    const privateRoot = fs.readFileSync(privateRootMarker, "utf8");
-    expect(fs.existsSync(privateRoot)).toBe(false);
-  }
+  const privateRootStillExists =
+    fs.existsSync(privateRootMarker) && fs.existsSync(fs.readFileSync(privateRootMarker, "utf8"));
+  expect(privateRootStillExists).toBe(false);
 }
 
 describe("local credential helper", () => {
@@ -694,10 +702,7 @@ describe("local credential helper", () => {
       timeoutMs: 20,
     });
 
-    const exitCode = await session.completion;
-    if (exitCode !== 1) {
-      throw new Error(`expected an expired credential session to exit 1, received ${exitCode}`);
-    }
+    await expectCompletionCode(session.completion, 1);
     expect(privateExecutionRoots()).toEqual(rootsBefore);
   });
 
@@ -729,15 +734,8 @@ describe("local credential helper", () => {
       path: "/submit",
     });
 
-    if (accepted.status !== 202) {
-      throw new Error(
-        `expected the credential submission to be accepted, received ${accepted.status}`,
-      );
-    }
-    const exitCode = await session.completion;
-    if (exitCode !== 1) {
-      throw new Error(`expected a failed credential child spawn to exit 1, received ${exitCode}`);
-    }
+    expectHttpStatus(accepted, 202);
+    await expectCompletionCode(session.completion, 1);
     expect(privateExecutionRoots()).toEqual(rootsBefore);
   });
 
@@ -889,25 +887,27 @@ describe("local credential helper", () => {
       environment: Record<string, string | undefined>;
     };
     const accountHome = os.userInfo().homedir;
-    const expectedEnvironment: Record<string, string> = {
-      HOME: accountHome,
-      PWD: commandCwd,
-    };
-    if (process.platform === "win32") {
-      const accountTemp = path.join(accountHome, "AppData", "Local", "Temp");
-      Object.assign(expectedEnvironment, {
-        APPDATA: path.join(accountHome, "AppData", "Roaming"),
-        LOCALAPPDATA: path.join(accountHome, "AppData", "Local"),
-        TEMP: accountTemp,
-        TMP: accountTemp,
-        TMPDIR: accountTemp,
-        USERPROFILE: accountHome,
-      });
-      if (/^[A-Za-z]:[\\/]/.test(accountHome)) {
-        expectedEnvironment.HOMEDRIVE = accountHome.slice(0, 2);
-        expectedEnvironment.HOMEPATH = accountHome.slice(2) || "\\";
-      }
-    }
+    const accountTemp = path.join(accountHome, "AppData", "Local", "Temp");
+    const hasWindowsDrive = /^[A-Za-z]:[\\/]/.test(accountHome);
+    const expectedEnvironment: Record<string, string> =
+      process.platform === "win32"
+        ? {
+            APPDATA: path.join(accountHome, "AppData", "Roaming"),
+            ...(hasWindowsDrive
+              ? {
+                  HOMEDRIVE: accountHome.slice(0, 2),
+                  HOMEPATH: accountHome.slice(2) || "\\",
+                }
+              : {}),
+            HOME: accountHome,
+            LOCALAPPDATA: path.join(accountHome, "AppData", "Local"),
+            PWD: commandCwd,
+            TEMP: accountTemp,
+            TMP: accountTemp,
+            TMPDIR: accountTemp,
+            USERPROFILE: accountHome,
+          }
+        : { HOME: accountHome, PWD: commandCwd };
     expect(observed.cwd).toBe(commandCwd);
     expect(
       Object.fromEntries(Object.entries(observed.environment).filter(([, value]) => value)),
