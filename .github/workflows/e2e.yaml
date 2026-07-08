@@ -2987,6 +2987,23 @@ jobs:
           set -euo pipefail
           printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces" >> "${GITHUB_ENV}"
 
+      - name: Install cloud-onboard DCode TUI host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update failed after 3 attempts." >&2
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+            sleep $((attempt * 5))
+          done
+          sudo apt-get install -y --no-install-recommends expect
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 

@@ -40,6 +40,12 @@ describe("inline E2E host dependency boundary", () => {
         "network-policy host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
     },
     {
+      jobName: "cloud-onboard",
+      stepName: "Install cloud-onboard DCode TUI host dependencies",
+      expected:
+        "cloud-onboard host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
+    },
+    {
       jobName: "issue-4434-tui-unreachable-inference",
       stepName: "Install issue #4434 host dependencies",
       expected:
@@ -55,6 +61,28 @@ describe("inline E2E host dependency boundary", () => {
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(expected);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps cloud-onboard host dependencies before workspace preparation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-host-order-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow();
+    const steps = workflow.jobs["cloud-onboard"].steps;
+    const installIndex = steps.findIndex(
+      (step) => step.name === "Install cloud-onboard DCode TUI host dependencies",
+    );
+    const install = steps.splice(installIndex, 1)[0]!;
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    steps.splice(prepareIndex + 1, 0, install);
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        "cloud-onboard DCode TUI host dependencies must precede workspace prep",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
