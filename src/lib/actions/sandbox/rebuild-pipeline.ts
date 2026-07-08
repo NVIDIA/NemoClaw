@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
+import { normalizeRebuildSandboxOptions } from "../../domain/lifecycle/options";
 import { BRAVE_API_KEY_ENV, TAVILY_API_KEY_ENV } from "../../inference/web-search";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
 import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-config";
@@ -76,6 +77,7 @@ async function rebuildSandboxUnlocked(
   options: string[] | RebuildSandboxOptions,
   opts: RebuildSandboxExecutionOptions,
 ): Promise<void> {
+  const normalized = normalizeRebuildSandboxOptions(options);
   const preflight = await runRebuildPreflightPhase(sandboxName, options, opts);
   if (!preflight) return;
   const {
@@ -161,6 +163,7 @@ async function rebuildSandboxUnlocked(
         preparedRecoveryManifest: recoveryManifest,
         messagingPlan,
         webSearchConfig: durableConfig.webSearchConfig,
+        force: normalized.force,
         log,
         bail,
         relockShieldsIfNeeded,
@@ -309,6 +312,7 @@ async function rebuildSandboxUnlocked(
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         restoreSucceeded: restored.restoreSucceeded,
+        backupWasForceSkipped: backup.backupWasForceSkipped,
         failedPresets: restored.failedPresets,
         finalBuiltinPresets: restored.finalBuiltinPresets,
         failedPresetRemovals: restored.failedPresetRemovals,

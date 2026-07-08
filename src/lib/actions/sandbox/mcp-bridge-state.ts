@@ -11,6 +11,7 @@ import {
   MCP_BRIDGE_POLICY_SOURCE,
   McpBridgeError,
 } from "./mcp-bridge-contracts";
+import { validateSandboxName } from "./mcp-bridge-validation";
 
 export function nowIso(): string {
   return new Date().toISOString();
@@ -99,9 +100,94 @@ export function setBridgeState(sandboxName: string, bridges: Record<string, McpB
 
 export function assertMcpDestroyNotPending(sandbox: SandboxEntry): void {
   if (!sandbox.mcp?.destroyPreparedAt && !sandbox.mcp?.destroyPendingAt) return;
+  // Phase-aware recovery guidance. `destroyPendingAt` is written only after
+  // OpenShell confirms deletion (mcp-bridge-destroy.ts), so the only safe action
+  // is to finish the idempotent destroy. A prepared-only marker does not prove
+  // deletion; `mcp remove --force` may recover in place if the sandbox is still
+  // live, while failures preserve the marker.
+  if (sandbox.mcp?.destroyPendingAt) {
+    throw new McpBridgeError(
+      `Sandbox '${sandbox.name}' is mid-destroy past the point of no return — the registry records that OpenShell deletion was already confirmed. Run \`nemoclaw ${sandbox.name} destroy\` to finish the (idempotent) cleanup.`,
+    );
+  }
   throw new McpBridgeError(
-    `Sandbox '${sandbox.name}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup before using MCP commands.`,
+    `Sandbox '${sandbox.name}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup, or, if the sandbox is still live, recover non-destructively with \`nemoclaw ${sandbox.name} mcp remove <server> --force\`.`,
   );
+}
+
+/**
+ * Non-destructive recovery for a stuck MCP destroy transaction — PHASE-AWARE.
+ *
+ * When a prior destroy leaves a `destroyPreparedAt` marker behind (phase one:
+ * in-sandbox scrub + provider detach done, deletion not durably confirmed)
+ * every MCP command is refused by `assertMcpDestroyNotPending`, and rebuild
+ * refuses up front with the same guard. Before #6376 the only advertised
+ * recovery was `nemoclaw <name> destroy` — full sandbox destruction.
+ *
+ * This helper clears ONLY the prepared (phase-one) marker, in place, so a
+ * `--force` caller can attempt the requested removal if the sandbox still
+ * exists. It deliberately refuses the pending (phase-two) marker: that marker
+ * records confirmed OpenShell deletion and is the durable retry state that
+ * keeps still-owed provider/policy cleanup idempotent. Erasing it would silently
+ * abandon that cleanup, so a pending transaction must be finished with
+ * `nemoclaw <name> destroy`, not cleared.
+ *
+ * Callers clear the prepared marker only AFTER the requested removal succeeds
+ * (see removeMcpBridge), so a failed recovery preserves the retry marker.
+ * `setBridgeState` preserves the marker across the removal's own writes until
+ * then.
+ *
+ * Returns whether the marker was actually cleared, so callers can log
+ * accurately (no-op vs. cleared).
+ *
+ * Product contract (#6376), intentionally narrow:
+ *   invalidState: a crash/abort mid-destroy leaves durable `destroyPreparedAt`
+ *     and/or `destroyPendingAt` markers that fail every MCP command and rebuild.
+ *   sourceBoundary: the markers are host-owned registry state; the sandbox does
+ *     not write them. `destroyPreparedAt` = deletion is not durably confirmed
+ *     (recoverable if still live); `destroyPendingAt` = the registry records
+ *     confirmed OpenShell deletion (not recoverable in place — global
+ *     provider/policy cleanup is still owed).
+ *   sourceFixConstraint: there is no safe non-destructive reconciliation for the
+ *     pending/both-marker live state, so this helper refuses it rather than
+ *     guess. Prepared-only markers are recoverable with `mcp remove --force`;
+ *     pending/both-marker state must finish `nemoclaw <name> destroy`.
+ *   regressionTest: mcp-bridge-destroy-marker-recovery.test.ts (phase-aware
+ *     clear/refuse, clear-only-after-proven-recovery, preserve-on-failure) and
+ *     mcp-destroy-lifecycle.test.ts (phase-aware guard message).
+ *   removalCondition: revisit if a safe pending-phase reconciliation is designed
+ *     (proving the still-owed provider/policy cleanup is complete) — then this
+ *     refusal could be relaxed.
+ */
+export function clearMcpDestroyMarkers(sandboxName: string): boolean {
+  // Validate the name before any registry read/update — this helper mutates
+  // durable state and must not trust an unvalidated identifier.
+  validateSandboxName(sandboxName);
+  const sandbox = registry.getSandbox(sandboxName);
+  const mcpState = sandbox?.mcp;
+  if (!mcpState?.destroyPreparedAt && !mcpState?.destroyPendingAt) return false;
+  if (mcpState.destroyPendingAt) {
+    throw new McpBridgeError(
+      `Sandbox '${sandboxName}' is mid-destroy past the point of no return — the registry records that OpenShell deletion was already confirmed. Run \`nemoclaw ${sandboxName} destroy\` to finish cleanup; the pending-destroy marker cannot be cleared non-destructively.`,
+    );
+  }
+  const bridges = mcpState.bridges ?? {};
+  const managedServerNames = mcpState.managedServerNames ?? [];
+  const updated = registry.updateSandbox(sandboxName, {
+    mcp:
+      Object.keys(bridges).length > 0 || managedServerNames.length > 0
+        ? {
+            bridges,
+            ...(managedServerNames.length > 0 ? { managedServerNames } : {}),
+          }
+        : undefined,
+  });
+  if (!updated) {
+    throw new McpBridgeError(
+      `Could not clear incomplete MCP destroy markers for sandbox '${sandboxName}'.`,
+    );
+  }
+  return true;
 }
 
 export function assertNoDerivedResourceCollision(

@@ -47,9 +47,9 @@ const require = createRequire(import.meta.url);
 
 const DIST_ENTRYPOINT = CLI_DIST_ENTRYPOINT;
 const BEDROCK_HOSTNAME = "bedrock-runtime.us-east-1.amazonaws.com";
-const BEDROCK_MOCK_PORT = Number(process.env.NEMOCLAW_BEDROCK_RUNTIME_MOCK_PORT ?? "18147");
+const BEDROCK_MOCK_PORT = 18147;
 const BEDROCK_ADAPTER_PORT = 11436;
-const BEDROCK_ENDPOINT_URL = `http://${BEDROCK_HOSTNAME}:${BEDROCK_MOCK_PORT}`;
+const BEDROCK_ENDPOINT_URL = `https://${BEDROCK_HOSTNAME}`;
 const BEDROCK_MODEL =
   process.env.NEMOCLAW_BEDROCK_RUNTIME_MODEL ?? "anthropic.claude-3-5-sonnet-20240620-v1:0";
 const COMPATIBLE_KEY =
@@ -131,7 +131,7 @@ function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv
   return testHomeEnvironment(home, extra);
 }
 
-function onboardEnv(home: string, agent: AgentName): NodeJS.ProcessEnv {
+function onboardEnv(home: string, agent: AgentName, caCertPath: string): NodeJS.ProcessEnv {
   return testEnv(home, {
     COMPATIBLE_ANTHROPIC_API_KEY: COMPATIBLE_KEY,
     NEMOCLAW_AGENT: agent,
@@ -143,7 +143,45 @@ function onboardEnv(home: string, agent: AgentName): NodeJS.ProcessEnv {
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_YES: "1",
+    NODE_EXTRA_CA_CERTS: caCertPath,
   });
+}
+
+function createBedrockTlsFixture(home: string): { cert: Buffer; key: Buffer; certPath: string } {
+  const tlsDir = path.join(home, "bedrock-runtime-tls");
+  const certPath = path.join(tlsDir, "cert.pem");
+  const keyPath = path.join(tlsDir, "key.pem");
+  fs.mkdirSync(tlsDir, { recursive: true });
+  const generated = spawnSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-keyout",
+      keyPath,
+      "-out",
+      certPath,
+      "-days",
+      "1",
+      "-nodes",
+      "-subj",
+      `/CN=${BEDROCK_HOSTNAME}`,
+      "-addext",
+      `subjectAltName=DNS:${BEDROCK_HOSTNAME}`,
+    ],
+    { encoding: "utf8" },
+  );
+  expect(
+    generated.status,
+    `failed to generate Bedrock TLS fixture: ${generated.stderr || generated.error}`,
+  ).toBe(0);
+  return {
+    cert: fs.readFileSync(certPath),
+    key: fs.readFileSync(keyPath),
+    certPath,
+  };
 }
 
 function redactedCommand(command: readonly string[], values: readonly string[]): string[] {
@@ -347,6 +385,7 @@ async function startFakeBedrockRuntimeMock(options: {
   port: number;
   expectedBearer: string;
   expectedModel: string;
+  tls: { cert: Buffer; key: Buffer };
 }): Promise<MockBedrockRuntime> {
   const codec = loadEventStreamCodec();
   const logs: string[] = [];
@@ -355,7 +394,7 @@ async function startFakeBedrockRuntimeMock(options: {
   const record = (line: string): void => {
     logs.push(line);
   };
-  const server = http2.createServer();
+  const server = http2.createSecureServer(options.tls);
   const sessions = new Set<http2.ServerHttp2Session>();
 
   server.on("session", (session) => {
@@ -636,6 +675,63 @@ async function mapBedrockHostToLoopback(
     },
   );
   expectExitZero(probe, "Bedrock Runtime hostname maps to localhost");
+}
+
+const bedrockTlsRedirectArgs = [
+  "-t",
+  "nat",
+  "OUTPUT",
+  "-p",
+  "tcp",
+  "-d",
+  "127.0.0.1",
+  "--dport",
+  "443",
+  "-j",
+  "REDIRECT",
+  "--to-ports",
+  String(BEDROCK_MOCK_PORT),
+];
+
+async function installBedrockTlsRedirect(host: HostCliClient, home: string): Promise<void> {
+  expectExitZero(
+    await host.command(
+      "sudo",
+      [
+        "-n",
+        "iptables",
+        ...bedrockTlsRedirectArgs.slice(0, 2),
+        "-A",
+        ...bedrockTlsRedirectArgs.slice(2),
+      ],
+      {
+        artifactName: "install-bedrock-tls-port-redirect",
+        env: testEnv(home),
+        timeoutMs: 30_000,
+      },
+    ),
+    "redirect canonical Bedrock TLS port to the unprivileged fake endpoint",
+  );
+}
+
+async function removeBedrockTlsRedirect(host: HostCliClient, home: string): Promise<void> {
+  await bestEffort(() =>
+    host.command(
+      "sudo",
+      [
+        "-n",
+        "iptables",
+        ...bedrockTlsRedirectArgs.slice(0, 2),
+        "-D",
+        ...bedrockTlsRedirectArgs.slice(2),
+      ],
+      {
+        artifactName: "remove-bedrock-tls-port-redirect",
+        env: testEnv(home),
+        timeoutMs: 30_000,
+      },
+    ),
+  );
 }
 
 async function prepareSourceCliAndOpenShell(host: HostCliClient, home: string): Promise<void> {
@@ -1224,6 +1320,9 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
   cleanup.add("restore /etc/hosts after Bedrock Runtime mapping", () =>
     restoreHostsFile(host, hostsBackup, hostsBackupDir, home),
   );
+  cleanup.add("remove Bedrock Runtime canonical TLS port redirect", () =>
+    removeBedrockTlsRedirect(host, home),
+  );
   cleanup.add("stop Bedrock Runtime adapter", () => stopBedrockAdapterBestEffort(home));
   cleanup.add("stop fake Bedrock Runtime endpoint", async () => {
     if (mock) await mock.close();
@@ -1279,10 +1378,13 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
 
   await prepareSourceCliAndOpenShell(host, home);
   await mapBedrockHostToLoopback(host, home, hostsBackup, skip);
+  await installBedrockTlsRedirect(host, home);
+  const tls = createBedrockTlsFixture(home);
   mock = await startFakeBedrockRuntimeMock({
     port: BEDROCK_MOCK_PORT,
     expectedBearer: COMPATIBLE_KEY,
     expectedModel: BEDROCK_MODEL,
+    tls,
   });
 
   await cleanupSandboxState(host, home);
@@ -1298,7 +1400,7 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
     {
       artifactName: `onboard-bedrock-runtime-${AGENT}`,
       artifacts,
-      env: onboardEnv(home, AGENT),
+      env: onboardEnv(home, AGENT, tls.certPath),
       redactionValues: [COMPATIBLE_KEY],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },

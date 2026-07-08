@@ -14,6 +14,7 @@ import {
   runCurlProbe,
 } from "../adapters/http/probe";
 import { normalizeCredentialValue } from "../credentials/store";
+import { buildResolvePinArgs } from "./endpoint-ssrf-preflight";
 
 export type AnthropicStreamingDiagnosticCode =
   | "anthropic-streaming-content-after-message-stop"
@@ -50,6 +51,12 @@ export interface AnthropicProbeOptions {
    * surfaces in-sandbox as "no final response was produced" (#6289).
    */
   probeStreaming?: boolean;
+  /**
+   * SSRF-preflight-validated address(es) to pin the probe curl to via
+   * `--resolve`, so a second DNS lookup here cannot rebind the endpoint host to
+   * a private/internal address after the public preflight (TOCTOU — #6293).
+   */
+  pinnedAddresses?: readonly string[];
 }
 
 // Streaming validation must not hang the onboarding wizard on an endpoint
@@ -123,9 +130,11 @@ export function probeAnthropicEndpoint(
   try {
     authConfig = createXApiKeyAuthConfig(normalizeCredentialValue(apiKey));
     const messagesUrl = `${String(endpointUrl).replace(/\/+$/, "")}/v1/messages`;
+    const resolvePinArgs = buildResolvePinArgs(messagesUrl, options.pinnedAddresses);
     const result = runCurlProbe(
       [
         "-sS",
+        ...resolvePinArgs,
         ...getCurlTimingArgs(),
         ...authConfig.args,
         "-H",
@@ -136,7 +145,10 @@ export function probeAnthropicEndpoint(
         anthropicMessagesPayload(model, false),
         messagesUrl,
       ],
-      { trustedConfigFiles: authConfig.trustedConfigFiles },
+      {
+        trustedConfigFiles: authConfig.trustedConfigFiles,
+        pinnedAddresses: options.pinnedAddresses,
+      },
     );
     if (!result.ok) {
       return {
@@ -157,6 +169,7 @@ export function probeAnthropicEndpoint(
       const streamResult = runAnthropicStreamingEventProbe(
         [
           "-sS",
+          ...resolvePinArgs,
           ...STREAMING_PROBE_TIMING_ARGS,
           ...authConfig.args,
           "-H",
@@ -167,7 +180,10 @@ export function probeAnthropicEndpoint(
           anthropicMessagesPayload(model, true),
           messagesUrl,
         ],
-        { trustedConfigFiles: authConfig.trustedConfigFiles },
+        {
+          trustedConfigFiles: authConfig.trustedConfigFiles,
+          pinnedAddresses: options.pinnedAddresses,
+        },
       );
       if (!streamResult.ok) {
         return {

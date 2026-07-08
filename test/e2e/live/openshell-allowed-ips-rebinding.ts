@@ -14,6 +14,7 @@ import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { discoverHostAddress } from "../fixtures/host-address.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   type DnsRebindingHostsFixture,
@@ -141,26 +142,7 @@ export function buildRawOpenShellAllowedIpsRebindingProbeScript(targetUrl: strin
 }
 
 async function hostAddressForSandbox(host: HostCliClient): Promise<string> {
-  const probe = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        'ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk \'{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}\')"',
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "ip_addr=\"$(hostname -I 2>/dev/null | awk '{print $1}')\"",
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "echo 127.0.0.1",
-      ].join("\n"),
-    ],
-    {
-      artifactName: "raw-openshell-rebinding-host-address",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(probe.exitCode, resultText(probe)).toBe(0);
-  return probe.stdout.trim();
+  return (await discoverHostAddress(host)).address;
 }
 
 async function closeServer(server: Server): Promise<void> {

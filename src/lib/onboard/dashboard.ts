@@ -37,6 +37,7 @@ import {
   ensureMessagingHostForwardForSandbox,
   resolveMessagingHostForwardForSandbox,
 } from "./messaging-host-forward";
+import { buildSshForwardHintLines } from "./ssh-forward-hint";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -58,6 +59,8 @@ export interface OnboardDashboardDeps {
   isWsl(): boolean;
   redact(value: unknown): string;
   sleep(seconds: number): void;
+  /** Environment used to detect an SSH session for the port-forward hint. */
+  env?: NodeJS.ProcessEnv;
   // Sandbox-registry lookup used by `ensureDashboardForward` for the
   // cross-gateway dashboard port view. Tests inject a stub so the allocator
   // never reads the runner's real `~/.nemoclaw/sandboxes.json`; production
@@ -70,6 +73,7 @@ export interface OnboardDashboardDeps {
     deps: {
       note: (msg: string) => void;
       buildControlUiUrls: (token: string | null, port: number) => string[];
+      effectiveDashboardPort?: number;
     },
   ): void;
 }
@@ -375,10 +379,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     sandboxName: string,
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number {
+    const chatUiUrl = process.env.CHAT_UI_URL;
     return ensureAgentDashboardForwardForAgent({
       sandboxName,
       agent,
       ensureDashboardForward,
+      chatUiUrl,
+      controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
     });
   }
 
@@ -477,6 +484,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       deps.printAgentDashboardUi(sandboxName, token, agent, {
         note: deps.note,
+        effectiveDashboardPort: chain.port,
         buildControlUiUrls: (tokenValue: string | null, port: number) => {
           const primary = buildControlUiUrls(tokenValue, port);
           const alternates = buildFallbackControlUiUrls(tokenValue, port, [
@@ -513,6 +521,17 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);
       console.log("      then run: openclaw tui");
+    }
+    const sshForwardHint = buildSshForwardHintLines({
+      port: chain.port,
+      accessUrl: chain.accessUrl,
+      env: deps.env,
+    });
+    if (sshForwardHint) {
+      console.log("");
+      for (const line of sshForwardHint) {
+        console.log(line);
+      }
     }
     console.log("");
     console.log("  Manage later");

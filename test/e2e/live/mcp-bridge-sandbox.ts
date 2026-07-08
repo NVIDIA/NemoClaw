@@ -10,7 +10,12 @@ const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
 
 export type McpDnsRebindingAdapter = "mcporter" | "hermes-config" | "deepagents-config";
 
-export async function hostAddressForSandbox(host: HostCliClient): Promise<string> {
+export async function hostAddressForSandbox(_host: HostCliClient): Promise<string> {
+  return "host.openshell.internal";
+}
+
+/** Concrete runner address used only to simulate a post-validation DNS rebind. */
+export async function hostPrivateAddressForSandbox(host: HostCliClient): Promise<string> {
   const probe = await host.command(
     "bash",
     [
@@ -24,7 +29,7 @@ export async function hostAddressForSandbox(host: HostCliClient): Promise<string
       ].join("\n"),
     ],
     {
-      artifactName: "host-ip-for-mcp-compatible-endpoint",
+      artifactName: "host-private-ip-for-mcp-rebinding",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     },
