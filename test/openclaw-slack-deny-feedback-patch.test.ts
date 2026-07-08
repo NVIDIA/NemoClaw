@@ -93,14 +93,15 @@ function runGuardProbe(
   options: {
     loadMode?: "require" | "import";
     requireGuardTwice?: boolean;
-    requireWhatsappQrCompact?: boolean;
+    whatsappPreloadOrder?: "before-slack" | "after-slack";
   } = {},
 ) {
   const script = `
 const guard = ${JSON.stringify(SLACK_GUARD)};
+${options.whatsappPreloadOrder === "before-slack" ? `require(${JSON.stringify(WHATSAPP_QR_COMPACT)});` : ""}
 require(guard);
 ${options.requireGuardTwice ? "require(guard);" : ""}
-${options.requireWhatsappQrCompact ? `require(${JSON.stringify(WHATSAPP_QR_COMPACT)});` : ""}
+${options.whatsappPreloadOrder === "after-slack" ? `require(${JSON.stringify(WHATSAPP_QR_COMPACT)});` : ""}
 const { pathToFileURL } = require("node:url");
 let prepareSlackMessage;
 async function loadPrepareSlackMessage() {
@@ -256,7 +257,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-deny-esm-"));
     const prepareFile = writeSlackPackage(tmp, { moduleType: "esm" });
     try {
-      const { result, output } = runGuardProbe(prepareFile, { loadMode: "import" });
+      const { result, output } = runGuardProbe(prepareFile, {
+        loadMode: "import",
+        whatsappPreloadOrder: "before-slack",
+      });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(fs.readFileSync(prepareFile, "utf-8")).not.toContain(
         "__nemoclawNotifyDeniedSlackMention",
@@ -275,13 +279,13 @@ describe("OpenClaw Slack denial-feedback patch", () => {
     }
   });
 
-  it("composes the Slack and WhatsApp synchronous loaders for ESM imports (#6467)", () => {
+  it("composes Slack-before-WhatsApp synchronous loaders for ESM imports (#6467)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-whatsapp-loaders-"));
     const prepareFile = writeSlackPackage(tmp, { moduleType: "esm" });
     try {
       const { result, output } = runGuardProbe(prepareFile, {
         loadMode: "import",
-        requireWhatsappQrCompact: true,
+        whatsappPreloadOrder: "after-slack",
       });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(result.stderr).not.toMatch(/loadSync|returned for the "source" from the "load" hook/u);
