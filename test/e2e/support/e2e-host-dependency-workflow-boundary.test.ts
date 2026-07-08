@@ -75,9 +75,6 @@ describe("inline E2E host dependency boundary", () => {
       (step) => step.name === "Install OpenClaw TUI host dependencies",
     );
     const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-    if (installIndex < 0 || prepareIndex < 0) {
-      throw new Error("fixture must contain OpenClaw TUI install and workspace preparation steps");
-    }
     [steps[installIndex], steps[prepareIndex]] = [steps[prepareIndex]!, steps[installIndex]!];
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
