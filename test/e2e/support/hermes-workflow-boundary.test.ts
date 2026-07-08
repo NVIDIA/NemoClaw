@@ -34,6 +34,10 @@ describe("Hermes E2E workflow boundary", () => {
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     };
     gpuRun.run = "npx vitest run --project e2e-live test/e2e/live/hermes-e2e.test.ts";
+    gpuJob.steps.push(
+      { name: "Prepare no-GPU native fallback fixture", run: "sudo true" },
+      { name: "Restore Docker default runtime after fallback fixture", run: "sudo true" },
+    );
     const gpuUpload = gpuJob.steps.find(
       (step: { name?: string }) => step.name === "Upload Hermes GPU startup artifacts",
     );
@@ -70,6 +74,9 @@ describe("Hermes E2E workflow boundary", () => {
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not expose NVIDIA_API_KEY",
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not expose NVIDIA_INFERENCE_API_KEY",
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not consume repository secrets",
+          "hermes-gpu-startup fallback Docker mutation, Vitest, and restore must share one step",
+          "hermes-gpu-startup fallback Docker mutation must remain under same-step cleanup traps",
+          "hermes-gpu-startup fallback Docker fixture must retain its source-boundary rationale",
           "hermes-gpu-startup step must run the dedicated Hermes GPU startup test",
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not run the hosted Hermes E2E test",
           "hermes-gpu-startup step 'Unexpected hosted test' must not run the hosted Hermes E2E test",

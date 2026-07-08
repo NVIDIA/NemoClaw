@@ -11,6 +11,8 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "hermes-gpu-startup";
 const RUN_STEP_NAME = "Run Hermes GPU startup live Vitest test";
+const LEGACY_PREPARE_STEP_NAME = "Prepare no-GPU native fallback fixture";
+const LEGACY_RESTORE_STEP_NAME = "Restore Docker default runtime after fallback fixture";
 const UPLOAD_STEP_NAME = "Upload Hermes GPU startup artifacts";
 const DOCKER_AUTH_STEP_NAME = "Authenticate to Docker Hub";
 const HOSTED_PROVIDER_ENV_NAMES = [
@@ -136,6 +138,37 @@ export function validateHermesGpuStartupWorkflowBoundary(
     return errors;
   }
   const runScript = stringValue(runStep.run);
+  if (
+    steps.some(
+      (step) => step.name === LEGACY_PREPARE_STEP_NAME || step.name === LEGACY_RESTORE_STEP_NAME,
+    )
+  ) {
+    errors.push(`${JOB_NAME} fallback Docker mutation, Vitest, and restore must share one step`);
+  }
+  const cleanupBoundaryFragments = [
+    "restore_docker_default_runtime()",
+    "trap restore_docker_default_runtime EXIT",
+    "trap 'exit 130' INT",
+    "trap 'exit 143' TERM",
+    'config["default-runtime"] = "runc"',
+    'sudo install -m 0644 "$state_dir/daemon.json.original" "$daemon_json"',
+    'sudo rm -f "$daemon_json"',
+    'sudo cmp -s "$state_dir/daemon.json.original" "$daemon_json"',
+    "docker-default-runtime-restored.txt",
+  ];
+  if (!cleanupBoundaryFragments.every((fragment) => runScript.includes(fragment))) {
+    errors.push(`${JOB_NAME} fallback Docker mutation must remain under same-step cleanup traps`);
+  }
+  const sourceBoundaryMarkers = [
+    "invalidState:",
+    "sourceBoundary:",
+    "whyNotSourceFix:",
+    "regressionTest:",
+    "removalCondition:",
+  ];
+  if (!sourceBoundaryMarkers.every((marker) => runScript.includes(marker))) {
+    errors.push(`${JOB_NAME} fallback Docker fixture must retain its source-boundary rationale`);
+  }
   if (!runScript.includes("npx vitest run --project e2e-live")) {
     errors.push(`${JOB_NAME} step must run the e2e-live Vitest project`);
   }
