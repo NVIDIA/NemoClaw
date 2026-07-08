@@ -33,6 +33,7 @@ import { buildRiskPlan, type RiskPlan } from "../advisors/risk-plan.mts";
 import {
   type AdvisorPromptTurn,
   type AdvisorSyntheticToolResult,
+  advisorRunErrors,
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
   READ_ONLY_TOOLS,
@@ -211,8 +212,9 @@ async function main(): Promise<void> {
         "utf8",
       )}`,
     );
-    if (sdkResult.turnErrors.length > 0) {
-      writeFailure(`Target advisor SDK provider error: ${sdkResult.turnErrors.join("; ")}`);
+    const executionErrors = advisorRunErrors(sdkResult);
+    if (executionErrors.length > 0) {
+      writeFailure(`Target advisor SDK provider error: ${executionErrors.join("; ")}`);
       process.exit(1);
     }
   } catch (error: unknown) {

@@ -29,13 +29,18 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 2. Checks out advisor implementation code from trusted `main` into `advisor/`.
 3. Checks out PR content into `pr-workdir/` as inert read-only analysis data.
 4. Installs a pinned Pi SDK package with lifecycle scripts disabled.
-5. Builds the same deterministic regression risk plan used by E2E Advisor and injects it into the security and validation review contexts.
+5. Builds the same deterministic regression risk plan used by E2E Advisor and injects it into the scope/risk, security/trust, and tests/regressions contexts.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for each configured model variant: the primary GPT-5.5 lane and the Nemotron Ultra lane.
-8. Opens one Pi session per model variant and reviews the PR as a short conversation: orientation/drift, security, acceptance/correctness/tests, then final JSON synthesis.
-9. Retries synthesis once when the model output is malformed or contains low-quality placeholder fields.
-10. Writes artifacts under the model-specific artifact directory, for example `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
-11. Posts or updates model-specific sticky PR comments marked by `<!-- nemoclaw-pr-review-advisor -->` and `<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->` plus hidden head-SHA, run, and comment-id metadata for follow-up reviews.
+8. Opens one Pi session per model variant and reviews the PR in seven bounded turns: scope/risk map, correctness/state, security/trust, tests/regressions, CI/operations, finding reconciliation, and final JSON synthesis. Intermediate turns are capped to concise working notes.
+9. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript.
+10. Retries synthesis once when the model output is malformed or contains low-quality placeholder fields.
+11. Writes artifacts under the model-specific artifact directory, for example `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
+12. Posts or updates model-specific sticky PR comments marked by `<!-- nemoclaw-pr-review-advisor -->` and `<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->` plus hidden head-SHA, run, and comment-id metadata for follow-up reviews.
+
+Provider failures and timeouts settle the active turn before the analysis fails, so its status and
+partial response remain available beside the raw transcript. Turn-artifact persistence failures are
+also fatal; the advisor does not publish a result whose per-turn trace is incomplete.
 
 The workflow is advisory and must not be configured as a required status check. It uses the
 deterministic plan as review context but does not run its jobs. E2E Advisor emits the corresponding
@@ -90,17 +95,18 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 ## Artifacts
 
 - `prompts/00-system.md` — system prompt sent to the advisor.
-- `prompts/01-orient-drift.md` — orientation, codebase drift, overlaps, monolith, and localized-patch scan.
-- `prompts/01-orient-drift.synthetic-tool-results/` — deterministic drift context and truncated diff injected as synthetic tool results.
-- `prompts/02-security.md` — security-review turn.
-- `prompts/02-security.synthetic-tool-results/` — deterministic security and exact-SHA risk-plan context injected before the security turn.
-- `prompts/03-acceptance-correctness-tests.md` — acceptance, correctness, tests, and source-of-truth turn.
-- `prompts/03-acceptance-correctness-tests.synthetic-tool-results/` — deterministic validation/GitHub context injected before the validation turn.
-- `prompts/04-synthesize-json.md` — final JSON synthesis turn.
-- `prompts/04-synthesize-json.synthetic-tool-results/` — exact metadata fields and response schema injected before final synthesis.
+- `prompts/01-scope-risk-map.md` through `prompts/07-synthesize-json.md` — the seven bounded review turns in execution order.
+- `prompts/*.synthetic-tool-results/` — bounded deterministic, domain-specific context injected immediately before each turn. The untrusted truncated diff appears only in the first turn, and repeated risk-plan projections use capped path samples.
+- `turns/01-scope-risk-map.txt` through `turns/07-synthesize-json.txt` — assistant output and completed/failed/timed-out status written as each primary turn settles.
 - `retry-prompts/` — retry synthesis prompt and synthetic tool results when the first output is malformed or low quality.
+- `retry-turns/` — assistant output and settled status from the optional retry synthesis conversation.
 - `context/drift-context.json` — deterministic drift, overlap, monolith, and previous-review context.
+- `context/scope-risk-context.json` — the first turn's deterministic drift and exact-SHA risk map.
+- `context/correctness-state-context.json` — linked acceptance, localized-patch, source-of-truth, and simplification evidence.
 - `context/security-context.json` — deterministic security-risk and exact-SHA risk-plan context.
+- `context/tests-regressions-context.json` — exact-SHA invariants, required-job floors, test depth, and static test inventory.
+- `context/ci-operations-context.json` — workflow, operational, and monolith evidence.
+- `context/reconciliation-context.json` — compact prior-review, risk-plan, and linked-issue metadata used to reconcile candidate findings.
 - `context/validation-context.json` — deterministic acceptance, source-of-truth, static
   test-inventory, simplification-signal, and exact-SHA risk-plan context, including the regression
   invariants reviewed for the PR.
