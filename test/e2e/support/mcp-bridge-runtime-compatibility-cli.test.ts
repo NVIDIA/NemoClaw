@@ -74,7 +74,8 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
       expect(run.result.status).toBe(0);
       expect(run.result.stderr).toBe("");
       expect(run.result.stdout).toContain("::notice title=OpenShell dev compatibility::");
-      expect(run.result.stdout).toContain("Unsupported OpenShell 0.0.78-dev.6+ga7271169");
+      expect(run.result.stdout).not.toContain("0.0.78-dev.6+ga7271169");
+      expect(run.result.stdout).not.toContain("0.0.72");
       expect(fs.readFileSync(run.githubOutputPath, "utf8")).toBe(
         [
           "mode=expected-version-mismatch",
@@ -83,14 +84,13 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
           "",
         ].join("\n"),
       );
-      expect(
-        JSON.parse(
-          fs.readFileSync(
-            path.join(run.artifactDirectory, MCP_BRIDGE_RUNTIME_COMPATIBILITY_ARTIFACT),
-            "utf8",
-          ),
+      const artifact = JSON.parse(
+        fs.readFileSync(
+          path.join(run.artifactDirectory, MCP_BRIDGE_RUNTIME_COMPATIBILITY_ARTIFACT),
+          "utf8",
         ),
-      ).toMatchObject({
+      );
+      expect(artifact).toMatchObject({
         schemaVersion: 1,
         lane: "mcp-bridge-dev",
         artifactKind: "runtime-compatibility-preflight",
@@ -102,9 +102,13 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
         credentialBoundaryGate: "rejected-as-required",
         fullLifecycle: "not-run",
       });
-      expect(fs.readFileSync(run.githubSummaryPath, "utf8")).toContain(
+      expect(artifact).not.toHaveProperty("guardMessage");
+      const summary = fs.readFileSync(run.githubSummaryPath, "utf8");
+      expect(summary).toContain(
         "the exact-version gate rejected the unsupported runtime as required",
       );
+      expect(summary).not.toContain("0.0.78-dev.6+ga7271169");
+      expect(summary).not.toContain("0.0.72");
     } finally {
       fs.rmSync(run.root, { force: true, recursive: true });
     }
@@ -138,6 +142,59 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
       ).toBe(false);
     } finally {
       fs.rmSync(run.root, { force: true, recursive: true });
+    }
+  });
+
+  it("reports missing workflow output paths without probing OpenShell (#6426)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-compat-cli-"));
+    try {
+      const probeMarker = path.join(root, "openshell-probed");
+      const openshellPath = path.join(root, "openshell");
+      fs.writeFileSync(
+        openshellPath,
+        [
+          `#!${process.execPath}`,
+          `require("node:fs").writeFileSync(${JSON.stringify(probeMarker)}, "probed");`,
+          'process.stdout.write("openshell 0.0.72\\n");',
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.chmodSync(openshellPath, 0o755);
+
+      for (const missingName of ["E2E_ARTIFACT_DIR", "GITHUB_OUTPUT"]) {
+        const env: Record<string, string> = {
+          PATH: process.env.PATH ?? "",
+          HOME: root,
+          TMPDIR: root,
+          LANG: "C",
+          NODE_NO_WARNINGS: "1",
+          NEMOCLAW_OPENSHELL_BIN: openshellPath,
+          E2E_ARTIFACT_DIR: path.join(root, "artifacts"),
+          GITHUB_OUTPUT: path.join(root, "github-output.txt"),
+        };
+        delete env[missingName];
+        const result = spawnSync(
+          process.execPath,
+          ["--no-warnings", "--import", "tsx", COMPATIBILITY_TOOL],
+          {
+            cwd: process.cwd(),
+            encoding: "utf8",
+            env,
+            killSignal: "SIGKILL",
+            timeout: 30_000,
+          },
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result.signal).toBeNull();
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("E2E_ARTIFACT_DIR and GITHUB_OUTPUT are required");
+        expect(result.stderr).not.toContain("OpenShell credential boundary runtime version check");
+        expect(fs.existsSync(probeMarker)).toBe(false);
+      }
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
     }
   });
 });

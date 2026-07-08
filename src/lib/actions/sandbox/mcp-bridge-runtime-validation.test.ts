@@ -26,6 +26,7 @@ function captureRuntimeVersionError(validate: () => void) {
     validate();
   } catch (error) {
     expect(error).toBeInstanceOf(McpCredentialBoundaryRuntimeVersionError);
+    expect(error).toMatchObject({ exitCode: 1 });
     return error as McpCredentialBoundaryRuntimeVersionError;
   }
   throw new Error("expected runtime version validation to fail");

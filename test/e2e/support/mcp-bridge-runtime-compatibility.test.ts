@@ -81,8 +81,6 @@ describe("MCP bridge dev runtime compatibility", () => {
     expect(result).toEqual({
       actualVersion: "0.0.78-dev.6+ga7271169",
       expectedVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
-      guardMessage:
-        "OpenShell credential boundary runtime version check failed: expected 0.0.72, actual 0.0.78-dev.6+ga7271169 (version mismatch). Install OpenShell 0.0.72, or point NEMOCLAW_OPENSHELL_BIN to that version, then retry.",
       mode: "expected-version-mismatch",
     });
 
@@ -110,6 +108,7 @@ describe("MCP bridge dev runtime compatibility", () => {
         fullLifecycle: "not-run",
       });
       expect(artifact).not.toHaveProperty("status");
+      expect(artifact).not.toHaveProperty("guardMessage");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("mode=expected-version-mismatch\n");
       expect(fs.readFileSync(summaryPath, "utf8")).toContain(
         "the exact-version gate rejected the unsupported runtime as required",

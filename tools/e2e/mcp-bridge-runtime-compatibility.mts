@@ -30,7 +30,6 @@ export type McpBridgeRuntimeCompatibilityMode = "expected-version-mismatch" | "f
 export interface McpBridgeRuntimeCompatibilityResult {
   actualVersion: string;
   expectedVersion: string;
-  guardMessage?: string;
   mode: McpBridgeRuntimeCompatibilityMode;
 }
 
@@ -49,6 +48,9 @@ type AssertRuntimeVersion = () => void;
 // removalCondition: Remove this branch when an attested machine-readable
 // credential-boundary capability replaces exact-version matching, or when this
 // lane stops consuming a moving tag.
+// relatedIssue: #6256 tracks exact runtime-versus-manifest attestation, not a
+// removal milestone. Removal remains capability-based because no upstream date
+// exists for an attested replacement.
 export function classifyMcpBridgeRuntimeCompatibility(
   assertRuntimeVersion: AssertRuntimeVersion = assertMcpCredentialBoundaryRuntimeVersion,
 ): McpBridgeRuntimeCompatibilityResult {
@@ -67,7 +69,6 @@ export function classifyMcpBridgeRuntimeCompatibility(
       return {
         actualVersion: error.actualVersion,
         expectedVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
-        guardMessage: error.message,
         mode: "expected-version-mismatch",
       };
     }
@@ -96,7 +97,6 @@ export function recordMcpBridgeRuntimeCompatibility(
     actualOpenShellVersion: result.actualVersion,
     credentialBoundaryGate: fullLifecycle ? "accepted" : "rejected-as-required",
     fullLifecycle: fullLifecycle ? "required" : "not-run",
-    ...(result.guardMessage ? { guardMessage: result.guardMessage } : {}),
   };
   fs.writeFileSync(
     path.join(options.artifactDirectory, MCP_BRIDGE_RUNTIME_COMPATIBILITY_ARTIFACT),
@@ -120,8 +120,7 @@ export function recordMcpBridgeRuntimeCompatibility(
         "## MCP bridge dev compatibility",
         "",
         `- Result: \`${result.mode}\``,
-        `- Reviewed OpenShell version: \`${result.expectedVersion}\``,
-        `- Installed OpenShell version: \`${result.actualVersion}\``,
+        `- Structured version evidence: \`${MCP_BRIDGE_RUNTIME_COMPATIBILITY_ARTIFACT}\``,
         `- Full MCP lifecycle: ${fullLifecycle ? "required" : "not run; the exact-version gate rejected the unsupported runtime as required"}`,
         "",
       ].join("\n"),
@@ -145,11 +144,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     });
     if (result.mode === "expected-version-mismatch") {
       console.log(
-        `::notice title=OpenShell dev compatibility::Unsupported OpenShell ${result.actualVersion} was rejected by the reviewed ${result.expectedVersion} credential boundary; full MCP lifecycle was not run.`,
+        "::notice title=OpenShell dev compatibility::The installed OpenShell runtime is outside the reviewed credential boundary; full MCP lifecycle was not run. See the structured compatibility artifact for version evidence.",
       );
     } else {
       console.log(
-        `OpenShell ${result.actualVersion} matches the reviewed credential boundary; running the full MCP lifecycle.`,
+        "The installed OpenShell runtime matches the reviewed credential boundary; running the full MCP lifecycle.",
       );
     }
   } catch (error) {
