@@ -57,6 +57,36 @@ describe("rebuild confirmation", () => {
     await expect(confirmSandboxRebuildIfNeeded(true, 3, prompt)).resolves.toBe(true);
     expect(prompt).not.toHaveBeenCalled();
   });
+
+  it("warns before the generic rebuild confirmation when thread auto-approval is enabled (#6478)", async () => {
+    const prompt = vi.fn(async () => "n");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(confirmSandboxRebuildIfNeeded(false, 0, prompt, "thread-opt-in")).resolves.toBe(
+      false,
+    );
+
+    const output = log.mock.calls.flat().join("\n");
+    expect(output).toContain("thread auto-approval will be enabled");
+    expect(output).toContain(
+      "Tool calls, including shell commands, may execute without further confirmation inside OpenShell",
+    );
+    expect(output.indexOf("thread auto-approval will be enabled")).toBeLessThan(
+      output.indexOf("This will:"),
+    );
+  });
+
+  it("prints the auto-approval warning even when --yes skips the prompt (#6478)", async () => {
+    const prompt = vi.fn(async () => "n");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(confirmSandboxRebuildIfNeeded(true, 0, prompt, "thread-opt-in")).resolves.toBe(
+      true,
+    );
+
+    expect(log.mock.calls.flat().join("\n")).toContain("including shell commands");
+    expect(prompt).not.toHaveBeenCalled();
+  });
 });
 
 describe("createRebuildCommandContext bail behaviour (#6376)", () => {

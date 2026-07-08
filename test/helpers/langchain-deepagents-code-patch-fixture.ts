@@ -12,6 +12,17 @@ export const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents
 export const patcher = path.join(agentDir, "patch-managed-deepagents-code.py");
 const packageFixtureDirs = new Set<string>();
 
+export function managedAutoApprovalPath(root: string): string {
+  return path.join(root, "managed-auto-approval");
+}
+
+export function writeManagedAutoApproval(root: string, content: string, mode = 0o444): string {
+  const capabilityPath = managedAutoApprovalPath(root);
+  fs.writeFileSync(capabilityPath, content, { mode });
+  fs.chmodSync(capabilityPath, mode);
+  return capabilityPath;
+}
+
 export function writeFixtureFile(root: string, relativePath: string, content: string): void {
   const target = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -93,7 +104,7 @@ def parse_args():
 
 
 def cli_main():
-    parse_args()
+    args = parse_args()
     tracing_flags = (
         "DEEPAGENTS_CODE_LANGSMITH_TRACING",
         "DEEPAGENTS_CODE_LANGSMITH_TRACING_V2",
@@ -108,7 +119,7 @@ def cli_main():
     assert all(os.environ.get(name) == "false" for name in tracing_flags)
     assert os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] == "1"
     assert os.environ["HOME"] == "/sandbox"
-    print("managed-posture-ok")
+    print(f"managed-posture-ok auto_approve={args.auto_approve}")
 `,
   );
   writeFixtureFile(
@@ -123,14 +134,91 @@ def should_run_onboarding(state_dir=None):
     return True
 `,
   );
-  writeFixtureFile(
-    packageDir,
-    "app.py",
-    fs.readFileSync(
+  const appFixture = fs
+    .readFileSync(
       path.join(process.cwd(), "test", "fixtures", "langchain-deepagents-code", "app.py"),
       "utf8",
-    ),
-  );
+    )
+    .replace(
+      "class DeepAgentsApp:\n",
+      `class _StatusBar:
+    def __init__(self):
+        self.auto_approve = True
+
+    def set_auto_approve(self, *, enabled):
+        self.auto_approve = enabled
+
+
+class _SessionState:
+    def __init__(self):
+        self.thread_id = "thread-1"
+        self.auto_approve = True
+        self.approval_mode_key = "approval/thread-1"
+
+
+class DeepAgentsApp:
+`,
+    )
+    .replace(
+      "        self._auto_approve = True\n        self._status_bar = None\n        self._session_state = None\n",
+      `        self._auto_approve = True
+        self._status_bar = _StatusBar()
+        self._session_state = _SessionState()
+        self._agent = object()
+        self._assistant_id = "agent-1"
+        self.resume_should_fail = False
+        self.resume_should_fail_after_reset = False
+        self.agent_swap_should_fail = False
+        self.agent_swap_should_fail_after_reset = False
+        self.clear_should_fail_early = False
+        self.clear_should_fail_after_reset = False
+`,
+    )
+    .replace(
+      "    async def _on_auto_approve_enabled(self):\n        self._auto_approve = True\n\n    async def action_toggle_auto_approve(self):\n        self._auto_approve = not self._auto_approve\n",
+      `    async def _on_auto_approve_enabled(self):
+        self._auto_approve = True
+        self._status_bar.set_auto_approve(enabled=True)
+        self._session_state.auto_approve = True
+
+    async def action_toggle_auto_approve(self):
+        self._auto_approve = not self._auto_approve
+        self._status_bar.set_auto_approve(enabled=self._auto_approve)
+        self._session_state.auto_approve = self._auto_approve
+
+    async def _resume_thread(self, thread_id):
+        if self.resume_should_fail:
+            return
+        previous_thread_id = self._session_state.thread_id
+        self._session_state.thread_id = thread_id
+        if self.resume_should_fail_after_reset:
+            self._session_state.thread_id = previous_thread_id
+            raise RuntimeError("resume failed after reset")
+
+    async def _restart_server_for_agent_swap(self, agent_name):
+        if self.agent_swap_should_fail:
+            return
+        self._session_state.thread_id = f"{self._session_state.thread_id}-swap"
+        if self.agent_swap_should_fail_after_reset:
+            self._agent = None
+            raise RuntimeError("agent swap failed after reset")
+        self._assistant_id = agent_name
+        self._agent = object()
+`,
+    )
+    .replace(
+      "    async def _handle_command(self, command):\n        self.original_commands.append(command)\n",
+      `    async def _handle_command(self, command):
+        self.original_commands.append(command)
+        if command.lower().strip() in {"/clear", "/force-clear"}:
+            if self.clear_should_fail_early:
+                raise RuntimeError("clear failed before reset")
+            self._session_state.thread_id = f"{self._session_state.thread_id}-clear"
+            if self.clear_should_fail_after_reset:
+                raise RuntimeError("clear failed after reset")
+`,
+    );
+  writeFixtureFile(packageDir, "app.py", appFixture);
   writeFixtureFile(
     packageDir,
     "auth_store.py",
@@ -624,6 +712,10 @@ export function patchFixture(tempDir: string): void {
     .replace(
       '"/usr/local/share/nemoclaw/dcode-inference-base-url"',
       JSON.stringify(managedBaseUrlFile),
+    )
+    .replace(
+      '"/usr/local/share/nemoclaw/dcode-auto-approval"',
+      JSON.stringify(managedAutoApprovalPath(tempDir)),
     )
     .replace("_MANAGED_FILE_OWNER_UID = 0", `_MANAGED_FILE_OWNER_UID = ${process.getuid?.() ?? 0}`);
   fs.writeFileSync(helperPath, helper, "utf8");

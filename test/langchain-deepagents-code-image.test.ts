@@ -258,6 +258,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/dcode.real",
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/deepagents-code",
       "/opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin",
+      "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
       "/opt/venv/bin/pip3 check",
       "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
     ]) {
@@ -603,9 +604,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
     ]);
   });
-
   it("ships a headless inference acceptance check for Deep Agents Code", () => {
     const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
     for (const expected of [

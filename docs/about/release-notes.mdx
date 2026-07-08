@@ -16,6 +16,17 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## Unreleased
+
+The next NemoClaw release adds an optional thread-scoped auto-approval capability for managed LangChain Deep Agents Code sandboxes.
+
+- Deep Agents interactive sessions keep auto-approval disabled by default.
+  Operators can enable the `thread-opt-in` capability through a named transactional rebuild, after which each thread must still activate it through the TUI approval choice or `dcode -y`.
+  Active state resets for a new process or thread, `/clear`, thread switching, and agent switching.
+  The root-owned capability fails closed on invalid state, ambient environment values cannot enable it, and OpenShell policy, credential, inference, MCP, filesystem, and process controls remain in force.
+  Headless `dcode -n` remains a separate automation boundary.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), [Security Best Practices](../security/best-practices), [Model Capability Audit](../inference/model-capability-audit), and [NemoClaw CLI Commands Reference](../reference/commands).
+
 ## v0.0.77
 
 NemoClaw v0.0.77 hardens LangChain Deep Agents Code packaging, tracing, and guided setup. The release publishes and validates the current Deep Agents sandbox base image, reduces telemetry credential exposure, reports the upstream provider selected during onboarding, and reuses a reviewed local credential form in starter prompts.

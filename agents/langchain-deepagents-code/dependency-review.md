@@ -64,9 +64,11 @@ A multi-stage build or secret mount would not make the shipped module
 confidential. Revisit this boundary if an adapter build input becomes
 secret-bearing or non-public.
 
-Before local build and installation, the managed image verifies both copied
-adapter build inputs against the module and project-metadata hashes recorded
-above. It then installs the first-party `nemoclaw-deepagents-profile` package
+Before local build and installation, the managed image verifies that the build
+tree contains exactly the two individually copied adapter inputs, then checks
+both against the module and project-metadata hashes recorded above. Extra files
+cannot enter the wheel through the Docker build context. It then installs the
+first-party `nemoclaw-deepagents-profile` package
 without consulting an index. Its `deepagents.harness_profiles` entry
 point runs after built-in profiles are registered, reads the reviewed canonical
 profile through one exact-version/hash-gated private registry lookup, and uses

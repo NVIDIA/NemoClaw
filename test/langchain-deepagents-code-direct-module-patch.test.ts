@@ -9,8 +9,10 @@ import { addDarwinFcntlSealConstants } from "./helpers/darwin-fcntl-seal-fixture
 import {
   cleanupPackageFixtures,
   createPackageFixture,
+  managedAutoApprovalPath,
   patcher,
   patchFixture,
+  writeManagedAutoApproval,
 } from "./helpers/langchain-deepagents-code-patch-fixture";
 
 const progressiveDisclosureHarness = path.join(
@@ -101,6 +103,8 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ],
     ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
+    ["app", "app.py", "_nemoclaw_original_on_auto_approve_enabled"],
+    ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
@@ -118,11 +122,13 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
 
-  it("rejects a fully marked package with a stale managed analytics guard", () => {
+  it.each([
+    ['os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
+    ["def managed_auto_approval_enabled() -> bool:"],
+  ])("rejects a fully marked package with a stale managed helper guard: %s", (anchor) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const target = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
-    const anchor = 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"';
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # stale`);
     fs.writeFileSync(target, corrupted, "utf8");
 
@@ -209,6 +215,100 @@ else:
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain("disabled in NemoClaw-managed");
+  });
+
+  it.each([
+    ["-y"],
+    ["--auto-approve"],
+  ])("preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)", (...args) => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    writeManagedAutoApproval(tempDir, "thread-opt-in\n");
+    const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
+      env: {
+        PATH: process.env.PATH,
+        PYTHONPATH: tempDir,
+        NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("managed-posture-ok auto_approve=True");
+    expect(result.stderr).toContain("Auto-approval is enabled for this thread");
+    expect(result.stderr).toContain("shell commands");
+  });
+
+  it("validates exact trusted auto-approval state and otherwise fails closed (#6478)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const capabilityPath = managedAutoApprovalPath(tempDir);
+    const validation = `
+import os
+from pathlib import Path
+
+from deepagents_code import _nemoclaw_managed as managed
+
+path = Path(${JSON.stringify(capabilityPath)})
+
+def check(expected_mode, expected_enabled):
+    assert managed.managed_auto_approval_mode() == expected_mode
+    assert managed.managed_auto_approval_enabled() is expected_enabled
+
+check("disabled", False)
+for content, expected_mode, expected_enabled in (
+    (b"disabled\\n", "disabled", False),
+    (b"thread-opt-in\\n", "thread-opt-in", True),
+    (b"thread-opt-in", "disabled", False),
+    (b"thread-opt-in\\n\\n", "disabled", False),
+    (b"thread-opt-in\\x00", "disabled", False),
+    (b"enabled\\n", "disabled", False),
+):
+    path.unlink(missing_ok=True)
+    path.write_bytes(content)
+    path.chmod(0o444)
+    check(expected_mode, expected_enabled)
+
+path.chmod(0o644)
+check("disabled", False)
+path.write_bytes(b"thread-opt-in\\n")
+path.chmod(0o444)
+trusted_owner = managed._MANAGED_FILE_OWNER_UID
+managed._MANAGED_FILE_OWNER_UID = trusted_owner + 1
+try:
+    check("disabled", False)
+finally:
+    managed._MANAGED_FILE_OWNER_UID = trusted_owner
+path.unlink()
+target = path.with_name(f"{path.name}-target")
+target.write_bytes(b"thread-opt-in\\n")
+target.chmod(0o444)
+path.symlink_to(target)
+check("disabled", False)
+path.unlink()
+
+real_open = managed.os.open
+def unreadable(*args, **kwargs):
+    raise PermissionError("unreadable")
+managed.os.open = unreadable
+try:
+    check("disabled", False)
+finally:
+    managed.os.open = real_open
+
+os.environ["NEMOCLAW_DCODE_AUTO_APPROVAL"] = "thread-opt-in"
+os.environ["NEMOCLAW_DCODE_AUTO_APPROVAL_ENABLED"] = "1"
+check("disabled", False)
+`;
+    const result = spawnSync("python3", ["-c", validation], {
+      env: { NEMOCLAW_DEBUG: "1", PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("NemoClaw managed auto-approval disabled:");
+    expect(result.stderr).toContain("capability metadata is unsafe");
+    expect(result.stderr).toContain("capability contents are invalid");
   });
 
   it("preserves ordinary direct-module and read-only tools execution", () => {
@@ -705,11 +805,19 @@ async def validate():
     )
     assert instance.original_switch_kwargs is None
     instance._auto_approve = True
+    instance._status_bar.set_auto_approve(enabled=True)
+    instance._session_state.auto_approve = True
     await instance._on_auto_approve_enabled()
     assert instance._auto_approve is False
+    assert instance._status_bar.auto_approve is False
+    assert instance._session_state.auto_approve is False
     instance._auto_approve = True
+    instance._status_bar.set_auto_approve(enabled=True)
+    instance._session_state.auto_approve = True
     await instance.action_toggle_auto_approve()
     assert instance._auto_approve is False
+    assert instance._status_bar.auto_approve is False
+    assert instance._session_state.auto_approve is False
     await instance._set_rubric_model("anthropic:test")
     assert instance._rubric_model is None
     assert instance._server_kwargs["rubric_model"] is None
@@ -1018,6 +1126,206 @@ print("managed-boundaries-ok")
       encoding: "utf8",
     });
     expect(output).toContain("managed-boundaries-ok");
+  });
+
+  it("enables warned thread-scoped approval and resets it at thread boundaries (#6478)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    writeManagedAutoApproval(tempDir, "thread-opt-in\n");
+    const validation = `
+import asyncio
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location(
+    "progressive_disclosure_harness",
+    ${JSON.stringify(progressiveDisclosureHarness)},
+)
+assert spec is not None and spec.loader is not None
+progressive_disclosure_harness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(progressive_disclosure_harness)
+progressive_disclosure_harness._install_stubs()
+
+from deepagents_code import _nemoclaw_managed, agent, app, main as dcode_main
+from deepagents_code.client import non_interactive
+from deepagents_code.tui.widgets.approval import ApprovalMenu
+
+WARNING = "Tool calls, including shell commands, may execute without further confirmation"
+
+def set_auto(instance, enabled):
+    instance._auto_approve = enabled
+    instance._status_bar.set_auto_approve(enabled=enabled)
+    instance._session_state.auto_approve = enabled
+
+def assert_auto(instance, enabled):
+    assert instance._auto_approve is enabled
+    assert instance._status_bar.auto_approve is enabled
+    assert instance._session_state.auto_approve is enabled
+
+def assert_reset(instance):
+    assert_auto(instance, False)
+    assert instance._session_state.approval_mode_key is None
+
+async def validate():
+    assert _nemoclaw_managed.managed_auto_approval_mode() == "thread-opt-in"
+    assert _nemoclaw_managed.managed_auto_approval_enabled() is True
+    original_argv = sys.argv
+    sys.argv = ["dcode"]
+    assert dcode_main.parse_args().auto_approve is False
+    sys.argv = ["dcode", "-n", "message", "--auto-approve"]
+    assert dcode_main.parse_args().auto_approve is True
+    sys.argv = original_argv
+    assert agent._resolve_ptc_option(
+        ["execute"], tools=[], acknowledge_unsafe=True, auto_approve=True
+    ) is None
+    headless_kwargs = await non_interactive.run_non_interactive(
+        "message",
+        "assistant",
+        startup_cmd="touch /tmp/unsafe",
+        model_params={"api_key": "secret"},
+        sandbox_type="modal",
+        mcp_config_path="mcp.json",
+        no_mcp=False,
+        trust_project_mcp=True,
+        enable_interpreter=True,
+        interpreter_ptc=["execute"],
+        rubric_model="anthropic:attacker",
+    )
+    assert headless_kwargs["startup_cmd"] is None
+    assert headless_kwargs["model_params"] is None
+    assert headless_kwargs["sandbox_type"] == "none"
+    assert headless_kwargs["mcp_config_path"] is None
+    assert headless_kwargs["no_mcp"] is True
+    assert headless_kwargs["trust_project_mcp"] is False
+    assert headless_kwargs["enable_interpreter"] is False
+    assert headless_kwargs["interpreter_ptc"] is None
+    assert headless_kwargs["rubric_model"] is None
+    instance = app.DeepAgentsApp()
+
+    set_auto(instance, False)
+    await instance._on_auto_approve_enabled()
+    assert_auto(instance, True)
+    assert WARNING in instance.notifications[-1][0]
+
+    set_auto(instance, False)
+    warning_count = len(instance.notifications)
+    await instance.action_toggle_auto_approve()
+    assert_auto(instance, True)
+    assert len(instance.notifications) == warning_count + 1
+    assert WARNING in instance.notifications[-1][0]
+    await instance.action_toggle_auto_approve()
+    assert_auto(instance, False)
+    assert len(instance.notifications) == warning_count + 1
+
+    approval = ApprovalMenu()
+    approval._handle_selection(1)
+    assert approval.decisions == [("auto_approve_all", None)]
+    assert approval.notifications == []
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    await instance._handle_command("/clear")
+    assert instance._session_state.thread_id != previous_thread
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    await instance._handle_command("/force-clear")
+    assert instance._session_state.thread_id != previous_thread
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    instance.clear_should_fail_early = True
+    try:
+        await instance._handle_command("/clear")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("early clear failure was not raised")
+    assert instance._session_state.thread_id == previous_thread
+    assert_reset(instance)
+
+    instance.clear_should_fail_early = False
+    instance.clear_should_fail_after_reset = True
+    try:
+        await instance._handle_command("/clear")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("post-reset clear failure was not raised")
+    assert instance._session_state.thread_id != previous_thread
+    assert_reset(instance)
+    instance.clear_should_fail_after_reset = False
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    instance.resume_should_fail = True
+    await instance._resume_thread("thread-failed")
+    assert instance._session_state.thread_id == previous_thread
+    assert_reset(instance)
+
+    instance.resume_should_fail = False
+    instance.resume_should_fail_after_reset = True
+    try:
+        await instance._resume_thread("thread-reset-then-failed")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("post-reset resume failure was not raised")
+    assert instance._session_state.thread_id == previous_thread
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    instance._session_state.approval_mode_key = "approval/thread-reset-then-failed"
+    instance.resume_should_fail_after_reset = False
+    await instance._resume_thread("thread-2")
+    assert instance._session_state.thread_id == "thread-2"
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    instance.agent_swap_should_fail = True
+    await instance._restart_server_for_agent_swap("agent-failed")
+    assert instance._session_state.thread_id == previous_thread
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    instance._session_state.thread_id = None
+    await instance._restart_server_for_agent_swap("agent-none")
+    assert instance._session_state.thread_id is None
+    assert_reset(instance)
+
+    instance.agent_swap_should_fail = False
+    instance.agent_swap_should_fail_after_reset = True
+    try:
+        await instance._restart_server_for_agent_swap("agent-restart-failed")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("post-reset agent swap failure was not raised")
+    assert instance._session_state.thread_id is not None
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    instance.agent_swap_should_fail_after_reset = False
+    instance.agent_swap_should_fail = False
+    await instance._restart_server_for_agent_swap("agent-2")
+    assert instance._session_state.thread_id != previous_thread
+    assert instance._assistant_id == "agent-2"
+    assert_reset(instance)
+
+asyncio.run(validate())
+print("managed-auto-approval-ok")
+`;
+    const result = spawnSync("python3", ["-c", validation], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("managed-auto-approval-ok");
   });
 
   it("fails closed when the installed version or required source shape drifts", () => {

@@ -512,6 +512,33 @@ If the container runtime restricts `ulimit` modification, the entrypoint logs a 
 
 <AgentOnly variant="deepagents">
 
+### Deep Agents Thread Auto-Approval Capability
+
+Managed Deep Agents sandboxes separate the host-configured capability from the active approval state of each TUI thread.
+The default `disabled` mode keeps the TUI auto-approval choice and `dcode -y` unavailable.
+An operator can select `thread-opt-in` through a named transactional rebuild, but each thread still requires an explicit TUI choice or `dcode -y` invocation before tool calls run without further confirmation.
+
+NemoClaw stores the configured mode in a root-owned, mode `0444` image file rather than trusting runtime environment variables.
+A missing, malformed, symlinked, writable, unreadable, or incorrectly owned capability file resolves to `disabled`.
+Ambient `NEMOCLAW_DCODE_AUTO_APPROVAL*` values cannot enable the capability.
+
+When a thread activates auto-approval, the TUI shows the upstream active-state indicator and prints a warning.
+NemoClaw clears that active state for a new process, `/clear`, `/force-clear`, a thread switch or resume, and an agent switch.
+The host-side `status` command reports only the configured capability because it does not attest to the current state of a specific TUI thread.
+
+| Aspect | Detail |
+|---|---|
+| Default | `disabled`. Interactive tool calls keep their approval prompts, and thread auto-approval cannot be selected. |
+| What you can change | Use `--dcode-auto-approval thread-opt-in` during a named managed Deep Agents rebuild. Use `--dcode-auto-approval disabled` in another rebuild to revoke the capability. |
+| Risk if enabled | A prompt injection, untrusted repository, or mistaken plan can cause tool calls, including shell commands, to run without another human confirmation for the rest of the active thread. |
+| Remaining controls | OpenShell egress policy, credential isolation and rewriting, the managed inference route, managed MCP validation, filesystem and process controls, and the other managed runtime restrictions remain active. |
+| Recommendation | Keep `disabled` for sensitive or unfamiliar work. Enable `thread-opt-in` only for bounded tasks in a reviewed workspace, watch the active-state indicator, and start a new thread or rebuild with `disabled` when unattended tool execution is no longer acceptable. |
+
+<Warning>
+Treat `thread-opt-in` as permission for unattended shell execution inside the sandbox, not as a policy bypass.
+The sandbox boundary limits where commands run and what external resources they can reach, but it does not make an automatically approved command harmless to writable workspace data.
+</Warning>
+
 ### Headless Deep Agents Approval Boundary
 
 Interactive `dcode` sessions keep destructive tools behind the Deep Agents Code approval UI.
@@ -521,7 +548,7 @@ The managed headless path automatically approves non-shell tool requests such as
 | Aspect | Detail |
 |---|---|
 | Default | Interactive `dcode` prompts for destructive tools. Headless `dcode -n` auto-approves non-shell tools and keeps shell execution disabled. |
-| What you can change | Choose interactive `dcode` when you need to review tool calls. Use `dcode -n` only for tasks where unattended file edits are acceptable. |
+| What you can change | Choose interactive `dcode` when you need to review tool calls. Use `dcode -n` only for tasks where unattended file edits are acceptable. The interactive `thread-opt-in` capability does not change this headless boundary. |
 | Risk if relaxed | Treating headless mode like an interactive approval session can let file edits happen without a human prompt. |
 | Recommendation | Use the interactive TUI for sensitive repositories or destructive tasks. Reserve `dcode -n` for bounded automation with a reviewed workspace and policy. |
 

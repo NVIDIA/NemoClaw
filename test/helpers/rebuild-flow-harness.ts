@@ -433,6 +433,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     failedDirs: [],
     failedFiles: [],
     manifest: {
+      agentType: overrides.agentName ?? "openclaw",
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       timestamp: "2026-06-01T00:00:00.000Z",
       policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
@@ -453,16 +454,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(
     overrides.managedImageEvidence ?? true,
   );
-  const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
-    overrides.restoreSandboxState ??
-      (() => ({
-        success: true,
-        restoredDirs: ["workspace"],
-        restoredFiles: ["user.md"],
-        failedDirs: [],
-        failedFiles: [],
-      })),
-  );
+  const restoreSandboxStateSpy = vi
+    .spyOn(sandboxState, "restoreRecreatedSandboxState")
+    .mockImplementation(
+      overrides.restoreSandboxState ??
+        (() => ({
+          success: true,
+          restoredDirs: ["workspace"],
+          restoredFiles: ["user.md"],
+          failedDirs: [],
+          failedFiles: [],
+        })),
+    );
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
     return argv[0] === "provider" && argv[1] === "get"

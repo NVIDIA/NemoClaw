@@ -3,6 +3,11 @@
 
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import {
+  type DcodeAutoApprovalMode,
+  hasDcodeAutoApprovalDrift,
+  resolveDcodeAutoApprovalRequest,
+} from "../../dcode-auto-approval";
 import { usesManagedDcodeIdentity } from "../../dcode-selection-drift";
 import type { SandboxResumeDecision } from "./sandbox-resume";
 
@@ -27,6 +32,7 @@ interface SelectionOptions<Agent> {
 interface ResumeOptions<Agent> extends SelectionOptions<Agent> {
   readonly resume: boolean;
   readonly preferredInferenceApi: string | null;
+  readonly requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
 }
 
 interface ResumeState {
@@ -36,6 +42,28 @@ interface ResumeState {
 
 function agentName<Agent>(agent: Agent): string | null | undefined {
   return (agent as { name?: string } | null | undefined)?.name;
+}
+
+export function resolveAutoApprovalMode<Agent>(
+  options: SelectionOptions<Agent> & {
+    readonly requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
+  },
+  sandboxName: string | null,
+  deps: Pick<Deps, "error" | "exitProcess"> & {
+    getSandboxRegistryEntry(name: string): SandboxEntry | null;
+  },
+): DcodeAutoApprovalMode {
+  const registryEntry = sandboxName ? deps.getSandboxRegistryEntry(sandboxName) : null;
+  const resolution = resolveDcodeAutoApprovalRequest({
+    agent: usesManagedDcodeIdentity(agentName(options.agent), options.fromDockerfile)
+      ? agentName(options.agent)
+      : null,
+    requestedMode: options.requestedDcodeAutoApprovalMode,
+    recordedMode: registryEntry?.dcodeAutoApprovalMode,
+  });
+  if (!resolution.error) return resolution.mode;
+  deps.error(resolution.error);
+  return deps.exitProcess(1);
 }
 
 export function preserveManagedDcodeRegistryEntry<Agent>(
@@ -57,9 +85,17 @@ export function resolveSignals<Agent>(
   state: ResumeState,
   sandboxReuseState: string,
   registryEntry: SandboxEntry | null,
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode,
   deps: Deps,
-): { inferenceSelectionChanged: boolean } {
+): { inferenceSelectionChanged: boolean; dcodeAutoApprovalChanged: boolean } {
   const sandboxName = state.sandboxName;
+  const dcodeAutoApprovalChanged = hasDcodeAutoApprovalDrift({
+    liveExists: sandboxReuseState === "ready",
+    managedDcodeAgent: usesManagedDcodeIdentity(agentName(options.agent), options.fromDockerfile),
+    hasRegistryEntry: registryEntry !== null,
+    recordedDcodeAutoApprovalMode: registryEntry?.dcodeAutoApprovalMode,
+    requestedDcodeAutoApprovalMode: dcodeAutoApprovalMode,
+  });
   if (
     !options.resume ||
     state.session?.steps?.sandbox?.status !== "complete" ||
@@ -67,7 +103,7 @@ export function resolveSignals<Agent>(
     !usesManagedDcodeIdentity(agentName(options.agent), options.fromDockerfile) ||
     sandboxReuseState !== "ready"
   ) {
-    return { inferenceSelectionChanged: false };
+    return { inferenceSelectionChanged: false, dcodeAutoApprovalChanged };
   }
   if (!registryEntry) {
     deps.error(
@@ -81,7 +117,10 @@ export function resolveSignals<Agent>(
     options.model,
     options.preferredInferenceApi,
   );
-  return { inferenceSelectionChanged: Boolean(drift.changed || drift.unknown) };
+  return {
+    inferenceSelectionChanged: Boolean(drift.changed || drift.unknown),
+    dcodeAutoApprovalChanged,
+  };
 }
 
 export function selectionFidelity<Agent>(
