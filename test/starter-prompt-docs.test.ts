@@ -30,10 +30,10 @@ const localCredentialFormUrl =
 const localCredentialFormSha256 =
   "57068851991cfa3e547827e564d1c842243a84c89d3dd14d5900c81d1f7b740b"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormScriptCspHash = [
-  "'sha256-gMKcS2M/",
-  "PaFPwkPUPGDZ9haV",
-  "wA7m+QRLgf2wZT1",
-  "73ls='",
+  "'sha256-7knX1kPQ",
+  "ir4x3z0uoR2GmEi9",
+  "hb0+82UEW2o9BzJD",
+  "520='",
 ].join("");
 const localCredentialFormStyleCspHash = [
   "'sha256-W4wSJyrm",
@@ -340,9 +340,37 @@ describe("starter prompt docs CTA", () => {
     expect(allInvalid.submitButton.disabled).toBe(true);
     expect(allInvalid.fieldsElement.children).toHaveLength(0);
     expect(allInvalid.resultElement.allText()).toContain("Rejected specs: bad-name:secret");
+
+    for (const malformedUrl of [
+      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:unknown",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:text:extra",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,SECRET_TOKEN:text",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret&fields=PUBLIC_ID:text",
+      "http://127.0.0.1:4123/local-credential-form.html?field=SECRET_TOKEN:secret&fields=PUBLIC_ID:text",
+    ]) {
+      const malformed = runCredentialForm(malformedUrl);
+      expect(malformed.submitButton.disabled, malformedUrl).toBe(true);
+      expect(malformed.resultElement.allText(), malformedUrl).toContain("rejected");
+      await malformed.submit();
+      expect(malformed.fetchCalls, malformedUrl).toHaveLength(0);
+    }
   });
 
   it("submits only to the loopback helper and redacts secret values (#5048)", async () => {
+    const repeated = runCredentialForm(
+      "http://127.0.0.1:4123/local-credential-form.html?field=SECRET_TOKEN:secret&field=PUBLIC_ID:text",
+    );
+    const repeatedInputs = repeated.fieldsElement.children.filter(
+      (child) => child.tagName === "input",
+    );
+    expect(repeatedInputs.map(({ name, type }) => [name, type])).toEqual([
+      ["SECRET_TOKEN", "password"],
+      ["PUBLIC_ID", "text"],
+    ]);
+    expect(repeated.submitButton.disabled).toBe(false);
+
     const rendered = runCredentialForm(
       "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,PUBLIC_ID:text&submit=http://127.0.0.1:9/capture",
     );
