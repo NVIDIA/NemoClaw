@@ -124,12 +124,12 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
-function helperArgs(fields: string[], command: string[]): string[] {
+function helperArgs(fields: string[], command: string[], formPath = FORM_PATH): string[] {
   return [
     "--experimental-strip-types",
     HELPER_PATH,
     "--form",
-    FORM_PATH,
+    formPath,
     ...fields.flatMap((field) => ["--field", field]),
     "--",
     ...command,
@@ -327,6 +327,27 @@ describe("local credential helper", () => {
     const result = await withTimeout(captured.closed, PROCESS_TIMEOUT_MS, "invalid helper CLI");
 
     expect(result.code).not.toBe(0);
+    expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
+  });
+
+  it("rejects a modified credential form before listening", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-form-test-"));
+    tempDirs.add(dir);
+    const modifiedFormPath = path.join(dir, "local-credential-form.html");
+    const modifiedForm = Buffer.concat([fs.readFileSync(FORM_PATH), Buffer.from("\n")]);
+    fs.writeFileSync(modifiedFormPath, modifiedForm);
+    const captured = captureChild(
+      helperArgs(
+        ["OPENAI_API_KEY:secret"],
+        [process.execPath, "-e", "process.exit(0)"],
+        modifiedFormPath,
+      ),
+    );
+
+    const result = await withTimeout(captured.closed, PROCESS_TIMEOUT_MS, "modified helper form");
+
+    expect(result.code).not.toBe(0);
+    expect(captured.output()).toContain("Local credential form SHA-256 mismatch");
     expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
   });
 

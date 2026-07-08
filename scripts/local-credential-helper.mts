@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import path from "node:path";
@@ -226,17 +226,43 @@ export function loadVerifiedCredentialForm(
       "Local credential form SHA-256 is not finalized in scripts/local-credential-helper.mts",
     );
   }
-  const stat = statSync(formPath);
-  if (!stat.isFile()) throw new Error(`Local credential form is not a regular file: ${formPath}`);
-  if (stat.size <= 0 || stat.size > MAX_FORM_BYTES) {
-    throw new Error(`Local credential form must be between 1 and ${MAX_FORM_BYTES} bytes`);
-  }
-  const bytes = readFileSync(formPath);
+  const bytes = readBoundedCredentialForm(formPath);
   const actualSha256 = createHash("sha256").update(bytes).digest("hex");
   if (!timingSafeStringEqual(actualSha256, expectedSha256)) {
     throw new Error(`Local credential form SHA-256 mismatch: ${formPath}`);
   }
   return bytes;
+}
+
+function readBoundedCredentialForm(formPath: string): Buffer {
+  const fileDescriptor = openSync(formPath, constants.O_RDONLY);
+  try {
+    const stat = fstatSync(fileDescriptor);
+    if (!stat.isFile()) {
+      throw new Error(`Local credential form is not a regular file: ${formPath}`);
+    }
+    if (stat.size <= 0 || stat.size > MAX_FORM_BYTES) {
+      throw new Error(`Local credential form must be between 1 and ${MAX_FORM_BYTES} bytes`);
+    }
+
+    const bytes = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(fileDescriptor, bytes, offset, bytes.length - offset, null);
+      if (count === 0) {
+        throw new Error(`Local credential form changed while being read: ${formPath}`);
+      }
+      offset += count;
+    }
+
+    const extraByte = Buffer.alloc(1);
+    if (readSync(fileDescriptor, extraByte, 0, 1, null) !== 0) {
+      throw new Error(`Local credential form changed while being read: ${formPath}`);
+    }
+    return bytes;
+  } finally {
+    closeSync(fileDescriptor);
+  }
 }
 
 function timingSafeStringEqual(actual: string, expected: string): boolean {
