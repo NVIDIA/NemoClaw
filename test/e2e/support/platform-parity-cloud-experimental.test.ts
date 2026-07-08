@@ -299,6 +299,21 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
+  it("restores Tavily denial after the opt-in proof for later ordered checks", () => {
+    const script = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+      ),
+      "utf8",
+    );
+
+    expect(script).toContain("policy-remove tavily --yes");
+    expect(script).toContain(
+      "managed Deep Agents Code python is blocked again after policy-remove",
+    );
+  });
+
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
     const scriptPath = path.join(
       process.cwd(),
