@@ -151,7 +151,8 @@ Forward the dashboard port from your workstation, substituting the port NemoClaw
 ssh -L 18789:127.0.0.1:18789 <user>@<remote-host>
 ```
 
-When you run `nemoclaw` over SSH, the install summary and `nemoclaw <sandbox> dashboard-url` print this command for you with the detected host and port.
+When you run `nemoclaw` over SSH, the install summary and `nemoclaw <sandbox> dashboard-url` print this command for you, filled in with your remote username and the forwarded dashboard port.
+The host stays a `<host>` placeholder that you replace with the address you SSH to, because NemoClaw cannot reliably recover it through an SSH config alias, NAT, or a jump host.
 Then open the dashboard URL on your workstation.
 
 <Warning>

@@ -100,7 +100,7 @@ describe("dashboard-url command helpers", () => {
     );
 
     expect(sinks.out).toContain("  Remote access (SSH session detected):");
-    expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@10.6.76.40");
+    expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@<host>");
   });
 
   it("appends the SSH hint in the plain-URL (session-auth) branch over SSH (#5925)", () => {
@@ -124,7 +124,7 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toContain("  Dashboard URL:");
     expect(sinks.out).toContain("  http://127.0.0.1:18790/");
     expect(sinks.out).toContain("  Remote access (SSH session detected):");
-    expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@10.6.76.40");
+    expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@<host>");
   });
 
   it("omits the SSH port-forward hint outside an SSH session", () => {
