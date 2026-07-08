@@ -51,8 +51,26 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
 /** Context-anchored patterns (require a prefix like KEY=, Bearer, etc.). */
 export const CONTEXT_PATTERNS: RegExp[] = [
   /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/gi,
-  /(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
+  /(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/gi,
+  /(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/g,
+  /(?<=(?:^|[^A-Za-z0-9])KEY["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/g,
 ];
+
+/** Match pass/passwd only as a complete or terminal credential-name segment. */
+export function hasPassCredentialSegment(key: string): boolean {
+  const normalized = key
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return (
+    normalized === "pass" ||
+    normalized === "passwd" ||
+    normalized.endsWith("_pass") ||
+    normalized.endsWith("_passwd")
+  );
+}
 
 /** Multi-line or JSON-escaped secret blocks that do not have a token prefix. */
 export const SECRET_BLOCK_PATTERNS: RegExp[] = [
@@ -62,8 +80,8 @@ export const SECRET_BLOCK_PATTERNS: RegExp[] = [
 /** All secret patterns combined. */
 export const SECRET_PATTERNS: RegExp[] = [
   ...TOKEN_PREFIX_PATTERNS,
-  ...CONTEXT_PATTERNS,
   ...SECRET_BLOCK_PATTERNS,
+  ...CONTEXT_PATTERNS,
 ];
 
 /**

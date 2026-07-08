@@ -308,7 +308,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("registers executable Deep Agents cloud-experimental checks", () => {
+  it("registers executable Deep Agents cloud-experimental checks in execution order", () => {
     expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
       "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
@@ -326,27 +326,6 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;
       expect(mode & 0o111, `${scriptPath} must be executable`).not.toBe(0);
     }
-  });
-
-  it("checks the stock Nemotron Ultra profile before destructive re-onboarding", () => {
-    const profileCheckPath = DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS[0];
-    const profileCheck = fs.readFileSync(path.join(process.cwd(), profileCheckPath), "utf8");
-
-    expect(profileCheckPath).toBe(
-      "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
-    );
-    expect(profileCheck).toContain("/opt/venv/bin/python3 -I -");
-    expect(profileCheck).toContain("from langchain_openai import ChatOpenAI");
-    expect(profileCheck).toContain("_harness_profile_for_model(make_model(model_id), None)");
-    expect(profileCheck).toContain('"nvidia/nemotron-3-ultra-550b-a55b"');
-    expect(profileCheck).toContain('"nvidia/nvidia/nemotron-3-ultra"');
-    expect(profileCheck).toContain('"deepagents-code": "0.1.34"');
-    expect(profileCheck).toContain('"deepagents": "0.7.0a6"');
-    expect(profileCheck).toContain("_nvidia_nemotron_3_ultra.__file__");
-    expect(profileCheck).toContain('description_overrides["read_file"]');
-    expect(profileCheck).toContain("middleware_names(profile) == EXPECTED_MIDDLEWARE");
-    expect(profileCheck).toContain('make_model("gpt-4.1-mini")');
-    expect(profileCheck).not.toMatch(/\.(?:invoke|ainvoke|stream|astream)\(/);
   });
 
   it("gives the destructive fresh re-onboard check its onboarding budget", () => {

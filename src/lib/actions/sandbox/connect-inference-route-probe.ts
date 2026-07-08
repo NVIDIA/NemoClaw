@@ -27,7 +27,7 @@ const INFERENCE_ROUTE_CA_FROM_ENV = 'CA_BUNDLE="${CURL_CA_BUNDLE:-${SSL_CERT_FIL
 const INFERENCE_ROUTE_CA_VALIDATION =
   '[ -n "$CA_BUNDLE" ] && [ -f "$CA_BUNDLE" ] && [ -r "$CA_BUNDLE" ] || { printf \'UNAVAILABLE OpenShell CA bundle missing or unreadable\'; exit 1; }';
 const INFERENCE_ROUTE_PROBE_CORE_SCRIPT = [
-  "HTTP_CODE=$(/usr/bin/curl -s -o /dev/null -w '%{http_code}' --cacert \"$CA_BUNDLE\" --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
+  "HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' --cacert \"$CA_BUNDLE\" --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
   'case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s\' "$HTTP_CODE" ;; esac',
 ].join("; ");
 export const INFERENCE_ROUTE_PROBE_SCRIPT = [
@@ -35,29 +35,17 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_VALIDATION,
   INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
 ].join("; ");
-const INFERENCE_ROUTE_PROBE_FROM_ARG0_SCRIPT = [
-  'CA_BUNDLE="$0"',
-  INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
-].join("; ");
-
-const PROXY_ENV_KEYS = [
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "NO_PROXY",
-  "no_proxy",
-  "ALL_PROXY",
-  "all_proxy",
-] as const;
-
-const DCODE_INFERENCE_ROUTE_PROBE_WRAPPER = [
-  INFERENCE_ROUTE_CA_FROM_ENV,
-  INFERENCE_ROUTE_CA_VALIDATION,
-  // bash -lc receives CA_BUNDLE as argv[0], so the inner script reads the
-  // exact OpenShell-injected CA path from $0 after the login shell loads.
-  `exec env ${PROXY_ENV_KEYS.map((key) => `-u ${key}`).join(" ")} HOME=/sandbox bash -lc "$1" "$CA_BUNDLE"`,
-].join("; ");
+// Invalid state: a DCode login shell runs sandbox-user startup files before the
+// probe, so every inherited output descriptor is attacker-writable evidence.
+// Source boundary: the image-baked launcher reconstructs the managed proxy from
+// root-owned, mode-0444 files and execs a command without loading user profiles.
+// Source-fix constraint: raw OpenShell exec does not inherit the entrypoint's
+// trusted proxy contract, while a login shell cannot provide an output trust
+// boundary. Regression: hostile-profile tests assert that no startup file or
+// inherited descriptor can emit probe evidence. Removal condition: use a raw
+// probe only when OpenShell provides the same trusted proxy environment to every
+// sandbox exec process without shell startup.
+const DCODE_MANAGED_RUNTIME_LAUNCHER = "/usr/local/bin/nemoclaw-start";
 
 /**
  * Classify a route result that is already known not to be healthy.
@@ -75,15 +63,12 @@ export function buildSandboxInferenceRouteProbeArgs(
   const command =
     agent?.name === "langchain-deepagents-code"
       ? [
-          // Capture OpenShell's trusted CA before the login shell sources the
-          // DCode runtime environment. The login shell still reconstructs the
-          // proxy contract from /tmp/nemoclaw-proxy-env.sh after inherited
-          // proxy variables are cleared.
-          "sh",
+          // The trusted launcher ignores ambient proxy overrides and does not
+          // source sandbox-user startup files before executing this probe.
+          DCODE_MANAGED_RUNTIME_LAUNCHER,
+          "/bin/sh",
           "-c",
-          DCODE_INFERENCE_ROUTE_PROBE_WRAPPER,
-          "nemoclaw-ca-capture",
-          INFERENCE_ROUTE_PROBE_FROM_ARG0_SCRIPT,
+          INFERENCE_ROUTE_PROBE_SCRIPT,
         ]
       : ["sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT];
 
@@ -98,7 +83,9 @@ export function parseSandboxInferenceRouteProbeResult(
   // Some OpenShell releases frame child stdout for humans. Normalize only the
   // two known frame prefixes at the beginning of the captured output.
   const detail = rawDetail.replace(/^(?:\[stdout\]|stdout:)\s*/i, "");
-  const match = /^(OK|BROKEN)\s+([0-9]{3})\b/.exec(detail);
+  // A trusted probe emits one result line. Reject preambles or extra lines so
+  // shell startup output can never be mistaken for the authoritative result.
+  const match = /^(OK|BROKEN)\s+([0-9]{3})\b[^\r\n]*$/.exec(detail);
   const httpStatus = match ? Number.parseInt(match[2], 10) : 0;
   const isReachableHttpStatus = httpStatus >= 200 && httpStatus < 500;
   const commandSucceeded = result.status === 0;

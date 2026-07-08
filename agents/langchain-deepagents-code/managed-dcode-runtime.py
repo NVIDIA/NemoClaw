@@ -35,8 +35,13 @@ _AUTO_APPROVAL_CONTENTS = {
 }
 _MANAGED_FILE_OWNER_UID = 0
 _CREDENTIAL_NAME = re.compile(
-    r"(?:^|_)(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIAL)$",
+    r"(?:^|[_-])(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIAL)$",
     re.IGNORECASE,
+)
+_CREDENTIAL_CAMEL_NAME = re.compile(
+    r"(?:[A-Za-z0-9](?:Token|Secret|Credential|Password|Passwd|Pass)|"
+    r"(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|"
+    r"[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key)$"
 )
 _CREDENTIAL_ENV_NAMES = {
     "LANGSMITH_RUNS_ENDPOINTS",
@@ -46,6 +51,12 @@ _CREDENTIAL_ENV_NAMES = {
     "OTEL_EXPORTER_OTLP_HEADERS",
     "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
 }
+# Python's \s also includes control separators that ECMAScript excludes, so
+# spell out the canonical whitespace set for cross-runtime parity.
+_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
+    r"[^\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029"
+    r"\u202f\u205f\u3000\ufeff'\"]"
+)
 _OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 _UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
 _MANAGED_ADAPTER_PROVIDER = "openai"
@@ -140,7 +151,21 @@ _SECRET_PATTERNS = tuple(
             r"Bearer[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[A-Za-z0-9_.+/=-]{10,}",
             re.IGNORECASE,
         ),
-        (None, r"(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:\s]['\"]?[A-Za-z0-9_.+/=-]{10,}", re.IGNORECASE),
+        (
+            None,
+            rf"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{{1,128}}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)['\"]?(?:[ \t]{{0,32}}[=:][ \t]{{0,32}}|[ \t]{{1,32}})['\"]?{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
+            re.IGNORECASE,
+        ),
+        (
+            None,
+            rf"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{{1,128}}(?:Token|Secret|Credential)|[A-Za-z0-9]{{0,128}}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{{1,128}}(?:Password|Passwd|Pass))['\"]?(?:[ \t]{{0,32}}[=:][ \t]{{0,32}}|[ \t]{{1,32}})['\"]?{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
+            0,
+        ),
+        (
+            None,
+            rf"(?:^|[^A-Za-z0-9])KEY['\"]?(?:[ \t]{{0,32}}[=:][ \t]{{0,32}}|[ \t]{{1,32}})['\"]?{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
+            0,
+        ),
         (None, r"lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*", 0),
         (None, r"-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*-----END [^-\r\n]*PRIVATE KEY-----", 0),
     )
@@ -200,7 +225,11 @@ def _assert_safe_environment() -> None:
         if _is_managed_value(name, value):
             continue
         if _contains_secret_shape(value) or (
-            len(value) >= 10 and _CREDENTIAL_NAME.search(name)
+            len(value) >= 10
+            and (
+                _CREDENTIAL_NAME.search(name)
+                or _CREDENTIAL_CAMEL_NAME.search(name)
+            )
         ) or (
             bool(value) and name.upper() in _CREDENTIAL_ENV_NAMES
         ):
