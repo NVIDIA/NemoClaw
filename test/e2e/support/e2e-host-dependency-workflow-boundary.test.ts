@@ -45,6 +45,12 @@ describe("inline E2E host dependency boundary", () => {
       expected:
         "issue-4434-tui-unreachable-inference host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect iptables'",
     },
+    {
+      jobName: "openclaw-tui-chat-correlation",
+      stepName: "Install OpenClaw TUI host dependencies",
+      expected:
+        "openclaw-tui-chat-correlation host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
+    },
   ])("rejects package allowlist drift in $jobName", ({ jobName, stepName, expected }) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-apt-allowlist-"));
     const workflowPath = path.join(tmp, "workflow.yaml");

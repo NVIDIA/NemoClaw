@@ -885,6 +885,36 @@ function validateIssue4434HostDependencies(errors: string[], jobs: WorkflowRecor
   );
 }
 
+function validateOpenclawTuiChatCorrelationHostDependencies(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "openclaw-tui-chat-correlation";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push(`workflow missing ${jobName} job`);
+    return;
+  }
+  const steps = asSteps(job.steps);
+  validateInlineHostDependencyInstall(
+    errors,
+    jobName,
+    steps,
+    "Install OpenClaw TUI host dependencies",
+    ["expect"],
+  );
+  const install = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install OpenClaw TUI host dependencies",
+  );
+  const prepare = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
+  if (install && prepare && steps.indexOf(install) >= steps.indexOf(prepare)) {
+    errors.push(`${jobName} host dependencies must be installed before workspace prep`);
+  }
+}
+
 function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "common-egress-agent";
   const job = asRecord(jobs[jobName]);
@@ -3821,6 +3851,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     "issue-4434-tui-unreachable-inference",
   );
   validateIssue4434HostDependencies(errors, jobs);
+  validateOpenclawTuiChatCorrelationHostDependencies(errors, jobs);
   validateDiagnosticsJob(errors, jobs);
   validateModelRouterProviderRoutedInferenceJob(errors, jobs);
   validateSnapshotCommandsJob(errors, jobs);
