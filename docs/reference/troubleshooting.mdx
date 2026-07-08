@@ -564,6 +564,22 @@ sudo ufw allow from "$SUBNET" to any port 8080 proto tcp
 $$nemoclaw onboard
 ```
 
+<AgentOnly variant="openclaw">
+
+### Custom OpenClaw image creates without a gateway or dashboard
+
+`$$nemoclaw onboard --from <Dockerfile>` treats the supplied Dockerfile as the complete sandbox image rather than adding it on top of the stock managed runtime.
+If deployment verification cannot reach the gateway, NemoClaw checks for `/tmp/gateway.log`, `/usr/local/bin/nemoclaw-start`, and `/sandbox/.openclaw/openclaw.json` in the custom sandbox.
+When all three paths are absent, the CLI reports that the image lacks the NemoClaw-managed OpenClaw runtime and does not suggest repeated dashboard port-forward retries.
+This failure commonly occurs when the custom Dockerfile starts from `ghcr.io/nvidia/nemoclaw/sandbox-base` alone because that image is an intermediate dependency image.
+
+Rebuild the custom image from the full stock Dockerfile and source context for the same NemoClaw release.
+For the version-pinned plugin workflow, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins).
+
+If the sandbox is unreachable or the managed runtime paths are present, NemoClaw retains the existing generic gateway-log and host OpenShell-log guidance because the base-only failure is not proven.
+
+</AgentOnly>
+
 <AgentOnly variant="openclaw,hermes">
 
 ### `connect` exits because the gateway is down

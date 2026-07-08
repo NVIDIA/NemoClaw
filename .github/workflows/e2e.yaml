@@ -3740,6 +3740,72 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
+  # Scheduled coverage for #6108 / #3513 / #3127. This exercises the complete
+  # managed v0.0.71 runtime with a custom plugin, then proves restart/rebuild
+  # persistence and target-side runtime-dependency replacement across devices.
+  openclaw-plugin-runtime-exdev:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-plugin-runtime-exdev,') || contains(format(',{0},', inputs.targets), ',openclaw-plugin-runtime-exdev,') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Three bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
+    # Vitest buffer need 110 minutes; allow 20 more for setup and teardown.
+    timeout-minutes: 130
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-plugin-exdev"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Pre-pull release-matched Docker Hub builder image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
+
+      - name: Remove Docker auth before release-pinned fixture
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/docker-auth-cleanup.sh
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test
+        run: |
+          set -euo pipefail
+          test -n "${DOCKER_CONFIG:-}"
+          test ! -e "${DOCKER_CONFIG}"
+          test -z "${DOCKERHUB_USERNAME:-}"
+          test -z "${DOCKERHUB_TOKEN:-}"
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
+            npx vitest run --project e2e-live \
+            test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   # The #2603/#3145 OpenClaw websocket protocol/history contract.
   openclaw-tui-chat-correlation:
     needs: generate-matrix
@@ -4702,6 +4768,7 @@ jobs:
         diagnostics,
         snapshot-commands,
         gateway-drift-preflight,
+        openclaw-plugin-runtime-exdev,
         openclaw-tui-chat-correlation,
         gateway-guard-recovery,
         issue-4434-tui-unreachable-inference,

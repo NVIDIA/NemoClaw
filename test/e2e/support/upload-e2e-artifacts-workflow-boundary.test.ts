@@ -177,8 +177,8 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "upload-e2e-artifacts must cover exactly 74 live and E2E_JOB execution jobs",
-        "upload-e2e-artifacts must keep exactly 63 default callers",
+        "upload-e2e-artifacts must cover exactly 75 live and E2E_JOB execution jobs",
+        "upload-e2e-artifacts must keep exactly 64 default callers",
       ]),
     );
   });

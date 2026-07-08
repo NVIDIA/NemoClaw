@@ -38,6 +38,7 @@ import {
   acquireRebuildOnboardLock,
   assertRebuildEntryUnchanged,
   checkRebuildGatewaySchemaPreflight,
+  expectedRebuildEntryAfterVersionCheck,
   getRebuildSandboxEntryOrBail,
   isSingleAgentRebuildSupported,
   runRebuildGatewayIntentPreflight,
@@ -150,15 +151,35 @@ export async function runRebuildPreflightPhase(
     return null;
   }
   const agentName = getRebuildAgentDisplayName(sandboxName);
+  const versionCheck = await runRebuildGatewayIntentPreflight({
+    checkGatewaySchema: () =>
+      isDcodeRebuildAgent(rebuildAgent) ||
+      checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail),
+    confirmIntent: () =>
+      confirmRebuildIntent(
+        sandboxName,
+        agentName,
+        skipConfirm,
+        activeSessionCount,
+        bail,
+        requestedDcodeAutoApprovalMode,
+      ),
+  });
+  if (!versionCheck) return null;
+  const expectedSandboxEntry = expectedRebuildEntryAfterVersionCheck(
+    sandboxEntry,
+    confirmedEntrySnapshot,
+    versionCheck,
+  );
   const dcodePreflight = createDcodeRebuildOrchestrator({
     sandboxName,
-    entry: sandboxEntry,
+    entry: expectedSandboxEntry,
     rebuildAgent,
     log,
     bail,
     deps: {
       checkGatewaySchema: (name, scopedBail) =>
-        checkRebuildGatewaySchemaPreflight(name, sandboxEntry, scopedBail),
+        checkRebuildGatewaySchemaPreflight(name, expectedSandboxEntry, scopedBail),
       preflightCredentials: (_name, entry, scopedLog, scopedBail) =>
         preflightRebuildCredentials(entry, scopedLog, scopedBail),
       // Non-DCode rebuilds stay on the existing typed base-image preflight.
@@ -170,29 +191,13 @@ export async function runRebuildPreflightPhase(
   let preparedImage: PreparedRebuildImage | null = null;
   let retainPreparedImage = false;
   try {
-    const versionCheck = await runRebuildGatewayIntentPreflight({
-      checkGatewaySchema: () =>
-        isDcodeRebuildAgent(rebuildAgent) ||
-        checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail),
-      confirmIntent: () =>
-        confirmRebuildIntent(
-          sandboxName,
-          agentName,
-          skipConfirm,
-          activeSessionCount,
-          bail,
-          requestedDcodeAutoApprovalMode,
-        ),
-    });
-    if (!versionCheck) return null;
-
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
     let retainOnboardLock = false;
     try {
-      assertRebuildEntryUnchanged(sandboxName, confirmedEntrySnapshot, bail);
+      assertRebuildEntryUnchanged(sandboxName, JSON.stringify(expectedSandboxEntry), bail);
       const preparedTarget = await prepareRebuildTargetPreflights({
         sandboxName,
-        sandboxEntry,
+        sandboxEntry: expectedSandboxEntry,
         rebuildAgent,
         // Reaching this point means either --yes was supplied or confirmation
         // succeeded, matching the previous `skipConfirm || confirmed` contract.
@@ -212,7 +217,7 @@ export async function runRebuildPreflightPhase(
       if (!preparedTarget) return null;
       preparedImage = preparedTarget.preparedImage;
 
-      const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
+      const liveState = await resolveRebuildLiveState(sandboxName, expectedSandboxEntry, log, bail);
       if (!liveState) return null;
       if (isDcodeRebuildAgent(rebuildAgent)) {
         const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;
@@ -248,7 +253,7 @@ export async function runRebuildPreflightPhase(
       retainDcodePreflight = true;
       retainPreparedImage = true;
       return {
-        sandboxEntry,
+        sandboxEntry: expectedSandboxEntry,
         rebuildAgent,
         versionCheck,
         ...preparedTarget,
