@@ -647,6 +647,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
       "myCredential",
       "customPassword",
       "privateKey",
+      "replyToken",
     ];
     const opaque = "opaqueCredentialPayloadZ1234567890";
     for (const name of cases) {
@@ -671,7 +672,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
       passRate: "opaqueNonSecretPayload123",
       passCount: "opaqueNonSecretPayload123",
       passThrough: "opaqueNonSecretPayload123",
-      replyToken: "reply-correlation-token-123",
+      replyMarker: "reply-correlation-marker-123",
       tokenizer: "opaqueNonSecretPayload123",
       publicKey: "opaqueVerificationMaterial123",
       customKey: "opaqueNonSecretPayload123",

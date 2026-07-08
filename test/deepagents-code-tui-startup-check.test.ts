@@ -669,7 +669,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       "public-key=opaqueVerificationMaterial123",
       "custom-key=opaqueNonSecretPayload123",
       '{"key":"agent:main:main"}',
-      '{"replyToken":"reply-correlation-token-123"}',
+      '{"replyMarker":"reply-correlation-marker-123"}',
     ]) {
       expect(detectsSecret(benign), benign).toBe("clean");
       expect(redactsSecret(benign), benign).toBe(benign);
