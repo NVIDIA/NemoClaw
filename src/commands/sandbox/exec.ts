@@ -40,8 +40,17 @@ export default class SandboxExecCommand extends NemoClawCommand {
   };
 
   public async run(): Promise<void> {
+    const originalArgv = [...this.argv];
     const { args, flags, argv } = await this.parse(SandboxExecCommand);
-    const cmd = argv.slice(1) as string[];
+    const separatorIndex = originalArgv.indexOf("--");
+    // oclif's non-strict parser preserves ordinary inner flags, but sorts
+    // repeated unknown flags by their first input position. That turns a
+    // command such as `env -u A -u B` into `env -u -u A B`. Once the caller
+    // used the documented `--` boundary, take the command from oclif's
+    // original argv instead of its reconstructed parser output.
+    const cmd = (
+      separatorIndex === -1 ? argv.slice(1) : originalArgv.slice(separatorIndex + 1)
+    ) as string[];
     await execSandbox(args.sandboxName, cmd, {
       workdir: flags.workdir,
       tty: typeof flags.tty === "boolean" ? flags.tty : null,

@@ -46,7 +46,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -75,6 +75,7 @@ export type OnboardFlags = {
   agent?: string;
   agents?: string;
   "tool-disclosure"?: ToolDisclosure;
+  observability?: boolean;
   "control-ui-port"?: number;
   yes?: boolean;
   "no-ollama-autostart"?: boolean;
@@ -126,6 +127,11 @@ export function buildOnboardFlags(): Record<string, any> {
       description:
         "Choose progressive tool discovery or direct exposure of all session-authorized tools",
       options: [...TOOL_DISCLOSURE_VALUES],
+    }),
+    observability: Flags.boolean({
+      allowNo: true,
+      description:
+        "Export bounded prompt, response, tool argument, and tool result content to a local OTLP collector (Deep Agents Code only)",
     }),
     "control-ui-port": Flags.integer({
       description: "Host port for the local control UI",

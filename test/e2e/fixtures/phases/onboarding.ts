@@ -229,7 +229,7 @@ export class OnboardingPhaseFixture {
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
-    const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+    const result = await this.host.nemoclaw([...ONBOARD_ARGS, "--observability"], {
       artifactName: "onboard-cloud-langchain-deepagents-code",
       env: commandEnv(sandboxName, {
         NEMOCLAW_AGENT: "langchain-deepagents-code",

@@ -33,6 +33,7 @@ function readCleanupGatewayEnv(): boolean | undefined {
 
 export interface RebuildSandboxOptions {
   force?: boolean;
+  observabilityEnabled?: boolean;
   toolDisclosure?: ToolDisclosure;
   verbose?: boolean;
   yes?: boolean;
@@ -78,6 +79,12 @@ export function normalizeRebuildSandboxOptions(
 ): RebuildSandboxOptions {
   let rawToolDisclosure: unknown;
   if (Array.isArray(options)) {
+    const observabilityIndex = options.lastIndexOf("--observability");
+    const noObservabilityIndex = options.lastIndexOf("--no-observability");
+    const observabilityEnabled =
+      observabilityIndex === -1 && noObservabilityIndex === -1
+        ? undefined
+        : observabilityIndex > noObservabilityIndex;
     const splitIndex = options.lastIndexOf("--tool-disclosure");
     const inline = [...options].reverse().find((value) => value.startsWith("--tool-disclosure="));
     const toolDisclosureFlagProvided = splitIndex >= 0 || inline !== undefined;
@@ -89,6 +96,7 @@ export function normalizeRebuildSandboxOptions(
     }
     return {
       force: options.includes("--force"),
+      ...(observabilityEnabled === undefined ? {} : { observabilityEnabled }),
       ...(toolDisclosure ? { toolDisclosure } : {}),
       verbose: options.includes("--verbose") || options.includes("-v"),
       yes: options.includes("--yes"),

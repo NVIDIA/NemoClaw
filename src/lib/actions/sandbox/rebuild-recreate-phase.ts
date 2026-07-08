@@ -110,6 +110,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
+        observabilityEnabled: recreateOptions.observabilityEnabled,
+        observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
         wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
         migratedLegacyValueHashes: sessionMatchesSandbox
@@ -149,6 +151,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.compatibleEndpointReasoning = resumeConfig.compatibleEndpointReasoning;
     s.endpointUrl = resumeConfig.endpointUrl;
     s.toolDisclosure = rebuildDurableConfig.toolDisclosure;
+    s.observabilityEnabled = recreateOptions.observabilityEnabled;
+    s.observabilityRequestedExplicitly = recreateOptions.observabilityRequestedExplicitly;
     return s;
   });
   const sessionAfter = onboardSession.loadSession();
@@ -178,6 +182,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
+  if (recreateOptions.policyTier) {
+    process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
+  }
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
   try {
@@ -224,6 +231,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       sandboxName,
       rebuildMcpEntries,
       rebuildDurableConfig.toolDisclosure,
+      {
+        enabled: recreateOptions.observabilityEnabled,
+        requestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
+      },
     );
     if (backupManifest) {
       console.error("    3. Then restore your workspace state:");

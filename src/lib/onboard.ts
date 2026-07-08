@@ -33,6 +33,9 @@ const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./o
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
 const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = require("./onboard/tool-disclosure-flow");
+const runtimeControlFlow: typeof import("./onboard/runtime-control-flow") = require("./onboard/runtime-control-flow");
+const observabilityPolicy: typeof import("./onboard/observability-policy-presets") = require("./onboard/observability-policy-presets");
+const observabilityCommandFlag: typeof import("./onboard/observability-command-flag") = require("./onboard/observability-command-flag");
 const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
@@ -137,14 +140,8 @@ const {
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const {
-  clearAgentScopedResumeState,
-}: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
-const {
   repairResumeMachineSnapshot,
 }: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
-const {
-  stopTrackedModelRouterForAgentChange,
-}: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
   require("./onboard/bedrock-runtime");
 const {
@@ -2392,6 +2389,8 @@ async function createSandboxWithBaseImageResolution(
     );
     process.exit(1);
   }
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2485,7 +2484,8 @@ async function createSandboxWithBaseImageResolution(
       !credentialRotation.changed &&
       !hermesToolGatewayDrift &&
       !hermesDashboardDrift &&
-      !toolDisclosureMigrationNeeded
+      !toolDisclosureMigrationNeeded &&
+      !observabilityDrift
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -2638,6 +2638,8 @@ async function createSandboxWithBaseImageResolution(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes managed-tool changes.`);
     } else if (hermesDashboardDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
+    } else if (observabilityDrift) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to apply observability settings.`);
     } else if (toolDisclosureMigrationNote) {
       note(toolDisclosureMigrationNote);
     } else if (credentialRotation.changed) {
@@ -2649,11 +2651,13 @@ async function createSandboxWithBaseImageResolution(
     }
 
     if (preservedMcpState) {
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      const explicitObservability = observabilityCommandFlag.explicitObservabilityFlag(createIntent?.observabilityEnabled === true, createIntent?.observabilityRequestedExplicitly === true);
       console.error(
         `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
       );
       console.error(
-        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}\` so MCP providers and adapter state are preserved transactionally.`,
+        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}${explicitObservability ? ` ${explicitObservability}` : ""}\` so MCP providers and adapter state are preserved transactionally.`,
       );
       process.exit(1);
     }
@@ -2735,6 +2739,7 @@ async function createSandboxWithBaseImageResolution(
   const {
     activeMessagingChannels,
     initialSandboxPolicy,
+    policyTier: resolvedCreatePolicyTier,
     createArgs,
     messagingProviders,
     useDockerGpuPatch,
@@ -2771,6 +2776,7 @@ async function createSandboxWithBaseImageResolution(
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
     agentName: agent?.name,
+    policyTier: createIntent?.policyTier,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
@@ -2810,6 +2816,7 @@ async function createSandboxWithBaseImageResolution(
   const { createCommand, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
     await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
       agent,
+      observabilityEnabled: createIntent?.observabilityEnabled === true,
       chatUiUrl,
       createArgs,
       sandboxName,
@@ -3008,6 +3015,8 @@ async function createSandboxWithBaseImageResolution(
           imageTag: resolvedImageTag,
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
+          observabilityEnabled: createIntent?.observabilityEnabled === true,
+          policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
           plannedMessagingState,
@@ -4062,9 +4071,7 @@ async function preflightAuthoritativeRebuildTarget(
 const onboard = onboardEntryOptions.withNonInteractiveEnvironment(runOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
-  const requestedToolDisclosure = toolDisclosureFlow.applyOnboardToolDisclosureRequest(
-    opts.toolDisclosure,
-  );
+  const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
@@ -4209,7 +4216,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
-        requestedToolDisclosure,
+        ...runtimeControlRequests,
       },
       {
         loadSession: onboardSession.loadSession,
@@ -4259,29 +4266,16 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       canPrompt: !cannotPrompt,
     });
-    const selectedAgentName = normalizeSandboxAgentName(agent?.name);
-    const recordedAgentName = normalizeSandboxAgentName(session?.agent);
-    let resumeAgentChanged = false;
-    let forceProviderSelectionForAgentChange = false;
-    if (resume && session && recordedAgentName !== selectedAgentName) {
-      resumeAgentChanged = true;
-      forceProviderSelectionForAgentChange = true;
-      note(
-        `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
-      );
-      await stopTrackedModelRouterForAgentChange(
-        session,
-        loadBlueprintProfile("routed")?.router.port || 4000,
-      );
-      onboardSession.updateSession((current: Session) =>
-        clearAgentScopedResumeState(current, selectedAgentName),
-      );
-    }
-    setOnboardBrandingAgent(agent?.name || "openclaw");
-    session = onboardSession.updateSession((s: Session) => {
-      s.agent = agent?.name ?? null;
-      return s;
+    const selectedAgentTransition = await runtimeControlFlow.applySelectedAgentTransition({
+      resume,
+      session,
+      selectedAgentName: agent?.name,
+      routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
+      note,
     });
+    session = selectedAgentTransition.session;
+    const resumeAgentChanged = selectedAgentTransition.resumeAgentChanged;
+    const forceProviderSelectionForAgentChange = resumeAgentChanged;
 
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
@@ -4517,6 +4511,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         sandbox: {
           resumeAgentChanged,
+          requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
+          authoritativePolicyTier:
+            opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
           controlUiPort: opts.controlUiPort || null,
           rootDir: ROOT,
         },
@@ -4621,6 +4618,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       import("./verify-deployment").VerifyDeploymentResult
     >({
       branchState: agent ? "agent_setup" : "openclaw",
+      authoritativePolicyTier:
+        opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
       agentSetupDeps: {
         handleAgentSetup: agentOnboard.handleAgentSetup,
         agentSetupContext: () => ({
@@ -4814,7 +4813,7 @@ module.exports = {
   hasStaleGateway,
   getRequestedSandboxNameHint,
   getResumeSandboxConflict,
-  clearAgentScopedResumeState,
+  clearAgentScopedResumeState: runtimeControlFlow.clearAgentScopedResumeState,
   getSandboxReuseState,
   getSandboxStateFromOutputs,
   getPortConflictServiceHints,

@@ -16,6 +16,7 @@ export interface OnboardSessionBootstrapInput {
   agentFlag?: string | null;
   envAgent?: string | null;
   requestedToolDisclosure?: ToolDisclosure | null;
+  requestedObservabilityEnabled?: boolean | null;
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -34,6 +35,7 @@ export interface OnboardSessionBootstrapDeps {
       sandboxName?: string | null;
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
+      observabilityEnabled?: boolean | null;
       authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
@@ -158,6 +160,7 @@ async function prepareResumeSession(
     sandboxName: input.requestedSandboxName,
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
+    observabilityEnabled: input.requestedObservabilityEnabled ?? null,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
@@ -166,6 +169,10 @@ async function prepareResumeSession(
 
   deps.updateSession((current: Session) => {
     deps.repairResumeMachineSnapshot(current);
+    if (typeof input.requestedObservabilityEnabled === "boolean") {
+      current.observabilityEnabled = input.requestedObservabilityEnabled;
+      current.observabilityRequestedExplicitly = true;
+    }
     current.mode = mode(input.nonInteractive);
     current.failure = null;
     current.status = "in_progress";
@@ -190,6 +197,8 @@ function prepareFreshSession(
     deps.createSession({
       mode: mode(input.nonInteractive),
       toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
+      observabilityEnabled: input.requestedObservabilityEnabled === true,
+      observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
     }),
   );

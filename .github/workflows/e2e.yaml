@@ -314,6 +314,35 @@ jobs:
           set -euo pipefail
           printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}" >> "${GITHUB_ENV}"
 
+      # invalidState: the selected PR-modifiable TUI check needs a PTY driver,
+      # but the fixed GitHub-hosted runner image does not provide expect.
+      # sourceBoundary: this trusted workflow owns host setup; the PR-controlled
+      # check only verifies and consumes expect without privilege.
+      # whyNotSourceFix: GitHub-hosted jobs cannot use a repository-owned host
+      # image, and caching privileged dpkg state between clean runners is not
+      # supported.
+      # regressionTest: the workflow-boundary suite pins this target, condition,
+      # ordering, retry contract, and exact one-package apt allowlist.
+      # removalCondition: remove the install when the hosted runner supplies
+      # expect or the acceptance check no longer requires a PTY.
+      - name: Install Deep Agents Code TUI host dependencies
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update failed after 3 attempts." >&2
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+            sleep $((attempt * 5))
+          done
+          sudo apt-get install -y --no-install-recommends expect
+
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace

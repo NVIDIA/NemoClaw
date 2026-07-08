@@ -18,6 +18,7 @@ export interface OnboardSessionUpdateInput {
   nimContainer?: string | null;
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure | string;
+  observabilityEnabled?: boolean;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
   hermesToolGateways?: string[] | null;
@@ -59,6 +60,9 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
   if (updates.toolDisclosure !== undefined) {
     const toolDisclosure = normalizeToolDisclosure(updates.toolDisclosure);
     if (toolDisclosure) normalized.toolDisclosure = toolDisclosure;
+  }
+  if (typeof updates.observabilityEnabled === "boolean") {
+    normalized.observabilityEnabled = updates.observabilityEnabled;
   }
   if (updates.policyPresets !== undefined) normalized.policyPresets = updates.policyPresets;
   if (updates.messagingPlan !== undefined) normalized.messagingPlan = updates.messagingPlan;

@@ -2507,7 +2507,11 @@ start_auto_pair() {
   ) <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import importlib.util
+import base64
+import binascii
+import hashlib
 import os
+import re
 import stat
 import subprocess
 import time
@@ -2532,10 +2536,11 @@ def load_approval_policy(path):
     return (
         module.approval_request_decision,
         module.gateway_approval_env,
+        module.ALLOWED_SCOPES,
     )
 
 
-approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
+approval_request_decision, gateway_approval_env, policy_allowed_scopes = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -2621,6 +2626,208 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
+
+def _read_json_object(path):
+    with open(path, 'r', encoding='utf-8') as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise RuntimeError(f'{path} is not a JSON object')
+    return data
+
+
+def _identity_public_key(identity):
+    raw = str(identity.get('publicKey', '') or '').strip()
+    if raw:
+        return raw
+    pem = str(identity.get('publicKeyPem', '') or '')
+    body = ''.join(line.strip() for line in pem.splitlines() if '---' not in line)
+    if not body:
+        return ''
+    der = base64.b64decode(body)
+    if len(der) < 32:
+        return ''
+    return base64.urlsafe_b64encode(der[-32:]).decode('ascii').rstrip('=')
+
+
+def initial_cli_request_is_allowlisted(request_id):
+    # SOURCE_OF_TRUTH_REVIEW (NemoClaw#6113 gated-list bootstrap):
+    # Invalid state: `devices list --json` can be gated by the same initial
+    # CLI pairing request the watcher needs to approve, so the request id is
+    # only available in the structured error text.
+    # Source boundary: this function reads local OpenClaw pending/identity
+    # state only to validate the parsed request id before delegating approval
+    # back to `openclaw devices approve`, which owns locking, token creation,
+    # and state publication. The watcher never writes OpenClaw state.
+    # Source-fix constraint: OpenClaw should expose a first-run local
+    # bootstrap/list API that returns the pending request without requiring an
+    # already-approved device. This compatibility path supports packaged
+    # gateway builds that still gate list.
+    # Removal condition: delete this branch once the pinned OpenClaw release
+    # exposes that bootstrap/list API and NemoClaw no longer supports gated
+    # list behavior for first-run CLI pairing.
+    state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+    pending_path = os.path.join(state_dir, 'devices', 'pending.json')
+    identity_path = os.path.join(state_dir, 'identity', 'device.json')
+    try:
+        pending = _read_json_object(pending_path)
+        identity = _read_json_object(identity_path)
+        request = pending.get(request_id)
+        if not isinstance(request, dict):
+            return False
+        # The map key is the authoritative request id. Reject a record whose
+        # embedded requestId is missing or disagrees with its key, so a
+        # malformed/tampered pending.json cannot approve a mismatched request.
+        # (PR #6330 review, cv item 3.)
+        if str(request.get('requestId', '') or '').strip() != str(request_id).strip():
+            return False
+        device_id = str(identity.get('deviceId', '') or '').strip()
+        public_key = _identity_public_key(identity)
+        if not device_id or not public_key:
+            return False
+        public_key_raw = base64.urlsafe_b64decode(public_key + '=' * (-len(public_key) % 4))
+        if len(public_key_raw) != 32 or hashlib.sha256(public_key_raw).hexdigest() != device_id:
+            return False
+        if str(request.get('deviceId', '')).strip() != device_id:
+            return False
+        if str(request.get('publicKey', '')).strip() != public_key:
+            return False
+        # OpenClaw CLI initial pairing records use clientId/clientMode `cli`
+        # in the observed DGX Spark/Station repros and in the paired-state
+        # fixtures for this PR. The broader policy still handles normal
+        # openclaw-cli scope upgrades through the main pending-list branch.
+        if str(request.get('clientId', '')).strip() != 'cli':
+            return False
+        if str(request.get('clientMode', '')).strip() != 'cli':
+            return False
+        roles = set()
+        role = request.get('role')
+        if role is not None:
+            if not isinstance(role, str) or not role.strip():
+                return False
+            roles.add(role.strip())
+        raw_roles = request.get('roles')
+        if raw_roles is not None:
+            if not isinstance(raw_roles, list):
+                return False
+            for item in raw_roles:
+                if not isinstance(item, str) or not item.strip():
+                    return False
+                roles.add(item.strip())
+        if roles != {'operator'}:
+            return False
+        raw_scopes = request.get('scopes')
+        if not isinstance(raw_scopes, list) or not raw_scopes:
+            return False
+        scopes = set()
+        for item in raw_scopes:
+            if not isinstance(item, str) or not item.strip():
+                return False
+            scope = item.strip()
+            if scope not in policy_allowed_scopes or scope in scopes:
+                return False
+            scopes.add(scope)
+        if scopes != {'operator.pairing'}:
+            return False
+        return approval_request_decision(request)['allowed'] is True
+    except (OSError, ValueError, RuntimeError, binascii.Error) as err:
+        print(f'[auto-pair] initial CLI pairing validation skipped request={request_id}: {brief_child_error("", str(err))}')
+        return False
+
+
+def is_pairing_required_list_failure(out, err):
+    # SOURCE_OF_TRUTH_REVIEW (NemoClaw#6113 gated-list failure detection):
+    # Invalid state: initial `openclaw devices list --json` returns the gateway
+    # pairing-required denial instead of the pending request list.
+    # Source boundary: the compatibility trigger only recognizes the stable
+    # gateway denial text and still requires local pending/identity validation
+    # before approval is delegated to OpenClaw.
+    # Source-fix constraint: OpenClaw should expose a structured bootstrap/list
+    # API for first-run CLI pairing.
+    # Regression test: the non-pairing error fixture must not call approve.
+    # Removal condition: delete with initial_cli_request_is_allowlisted once the
+    # pinned OpenClaw release exposes that bootstrap/list API.
+    message = f'{out}\n{err}'.lower()
+    return 'pairing required' in message and 'device is not approved yet' in message
+
+
+REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+
+
+def _structured_request_ids(text):
+    try:
+        data = json.loads(text)
+    except Exception:
+        return []
+    found = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {'requestId', 'request_id'} and isinstance(item, str):
+                    found.append(item.strip())
+                else:
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(data)
+    return found
+
+
+def pairing_required_request_id(out, err):
+    # SOURCE_OF_TRUTH_REVIEW (NemoClaw#6113 gated-list requestId extraction):
+    # Invalid state: the requestId needed for canonical `devices approve` is
+    # sometimes only present in the list denial payload.
+    # Source boundary: parse one bounded requestId from structured JSON first,
+    # then from the reviewed error-text forms; ambiguous, overlong, or malformed
+    # output fails closed and never reaches approve.
+    # Source-fix constraint: OpenClaw should return requestId in a stable
+    # structured error field for this first-run bootstrap path.
+    # Regression test: malformed, overlong, whitespace, and multiple requestIds
+    # must not call approve.
+    # Removal condition: delete with initial_cli_request_is_allowlisted once the
+    # pinned OpenClaw release exposes a bootstrap/list API.
+    if not is_pairing_required_list_failure(out, err):
+        return None
+    message = f'{out}\n{err}'
+    if len(re.findall(r'\brequestId\b', message)) != 1:
+        return None
+    candidates = []
+    for text in (out, err):
+        candidates.extend(_structured_request_ids(text))
+    candidates.extend(
+        next(group for group in match.groups() if group is not None)
+        for match in re.finditer(
+            r'\brequestId\b["\']?\s*[:=]\s*(?:"([A-Za-z0-9._:-]{1,128})"(?=$|[,}\]\)])|\'([A-Za-z0-9._:-]{1,128})\'(?=$|[,}\]\)])|([A-Za-z0-9._:-]{1,128})(?=$|[,}\]\)]))',
+            message,
+        )
+    )
+    candidates.extend(
+        match.group(1).strip()
+        for match in re.finditer(r'\(requestId:\s*([A-Za-z0-9._:-]{1,128})\)', message)
+    )
+    valid = [candidate for candidate in candidates if REQUEST_ID_RE.fullmatch(candidate)]
+    if not valid or len(set(valid)) != 1 or len(valid) != len(candidates):
+        return None
+    return valid[0]
+
+
+def brief_child_error(out, err):
+    # SOURCE_OF_TRUTH_REVIEW (auto-pair child error summary):
+    # Invalid state: child openclaw failures often include noisy locale/setup
+    # output before the actual error.
+    # Source boundary: logs only the last non-empty child line, capped to 400
+    # characters; decisions never depend on this summary.
+    # Source-fix constraint: OpenClaw should expose structured error codes so
+    # callers do not need stdout/stderr message summaries.
+    # Regression test: approve-failure fixtures assert the actionable child
+    # error remains visible.
+    # Removal condition: retire when OpenClaw CLI returns structured errors for
+    # the watched devices list/approve calls.
+    lines = [line.strip() for line in f'{err}\n{out}'.splitlines() if line.strip()]
+    return (lines[-1] if lines else '')[:400]
+
 # Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
 # runtime environment, so list calls resolve the same live gateway through
 # local loopback instead of the injected private-interface URL. Approval calls
@@ -2676,8 +2883,37 @@ def sleep_for_next_poll(default_seconds, productive=True):
 
 
 while time.time() < DEADLINE:
+    # Fast-to-slow transition is checked at the TOP of every iteration — before
+    # any list/approve-failure `continue` below — so a permanently failing gated
+    # list/approve (or a sticky pending request) cannot hold the watcher in 1s
+    # polling for the full DEADLINE window; after FAST_DEADLINE it drops to
+    # SLOW_INTERVAL. Preventing that long-timeline re-creation of the
+    # NemoClaw#2484 connect-handler pile-up is exactly the point.
+    # (PR #6330 review, cv item 2.)
+    if not SLOW_MODE and time.time() >= FAST_DEADLINE:
+        SLOW_MODE = True
+        print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
+        initial_request_id = pairing_required_request_id(out, err)
+        if (
+            initial_request_id
+            and initial_request_id not in HANDLED
+            and initial_cli_request_is_allowlisted(initial_request_id)
+        ):
+            arc, aout, aerr = run(
+                OPENCLAW, 'devices', 'approve', initial_request_id, '--json', strip_gateway_env=True,
+            )
+            if arc == 0:
+                HANDLED.add(initial_request_id)
+                APPROVED += 1
+                print(f'[auto-pair] approved initial CLI pairing request={initial_request_id}')
+                FAST_REENTRY_REMAINING = max(FAST_REENTRY_REMAINING, FAST_REENTRY_POLLS)
+                sleep_for_next_poll(FAST_REENTRY_INTERVAL)
+                continue
+            failure = brief_child_error(aout, aerr)
+            if arc != 124 and failure:
+                print(f'[auto-pair] initial CLI approve failed request={initial_request_id}: {failure}')
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
     try:
@@ -2689,16 +2925,6 @@ while time.time() < DEADLINE:
     pending = data.get('pending') or []
     paired = data.get('paired') or []
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
-
-    # Fast-deadline transition is checked here, BEFORE the pending-branch
-    # `continue`, so that a sticky pending request (rejected unknown client
-    # added to HANDLED, or a permanent approve failure) cannot hold the
-    # watcher in 1s polling for the full DEADLINE window — that would
-    # re-create the NemoClaw#2484 connect-handler pile-up on a much longer
-    # timeline.
-    if not SLOW_MODE and time.time() >= FAST_DEADLINE:
-        SLOW_MODE = True
-        print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
 
     if pending:
         QUIET_POLLS = 0
@@ -2744,8 +2970,10 @@ while time.time() < DEADLINE:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
-            elif aout or aerr:
-                print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
+            else:
+                failure = brief_child_error(aout, aerr)
+                if failure:
+                    print(f'[auto-pair] approve failed request={request_id}: {failure}')
         # Drop previously-bumped requestIds that the gateway no longer reports
         # as pending so a future re-appearance of the same id (very unlikely,
         # but kept robust) can bump again. The set is otherwise small and
