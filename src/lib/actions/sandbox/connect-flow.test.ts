@@ -432,6 +432,38 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it.each([
+    "OK 200\nBROKEN 000",
+    "BROKEN 503\nOK 200",
+  ])("rejects DCode login-shell preamble evidence without repair or SSH (%s) (#6192)", async (output) => {
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      registryEntry: {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      },
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+      inferenceProbeResponses: [output],
+      sessionAgent: { name: "langchain-deepagents-code" },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
+    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "did not return a trusted result",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("stops before opening SSH when the sandbox list reports a terminal failure phase", async () => {
     const harness = createConnectHarness({ listOutput: "alpha Error" });
 

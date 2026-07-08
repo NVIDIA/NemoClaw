@@ -36,6 +36,10 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
 ].join("; ");
 const INFERENCE_ROUTE_PROBE_FROM_ARG0_SCRIPT = [
+  // The outer DCode wrapper suppresses login-shell startup stdout. Restore the
+  // capture descriptor only after profile loading completes so profile output
+  // cannot impersonate trusted route evidence.
+  "exec 1>&3 3>&-",
   'CA_BUNDLE="$0"',
   INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
 ].join("; ");
@@ -55,8 +59,10 @@ const DCODE_INFERENCE_ROUTE_PROBE_WRAPPER = [
   INFERENCE_ROUTE_CA_FROM_ENV,
   INFERENCE_ROUTE_CA_VALIDATION,
   // bash -lc receives CA_BUNDLE as argv[0], so the inner script reads the
-  // exact OpenShell-injected CA path from $0 after the login shell loads.
-  `exec env ${PROXY_ENV_KEYS.map((key) => `-u ${key}`).join(" ")} HOME=/sandbox bash -lc "$1" "$CA_BUNDLE"`,
+  // exact OpenShell-injected CA path from $0 after the login shell loads. FD 3
+  // preserves the capture stream while startup stdout is discarded; the inner
+  // probe restores it before emitting its result.
+  `exec env ${PROXY_ENV_KEYS.map((key) => `-u ${key}`).join(" ")} HOME=/sandbox bash -lc "$1" "$CA_BUNDLE" 3>&1 1>/dev/null`,
 ].join("; ");
 
 /**
@@ -98,7 +104,9 @@ export function parseSandboxInferenceRouteProbeResult(
   // Some OpenShell releases frame child stdout for humans. Normalize only the
   // two known frame prefixes at the beginning of the captured output.
   const detail = rawDetail.replace(/^(?:\[stdout\]|stdout:)\s*/i, "");
-  const match = /^(OK|BROKEN)\s+([0-9]{3})\b/.exec(detail);
+  // A trusted probe emits one result line. Reject preambles or extra lines so
+  // shell startup output can never be mistaken for the authoritative result.
+  const match = /^(OK|BROKEN)\s+([0-9]{3})\b[^\r\n]*$/.exec(detail);
   const httpStatus = match ? Number.parseInt(match[2], 10) : 0;
   const isReachableHttpStatus = httpStatus >= 200 && httpStatus < 500;
   const commandSucceeded = result.status === 0;
