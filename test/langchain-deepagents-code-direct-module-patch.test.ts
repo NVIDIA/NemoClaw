@@ -230,7 +230,7 @@ else:
     }
   });
 
-  it("routes fetch_url through only the explicit managed proxy without direct DNS", () => {
+  it("keeps redirects and concurrent fetches behind the explicit proxy without direct DNS", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const proxyUrl = "http://managed-proxy.internal:3128";
@@ -241,32 +241,48 @@ else:
         `
 import builtins
 import os
+import socket
 import sys
 import types
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 calls = []
 responses = []
+sessions = []
+
+class ProxyPolicyDenied(RuntimeError):
+    pass
 
 class Response:
-    def __init__(self, status_code=200, location=None):
+    def __init__(self, status_code=200, location=None, error=None):
         self.status_code = status_code
         self.headers = {} if location is None else {"Location": location}
+        self.error = error
 
     def raise_for_status(self):
+        if self.error is not None:
+            raise self.error
         return None
 
 class Session:
     def __init__(self):
         self.trust_env = True
+        self.calls = []
+        sessions.append(self)
 
     def get(self, url, **kwargs):
-        calls.append((self.trust_env, url, kwargs))
+        call = (self.trust_env, url, kwargs)
+        self.calls.append(call)
+        calls.append(call)
         return responses.pop(0) if responses else Response()
 
 requests = types.ModuleType("requests")
 requests.Session = Session
-requests.exceptions = types.SimpleNamespace(TooManyRedirects=RuntimeError)
+requests.exceptions = types.SimpleNamespace(
+    HTTPError=ProxyPolicyDenied,
+    TooManyRedirects=RuntimeError,
+)
 sys.modules["requests"] = requests
 
 from deepagents_code import _nemoclaw_managed, tools
@@ -297,6 +313,29 @@ def forbidden_direct_dns(*_args, **_kwargs):
     raise AssertionError("managed fetch attempted direct DNS validation")
 
 tools._validate_url = forbidden_direct_dns
+expected_proxies = {
+    "http": ${JSON.stringify(proxyUrl)},
+    "https": ${JSON.stringify(proxyUrl)},
+}
+
+def assert_managed_hops(expected_urls):
+    assert [url for _, url, _ in calls] == expected_urls
+    assert all(trust_env is False for trust_env, _, _ in calls)
+    assert all(kwargs["proxies"] == expected_proxies for _, _, kwargs in calls)
+    assert all(kwargs["verify"] == str(managed_ca_file) for _, _, kwargs in calls)
+
+def expect_redirect_policy_denial(initial_url, redirect_url):
+    calls.clear()
+    denial = ProxyPolicyDenied("403 policy_denied")
+    responses.extend([Response(302, redirect_url), Response(403, error=denial)])
+    try:
+        tools._fetch_with_redirects(initial_url, timeout=8)
+    except ProxyPolicyDenied as exc:
+        assert exc is denial
+    else:
+        raise AssertionError("redirect escaped proxy policy denial")
+    assert_managed_hops([initial_url, redirect_url])
+
 response = tools._fetch_with_redirects("https://raw.githubusercontent.com/example/repo/main/README.md", timeout=8)
 assert response.status_code == 200
 assert calls == [(
@@ -340,16 +379,35 @@ response = tools._fetch_with_redirects(
     timeout=8,
 )
 assert response.status_code == 200
-assert [url for _, url, _ in calls] == [
+assert_managed_hops([
     "https://raw.githubusercontent.com/example/repo/start",
     "https://raw.githubusercontent.com/example/main/README.md",
-]
-assert all(
-    kwargs["proxies"]
-    == {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}}
-    for _, _, kwargs in calls
+])
+
+# Cross-host redirects remain behind the same explicit proxy. The adapter does
+# not locally authorize IMDS; it propagates the policy proxy's denial. The live
+# egress check separately proves that OpenShell denies the IMDS destination.
+metadata_url = "https://169.254.169.254/latest/meta-data/"
+expect_redirect_policy_denial(
+    "https://raw.githubusercontent.com/example/redirect-to-imds",
+    metadata_url,
 )
-assert all(kwargs["verify"] == str(managed_ca_file) for _, _, kwargs in calls)
+
+# DNS and resolved-IP policy belong to OpenShell. A rebinding candidate must be
+# passed by hostname through the explicit proxy without local DNS, and the
+# proxy's denial must propagate rather than triggering a direct retry.
+rebind_url = "https://rebind.attacker.invalid/private"
+original_getaddrinfo = socket.getaddrinfo
+def forbidden_local_dns(*_args, **_kwargs):
+    raise AssertionError("managed redirect attempted local DNS")
+socket.getaddrinfo = forbidden_local_dns
+try:
+    expect_redirect_policy_denial(
+        "https://raw.githubusercontent.com/example/redirect-to-rebind",
+        rebind_url,
+    )
+finally:
+    socket.getaddrinfo = original_getaddrinfo
 
 calls.clear()
 responses.append(Response(302))
@@ -361,7 +419,7 @@ else:
     raise AssertionError("redirect without Location escaped validation")
 
 calls.clear()
-responses.append(Response(302, "https://user:redirect-secret@raw.githubusercontent.com/private"))
+responses.append(Response(302, "http://user:redirect-secret@proxy.internal:3128/private"))
 try:
     tools._fetch_with_redirects("https://raw.githubusercontent.com/credential-redirect", timeout=8)
 except tools._UrlValidationError as exc:
@@ -478,6 +536,38 @@ except RuntimeError as exc:
 else:
     raise AssertionError("wrong-owner CA bundle was accepted")
 _nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
+
+# The proxy and CA are immutable process-wide image inputs. Per-call isolation
+# therefore means a fresh Session and explicit proxy mapping for each fetch,
+# including concurrent calls, rather than unsupported mutable configurations.
+calls.clear()
+session_start = len(sessions)
+concurrent_urls = [
+    f"https://raw.githubusercontent.com/example/concurrent-{index}"
+    for index in range(4)
+]
+with ThreadPoolExecutor(max_workers=len(concurrent_urls)) as executor:
+    concurrent_responses = list(executor.map(
+        lambda candidate: tools._fetch_with_redirects(candidate, timeout=8),
+        concurrent_urls,
+    ))
+concurrent_sessions = sessions[session_start:]
+assert all(response.status_code == 200 for response in concurrent_responses)
+assert len(concurrent_sessions) == len(concurrent_urls)
+assert all(session.trust_env is False for session in concurrent_sessions)
+assert all(len(session.calls) == 1 for session in concurrent_sessions)
+assert {session.calls[0][1] for session in concurrent_sessions} == set(concurrent_urls)
+assert all(
+    session.calls[0][2]["proxies"] == expected_proxies
+    for session in concurrent_sessions
+)
+assert all(
+    session.calls[0][2]["verify"] == str(managed_ca_file)
+    for session in concurrent_sessions
+)
+assert len({id(session.calls[0][2]["proxies"]) for session in concurrent_sessions}) == len(
+    concurrent_sessions
+)
 print("managed-fetch-proxy-ok")
 `,
       ],
