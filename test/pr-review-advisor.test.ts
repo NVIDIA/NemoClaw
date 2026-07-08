@@ -352,11 +352,12 @@ describe("PR review advisor", () => {
     expect(actual).toEqual(expected);
     for (const [index, turn] of turns.entries()) {
       expect(turn.prompt).toContain(`Turn ${index + 1}/${turns.length}`);
-      if (index < turns.length - 1) {
-        expect(turn.prompt).toContain("Do not produce final JSON");
-        expect(turn.prompt).not.toContain("<pr_review_advisor_json>");
-      }
     }
+    const workingPrompts = turns.slice(0, -1).map((turn) => turn.prompt);
+    expect(
+      workingPrompts.filter((prompt) => prompt.includes("Do not produce final JSON")),
+    ).toHaveLength(6);
+    expect(workingPrompts.join("\n")).not.toContain("<pr_review_advisor_json>");
     expect(turns[1]?.prompt).toContain("source-of-truth questions");
     expect(turns[2]?.prompt).toContain("sandbox escape");
     expect(turns[3]?.prompt).toContain("every riskPlan invariant");
