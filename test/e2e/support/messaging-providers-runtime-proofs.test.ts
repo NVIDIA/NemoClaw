@@ -15,7 +15,10 @@ import {
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
 } from "../live/messaging-providers-helpers.ts";
-import { SLACK_INSTALLED_RUNTIME_PROOF_SOURCE } from "../live/messaging-providers-slack-runtime-proof.ts";
+import {
+  parseInstalledSlackProof,
+  SLACK_INSTALLED_RUNTIME_PROOF_SOURCE,
+} from "../live/messaging-providers-slack-runtime-proof.ts";
 import { TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE } from "../live/messaging-providers-telegram-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
@@ -152,12 +155,65 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("/api/chat.postMessage");
   });
 
+  it("reports loader stderr without accepting stderr as a Slack proof (#6467)", () => {
+    const proof = JSON.stringify({
+      ok: true,
+      proof: "openclaw-pipeline-runtime",
+      allowedReplyTarget: "channel:C0E2ESLACK",
+      deniedPrepared: true,
+      deniedFeedbackMethod: "chat.postEphemeral",
+      deniedFeedbackCount: 1,
+      messageId: "1710000000.000201",
+      channelId: "C0E2ESLACK",
+    });
+    const stderr = [
+      "[channels] [slack] provider failed to start: this[#customizations].loadSync is not a function",
+      proof,
+    ].join("\n");
+
+    expect(() => parseInstalledSlackProof("", stderr)).toThrow(
+      /stderr:.*loadSync is not a function/su,
+    );
+  });
+
+  it("continues to accept only a complete Slack proof from stdout (#6467)", () => {
+    const proof = {
+      ok: true as const,
+      proof: "openclaw-pipeline-runtime" as const,
+      allowedReplyTarget: "channel:C0E2ESLACK",
+      deniedPrepared: true as const,
+      deniedFeedbackMethod: "chat.postEphemeral" as const,
+      deniedFeedbackCount: 1 as const,
+      messageId: "1710000000.000201",
+      channelId: "C0E2ESLACK",
+    };
+
+    expect(parseInstalledSlackProof(`diagnostic\n${JSON.stringify(proof)}`, "warning")).toEqual(
+      proof,
+    );
+  });
+
   it("requires the reviewed Slack pipeline/runtime proof in the default 2026.6.10 live lane", () => {
     expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
       'installedSlackProof.proof === "openclaw-pipeline-runtime"',
     );
     expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
       'installedSlackProof.proof === "openclaw-private-helper"',
+    );
+  });
+
+  it("requires channel-list output without suppressing loader failures (#6467)", () => {
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
+      '"timeout 45 openclaw channels list --all --json --no-color"',
+    );
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
+      "OpenClaw channels list did not emit channel state",
+    );
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
+      "OpenClaw channels list returned no output",
+    );
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
+      "openclaw channels list --all --json --no-color 2>/dev/null || true",
     );
   });
 

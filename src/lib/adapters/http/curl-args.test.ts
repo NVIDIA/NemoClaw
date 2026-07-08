@@ -43,9 +43,15 @@ describe("validateCurlProbeArgs — credential-leak defence", () => {
     "x-api-key",
     "access_key",
     "access-key",
+    "authorization",
+    "passcode",
+    "cookie",
+    "dsn",
+    "connection_string",
+    "webhook_url",
     "password",
     "credential",
-  ])("rejects a credential-shaped %s query parameter so secrets cannot reach argv", (paramName) => {
+  ])("rejects a credential-shaped %s query parameter so secrets cannot reach argv (#5048)", (paramName) => {
     expect(() =>
       validateCurlProbeArgs([
         "-sS",

@@ -17,5 +17,5 @@
     "types": ["node"]
   },
   "include": [".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts", ".agents/skills/nemoclaw-maintainer-day/scripts/pra-gate.ts", ".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts", "agents/hermes/**/*.ts", "bin/**/*.ts", "scripts/**/*.ts", "scripts/**/*.mts", "src/**/*.ts", "test/**/*.ts", "tools/**/*.ts", "tools/**/*.mts", "nemoclaw-blueprint/scripts/**/*.ts"],
-  "exclude": ["node_modules", "nemoclaw"]
+  "exclude": ["node_modules", "nemoclaw", "test/e2e/fixtures/plugins/weather"]
 }

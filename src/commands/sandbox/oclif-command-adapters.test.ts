@@ -302,6 +302,33 @@ describe("sandbox oclif command adapters", () => {
     expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha");
   });
 
+  it("sets a nonzero JSON exit when doctor reports inference.local failure (#6192)", async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    mocks.runSandboxDoctor.mockResolvedValueOnce({
+      schemaVersion: 1,
+      sandbox: "alpha",
+      status: "fail",
+      failed: 1,
+      warnings: 0,
+      checks: [
+        {
+          group: "Inference",
+          label: "Inference route (gateway)",
+          status: "fail",
+          detail: "Inference gateway returned HTTP 503",
+        },
+      ],
+    });
+
+    try {
+      await SandboxDoctorCliCommand.run(["alpha", "--json"], rootDir);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it("keeps doctor --json stdout clean while diagnostics recovery prints progress", async () => {
     const report = {
       schemaVersion: 1,

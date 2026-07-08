@@ -5,6 +5,7 @@ import { type MockInstance, vi } from "vitest";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
+import type { VersionCheckResult } from "../../src/lib/sandbox/version";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
 
 export type RebuildSandbox =
@@ -28,6 +29,7 @@ export type RebuildFlowSession = Record<string, unknown> & {
   steps: Record<string, RebuildFlowStep>;
 };
 export type RebuildFlowOverrides = {
+  entryUpdatesAfterVersionCheck?: Record<string, unknown>;
   applyPreset?: (presetName: string) => boolean;
   baseImagePreflight?: {
     ok: boolean;
@@ -82,6 +84,7 @@ export type RebuildFlowOverrides = {
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
   hermesProviderExists?: boolean;
+  versionCheck?: VersionCheckResult;
   hydrateCredentialEnv?: (credentialEnv: string) => string | null;
   customImagePreflight?: RebuildImagePreflightResult;
   defaultSelectionRevision?: number;
