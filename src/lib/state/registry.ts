@@ -105,6 +105,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchEnabled?: boolean;
   /** Selected disclosure preference; model compatibility safeguards may downgrade runtime behavior. */
   toolDisclosure?: ToolDisclosure;
+  /** Enables backend-neutral trace export to the fixed local OTLP collector boundary. */
+  observabilityEnabled?: boolean;
   /** Durable provider identity for enabled managed web search. */
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
@@ -489,6 +491,8 @@ export function registerSandbox(entry: SandboxEntry): void {
       // Preserve absence on reconstructed legacy rows. Only a freshly built
       // sandbox registration may claim the new progressive default.
       toolDisclosure: normalizeToolDisclosure(entry.toolDisclosure) ?? undefined,
+      observabilityEnabled:
+        typeof entry.observabilityEnabled === "boolean" ? entry.observabilityEnabled : undefined,
       webSearchProvider:
         entry.webSearchEnabled === true &&
         (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")

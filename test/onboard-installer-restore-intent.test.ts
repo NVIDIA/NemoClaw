@@ -265,6 +265,11 @@ runner.run = (command) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
   if (_n(command).includes("sandbox list")) return "my-assistant NotReady";
+  // Keep dashboard allocation inside this restore-intent fixture; host port
+  // occupancy is unrelated to the not-ready decision under test.
+  if (_n(command).includes("forward list")) {
+    return "my-assistant 127.0.0.1 18789 12345 running";
+  }
   return "";
 };
 registry.getSandbox = () => ({

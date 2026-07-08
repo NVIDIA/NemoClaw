@@ -3,6 +3,8 @@
 
 export const DEEPAGENTS_FRESH_REONBOARD_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh";
+export const DEEPAGENTS_OBSERVABILITY_CHECK =
+  "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh";
 
 export const DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS = [
   "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
@@ -13,6 +15,7 @@ export const DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS = [
   "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
   "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
   "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+  DEEPAGENTS_OBSERVABILITY_CHECK,
 ] as const;
 
 export function cloudExperimentalChecksForOnboarding(

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MessagingTokenDef } from "./messaging-prep";
 import {
   materializeSandboxCreatePlan,
@@ -15,6 +15,10 @@ const sandboxGpuConfig: SandboxGpuCreateConfig = {
   sandboxGpuEnabled: true,
   sandboxGpuDevice: "nvidia.com/gpu=0",
 };
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const channels = [
   {
@@ -327,6 +331,8 @@ describe("resolveSandboxCreateIntent", () => {
 
 describe("prepareSandboxCreatePlan", () => {
   it("builds create args, policy, providers, and active channels in onboard order", () => {
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
+    vi.stubEnv("NEMOCLAW_POLICY_TIER", "restricted");
     const events: string[] = [];
     const appendResourceFlags = vi.fn((args: string[]) => {
       events.push("resources");
@@ -402,9 +408,10 @@ describe("prepareSandboxCreatePlan", () => {
         dockerGpuPatch: false,
         additionalPresets: ["github"],
         agentName: "langchain-deepagents-code",
-        policyTier: null,
+        policyTier: "restricted",
       },
     );
+    expect(result.policyTier).toBe("restricted");
     expect(result.createArgs).toEqual([
       "--from",
       "/tmp/nemoclaw-build-1/Dockerfile",

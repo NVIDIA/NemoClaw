@@ -192,7 +192,7 @@ if ! reonboard_output="$(
     NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
     OPENSHELL_GATEWAY=nemoclaw \
     "$CLI" onboard --agent langchain-deepagents-code --name "$SANDBOX_NAME" \
-    --fresh --non-interactive --yes --yes-i-accept-third-party-software 2>&1
+    --fresh --non-interactive --observability --yes --yes-i-accept-third-party-software 2>&1
 )"; then
   fail "same-name --fresh re-onboard failed: $reonboard_output"
 fi

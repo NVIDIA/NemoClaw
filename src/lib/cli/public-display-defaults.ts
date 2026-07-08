@@ -375,7 +375,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 13,
-      flags: "[--yes|-y|--force] [--verbose|-v]",
+      flags: "[--yes|-y|--force] [--verbose|-v] [--observability|--no-observability]",
     },
   ],
   "sandbox:recover": [

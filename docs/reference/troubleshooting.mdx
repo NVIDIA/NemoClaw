@@ -210,6 +210,27 @@ docker run --rm busybox nslookup registry.npmjs.org
 
 When the lookup returns an answer, retry onboarding.
 
+### Direct DNS lookups fail in a Docker-driver GPU sandbox
+
+Egress covered by OpenShell network policies resolves destinations through the gateway.
+A direct DNS lookup inside the agent network namespace can fail on Docker-driver GPU hosts such as DGX Spark even when policy-covered inference, messaging, and search work normally.
+Direct in-sandbox DNS depends on Docker and the host resolver and is not a supported NemoClaw network-policy path, so NemoClaw does not use it as a sandbox health check.
+
+Run a manual lookup only when you are diagnosing a custom tool that performs its own DNS resolution:
+
+```bash
+openshell sandbox exec --name <sandbox-name> -- getent hosts host.openshell.internal
+openshell sandbox exec --name <sandbox-name> -- getent hosts example.com
+```
+
+If the host alias resolves but the external name does not, Docker's embedded resolver may be forwarding to an upstream DNS server that the sandbox bridge cannot use.
+Do not treat this result as evidence that a policy-covered feature is unhealthy.
+Test the affected inference, messaging, or search request through its normal policy path and inspect denied requests with `openshell term`.
+
+If a custom tool requires direct DNS, configure the Docker daemon to use a resolver that containers can reach.
+On hosts with VPN or split-DNS software, use an upstream resolver that remains reachable from the Docker bridge, then recreate or rebuild the sandbox.
+Keep bridge networking enabled so the sandbox retains its normal Docker network isolation.
+
 ### Host DNS resolution is blocked before provider validation
 
 NemoClaw also checks that the host process can resolve the provider host before it starts NVIDIA provider validation.

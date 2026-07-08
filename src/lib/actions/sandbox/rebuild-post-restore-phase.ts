@@ -6,6 +6,7 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
+import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import type * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
@@ -26,13 +27,14 @@ import { reapplyMessagingManifestAfterOpenClawDoctor } from "./rebuild-messaging
 export interface RebuildPostRestorePhaseInput {
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
-  preservedCustomPolicies: NonNullable<RebuildSandboxEntry["customPolicies"]>;
   messagingPlan: SandboxMessagingPlan | null;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
   restoreSucceeded: boolean;
-  restoredPresets: string[];
   failedPresets: string[];
+  finalBuiltinPresets: string[];
+  failedPresetRemovals: string[];
+  policyPresetReconciliationVerified: boolean;
   staleRecovery: boolean;
   recoveryRecreate: boolean;
   preparedBackupRecovery: boolean;
@@ -44,15 +46,19 @@ export interface RebuildPostRestorePhaseInput {
 }
 
 export function resolveRestoredPolicyRegistryState(
-  sandboxEntry: Pick<RebuildSandboxEntry, "customPolicies" | "policyPresetsFinalized">,
-  restoredPresets: readonly string[],
+  sandboxEntry: Pick<RebuildSandboxEntry, "policyPresetsFinalized">,
+  restoredBuiltinPresets: readonly string[],
   failedPresets: readonly string[],
+  policyPresetReconciliationVerified = true,
 ): { policies: string[]; policyPresetsFinalized: true | undefined } {
-  const customPolicyNames = new Set((sandboxEntry.customPolicies ?? []).map((entry) => entry.name));
   return {
-    policies: restoredPresets.filter((name) => !customPolicyNames.has(name)),
+    policies: [...new Set(restoredBuiltinPresets)],
     policyPresetsFinalized:
-      sandboxEntry.policyPresetsFinalized === true && failedPresets.length === 0 ? true : undefined,
+      sandboxEntry.policyPresetsFinalized === true &&
+      failedPresets.length === 0 &&
+      policyPresetReconciliationVerified
+        ? true
+        : undefined,
   };
 }
 
@@ -67,13 +73,14 @@ export async function runRebuildPostRestorePhase(
   const {
     sandboxName,
     sandboxEntry: sb,
-    preservedCustomPolicies,
     messagingPlan,
     backupManifest,
     mcpEntries,
     restoreSucceeded,
-    restoredPresets,
     failedPresets,
+    finalBuiltinPresets,
+    failedPresetRemovals,
+    policyPresetReconciliationVerified,
     staleRecovery,
     recoveryRecreate,
     preparedBackupRecovery,
@@ -89,7 +96,10 @@ export async function runRebuildPostRestorePhase(
   let mutablePermsRepairUnverified = false;
   let mutableConfigHashRefreshUnverified = false;
   let messagingHostForwardUnverified = false;
-  const policyPresetRestoreIncomplete = failedPresets.length > 0;
+  const policyPresetRestoreIncomplete =
+    failedPresets.length > 0 ||
+    failedPresetRemovals.length > 0 ||
+    !policyPresetReconciliationVerified;
 
   if (agentDef.name === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
@@ -146,16 +156,16 @@ export async function runRebuildPostRestorePhase(
   const { policies: restoredBuiltinPresets, policyPresetsFinalized } =
     resolveRestoredPolicyRegistryState(
       {
-        customPolicies: backupManifest?.customPolicies ?? preservedCustomPolicies,
         policyPresetsFinalized: sb.policyPresetsFinalized,
       },
-      restoredPresets,
+      finalBuiltinPresets,
       failedPresets,
+      policyPresetReconciliationVerified,
     );
   registry.updateSandbox(sandboxName, {
     agentVersion: agentDef.expectedVersion || null,
     policies: restoredBuiltinPresets,
-    policyTier: sb.policyTier ?? null,
+    policyTier: normalizePolicyTierName(sb.policyTier),
     policyPresetsFinalized,
   });
   log(
@@ -215,15 +225,26 @@ export async function runRebuildPostRestorePhase(
     }
     printMcpRestoreRecovery(sandboxName, mcpBridgeRestoreUnverified);
     if (policyPresetRestoreIncomplete) {
-      console.log(
-        `    Policy presets failed to reapply: ${failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${sandboxName} policy-add\``,
-      );
+      if (failedPresets.length > 0) {
+        console.log(
+          `    Policy presets failed to reapply: ${failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${sandboxName} policy-add\``,
+        );
+      }
+      if (failedPresetRemovals.length > 0 || !policyPresetReconciliationVerified) {
+        console.log(
+          `    Exact live policy reconciliation was incomplete${failedPresetRemovals.length > 0 ? `; remove failed: ${failedPresetRemovals.join(", ")}` : ""} \u2014 reconcile manually with \`${CLI_NAME} ${sandboxName} policy-add\` or \`${CLI_NAME} ${sandboxName} policy-remove\``,
+        );
+      }
     }
   }
   if (recoveryRecreate && staleSandboxWasLocked) {
     console.log(
       `    ${YW}\u26a0${R} Shields were previously enabled but the recreated sandbox starts unlocked \u2014 run \`${CLI_NAME} ${sandboxName} shields up\` to restore lockdown.`,
     );
+  }
+  if (failedPresetRemovals.length > 0 || !policyPresetReconciliationVerified) {
+    bail(`Rebuild completed with unverified live policy reconciliation for '${sandboxName}'.`);
+    return;
   }
   if (preparedBackupRecovery && !postRestoreComplete) {
     bail(

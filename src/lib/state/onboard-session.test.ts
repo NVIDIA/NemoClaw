@@ -154,6 +154,8 @@ describe("onboard session", () => {
 
     expect(saved.mode).toBe("non-interactive");
     expect(saved.toolDisclosure).toBe("progressive");
+    expect(saved.observabilityEnabled).toBe(false);
+    expect(saved.observabilityRequestedExplicitly).toBe(false);
     expect(saved.machine).toMatchObject({
       version: 1,
       state: "init",
@@ -163,6 +165,35 @@ describe("onboard session", () => {
     expect(fs.existsSync(session.SESSION_FILE)).toBe(true);
     expect(stat.mode & 0o777).toBe(0o600);
     expect(dirStat.mode & 0o777).toBe(0o700);
+  });
+
+  it.each([
+    true,
+    false,
+  ])("persists explicit observability intent when enabled=$enabled", (observabilityEnabled) => {
+    session.saveSession(
+      session.createSession({
+        observabilityEnabled,
+        observabilityRequestedExplicitly: true,
+      }),
+    );
+    const loaded = requireLoadedSession(session.loadSession());
+    const summary = requireDebugSummary(session.summarizeForDebug());
+
+    expect(loaded.observabilityEnabled).toBe(observabilityEnabled);
+    expect(loaded.observabilityRequestedExplicitly).toBe(true);
+    expect(summary.observabilityEnabled).toBe(observabilityEnabled);
+    expect(summary.observabilityRequestedExplicitly).toBe(true);
+  });
+
+  it("defaults legacy observability intent and provenance off", () => {
+    const legacy = session.createSession() as unknown as Record<string, unknown>;
+    delete legacy.observabilityEnabled;
+    delete legacy.observabilityRequestedExplicitly;
+    const normalized = requireLoadedSession(session.normalizeSession(legacy as never));
+
+    expect(normalized.observabilityEnabled).toBe(false);
+    expect(normalized.observabilityRequestedExplicitly).toBe(false);
   });
 
   it("redacts credential-bearing endpoint URLs before persisting them", () => {
