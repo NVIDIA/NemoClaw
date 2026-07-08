@@ -671,9 +671,7 @@ def _assert_secret_value_redaction(observability: ModuleType) -> None:
     for label, credential in boundary_probes:
         boundary_prefix = credential[:-3]
         boundary_value = (
-            "x"
-            * (observability._MAX_CAPTURE_STRING_CHARS - len(boundary_prefix) - 1)
-            + " "
+            "x" * (observability._MAX_CAPTURE_STRING_CHARS - len(boundary_prefix))
             + credential
         )
         boundary_capture = observability._bounded_capture(boundary_value)
