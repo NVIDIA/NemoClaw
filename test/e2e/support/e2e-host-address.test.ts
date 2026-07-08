@@ -12,8 +12,14 @@ describe("host address discovery", () => {
     ["hostname 192.168.1.5\n", { source: "hostname", address: "192.168.1.5" }],
     ["darwin-interface 192.168.64.1\n", { source: "darwin-interface", address: "192.168.64.1" }],
     ["darwin-ifconfig 10.1.2.3\n", { source: "darwin-ifconfig", address: "10.1.2.3" }],
-    ["", { source: "loopback", address: "127.0.0.1" }],
+    ["loopback 127.0.0.1\n", { source: "loopback", address: "127.0.0.1" }],
   ])("parses %j", (output, expected) => expect(parseHostAddressProbe(output)).toEqual(expected));
+
+  it("rejects successful unrecognized host address probe output", () => {
+    expect(() => parseHostAddressProbe("garbage 10.0.0.2\n")).toThrow(
+      /unrecognized probe output: garbage 10\.0\.0\.2/,
+    );
+  });
 
   it("rejects malformed known-source host address output", () => {
     expect(() => parseHostAddressProbe("route not-an-ip\n")).toThrow(

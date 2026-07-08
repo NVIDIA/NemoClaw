@@ -23,19 +23,24 @@ export interface HostAddressResult {
 export function parseHostAddressProbe(
   output: string,
 ): Pick<HostAddressResult, "address" | "source"> {
-  const match = output.trim().match(/^(route|hostname|darwin-interface|darwin-ifconfig)\s+(\S+)/);
-  if (!match) {
+  const trimmed = output.trim();
+  const match = trimmed.match(/^(route|hostname|darwin-interface|darwin-ifconfig)\s+(\S+)$/);
+  if (match) {
+    const address = match[2];
+    if (isIP(address) !== 4) {
+      throw new Error(
+        `host address discovery returned invalid IPv4 address from ${match[1]}: ${address}`,
+      );
+    }
+
+    return { source: match[1] as HostAddressSource, address };
+  }
+
+  if (trimmed === "loopback 127.0.0.1") {
     return { source: "loopback", address: "127.0.0.1" };
   }
 
-  const address = match[2];
-  if (isIP(address) !== 4) {
-    throw new Error(
-      `host address discovery returned invalid IPv4 address from ${match[1]}: ${address}`,
-    );
-  }
-
-  return { source: match[1] as HostAddressSource, address };
+  throw new Error(`host address discovery returned unrecognized probe output: ${trimmed}`);
 }
 
 export async function discoverHostAddress(
