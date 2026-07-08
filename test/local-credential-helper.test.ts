@@ -383,7 +383,7 @@ function createCommandFixture(): {
     "if (!path.isAbsolute(privateRoot) || process.cwd() !== privateRoot) process.exit(30);",
     'if (process.platform !== "win32" && (fs.statSync(privateRoot).mode & 0o077) !== 0) process.exit(31);',
     'if ([".curlrc", ".gitconfig", ".npmrc", ".netrc"].some((name) => fs.existsSync(path.join(privateRoot, name)))) process.exit(32);',
-    "fs.writeFileSync(`${markerPath}.private-root`, privateRoot);",
+    'fs.writeFileSync(markerPath + ".private-root", privateRoot);',
     'fs.appendFileSync(markerPath, "ran\\n");',
     "if (fs.existsSync(unexpectedShellPath)) process.exit(24);",
   ].join("");
