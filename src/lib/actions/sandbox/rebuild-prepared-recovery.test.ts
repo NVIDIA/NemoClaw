@@ -47,6 +47,7 @@ describe("prepared rebuild recovery", () => {
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       recoveryManifest.backupPath,
+      { applyManagedStateFileRestore: false },
     );
   });
 
@@ -87,6 +88,7 @@ describe("prepared rebuild recovery", () => {
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       recoveryManifest.backupPath,
+      { applyManagedStateFileRestore: false },
     );
   });
 

@@ -20,6 +20,7 @@ export interface RebuildRestorePhaseInput {
   policyPresets: string[];
   customPolicies: NonNullable<RebuildSandboxEntry["customPolicies"]>;
   reconcileManagedDcodeObservability: boolean;
+  applyManagedStateFileRestore: boolean;
   log: RebuildLog;
 }
 
@@ -180,6 +181,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     policyPresets,
     customPolicies,
     reconcileManagedDcodeObservability,
+    applyManagedStateFileRestore,
     log,
   } = input;
   let restoreSucceeded = true;
@@ -187,7 +189,9 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     console.log("");
     console.log("  Restoring workspace state...");
     log(`Restoring from: ${backupManifest.backupPath} into sandbox: ${sandboxName}`);
-    const restore = sandboxState.restoreSandboxState(sandboxName, backupManifest.backupPath);
+    const restore = sandboxState.restoreSandboxState(sandboxName, backupManifest.backupPath, {
+      applyManagedStateFileRestore,
+    });
     log(
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}`,
     );

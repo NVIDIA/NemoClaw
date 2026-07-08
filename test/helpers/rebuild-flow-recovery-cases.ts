@@ -31,6 +31,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
         "alpha",
         recoveryManifest.backupPath,
+        { applyManagedStateFileRestore: false },
       );
     });
 

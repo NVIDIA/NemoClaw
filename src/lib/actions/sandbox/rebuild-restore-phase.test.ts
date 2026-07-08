@@ -51,6 +51,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["npm", "brave", "tavily", "nous-web"],
       customPolicies,
       reconcileManagedDcodeObservability: false,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -92,6 +93,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies,
       reconcileManagedDcodeObservability: false,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -125,6 +127,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [genuineCustomPolicy, generatedMcpPolicy],
       reconcileManagedDcodeObservability: false,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -154,6 +157,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["npm"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -179,6 +183,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["npm"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -209,6 +214,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["npm", "bad", "throw"],
       customPolicies: [],
       reconcileManagedDcodeObservability: false,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -230,6 +236,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["observability-otlp-local"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -251,6 +258,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["observability-otlp-local"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -267,6 +275,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -292,6 +301,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -324,6 +334,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -358,6 +369,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["observability-otlp-local"],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -387,6 +399,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -415,6 +428,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 
@@ -442,6 +456,7 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["observability-otlp-local"],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
+      applyManagedStateFileRestore: false,
       log: vi.fn(),
     });
 

@@ -6,6 +6,7 @@ import { BRAVE_API_KEY_ENV, TAVILY_API_KEY_ENV } from "../../inference/web-searc
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
 import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-config";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
+import { usesManagedDcodeIdentity } from "../../onboard/dcode-selection-drift";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
@@ -300,6 +301,7 @@ async function rebuildSandboxUnlocked(
           backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
           preservedCustomPolicies,
         reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
+        applyManagedStateFileRestore: usesManagedDcodeIdentity(rebuildAgent, fromDockerfile),
         log,
       });
       await runRebuildPostRestorePhase({

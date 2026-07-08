@@ -870,13 +870,15 @@ export function buildStateFileRestoreCommand(
   return steps.join("; ");
 }
 
-function loadStateFileRestoreOwnership(agentType: string): Map<string, StateFileRestoreOwnership> {
+function loadStateFileRestoreOwnership(
+  agentType: string,
+): Map<string, StateFileRestoreOwnership> | null {
   const ownership = new Map<string, StateFileRestoreOwnership>();
   let agent: ReturnType<typeof loadAgent> | null = null;
   try {
     agent = loadAgent(agentType);
   } catch {
-    return ownership;
+    return null;
   }
   for (const file of agent.stateFiles) {
     if (!file.restore) continue;
@@ -1537,6 +1539,13 @@ export function restoreSandboxState(
 
     const restoreOwnership = loadStateFileRestoreOwnership(manifest.agentType);
     for (const spec of localFiles) {
+      if (restoreOwnership === null) {
+        _log(
+          `FAILED: state file restore ${spec.path}: could not load agent manifest '${manifest.agentType}' to determine restore ownership`,
+        );
+        failedFiles.push(spec.path);
+        continue;
+      }
       if (
         restoreStateFile(
           configFile,

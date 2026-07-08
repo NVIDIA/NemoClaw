@@ -20,6 +20,7 @@ import {
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
 import { listMessagingProviderSuffixes } from "../../messaging/channels";
+import { usesManagedDcodeIdentity } from "../../onboard/dcode-selection-drift";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   isDcodeAgent,
@@ -993,7 +994,13 @@ async function runSnapshotRestoreUnlocked(
     } else {
       console.log(`  Restoring snapshot into '${sandboxName}'...`);
     }
-    const result = sandboxState.restoreSandboxState(targetSandbox, backupPath);
+    const restoreTargetEntry = registry.getSandbox(targetSandbox);
+    const result = sandboxState.restoreSandboxState(targetSandbox, backupPath, {
+      applyManagedStateFileRestore: usesManagedDcodeIdentity(
+        restoreTargetEntry?.agent,
+        restoreTargetEntry?.fromDockerfile,
+      ),
+    });
     if (result.success) {
       console.log(
         `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
