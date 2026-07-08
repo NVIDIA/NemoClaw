@@ -172,14 +172,19 @@ _ANCHORED_SECRET_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"((?:_KEY|API_KEY|SECRET|TOKEN|CREDENTIAL)[=: ]['\"]?)"
-        r"[A-Za-z0-9_.+/=-]{10,}",
+        r"((?:^|[^A-Za-z0-9])(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)"
+        r"['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?)"
+        r"[^\s'\"]{10,}",
         re.IGNORECASE,
     ),
     re.compile(
-        r"((?:^|[^A-Za-z0-9])(?:PASSWORD|PASSWD|PASS)[=: ]['\"]?)"
+        r"((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}"
+        r"(?:Token|Secret|Credential|Password|Passwd|Pass)|"
+        r"[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|"
+        r"[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|"
+        r"[Aa]pp|[Rr]esolved)Key)"
+        r"['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?)"
         r"[^\s'\"]{10,}",
-        re.IGNORECASE,
     ),
 )
 _ANCHORED_SECRET_REPLACEMENT = rf"\g<1>{_REDACTED_SECRET_VALUE}"
@@ -204,15 +209,25 @@ _TRUNCATED_SECRET_PATTERNS = tuple(
         ),
         (
             r"(?:Bearer[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029"
-            r"\u202f\u205f\u3000\ufeff]+|"
-            r"(?:_KEY|API_KEY|SECRET|TOKEN|CREDENTIAL)[=: ]['\"]?)"
+            r"\u202f\u205f\u3000\ufeff]+)"
             r"[A-Za-z0-9_.+/=-]*\Z",
             re.IGNORECASE,
         ),
         (
-            r"(?:^|[^A-Za-z0-9])(?:PASSWORD|PASSWD|PASS)[=: ]['\"]?"
+            r"(?:^|[^A-Za-z0-9])(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)"
+            r"['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?"
             r"[^\s'\"]*\Z",
             re.IGNORECASE,
+        ),
+        (
+            r"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}"
+            r"(?:Token|Secret|Credential|Password|Passwd|Pass)|"
+            r"[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|"
+            r"[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|"
+            r"[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key)"
+            r"['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?"
+            r"[^\s'\"]*\Z",
+            0,
         ),
     )
 )
@@ -286,9 +301,7 @@ def _redact_capture_key(key: Any) -> bool:
                 "credential",
                 "credentials",
                 "header",
-                "pass",
                 "password",
-                "passwd",
                 "secret",
                 "token",
             }
@@ -297,6 +310,9 @@ def _redact_capture_key(key: Any) -> bool:
         or normalized.endswith("_api_key")
         or normalized.endswith("_access_key")
         or normalized.endswith("_headers")
+        or normalized in {"pass", "passwd"}
+        or normalized.endswith("_pass")
+        or normalized.endswith("_passwd")
         or normalized.endswith("_password")
         or normalized.endswith("_private_key")
         or normalized.endswith("_secret")

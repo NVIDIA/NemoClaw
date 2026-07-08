@@ -73,8 +73,8 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
 
 export const CONTEXT_PATTERNS: RegExp[] = [
   /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/gi,
-  /(?<=(?:_KEY|API_KEY|SECRET|TOKEN|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
-  /(?<=(?:^|[^A-Za-z0-9])(?:PASSWORD|PASSWD|PASS)[=: ]['"]?)[^\s'"]{10,}/gi,
+  /(?<=(?:^|[^A-Za-z0-9])(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/gi,
+  /(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential|Password|Passwd|Pass)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/g,
 ];
 
 export const SECRET_BLOCK_PATTERNS: RegExp[] = [
@@ -113,11 +113,11 @@ export function redactString(text: string, explicitValues?: Iterable<string>): s
     p.lastIndex = 0;
     out = out.replace(p, REDACTED);
   }
-  for (const p of CONTEXT_PATTERNS) {
+  for (const p of SECRET_BLOCK_PATTERNS) {
     p.lastIndex = 0;
     out = out.replace(p, REDACTED);
   }
-  for (const p of SECRET_BLOCK_PATTERNS) {
+  for (const p of CONTEXT_PATTERNS) {
     p.lastIndex = 0;
     out = out.replace(p, REDACTED);
   }
@@ -158,7 +158,7 @@ const FIXTURE_ENV_PREFIXES: readonly string[] = ["E2E_", "NEMOCLAW_LOG_"];
 // non-secret values via the secretEnv channel and keeps the
 // "fixture-allowlist vs declared-secret" distinction honest.
 const SECRET_ENV_KEY_SHAPE =
-  /^[A-Z][A-Z0-9_]*(?:API[_]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIAL|PASSPHRASE|PRIVATE[_]?KEY|ACCESS[_]?KEY)$/;
+  /^(?:[A-Z][A-Z0-9_]*_)?(?:API[_]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIAL|PASSPHRASE|PRIVATE[_]?KEY|ACCESS[_]?KEY)$/;
 
 export function isValidSecretEnvKey(key: string): boolean {
   return SECRET_ENV_KEY_SHAPE.test(key);

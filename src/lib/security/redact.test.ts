@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { redact, redactForLog, redactSensitiveText, redactUrl } from "./redact.js";
+import { redact, redactForLog, redactFull, redactSensitiveText, redactUrl } from "./redact.js";
 
 describe("URL redaction", () => {
   it.each([
@@ -96,28 +96,62 @@ describe("redactForLog", () => {
   it("redacts pass aliases in structured keys and canonical text assignments", () => {
     const payload = "opaqueCredentialPayloadZ1234567890";
 
-    expect(redactForLog({ pass: payload, passwd: payload, customPass: payload })).toEqual({
+    expect(
+      redactForLog({
+        pass: payload,
+        passwd: payload,
+        customPass: payload,
+        customPasswd: payload,
+        DBPass: payload,
+        db_pass: payload,
+        "db-pass": payload,
+      }),
+    ).toEqual({
       pass: "<REDACTED>",
       passwd: "<REDACTED>",
       customPass: "<REDACTED>",
+      customPasswd: "<REDACTED>",
+      DBPass: "<REDACTED>",
+      db_pass: "<REDACTED>",
+      "db-pass": "<REDACTED>",
     });
     for (const [assignment, expected] of [
       [`CUSTOM_PASS=${payload}`, "CUSTOM_PASS=<REDACTED>"],
       [`CUSTOM_PASSWD=${payload}`, "CUSTOM_PASSWD=<REDACTED>"],
+      [`CUSTOM_PASS ${payload}`, "CUSTOM_PASS <REDACTED>"],
       ["CUSTOM_PASS=!OpaquePassword123", "CUSTOM_PASS=<REDACTED>"],
       ["CUSTOM_PASS=abcdefghij!tail-secret", "CUSTOM_PASS=<REDACTED>"],
+      ["CUSTOM_PASS=,OpaquePassword123", "CUSTOM_PASS=<REDACTED>"],
+      ["CUSTOM_PASS=OpaquePassword123,", "CUSTOM_PASS=<REDACTED>"],
+      [`PASS: ${payload}`, "PASS: <REDACTED>"],
+      [`PASS = ${payload}`, "PASS = <REDACTED>"],
+      [`{"PASS":"${payload}"}`, '{"PASS":"<REDACTED>"}'],
+      [`clientSecret=${payload}`, "clientSecret=<REDACTED>"],
+      [`customPass=${payload}`, "customPass=<REDACTED>"],
+      [`DBPass=${payload}`, "DBPass=<REDACTED>"],
     ]) {
       expect(redactSensitiveText(assignment)).toBe(expected);
+      expect(redactFull(assignment)).toBe(expected);
+      expect(redactForLog(assignment)).toBe(expected);
     }
-    expect(redactForLog("CUSTOM_PASS=abcdefghij!tail-secret")).toBe("CUSTOM_PASS=<REDACTED>");
   });
 
   it("preserves benign structured keys and assignments containing pass", () => {
-    const benign = { compass: "north", bypass: false, passengerCount: 2, passed: true };
+    const benign = {
+      compass: "north",
+      bypass: false,
+      passengerCount: 2,
+      passed: true,
+      passRate: 0.9,
+      passCount: 4,
+      passThrough: "enabled",
+    };
 
     expect(redactForLog(benign)).toEqual(benign);
-    const text = "COMPASS=opaqueNonSecretPayload123 BYPASS=allowedValue123";
+    const text =
+      "COMPASS=opaqueNonSecretPayload123 BYPASS=allowedValue123 TOPSECRET=opaqueNonSecretPayload123 SUBTOKEN=opaqueNonSecretPayload123 publicKey=opaqueVerificationMaterial123 customKey=opaqueNonSecretPayload123 passRate=opaqueNonSecretPayload123";
     expect(redactSensitiveText(text)).toBe(text);
+    expect(redactFull(text)).toBe(text);
     expect(redactForLog(text)).toBe(text);
   });
 

@@ -98,10 +98,10 @@ run_dcode() {
 has_context_secret_shape() {
   local upper
   upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
-  # The outer class accepts '=', ':', or whitespace; [:space:] is the nested
-  # POSIX character class understood by Bash's [[ string =~ regex ]] operator.
-  [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]] \
-    || [[ "$upper" =~ (^|[^A-Z0-9])(PASSWORD|PASSWD|PASS)[=:[:space:]][\'\"]?[^[:space:]\'\"]{10,} ]]
+  # Keep horizontal separator whitespace bounded to mirror the canonical
+  # lookbehind and avoid an attacker-controlled scan over arbitrarily long runs.
+  [[ "$upper" =~ (^|[^A-Z0-9])(KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
+    || [[ "$1" =~ (^|[^A-Za-z0-9])([A-Za-z0-9]{1,128}(Token|Secret|Credential|Password|Passwd|Pass)|[A-Za-z0-9]{0,128}([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key)[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]]
 }
 
 has_bearer_secret_shape() {
@@ -282,10 +282,14 @@ has_credential_name_context() {
     OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT | OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
       return 0
       ;;
-    *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASSWD | *_PASS | *_CREDENTIAL)
+    *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASSWD | *_PASS | *_CREDENTIAL | *-API-KEY | *-KEY | *-TOKEN | *-SECRET | *-PASSWORD | *-PASSWD | *-PASS | *-CREDENTIAL)
       return 0
       ;;
   esac
+  if [[ "$1" =~ [A-Za-z0-9](Token|Secret|Credential|Password|Passwd|Pass)$ ]] \
+    || [[ "$1" =~ ([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key$ ]]; then
+    return 0
+  fi
   return 1
 }
 

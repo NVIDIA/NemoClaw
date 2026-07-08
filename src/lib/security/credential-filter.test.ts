@@ -39,6 +39,33 @@ describe("isCredentialField", () => {
     expect(isCredentialField("appToken")).toBe(true);
   });
 
+  it("matches terminal pass aliases without treating pass substrings as credentials", () => {
+    for (const field of [
+      "pass",
+      "passwd",
+      "customPass",
+      "customPasswd",
+      "DBPass",
+      "db_pass",
+      "db_passwd",
+      "db-pass",
+      "db-passwd",
+    ]) {
+      expect(isCredentialField(field), field).toBe(true);
+    }
+    for (const field of [
+      "COMPASS",
+      "BYPASS",
+      "passengerCount",
+      "passed",
+      "passRate",
+      "passCount",
+      "passThrough",
+    ]) {
+      expect(isCredentialField(field), field).toBe(false);
+    }
+  });
+
   it("matches env-variable-style secret names (#5027)", () => {
     expect(isCredentialField("GITHUB_TOKEN")).toBe(true);
     expect(isCredentialField("BRAVE_API_KEY")).toBe(true);
@@ -157,6 +184,41 @@ describe("stripCredentials", () => {
     expect(result.model).toBe("gpt-4");
     expect(result.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
     expect(result.name).toBe("test");
+  });
+
+  it("strips terminal pass aliases while preserving benign pass substrings", () => {
+    const payload = "opaqueCredentialPayloadZ1234567890";
+    const result = stripCredentials({
+      customPass: payload,
+      customPasswd: payload,
+      DBPass: payload,
+      db_pass: payload,
+      db_passwd: payload,
+      "db-pass": payload,
+      COMPASS: "north",
+      BYPASS: "allowed",
+      passRate: 0.9,
+      passCount: 4,
+      passThrough: true,
+    });
+
+    for (const field of [
+      "customPass",
+      "customPasswd",
+      "DBPass",
+      "db_pass",
+      "db_passwd",
+      "db-pass",
+    ]) {
+      expect((result as Record<string, unknown>)[field], field).toBe("[STRIPPED_BY_MIGRATION]");
+    }
+    expect(result).toMatchObject({
+      COMPASS: "north",
+      BYPASS: "allowed",
+      passRate: 0.9,
+      passCount: 4,
+      passThrough: true,
+    });
   });
 
   it("strips nested credential fields", () => {

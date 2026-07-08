@@ -22,11 +22,27 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildChildEnv, redactString } from "../fixtures/redaction.ts";
+import { buildChildEnv, isValidSecretEnvKey, redactString } from "../fixtures/redaction.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 
 describe("fixture redaction entry point", () => {
+  it("recognizes pass env names only at exact or underscore-delimited boundaries", () => {
+    for (const key of ["PASS", "PASSWD", "CUSTOM_PASS", "CUSTOM_PASSWD"]) {
+      expect(isValidSecretEnvKey(key), key).toBe(true);
+    }
+    for (const key of ["COMPASS", "BYPASS", "PASSENGER_COUNT", "PASSED"]) {
+      expect(isValidSecretEnvKey(key), key).toBe(false);
+    }
+
+    expect(
+      buildChildEnv(
+        { COMPASS: "north", BYPASS: "allowed" },
+        { fixtureOverlay: {}, additionalAllowedEnv: ["COMPASS", "BYPASS"] },
+      ),
+    ).toMatchObject({ COMPASS: "north", BYPASS: "allowed" });
+  });
+
   it("passes only the workflow-owned trace directory through child env", () => {
     const childEnv = buildChildEnv(
       {
