@@ -87,7 +87,7 @@ describe("stopSandboxChannels", () => {
     );
     const args = spawnSyncSpy.mock.calls[1][1] as string[];
     const script = args[args.length - 1];
-    expect(script).toContain("ps -eo pid=,args=");
+    expect(script).toContain("ps -eo user=,pid=,args=");
     expect(script).toContain("openclaw-gateway");
     expect(script).toContain("kill -TERM $pids");
     expect(script).toContain("kill -KILL $remaining");
@@ -110,6 +110,56 @@ describe("stopSandboxChannels", () => {
     );
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("OpenClaw gateway stopped inside sandbox");
+    logSpy.mockRestore();
+  });
+
+  it("uses the generated sandbox pod name for privileged shutdown", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    spawnSyncSpy
+      .mockReturnValueOnce({ status: 0, stdout: "pod/app-abc\n" })
+      .mockReturnValueOnce({ status: 0 });
+
+    stopSandboxChannels("app");
+
+    const args = spawnSyncSpy.mock.calls[1][1] as string[];
+    expect(args).toContain("pod/app-abc");
+    logSpy.mockRestore();
+  });
+
+  it("does not select overlapping sandbox pod names for privileged shutdown", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    spawnSyncSpy
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "pod/prod-app-abc\npod/app-abc\n",
+      })
+      .mockReturnValueOnce({ status: 0 });
+
+    stopSandboxChannels("app");
+
+    const args = spawnSyncSpy.mock.calls[1][1] as string[];
+    expect(args).toContain("pod/app-abc");
+    expect(args).not.toContain("pod/prod-app-abc");
+    logSpy.mockRestore();
+  });
+
+  it("falls back when no exact generated sandbox pod name is available", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    spawnSyncSpy
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "pod/prod-app-abc\npod/app-copy-abc\n",
+      })
+      .mockReturnValueOnce({ status: 0 });
+
+    stopSandboxChannels("app");
+
+    expect(spawnSyncSpy).toHaveBeenNthCalledWith(
+      2,
+      "/usr/local/bin/openshell",
+      ["sandbox", "exec", "--name", "app", "--", "sh", "-lc", expect.any(String)],
+      expect.objectContaining({ timeout: 20000 }),
+    );
     logSpy.mockRestore();
   });
 
@@ -190,12 +240,19 @@ describe("stopSandboxChannels", () => {
 
     const args = spawnSyncSpy.mock.calls[1][1] as string[];
     const script = args[args.length - 1];
-    // Must match both the launcher form ("openclaw gateway run") and the
-    // re-exec'd binary ("openclaw-gateway"). The gateway re-execs after
-    // startup, dropping "run" from argv entirely.
+    // Must match all three gateway argv forms: the launcher
+    // ("openclaw gateway run"), the re-exec'd binary ("openclaw-gateway"),
+    // and the post-startup form where OpenClaw rewrites argv to a bare
+    // "openclaw" via process.title (#4951).
     expect(script).toContain("openclaw-gateway");
     expect(script).toContain("openclaw[[:space:]]+gateway");
+    expect(script).toContain("openclaw[[:space:]]*$");
     logSpy.mockRestore();
+  });
+
+  it("rejects malformed sandbox names before spawning docker or openshell", () => {
+    expect(() => stopSandboxChannels("../escape")).toThrow("Invalid sandbox name");
+    expect(spawnSyncSpy).not.toHaveBeenCalled();
   });
 });
 

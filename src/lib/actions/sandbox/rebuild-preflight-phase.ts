@@ -5,6 +5,7 @@ import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import type { RebuildManifest } from "../../state/sandbox";
+import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
 import {
   preflightRebuildCredentials,
   type RebuildBail,
@@ -82,6 +83,19 @@ export async function runRebuildPreflightPhase(
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
+  // #6376: refuse a stuck MCP destroy transaction up front — before backup,
+  // image prep, or the old-sandbox delete. The only MCP marker check used to
+  // live inside the destroy phase, which runs AFTER the backup phase, so a
+  // stuck sandbox paid destructive/backup cost before the guard fired. Moving
+  // it here fails closed before any destructive work; the guard's message is
+  // phase-aware (prepared -> non-destructive `mcp remove --force`; pending ->
+  // finish the destroy).
+  try {
+    assertMcpDestroyNotPending(sandboxEntry);
+  } catch (error) {
+    bail(error instanceof Error ? error.message : String(error));
+    return null;
+  }
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;

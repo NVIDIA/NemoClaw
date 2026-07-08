@@ -24,6 +24,7 @@ import {
 import {
   assertMcpDestroyNotPending,
   bridgeState,
+  clearMcpDestroyMarkers,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
@@ -84,32 +85,100 @@ function assertExactMcpRemoveProvider(
   }
 }
 
+// Discriminated outcome of a single `mcp remove` so the caller can prove the
+// requested entry was handled. Clearing the transaction marker additionally
+// requires that no bridge entries remain: phase one scrubbed/detached every
+// bridge, so one successful removal cannot mark a multi-bridge recovery done.
+type McpRemovalOutcome =
+  | "removedTarget" // the requested committed server was cleaned up
+  | "cancelledPreparedAdd" // an incomplete add for the requested server was cancelled
+  | "markerOnlyNoEntries" // no bridges remain; a --force removal is a marker-only recovery
+  | "noMatchingEntry" // bridges remain but not the requested server (no-op / wrong server)
+  | "residualPreserved"; // force cleanup left residual resources; the entry is preserved
+
+const PROVEN_MCP_RECOVERY_OUTCOMES: ReadonlySet<McpRemovalOutcome> = new Set([
+  "removedTarget",
+  "cancelledPreparedAdd",
+  "markerOnlyNoEntries",
+]);
+
+function completedPreparedDestroyRecovery(
+  sandboxName: string,
+  outcome: McpRemovalOutcome,
+): boolean {
+  if (!PROVEN_MCP_RECOVERY_OUTCOMES.has(outcome)) return false;
+  return Object.keys(bridgeState(getSandboxOrThrow(sandboxName))).length === 0;
+}
+
 export async function removeMcpBridge(
   sandboxName: string,
   server: string,
   options: { force?: boolean; allowResidual?: boolean } = {},
 ): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () =>
-    removeMcpBridgeUnlocked(sandboxName, server, options),
-  );
+  return withMcpLifecycleLock(sandboxName, async () => {
+    // #6376: capture the recoverable prepared-destroy phase BEFORE the removal.
+    const before = getSandboxOrThrow(sandboxName).mcp;
+    const recoverPreparedDestroy =
+      !!options.force && !!before?.destroyPreparedAt && !before?.destroyPendingAt;
+    const outcome = await removeMcpBridgeUnlocked(sandboxName, server, options);
+    // Clear the phase-one destroy marker only after the requested entry was
+    // handled AND no bridge entries remain. A failed removal, wrong-server
+    // no-op, residual-preserving cleanup, or partial multi-bridge recovery must
+    // retain the durable marker. `setBridgeState` preserves it across each
+    // removal until this explicit, phase-aware clear.
+    if (
+      recoverPreparedDestroy &&
+      completedPreparedDestroyRecovery(sandboxName, outcome) &&
+      clearMcpDestroyMarkers(sandboxName)
+    ) {
+      console.log(
+        `  Cleared incomplete MCP destroy transaction on sandbox '${sandboxName}' (--force).`,
+      );
+    }
+  });
 }
 
 async function removeMcpBridgeUnlocked(
   sandboxName: string,
   server: string,
   options: { force?: boolean; allowResidual?: boolean } = {},
-): Promise<void> {
+): Promise<McpRemovalOutcome> {
   validateSandboxName(sandboxName);
   validateMcpServerName(server);
   const sandbox = getSandboxOrThrow(sandboxName);
-  assertMcpDestroyNotPending(sandbox);
-  const entry = bridgeState(sandbox)[server];
+  // #6376: `--force` on `mcp remove` is the documented non-destructive recovery
+  // for a stuck MCP destroy transaction. It is PHASE-AWARE: only the prepared
+  // (phase-one) marker — in-sandbox scrub + provider detach done, deletion not
+  // durably confirmed — is recoverable here when the sandbox is still live. In
+  // that case skip the guard and attempt the requested removal; removeMcpBridge
+  // clears the marker only after the full bridge manifest is drained, so a
+  // failure or an absent sandbox preserves the durable retry state. Every other
+  // state still hits the guard:
+  //   - no `--force`: refuse (the guard's normal behavior);
+  //   - the pending (phase-two) marker: the registry records confirmed OpenShell
+  //     deletion, so the guard points at `nemoclaw <name> destroy`; clearing that
+  //     marker would abandon still-owed provider/policy cleanup.
+  const recoverPreparedDestroy =
+    !!options.force && !!sandbox.mcp?.destroyPreparedAt && !sandbox.mcp?.destroyPendingAt;
+  if (!recoverPreparedDestroy) {
+    assertMcpDestroyNotPending(sandbox);
+  }
+  const currentBridges = bridgeState(sandbox);
+  const entry = currentBridges[server];
   if (!entry) {
     if (!options.force) {
       throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
     }
+    // Distinguish a genuine marker-only recovery (no bridge entries remain, so
+    // the requested `--force` removal has nothing to clean up beyond the stuck
+    // marker) from a wrong-server no-op (other entries exist but not this one).
+    // Only the former is a proven recovery that may clear the destroy marker.
+    if (Object.keys(currentBridges).length === 0) {
+      console.log(`  No MCP servers are registered on sandbox '${sandboxName}'.`);
+      return "markerOnlyNoEntries";
+    }
     console.log(`  No MCP server '${server}' is registered on sandbox '${sandboxName}'.`);
-    return;
+    return "noMatchingEntry";
   }
   if (entry.addState === "prepared") {
     // `prepared` is persisted before gateway selection and is advanced only
@@ -118,7 +187,7 @@ async function removeMcpBridgeUnlocked(
     // state another workflow may own.
     removeBridgeEntry(sandboxName, server);
     console.log(`  Cancelled incomplete MCP add for '${server}' on sandbox '${sandboxName}'.`);
-    return;
+    return "cancelledPreparedAdd";
   }
   // Cleanup follows the adapter persisted with the bridge. Requiring the
   // sandbox's current agent to still advertise MCP support would strand old
@@ -333,8 +402,11 @@ async function removeMcpBridgeUnlocked(
         `MCP force cleanup left residual resources for '${server}'. The registry entry was preserved so cleanup can be retried.`,
       );
     }
-    return;
+    // allowResidual: the caller accepted leftover resources. This is NOT a proven
+    // recovery — residual state remains — so the destroy marker must be preserved.
+    return "residualPreserved";
   }
   removeBridgeEntry(sandboxName, server);
   console.log(`  Removed MCP server '${server}' from sandbox '${sandboxName}'.`);
+  return "removedTarget";
 }

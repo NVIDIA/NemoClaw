@@ -24,6 +24,9 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { registerTunnelOrigin } from "./allowed-origins";
 import * as gatewayStop from "./gateway-stop";
+import { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
+
+export { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -453,15 +456,22 @@ export function showStatus(opts: ServiceOptions = {}): void {
  *
  * The in-sandbox script intentionally does not rely on a bare `pkill -f`
  * result: `pkill -f openclaw[- ]gateway` can match the transient shell/pkill
- * command line and report success while the real `openclaw-gateway` process
- * survives.  Instead, it gathers concrete PIDs from `ps`, excludes its own
- * process tree, sends TERM/KILL as needed, and only reports success after a
- * post-stop process scan is empty.
+ * command line and report success while the real gateway process survives.
+ * Instead, it gathers concrete PIDs from `ps`, excludes its own process tree,
+ * sends TERM/KILL as needed, and only reports success after a post-stop process
+ * scan is empty.
+ *
+ * The matcher must also recognize the bare `openclaw` process name that
+ * OpenClaw reports after rewriting `process.title`, but that broad argv form is
+ * accepted only when it matches the recorded gateway PID plus local gateway
+ * marker. This keeps `tunnel stop` from killing unrelated bare OpenClaw
+ * processes while still finding the rewritten gateway (#4951).
  */
 export function stopSandboxChannels(sandboxName: string): void {
-  info(`Stopping in-sandbox OpenClaw gateway (sandbox: ${sandboxName})...`);
+  const validatedSandboxName = validateSandboxName(sandboxName);
+  info(`Stopping in-sandbox OpenClaw gateway (sandbox: ${validatedSandboxName})...`);
 
-  const privilegedResult = stopSandboxChannelsViaKubectl(sandboxName);
+  const privilegedResult = stopSandboxChannelsViaKubectl(validatedSandboxName);
   if (reportStopResult(privilegedResult)) return;
 
   const openshell = resolveOpenshell();
@@ -472,7 +482,7 @@ export function stopSandboxChannels(sandboxName: string): void {
 
   const fallbackResult = spawnSync(
     openshell,
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-lc", GATEWAY_STOP_SCRIPT],
+    ["sandbox", "exec", "--name", validatedSandboxName, "--", "sh", "-lc", GATEWAY_STOP_SCRIPT],
     { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },
   );
   reportStopResult(fallbackResult);
@@ -480,52 +490,17 @@ export function stopSandboxChannels(sandboxName: string): void {
 
 const GATEWAY_CLUSTER_CONTAINER = "openshell-cluster-nemoclaw";
 
-const GATEWAY_STOP_SCRIPT = String.raw`
-set -eu
-self="$$"
-parent="$PPID"
-find_gateway_pids() {
-  ps -eo pid=,args= 2>/dev/null | awk -v self="$self" -v parent="$parent" '
-    $1 ~ /^[0-9]+$/ && $1 != self && $1 != parent {
-      cmd = $0
-      sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", cmd)
-      if (cmd ~ /(^|[[:space:]\/])openclaw-gateway([[:space:]]|$)/ || cmd ~ /(^|[[:space:]\/])openclaw[[:space:]]+gateway([[:space:]]|$)/) {
-        seen[$1] = 1
-      }
-    }
-    END { for (pid in seen) print pid }
-  '
-}
-
-pids="$(find_gateway_pids)"
-if [ -z "$pids" ]; then
-  exit 1
-fi
-
-# Ask the gateway to shut down cleanly so its signal handler can stop channel
-# pollers and other children.
-kill -TERM $pids 2>/dev/null || true
-
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  remaining="$(find_gateway_pids)"
-  [ -z "$remaining" ] && exit 0
-  sleep 0.2
-done
-
-# If the process ignored SIGTERM, stop it anyway.  The caller must not report
-# success until the verification below observes that the gateway is gone.
-kill -KILL $remaining 2>/dev/null || true
-for _ in 1 2 3 4 5; do
-  remaining="$(find_gateway_pids)"
-  [ -z "$remaining" ] && exit 0
-  sleep 0.2
-done
-
-printf '%s\n' "$remaining" >&2
-exit 2
-`;
-
 type StopAttemptResult = ReturnType<typeof spawnSync>;
+
+function isSandboxPodName(line: string, sandboxName: string): boolean {
+  if (!line.startsWith("pod/")) return false;
+  const podName = line.slice("pod/".length);
+  if (podName === sandboxName) return true;
+  const prefix = `${sandboxName}-`;
+  if (!podName.startsWith(prefix)) return false;
+  const generatedSuffix = podName.slice(prefix.length);
+  return /^[a-z0-9]+$/.test(generatedSuffix);
+}
 
 function stopSandboxChannelsViaKubectl(sandboxName: string): StopAttemptResult | null {
   const podsResult = dockerSpawnSync(
@@ -539,7 +514,7 @@ function stopSandboxChannelsViaKubectl(sandboxName: string): StopAttemptResult |
   const pod = podOutput
     .split(/\r?\n/)
     .map((line: string) => line.trim())
-    .find((line: string) => line.startsWith("pod/") && line.includes(sandboxName));
+    .find((line: string) => isSandboxPodName(line, sandboxName));
   if (!pod) return null;
 
   return dockerSpawnSync(

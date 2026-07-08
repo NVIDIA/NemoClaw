@@ -869,6 +869,7 @@ $$nemoclaw dcode-sandbox agent -n "Summarize this repository"
 When post-command permission cleanup succeeds, the wrapper inherits the remote command's exit code so host-side pipelines can branch on it.
 If cleanup fails closed, the wrapper prints the command and cleanup statuses to `stderr` and returns the cleanup failure.
 For normal turns, streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
+The in-sandbox NemoClaw plugin writes its registration banner to `stderr`, so the banner does not prefix the agent reply on `stdout` in non-JSON mode.
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
 Raw `stderr` is forwarded, and failed-tool or untrusted-child provenance found in the stdout JSON is appended to `stderr`.
 Literal `--json` values consumed by flags such as `-m` or `--reply-channel`, or arguments after `--`, stay on the normal passthrough path.
@@ -1450,6 +1451,29 @@ Managed MCP ownership disables the local-only fallback because exact provider cl
 $$nemoclaw my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]
 ```
 
+### `$$nemoclaw <name> policy-get`
+
+Export the sandbox's round-trippable OpenShell base policy as YAML.
+The command runs `openshell policy get --base`, validates the returned policy, and strips the OpenShell metadata header.
+The default output is suitable for review, editing, and later use with `openshell policy set`.
+The command exits non-zero when OpenShell fails, returns an empty response, or returns content that is not valid policy YAML.
+
+```bash
+$$nemoclaw my-assistant policy-get > current-policy.yaml
+```
+
+Use `--raw` only to inspect the unparsed OpenShell response, including its metadata header:
+
+```bash
+$$nemoclaw my-assistant policy-get --raw
+```
+
+Do not pass `--raw` output to `openshell policy set` because the metadata header is not part of the policy document.
+
+| Flag | Description |
+|------|-------------|
+| `--raw` | Print the unparsed `openshell policy get --base` response, including its metadata header. |
+
 ### `$$nemoclaw <name> policy-add`
 
 Add a policy preset to a sandbox.
@@ -1472,8 +1496,8 @@ If the preset name is unknown or already applied, the command exits non-zero wit
 Built-in preset choices are scoped to the sandbox's active agent. Messaging channel presets appear only when NemoClaw has a matching channel policy for that agent; unavailable channel presets use the standard unknown-preset error before endpoint preview or confirmation.
 Custom preset files are tracked with the sandbox that applied them.
 `policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
-Before `policy-add` writes a merged policy, it reads and parses the current live policy from OpenShell.
-If the live policy read returns non-empty output that NemoClaw cannot parse, the command exits non-zero instead of overwriting the live policy with only the new preset.
+Before `policy-add` writes a merged policy, it reads and parses the round-trippable base policy from OpenShell.
+If the base policy read returns non-empty output that NemoClaw cannot parse, the command exits non-zero instead of overwriting the live policy with only the new preset.
 Fix the gateway or policy read problem, then rerun the command.
 For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy-list` or `status`.
 Recover or re-onboard the sandbox, then re-apply the custom preset.
@@ -1896,13 +1920,22 @@ The command fails closed on observed drift.
 Residuals preserve registry state.
 OpenShell `0.0.72` mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.
 
+When an interrupted destroy leaves a prepared-only transaction, deletion is not durably confirmed.
+If the sandbox is still live, run `$$nemoclaw <name> mcp remove <server> --force` with the affected server name.
+NemoClaw clears the prepared marker only after cleanup succeeds without residuals and no bridge entries remain.
+A failed cleanup, a wrong server name, residual resources, or any remaining bridge entry preserves the marker for another retry.
+
+A pending marker, including a transaction with both prepared and pending markers, means the registry records that OpenShell deletion was already confirmed.
+`mcp remove --force` refuses this state.
+Run `$$nemoclaw <name> destroy` to finish the idempotent provider and policy cleanup.
+
 ```bash
 $$nemoclaw my-assistant mcp remove github [--force]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Remove same-name adapter config and continue exact-ownership provider/policy cleanup; preserve registry state when residuals remain |
+| `--force` | Remove same-name adapter config and continue exact-ownership provider and policy cleanup. For a prepared-only destroy, attempt recovery when the sandbox is still live and clear the marker only after residual-free cleanup drains every bridge entry. |
 
 ### `$$nemoclaw <name> skill install <path>`
 
@@ -2282,6 +2315,9 @@ Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 The sandbox must be running for the backup step to succeed.
 If an archive command reports partial output while still producing usable data, `rebuild` keeps the captured backup entries and reports only the manifest-defined paths that could not be archived.
 If any required state path still cannot be backed up, `rebuild` exits before destroying the original sandbox.
+Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy transaction.
+For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live.
+For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed.
 Before backup or deletion, rebuild checks the staged messaging configuration for credentials or channel resources already used by another registered sandbox.
 A conflict aborts with the original sandbox registered and intact so you can resolve the conflict before retrying.
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.

@@ -3999,12 +3999,8 @@ seed_default_workspace_templates() {
   if ! command -v node >/dev/null 2>&1; then
     return 0
   fi
-  if ! node - "$config_file" <<'NODE' >/dev/null 2>&1; then
-const fs = require("fs");
-const configPath = process.argv[2];
-const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
-process.exit(cfg?.agents?.defaults?.skipBootstrap === true ? 0 : 1);
-NODE
+  local skip_bootstrap_check='const fs = require("fs"); const configPath = process.argv[1]; const cfg = JSON.parse(fs.readFileSync(configPath, "utf8")); process.exit(cfg?.agents?.defaults?.skipBootstrap === true ? 0 : 1);'
+  if ! node -e "$skip_bootstrap_check" "$config_file" >/dev/null 2>&1; then
     return 0
   fi
 

@@ -1533,7 +1533,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("applies the systemd loopback override for an existing running Ollama install", {
+  it("treats an implicit latest Ollama model as installed during systemd repair", {
     timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
   }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -1570,7 +1570,7 @@ const shellCommands = [];
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "llama3.2:latest" }] });
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
@@ -1617,13 +1617,14 @@ const { setupNim } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_PROVIDER: "ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_MODEL: "llama3.2",
       },
     });
 
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
+    assert.equal(payload.result.model, "llama3.2");
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Configuring Ollama systemd loopback override"),
@@ -2278,7 +2279,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(handleRemoteProviderSelection.mock.calls.length, 1);
   });
 
-  it("offers starter Ollama models when none are installed and pulls the selected model", () => {
+  it("waits for delayed Ollama registration after pulling a starter model", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-bootstrap-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -2305,23 +2306,23 @@ exit 0
     );
 
     const script = String.raw`
+const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
 const answers = ["7", "1", "y"];
 const messages = [];
-
+const pullLog = ${JSON.stringify(pullLog)};
+let listAttempts = 0;
 credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
-  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) && ++listAttempts >= 7 ? "qwen3.5:9b" : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
@@ -2338,7 +2339,7 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
+    originalLog(JSON.stringify({ result, messages, lines, listAttempts }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -2356,6 +2357,7 @@ const { setupNim } = require(${onboardPath});
       env: {
         ...process.env,
         HOME: tmpDir,
+        NEMOCLAW_TEST_NO_SLEEP: "1",
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
       },
     });
@@ -2364,19 +2366,16 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.model, "qwen3.5:9b");
+    assert.equal(payload.listAttempts, 7);
     assert.ok(payload.lines.some((line: string) => line.includes("Ollama starter models:")));
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("No local Ollama models are installed yet"),
-      ),
-    );
+    assert.match(payload.lines.join("\n"), /Waiting for Ollama to register model: qwen3\.5:9b/);
     assert.ok(
       payload.lines.some((line: string) => line.includes("Pulling Ollama model: qwen3.5:9b")),
     );
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
   });
 
-  it("reprompts inside the Ollama model flow when a pull fails", () => {
+  it("reprompts when a pulled Ollama model does not appear in discovery (#6038)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -2395,9 +2394,6 @@ const { setupNim } = require(${onboardPath});
       `#!/usr/bin/env bash
 if [ "$1" = "pull" ]; then
   echo "$2" >> ${JSON.stringify(pullLog)}
-  if [ "$2" = "qwen3.5:9b" ]; then
-    exit 1
-  fi
   exit 0
 fi
 exit 0
@@ -2406,23 +2402,23 @@ exit 0
     );
 
     const script = String.raw`
+const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
 const answers = ["7", "1", "y", "2", "llama3.2:3b", "y"];
 const messages = [];
+const pullLog = ${JSON.stringify(pullLog)};
 
 credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
-  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) && fs.readFileSync(pullLog, "utf8").includes("llama3.2:3b") ? "llama3.2:3b" : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
@@ -2458,6 +2454,7 @@ const { setupNim } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_TEST_NO_SLEEP: "1",
       },
     });
 
@@ -2467,7 +2464,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "llama3.2:3b");
     assert.ok(
       payload.lines.some((line: string) =>
-        line.includes("Failed to pull Ollama model 'qwen3.5:9b'"),
+        line.includes("Ollama pull for 'qwen3.5:9b' completed, but Ollama did not list"),
       ),
     );
     assert.ok(
@@ -2509,11 +2506,13 @@ exit 0
     );
 
     const script = String.raw`
+const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
 const answers = ["7", "1", "n", "1", "y"];
 const messages = [];
+const pullLog = ${JSON.stringify(pullLog)};
 
 credentials.prompt = async (message) => {
   messages.push(message);
@@ -2523,7 +2522,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) ? "qwen3.5:9b" : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
@@ -2571,14 +2570,11 @@ const { setupNim } = require(${onboardPath});
         line.includes("Skipped pulling Ollama model 'qwen3.5:9b'"),
       ),
     );
-    // Pull only happened on the second confirmation, not on the declined first attempt.
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
     const downloadPrompts = payload.messages.filter((message: string) =>
       /Download Ollama model/.test(message),
     );
     assert.equal(downloadPrompts.length, 2);
-    // Each prompt must surface the resolved size — the whole point of #2639 —
-    // either a "<value> <unit>" label or the explicit "size unknown" fallback.
     const sizePattern = /\((\d+(\.\d+)? (B|KB|MB|GB|TB)( \(estimated\))?|size unknown)\)/;
     for (const prompt of downloadPrompts) {
       assert.match(prompt, sizePattern);
@@ -2612,11 +2608,13 @@ exit 0
     );
 
     const script = String.raw`
+const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
 const answers = ["7", "1"];
 const messages = [];
+const pullLog = ${JSON.stringify(pullLog)};
 
 credentials.prompt = async (message) => {
   messages.push(message);
@@ -2626,7 +2624,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) ? "qwen3.5:9b" : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
@@ -2671,7 +2669,6 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.model, "qwen3.5:9b");
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
-    // No "Download Ollama model 'X'?" prompt was issued — the env var bypassed it.
     assert.equal(
       payload.messages.filter((message: string) => /Download Ollama model/.test(message)).length,
       0,
