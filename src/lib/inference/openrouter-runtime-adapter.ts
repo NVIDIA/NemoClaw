@@ -66,6 +66,7 @@ const ATTRIBUTION_HEADER_NAMES = new Set(
   OPENROUTER_DEFAULT_HEADERS.map(([name]) => name.toLowerCase()),
 );
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
+const UPSTREAM_REQUEST_TIMEOUT_MS = 120_000;
 
 type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
 type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
@@ -199,6 +200,7 @@ function forwardToOpenRouter(options: {
       path: `${upstreamUrl.pathname}${upstreamUrl.search}`,
       method: req.method,
       headers: copySafeRequestHeaders(req.headers),
+      timeout: UPSTREAM_REQUEST_TIMEOUT_MS,
     },
     (upstreamRes) => {
       const status = upstreamRes.statusCode || 502;
@@ -219,6 +221,9 @@ function forwardToOpenRouter(options: {
       });
     },
   );
+  upstreamReq.on("timeout", () => {
+    upstreamReq.destroy(new Error("OpenRouter upstream request timed out."));
+  });
   upstreamReq.on("error", (err) => {
     logAdapterEvent(logger, "request_failed", {
       method: req.method || "unknown",

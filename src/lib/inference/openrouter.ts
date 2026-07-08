@@ -17,6 +17,10 @@ export const OPENROUTER_DEFAULT_HEADERS = [
   ["HTTP-Referer", "https://www.nvidia.com/nemoclaw/"],
   ["X-OpenRouter-Title", "NVIDIA NemoClaw"],
 ] as const;
+// OpenShell reaches host-local services through host.openshell.internal, not
+// the host loopback address, so the temporary adapter binds beyond 127.0.0.1.
+// The adapter still requires the hash of the OpenShell-owned Authorization
+// header before forwarding any OpenRouter runtime request.
 export const OPENROUTER_RUNTIME_ADAPTER_BIND_HOST = "0.0.0.0";
 export const OPENROUTER_RUNTIME_ADAPTER_LOOPBACK_HOST = "127.0.0.1";
 export const OPENROUTER_RUNTIME_ADAPTER_SANDBOX_HOST = "host.openshell.internal";
