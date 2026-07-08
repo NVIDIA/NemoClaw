@@ -23,6 +23,8 @@ import {
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 
+afterEach(cleanupPackageFixtures);
+
 function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
 }
