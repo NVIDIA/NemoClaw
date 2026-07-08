@@ -161,6 +161,11 @@ describe("redactForLog", () => {
       passRate: 0.9,
       passCount: 4,
       passThrough: "enabled",
+      tokenizer: "cl100k_base",
+      maxTokens: 1024,
+      secretary: "safe role",
+      credentialing: "complete",
+      passwordless: true,
       correlationMarker: "reply-correlation-marker-123",
     };
 
@@ -214,6 +219,7 @@ describe("redactForLog", () => {
         sessionKey: "opaque-session-key",
         setCookie: "session=opaque-set-cookie-secret",
         "API Key": "opaque-api-secret",
+        APIKey: "opaque-api-secret-with-acronym",
         headers: {
           "Proxy-Authorization": "Basic opaque-basic-secret",
           Cookie: "session=opaque-cookie-secret",
@@ -221,6 +227,7 @@ describe("redactForLog", () => {
         secretValue: "opaque-secret-value",
         tokenValue: "opaque-token-value",
         passwordValue: "opaque-password-value",
+        credentials: "opaque-credentials-value",
         publicKey: "safe public key",
         PUBLIC_KEY: "safe uppercase public key",
         author: "safe author",
@@ -234,6 +241,7 @@ describe("redactForLog", () => {
       sessionKey: "<REDACTED>",
       setCookie: "<REDACTED>",
       "API Key": "<REDACTED>",
+      APIKey: "<REDACTED>",
       headers: {
         "Proxy-Authorization": "<REDACTED>",
         Cookie: "<REDACTED>",
@@ -241,6 +249,7 @@ describe("redactForLog", () => {
       secretValue: "<REDACTED>",
       tokenValue: "<REDACTED>",
       passwordValue: "<REDACTED>",
+      credentials: "<REDACTED>",
       publicKey: "safe public key",
       PUBLIC_KEY: "safe uppercase public key",
       author: "safe author",

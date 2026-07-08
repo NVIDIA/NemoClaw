@@ -291,17 +291,30 @@ export function redactUrl(value: unknown): string | null {
   return `${parsed.url.toString()}${parsed.suffix}`;
 }
 
+const SENSITIVE_KEY_WORDS: ReadonlySet<string> = new Set([
+  "auth",
+  "authorization",
+  "bearer",
+  "cookie",
+  "credential",
+  "credentials",
+  "password",
+  "secret",
+  "token",
+]);
+
 function isSensitiveKey(key: string): boolean {
   if (isCredentialField(key)) return true;
-  if (/(?:api[\s_-]?key|token|secret|password|credential|authorization|bearer)/i.test(key)) {
-    return true;
-  }
   const words = key
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
-  return words.includes("auth") || words.includes("cookie");
+  return (
+    words.some((word) => SENSITIVE_KEY_WORDS.has(word)) ||
+    (words.includes("api") && words.includes("key"))
+  );
 }
 
 function credentialFlagKey(value: unknown): string | null {
