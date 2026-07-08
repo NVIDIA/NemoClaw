@@ -80,7 +80,10 @@ function replacementReceipts(): RebuildTransactionReceiptsV1 {
   };
 }
 
-function makeStore(root = tempDir()): { stateDir: string; store: RebuildTransactionStore } {
+function makeStore(root = tempDir()): {
+  stateDir: string;
+  store: RebuildTransactionStore;
+} {
   let tick = 0;
   const stateDir = path.join(root, ".nemoclaw", "state");
   return {
@@ -303,7 +306,9 @@ describe("RebuildTransactionStore", () => {
     const { stateDir, store } = makeStore();
     const prepared = store.create(intent(), preparedReceipts());
     vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
-      throw Object.assign(new Error("simulated rename failure"), { code: "EIO" });
+      throw Object.assign(new Error("simulated rename failure"), {
+        code: "EIO",
+      });
     });
 
     expect(() =>
