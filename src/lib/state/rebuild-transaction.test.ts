@@ -10,7 +10,6 @@ import {
   cleanupRebuildTransactionTests,
   deletedReceipts,
   expectCode,
-  FP_A,
   FP_D,
   intent,
   makeStore,
