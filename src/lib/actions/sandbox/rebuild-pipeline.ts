@@ -8,9 +8,11 @@ import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-confi
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
-import { runRebuildBackupPhase } from "./rebuild-backup-phase";
+import { normalizeRebuildTargetPolicyPresets, runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
+import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
@@ -148,7 +150,13 @@ async function rebuildSandboxUnlocked(
 
       const backup = runRebuildBackupPhase({
         sandboxName,
-        sandboxEntry,
+        // The requested observability bit is replacement intent, not a
+        // preflight mutation of the old registry row. Use a copy only for
+        // target policy normalization; replacement registration commits it.
+        sandboxEntry: {
+          ...sandboxEntry,
+          observabilityEnabled: recreateOptions.observabilityEnabled,
+        },
         staleRecovery,
         preparedRecoveryManifest: recoveryManifest,
         messagingPlan,
@@ -269,25 +277,42 @@ async function rebuildSandboxUnlocked(
       }
       if (!recreated) return;
 
+      const completedInnerSession = onboardSession.loadSession();
+      const freshInnerOnboardPolicyPresets =
+        completedInnerSession?.sandboxName === sandboxName &&
+        Array.isArray(completedInnerSession.policyPresets)
+          ? completedInnerSession.policyPresets
+          : [];
+      const targetPolicyPresets = normalizeRebuildTargetPolicyPresets(
+        [...backup.policyPresets, ...freshInnerOnboardPolicyPresets],
+        {
+          ...sandboxEntry,
+          observabilityEnabled: recreateOptions.observabilityEnabled,
+        },
+        durableConfig.webSearchConfig,
+      );
+
       const restored = runRebuildRestorePhase({
         sandboxName,
         backupManifest: backup.backupManifest,
-        policyPresets: backup.policyPresets,
+        policyPresets: targetPolicyPresets,
         customPolicies:
           backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
           preservedCustomPolicies,
+        reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
         log,
       });
       await runRebuildPostRestorePhase({
         sandboxName,
         sandboxEntry,
-        preservedCustomPolicies,
         messagingPlan,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         restoreSucceeded: restored.restoreSucceeded,
-        restoredPresets: restored.restoredPresets,
         failedPresets: restored.failedPresets,
+        finalBuiltinPresets: restored.finalBuiltinPresets,
+        failedPresetRemovals: restored.failedPresetRemovals,
+        policyPresetReconciliationVerified: restored.policyPresetReconciliationVerified,
         staleRecovery,
         recoveryRecreate,
         preparedBackupRecovery,

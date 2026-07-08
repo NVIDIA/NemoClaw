@@ -8,7 +8,21 @@ import json
 from pathlib import Path
 
 
-def load_mcp_config(config_path):
+def _json_error_hint(exc):
+    del exc
+    return "Check the JSON syntax."
+
+
+def _json_error_snippet(doc, lineno, colno, *, pos):
+    del pos
+    lines = doc.splitlines()
+    if lineno < 1 or lineno > len(lines):
+        return None
+    source = lines[lineno - 1]
+    return f"    {source}\n    {' ' * max(0, colno - 1)}^"
+
+
+def _load_mcp_config_json(config_path):
     path = Path(config_path)
 
     if not path.exists():
@@ -17,9 +31,21 @@ def load_mcp_config(config_path):
 
     try:
         with path.open(encoding="utf-8") as file_obj:
-            config = json.load(file_obj)
-    except json.JSONDecodeError:
-        raise
+            return json.load(file_obj)
+    except json.JSONDecodeError as exc:
+        parts = [f"Invalid JSON in MCP config file: {exc.msg}"]
+        hint = _json_error_hint(exc)
+        if hint is not None:
+            parts.append(hint)
+        snippet = _json_error_snippet(exc.doc, exc.lineno, exc.colno, pos=exc.pos)
+        if snippet is not None:
+            parts.append(snippet)
+        error_msg = "\n".join(parts)
+        raise json.JSONDecodeError(error_msg, exc.doc, exc.pos) from exc
+
+
+def load_mcp_config(config_path):
+    config = _load_mcp_config_json(config_path)
     if "mcpServers" not in config:
         raise ValueError("missing mcpServers")
     return config

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandboxInferenceConfig } from "../inference/config";
+import { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import {
   isWebSearchEnabled,
   type WebSearchConfig,
@@ -175,7 +176,15 @@ export function patchStagedDockerfile(
   // Honor NEMOCLAW_CONTEXT_WINDOW / NEMOCLAW_MAX_TOKENS / NEMOCLAW_REASONING
   // so the user can tune model metadata without editing the Dockerfile.
   const contextWindow = process.env.NEMOCLAW_CONTEXT_WINDOW;
-  if (contextWindow && POSITIVE_INT_RE.test(contextWindow)) {
+  // Validate the ceiling as well as the format: POSITIVE_INT_RE alone would let
+  // an implausibly large value (which the auto-detect/probe paths reject) bake
+  // into the image ARG. Match the auto-detect ceiling. See PR #6293 PRA-4
+  // (Nemotron).
+  if (
+    contextWindow &&
+    POSITIVE_INT_RE.test(contextWindow) &&
+    Number(contextWindow) <= MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW
+  ) {
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_CONTEXT_WINDOW=.*$/m,
       `ARG NEMOCLAW_CONTEXT_WINDOW=${sanitizeDockerArg(contextWindow)}`,

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { availableParallelism } from "node:os";
 import path from "node:path";
 
 import { defineConfig } from "vitest/config";
@@ -9,6 +10,7 @@ import {
   shouldRunBranchValidationE2E,
   shouldRunLiveE2E,
 } from "./test/e2e/fixtures/live-project-gate.ts";
+import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 
@@ -32,6 +34,12 @@ const typedSourceTransform = {
   },
 };
 const sourceNodeOptions = sourceLoaderNodeOptions(process.env.NODE_OPTIONS);
+const integrationProjectScheduling = resolveIntegrationProjectScheduling({
+  isCi,
+  npmLifecycleEvent: process.env.npm_lifecycle_event,
+  argv: process.argv.slice(2),
+  availableParallelism: availableParallelism(),
+});
 
 export default defineConfig({
   test: {
@@ -64,16 +72,11 @@ export default defineConfig({
           // when several coverage shards transpile and spawn them concurrently.
           testTimeout: testTimeout(15_000),
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
-          // Integration fixtures often spawn short Node programs. Keep those
-          // programs on the same source graph as their parent test process.
-          // The integration suite shells out heavily, and stacking multiple
-          // forks of the require-hook transpile cache on the 7 GiB ubuntu
-          // runner reliably exhausts physical RAM when coverage is on.
-          // Disable file parallelism for the integration project so the test
-          // files run serially against a single worker (vitest 4 dropped
-          // poolOptions.forks.singleFork; fileParallelism: false is the
-          // documented replacement).
-          fileParallelism: false,
+          // Integration fixtures often spawn short Node programs. Coverage
+          // stays serial because concurrent source-loader forks exhaust the
+          // 7 GiB CI runner. The canonical local full suite instead runs this
+          // project as a bounded four-worker phase after the other projects.
+          ...integrationProjectScheduling,
           env: { NODE_OPTIONS: sourceNodeOptions },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [

@@ -89,6 +89,8 @@ export type PrepareSandboxCreatePlanInput = {
 export type SandboxCreatePlan = {
   activeMessagingChannels: string[];
   initialSandboxPolicy: InitialSandboxPolicy;
+  /** Tier resolved before create, persisted with the registry entry for safe resume. */
+  policyTier: string | null;
   createArgs: string[];
   messagingProviders: string[];
   useDockerGpuPatch: boolean;
@@ -390,6 +392,7 @@ export function materializeSandboxCreatePlan({
   return {
     activeMessagingChannels: [...intent.activeMessagingChannels],
     initialSandboxPolicy,
+    policyTier: intent.policy.options.policyTier,
     createArgs,
     messagingProviders,
     useDockerGpuPatch: intent.useDockerGpuPatch,

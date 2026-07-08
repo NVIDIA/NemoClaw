@@ -122,6 +122,7 @@ describe("sandbox oclif command adapters", () => {
         ["alpha", "--force", "--verbose", "--tool-disclosure", "direct"],
         rootDir,
       );
+      await RebuildCliCommand.run(["dcode", "--yes", "--no-observability"], rootDir);
       await GatewayRestartCliCommand.run(["alpha", "--quiet"], rootDir);
 
       expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
@@ -131,6 +132,13 @@ describe("sandbox oclif command adapters", () => {
         toolDisclosure: "direct",
         verbose: true,
         yes: false,
+      });
+      expect(mocks.rebuildSandbox).toHaveBeenCalledWith("dcode", {
+        force: false,
+        observabilityEnabled: false,
+        toolDisclosure: undefined,
+        verbose: false,
+        yes: true,
       });
       expect(mocks.restartSandboxGateway).toHaveBeenCalledWith("alpha", { quiet: true });
     } finally {
@@ -230,6 +238,7 @@ describe("sandbox oclif command adapters", () => {
     expect(RebuildCliCommand.id).toBe("sandbox:rebuild");
     expect(usage(RebuildCliCommand)).toContain("[--yes|-y|--force]");
     expect(usage(RebuildCliCommand)).toContain("[--tool-disclosure <progressive|direct>]");
+    expect(usage(RebuildCliCommand)).toContain("[--observability|--no-observability]");
     expect(SandboxPolicyListCommand.id).toBe("sandbox:policy:list");
     expect(SandboxChannelsListCommand.id).toBe("sandbox:channels:list");
     expect(SandboxConfigGetCommand.id).toBe("sandbox:config:get");

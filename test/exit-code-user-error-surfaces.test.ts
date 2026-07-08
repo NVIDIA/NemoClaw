@@ -27,12 +27,12 @@
  * This matrix locks the nonexistent-sandbox share/upload surfaces instead.
  *
  * Issue instance 3 (onboard dashboard-port exhaustion) is locked by its own
- * hermetic `onboard` spawn in the second describe below: it binds the whole
- * dashboard port range and drives the real `onboard` preflight to the
- * fail-fast "All dashboard ports in range … are occupied" exit, asserting a
- * non-zero code. (That preflight exits via an explicit `exitFn(1)`, so it never
- * rode the `oclif.exit === 0` catch-all this PR hardens — the spawn simply
- * proves the surface stays non-zero end-to-end.)
+ * hermetic `onboard` spawn in the second describe below: a fake `lsof` reports
+ * the whole dashboard port range as occupied and drives the real `onboard`
+ * preflight to the fail-fast "All dashboard ports in range … are occupied"
+ * exit, asserting a non-zero code. (That preflight exits via an explicit
+ * `exitFn(1)`, so it never rode the `oclif.exit === 0` catch-all this PR
+ * hardens — the spawn simply proves the surface stays non-zero end-to-end.)
  *
  * Issue instance 5 (Model Router Python preflight) is the one surface left to
  * unit tests: `reconcileModelRouter` runs only deep in `onboard`, behind live
@@ -50,7 +50,6 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -241,11 +240,14 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
 describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
   const PORT_RANGE_START = 18789;
   const PORT_RANGE_END = 18799;
+  const OCCUPIED_PORT_CASES = Array.from(
+    { length: PORT_RANGE_END - PORT_RANGE_START + 1 },
+    (_unused, index) => PORT_RANGE_START + index,
+  ).join("|");
   let home: string;
   let binDir: string;
-  let servers: net.Server[];
 
-  beforeEach(async () => {
+  beforeEach(() => {
     home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-5974-onboard-"));
     binDir = path.join(home, "bin");
     fs.mkdirSync(binDir, { recursive: true });
@@ -278,29 +280,26 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
       { mode: 0o755 },
     );
 
-    // Occupy the entire dashboard port range so the preflight has no free port.
-    servers = [];
-    const ports = Array.from(
-      { length: PORT_RANGE_END - PORT_RANGE_START + 1 },
-      (_unused, i) => PORT_RANGE_START + i,
-    );
-    await Promise.all(
-      ports.map(
-        (port) =>
-          new Promise<void>((resolve) => {
-            const server = net.createServer();
-            server.once("error", () => resolve());
-            server.listen(port, "127.0.0.1", () => {
-              servers.push(server);
-              resolve();
-            });
-          }),
-      ),
+    // Report the whole dashboard range as occupied without binding host-global
+    // ports that can interfere with other integration workers.
+    fs.writeFileSync(
+      path.join(binDir, "lsof"),
+      [
+        "#!/usr/bin/env bash",
+        'port=""',
+        'for arg in "$@"; do',
+        '  case "$arg" in :*) port="${arg#:}";; esac',
+        "done",
+        'case "$port" in',
+        `  ${OCCUPIED_PORT_CASES}) echo "node 1 user 1u IPv4 TCP 127.0.0.1:\${port} (LISTEN)"; exit 0;;`,
+        "esac",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
     );
   });
 
   afterEach(() => {
-    for (const server of servers) server.close();
     fs.rmSync(home, { recursive: true, force: true });
   });
 

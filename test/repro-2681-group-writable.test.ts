@@ -125,7 +125,7 @@ function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
 function withMockedDockerExecFileSync<T>(
   calls: string[][],
   run: () => T,
-  options: { symlinkedPaths?: ReadonlySet<string> } = {},
+  options: { hermesLockedTransaction?: boolean; symlinkedPaths?: ReadonlySet<string> } = {},
 ): T {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dockerExecModule = require("../src/lib/adapters/docker/exec.js") as {
@@ -147,19 +147,30 @@ function withMockedDockerExecFileSync<T>(
     },
   } as any;
 
+  let hermesFinished = false;
   dockerExecModule.dockerExecFileSync = vi.fn((args: readonly string[]) => {
     const separator = args.indexOf("--");
     const command = separator >= 0 ? args.slice(separator + 1) : [...args];
     calls.push(command);
     const hermesGuardIndex = command.indexOf(HERMES_RUNTIME_CONFIG_GUARD);
     const hermesAction = command[hermesGuardIndex + 1] ?? "";
+    switch (hermesAction) {
+      case "finish-shields-transition":
+        hermesFinished = true;
+        break;
+    }
     const hermesResponse =
       hermesGuardIndex < 0
         ? undefined
         : (new Map<string, string>([
             ["--help", HERMES_SEALED_GUARD_HELP],
             ["begin-shields-transition", `lock_token=${HERMES_LOCK_TOKEN} original_locked=0`],
-            ["apply-shields-transition", "shields_mode=mutable chattr_applied=0"],
+            [
+              "apply-shields-transition",
+              options.hermesLockedTransaction
+                ? "shields_mode=locked chattr_applied=1"
+                : "shields_mode=mutable chattr_applied=0",
+            ],
           ]).get(hermesAction) ?? "");
     switch (hermesResponse) {
       case undefined:
@@ -179,19 +190,27 @@ function withMockedDockerExecFileSync<T>(
       const target = command.at(-1);
       switch (target) {
         case "/sandbox":
-          return "755 sandbox:sandbox\n";
+          return options.hermesLockedTransaction
+            ? hermesFinished
+              ? "1775 root:sandbox\n"
+              : "755 root:root\n"
+            : "755 sandbox:sandbox\n";
         case "/sandbox/.openclaw":
           return "2770 sandbox:sandbox\n";
         case "/sandbox/.hermes":
-          return "3770 sandbox:sandbox\n";
+          return options.hermesLockedTransaction ? "755 root:root\n" : "3770 sandbox:sandbox\n";
       }
       if (typeof target === "string" && target.startsWith("/sandbox/.hermes/")) {
-        return "640 sandbox:sandbox\n";
+        return options.hermesLockedTransaction ? "444 root:root\n" : "640 sandbox:sandbox\n";
       }
       return "660 sandbox:sandbox\n";
     }
     if (command[0] === "lsattr") {
-      return `---------------------- ${command.at(-1)}\n`;
+      return `${options.hermesLockedTransaction ? "----i-----------------" : "----------------------"} ${command.at(-1)}\n`;
+    }
+    switch (command[0]) {
+      case "sha256sum":
+        return `${"a".repeat(64)}  ${command.at(-1)}\n`;
     }
     return "";
   });
@@ -569,6 +588,45 @@ describe("mutable agent config permissions", () => {
     }
     expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.hermes/config.yaml"]);
     expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.hermes/.env"]);
+  });
+
+  it("verifies the frozen Hermes tree before publishing and checking the locked parent", () => {
+    const commands: string[][] = [];
+    withMockedDockerExecFileSync(
+      commands,
+      () => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { lockAgentConfig } = require("../src/lib/shields/index.js") as {
+          lockAgentConfig: (
+            sandboxName: string,
+            target: {
+              agentName?: string;
+              configPath: string;
+              configDir: string;
+              sensitiveFiles?: string[];
+            },
+          ) => void;
+        };
+
+        lockAgentConfig("sandbox-pod", {
+          agentName: "hermes",
+          configPath: "/sandbox/.hermes/config.yaml",
+          configDir: "/sandbox/.hermes",
+          sensitiveFiles: ["/sandbox/.hermes/.env", "/sandbox/.hermes/.config-hash"],
+        });
+      },
+      { hermesLockedTransaction: true },
+    );
+
+    const finishIndex = commands.findIndex((command) =>
+      command.includes("finish-shields-transition"),
+    );
+    const parentStats = commands
+      .map((command, index) => ({ command, index }))
+      .filter(({ command }) => command.at(-1) === "/sandbox" && command[0] === "stat");
+    expect(finishIndex).toBeGreaterThan(0);
+    expect(parentStats).toHaveLength(1);
+    expect(parentStats[0].index).toBeGreaterThan(finishIndex);
   });
 
   it("shields-up strips setgid from the OpenClaw config root before verifying lock", () => {

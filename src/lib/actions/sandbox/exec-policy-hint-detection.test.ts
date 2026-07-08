@@ -41,6 +41,81 @@ describe("isPolicyDenialLine (#5978)", () => {
     ],
     ["proxy JSON policy_denied body", PROXY_JSON_LINE, true],
     [
+      "forward proxy host denial body",
+      '{"error":"policy_denied","detail":"POST example.com:4318/v1/traces not permitted by policy"}',
+      true,
+    ],
+    [
+      "forward proxy unmatched endpoint path body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/not-traces did not match an L7 endpoint path"}',
+      true,
+    ],
+    [
+      "forward proxy L7 method denial body",
+      '{"error":"policy_denied","detail":"GET host.openshell.internal:4318/v1/traces denied by L7 policy: GET /v1/traces not permitted by policy"}',
+      true,
+    ],
+    [
+      "forward proxy L7 path denial body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/not-traces denied by L7 policy: POST /not-traces not permitted by policy"}',
+      true,
+    ],
+    [
+      "forward proxy explicit deny-rule body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/v1/traces denied by L7 policy: POST /v1/traces blocked by deny rule"}',
+      true,
+    ],
+    [
+      "forward proxy GraphQL policy denial body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/graphql denied by L7 policy: GraphQL operation blocked by endpoint policy"}',
+      true,
+    ],
+    [
+      "forward proxy unregistered GraphQL persisted-query denial body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/graphql denied by L7 policy: GraphQL persisted query is not registered"}',
+      true,
+    ],
+    [
+      "forward proxy GraphQL allow-policy denial body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/graphql denied by L7 policy: GraphQL operation not permitted by policy"}',
+      true,
+    ],
+    [
+      "forward proxy GraphQL parse denial body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/graphql denied by L7 policy: GraphQL request rejected: missing operation document"}',
+      true,
+    ],
+    [
+      "forward proxy JSON-RPC parse denial body",
+      `{"error":"policy_denied","detail":"POST host.openshell.internal:4318/rpc denied by L7 policy: JSON-RPC request rejected: missing or non-string 'jsonrpc' field"}`,
+      true,
+    ],
+    [
+      "forward proxy JSON-RPC response-frame denial body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/rpc denied by L7 policy: JSON-RPC response frames are not permitted from client to server"}',
+      true,
+    ],
+    [
+      "forward proxy policy-engine fallback denial body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/rpc denied by L7 policy: request denied by policy"}',
+      true,
+    ],
+    [
+      "forward proxy policy-evaluation failure body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4318/rpc denied by L7 policy: L7 evaluation error: policy engine unavailable"}',
+      true,
+    ],
+    [
+      "forward proxy extension method denial body",
+      '{"error":"policy_denied","detail":"PROPFIND host.openshell.internal:4318/resource not permitted by policy"}',
+      true,
+    ],
+    [
+      "forward proxy port denial body",
+      '{"error":"policy_denied","detail":"POST host.openshell.internal:4319/v1/traces not permitted by policy"}',
+      true,
+    ],
+    [
       "timestamp-prefixed proxy JSON policy_denied body",
       `[1783046573.602] [gateway] ${PROXY_JSON_LINE}`,
       true,
@@ -68,8 +143,66 @@ describe("isPolicyDenialLine (#5978)", () => {
       false,
     ],
     [
-      "exact JSON error code without the structured CONNECT denial detail",
+      "exact JSON error code without a structured proxy denial detail",
       '{"detail":"policy_denied is configured here","error":"policy_denied"}',
+      false,
+    ],
+    [
+      "forward proxy detail with an invalid endpoint",
+      '{"error":"policy_denied","detail":"POST bad/host:4318/v1/traces not permitted by policy"}',
+      false,
+    ],
+    [
+      "forward proxy detail with a lowercase method",
+      '{"error":"policy_denied","detail":"post example.com:4318/v1/traces not permitted by policy"}',
+      false,
+    ],
+    [
+      "forward proxy detail with an unsupported suffix",
+      '{"error":"policy_denied","detail":"POST example.com:4318/v1/traces access denied"}',
+      false,
+    ],
+    [
+      "forward proxy L7 detail whose reason does not match its method",
+      '{"error":"policy_denied","detail":"GET example.com:4318/v1/traces denied by L7 policy: POST /v1/traces not permitted by policy"}',
+      false,
+    ],
+    [
+      "forward proxy L7 detail whose reason does not match its path",
+      '{"error":"policy_denied","detail":"GET example.com:4318/v1/traces denied by L7 policy: GET /other not permitted by policy"}',
+      false,
+    ],
+    [
+      "forward proxy L7 detail with an unknown policy reason",
+      '{"error":"policy_denied","detail":"POST example.com:4318/v1/traces denied by L7 policy: arbitrary denial prose"}',
+      false,
+    ],
+    [
+      "forward proxy L7 evaluation detail with an empty error",
+      '{"error":"policy_denied","detail":"POST example.com:4318/v1/traces denied by L7 policy: L7 evaluation error: "}',
+      false,
+    ],
+    [
+      "forward proxy L7 detail with control text in a dynamic reason",
+      JSON.stringify({
+        detail:
+          "POST example.com:4318/graphql denied by L7 policy: GraphQL request rejected: bad\noperation",
+        error: "policy_denied",
+      }),
+      false,
+    ],
+    [
+      "proxy denial body with extra JSON fields",
+      '{"error":"policy_denied","detail":"POST example.com:4318/v1/traces not permitted by policy","extra":true}',
+      false,
+    ],
+    ["oversized structured proxy line", `${"x".repeat(4097)}${PROXY_JSON_LINE}`, false],
+    [
+      "oversized structured proxy detail",
+      JSON.stringify({
+        detail: `POST example.com:4318/${"a".repeat(1100)} not permitted by policy`,
+        error: "policy_denied",
+      }),
       false,
     ],
     ["unrelated log line", "[123.0] [sandbox] [INFO ] flushed activity summary", false],

@@ -117,6 +117,44 @@ raise SystemExit(module.main())
   );
 }
 
+function runManagedFirstShieldsDown(fixture: ReconciliationFixture) {
+  const wrapper = String.raw`
+import importlib.util
+import sys
+
+source = sys.argv[1]
+spec = importlib.util.spec_from_file_location("nemoclaw_runtime_config_guard_shields_fixture", source)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load runtime guard fixture")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module._managed_nonroot_reconciliation_is_allowed = lambda: True
+sys.argv = [source, *sys.argv[2:]]
+raise SystemExit(module.main())
+`;
+  return spawnSync(
+    "python3",
+    [
+      "-c",
+      wrapper,
+      RUNTIME_CONFIG_GUARD,
+      "begin-shields-transition",
+      "--hermes-dir",
+      fixture.hermesDir,
+      "--hash-file",
+      fixture.hashPath,
+      "--state-file",
+      fixture.statePath,
+      "--shields-mode",
+      "mutable",
+      "--rollback-shields-mode",
+      "mutable",
+    ],
+    { encoding: "utf-8", timeout: 5000 },
+  );
+}
+
 function refreshCompatOnly(fixture: ReconciliationFixture): void {
   fs.writeFileSync(fixture.compatHashPath, hashInputs(fixture));
 }
@@ -262,6 +300,25 @@ print(json.dumps([private_live, canonical_mutable, foreign_private, unexpected_m
         expect(fs.existsSync(fixture.statePath)).toBe(false);
         expect(fs.existsSync(path.join(fixture.root, "hermes-config-mutation.lock"))).toBe(false);
       } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
+    it("reconciles the generated startup API key on the first shields-down transaction (#6381)", () => {
+      const fixture = createFixture();
+      fs.appendFileSync(fixture.envPath, `API_SERVER_KEY=${"a".repeat(64)}\n`);
+      refreshCompatOnly(fixture);
+
+      try {
+        expect(strictHashIsValid(fixture)).toBe(false);
+        const result = runManagedFirstShieldsDown(fixture);
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toMatch(/^lock_token=[0-9a-f]{64} original_locked=0\n$/u);
+        expect(strictHashIsValid(fixture)).toBe(true);
+        expect(fs.existsSync(fixture.statePath)).toBe(true);
+      } finally {
+        fs.chmodSync(fixture.sandboxDir, 0o700);
+        fs.chmodSync(fixture.hermesDir, 0o700);
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
     });

@@ -9,7 +9,7 @@
 name: langchain-deepagents-code
 display_name: "LangChain Deep Agents Code"
 description: "Terminal coding agent built on the Deep Agents SDK"
-version_constraint: ">=0.1.30"
+version_constraint: ">=0.1.34"
 language: python
 license: MIT
 homepage: "https://docs.langchain.com/oss/python/deepagents/code/overview"
@@ -18,7 +18,7 @@ homepage: "https://docs.langchain.com/oss/python/deepagents/code/overview"
 install_method: pip
 binary_path: /usr/local/bin/dcode
 version_command: "dcode --version"
-expected_version: "0.1.30"
+expected_version: "0.1.34"
 version_scheme: semver
 runtime:
   kind: terminal

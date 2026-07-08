@@ -125,6 +125,8 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       model: "nemotron",
       policyPresets: ["npm"],
       nimContainer: null,
+      observabilityEnabled: true,
+      agent: "langchain-deepagents-code",
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
       },
@@ -136,6 +138,7 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     const recovered = result.sandboxes.find((s) => s.name === "alpha");
     expect(recovered).toBeDefined();
     expect(recovered?.policies).toEqual(["npm"]);
+    expect(recovered?.observabilityEnabled).toBe(true);
   });
 
   it("restores complete custom-route identity from a confirmed session", async () => {
@@ -259,6 +262,34 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     await recoverRegistryEntries();
 
     expect(mockRegistryState.sandboxes["my-hermes"]?.agent).toBe("hermes");
+  });
+
+  it("preserves recorded observability when an older confirmed session omits the field", async () => {
+    mockRegistryState.sandboxes.alpha = {
+      name: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      gpuEnabled: false,
+      policies: [],
+      nimContainer: null,
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+    };
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      policyPresets: [],
+      nimContainer: null,
+      agent: "langchain-deepagents-code",
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    await recoverRegistryEntries();
+
+    expect(mockRegistryState.sandboxes.alpha?.observabilityEnabled).toBe(true);
   });
 
   it("does not evict a registered sandbox even when its session step is incomplete (avoids false positives)", async () => {

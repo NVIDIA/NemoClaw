@@ -20,6 +20,16 @@ import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import { resolveSandboxGatewayName } from "../../gateway-binding";
+import {
+  type ManagedSandboxFeatureIssue,
+  managedSandboxFeatureNeedsSessionUpdate,
+  resolveManagedSandboxFeature,
+} from "../../managed-sandbox-feature";
+import {
+  DCODE_OBSERVABILITY_FEATURE,
+  hasDcodeObservabilityDrift,
+  isDcodeAgent,
+} from "../../observability-policy-presets";
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -45,7 +55,10 @@ export interface SandboxStateOptions<
   fresh: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
+  /** Internal rebuild tier that must govern create-time and resumed policy selection. */
+  authoritativePolicyTier?: string | null;
   resumeAgentChanged: boolean;
+  requestedObservabilityEnabled?: boolean | null;
   gatewayName: string;
   session: Session | null;
   sandboxName: string | null;
@@ -273,6 +286,18 @@ function mcpRegistryRemovalBlockReason(
   return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
 }
 
+function observabilityRequestValidationError(
+  issue: ManagedSandboxFeatureIssue | null,
+): string | null {
+  if (issue === "unsupported-request") {
+    return "  --observability is supported only with --agent langchain-deepagents-code.";
+  }
+  if (issue === "recorded-state-on-unsupported-agent") {
+    return "  Recorded observability belongs to the existing Deep Agents Code sandbox. Pass --no-observability explicitly when switching agents.";
+  }
+  return null;
+}
+
 class SandboxStateFlow<
   Gpu,
   Agent,
@@ -422,10 +447,57 @@ class SandboxStateFlow<
         recordedToolGateways,
         effectiveToolGateways,
       ),
+      observabilityChanged: hasDcodeObservabilityDrift({
+        liveExists: sandboxReuseState === "ready",
+        managedDcodeAgent: isDcodeAgent((this.options.agent as { name?: string } | null)?.name),
+        hasRegistryEntry: registryEntry !== null,
+        recordedObservabilityEnabled: registryEntry?.observabilityEnabled,
+        requestedObservabilityEnabled: state.session?.observabilityEnabled,
+      }),
       ...toolDisclosureSignals,
       ...dcodeResumeSignals,
     });
     return dcodeResume.preserveManagedDcodeRegistryEntry(this.options, decision);
+  }
+
+  private applyObservabilityRequest(
+    state: SandboxStepState<WebSearchConfig>,
+  ): SandboxStepState<WebSearchConfig> {
+    const registryEntry = state.sandboxName
+      ? this.deps.getSandboxRegistryEntry(state.sandboxName)
+      : null;
+    const selectedAgent = (this.options.agent as { name?: string } | null)?.name;
+    const requested = this.options.requestedObservabilityEnabled;
+    const resolution = resolveManagedSandboxFeature(DCODE_OBSERVABILITY_FEATURE, {
+      agent: selectedAgent,
+      requested,
+      resume: this.options.resume,
+      sessionValue: state.session?.observabilityEnabled,
+      sessionRequestedExplicitly: state.session?.observabilityRequestedExplicitly,
+      registryValue: registryEntry?.observabilityEnabled,
+    });
+    const validationError = observabilityRequestValidationError(resolution.issue);
+    if (validationError) {
+      this.deps.error(validationError);
+      return this.deps.exitProcess(1);
+    }
+    if (
+      !managedSandboxFeatureNeedsSessionUpdate(
+        DCODE_OBSERVABILITY_FEATURE,
+        state.session?.observabilityEnabled,
+        state.session?.observabilityRequestedExplicitly,
+        resolution,
+      )
+    ) {
+      return state;
+    }
+    const session = this.deps.updateSession((current) => {
+      current.observabilityEnabled = resolution.value;
+      current.observabilityRequestedExplicitly =
+        current.observabilityRequestedExplicitly || resolution.requestedExplicitly;
+      return current;
+    });
+    return { ...state, session };
   }
 
   private assertGatewayRouteCompatible(sandboxName: string | null): void {
@@ -607,6 +679,13 @@ class SandboxStateFlow<
             {
               recreate: decision.kind !== "create",
               toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+              observabilityEnabled: state.session?.observabilityEnabled === true,
+              ...(state.session?.observabilityRequestedExplicitly === true
+                ? { observabilityRequestedExplicitly: true as const }
+                : {}),
+              ...(this.options.authoritativePolicyTier
+                ? { policyTier: this.options.authoritativePolicyTier }
+                : {}),
             },
           ),
       );
@@ -728,7 +807,7 @@ class SandboxStateFlow<
   }
 
   async run(): Promise<SandboxStateResult<WebSearchConfig>> {
-    const initialState = this.prepareWebSearchSupport();
+    const initialState = this.applyObservabilityRequest(this.prepareWebSearchSupport());
     const decision = this.resolveResumeDecision(initialState);
     const completedState =
       decision.kind === "reuse"

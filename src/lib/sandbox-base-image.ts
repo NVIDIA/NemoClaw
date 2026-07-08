@@ -265,7 +265,7 @@ export function resolveSandboxBaseImage(
     if (!options.requireOpenshellSandboxAbi && !options.validateImage) return null;
   } else {
     const rootDir = options.rootDir || ROOT;
-    const inputPaths = [options.dockerfilePath];
+    const inputPaths = [options.dockerfilePath, ...(options.inputPaths ?? [])];
     const preferPinnedRemoteRef = options.preferPinnedRemoteRef === true;
     if (baseImageInputsDirty(rootDir, env, inputPaths)) return resolveChangedInputs();
 

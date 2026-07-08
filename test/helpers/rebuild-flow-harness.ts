@@ -94,6 +94,8 @@ export type RebuildFlowOverrides = {
   sessionSandboxName?: string;
   sandboxListOutput?: string;
   backupPolicyPresets?: string[];
+  gatewayPresets?: string[];
+  verificationUnavailableAfterPresetRemoval?: boolean;
   preDeleteSandboxEntry?: Record<string, unknown>;
   preDeleteDefaultSandbox?: string | null;
   preDeleteLatestManifest?: Record<string, unknown> | null;
@@ -139,6 +141,7 @@ export type RebuildFlowHarness = {
   preflightMessagingConflictsSpy: MockInstance;
   preflightDcodeRouteSpy: MockInstance;
   prepareManagedDcodeRebuildImageSpy: MockInstance;
+  removePresetSpy: MockInstance;
   removeSandboxRegistryEntrySpy: MockInstance;
   registryUpdateSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
@@ -496,15 +499,77 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         (options ?? {}) as Record<string, unknown>,
       );
     });
+  const livePolicyPresets = new Set(overrides.gatewayPresets ?? []);
+  const managedObservabilityPreset = "observability-otlp-local";
+  const managedObservabilityContent =
+    "network_policies:\n  observability-otlp-local:\n    name: observability-otlp-local\n";
+  let liveManagedObservabilityContent = livePolicyPresets.has(managedObservabilityPreset)
+    ? managedObservabilityContent
+    : null;
+  let policyRemovalObserved = false;
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
     .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
       const normalizedPresetName = String(presetName);
-      if (overrides.applyPreset) return overrides.applyPreset(normalizedPresetName);
-      if (normalizedPresetName === "throw") throw new Error("preset boom");
-      return normalizedPresetName === "npm";
+      let applied: boolean;
+      if (overrides.applyPreset) {
+        applied = overrides.applyPreset(normalizedPresetName);
+      } else if (normalizedPresetName === "throw") {
+        throw new Error("preset boom");
+      } else {
+        applied = normalizedPresetName === "npm";
+      }
+      if (applied) {
+        livePolicyPresets.add(normalizedPresetName);
+        if (normalizedPresetName === managedObservabilityPreset) {
+          liveManagedObservabilityContent = managedObservabilityContent;
+        }
+      }
+      return applied;
     });
-  const applyPresetContentSpy = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
+  const applyPresetContentSpy = vi
+    .spyOn(policies, "applyPresetContent")
+    .mockImplementation((_sandboxName: unknown, presetName: unknown, presetContent: unknown) => {
+      livePolicyPresets.add(String(presetName));
+      const content = String(presetContent);
+      if (policies.parsePresetPolicyKeys(content).includes(managedObservabilityPreset)) {
+        liveManagedObservabilityContent = content;
+      }
+      return true;
+    });
+  vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
+    (_sandboxName: unknown, presetName: unknown) =>
+      String(presetName) === managedObservabilityPreset ? managedObservabilityContent : null,
+  );
+  vi.spyOn(policies, "getPresetContentGatewayState").mockImplementation(
+    (_sandboxName: unknown, presetContent: unknown) => {
+      if (overrides.verificationUnavailableAfterPresetRemoval && policyRemovalObserved) return null;
+      const content = String(presetContent);
+      if (!policies.parsePresetPolicyKeys(content).includes(managedObservabilityPreset)) {
+        return "absent";
+      }
+      if (liveManagedObservabilityContent === null) return "absent";
+      return liveManagedObservabilityContent === content ? "match" : "drift";
+    },
+  );
+  vi.spyOn(policies, "getGatewayPresets").mockImplementation(() =>
+    overrides.verificationUnavailableAfterPresetRemoval && policyRemovalObserved
+      ? null
+      : [...livePolicyPresets],
+  );
+  const removePresetSpy = vi
+    .spyOn(policies, "removePreset")
+    .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
+      const removed = livePolicyPresets.delete(String(presetName));
+      if (
+        String(presetName) === managedObservabilityPreset &&
+        liveManagedObservabilityContent === managedObservabilityContent
+      ) {
+        liveManagedObservabilityContent = null;
+      }
+      if (removed) policyRemovalObserved = true;
+      return removed;
+    });
   const executeSandboxCommandSpy = vi
     .spyOn(processRecovery, "executeSandboxCommand")
     .mockImplementation(
@@ -569,6 +634,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     preflightMessagingConflictsSpy,
     preflightDcodeRouteSpy,
     prepareManagedDcodeRebuildImageSpy,
+    removePresetSpy,
     removeSandboxRegistryEntrySpy,
     registryUpdateSpy,
     releaseOnboardLockSpy,

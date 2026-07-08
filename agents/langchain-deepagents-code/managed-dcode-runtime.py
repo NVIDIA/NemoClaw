@@ -37,6 +37,12 @@ _CREDENTIAL_ENV_NAMES = {
     "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
 }
 _OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
+_UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
+_MANAGED_ADAPTER_PROVIDER = "openai"
+_NVIDIA_DISPLAY_PROVIDER_ALIASES = frozenset(
+    {"nvidia", "nvidia-prod", "nvidia-nim", "nvidia-router"}
+)
+_DISPLAY_PROVIDER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _MCP_SERVER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 _MCP_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 _MCP_DNS_NAME = re.compile(
@@ -858,6 +864,28 @@ def managed_inference_base_url() -> str:
     return value
 
 
+def managed_display_provider(adapter_provider: object) -> str:
+    """Return the provider label to show for the managed inference adapter.
+
+    Managed inference always routes through the OpenAI-compatible adapter, so
+    Deep Agents Code reports the wire provider (`openai`) in the status bar and
+    the model-identity system prompt. Substitute the onboard-selected upstream
+    provider so those surfaces match the launch page. Only the managed
+    ``openai`` adapter is relabeled; every other adapter is returned unchanged.
+    NVIDIA route aliases share the canonical ``nvidia`` display family.
+    """
+    adapter = adapter_provider if isinstance(adapter_provider, str) else ""
+    if adapter != _MANAGED_ADAPTER_PROVIDER:
+        return adapter
+
+    upstream = os.environ.get(_UPSTREAM_PROVIDER_ENV, "")
+    if _DISPLAY_PROVIDER_NAME.fullmatch(upstream) is None:
+        return adapter
+    if upstream in _NVIDIA_DISPLAY_PROVIDER_ALIASES:
+        return "nvidia"
+    return upstream
+
+
 def assert_safe_runtime() -> None:
     """Reject unmanaged runtime credentials before dcode bootstraps settings."""
     _assert_safe_environment()
@@ -866,6 +894,9 @@ def assert_safe_runtime() -> None:
     os.environ["OPENAI_BASE_URL"] = base_url
     os.environ["NEMOCLAW_INFERENCE_BASE_URL"] = base_url
     os.environ["LANGGRAPH_NO_VERSION_CHECK"] = "true"
+    # LangGraph CLI otherwise posts command analytics to a third-party
+    # Supabase collector. Managed sandboxes keep that optional egress closed.
+    os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
     os.environ["OTEL_ENABLED"] = "false"
     for name in (
         "OPENAI_PROXY",
