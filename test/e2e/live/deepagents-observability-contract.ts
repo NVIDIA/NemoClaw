@@ -26,6 +26,7 @@ const CONFIRMED_EXEC_HINT =
 export type LlmTraceExpectation = {
   label: string;
   promptMarker: string;
+  redactionMarker?: string;
   responseMarker: string;
 };
 
@@ -38,6 +39,10 @@ export type ToolTraceExpectation = {
 export type DeepAgentsTraceExpectations = {
   ambientCanary: string;
   llmExchanges: readonly LlmTraceExpectation[];
+  redaction: {
+    marker: string;
+    rawCredential: string;
+  };
   serviceName: string;
   tool: ToolTraceExpectation;
 };
@@ -78,6 +83,8 @@ function assertLlmExchange(
       hasManagedService(span, serviceName) &&
       spanKind(span) === "LLM" &&
       markerInAttributes(span, INPUT_ATTRIBUTE_KEYS, expectation.promptMarker) &&
+      (expectation.redactionMarker === undefined ||
+        markerInAttributes(span, INPUT_ATTRIBUTE_KEYS, expectation.redactionMarker)) &&
       markerInAttributes(span, OUTPUT_ATTRIBUTE_KEYS, expectation.responseMarker),
   );
   if (!match) {
@@ -113,10 +120,18 @@ export function assertDeepAgentsTraceContract(
 ): { requestCount: number; spanCount: number } {
   if (bodies.length === 0) throw new Error("no managed OTLP trace requests were captured");
   const canary = Buffer.from(expectations.ambientCanary);
+  const rawCredential = Buffer.from(expectations.redaction.rawCredential);
+  const redactionMarker = Buffer.from(expectations.redaction.marker);
+  let redactionMarkerObserved = false;
   const spans = bodies.flatMap((body, index) => {
-    if (Buffer.from(body).includes(canary)) {
+    const encoded = Buffer.from(body);
+    if (encoded.includes(canary)) {
       throw new Error("ambient exporter configuration reached OTLP");
     }
+    if (encoded.includes(rawCredential)) {
+      throw new Error("credential-shaped prompt content reached OTLP");
+    }
+    redactionMarkerObserved ||= encoded.includes(redactionMarker);
     try {
       return decodeExportTraceServiceRequest(body);
     } catch (error) {
@@ -125,6 +140,9 @@ export function assertDeepAgentsTraceContract(
       );
     }
   });
+  if (!redactionMarkerObserved) {
+    throw new Error("credential-shaped OTLP content lacks the redaction marker");
+  }
 
   for (const expectation of expectations.llmExchanges) {
     assertLlmExchange(spans, expectations.serviceName, expectation);
@@ -221,11 +239,16 @@ async function main(): Promise<void> {
       requiredEnvironment("ALLOWED_PROBE"),
       {
         ambientCanary: requiredEnvironment("AMBIENT_CANARY"),
+        redaction: {
+          marker: requiredEnvironment("REDACTION_MARKER"),
+          rawCredential: requiredEnvironment("REDACTION_PROBE"),
+        },
         serviceName: requiredEnvironment("SERVICE_NAME"),
         llmExchanges: [
           {
             label: "direct-exec",
             promptMarker: requiredEnvironment("DIRECT_PROMPT"),
+            redactionMarker: requiredEnvironment("REDACTION_MARKER"),
             responseMarker: requiredEnvironment("DIRECT_RESPONSE"),
           },
           {
