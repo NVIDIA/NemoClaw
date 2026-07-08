@@ -165,7 +165,7 @@ This writes:
 
 If `notes-data.json` has `status: "partial"` or non-empty `pullRequestWarnings`, report the warnings and ask the maintainer whether to fetch/fill the missing PR metadata before drafting.
 
-Draft release notes from `notes-data.json` using the style from `nemoclaw-maintainer-release-notes`. Save only Markdown, outside the checkout root:
+Load and follow `nemoclaw-maintainer-release-notes`, then use its output as the draft. Save only Markdown, outside the checkout root:
 
 ```text
 <release-dir>/release-note-draft.md
@@ -189,12 +189,11 @@ Ask the maintainer to publish the draft in the `Announcements` Discussion catego
 
 ### Step 8: Verify Announcement and Hand Off Sharing
 
-Open the maintainer-provided Discussion URL using a read-only GitHub or web capability. Verify:
+Before making any network request, reject the maintainer-provided URL unless it exactly matches `https://github.com/NVIDIA/NemoClaw/discussions/<positive-integer>` with no query string or fragment. Only then open it using a read-only GitHub or web capability and verify:
 
-- the URL belongs to `github.com/NVIDIA/NemoClaw/discussions/<number>`;
 - the title is `NemoClaw <new-version> is out`;
 - the category is `Announcements`;
-- the body describes the released tag and substantially matches the local release-note draft;
+- the body preserves the draft's three lead paragraphs, category headings, every included PR link, comparison URL, and external contributor usernames; formatting-only edits are acceptable;
 - the comparison link targets `<previous-version>...<new-version>` and visible PR links target `github.com/NVIDIA/NemoClaw/pull/<number>`.
 
 If the Announcement is valid, return its URL with the release artifacts and mark the release workflow complete. Remind the maintainer to share that Discussion URL in the appropriate external channels. Do not create a duplicate Announcement.
@@ -209,5 +208,5 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 - `lkg` changed: stop and escalate to a release admin.
 - Post-tag housekeeping fails: report the error and list items still carrying the released label. After the failure is fixed, rerun the same bump command; already-moved items no longer match the source label.
 - Announcement is not published yet: keep Step 7 in progress and return the draft path and suggested title; the tag and housekeeping remain complete.
-- Announcement title, category, body, or links are wrong: ask the maintainer to edit the existing Discussion, then verify the same URL again. Do not create a replacement.
+- Announcement title, category, body, or links are wrong: ask the maintainer to edit the existing Discussion, then verify the same URL again. Do not create a replacement. After three failed verification attempts for the same Discussion, stop and escalate to a release admin.
 - Announcement cannot be inspected: report the read failure and ask the maintainer to confirm access or provide a public URL; do not mark Step 8 complete.
