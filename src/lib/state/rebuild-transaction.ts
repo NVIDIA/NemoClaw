@@ -11,6 +11,7 @@ import { isRecord, type UnknownRecord } from "../core/json-types";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import type { ToolDisclosure } from "../tool-disclosure";
 import { ensureConfigDir } from "./config-io";
+import { withMcpLifecycleLock } from "./mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "./paths";
 
 export const REBUILD_TRANSACTION_VERSION = 1 as const;
@@ -400,6 +401,8 @@ function normalizeRecord(value: unknown, sandboxName: string): RebuildTransactio
 }
 
 function syncDirectory(dirPath: string): void {
+  // NemoClaw's supported Linux filesystems persist the directory entry after
+  // fsync. Other platforms may provide weaker directory-fsync guarantees.
   const fd = fs.openSync(dirPath, fs.constants.O_RDONLY);
   try {
     fs.fsyncSync(fd);
@@ -431,6 +434,8 @@ function durablePublish(
     fs.closeSync(fd);
     fd = null;
     if (createOnly) {
+      // Both paths are deliberately in dirPath, so this hard link cannot cross
+      // a filesystem boundary and fail with EXDEV.
       fs.linkSync(candidatePath, filePath);
       fs.unlinkSync(candidatePath);
     } else {
@@ -501,11 +506,9 @@ function assertReceiptHistoryUnchanged(
   }
 }
 
-/**
- * Durable state for the rebuild coordinator. Mutation calls are synchronous so
- * their revision check and atomic publication cannot interleave in one process.
- * Cross-process callers must hold the existing per-sandbox MCP lifecycle lock;
- * revisions then reject state loaded before the current lock generation.
+/** Durable state for the rebuild coordinator. Each mutation acquires the
+ * existing per-sandbox lifecycle lock before revision validation and durable
+ * publication. Nested calls from an already-locked rebuild are reentrant.
  */
 export class RebuildTransactionStore {
   private readonly stateDir: string;
@@ -518,55 +521,57 @@ export class RebuildTransactionStore {
     this.transactionId = options.transactionId ?? (() => crypto.randomUUID());
   }
 
-  create(
+  async create(
     intent: RebuildTransactionIntentV1,
     receipts: RebuildTransactionReceiptsV1,
-  ): RebuildTransactionRecordV1 {
+  ): Promise<RebuildTransactionRecordV1> {
     assertSandboxName(intent.sandboxName);
-    const now = this.now().toISOString();
-    let record: RebuildTransactionRecordV1;
-    try {
-      record = normalizeRecord(
-        {
-          version: REBUILD_TRANSACTION_VERSION,
-          transactionId: this.transactionId(),
-          revision: 1,
-          status: "active",
-          phase: "prepared",
-          intent,
-          receipts,
-          failure: null,
-          createdAt: now,
-          updatedAt: now,
-          completedAt: null,
-        },
-        intent.sandboxName,
-      );
-    } catch (error) {
-      if (error instanceof RebuildTransactionError && error.code === "CORRUPT") {
-        throw transactionError(
-          "INVALID_INPUT",
+    return this.withMutationLock(intent.sandboxName, () => {
+      const now = this.now().toISOString();
+      let record: RebuildTransactionRecordV1;
+      try {
+        record = normalizeRecord(
+          {
+            version: REBUILD_TRANSACTION_VERSION,
+            transactionId: this.transactionId(),
+            revision: 1,
+            status: "active",
+            phase: "prepared",
+            intent,
+            receipts,
+            failure: null,
+            createdAt: now,
+            updatedAt: now,
+            completedAt: null,
+          },
           intent.sandboxName,
-          "creation input is invalid",
-          error,
         );
+      } catch (error) {
+        if (error instanceof RebuildTransactionError && error.code === "CORRUPT") {
+          throw transactionError(
+            "INVALID_INPUT",
+            intent.sandboxName,
+            "creation input is invalid",
+            error,
+          );
+        }
+        throw error;
       }
-      throw error;
-    }
-    try {
-      durablePublish(this.path(intent.sandboxName), record, true);
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "EEXIST") {
-        throw transactionError(
-          "ALREADY_EXISTS",
-          intent.sandboxName,
-          "already exists; load and reconcile it before starting another rebuild",
-          error,
-        );
+      try {
+        durablePublish(this.path(intent.sandboxName), record, true);
+      } catch (error) {
+        if (isErrnoException(error) && error.code === "EEXIST") {
+          throw transactionError(
+            "ALREADY_EXISTS",
+            intent.sandboxName,
+            "already exists; load and reconcile it before starting another rebuild",
+            error,
+          );
+        }
+        throw error;
       }
-      throw error;
-    }
-    return record;
+      return record;
+    });
   }
 
   load(sandboxName: string): RebuildTransactionRecordV1 | null {
@@ -574,81 +579,90 @@ export class RebuildTransactionStore {
     return readStrictRecord(this.path(sandboxName), sandboxName);
   }
 
-  transition(
+  async transition(
     sandboxName: string,
     expectedRevision: number,
     phase: Exclude<RebuildTransactionPhaseV1, "prepared" | "completed">,
     receipts: RebuildTransactionReceiptsV1,
-  ): RebuildTransactionRecordV1 {
-    const current = this.requireActive(sandboxName, expectedRevision);
-    if (current.phase === "completed" || NEXT_PHASE[current.phase] !== phase) {
-      throw transactionError(
-        "INVALID_TRANSITION",
+  ): Promise<RebuildTransactionRecordV1> {
+    return this.withMutationLock(sandboxName, () => {
+      const current = this.requireActive(sandboxName, expectedRevision);
+      if (current.phase === "completed" || NEXT_PHASE[current.phase] !== phase) {
+        throw transactionError(
+          "INVALID_TRANSITION",
+          sandboxName,
+          `cannot advance from ${current.phase} to ${phase}`,
+        );
+      }
+      assertReceiptHistoryUnchanged(current.receipts, receipts, sandboxName);
+      const updated = normalizeRecord(
+        {
+          ...current,
+          phase,
+          receipts,
+          failure: null,
+          revision: current.revision + 1,
+          updatedAt: this.now().toISOString(),
+        },
         sandboxName,
-        `cannot advance from ${current.phase} to ${phase}`,
       );
-    }
-    assertReceiptHistoryUnchanged(current.receipts, receipts, sandboxName);
-    const updated = normalizeRecord(
-      {
-        ...current,
-        phase,
-        receipts,
-        failure: null,
-        revision: current.revision + 1,
-        updatedAt: this.now().toISOString(),
-      },
-      sandboxName,
-    );
-    durablePublish(this.path(sandboxName), updated, false);
-    return updated;
+      durablePublish(this.path(sandboxName), updated, false);
+      return updated;
+    });
   }
 
-  recordFailure(
+  async recordFailure(
     sandboxName: string,
     expectedRevision: number,
     failure: RebuildTransactionFailureV1,
-  ): RebuildTransactionRecordV1 {
-    const current = this.requireActive(sandboxName, expectedRevision);
-    const updated = normalizeRecord(
-      {
-        ...current,
-        failure,
-        revision: current.revision + 1,
-        updatedAt: this.now().toISOString(),
-      },
-      sandboxName,
-    );
-    durablePublish(this.path(sandboxName), updated, false);
-    return updated;
+  ): Promise<RebuildTransactionRecordV1> {
+    return this.withMutationLock(sandboxName, () => {
+      const current = this.requireActive(sandboxName, expectedRevision);
+      const updated = normalizeRecord(
+        {
+          ...current,
+          failure,
+          revision: current.revision + 1,
+          updatedAt: this.now().toISOString(),
+        },
+        sandboxName,
+      );
+      durablePublish(this.path(sandboxName), updated, false);
+      return updated;
+    });
   }
 
-  complete(sandboxName: string, expectedRevision: number): RebuildTransactionRecordV1 {
-    const current = this.require(sandboxName);
-    this.assertRevision(current, expectedRevision);
-    if (current.status === "completed") return current;
-    if (current.phase !== "replacement_created") {
-      throw transactionError(
-        "INVALID_TRANSITION",
+  async complete(
+    sandboxName: string,
+    expectedRevision: number,
+  ): Promise<RebuildTransactionRecordV1> {
+    return this.withMutationLock(sandboxName, () => {
+      const current = this.require(sandboxName);
+      this.assertRevision(current, expectedRevision);
+      if (current.status === "completed") return current;
+      if (current.phase !== "replacement_created") {
+        throw transactionError(
+          "INVALID_TRANSITION",
+          sandboxName,
+          `cannot complete from ${current.phase}`,
+        );
+      }
+      const completedAt = this.now().toISOString();
+      const completed = normalizeRecord(
+        {
+          ...current,
+          phase: "completed",
+          status: "completed",
+          failure: null,
+          revision: current.revision + 1,
+          updatedAt: completedAt,
+          completedAt,
+        },
         sandboxName,
-        `cannot complete from ${current.phase}`,
       );
-    }
-    const completedAt = this.now().toISOString();
-    const completed = normalizeRecord(
-      {
-        ...current,
-        phase: "completed",
-        status: "completed",
-        failure: null,
-        revision: current.revision + 1,
-        updatedAt: completedAt,
-        completedAt,
-      },
-      sandboxName,
-    );
-    durablePublish(this.path(sandboxName), completed, false);
-    return completed;
+      durablePublish(this.path(sandboxName), completed, false);
+      return completed;
+    });
   }
 
   diagnostic(record: RebuildTransactionRecordV1): RebuildTransactionDiagnosticV1 {
@@ -673,6 +687,11 @@ export class RebuildTransactionStore {
 
   private path(sandboxName: string): string {
     return getRebuildTransactionPath(sandboxName, this.stateDir);
+  }
+
+  private withMutationLock<T>(sandboxName: string, operation: () => T): Promise<T> {
+    assertSandboxName(sandboxName);
+    return withMcpLifecycleLock(sandboxName, operation, { stateDir: this.stateDir });
   }
 
   private require(sandboxName: string): RebuildTransactionRecordV1 {
