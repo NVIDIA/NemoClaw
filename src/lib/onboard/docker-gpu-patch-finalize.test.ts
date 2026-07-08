@@ -3,8 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { DockerGpuPatchResult } from "../../../dist/lib/onboard/docker-gpu-patch";
-import { finalizeDockerGpuPatchBackup } from "../../../dist/lib/onboard/docker-gpu-patch-finalize";
+import type { DockerGpuPatchResult } from "./docker-gpu-patch";
+import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 
 function deferredCreateResult(): DockerGpuPatchResult {
   return {

@@ -31,11 +31,11 @@ describe("SandboxAgentCommand oclif parse path", () => {
     });
   });
 
-  it("does not call runAgentPassthrough when --help follows the sandbox name", async () => {
+  it("passes --help after the sandbox name to agent-aware dispatch (#5790)", async () => {
     await SandboxAgentCommand.run(["alpha", "--help"], rootDir);
-    expect(runAgentPassthroughMock).not.toHaveBeenCalled();
-    const help = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
-    expect(help).toMatch(/openclaw agent/);
+    expect(runAgentPassthroughMock).toHaveBeenCalledWith("alpha", {
+      extraArgs: ["--help"],
+    });
   });
 
   it("does not call runAgentPassthrough when no sandbox name is supplied", async () => {
@@ -48,5 +48,10 @@ describe("SandboxAgentCommand oclif parse path", () => {
   it("treats sandbox name '--help' as a help request, not a name", async () => {
     await SandboxAgentCommand.run(["--help"], rootDir);
     expect(runAgentPassthroughMock).not.toHaveBeenCalled();
+  });
+
+  it("passes a bare sandbox invocation to agent-aware dispatch (#5790)", async () => {
+    await SandboxAgentCommand.run(["alpha"], rootDir);
+    expect(runAgentPassthroughMock).toHaveBeenCalledWith("alpha", { extraArgs: [] });
   });
 });

@@ -3,11 +3,11 @@
 
 import { createRequire } from "node:module";
 
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
 
-type RoutingModule = typeof import("../../../../dist/lib/actions/sandbox/sandbox-gateway-routing");
+type RoutingModule = typeof import("./sandbox-gateway-routing");
 
 describe("sandbox gateway routing helpers", () => {
   let routing: RoutingModule;
@@ -17,8 +17,8 @@ describe("sandbox gateway routing helpers", () => {
   let runOpenshellSpy: MockInstance;
 
   beforeEach(() => {
-    const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-    const registry = requireDist("../../../../dist/lib/state/registry.js");
+    const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+    const registry = requireDist("../../state/registry.js");
 
     spies = [];
     getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue({
@@ -44,7 +44,7 @@ describe("sandbox gateway routing helpers", () => {
     } as never);
     spies.push(getSandboxSpy, captureOpenshellSpy, runOpenshellSpy);
 
-    routing = requireDist("../../../../dist/lib/actions/sandbox/sandbox-gateway-routing.js");
+    routing = requireDist("./sandbox-gateway-routing.js");
   });
 
   afterEach(() => {

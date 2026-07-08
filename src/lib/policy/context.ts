@@ -7,7 +7,7 @@ import {
   getPresetEndpoints,
   listCustomPresets,
   listPresets,
-  loadPreset,
+  loadPresetForSandbox,
 } from ".";
 import { hostStemsFromEndpoints } from "./host-redaction";
 import { getTier } from "./tiers";
@@ -146,7 +146,12 @@ function partitionPresets(
     const isApplied = applied.has(info.name);
     const verification = resolveVerification(info.name, isApplied, gatewayPresets);
     const onGatewayOnly = !isApplied && verification === "gateway-only";
-    const entry = presetEntry(info, "builtin", loadPreset(info.name), verification);
+    const entry = presetEntry(
+      info,
+      "builtin",
+      loadPresetForSandbox(sandboxName, info.name),
+      verification,
+    );
     if (isApplied || onGatewayOnly) {
       active.push(entry);
     } else {

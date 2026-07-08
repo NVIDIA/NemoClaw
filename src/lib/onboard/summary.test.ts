@@ -5,10 +5,7 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "vitest";
 
-import {
-  formatOnboardConfigSummary,
-  formatSandboxBuildEstimateNote,
-} from "../../../dist/lib/onboard/summary";
+import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./summary";
 
 describe("onboard summary helpers", () => {
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {
@@ -30,6 +27,7 @@ describe("onboard summary helpers", () => {
       "summary shows API key staging state without printing env var names",
     );
     assert.ok(summary.includes("enabled"), "summary includes web-search enabled");
+    assert.ok(summary.includes("Brave Search"), "legacy web-search config defaults to Brave");
     assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");
     assert.ok(summary.includes("my-assistant"), "summary shows sandbox name");
     assert.ok(
@@ -73,6 +71,14 @@ describe("onboard summary helpers", () => {
     });
     assert.ok(!orphanSummary.includes("undefined"), "null fields never render as 'undefined'");
     assert.ok(orphanSummary.includes("(unset)"), "null fields fall back to '(unset)'");
+
+    const tavilySummary = formatOnboardConfigSummary({
+      provider: "nvidia-prod",
+      model: "test-model",
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      sandboxName: "tavily-agent",
+    });
+    assert.ok(tavilySummary.includes("enabled (Tavily Search)"));
   });
 
   it("formatSandboxBuildEstimateNote warns when runtime is under-provisioned (#2514)", () => {

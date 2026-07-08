@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { GATEWAY_PRELOAD_GUARDS } from "../../dist/lib/agent/runtime-recovery-preload";
+import { GATEWAY_PRELOAD_GUARDS } from "../../src/lib/agent/runtime-recovery-preload";
 
 const [SAFETY_NET_GUARD, CIAO_GUARD] = GATEWAY_PRELOAD_GUARDS;
 

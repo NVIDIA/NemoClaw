@@ -71,7 +71,7 @@ describe("onboard Hermes dashboard helpers", () => {
     );
   });
 
-  it("routes the #4984 rejection through fail() so onboarding exits non-zero", () => {
+  it("routes the reserved-port rejection through fail() so onboarding exits non-zero (#4984)", () => {
     const fail = vi.fn((message: string): never => {
       throw new Error(message);
     });

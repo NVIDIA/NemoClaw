@@ -14,7 +14,7 @@ import {
   printHardwareResources,
   resolveProfile,
   resolveResourceValue,
-} from "../../dist/lib/resources-cmd.js";
+} from "./resources-cmd.js";
 
 const tempDirs: string[] = [];
 

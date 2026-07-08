@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: upload-e2e-artifacts
+description: Upload the artifacts produced by an E2E target.
+
+inputs:
+  name:
+    description: Artifact name. Defaults to the current E2E target.
+    required: false
+    default: ""
+  path:
+    description: Artifact path. Defaults to the current E2E target's artifact directory.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Upload E2E artifacts
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.name != '' && inputs.name || format('e2e-{0}', env.E2E_TARGET_ID) }}
+        path: ${{ inputs.path != '' && inputs.path || format('e2e-artifacts/live/{0}/', env.E2E_TARGET_ID) }}
+        include-hidden-files: false
+        if-no-files-found: ignore
+        retention-days: 14

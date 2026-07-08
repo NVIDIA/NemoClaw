@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import type { ProviderHealthProbeOptions } from "../../inference/health";
 import {
   classifySandboxContainerFailureForStatus,
   classifySandboxStatusPreflightFailure,
@@ -10,8 +11,7 @@ import {
   maybeGetSandboxStatusInferenceHealth,
   sandboxGpuProofStatusSuffix,
   sandboxGpuProofUnverified,
-} from "../../../../dist/lib/actions/sandbox/status";
-import type { ProviderHealthProbeOptions } from "../../../../dist/lib/inference/health";
+} from "./status";
 
 describe("sandbox status inference health", () => {
   it("passes the current model with the current provider", () => {

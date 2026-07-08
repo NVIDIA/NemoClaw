@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
 // We test stopSandboxChannels / stopAll by temporarily replacing the
@@ -13,9 +13,9 @@ import { tmpdir } from "node:os";
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const resolveOpenshellModule = require("../../../dist/lib/adapters/openshell/resolve");
+const resolveOpenshellModule = require("../adapters/openshell/resolve");
 
-import { stopSandboxChannels, stopAll } from "../../../dist/lib/tunnel/services";
+const { stopAll, stopSandboxChannels } = require("./services") as typeof import("./services");
 
 // ---------------------------------------------------------------------------
 // stopSandboxChannels

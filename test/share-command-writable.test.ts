@@ -4,7 +4,7 @@
 import fs from "fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { checkLocalMountWritable } from "../dist/lib/share-command.js";
+import { checkLocalMountWritable } from "../src/lib/share-command.js";
 
 describe("checkLocalMountWritable (#3192)", () => {
   afterEach(() => {

@@ -235,7 +235,7 @@ Bootstrap **once before Step 8b's baseline run** and reuse for Step 8d's latest 
 | Sandbox structure (build, file permissions, mounts, layout) | ✓ Always | Provider not exercised |
 | Networking / policy (port forwards, NAT, egress rules, channels guards) | ✓ Always | Provider not exercised |
 | Generic inference flow (does an agent turn complete, does the proxy route correctly) | ✓ Usually | Ollama can fail in the same shape as NIM/Gemini for most flow bugs |
-| Provider-specific behavior (`Provider: NVIDIA` symptom, NIM-only error handling, `Provider: Gemini` quirks) | ✗ No | Different code paths; substitution doesn't exercise the bug |
+| Provider-specific behavior (`provider: nvidia` symptom, NIM-only error handling, Gemini-specific quirks) | ✗ No | Different code paths; substitution doesn't exercise the bug |
 | Model-specific behavior (`gemini-flash-3-preview` doesn't handle prompt X, `nemotron-3-nano:4b` works fine) | ✗ No | Wrong model = wrong outputs |
 | Ollama-shape-specific (#2519 "Ollama-local 401" — local-vs-networked Ollama config) | △ Sometimes | A generic Ollama install may or may not reproduce; may need specific configuration |
 | Performance / latency on specific silicon | ✗ No | Hardware substitution caveat (Step 10) and Step 8e perf rubric apply |

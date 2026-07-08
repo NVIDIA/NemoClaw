@@ -15,6 +15,7 @@ describe("messaging channel diagnostics", () => {
       "wechat",
       "slack",
       "whatsapp",
+      "teams",
     ]);
     expect(specs.find((spec) => spec.channelId === "telegram")).toMatchObject({
       policyPresets: ["telegram"],
@@ -30,6 +31,10 @@ describe("messaging channel diagnostics", () => {
       doctorWhenNoHealthSignals: expect.objectContaining({
         hint: "run `{cli} {sandbox} channels status --channel {channel}` to probe inbound delivery",
       }),
+    });
+    expect(specs.find((spec) => spec.channelId === "teams")).toMatchObject({
+      policyPresets: ["teams"],
+      preferredDefault: false,
     });
   });
 });

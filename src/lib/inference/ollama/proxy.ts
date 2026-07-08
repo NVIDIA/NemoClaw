@@ -772,47 +772,15 @@ async function pullOllamaModel(model) {
 // override env var in non-interactive mode, or block. Probe failures
 // degrade to "unknown" and never block onboarding.
 
-function isProxyNonInteractive(): boolean {
-  // Lazy-require to avoid a circular import (onboard.ts requires this file
-  // at module-load time). isNonInteractive is exported from onboard.ts;
-  // fall back to the env var if onboard hasn't fully loaded yet.
-  try {
-    const onboardMod = require("./onboard");
-    if (typeof onboardMod.isNonInteractive === "function") {
-      return Boolean(onboardMod.isNonInteractive());
-    }
-  } catch {
-    /* fall through to env-var check */
-  }
-  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
-}
-
-function isProxyAutoYes(): boolean {
-  // isAutoYes is not exported from onboard.ts, so fall back to the env var.
-  // The interactive override prompt path still covers --yes-only invocations
-  // because non-interactive mode is the gate that matters here.
-  try {
-    const onboardMod = require("./onboard");
-    if (typeof onboardMod.isAutoYes === "function") {
-      return Boolean(onboardMod.isAutoYes());
-    }
-  } catch {
-    /* fall through to env-var check */
-  }
-  return process.env.NEMOCLAW_YES === "1";
-}
+export type OllamaToolCapabilityInteraction = Readonly<{
+  isNonInteractive: () => boolean;
+  isAutoYes: () => boolean;
+  confirm: (question: string, defaultIsYes: boolean) => Promise<boolean>;
+}>;
 
 async function promptProxyYesNo(question: string, defaultIsYes: boolean): Promise<boolean> {
-  // Prefer onboard's promptYesNoOrDefault so we get the same indicator
-  // formatting and non-interactive note. Lazy-require to avoid the cycle.
-  try {
-    const onboardMod = require("./onboard");
-    if (typeof onboardMod.promptYesNoOrDefault === "function") {
-      return Boolean(await onboardMod.promptYesNoOrDefault(question, null, defaultIsYes));
-    }
-  } catch {
-    /* fall through */
-  }
+  // Standalone callers use the credential-store prompt. Onboarding injects
+  // its own confirmation helper so this module does not depend on onboard.ts.
   const reply = await prompt(`${question} ${defaultIsYes ? "[Y/n]" : "[y/N]"}: `);
   const v = String(reply ?? "")
     .trim()
@@ -821,6 +789,12 @@ async function promptProxyYesNo(question: string, defaultIsYes: boolean): Promis
   if (v === "n" || v === "no") return false;
   return defaultIsYes;
 }
+
+const defaultOllamaToolCapabilityInteraction: OllamaToolCapabilityInteraction = {
+  isNonInteractive: () => process.env.NEMOCLAW_NON_INTERACTIVE === "1",
+  isAutoYes: () => process.env.NEMOCLAW_YES === "1",
+  confirm: promptProxyYesNo,
+};
 
 function printToolsIncompatibleWarning(model: string): void {
   console.log("");
@@ -834,6 +808,7 @@ function printToolsIncompatibleWarning(model: string): void {
 
 async function checkOllamaModelToolSupport(
   model: string,
+  interaction: OllamaToolCapabilityInteraction = defaultOllamaToolCapabilityInteraction,
 ): Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }> {
   const caps = probeOllamaModelCapabilities(model);
 
@@ -857,12 +832,12 @@ async function checkOllamaModelToolSupport(
   // reject the same model on the same condition — see issue #4241.
   printToolsIncompatibleWarning(model);
 
-  if (isProxyAutoYes()) {
+  if (interaction.isAutoYes()) {
     console.log("  Continuing because --yes was passed.");
     return { ok: true, allowToolsIncompatible: true };
   }
 
-  if (isProxyNonInteractive()) {
+  if (interaction.isNonInteractive()) {
     if (process.env.NEMOCLAW_OLLAMA_REQUIRE_TOOLS === "0") {
       console.error(
         `  NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 set — proceeding with '${model}' despite missing 'tools'.`,
@@ -875,7 +850,7 @@ async function checkOllamaModelToolSupport(
     return { ok: false, message: "Tools-incompatible model in non-interactive mode." };
   }
 
-  const proceed = await promptProxyYesNo("  Use this model anyway?", false);
+  const proceed = await interaction.confirm("  Use this model anyway?", false);
   if (!proceed) {
     return { ok: false, message: "Choose a tools-capable model." };
   }
@@ -885,6 +860,7 @@ async function checkOllamaModelToolSupport(
 async function prepareOllamaModel(
   model,
   installedModels: string[] = [],
+  interaction: OllamaToolCapabilityInteraction = defaultOllamaToolCapabilityInteraction,
 ): Promise<{
   ok: boolean;
   message?: string;
@@ -904,7 +880,7 @@ async function prepareOllamaModel(
     }
   }
 
-  const capCheck = await checkOllamaModelToolSupport(model);
+  const capCheck = await checkOllamaModelToolSupport(model, interaction);
   if (!capCheck.ok) {
     return { ok: false, message: capCheck.message };
   }

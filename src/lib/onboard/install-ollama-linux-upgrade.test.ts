@@ -7,7 +7,7 @@ import {
   decideInstallOllamaLinuxMode,
   type InstallOllamaLinuxOptions,
   installOllamaOnLinux,
-} from "../../../dist/lib/onboard/install-ollama-linux";
+} from "./install-ollama-linux";
 
 function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaLinuxOptions {
   return {
@@ -133,7 +133,7 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
   it("pins the resolved Ollama host to local loopback after a successful install", () => {
     // Resolve through the same CJS require cache the helper uses internally
     // so the `_resolvedOllamaHost` mutation is observable from the test.
-    const localInference = require("../../../dist/lib/inference/local");
+    const localInference = require("../inference/local");
     localInference.setResolvedOllamaHost("host.docker.internal");
     try {
       const opts = makeOpts({

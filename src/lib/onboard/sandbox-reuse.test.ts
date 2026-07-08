@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import { applyReusedSandboxDashboardState } from "../../../dist/lib/onboard/sandbox-reuse";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import { applyReusedSandboxDashboardState } from "./sandbox-reuse";
 
 describe("applyReusedSandboxDashboardState", () => {
   afterEach(() => {

@@ -57,12 +57,12 @@ function runLifecycleEntrypoint(mode: "fresh" | "resume"): LifecyclePayload {
   const repoRoot = path.join(import.meta.dirname, "..");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-lifecycle-"));
   const scriptPath = path.join(tmpDir, `onboard-lifecycle-${mode}.cjs`);
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const runtimeBoundaryPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "onboard", "runtime-boundary.js"),
+    path.join(repoRoot, "src", "lib", "onboard", "runtime-boundary.ts"),
   );
   const eventsPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "onboard", "machine", "events.js"),
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "events.ts"),
   );
 
   fs.writeFileSync(
@@ -143,12 +143,12 @@ function runResumeConflictEntrypoint(
   const repoRoot = path.join(import.meta.dirname, "..");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-conflict-"));
   const scriptPath = path.join(tmpDir, "onboard-resume-conflict.cjs");
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const runtimeBoundaryPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "onboard", "runtime-boundary.js"),
+    path.join(repoRoot, "src", "lib", "onboard", "runtime-boundary.ts"),
   );
   const eventsPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "onboard", "machine", "events.js"),
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "events.ts"),
   );
 
   fs.writeFileSync(

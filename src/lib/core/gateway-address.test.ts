@@ -8,7 +8,7 @@ import {
   getGatewayHttpEndpoint,
   getGatewayHttpsEndpoint,
   parseGatewayBindAddress,
-} from "../../../dist/lib/core/gateway-address";
+} from "./gateway-address";
 
 const ENV_KEY = "TEST_GATEWAY_BIND_ADDRESS";
 

@@ -5,12 +5,12 @@ import { createRequire } from "module";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Import from compiled dist/ for coverage attribution.
-import * as nim from "../../../dist/lib/inference/nim";
+// Import source directly so tests cannot pass against a stale build.
+import * as nim from "./nim";
 
 const require = createRequire(import.meta.url);
-const NIM_DIST_PATH = require.resolve("../../../dist/lib/inference/nim");
-const RUNNER_PATH = require.resolve("../../../dist/lib/runner");
+const NIM_DIST_PATH = require.resolve("./nim");
+const RUNNER_PATH = require.resolve("../runner");
 const fs = require("fs");
 const NIM_API_KEY_ENV_KEYS = ["NGC_API_KEY", "NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"];
 function clearNimApiKeyEnv(): Array<[string, string | undefined]> {
@@ -632,7 +632,7 @@ describe("nim", () => {
     // hosts, so mixed-GPU machines (RTX PRO 6000 + GB300 on the QA verification
     // host) dropped the model info entirely. We keep `name` undefined to avoid
     // misattribution but now surface the per-GPU breakdown via `gpus`.
-    it("drops name and populates gpus breakdown on mixed-model hosts (regression #2669)", () => {
+    it("drops name and populates the gpus breakdown on mixed-model hosts (#2669)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {

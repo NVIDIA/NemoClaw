@@ -7,7 +7,7 @@ import {
   extractNousRecommendedModelOptions,
   getHermesProviderModelOptions,
   mergeModelOptions,
-} from "../../../dist/lib/inference/nous-models";
+} from "./nous-models";
 
 describe("Nous recommended model helpers", () => {
   it("prepends paid portal recommendations and keeps fallback models for the full list", () => {

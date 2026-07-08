@@ -20,11 +20,16 @@ export type EnsureDashboardForward = (
 
 export type AgentDashboardForwardConfig = NonNullable<DashboardRuntimeAgent>;
 
+function isValidPort(port: number | null | undefined): port is number {
+  return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
 export function ensureAgentDashboardForward(options: {
   sandboxName: string;
   agent: AgentDashboardForwardConfig;
   ensureDashboardForward: EnsureDashboardForward;
   controlUiPort?: number;
+  preserveForwardPorts?: readonly (number | null | undefined)[];
   warn?: (message: string) => void;
 }): number {
   const {
@@ -32,6 +37,7 @@ export function ensureAgentDashboardForward(options: {
     agent,
     ensureDashboardForward,
     controlUiPort = DASHBOARD_PORT,
+    preserveForwardPorts = [],
     warn = (message: string) => console.warn(message),
   } = options;
   if (!shouldManageDashboardForAgent(agent)) {
@@ -40,7 +46,9 @@ export function ensureAgentDashboardForward(options: {
 
   const declaredPorts = getAgentDeclaredForwardPorts(agent);
   const agentDashboardPort = getAgentPrimaryForwardPort(agent, controlUiPort);
-  const preservePorts = [...new Set([agentDashboardPort, ...declaredPorts])];
+  const preservePorts = [
+    ...new Set([agentDashboardPort, ...declaredPorts, ...preserveForwardPorts]),
+  ].filter(isValidPort);
   const actualAgentDashboardPort = ensureDashboardForward(
     sandboxName,
     `http://127.0.0.1:${agentDashboardPort}`,

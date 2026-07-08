@@ -9,19 +9,43 @@ import {
   getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import {
+  checkGatewayRouteCompatibility,
+  formatGatewayRouteConflict,
+} from "../../inference/gateway-route-compatibility";
+import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
+import * as nim from "../../inference/nim";
 import { listMessagingProviderSuffixes } from "../../messaging/channels";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  isDcodeAgent,
+  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+  OBSERVABILITY_POLICY_BINDING,
+} from "../../onboard/observability-policy-presets";
+import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { streamSandboxCreate } from "../../sandbox/create-stream";
 import * as shields from "../../shields";
+import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
+import { readTimerMarker } from "../../shields/timer-control";
+import { isSandboxReady } from "../../state/gateway";
+import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import * as sandboxState from "../../state/sandbox";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import {
+  buildSandboxExecMarkedCommand,
+  createSandboxExecMarker,
+  extractSandboxExecCommandStdoutFromStreams,
+} from "./sandbox-exec-output";
 import {
   probeGatewayRunning,
   selectSandboxGatewayIfRegistered,
@@ -35,6 +59,54 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
+const DCODE_AGENT_NAME = "langchain-deepagents-code";
+const DCODE_PROBE_PREFIX = "NEMOCLAW_DCODE_PROBE=";
+const DCODE_PROBE_STATE = {
+  active: "active",
+  idleDcodeRuntime: "idle",
+  unverifiableDcodeRuntime: "unverifiable",
+  noDcodeRuntime: "no-runtime",
+} as const;
+type DcodeProbeState = (typeof DCODE_PROBE_STATE)[keyof typeof DCODE_PROBE_STATE];
+
+const DCODE_BUSY_PROBE_SCRIPT = String.raw`emit_dcode_probe_state() {
+  printf 'NEMOCLAW_DCODE_PROBE=%s\n' "$1"
+  exit 0
+}
+has_dcode_runtime=0
+dc_bin="$(printf 'd%s' code)"
+da_bin="$(printf 'deepagents-%s' code)"
+home_dir="$HOME"
+[ -n "$home_dir" ] || home_dir=/sandbox
+[ -d /sandbox/.deepagents ] && has_dcode_runtime=1
+[ -d "$home_dir/.deepagents" ] && has_dcode_runtime=1
+command -v "$dc_bin" >/dev/null 2>&1 && has_dcode_runtime=1
+command -v "$da_bin" >/dev/null 2>&1 && has_dcode_runtime=1
+processes="$(ps -eo pid=,args= 2>/dev/null)" || {
+  [ "$has_dcode_runtime" -eq 1 ] && emit_dcode_probe_state unverifiable
+  emit_dcode_probe_state no-runtime
+}
+printf '%s\n' "$processes" | awk '
+/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?python[0-9.]*[[:space:]]+(-I[[:space:]]+)?-m[[:space:]]+deepagents[_]code([[:space:]]|$)/ {
+  found = 1
+}
+/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?[d]code([[:space:]]|$)/ {
+  found = 1
+}
+/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?deepagents[-_]code([[:space:]]|$)/ {
+  found = 1
+}
+END { exit found ? 0 : 1 }
+'
+matched=$?
+[ "$matched" -eq 0 ] && emit_dcode_probe_state active
+[ "$matched" -ne 1 ] && {
+  [ "$has_dcode_runtime" -eq 1 ] && emit_dcode_probe_state unverifiable
+  emit_dcode_probe_state no-runtime
+}
+[ "$has_dcode_runtime" -eq 1 ] && emit_dcode_probe_state idle
+emit_dcode_probe_state no-runtime
+`;
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -156,10 +228,15 @@ async function autoCreateSandboxFromSource(
   srcEntry: SandboxEntry | { name: string },
   fromImage: string,
 ): Promise<void> {
-  const sandboxCreateStream = require("../../sandbox/create-stream");
-  const { isSandboxReady } = require("../../state/gateway");
   const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const openshellBin = getOpenshellBinary();
+  const sourceObservabilityEnabled =
+    (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
+  const startupCommand = sourceObservabilityEnabled
+    ? ["env", "NEMOCLAW_OBSERVABILITY=1", "nemoclaw-start"]
+    : ["nemoclaw-start"];
+  const createEnv = { ...process.env };
+  delete createEnv.NEMOCLAW_OBSERVABILITY;
 
   const cmdParts = [
     openshellBin,
@@ -173,13 +250,13 @@ async function autoCreateSandboxFromSource(
     basePolicy,
     "--auto-providers",
     "--",
-    "nemoclaw-start",
+    ...startupCommand,
   ].map((p) => shellQuote(p));
   const command = `${cmdParts.join(" ")} 2>&1`;
 
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
 
-  const createResult = await sandboxCreateStream.streamSandboxCreate(command, process.env, {
+  const createResult = await streamSandboxCreate(command, createEnv, {
     // Use a pre-built image, so skip build+push and jump to pod creation.
     initialPhase: "create",
     // Wait until the sandbox actually reaches Ready state, not just appears in the list.
@@ -224,6 +301,7 @@ async function autoCreateSandboxFromSource(
     name: dstName,
     createdAt: new Date().toISOString(),
     policies: [],
+    observabilityEnabled: sourceObservabilityEnabled,
     // dst has its own lifecycle; don't inherit src's local NIM container
     // reference, or destroying dst would stop src's NIM.
     nimContainer: null,
@@ -250,10 +328,6 @@ async function autoCreateSandboxFromSource(
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
 function deleteSandboxForRestore(name: string): void {
-  const nim = require("../../inference/nim") as {
-    stopNimContainer: (sandboxName: string, opts?: { silent?: boolean }) => void;
-    stopNimContainerByName: (name: string) => void;
-  };
   const sbMeta = registry.getSandbox(name);
   if (sbMeta?.nimContainer) {
     nim.stopNimContainerByName(sbMeta.nimContainer);
@@ -261,37 +335,49 @@ function deleteSandboxForRestore(name: string): void {
     nim.stopNimContainer(name, { silent: true });
   }
   console.log(`  Deleting existing destination '${name}' before restore...`);
-  const deleteResult = runOpenshell(["sandbox", "delete", name], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-  if (deleteResult.status !== 0 && !alreadyGone) {
-    console.error(`  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`);
-    snapshotExit(1);
-  }
-  // Destination-only cleanup so the recreated sandbox does not inherit stale
-  // host-side state or hit provider-name conflicts (Codex #3796 P2):
-  // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
-  // - OpenShell per-sandbox messaging bridge providers declared by channel
-  //   manifests.
-  // - shields-<name>.json + shields timer: per-sandbox shields artifacts
-  try {
-    fs.rmSync(`/tmp/nemoclaw-services-${name}`, {
-      recursive: true,
-      force: true,
-    });
-  } catch {
-    // PID dir may not exist \u2014 ignore.
-  }
-  for (const suffix of listMessagingProviderSuffixes()) {
-    runOpenshell(["provider", "delete", `${name}${suffix}`], {
+  withTimerBoundShieldsMutationLock(name, "delete snapshot restore destination", () => {
+    if (readTimerMarker(name)) {
+      shields.shieldsUp(name, {
+        throwOnError: true,
+        allowLegacyHermesProtocol: true,
+      });
+    }
+    const deleteResult = runOpenshell(["sandbox", "delete", name], {
       ignoreError: true,
-      stdio: ["ignore", "ignore", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
-  }
-  cleanupShieldsDestroyArtifacts(name);
-  removeSandboxRegistryEntry(name);
+    const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
+    if (deleteResult.status !== 0 && !alreadyGone) {
+      // Any active timer was cleared only after shieldsUp verified the live
+      // destination was hardened. Preserve that locked state on failure.
+      console.error(
+        `  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`,
+      );
+      snapshotExit(1);
+    }
+    // Destination-only cleanup so the recreated sandbox does not inherit stale
+    // host-side state or hit provider-name conflicts (Codex #3796 P2):
+    // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
+    // - OpenShell per-sandbox messaging bridge providers declared by channel
+    //   manifests.
+    // - shields-<name>.json + shields timer: per-sandbox shields artifacts
+    try {
+      fs.rmSync(`/tmp/nemoclaw-services-${name}`, {
+        recursive: true,
+        force: true,
+      });
+    } catch {
+      // PID dir may not exist \u2014 ignore.
+    }
+    for (const suffix of listMessagingProviderSuffixes()) {
+      runOpenshell(["provider", "delete", `${name}${suffix}`], {
+        ignoreError: true,
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+    }
+    cleanupShieldsDestroyArtifacts(name);
+    removeSandboxRegistryEntry(name);
+  });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
@@ -340,6 +426,77 @@ function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
   return isShieldsDown(sandboxName);
 }
 
+function parseDcodeProbeState(output: string): DcodeProbeState | null {
+  const escapedPrefix = DCODE_PROBE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matches = [
+    ...output.matchAll(new RegExp(`^${escapedPrefix}(active|idle|unverifiable|no-runtime)$`, "gm")),
+  ];
+  if (matches.length !== 1) return null;
+  return (matches[0][1] as DcodeProbeState | undefined) ?? null;
+}
+
+function shouldCheckDcodeActivity(sandboxName: string): boolean {
+  const entry = registry.getSandbox(sandboxName);
+  // Preserve the existing snapshot path for registered non-dcode sandboxes while
+  // still probing missing-registry entries, where stale metadata is part of the risk.
+  return !entry || entry.agent === DCODE_AGENT_NAME;
+}
+
+function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean {
+  // Invalid state: backing up .deepagents while dcode is actively mutating it can
+  // produce a snapshot that later restores inconsistent agent state. The source
+  // boundary available today is the live sandbox process table plus runtime
+  // markers, because the managed dcode wrapper does not yet expose an atomic
+  // quiescence lock that backupSandboxState can consume. Keep this guard
+  // fail-closed for missing/unknown probe sentinels, OpenShell exec failures,
+  // timeouts, and any detected-but-unverifiable runtime. Remove this workaround
+  // when dcode exposes a wrapper-owned idle/active lock or equivalent snapshot
+  // quiescence signal and the backup path checks that source directly.
+  const execMarker = createSandboxExecMarker();
+  const probe = captureOpenshell(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--",
+      "sh",
+      "-c",
+      buildSandboxExecMarkedCommand(DCODE_BUSY_PROBE_SCRIPT, execMarker),
+    ],
+    {
+      ignoreError: true,
+      includeStreams: true,
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    },
+  );
+  const probeCompleted = probe.status === 0 && !probe.error && !probe.signal;
+  const commandStdout = probeCompleted
+    ? extractSandboxExecCommandStdoutFromStreams(
+        { stdout: probe.stdout, stderr: probe.stderr },
+        execMarker,
+      )
+    : null;
+  const probeState = commandStdout === null ? null : parseDcodeProbeState(commandStdout);
+  if (
+    probeState === DCODE_PROBE_STATE.idleDcodeRuntime ||
+    probeState === DCODE_PROBE_STATE.noDcodeRuntime
+  ) {
+    return true;
+  }
+  if (probeState === DCODE_PROBE_STATE.active) {
+    console.error(
+      "  Sandbox is actively running a dcode task. Please retry after the task completes.",
+    );
+    return false;
+  }
+
+  console.error(
+    `  Cannot verify whether sandbox '${sandboxName}' is actively running a dcode task. Refusing to create snapshot.`,
+  );
+  return false;
+}
+
 function runSnapshotCreate(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "create" }>,
@@ -352,38 +509,49 @@ function runSnapshotCreate(
     console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
     snapshotExit(1);
   }
-  if (!isSnapshotCreationAllowedByShields(sandboxName)) {
-    console.error("  Cannot create snapshot while shields are up.");
-    console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
+  return withTimerBoundShieldsMutationLock(sandboxName, "create sandbox snapshot", () => {
+    // Keep the shields check and backup in one timer-bound interval. Normal
+    // auto-restore waits; at the absolute deadline it may preempt this process
+    // and reclaim the token rather than changing policy/config mid-copy.
+    if (!isSnapshotCreationAllowedByShields(sandboxName)) {
+      console.error("  Cannot create snapshot while shields are up.");
+      console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
+      snapshotExit(1);
+    }
+    if (
+      shouldCheckDcodeActivity(sandboxName) &&
+      !isSnapshotCreationAllowedByDcodeActivity(sandboxName)
+    ) {
+      snapshotExit(1);
+    }
+    const label = request.name ? ` (--name ${request.name})` : "";
+    console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
+    const result = sandboxState.backupSandboxState(sandboxName, {
+      name: request.name ?? null,
+    });
+    if (result.success) {
+      const manifest = result.manifest!;
+      const entry = sandboxState.findBackup(sandboxName, manifest.timestamp).match ?? manifest;
+      const v = formatSnapshotVersion(entry);
+      const nameSuffix = entry.name ? ` name=${entry.name}` : "";
+      const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
+      console.log(`  ${G}✓${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
+      console.log(`    ${manifest.backupPath}`);
+      return;
+    }
+    if (result.error) {
+      console.error(`  ${result.error}`);
+    } else {
+      console.error("  Snapshot failed.");
+      if (result.failedDirs.length > 0) {
+        console.error(`  Failed directories: ${result.failedDirs.join(", ")}`);
+      }
+      if (result.failedFiles.length > 0) {
+        console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
+      }
+    }
     snapshotExit(1);
-  }
-  const label = request.name ? ` (--name ${request.name})` : "";
-  console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
-  const result = sandboxState.backupSandboxState(sandboxName, {
-    name: request.name ?? null,
   });
-  if (result.success) {
-    const manifest = result.manifest!;
-    const entry = sandboxState.findBackup(sandboxName, manifest.timestamp).match ?? manifest;
-    const v = formatSnapshotVersion(entry);
-    const nameSuffix = entry.name ? ` name=${entry.name}` : "";
-    const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
-    console.log(`  ${G}✓${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
-    console.log(`    ${manifest.backupPath}`);
-    return;
-  }
-  if (result.error) {
-    console.error(`  ${result.error}`);
-  } else {
-    console.error("  Snapshot failed.");
-    if (result.failedDirs.length > 0) {
-      console.error(`  Failed directories: ${result.failedDirs.join(", ")}`);
-    }
-    if (result.failedFiles.length > 0) {
-      console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
-    }
-  }
-  snapshotExit(1);
 }
 
 function repairRestoredOpenClawConfigPerms(
@@ -413,17 +581,117 @@ function reconcileSnapshotPolicyPresets(
   targetSandbox: string,
   resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>,
 ): void {
-  if (!resolvedSnapshot || !Array.isArray(resolvedSnapshot.policyPresets)) return;
-  const snapshotPresets = resolvedSnapshot.policyPresets;
+  if (!resolvedSnapshot) return;
+  const snapshotPolicyPresets = Array.isArray(resolvedSnapshot.policyPresets)
+    ? resolvedSnapshot.policyPresets
+    : null;
+  const hasSnapshotPresetMetadata = snapshotPolicyPresets !== null;
+  const snapshotCustomPolicies = Array.isArray(resolvedSnapshot.customPolicies)
+    ? resolvedSnapshot.customPolicies
+    : [];
+  const snapshotCustomPolicyNames = new Set(
+    snapshotCustomPolicies.map((entry) => entry.name.trim().toLowerCase()),
+  );
+  const snapshotPresets =
+    snapshotPolicyPresets?.filter(
+      (preset) => !snapshotCustomPolicyNames.has(preset.trim().toLowerCase()),
+    ) ?? [];
+  const targetEntry = registry.getSandbox(targetSandbox);
+  // Custom reconciliation runs before this function. Only the registry state
+  // that remains after that reconciliation can participate in ownership.
+  const currentCustomPolicies = registry.getCustomPolicies(targetSandbox);
+  const currentCustomPolicyNames = new Set(
+    currentCustomPolicies.map((preset) => preset.name.trim().toLowerCase()),
+  );
+  const customPolicyNames = new Set([...snapshotCustomPolicyNames, ...currentCustomPolicyNames]);
+  let customOwnsObservability: boolean;
+  try {
+    customOwnsObservability = OBSERVABILITY_POLICY_BINDING.hasLiveCustomOwner(
+      targetSandbox,
+      currentCustomPolicies.map((entry) => entry.content),
+      policies,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `  Warning: could not verify custom ownership of '${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}' (${detail}); leaving live policy presets unchanged.`,
+    );
+    return;
+  }
+  const withoutBuiltinObservability = snapshotPresets.filter(
+    (preset) => !OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
+  );
+  const shouldEnableBuiltinObservability =
+    !customOwnsObservability &&
+    isDcodeAgent(targetEntry?.agent) &&
+    targetEntry?.observabilityEnabled === true &&
+    normalizePolicyTierName(targetEntry.policyTier) !== "restricted";
   // getAppliedPresets includes custom-policy names for display/CLI parity.
   // Built-in preset reconciliation must not remove those; custom policy content
   // is reconciled separately below from registry.getCustomPolicies().
-  const customPolicyNames = new Set(registry.getCustomPolicies(targetSandbox).map((p) => p.name));
-  const currentPresets = policies
-    .getAppliedPresets(targetSandbox)
-    .filter((preset: string) => !customPolicyNames.has(preset));
-  const toRemove = currentPresets.filter((p: string) => !snapshotPresets.includes(p));
-  const toAdd = snapshotPresets.filter((p: string) => !currentPresets.includes(p));
+  const currentPresets = hasSnapshotPresetMetadata
+    ? [...new Set(policies.getAppliedPresets(targetSandbox))].filter((preset: string) => {
+        const normalized = preset.trim().toLowerCase();
+        return (
+          !OBSERVABILITY_POLICY_BINDING.matchesPreset(normalized) &&
+          !customPolicyNames.has(normalized)
+        );
+      })
+    : [];
+  const recordedBuiltinObservability = (targetEntry?.policies ?? []).some((preset) =>
+    OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
+  );
+  const setRecordedBuiltinObservability = (enabled: boolean, force = false): void => {
+    const currentEntry = registry.getSandbox(targetSandbox);
+    if (!currentEntry) return;
+    const currentPolicies = currentEntry.policies ?? [];
+    const currentlyRecorded = currentPolicies.some((preset) =>
+      OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
+    );
+    if (!force && enabled === currentlyRecorded) return;
+    registry.updateSandbox(targetSandbox, {
+      policies: OBSERVABILITY_POLICY_BINDING.setAttribution(currentPolicies, enabled),
+    });
+  };
+  if (customOwnsObservability) {
+    setRecordedBuiltinObservability(false);
+  }
+  // Legacy snapshots predate generic preset metadata. Leave those unrelated
+  // presets untouched, while still reconciling the managed observability
+  // binding below from the target registry's authoritative enablement state.
+  const toRemove = hasSnapshotPresetMetadata
+    ? currentPresets.filter((preset: string) => !withoutBuiltinObservability.includes(preset))
+    : [];
+  const toAdd = hasSnapshotPresetMetadata
+    ? withoutBuiltinObservability.filter((preset: string) => !currentPresets.includes(preset))
+    : [];
+
+  // A same-name custom policy does not own the built-in OTLP entry unless its
+  // exact, overlapping content is both registered after custom reconciliation
+  // and live in the gateway. Reconcile the built-in from exact content state,
+  // never from a name/key-only match that could delete drifted operator policy.
+  let builtinObservabilityContent: string | null = null;
+  let builtinObservabilityState: "match" | "absent" | "drift" | null = null;
+  if (!customOwnsObservability) {
+    const loadedBinding = OBSERVABILITY_POLICY_BINDING.load(targetSandbox, policies);
+    builtinObservabilityContent = loadedBinding.content;
+    builtinObservabilityState = loadedBinding.state;
+    const builtinState = builtinObservabilityState;
+    if (builtinState === "absent" && shouldEnableBuiltinObservability) {
+      toAdd.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
+    } else if (builtinState === "absent" && recordedBuiltinObservability) {
+      setRecordedBuiltinObservability(false);
+    } else if (builtinState === "match" && !shouldEnableBuiltinObservability) {
+      toRemove.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
+    } else if (builtinState === "match" && !recordedBuiltinObservability) {
+      setRecordedBuiltinObservability(true);
+    } else if (builtinState === "drift" || builtinState === null) {
+      const reason = builtinState === "drift" ? "has drifted" : "could not be inspected";
+      console.warn(
+        `  Warning: built-in preset '${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}' ${reason}; leaving its live policy content unchanged.`,
+      );
+    }
+  }
   if (toRemove.length === 0 && toAdd.length === 0) return;
 
   const summary: string[] = [];
@@ -433,6 +701,25 @@ function reconcileSnapshotPolicyPresets(
 
   const failed: string[] = [];
   for (const preset of toRemove) {
+    if (OBSERVABILITY_POLICY_BINDING.matchesPreset(preset) && builtinObservabilityContent) {
+      const removal = OBSERVABILITY_POLICY_BINDING.removeExact(
+        targetSandbox,
+        builtinObservabilityContent,
+        policies,
+        { knownBefore: builtinObservabilityState },
+      );
+      builtinObservabilityState = removal.after;
+      if (removal.verifiedAbsent) {
+        setRecordedBuiltinObservability(false);
+      } else {
+        // removePreset updates the registry on a reported success. Restore
+        // attribution whenever exact absence was not proven so recovery does
+        // not forget built-in policy that may still be live.
+        setRecordedBuiltinObservability(true, true);
+      }
+      if (removal.failureDetail) failed.push(`${preset} (${removal.failureDetail})`);
+      continue;
+    }
     try {
       if (!policies.removePreset(targetSandbox, preset)) failed.push(`${preset} (remove failed)`);
     } catch (err) {
@@ -515,6 +802,16 @@ async function runSnapshotRestore(
   const target = request.to ?? sandboxName;
   const targetSandbox =
     target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
+  return withSandboxMutationLock(targetSandbox, () =>
+    runSnapshotRestoreUnlocked(sandboxName, request, targetSandbox),
+  );
+}
+
+async function runSnapshotRestoreUnlocked(
+  sandboxName: string,
+  request: Extract<SnapshotRequest, { kind: "restore" }>,
+  targetSandbox: string,
+): Promise<void> {
   const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
@@ -622,53 +919,115 @@ async function runSnapshotRestore(
           snapshotExit(1);
         }
       }
-      if (targetEntry) {
-        verifyRestoreDestinationOnOwnGateway(targetSandbox);
+    }
+    const sourceGatewayName = resolveSandboxGatewayName(srcEntry);
+    await withGatewayRouteMutationLock(sourceGatewayName, async () => {
+      if (!targetExists && registry.getSandbox(targetSandbox)) {
+        console.error(
+          `  Destination sandbox '${targetSandbox}' was registered while this restore was waiting. Retry with --force only after reviewing that sandbox.`,
+        );
+        snapshotExit(1);
       }
-      deleteSandboxForRestore(targetSandbox);
-      requireLiveSandboxesOnSandboxGateway(
+      const lockedSourceEntry = registry.getSandbox(sandboxName);
+      if (!lockedSourceEntry) {
+        console.error(
+          `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' has no durable inference route metadata.`,
+        );
+        snapshotExit(1);
+      }
+      if (getSandboxEntryInference(lockedSourceEntry).kind !== "configured") {
+        console.error(
+          `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' has no complete durable inference route.`,
+        );
+        snapshotExit(1);
+      }
+      const lockedFromImage = resolveSrcPodImage(sandboxName, lockedSourceEntry);
+      if (!lockedFromImage) {
+        console.error(
+          `  Cannot resolve the current image for source sandbox '${sandboxName}' — aborting before changing '${targetSandbox}'.`,
+        );
+        snapshotExit(1);
+      }
+      const lockedGatewayName = resolveSandboxGatewayName(lockedSourceEntry);
+      if (lockedGatewayName !== sourceGatewayName) {
+        console.error(
+          `  Source sandbox '${sandboxName}' changed OpenShell gateways while waiting to restore. Retry the command.`,
+        );
+        snapshotExit(1);
+      }
+      const compatibility = checkGatewayRouteCompatibility({
+        gatewayName: sourceGatewayName,
+        sandboxName: targetSandbox,
+        route: lockedSourceEntry,
+        sandboxes: registry.listSandboxes().sandboxes,
+      });
+      if (!compatibility.ok) {
+        console.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+        snapshotExit(1);
+      }
+      if (targetExists) {
+        if (targetEntry) {
+          verifyRestoreDestinationOnOwnGateway(targetSandbox);
+        }
+        deleteSandboxForRestore(targetSandbox);
+        requireLiveSandboxesOnSandboxGateway(
+          sandboxName,
+          "  Failed to re-select source sandbox gateway after deleting destination.",
+        );
+      }
+      await autoCreateSandboxFromSource(
         sandboxName,
-        "  Failed to re-select source sandbox gateway after deleting destination.",
+        targetSandbox,
+        lockedSourceEntry,
+        lockedFromImage,
       );
-    }
-    await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry, fromImage);
+    });
   }
-  if (targetSandbox !== sandboxName) {
-    console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
-  } else {
-    console.log(`  Restoring snapshot into '${sandboxName}'...`);
-  }
-  const result = sandboxState.restoreSandboxState(targetSandbox, backupPath);
-  if (result.success) {
-    console.log(
-      `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
-    );
-  } else {
-    console.error(`  Restore failed.`);
-    if (result.restoredDirs.length > 0) {
-      console.error(`  Partial: ${result.restoredDirs.join(", ")}`);
+  withTimerBoundShieldsMutationLock(targetSandbox, "restore sandbox snapshot", () => {
+    // Serialize filesystem restore, mutable-permission repair, and policy
+    // reconciliation under the active timer generation. Normal auto-restore
+    // waits; the absolute deadline may preempt this process and reclaim the
+    // token, preventing policy/config mutation after lockdown resumes.
+    if (targetSandbox !== sandboxName) {
+      console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
+    } else {
+      console.log(`  Restoring snapshot into '${sandboxName}'...`);
     }
-    if (result.failedDirs.length > 0) {
-      console.error(`  Failed: ${result.failedDirs.join(", ")}`);
+    const result = sandboxState.restoreSandboxState(targetSandbox, backupPath);
+    if (result.success) {
+      console.log(
+        `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
+      );
+    } else {
+      console.error(`  Restore failed.`);
+      if (result.restoredDirs.length > 0) {
+        console.error(`  Partial: ${result.restoredDirs.join(", ")}`);
+      }
+      if (result.failedDirs.length > 0) {
+        console.error(`  Failed: ${result.failedDirs.join(", ")}`);
+      }
+      if (result.failedFiles.length > 0) {
+        console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
+      }
+      snapshotExit(1);
     }
-    if (result.failedFiles.length > 0) {
-      console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
-    }
-    snapshotExit(1);
-  }
-  // Post-restore security-state reconciliation is best-effort by design: the
-  // filesystem restore succeeded and old snapshots may target hosts where policy
-  // providers or mutable-config repair are temporarily unavailable. Surface every
-  // failure as a warning, but keep the restore result tied to state restoration.
-  // #5027/#4538: openclaw.json restores via the generic copy strategy, which
-  // lands it at 0640. Repair the mutable config contract when needed.
-  repairRestoredOpenClawConfigPerms(targetSandbox, result);
-  // Reconcile the target's policy presets to match the snapshot manifest
-  // exactly. Skip legacy snapshots that predate the `policyPresets` field.
-  reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
-  // Reconcile custom policy presets (applied via --from-file/--from-dir).
-  // Skipped for legacy snapshots that predate the `customPolicies` field.
-  reconcileSnapshotCustomPolicies(targetSandbox, resolvedSnapshot);
+    // Post-restore security-state reconciliation is best-effort by design: the
+    // filesystem restore succeeded and old snapshots may target hosts where policy
+    // providers or mutable-config repair are temporarily unavailable. Surface every
+    // failure as a warning, but keep the restore result tied to state restoration.
+    // #5027/#4538: openclaw.json restores via the generic copy strategy, which
+    // lands it at 0640. Repair the mutable config contract when needed.
+    repairRestoredOpenClawConfigPerms(targetSandbox, result);
+    // Reconcile custom policy presets (applied via --from-file/--from-dir).
+    // Skipped for legacy snapshots that predate the `customPolicies` field.
+    reconcileSnapshotCustomPolicies(targetSandbox, resolvedSnapshot);
+    // Reconcile built-in presets after custom content so same-name custom
+    // policies are never transiently substituted with a built-in. The current
+    // target observability bit and tier override historical built-in OTLP state.
+    // Legacy snapshots skip unrelated generic presets but still reconcile the
+    // managed observability binding from current target state.
+    reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
+  });
 }
 
 export async function runSandboxSnapshot(

@@ -10,13 +10,42 @@ import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
+import {
+  prebuildSandboxImageIfEligible,
+  type SandboxPrebuildInput,
+  type SandboxPrebuildResult,
+} from "./sandbox-prebuild";
 
 type OpenshellShellCommand = (args: string[]) => string;
 
+// These non-secret scheduler controls are intentionally forwarded for bounded
+// live-test and operator tuning. Keep this as an exact allowlist: the host's
+// broader NEMOCLAW_* environment must not become sandbox runtime input.
+const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
+  "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
+  "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
+] as const;
+
+function appendOpenClawAutoPairRuntimeEnvArgs(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  for (const key of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
+    const value = env[key]?.trim();
+    if (value) envArgs.push(formatEnvAssignment(key, value));
+  }
+}
+
 export interface SandboxCreateLaunchInput {
   agent: AgentDefinition | null | undefined;
+  observabilityEnabled?: boolean;
   chatUiUrl: string;
   createArgs: readonly string[];
+  sandboxName?: string;
   env?: NodeJS.ProcessEnv;
   extraPlaceholderKeys: readonly string[];
   getDashboardForwardPort(chatUiUrl: string): string;
@@ -32,6 +61,15 @@ export interface SandboxCreateLaunch {
   envArgs: string[];
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
+}
+
+export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
+  sandboxName: string;
+  prebuild: Omit<SandboxPrebuildInput, "createArgs" | "sandboxName">;
+}
+
+export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
+  prebuild: SandboxPrebuildResult;
 }
 
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
@@ -53,19 +91,17 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   }
 
   appendOpenClawRuntimeEnvArgs(envArgs, input.agent ?? null);
+  appendOpenClawAutoPairRuntimeEnvArgs(envArgs, input.agent ?? null, env);
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
   appendHostProxyEnvArgs(envArgs, env, {
     dropCredentialBearingProxyUrls: input.agent?.name === "langchain-deepagents-code",
   });
 
-  // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
-  // sandbox container. patchStagedDockerfile() already substitutes them
-  // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create
-  // -- env ... nemoclaw-start` only forwards the explicitly listed env vars;
-  // image-baked ENV does not propagate into the running pod. Without
-  // this, nemoclaw-start.sh falls back to the default 10.200.0.1:3128
-  // and `HTTPS_PROXY` inside the sandbox ignores the host override. The
-  // build-time substitution and runtime env stay in sync as a result.
+  // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to runtime containers
+  // that consume them from sandbox-create env. patchStagedDockerfile() also
+  // substitutes the validated build args; dcode pins that build-time source in
+  // root-owned image files instead of trusting this runtime copy. Keep both
+  // paths in sync for the other agent images that still consume runtime env.
   // Fixes #2424. Uses the shared isValidProxyHost / isValidProxyPort
   // helpers so build-time and runtime validation stay aligned.
   const sandboxProxyHost = env.NEMOCLAW_PROXY_HOST;
@@ -75,6 +111,16 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   const sandboxProxyPort = env.NEMOCLAW_PROXY_PORT;
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
+  }
+
+  if (input.agent?.name === "langchain-deepagents-code") {
+    const sandboxName = input.sandboxName;
+    if (sandboxName) {
+      envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
+    }
+    if (input.observabilityEnabled === true) {
+      envArgs.push(formatEnvAssignment("NEMOCLAW_OBSERVABILITY", "1"));
+    }
   }
 
   appendExtraPlaceholderKeysEnvArg(envArgs, input.extraPlaceholderKeys, formatEnvAssignment);
@@ -104,5 +150,21 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs,
     sandboxEnv,
     sandboxStartupCommand,
+  };
+}
+
+/** Coordinate the optional local image build with the canonical launch renderer. */
+export async function prepareSandboxCreateLaunchWithPrebuild(
+  input: SandboxCreateLaunchWithPrebuildInput,
+): Promise<SandboxCreateLaunchWithPrebuild> {
+  const { prebuild: prebuildInput, ...launchInput } = input;
+  const prebuild = await prebuildSandboxImageIfEligible({
+    ...prebuildInput,
+    createArgs: input.createArgs,
+    sandboxName: input.sandboxName,
+  });
+  return {
+    ...prepareSandboxCreateLaunch({ ...launchInput, createArgs: prebuild.createArgs }),
+    prebuild,
   };
 }

@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { ROOT, SCRIPTS } from "../../../dist/lib/state/paths";
+import { ROOT, SCRIPTS } from "./paths";
 
 describe("paths", () => {
   it("resolves the repo root", () => {

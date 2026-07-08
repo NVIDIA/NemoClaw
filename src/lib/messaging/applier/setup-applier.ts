@@ -149,6 +149,7 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
     typeof value.agent !== "string" ||
     typeof value.workflow !== "string" ||
     !Array.isArray(value.channels) ||
+    !value.channels.every(isSerializableChannelPlan) ||
     !Array.isArray(value.disabledChannels) ||
     !Array.isArray(value.credentialBindings) ||
     !isObject(value.networkPolicy) ||
@@ -164,6 +165,21 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSerializableChannelPlan(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  if (!Object.hasOwn(value, "hostForward")) return true;
+  const hostForward = value.hostForward;
+  return (
+    isObject(hostForward) &&
+    typeof hostForward.channelId === "string" &&
+    typeof hostForward.port === "number" &&
+    Number.isInteger(hostForward.port) &&
+    hostForward.port >= 1 &&
+    hostForward.port <= 65535 &&
+    typeof hostForward.label === "string"
+  );
 }
 
 function isRuntimeSetup(value: unknown): boolean {

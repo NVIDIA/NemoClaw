@@ -247,6 +247,7 @@ function readOverlapOutputs(result: MessagingStatusHookRunResult): MessagingOver
           sandboxes: entry.sandboxes,
           ...(typeof entry.reason === "string" ? { reason: entry.reason } : {}),
           ...(typeof entry.message === "string" ? { message: entry.message } : {}),
+          ...(typeof entry.port === "number" ? { port: entry.port } : {}),
         },
       ];
     });

@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import type { ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { containsReplyTokenAllowingWhitespace } from "./helpers/e2e-answer-assertions.ts";
 
 const LIVE_REPRO_ENV = "NEMOCLAW_ISSUE_2603_LIVE";
 const LIVE_SANDBOX_ENV = "NEMOCLAW_ISSUE_2603_SANDBOX";
@@ -150,7 +152,7 @@ function analyzeIssue2603Trace({
   const finalReplyCounts = new Map<string, number>();
   for (const [replyToken, expectedRunId] of expectedRunByReplyToken) {
     for (const event of chatEvents) {
-      if (!event.text.includes(replyToken)) continue;
+      if (!containsReplyTokenAllowingWhitespace(event.text, replyToken)) continue;
       visibleReplyCounts.set(replyToken, (visibleReplyCounts.get(replyToken) ?? 0) + 1);
       if (event.state === "final") {
         finalReplyCounts.set(replyToken, (finalReplyCounts.get(replyToken) ?? 0) + 1);
@@ -253,6 +255,10 @@ function buildFailureSummary(
   );
 }
 
+// Frozen historical #2603 trace: it intentionally retains the original
+// tool-triggering wait prompt so the classifier keeps covering the observed
+// broken gateway behavior. The live repro below uses deterministic no-tools
+// prompts instead.
 const capturedIssue2603Trace: Issue2603Trace = {
   sentRuns: [
     {
@@ -423,8 +429,12 @@ function textFromMessage(message) {
   return content.map((part) => part && typeof part === "object" && typeof part.text === "string" ? part.text : "").filter(Boolean).join("\n");
 }
 
+function compactReplyTokenText(value) {
+  return String(value || "").replace(/\s+/g, "");
+}
+
 function sawAllReplies(replyTokens) {
-  return replyTokens.every((token) => events.some((event) => event.event === "chat" && textFromMessage(event.payload?.message).includes(token)));
+  return replyTokens.every((token) => events.some((event) => event.event === "chat" && compactReplyTokenText(textFromMessage(event.payload?.message)).includes(compactReplyTokenText(token))));
 }
 
 ws.on("message", (data) => {
@@ -469,10 +479,14 @@ ws.on("open", async () => {
     await request("chat.history", { sessionKey, limit: 20 });
 
     const sentRuns = [];
+    // This guard measures websocket run correlation, not tool execution. Keep
+    // the prompts tool-free so a model-selected tool cannot replace the reply;
+    // the strict empty-final, missing-reply, and history assertions below still
+    // fail if the instruction is ignored and the expected reply is lost.
     const messages = [
-      ["A2603", "A2603-REPLY", "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else."],
-      ["B2603", "B2603-REPLY", "B2603: Second task. Reply exactly B2603-REPLY and nothing else."],
-      ["C2603", "C2603-REPLY", "C2603: Third task. Reply exactly C2603-REPLY and nothing else."],
+      ["A2603", "A2603-REPLY", "A2603: First task. Reply exactly A2603-REPLY and nothing else. Do not use tools."],
+      ["B2603", "B2603-REPLY", "B2603: Second task. Reply exactly B2603-REPLY and nothing else. Do not use tools."],
+      ["C2603", "C2603-REPLY", "C2603: Third task. Reply exactly C2603-REPLY and nothing else. Do not use tools."],
     ];
 
     for (const [promptToken, replyToken, message] of messages) {
@@ -573,7 +587,7 @@ function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIs
 }
 
 describe("OpenClaw TUI chat correlation regression (#2603)", () => {
-  it("classifies the observed #2603 gateway trace as broken", () => {
+  it("classifies the observed gateway trace as broken (#2603)", () => {
     const analysis = analyzeIssue2603Trace(capturedIssue2603Trace);
 
     expect(analysis.emptyFinalsForSubmittedRuns).toEqual([
@@ -609,6 +623,38 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
       { promptToken: "B2603", count: 2 },
       { promptToken: "C2603", count: 2 },
     ]);
+  });
+
+  it("matches deterministic reply tokens split by harmless model whitespace", () => {
+    const analysis = analyzeIssue2603Trace({
+      sentRuns: [
+        {
+          promptToken: "A2603",
+          replyToken: "A2603-REPLY",
+          runId: "split-reply-run",
+          message: "A2603: Reply exactly A2603-REPLY and nothing else.",
+        },
+      ],
+      events: [
+        {
+          event: "chat",
+          payload: {
+            runId: "split-reply-run",
+            state: "final",
+            message: { role: "assistant", content: [{ type: "text", text: "A\n2603-REPLY" }] },
+          },
+        },
+      ],
+      historyMessages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "A2603: Reply exactly A2603-REPLY and nothing else." }],
+        },
+      ],
+    });
+
+    expect(analysis.missingReplies).toEqual([]);
+    expect(analysis.uncorrelatedReplies).toEqual([]);
   });
 
   it("does not classify a streamed delta plus final for the same run as a duplicate reply", () => {
@@ -657,6 +703,45 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
     expect(analysis.uncorrelatedReplies).toEqual([]);
   });
 
+  it("treats hosted-model line wrapping inside reply tokens as the same visible reply", () => {
+    const analysis = analyzeIssue2603Trace({
+      sentRuns: [
+        {
+          promptToken: "A2603",
+          replyToken: "A2603-REPLY",
+          runId: "run-a",
+          message:
+            "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else.",
+        },
+      ],
+      events: [
+        {
+          event: "chat",
+          payload: {
+            runId: "run-a",
+            state: "final",
+            message: { role: "assistant", content: [{ type: "text", text: "A2\n603-REPLY" }] },
+          },
+        },
+      ],
+      historyMessages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else.",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(analysis.missingReplies).toEqual([]);
+    expect(analysis.duplicateReplies).toEqual([]);
+    expect(analysis.uncorrelatedReplies).toEqual([]);
+  });
+
   it("only retries the live repro when no chat events were captured", () => {
     expect(
       looksLikeEventCaptureFailure({
@@ -681,6 +766,21 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
         historyMessages: [],
       }),
     ).toBe(false);
+  });
+
+  it("keeps the live repro prompts deterministic and tool-free", () => {
+    const script = buildLiveReproScript();
+
+    expect(script).not.toContain("Wait 8 seconds");
+    expect(script).toContain(
+      "A2603: First task. Reply exactly A2603-REPLY and nothing else. Do not use tools.",
+    );
+    expect(script).toContain(
+      "B2603: Second task. Reply exactly B2603-REPLY and nothing else. Do not use tools.",
+    );
+    expect(script).toContain(
+      "C2603: Third task. Reply exactly C2603-REPLY and nothing else. Do not use tools.",
+    );
   });
 
   it.runIf(process.env[LIVE_REPRO_ENV] === "1")(

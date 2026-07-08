@@ -74,6 +74,53 @@ export function withLegacyMessagingPlanEnv(
   };
 }
 
+/** Build a legacy messaging plan in-process for tests that do not need a process boundary. */
+export async function withLegacyMessagingPlanEnvDirect(
+  env: Record<string, string>,
+  agent: MessagingPlanAgent,
+): Promise<Record<string, string>> {
+  if (env.NEMOCLAW_MESSAGING_PLAN_B64) return env;
+  const channels = decodeJsonEnv<string[]>(env, "NEMOCLAW_MESSAGING_CHANNELS_B64", []);
+  if (!Array.isArray(channels) || channels.length === 0) return env;
+
+  const normalizedEnv = {
+    ...env,
+    ...legacyMessagingConfigEnv(env),
+  };
+  const {
+    createBuiltInChannelManifestRegistry,
+    createBuiltInMessagingHookRegistry,
+    createBuiltInRenderTemplateResolver,
+    MessagingSetupApplier,
+    MessagingWorkflowPlanner,
+  } = await import("../src/lib/messaging/index.ts");
+  const plan = await withProcessEnv(normalizedEnv, () =>
+    new MessagingWorkflowPlanner(
+      createBuiltInChannelManifestRegistry(),
+      createBuiltInMessagingHookRegistry({
+        wechat: {
+          seedOpenClawAccount: {
+            now: () => "2026-01-01T00:00:00.000Z",
+          },
+        },
+      }),
+      createBuiltInRenderTemplateResolver(),
+    ).buildPlan({
+      sandboxName: "test-sandbox",
+      agent,
+      workflow: "rebuild",
+      isInteractive: false,
+      configuredChannels: [...new Set(channels)],
+      credentialAvailability: credentialAvailability(),
+    }),
+  );
+
+  return {
+    ...env,
+    NEMOCLAW_MESSAGING_PLAN_B64: MessagingSetupApplier.encodePlan(plan),
+  };
+}
+
 export function buildMessagingPlanB64(
   env: Record<string, string>,
   agent: MessagingPlanAgent,
@@ -139,6 +186,13 @@ function legacyMessagingConfigEnv(env: Record<string, string>): Record<string, s
 
   const slackConfig = decodeJsonEnv<Record<string, unknown>>(env, "NEMOCLAW_SLACK_CONFIG_B64", {});
   assignCsv(next, "SLACK_ALLOWED_CHANNELS", slackConfig.allowedChannels);
+
+  const teamsConfig = decodeJsonEnv<Record<string, unknown>>(env, "NEMOCLAW_TEAMS_CONFIG_B64", {});
+  assignString(next, "MSTEAMS_APP_ID", teamsConfig.appId);
+  assignString(next, "MSTEAMS_TENANT_ID", teamsConfig.tenantId);
+  assignCsv(next, "TEAMS_ALLOWED_USERS", teamsConfig.allowedUsers);
+  assignString(next, "MSTEAMS_PORT", teamsConfig.webhookPort);
+  assignMentionMode(next, "TEAMS_REQUIRE_MENTION", teamsConfig.requireMention);
 
   return next;
 }
@@ -220,6 +274,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+async function withProcessEnv<T>(env: Record<string, string>, run: () => Promise<T>): Promise<T> {
+  const originalEnv = { ...process.env };
+  try {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, env);
+    return await run();
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, originalEnv);
+  }
+}
+
 function credentialAvailability(): Record<string, boolean> {
   const keys = [
     "botToken",
@@ -234,11 +300,13 @@ function credentialAvailability(): Record<string, boolean> {
     "wechatBotToken",
     "slackBotToken",
     "slackAppToken",
+    "teamsClientSecret",
     "TELEGRAM_BOT_TOKEN",
     "DISCORD_BOT_TOKEN",
     "WECHAT_BOT_TOKEN",
     "SLACK_BOT_TOKEN",
     "SLACK_APP_TOKEN",
+    "MSTEAMS_APP_PASSWORD",
   ];
   return Object.fromEntries(keys.map((key) => [key, true]));
 }

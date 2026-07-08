@@ -2,4 +2,5 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 uv==0.11.15
-deepagents-code[nvidia]==0.1.12
+deepagents-code[nvidia]==0.1.34
+nemo-relay[langgraph]==0.4.0

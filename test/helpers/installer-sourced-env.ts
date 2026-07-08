@@ -47,6 +47,14 @@ export function buildIsolatedSystemPath() {
 
 export const TEST_SYSTEM_PATH = buildIsolatedSystemPath();
 
+export function readShellConstant(file: string, name: string) {
+  const source = fs.readFileSync(file, "utf-8");
+  const match = new RegExp(`^${name}="([^"]+)"`, "m").exec(source);
+  const value = match?.[1];
+  if (!value) throw new Error(`Unable to read ${name} from ${file}`);
+  return value;
+}
+
 export function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }

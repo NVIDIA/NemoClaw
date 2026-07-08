@@ -3,10 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  classifyCustomAnthropicEndpoint,
-  isBedrockRuntimeEndpoint,
-} from "../../../dist/lib/inference/bedrock-runtime";
+import { classifyCustomAnthropicEndpoint, isBedrockRuntimeEndpoint } from "./bedrock-runtime";
 
 describe("Bedrock Runtime endpoint classification", () => {
   it("detects standard Bedrock Runtime hosts", () => {
@@ -39,5 +36,18 @@ describe("Bedrock Runtime endpoint classification", () => {
     expect(isBedrockRuntimeEndpoint("https://bedrock-mantle.example.com/v1/messages")).toBe(false);
     expect(isBedrockRuntimeEndpoint("https://proxy.example.com/v1/messages")).toBe(false);
     expect(isBedrockRuntimeEndpoint("https://api.anthropic.com/v1/messages")).toBe(false);
+  });
+
+  it("requires the canonical authenticated TLS boundary for Bedrock Runtime", () => {
+    expect(isBedrockRuntimeEndpoint("https://bedrock-runtime.us-east-1.amazonaws.com:443")).toBe(
+      true,
+    );
+    expect(isBedrockRuntimeEndpoint("http://bedrock-runtime.us-east-1.amazonaws.com")).toBe(false);
+    expect(isBedrockRuntimeEndpoint("https://bedrock-runtime.us-east-1.amazonaws.com:18147")).toBe(
+      false,
+    );
+    expect(isBedrockRuntimeEndpoint("https://user@bedrock-runtime.us-east-1.amazonaws.com")).toBe(
+      false,
+    );
   });
 });

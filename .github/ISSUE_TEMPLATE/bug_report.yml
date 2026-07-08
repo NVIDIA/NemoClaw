@@ -8,7 +8,7 @@ body:
       value: |
         ## Agent-First Troubleshooting
 
-        NemoClaw is an agent-first project. Before filing this bug, point your coding agent at the repo and have it investigate using the available skills (`nemoclaw-skills-guide`, `nemoclaw-user-monitor-sandbox`, `nemoclaw-user-manage-sandboxes`, etc.). See [CONTRIBUTING.md](https://github.com/NVIDIA/NemoClaw/blob/main/CONTRIBUTING.md) for issue expectations.
+        NemoClaw is an agent-first project. Before filing this bug, point your coding agent at the repo and have it investigate using the available skills (`nemoclaw-skills-guide`, `nemoclaw-user-guide`, etc.). See [CONTRIBUTING.md](https://github.com/NVIDIA/NemoClaw/blob/main/CONTRIBUTING.md) for issue expectations.
 
   - type: textarea
     id: agent-diagnostic
@@ -18,7 +18,7 @@ body:
         Paste the output from your agent's investigation of this bug. What skills did it load? What did it find? What did it try?
       placeholder: |
         Example:
-        - Loaded `nemoclaw-user-monitor-sandbox`
+        - Loaded `nemoclaw-user-guide`
         - Ran `nemoclaw status`, `nemoclaw list`, and `nemoclaw debug --quick`
         - Found the sandbox is registered but not ready after onboarding
         - Tried `nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz`; the attached bundle still shows the failure

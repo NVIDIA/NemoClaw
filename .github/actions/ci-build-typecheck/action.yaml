@@ -27,6 +27,10 @@ runs:
       shell: bash
       run: npm run build:cli
 
+    - name: Verify compiled package contracts
+      shell: bash
+      run: npx vitest run --project package-contract
+
     - name: Typecheck CLI + tests
       shell: bash
       run: npm run typecheck:cli

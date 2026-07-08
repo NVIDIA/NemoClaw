@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getSandboxDeleteOutcome,
+  isGatewayUnreachableDeleteOutput,
   isMissingSandboxDeleteOutput,
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
@@ -17,20 +18,40 @@ describe("sandbox destroy helpers", () => {
     expect(isMissingSandboxDeleteOutput("permission denied")).toBe(false);
   });
 
+  it("detects gateway transport errors vs real failures (#6046)", () => {
+    expect(isGatewayUnreachableDeleteOutput("Connection refused (os error 61)")).toBe(true);
+    expect(isGatewayUnreachableDeleteOutput("tcp connect error: Connection refused")).toBe(true);
+    expect(isGatewayUnreachableDeleteOutput("error trying to connect to 127.0.0.1:8080")).toBe(
+      true,
+    );
+    expect(isGatewayUnreachableDeleteOutput("permission denied")).toBe(false);
+    expect(isGatewayUnreachableDeleteOutput("sandbox alpha not found")).toBe(false);
+  });
+
   it("classifies delete outcomes", () => {
     expect(
       getSandboxDeleteOutcome({ status: 1, stderr: "Error: sandbox alpha not found" }),
     ).toEqual({
       output: "Error: sandbox alpha not found",
       alreadyGone: true,
+      gatewayUnreachable: false,
     });
     expect(getSandboxDeleteOutcome({ status: 1, stdout: "boom" })).toEqual({
       output: "boom",
       alreadyGone: false,
+      gatewayUnreachable: false,
     });
     expect(getSandboxDeleteOutcome({ status: 0, stdout: "deleted" })).toEqual({
       output: "deleted",
       alreadyGone: false,
+      gatewayUnreachable: false,
+    });
+    expect(
+      getSandboxDeleteOutcome({ status: 1, stderr: "tcp connect error: Connection refused" }),
+    ).toEqual({
+      output: "tcp connect error: Connection refused",
+      alreadyGone: false,
+      gatewayUnreachable: true,
     });
   });
 

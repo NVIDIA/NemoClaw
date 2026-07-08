@@ -13,14 +13,21 @@ export function toYaml(obj: Record<string, unknown>, indent: number = 0): string
         out += `${pad}${key}: []\n`;
       } else {
         out += `${pad}${key}:\n`;
+        // Indent block-sequence items one level under the key. A top-level
+        // array whose `-` sits at the key's own indent (e.g. `custom_providers`
+        // followed by sibling keys) cannot be round-tripped by the messaging
+        // build applier's YAML mini-parser, which only ends a sequence on a
+        // dedent. This matches the applier's own serializer; both forms are
+        // valid YAML for Hermes' real parser.
+        const itemPad = "  ".repeat(indent + 1);
         for (const item of value) {
           if (typeof item === "object" && item !== null) {
-            out += `${pad}-\n`;
-            out += toYaml(item as Record<string, unknown>, indent + 1);
+            out += `${itemPad}-\n`;
+            out += toYaml(item as Record<string, unknown>, indent + 2);
           } else if (typeof item === "string") {
-            out += `${pad}- ${yamlString(item)}\n`;
+            out += `${itemPad}- ${yamlString(item)}\n`;
           } else if (typeof item === "number" || typeof item === "boolean") {
-            out += `${pad}- ${item}\n`;
+            out += `${itemPad}- ${item}\n`;
           }
         }
       }

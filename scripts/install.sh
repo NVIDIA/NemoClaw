@@ -49,6 +49,7 @@ resolve_repo_root() {
 }
 DEFAULT_NEMOCLAW_VERSION="0.1.0"
 DEFAULT_INSTALL_REF="lkg"
+INSTALL_TAG_EXAMPLE="vX.Y.Z"
 TOTAL_STEPS=3
 
 is_mutable_install_ref() {
@@ -107,12 +108,32 @@ installer_version_for_display() {
 agent_display_name() {
   case "${1:-}" in
     hermes) printf "Hermes" ;;
+    langchain-deepagents-code) printf "LangChain Deep Agents Code" ;;
     openclaw | "") printf "OpenClaw" ;;
     *)
       local first rest
       first="$(printf "%.1s" "$1" | tr '[:lower:]' '[:upper:]')"
       rest="${1#?}"
       printf "%s%s" "$first" "$rest"
+      ;;
+  esac
+}
+
+canonical_agent_name() {
+  local raw="${1:-}" normalized
+  normalized="$(printf "%s" "$raw" | tr '[:upper:]_ ' '[:lower:]--' | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+  case "$normalized" in
+    nemoclaw | nemo-claw | openclaw)
+      printf "openclaw"
+      ;;
+    nemohermes | nemo-hermes | hermes)
+      printf "hermes"
+      ;;
+    nemo-deepagents | nemo-deepagent | nemodeepagents | nemodeepagent | dcode | deepagent | deepagents | deep-agent | deep-agents | deepagentcode | deepagentscode | deepagent-code | deepagents-code | deep-agent-code | deep-agents-code | langchain | langchain-code | langchaindeepagent | langchaindeepagents | langchain-deepagent | langchain-deepagents | langchaindeepagentcode | langchaindeepagentscode | langchain-deepagent-code | langchain-deepagents-code | langchain-deep-agent | langchain-deep-agents | langchain-deep-agent-code | langchain-deep-agents-code)
+      printf "langchain-deepagents-code"
+      ;;
+    *)
+      printf "%s" "$raw"
       ;;
   esac
 }
@@ -269,9 +290,14 @@ resolve_default_sandbox_name() {
   fi
 
   local fallback="my-assistant"
-  if [[ "${NEMOCLAW_AGENT:-}" == "hermes" ]]; then
-    fallback="hermes"
-  fi
+  case "${NEMOCLAW_AGENT:-}" in
+    hermes)
+      fallback="hermes"
+      ;;
+    langchain-deepagents-code)
+      fallback="deepagents-code"
+      ;;
+  esac
   printf "%s" "${sandbox_name:-$fallback}"
 }
 
@@ -507,11 +533,27 @@ print_done() {
   local _needs_cli_refresh=false
   needs_shell_reload && _needs_cli_refresh=true
 
-  info "=== Installation complete ==="
+  # #5735: do not claim a clean install when the automatic upgrade of a
+  # pre-existing sandbox failed (it may have been destroyed before its recreate
+  # failed). Surface an explicit incomplete/recovery status instead.
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    warn "=== Installation completed with warnings ==="
+  else
+    info "=== Installation complete ==="
+  fi
   printf "\n"
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
-  if [[ "$ONBOARD_RAN" == true ]]; then
+  if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+    printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
+    if [[ "$_needs_cli_refresh" == true ]]; then
+      printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
+      printf "\n"
+      printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
+      print_cli_path_refresh_actions
+    fi
+    printf "  ${C_DIM}No new sandbox onboarding was needed.${C_RESET}\n"
+  elif [[ "$ONBOARD_RAN" == true ]]; then
     local agent_name
     agent_name="$(resolve_onboarded_agent)"
     if [[ "$_needs_cli_refresh" == true ]]; then
@@ -552,6 +594,11 @@ print_done() {
     print_cli_path_refresh_actions
     printf "  %s$%s %s onboard\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN"
   fi
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    printf "\n"
+    printf "  ${C_YELLOW}${C_BOLD}Existing sandbox upgrade did not finish.${C_RESET}\n"
+    printf "  ${C_YELLOW}One or more pre-existing sandboxes failed to upgrade. See the messages above for the affected sandbox name, any preserved backup path, and recovery steps (${C_BOLD}%s onboard --resume${C_RESET}${C_YELLOW} / ${C_BOLD}%s <name> rebuild${C_RESET}${C_YELLOW}).${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
+  fi
   printf "\n"
   printf "  ${C_BOLD}GitHub${C_RESET}  ${C_DIM}https://github.com/nvidia/nemoclaw${C_RESET}\n"
   printf "  ${C_BOLD}Docs${C_RESET}    ${C_DIM}https://docs.nvidia.com/nemoclaw/latest/${C_RESET}\n"
@@ -585,10 +632,12 @@ usage() {
   printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                  Continue after manually backing up and retiring old gateway\n"
+  printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
+  printf "                                  Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
-  printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: lkg)\n"
+  printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: %s)\n" "$DEFAULT_INSTALL_REF"
   printf "                                  In curl pipes, set this on bash or export it first.\n"
-  printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash\n"
+  printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s bash\n" "$INSTALL_TAG_EXAMPLE"
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
@@ -597,7 +646,10 @@ usage() {
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
   printf "    NEMOCLAW_POLICY_PRESETS       Comma-separated policy presets\n"
-  printf "    BRAVE_API_KEY                 Enable Brave Search with this API key (kept behind OpenShell provider rewrite)\n"
+  printf "    NEMOCLAW_WEB_SEARCH_PROVIDER  brave | tavily | none (Hermes supports tavily only)\n"
+  printf "    BRAVE_API_KEY                 Enable Brave Search for OpenClaw when the provider is unset\n"
+  printf "    TAVILY_API_KEY                Enable Tavily Search when no higher-precedence supported key is set\n"
+  printf "                                  Web search keys stay behind OpenShell credential rewrite\n"
   printf "    NEMOCLAW_EXPERIMENTAL=1       Show experimental/local options\n"
   printf "    CHAT_UI_URL                   Chat UI URL to open after setup\n"
   printf "    Messaging credential env vars Auto-enable matching messaging policy support\n"
@@ -834,11 +886,20 @@ MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
 
 # ── Agent branding — adapt user-visible names to the active agent ──
+if [[ -n "${NEMOCLAW_AGENT:-}" ]]; then
+  NEMOCLAW_AGENT="$(canonical_agent_name "$NEMOCLAW_AGENT")"
+  export NEMOCLAW_AGENT
+fi
 case "${NEMOCLAW_AGENT:-openclaw}" in
   hermes)
     _CLI_DISPLAY="NemoHermes"
     _AGENT_PRODUCT="Hermes"
     _CLI_BIN="nemohermes"
+    ;;
+  langchain-deepagents-code)
+    _CLI_DISPLAY="NemoDeepAgents"
+    _AGENT_PRODUCT="LangChain Deep Agents Code"
+    _CLI_BIN="nemo-deepagents"
     ;;
   *)
     _CLI_DISPLAY="NemoClaw"
@@ -863,6 +924,12 @@ ONBOARD_RAN=false
 # auto-onboarding (#3276).
 _CLI_PATH=""
 _PREEXISTING_SANDBOX_COUNT=0
+_PREEXISTING_SANDBOX_RECOVERY_RAN=false
+_LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
+# #5735: set when automatic recovery/upgrade of pre-existing sandboxes
+# reported a failure. A failed/destructive rebuild must not be reported as a
+# clean install, so print_done downgrades the final banner when this is true.
+_UPGRADE_SANDBOXES_FAILED=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 # Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
@@ -1104,11 +1171,12 @@ EOF
 }
 
 ensure_nemoclaw_shim() {
-  local status=0
+  local cli_bin status=0
   ensure_cli_shim "$_CLI_BIN" || status=$?
-  if [[ "$_CLI_BIN" != "nemoclaw" ]]; then
-    ensure_cli_shim "nemoclaw" || true
-  fi
+  for cli_bin in nemoclaw nemohermes nemo-deepagents; do
+    [[ "$cli_bin" == "$_CLI_BIN" ]] && continue
+    ensure_cli_shim "$cli_bin" || true
+  done
   return "$status"
 }
 
@@ -1520,8 +1588,8 @@ is_real_nemoclaw_cli() {
   local expected_name="${2:-$_CLI_BIN}"
   local version_output
   version_output="$("$bin_path" --version 2>/dev/null)" || return 1
-  # Real CLI outputs: "nemoclaw v0.1.0" or "nemohermes v0.1.0"
-  # (or any semver, with optional pre-release/build metadata).
+  # Real CLI outputs: "nemoclaw v0.1.0", "nemohermes v0.1.0", or
+  # "nemo-deepagents v0.1.0" (or any semver, with optional pre-release/build metadata).
   [[ "$version_output" =~ ^${expected_name}[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]]
 }
 
@@ -1611,20 +1679,55 @@ verify_nemoclaw() {
   error "Installation failed: ${_CLI_BIN} binary not found."
 }
 
+inspect_sandbox_registry_for_upgrade() {
+  local reg_file="$1" field="$2"
+  node - "$reg_file" "$field" <<'NODE'
+const fs = require("node:fs");
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+let registry;
+try {
+  registry = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+} catch {
+  process.exit(1);
+}
+if (!isRecord(registry) || !isRecord(registry.sandboxes)) process.exit(1);
+
+const entries = Object.entries(registry.sandboxes);
+if (entries.some(([name, entry]) => !name || !isRecord(entry) || entry.name !== name)) {
+  process.exit(1);
+}
+
+if (process.argv[3] === "count") {
+  process.stdout.write(String(entries.length));
+  process.exit(0);
+}
+if (process.argv[3] !== "ambiguous-names") process.exit(1);
+
+const ambiguous = entries
+  .filter(([, entry]) => {
+    const version = entry.nemoclawVersion;
+    const hasFingerprint = typeof version === "string" && version.trim().length > 0;
+    const hasNoCustomImageEvidence =
+      entry.fromDockerfile === undefined || entry.fromDockerfile === null;
+    return !hasFingerprint && hasNoCustomImageEvidence;
+  })
+  .map(([name]) => name)
+  .sort();
+process.stdout.write(JSON.stringify(ambiguous));
+NODE
+}
+
 registered_sandbox_count() {
   local reg_file="${HOME}/.nemoclaw/sandboxes.json"
   if [ ! -f "$reg_file" ]; then
     printf "0"
     return
   fi
-  python3 -c "
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(len(d.get('sandboxes', {})))
-except Exception:
-    print(0)
-" "$reg_file" 2>/dev/null || printf "0"
+  inspect_sandbox_registry_for_upgrade "$reg_file" count
 }
 
 resolve_existing_cli_runner() {
@@ -1651,7 +1754,7 @@ resolve_existing_cli_runner() {
 
 prepare_current_cli_for_preupgrade_backup() {
   local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-__unset__}"
-  info "Preparing current ${_CLI_DISPLAY} CLI for legacy OpenShell backup retry…"
+  info "Preparing current ${_CLI_DISPLAY} CLI for pre-upgrade backup…"
   export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
   install_nemoclaw
   if [[ "$old_defer" == "__unset__" ]]; then
@@ -1671,30 +1774,18 @@ resolve_prepared_cli_runner() {
 }
 
 run_preupgrade_backup() {
-  local old_cli_runner="$1" old_openshell_version="$2"
-
-  if "$old_cli_runner" backup-all 2>&1; then
-    return 0
-  fi
-
-  if ! legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
-    return 1
-  fi
-
-  warn "Pre-upgrade backup with the existing ${_CLI_BIN} CLI failed."
-  warn "Retrying with the current ${_CLI_DISPLAY} CLI before retiring the legacy OpenShell gateway."
   if ! prepare_current_cli_for_preupgrade_backup; then
-    warn "Could not prepare the current ${_CLI_DISPLAY} CLI for backup retry."
+    warn "Could not prepare the current ${_CLI_DISPLAY} CLI for pre-upgrade backup."
     return 1
   fi
 
-  local retry_cli_runner=""
-  if ! retry_cli_runner="$(resolve_prepared_cli_runner)"; then
-    warn "Could not locate the current ${_CLI_BIN} CLI for backup retry."
+  local current_cli_runner=""
+  if ! current_cli_runner="$(resolve_prepared_cli_runner)"; then
+    warn "Could not locate the current ${_CLI_BIN} CLI for pre-upgrade backup."
     return 1
   fi
 
-  "$retry_cli_runner" backup-all 2>&1
+  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" backup-all 2>&1
 }
 
 installed_openshell_version() {
@@ -1714,52 +1805,123 @@ legacy_openshell_gateway_upgrade_needed() {
   [[ -n "$version" ]] && ! version_gte "$version" "0.0.37"
 }
 
-existing_cli_supports_backup_all() {
-  local cli_runner="$1" help_output
-  [[ -n "$cli_runner" ]] || return 1
-  help_output="$("$cli_runner" --help 2>/dev/null || true)"
-  grep -Eq '(^|[[:space:]])backup-all([[:space:]]|$)' <<<"$help_output"
-}
-
 installer_non_interactive() {
   [[ "${NON_INTERACTIVE:-}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-}" == "1" ]]
 }
 
+legacy_ambiguous_sandbox_names_json() {
+  local reg_file="$1"
+  inspect_sandbox_registry_for_upgrade "$reg_file" ambiguous-names
+}
+
+normalize_legacy_managed_confirmation_json() {
+  node -e '
+    let names;
+    try {
+      names = JSON.parse(process.argv[1]);
+    } catch {
+      process.exit(1);
+    }
+    if (
+      !Array.isArray(names) ||
+      names.some((name) => typeof name !== "string" || name.length === 0) ||
+      new Set(names).size !== names.length
+    ) {
+      process.exit(1);
+    }
+    process.stdout.write(JSON.stringify([...names].sort()));
+  ' "$1"
+}
+
+confirm_legacy_managed_image_recovery() {
+  local reg_file="$1" ambiguous_json="" ambiguous_count="0"
+  if ! ambiguous_json="$(legacy_ambiguous_sandbox_names_json "$reg_file")"; then
+    error "Could not inspect legacy sandbox image provenance. Existing sandboxes were left unchanged."
+  fi
+  ambiguous_count="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$ambiguous_json")"
+  if [ "$ambiguous_count" -eq 0 ] 2>/dev/null; then
+    _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
+    return 0
+  fi
+
+  cat <<EOF
+
+  ${ambiguous_count} existing sandbox(es) predate managed-image provenance tracking:
+EOF
+  while IFS= read -r sandbox_name; do
+    [[ -n "$sandbox_name" ]] && printf "    %s\n" "$sandbox_name"
+  done < <(node -e 'for (const name of JSON.parse(process.argv[1])) console.log(JSON.stringify(name))' "$ambiguous_json")
+  cat <<EOF
+
+  Continue only if every sandbox above was created with NemoClaw's standard
+  managed image. Recovery will replace it with the current managed image. A
+  custom --from image cannot be inferred from this legacy registry format.
+
+EOF
+
+  if [[ -n "${NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE:-}" ]]; then
+    local confirmed_json=""
+    if ! confirmed_json="$(normalize_legacy_managed_confirmation_json "$NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE")"; then
+      error "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE must be a JSON array containing the exact sandbox names listed above."
+    fi
+    if [[ "$confirmed_json" != "$ambiguous_json" ]]; then
+      error "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE must exactly match the listed sandbox names: ${ambiguous_json}"
+    fi
+    info "Confirmed ${ambiguous_count} exact pre-fingerprint sandbox name(s) used NemoClaw-managed images."
+    _LEGACY_MANAGED_RECOVERY_NAMES_JSON="$ambiguous_json"
+    return 0
+  fi
+
+  if installer_non_interactive; then
+    error "Legacy sandbox recovery requires explicit confirmation. Set NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE='${ambiguous_json}' only after verifying those exact sandboxes used managed images."
+  fi
+
+  local answer=""
+  if [ -t 0 ]; then
+    printf "  Confirm these were managed-image sandboxes? [y/N]: "
+    IFS= read -r answer || answer=""
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    info "Installer stdin is piped; prompting for legacy sandbox recovery on /dev/tty..."
+    printf "  Confirm these were managed-image sandboxes? [y/N]: "
+    IFS= read -r answer <&3 || answer=""
+    exec 3<&-
+  else
+    error "Legacy sandbox recovery requires a TTY prompt or an exact JSON name array in NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE."
+  fi
+
+  answer="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
+  case "$answer" in
+    y | yes)
+      _LEGACY_MANAGED_RECOVERY_NAMES_JSON="$ambiguous_json"
+      info "Confirmed legacy managed-image recovery."
+      ;;
+    *)
+      error "Aborting before backup or OpenShell changes. Existing gateway and sandboxes were left unchanged."
+      ;;
+  esac
+}
+
 print_openshell_upgrade_manual_commands() {
   cat <<EOF
-  Manual upgrade path:
-    ${_CLI_BIN} backup-all
+  Manual upgrade path (after installing the current CLI with OpenShell deferred):
+    NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all
     openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy
     sudo pkill -f openshell-gateway  # if a privileged host gateway process remains
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
     ${_CLI_BIN} upgrade-sandboxes --check
+
+  The prepared installer rerun lists pre-fingerprint sandboxes and asks you to
+  confirm their managed-image provenance. For a non-interactive rerun, set
+  NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE to the exact JSON array printed by
+  the installer only after verifying every listed sandbox used a managed image.
 
   Use NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to allow the installer
   to run the backup, gateway retirement, and restore preparation automatically.
 EOF
 }
 
-abort_unsupported_automatic_openshell_upgrade() {
-  local old_openshell_version="$1"
-  warn "Existing sandbox sessions use OpenShell ${old_openshell_version}, but the current ${_CLI_BIN} CLI does not support '${_CLI_BIN} backup-all'."
-  cat <<EOF
-  The automatic legacy OpenShell gateway upgrade is disabled for this install.
-  Upgrade from a ${_CLI_BIN} version that supports '${_CLI_BIN} backup-all', or
-  manually preserve sandbox state before retiring the old OpenShell gateway.
-
-EOF
-  print_openshell_upgrade_manual_commands
-  error "Aborting before OpenShell gateway upgrade. Existing gateway and sandboxes were left unchanged."
-}
-
 confirm_experimental_openshell_gateway_upgrade() {
   local sandbox_count="$1" old_openshell_version="$2"
-
-  if truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
-    info "Using manually prepared OpenShell gateway upgrade state."
-    export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
-    return 1
-  fi
 
   if truthy_env "${NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE:-}"; then
     info "Accepted experimental OpenShell gateway upgrade for ${sandbox_count} existing sandbox(es)."
@@ -1773,10 +1935,11 @@ confirm_experimental_openshell_gateway_upgrade() {
   different gateway layout than pre-0.0.37 gateways.
 
   NemoClaw can run the new automatic upgrade path now:
-    1. back up registered sandbox state
-    2. retire the old OpenShell gateway while the old CLI is still available
-    3. install the current supported OpenShell
-    4. recreate and restore the registered sandbox during onboarding
+    1. install the current CLI without replacing OpenShell
+    2. back up every registered sandbox with the current state manifest
+    3. retire the old OpenShell gateway
+    4. install the current supported OpenShell
+    5. recreate and restore the registered sandbox
 
   This upgrade path is new. Durable workspace and agent configuration state
   should be preserved, but running processes may be interrupted.
@@ -1817,12 +1980,14 @@ EOF
 preinstall_backup_and_retire_legacy_gateway() {
   local reg_file="${HOME}/.nemoclaw/sandboxes.json"
   [ -f "$reg_file" ] || return 0
-  command_exists openshell || return 0
 
   local sandbox_count
-  sandbox_count="$(registered_sandbox_count)"
+  if ! sandbox_count="$(registered_sandbox_count)"; then
+    error "Could not inspect the existing sandbox registry. Existing gateway and sandboxes were left unchanged."
+  fi
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
+  command_exists openshell || return 0
 
   if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
     error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
@@ -1830,37 +1995,26 @@ preinstall_backup_and_retire_legacy_gateway() {
 
   local old_openshell_version=""
   old_openshell_version="$(installed_openshell_version || true)"
-  local old_cli_runner=""
-  if ! old_cli_runner="$(resolve_existing_cli_runner)"; then
-    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version" && truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
-      info "Using manually prepared OpenShell gateway upgrade state."
-      export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
-      return 0
-    fi
-    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
-      warn "Existing sandbox sessions use OpenShell ${old_openshell_version}, but no usable ${_CLI_BIN} CLI was found for pre-upgrade backup."
-      print_openshell_upgrade_manual_commands
-      error "Aborting before OpenShell gateway upgrade. Restore a working ${_CLI_BIN} CLI or manually back up and retire the old gateway first."
-    fi
-    warn "Existing sandbox sessions detected, but no usable ${_CLI_BIN} CLI was found for pre-upgrade backup."
+  if legacy_openshell_gateway_upgrade_needed "$old_openshell_version" && truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
+    confirm_legacy_managed_image_recovery "$reg_file"
+    info "Using manually prepared OpenShell gateway upgrade state."
+    export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
     return 0
   fi
 
   if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
-    if ! existing_cli_supports_backup_all "$old_cli_runner"; then
-      abort_unsupported_automatic_openshell_upgrade "$old_openshell_version"
-    fi
     if ! confirm_experimental_openshell_gateway_upgrade "$sandbox_count" "$old_openshell_version"; then
       return 0
     fi
   fi
 
+  confirm_legacy_managed_image_recovery "$reg_file"
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  if ! run_preupgrade_backup "$old_cli_runner" "$old_openshell_version"; then
+  if ! run_preupgrade_backup; then
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
-    error "Pre-upgrade backup failed. Fix the OpenShell gateway state, rerun '${_CLI_BIN} backup-all', then rerun the installer."
+    error "Pre-upgrade backup failed. Resolve every reported sandbox backup failure and rerun the installer."
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
@@ -2097,6 +2251,29 @@ run_installer_host_preflight() {
   [[ "$status" -ne 10 ]]
 }
 
+recover_preexisting_sandboxes_before_onboard() {
+  local cli_runner="$1"
+  if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -le 0 ] 2>/dev/null; then
+    return 0
+  fi
+
+  info "Recovering and upgrading pre-existing sandboxes before onboarding…"
+  # `--auto` is the existing non-interactive maintenance path. When the
+  # pre-upgrade backup signal is present, the CLI also recovers registered
+  # non-Ready sandboxes from their validated latest backup. It attempts every
+  # eligible sandbox before returning non-zero for any failure.
+  if NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
+    "$cli_runner" upgrade-sandboxes --auto 2>&1; then
+    _PREEXISTING_SANDBOX_RECOVERY_RAN=true
+    return 0
+  fi
+
+  _UPGRADE_SANDBOXES_FAILED=true
+  warn "One or more existing sandboxes could not be recovered automatically."
+  warn "Generic onboarding will not run; review the affected sandbox and preserved backup diagnostics above."
+  return 1
+}
+
 run_onboard() {
   show_usage_notice
   info "Running ${_CLI_BIN} onboard…"
@@ -2109,8 +2286,9 @@ run_onboard() {
     info "Starting a fresh onboarding session (--fresh)."
     onboard_cmd+=(--fresh)
   elif command_exists node && [[ -f "$session_file" ]]; then
-    # Classify the session: "resume" (auto-attach --resume), "failed"
-    # (last run reported a step failure — user must choose), "skip"
+    # Classify the session: "resume" (auto-attach --resume), "fresh-recover"
+    # (interrupted before sandbox creation — nothing to resume, start over),
+    # "failed" (last run reported a step failure — user must choose), "skip"
     # (complete / missing / unreadable — nothing to resume), or "corrupt".
     local session_state
     session_state="$(
@@ -2124,7 +2302,19 @@ run_onboard() {
           } else if (data.status === "failed" || data.failure) {
             out = "failed";
           } else if (data.status === "in_progress") {
-            out = "resume";
+            // A run interrupted before confirmed sandbox creation has no
+            // sandbox to resume. Auto-attaching --resume here dead-ends at the
+            // CLI non-interactive resume guard (#2753) with no recovery path
+            // for curl|bash installs (#5626), so start fresh instead. Only
+            // auto-resume once the session has both the sandbox name and the
+            // completed sandbox step that onboard-session.ts records.
+            const sandboxCreated =
+              typeof data.sandboxName === "string" &&
+              data.sandboxName.trim() !== "" &&
+              data.steps &&
+              data.steps.sandbox &&
+              data.steps.sandbox.status === "complete";
+            out = sandboxCreated ? "resume" : "fresh-recover";
           } else {
             // Unknown or missing status — do not auto-resume a file we
             // cannot classify against what onboard-session.ts actually
@@ -2141,6 +2331,11 @@ run_onboard() {
       resume)
         info "Found an interrupted onboarding session — resuming it."
         onboard_cmd+=(--resume)
+        ;;
+      fresh-recover)
+        # #5626: interrupted before sandbox creation; nothing to resume.
+        info "Found an interrupted onboarding session with no sandbox yet — starting fresh."
+        onboard_cmd+=(--fresh)
         ;;
       failed)
         # #2430: a previous run failed. The user's provider/inference
@@ -2193,6 +2388,7 @@ run_onboard() {
   # whenever the binary is found on disk; if it is empty the caller has
   # already errored out via verify_nemoclaw's "binary not found" branch.
   local cli_invoke="${_CLI_PATH:-$_CLI_BIN}"
+  local status=0
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     onboard_cmd+=(--non-interactive)
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
@@ -2202,18 +2398,17 @@ run_onboard() {
     # forward --yes so the Ollama size-confirmation gate does not abort
     # the unattended download (the size is still printed to logs).
     onboard_cmd+=(--yes)
-    "$cli_invoke" "${onboard_cmd[@]}"
+    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif [ -t 0 ]; then
-    "$cli_invoke" "${onboard_cmd[@]}"
+    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
-    local status=0
     "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
     exec 3<&-
-    return "$status"
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
+  return "$status"
 }
 
 # Make sure Docker is installed and the current user can run it without
@@ -2411,17 +2606,24 @@ detect_express_platform() {
 describe_express_install() {
   local platform="$1"
   local inference_summary=""
+  local inference_disclosure=""
   local sandbox_summary=""
   local tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   local policy_summary=""
 
   case "$platform" in
     "DGX Spark")
-      inference_summary="managed local Ollama with model qwen3.6:35b"
+      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+        inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
+      else
+        inference_summary="managed local vLLM using the DGX Spark profile default model"
+      fi
+      inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
       ;;
     "DGX Station")
       inference_summary="managed local vLLM"
+      inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
@@ -2436,7 +2638,7 @@ describe_express_install() {
 
   case "$tier" in
     balanced)
-      policy_summary="base sandbox policy plus npm, pypi, huggingface, brew, brave when supported"
+      policy_summary="base sandbox policy plus npm, pypi, huggingface, brew, and the selected web-search preset"
       policy_summary="${policy_summary}, and local-inference access when needed"
       ;;
     restricted)
@@ -2453,6 +2655,9 @@ describe_express_install() {
   esac
 
   printf "  Express install will configure %s.\n" "$inference_summary"
+  if [ -n "$inference_disclosure" ]; then
+    printf "  %s\n" "$inference_disclosure"
+  fi
   printf "  Sandbox name: %s.\n" "$sandbox_summary"
   printf "  It runs onboarding non-interactively, but still prompts for sudo when host setup needs it.\n"
   printf "  Sandbox policy: suggested mode, tier '%s'. This uses the %s.\n" "$tier" "$policy_summary"
@@ -2514,8 +2719,10 @@ maybe_offer_express_install() {
       case "$platform" in
         "DGX Spark")
           export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
-          export NEMOCLAW_PROVIDER=install-ollama
-          export NEMOCLAW_MODEL=qwen3.6:35b
+          export NEMOCLAW_PROVIDER=install-vllm
+          if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+            export NEMOCLAW_VLLM_MODEL
+          fi
           ;;
         "DGX Station")
           export NEMOCLAW_PROVIDER=install-vllm
@@ -2646,15 +2853,19 @@ main() {
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
     if run_installer_host_preflight; then
-      run_onboard
-      ONBOARD_RAN=true
-      # After onboard, check for stale sandboxes that need rebuilding (#1904).
-      # Uses --auto so it runs non-interactively in piped/CI contexts.
-      if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -gt 0 ] 2>/dev/null && [ -n "$_cli_runner" ]; then
-        info "Checking for sandboxes that need upgrading…"
-        "$_cli_runner" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
+      if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
+        finalize_install
+        return 1
       fi
-      restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+      if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+        info "Existing sandboxes recovered; skipping generic onboarding."
+      else
+        run_onboard || error "Onboarding did not complete successfully."
+        ONBOARD_RAN=true
+        restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+      fi
+    elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
+      error "Skipping onboarding until the host prerequisites above are fixed."
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi
@@ -2662,7 +2873,21 @@ main() {
     warn "Skipping onboarding — could not locate the ${_CLI_BIN} executable on disk."
   fi
 
+  finalize_install
+}
+
+# Print the completion summary, then propagate a fatal/non-zero result when the
+# automatic recovery of a pre-existing sandbox failed (#5735, PRA-5). A failed
+# recovery can have left an existing sandbox destroyed or backup-only, so the install must not be
+# reported as success. print_done() has already shown the affected sandbox and
+# recovery guidance (and the "completed with warnings" banner); exiting non-zero
+# here is what keeps automation and operators from treating it as a clean
+# install. Extracted from main() so it is unit-testable.
+finalize_install() {
   print_done
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    error "Installation incomplete: one or more existing sandboxes failed to upgrade. See the recovery guidance above."
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then

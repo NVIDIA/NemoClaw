@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { agentSupportsWebSearch } from "./web-search-support";
+import { agentSupportsWebSearch, agentSupportsWebSearchProvider } from "./web-search-support";
 
 const tmpRoots: string[] = [];
 
@@ -33,16 +33,63 @@ describe("agentSupportsWebSearch", () => {
   it("detects default, OpenClaw, and Hermes agent support", () => {
     expect(agentSupportsWebSearch(null)).toBe(true);
     expect(agentSupportsWebSearch({ name: "openclaw" })).toBe(true);
-    expect(agentSupportsWebSearch({ name: "hermes" })).toBe(false);
+    expect(agentSupportsWebSearch({ name: "hermes" })).toBe(true);
   });
 
-  it("returns false for Hermes regardless of Dockerfile support", () => {
+  it("accepts Hermes when its Dockerfile declares web-search support", () => {
     const root = tmpRoot();
     const dockerfile = writeDockerfile(root, "ARG NEMOCLAW_WEB_SEARCH_ENABLED=1\n");
 
     expect(agentSupportsWebSearch({ name: "hermes", dockerfilePath: dockerfile }, null, root)).toBe(
-      false,
+      true,
     );
+    expect(
+      agentSupportsWebSearchProvider(
+        { name: "hermes", dockerfilePath: dockerfile },
+        "brave",
+        null,
+        root,
+      ),
+    ).toBe(false);
+  });
+
+  it("requires a provider selector arg for Tavily while preserving legacy Brave support", () => {
+    const root = tmpRoot();
+    const legacyDockerfile = writeDockerfile(
+      root,
+      "ARG NEMOCLAW_WEB_SEARCH_ENABLED=1\n",
+      "Legacyfile",
+    );
+    const providerAwareDockerfile = writeDockerfile(
+      root,
+      "ARG NEMOCLAW_WEB_SEARCH_ENABLED=1\nARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave\n",
+      "Providerfile",
+    );
+
+    expect(
+      agentSupportsWebSearchProvider(
+        { name: "openclaw", dockerfilePath: legacyDockerfile },
+        "brave",
+        null,
+        root,
+      ),
+    ).toBe(true);
+    expect(
+      agentSupportsWebSearchProvider(
+        { name: "openclaw", dockerfilePath: legacyDockerfile },
+        "tavily",
+        null,
+        root,
+      ),
+    ).toBe(false);
+    expect(
+      agentSupportsWebSearchProvider(
+        { name: "openclaw", dockerfilePath: providerAwareDockerfile },
+        "tavily",
+        null,
+        root,
+      ),
+    ).toBe(true);
   });
 
   it("uses an override Dockerfile path first", () => {

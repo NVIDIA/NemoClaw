@@ -11,7 +11,7 @@ import {
   parseVethGateway,
   selectSandboxNamespace,
   selectSandboxPod,
-} from "../../../../dist/lib/domain/dns/setup-proxy.js";
+} from "./setup-proxy.js";
 
 describe("DNS setup proxy domain helpers", () => {
   it("selects a sandbox pod using fixed-string style matching", () => {

@@ -13,7 +13,7 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
-import type { WebSearchConfig } from "../inference/web-search";
+import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
@@ -25,7 +25,18 @@ import {
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
-import { type StepMutationOptions, shouldUpdateMachine } from "./onboard-step-mutation";
+import {
+  assignSafeToolDisclosureUpdate,
+  normalizeSessionToolDisclosure,
+  preserveInvalidSessionToolDisclosure,
+  type ToolDisclosure,
+} from "./onboard-session-tool-disclosure";
+import {
+  LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  RECORD_ONLY_STEP_MUTATION_OPTIONS,
+  type StepMutationOptions,
+  shouldUpdateMachine,
+} from "./onboard-step-mutation";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 
 export const SESSION_VERSION = 1;
@@ -48,6 +59,8 @@ const STEP_STATES: readonly StepStatus[] = [
   "skipped",
 ];
 const VALID_STEP_STATES: ReadonlySet<string> = new Set(STEP_STATES);
+
+export { hasInvalidSessionToolDisclosure } from "./onboard-session-tool-disclosure";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -95,10 +108,17 @@ export interface Session {
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
+  /** Selected preference, retained even when a model-specific safeguard downgrades it. */
+  toolDisclosure: ToolDisclosure;
+  /** Enables credential-free OTLP trace export to NemoClaw's fixed local collector boundary. */
+  observabilityEnabled: boolean;
+  /** True when observability was explicitly enabled or disabled for this resumable run. */
+  observabilityRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
@@ -164,10 +184,13 @@ export interface SessionUpdates {
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | null;
   preferredInferenceApi?: string | null;
+  compatibleEndpointReasoning?: string | null;
   nimContainer?: string | null;
   routerPid?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
+  toolDisclosure?: ToolDisclosure;
+  observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
@@ -193,7 +216,11 @@ export interface DebugSessionSummary {
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
+  toolDisclosure: ToolDisclosure;
+  observabilityEnabled: boolean;
+  observabilityRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
@@ -271,7 +298,8 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
 }
 
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
-  return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
+  if (!isObject(value) || value.fetchEnabled !== true) return null;
+  return normalizeWebSearchConfig(value as Partial<WebSearchConfig>);
 }
 
 function parseTelegramConfig(value: unknown): TelegramConfig | null {
@@ -442,11 +470,14 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv ?? null,
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
+    compatibleEndpointReasoning: overrides.compatibleEndpointReasoning ?? null,
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
-    webSearchConfig:
-      overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
+    webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
+    toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
+    observabilityEnabled: overrides.observabilityEnabled === true,
+    observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
@@ -465,6 +496,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       createMachineSnapshot("init", startedAt),
     steps,
   };
+  preserveInvalidSessionToolDisclosure(overrides, session);
   return session;
 }
 
@@ -484,10 +516,14 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     credentialEnv: readString(data.credentialEnv),
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
     preferredInferenceApi: readString(data.preferredInferenceApi),
+    compatibleEndpointReasoning: readString(data.compatibleEndpointReasoning),
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
+    observabilityEnabled: data.observabilityEnabled === true,
+    observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
@@ -513,6 +549,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   }
 
   normalized.machine = parseMachineSnapshot(data.machine) ?? inferMachineSnapshot(normalized);
+  preserveInvalidSessionToolDisclosure(data, normalized);
 
   return normalized;
 }
@@ -964,6 +1001,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.hermesAuthMethod = null;
   }
   assignNullableString(safe, "preferredInferenceApi", updates.preferredInferenceApi);
+  assignNullableString(safe, "compatibleEndpointReasoning", updates.compatibleEndpointReasoning);
   assignNullableString(safe, "nimContainer", updates.nimContainer);
   if (
     typeof updates.routerPid === "number" &&
@@ -976,9 +1014,15 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.routerCredentialHash = updates.routerCredentialHash;
   }
   if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
-    safe.webSearchConfig = { fetchEnabled: true };
+    safe.webSearchConfig = normalizeWebSearchConfig(
+      updates.webSearchConfig as Partial<WebSearchConfig>,
+    );
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
+  }
+  assignSafeToolDisclosureUpdate(safe, updates.toolDisclosure);
+  if (typeof updates.observabilityEnabled === "boolean") {
+    safe.observabilityEnabled = updates.observabilityEnabled;
   }
   if (updates.hermesToolGateways === null) {
     safe.hermesToolGateways = null;
@@ -1040,7 +1084,10 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-function markStepStartedWithOptions(stepName: string, options: StepMutationOptions = {}): Session {
+function markStepStartedWithOptions(
+  stepName: string,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
+): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1069,7 +1116,7 @@ function markStepStartedWithOptions(stepName: string, options: StepMutationOptio
 function markStepCompleteWithOptions(
   stepName: string,
   updates: SessionUpdates = {},
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   const safeUpdates = filterSafeUpdates(updates);
   const hasUpdates = Object.keys(safeUpdates).length > 0;
@@ -1111,18 +1158,21 @@ function markStepCompleteWithOptions(
   return updatedSession;
 }
 
-export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
+export function markStepStarted(
+  stepName: string,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
+): Session {
   return markStepStartedWithOptions(stepName, options);
 }
 
 export function markStepStartedRecordOnly(stepName: string): Session {
-  return markStepStartedWithOptions(stepName, { updateMachine: false });
+  return markStepStartedWithOptions(stepName, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepComplete(
   stepName: string,
   updates: SessionUpdates = {},
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepCompleteWithOptions(stepName, updates, options);
 }
@@ -1131,7 +1181,7 @@ export function markStepCompleteRecordOnly(
   stepName: string,
   updates: SessionUpdates = {},
 ): Session {
-  return markStepCompleteWithOptions(stepName, updates, { updateMachine: false });
+  return markStepCompleteWithOptions(stepName, updates, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepSkipped(stepName: string): Session {
@@ -1159,7 +1209,7 @@ export function markStepSkipped(stepName: string): Session {
 function markStepFailedWithOptions(
   stepName: string,
   message: string | null = null,
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
@@ -1202,13 +1252,13 @@ function markStepFailedWithOptions(
 export function markStepFailed(
   stepName: string,
   message: string | null = null,
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepFailedWithOptions(stepName, message, options);
 }
 
 export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
-  return markStepFailedWithOptions(stepName, message, { updateMachine: false });
+  return markStepFailedWithOptions(stepName, message, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {
@@ -1265,7 +1315,11 @@ export function summarizeForDebug(
     credentialEnv: session.credentialEnv,
     hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
+    compatibleEndpointReasoning: session.compatibleEndpointReasoning,
     nimContainer: session.nimContainer,
+    toolDisclosure: session.toolDisclosure,
+    observabilityEnabled: session.observabilityEnabled,
+    observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,

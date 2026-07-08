@@ -3,10 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  type GatewayRecoveryDeps,
-  startGatewayForRecovery,
-} from "../../../dist/lib/onboard/gateway-recovery";
+import { type GatewayRecoveryDeps, startGatewayForRecovery } from "./gateway-recovery";
 
 function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecoveryDeps {
   return {

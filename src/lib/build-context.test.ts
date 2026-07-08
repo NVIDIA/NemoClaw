@@ -8,7 +8,7 @@ import {
   printSandboxCreateRecoveryHints,
   reconstructImageRefCreateCommand,
   shouldIncludeBuildContextPath,
-} from "../../dist/lib/build-context";
+} from "./build-context";
 
 type ConsoleErrorSpy = ReturnType<typeof vi.spyOn>;
 
@@ -98,7 +98,7 @@ describe("printSandboxCreateRecoveryHints", () => {
   // This recovery path runs ONLY after the OpenShell upload failure is
   // classified; ordinary x86_64 happy-path onboards never reach it. The tests
   // below assert that branch deterministically by injecting platform/arch.
-  it("prints the local-registry workaround with the preserved built image tag for the #3266 upload 404", () => {
+  it("prints the local-registry workaround with the preserved built image tag for an upload 404 (#3266)", () => {
     printSandboxCreateRecoveryHints(
       [
         "  Built image openshell/sandbox-from-nemoclaw:abcd1234",
@@ -128,7 +128,7 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(out).toContain("onboard --resume");
   });
 
-  it("adds the Linux ARM64 (aarch64) note for the #3266 upload 404 only on Linux arm64", () => {
+  it("adds the Linux ARM64 note for an upload 404 only on Linux arm64 (#3266)", () => {
     printSandboxCreateRecoveryHints("failed to upload image tar into container", {
       platform: "linux",
       arch: "arm64",
@@ -136,7 +136,7 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(stderr()).toContain("known limitation on Linux ARM64 (aarch64)");
   });
 
-  it("omits the ARM64 note for the #3266 upload 404 on x86_64 hosts", () => {
+  it("omits the ARM64 note for an upload 404 on x86_64 hosts (#3266)", () => {
     printSandboxCreateRecoveryHints("failed to upload image tar into container", {
       platform: "linux",
       arch: "x64",
@@ -183,6 +183,40 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(out).toContain("<YOUR_RUNTIME_ENV>");
   });
 
+  it("shows the pushed image ref (not a Dockerfile path) when the BuildKit prebuild rewrote --from (#6002)", () => {
+    // After the BuildKit prebuild, createArgs carries `--from <local-image-ref>`
+    // — the Dockerfile path was rewritten away before create. On an upload-404
+    // the recovery command must still swap --from to the pushed registry ref,
+    // leaving no Dockerfile path and no stale prebuilt local ref as --from.
+    printSandboxCreateRecoveryHints(
+      [
+        "  Built image openshell/sandbox-from-nemoclaw:abcd1234",
+        "failed to upload image tar into container",
+      ].join("\n"),
+      {
+        platform: "linux",
+        arch: "x64",
+        createArgs: [
+          "--from",
+          "nemoclaw-sandbox-local:my-assistant-1234567890",
+          "--name",
+          "my-assistant",
+          "--policy",
+          "/tmp/nemoclaw-policy-xyz.yaml",
+        ],
+      },
+    );
+
+    const out = stderr();
+    // --from is the pushed registry ref derived from the build log's image tag,
+    expect(out).toContain("--from localhost:5000/openshell/sandbox-from-nemoclaw:abcd1234");
+    // never a Dockerfile path (the prebuild removed it) and never the stale
+    // prebuilt local ref left as the --from value.
+    expect(out).not.toContain("Dockerfile");
+    expect(out).not.toContain("--from nemoclaw-sandbox-local:my-assistant-1234567890");
+    expect(out).toContain("--name my-assistant");
+  });
+
   it("falls back to placeholder push commands when no built image tag is in the output", () => {
     printSandboxCreateRecoveryHints("failed to upload image tar into container", {
       platform: "linux",
@@ -202,6 +236,25 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(out).toContain("--no-gpu");
     expect(out).toContain("NEMOCLAW_SANDBOX_GPU=0");
     expect(out).toContain("onboard --resume --no-gpu");
+  });
+
+  it("prints plugin-install network-policy guidance when the Docker build fails at the OpenClaw plugin install step", () => {
+    const output = [
+      "npm error code ENOTFOUND",
+      "npm error network request to https://registry.npmjs.org/@openclaw%2Fbrave-plugin failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org",
+      "Docker stream error: The command '/bin/bash -o pipefail -c set -eu;",
+      '  openclaw plugins install "npm:@openclaw/brave-plugin@2026.5.27" --pin;',
+      "fi' returned a non-zero code: 1",
+    ].join("\n");
+    printSandboxCreateRecoveryHints(output);
+
+    const out = stderr();
+    expect(out).toContain("OpenClaw plugin-install step");
+    expect(out).toContain("ClawHub");
+    expect(out).toContain("npm registry");
+    expect(out).toContain("network policy");
+    expect(out).toContain("NEMOCLAW_WEB_SEARCH_ENABLED=0");
+    expect(out).toContain("onboard --resume");
   });
 });
 

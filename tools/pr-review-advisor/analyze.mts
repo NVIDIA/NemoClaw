@@ -36,8 +36,14 @@ import {
 } from "../advisors/session.mts";
 
 const root = process.cwd();
+export const DEFAULT_ADVISOR_COMMENT_MARKER = "<!-- nemoclaw-pr-review-advisor -->";
+export const DEFAULT_ADVISOR_WORKFLOW_NAME = "PR Review / Advisor";
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
-const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
+const ADVISOR_MODEL = process.env.PR_REVIEW_ADVISOR_MODEL || DEFAULT_ADVISOR_MODEL;
+const ADVISOR_COMMENT_MARKER =
+  process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || DEFAULT_ADVISOR_COMMENT_MARKER;
+const ADVISOR_WORKFLOW_NAME =
+  process.env.PR_REVIEW_ADVISOR_WORKFLOW_NAME || DEFAULT_ADVISOR_WORKFLOW_NAME;
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
 const OPEN_PR_OVERLAP_LIMIT = 80;
 const OPEN_PR_OVERLAP_CONCURRENCY = 6;
@@ -341,7 +347,9 @@ async function main(): Promise<void> {
     writeUnavailableArtifacts(artifacts, metadata, reason, false);
 
   if (process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS === "0") {
-    writeUnavailable("PR_REVIEW_ADVISOR_RUN_ANALYSIS=0");
+    writeUnavailable(
+      process.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON || "PR_REVIEW_ADVISOR_RUN_ANALYSIS=0",
+    );
     process.exit(0);
   }
 
@@ -534,6 +542,8 @@ async function runAdvisorConversation(
     timeoutMs: options.timeoutMs,
     heartbeatMs: options.heartbeatMs,
     maxCaptureBytes: options.maxCaptureBytes,
+    provider: ADVISOR_PROVIDER,
+    modelId: ADVISOR_MODEL,
     credentialEnv: ADVISOR_CREDENTIAL_ENV,
     logPrefix: options.logPrefix,
     logProgress,
@@ -699,6 +709,7 @@ export function classifyTestDepth(
       file.endsWith("Dockerfile") ||
       /(^|\/)(install|setup|brev-setup|nemoclaw-start)\.sh$/.test(file) ||
       file.startsWith("nemoclaw-blueprint/policies/") ||
+      (file.startsWith("src/lib/messaging/channels/") && file.includes("/policy/")) ||
       file.startsWith("nemoclaw/src/blueprint/") ||
       file.startsWith("test/e2e/") ||
       file.includes("sandbox") ||
@@ -1131,6 +1142,7 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
       repo,
       token,
       issueComments,
+      { marker: ADVISOR_COMMENT_MARKER, workflowName: ADVISOR_WORKFLOW_NAME },
     );
     const prText = [
       stringOrUndefined(getPath<unknown>(pullRequest, ["title"])),
@@ -1277,18 +1289,25 @@ function extractIssueRefs(text: string, prNumber: number): number[] {
 export function extractPreviousAdvisorReview(
   issueComments: unknown[],
   trustedCommentIds: ReadonlySet<string>,
+  options: AdvisorReviewProvenanceOptions = {},
 ): PreviousAdvisorReview | null {
-  const candidates = previousAdvisorCandidates(issueComments).filter((candidate) =>
-    trustedCommentIds.has(candidate.metadata.commentId),
+  const candidates = previousAdvisorCandidates(issueComments, advisorCommentMarker(options)).filter(
+    (candidate) => trustedCommentIds.has(candidate.metadata.commentId),
   );
   const candidate = candidates.at(-1);
   return candidate ? { headSha: candidate.metadata.headSha, body: candidate.body } : null;
 }
 
+export type AdvisorReviewProvenanceOptions = {
+  marker?: string;
+  workflowName?: string;
+};
+
 export async function collectTrustedPreviousAdvisorReview(
   repo: string,
   token: string,
   issueComments: unknown[],
+  options: AdvisorReviewProvenanceOptions = {},
 ): Promise<PreviousAdvisorReview | null> {
   // Kept with the deterministic context collector for now: the provenance
   // decision depends on GitHub issue comments, Actions-run metadata, and the
@@ -1306,14 +1325,16 @@ export async function collectTrustedPreviousAdvisorReview(
   // the REST API does not currently expose. Remove this local provenance check
   // only if such a stronger ownership signal becomes available.
 
-  const candidates = previousAdvisorCandidates(issueComments);
+  const marker = advisorCommentMarker(options);
+  const workflowName = advisorWorkflowName(options);
+  const candidates = previousAdvisorCandidates(issueComments, marker);
   const trustedCommentIds = new Set<string>();
   for (const candidate of candidates) {
-    if (await isTrustedAdvisorRun(repo, token, candidate)) {
+    if (await isTrustedAdvisorRun(repo, token, candidate, workflowName)) {
       trustedCommentIds.add(candidate.metadata.commentId);
     }
   }
-  return extractPreviousAdvisorReview(issueComments, trustedCommentIds);
+  return extractPreviousAdvisorReview(issueComments, trustedCommentIds, { marker });
 }
 
 type AdvisorCommentMetadata = {
@@ -1330,11 +1351,14 @@ type PreviousAdvisorCandidate = {
   metadata: AdvisorCommentMetadata;
 };
 
-function previousAdvisorCandidates(issueComments: unknown[]): PreviousAdvisorCandidate[] {
+function previousAdvisorCandidates(
+  issueComments: unknown[],
+  marker: string,
+): PreviousAdvisorCandidate[] {
   return issueComments.flatMap((comment) => {
     if (!hasAdvisorCommentAuthor(comment)) return [];
     const body = stringOrUndefined(getPath<unknown>(comment, ["body"]));
-    if (!body?.includes("<!-- nemoclaw-pr-review-advisor -->")) return [];
+    if (!body?.includes(marker)) return [];
     const metadata = advisorHiddenMetadata(body);
     const commentId = getPath<number>(comment, ["id"]);
     const updatedAt = stringOrUndefined(getPath<unknown>(comment, ["updated_at"]));
@@ -1376,10 +1400,19 @@ function hasAdvisorCommentAuthor(comment: unknown): boolean {
   return author === "github-actions[bot]";
 }
 
+function advisorCommentMarker(options: AdvisorReviewProvenanceOptions): string {
+  return options.marker || DEFAULT_ADVISOR_COMMENT_MARKER;
+}
+
+function advisorWorkflowName(options: AdvisorReviewProvenanceOptions): string {
+  return options.workflowName || DEFAULT_ADVISOR_WORKFLOW_NAME;
+}
+
 async function isTrustedAdvisorRun(
   repo: string,
   token: string,
   candidate: PreviousAdvisorCandidate,
+  workflowName: string,
 ): Promise<boolean> {
   try {
     const run = await githubRest<unknown>(
@@ -1396,7 +1429,7 @@ async function isTrustedAdvisorRun(
     const updatedAt = stringOrUndefined(getPath<unknown>(run, ["updated_at"]));
     if (!startedAt || !updatedAt) return false;
     return (
-      name === "PR Review / Advisor" &&
+      name === workflowName &&
       headSha === candidate.metadata.headSha &&
       event === "pull_request" &&
       String(runAttempt) === candidate.metadata.runAttempt &&
@@ -1450,7 +1483,7 @@ export function buildSystemPrompt(): string {
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. When more tests would improve confidence, make testDepth.suggestedTests behavior-specific so they can render under 'Test follow-ups to resolve or justify'.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
-    "7. Vitest E2E suite simplicity: when a PR adds or changes files under `test/e2e-scenario/`, `.github/workflows/e2e-vitest-scenarios.yaml`, or `tools/e2e-scenarios/`, take a closer architecture look for new systems. Favor focused Vitest tests and local test helpers. Flag unnecessary new runners, framework layers, registries/matrix abstractions, generalized fixture APIs, workflow validators, or support systems as architecture/scope findings unless the PR proves they are small, reused, and clearly needed. Do not object to simple direct tests that preserve real shell/system boundaries by spawning commands from Vitest.",
+    "7. E2E suite simplicity: when a PR adds or changes files under `test/e2e/`, `.github/workflows/e2e.yaml`, or `tools/e2e/`, take a closer architecture look for new systems. Favor focused tests and local helpers. Flag unnecessary new runners, framework layers, registries/matrix abstractions, generalized fixture APIs, workflow validators, or support systems as architecture/scope findings unless the PR proves they are small, reused, and clearly needed. Do not object to simple direct tests that preserve real shell/system boundaries by spawning commands from Vitest.",
     "8. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
     "9. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
     "10. Simplification review: apply this ladder before accepting new code shape: does this need to exist; does Node/Python/shell/browser/OpenShell/GitHub already provide it; does an already-installed dependency cover it; can one line or fewer files do it; only then accept a custom abstraction. Use tags delete, stdlib, native, yagni, or shrink. Never simplify away trust-boundary validation, credential redaction, SSRF/sandbox/network-policy defenses, data-loss prevention, required regression tests, DCO/signature gates, or accessibility/user-safety behavior.",

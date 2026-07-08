@@ -11,7 +11,7 @@ import {
   getRegistryOccupiedDashboardPorts,
   preflightDashboardPortRangeAvailability,
   resolveCreateSandboxDashboardPort,
-} from "../../../dist/lib/onboard/dashboard-port";
+} from "./dashboard-port";
 
 describe("findDashboardForwardOwner", () => {
   it("parses openshell forward list column format (#2169)", () => {

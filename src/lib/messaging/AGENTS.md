@@ -5,7 +5,7 @@
 
 ## Purpose
 
-This package owns NemoClaw's manifest-first messaging architecture. It turns channel declarations for Telegram, Discord, Slack, WeChat, and WhatsApp into a serializable `SandboxMessagingPlan`, then applies that plan during onboard, channel add/remove/start/stop, rebuild, image build, runtime setup, diagnostics, and conflict checks.
+This package owns NemoClaw's manifest-first messaging architecture. It turns channel declarations for Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams into a serializable `SandboxMessagingPlan`, then applies that plan during onboard, channel add/remove/start/stop, rebuild, image build, runtime setup, diagnostics, and conflict checks.
 
 The design goal is to keep messaging channel behavior out of core onboard/rebuild logic. Add channel-specific behavior to manifests, template resolvers, hooks, runtime assets, and policy metadata first; only change shared engines when the manifest vocabulary cannot express the required behavior.
 
@@ -54,7 +54,7 @@ Start with `channels/<channel>/manifest.ts`.
 3. Add hook implementations under `channels/<channel>/hooks/` only for side effects or checks that cannot be represented as static manifest data.
 4. Register hook handlers in the channel `hooks/index.ts` and in `hooks/builtins.ts`.
 5. Add runtime preload assets under `channels/<channel>/runtime/` only when the agent runtime needs boot/connect-time shims or diagnostics.
-6. Add or update `nemoclaw-blueprint/policies/presets/<channel>.yaml` when the manifest declares a channel policy preset.
+6. Add or update `src/lib/messaging/channels/<channel>/policy/<agent>.yaml` when the manifest declares a channel policy preset.
 7. Cover the behavior with manifest/compiler tests plus applier/onboard/channel CLI tests when host effects change.
 
 ## Where Changes Belong
@@ -76,8 +76,25 @@ Use the narrowest test that covers the changed surface:
 - Build-time render/install behavior: `npx vitest run test/messaging-build-applier.test.ts`
 - Onboard/channel CLI integration: `npx vitest run test/onboard-messaging.test.ts test/channels-add-preset.test.ts src/lib/onboard/messaging-channel-setup.test.ts`
 
-Mock external messaging APIs. Do not call real Telegram, Discord, Slack, WeChat, WhatsApp, NVIDIA, or OpenShell services from unit tests.
+Mock external messaging APIs. Do not call real Telegram, Discord, Slack, WeChat, WhatsApp, Microsoft Teams, NVIDIA, or OpenShell services from unit tests.
 
 ## Documentation
 
-User-facing behavior changes usually need docs under `docs/manage-sandboxes/messaging-channels.mdx` or `docs/reference/commands.mdx`. Do not edit generated user skills under `.agents/skills/nemoclaw-user-*/` for normal docs changes.
+User-facing behavior changes usually need docs under `docs/manage-sandboxes/messaging-channels.mdx` or `docs/reference/commands.mdx`.
+Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
+
+## Unsupported Agent Boundaries
+
+LangChain Deep Agents Code is a terminal-oriented harness. NemoClaw does not run a long-running messaging bridge inside the DeepAgents sandbox today, and no built-in channel manifest lists `langchain-deepagents-code` under `supportedAgents`.
+
+- **No artifact-only support.** Do not add DeepAgents messaging render targets, Dockerfile plan args, startup env parsing, or local contract files without a real bridge that routes channel messages to and from `dcode`.
+- **No inbound bridge.** The harness does not spawn channel bot processes. Inbound messages from Telegram, Discord, Slack, or other channels do not currently reach `dcode`. `channels add` must reject DeepAgents before policy, provider, credential, registry, or rebuild mutation while this remains true.
+- **Support condition.** Adding DeepAgents support requires a channel manifest `supportedAgents` entry, a build/runtime applier path for that agent, and a runtime bridge/health path before public behavior claims channel readiness.
+
+## Agent Gating and Stale Plan Cleanup
+
+- **Invalid state.** A sandbox can be configured with an agent name that no channel manifest supports, or with stale `NEMOCLAW_MESSAGING_PLAN_B64` state from an earlier build. Without an explicit gate the channel-add path can still tear down the sandbox before failing at `dockerfile-patch.ts`, and rebuild can carry stale messaging plan data into an agent build path that does not consume it.
+- **Source boundary.** Channel manifests' `supportedAgents` lists are the single source of truth for whether a given agent supports messaging today, and which channels are available for it. Helpers in `utils.ts` derive the supported agent list from the active channel manifest registry, so `ChannelManifestRegistry.listAvailable`, `MessagingWorkflowPlanner.supportedChannelIds`, onboard state filtering, channel list, channel add/remove, and rebuild all share the same semantics. If no manifest supports the agent, deny or skip everywhere and clear stale staged plans.
+- **Source-fix constraint.** Expanding support for an agent requires per-channel `supportedAgents`, agent-side render and hook handlers in `applier/build/messaging-build-applier.mts`, the matching Dockerfile/build env plumbing when needed, and a runtime bridge/health path when public behavior claims channel readiness. Until that stack lands, the gate at the action boundary is the safe behavior: surface the unsupported-agent message in `addSandboxChannel`, clear the staged plan in `stageMessagingManifestPlanForRebuild`, and strip stale plans in `persistManifestChannelRemovePlan`.
+- **Regression tests.** `src/lib/messaging/utils.test.ts`, `src/lib/messaging/manifest/registry.test.ts`, and `src/lib/messaging/compiler/workflow-planner.test.ts` lock the helper and registry semantics. `src/lib/actions/sandbox/policy-channel-agent-gate.test.ts`, `src/lib/actions/sandbox/policy-channel-cleanup.test.ts`, `src/lib/actions/sandbox/rebuild-messaging-stage.test.ts`, and `src/lib/onboard/machine/handlers/sandbox.test.ts` cover the action, rebuild, and onboard-resume boundaries against stale or unsupported messaging plans. `test/channels-add-deepagents-rejection.test.ts` exercises the full DeepAgents `addSandboxChannel` boundary in a spawned Node process to prove no policy, provider, registry, credential, or rebuild call happens before the unsupported-agent exit.
+- **Removal condition.** Drop the unsupported-agent gate only when every target agent is represented by channel manifest `supportedAgents` entries and `applier/build/messaging-build-applier.mts` resolves its render and runtime targets. At that point the unsupported-agent branch becomes unreachable for that agent and the action boundary can rely on planner-level validation alone.

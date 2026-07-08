@@ -7,7 +7,7 @@ import {
   mintAgentKeyWithAccessToken,
   pollForToken,
   refreshAccessTokenWithRefreshToken,
-} from "../../dist/lib/oauth-device-code";
+} from "./oauth-device-code";
 
 describe("pollForToken", () => {
   it("rejects successful token responses missing an access token", async () => {

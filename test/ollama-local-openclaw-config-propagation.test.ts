@@ -7,12 +7,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-
-import { patchStagedDockerfile } from "../dist/lib/onboard/dockerfile-patch";
 import {
   buildConfig,
   buildLocalOllamaSmallContextCompaction,
 } from "../scripts/generate-openclaw-config.mts";
+import { patchStagedDockerfile } from "../src/lib/onboard/dockerfile-patch";
 
 const tmpRoots: string[] = [];
 

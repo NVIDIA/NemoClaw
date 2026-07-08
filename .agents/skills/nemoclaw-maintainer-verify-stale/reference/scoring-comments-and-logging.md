@@ -1,9 +1,9 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# verify-stale — Scoring, Comments, Labels, and Logging Reference
+# verify-stale — Scoring, Comments, Project Fields, and Logging Reference
 
-Use after a latest result exists or after a by-design/inconclusive branch is selected. Covers confidence scoring, redaction, concise comments, labels, project movement, infra failures, and activity logging.
+Use after a latest result exists or after a by-design/inconclusive branch is selected. Covers confidence scoring, redaction, concise comments, authorized Project updates, infra failures, and activity logging.
 
 ## Contents
 
@@ -40,13 +40,14 @@ The skill needs to know *which* path to `git log v<reported>..$LATEST -- <path>`
    - `/usr/local/bin/nemoclaw*` → `bin/`
    - `~/.nemoclaw/<rel>` → most often runtime state, drop unless the bug is config-related → `src/lib/config/`
    - In-repo paths (e.g., `bin/lib/policies.js` mentioned literally) → use as-is
-2. **Component-label-to-directory map.** Pick the first match. Paths verified against the current repo layout — drop any path that doesn't exist on the tag at `$LATEST` rather than passing it to `git log`.
-   - `NemoClaw CLI` → `bin/`, `src/lib/`, `nemoclaw/src/commands/`
-   - `Sandbox` → `nemoclaw/src/blueprint/`, `nemoclaw-blueprint/`
-   - `OpenShell` → cross-repo (lives at `github.com/NVIDIA/OpenShell`, not in this repo). Skip the +25 signal for OpenShell-only issues; cross-repo `git log` is out of v1 scope.
-   - `Docker` → `Dockerfile`, `Dockerfile.base`, `scripts/install-openshell.sh`, `scripts/install.sh`
-   - `Getting Started` → `docs/`, `scripts/install.sh`
-   - `Integration: <X>` — no `src/lib/integrations/` exists in this repo. Skip the +25 signal for integration-component issues unless source 1 (file paths in body) yielded a path.
+2. **Canonical routing-label-to-directory map.** Pick the first match. Drop paths that do not exist at `$LATEST`.
+   - `area: cli` → `bin/`, `src/commands/`, `src/lib/cli/`
+   - `area: sandbox` → `src/lib/sandbox/`, `nemoclaw/src/blueprint/`, `nemoclaw-blueprint/`
+   - `platform: container` or `area: packaging` → `Dockerfile`, `Dockerfile.base`, `scripts/install-openshell.sh`, `scripts/install.sh`
+   - `area: install` or `area: onboarding` → `scripts/install.sh`, `src/lib/onboard/`
+   - `area: policy` → `nemoclaw-blueprint/policies/`, `nemoclaw/src/blueprint/`
+   - `area: messaging` → `src/lib/messaging/`
+   - `integration: *` with no body path → skip the +25 signal; no generic integration directory owns every integration.
 3. **Title keywords.** "policy" → `nemoclaw-blueprint/policies/`, `nemoclaw/src/blueprint/`. "inference" → `docs/inference/` is docs-only; skip the +25 signal unless source 1 surfaces actual code paths.
 
 If none of the above produces a path, **skip the +25 signal entirely** rather than guessing. Floating the +25 on every issue would inflate scores meaninglessly.
@@ -77,22 +78,24 @@ If neither query returns anything, **skip the +25 signal**.
 
 **Action (when latest run was clean — bug not reproduced):**
 
-| Score | Label | Comment |
-|---|---|---|
-| ≥85 | `fixed-on-latest` | Evidence-rich, no @-mention. |
-| 60–84 | `fixed-on-latest` | Evidence-rich, **@-mention the original reporter** to confirm. |
-| <60 | `verify-inconclusive` | Short, honest "couldn't verify" explanation. |
+| Score | Verdict | Proposed Project action | Comment |
+|---|---|---|---|
+| ≥85 | `fixed-on-latest` | `Needs Review` | Evidence-rich; ask the reporter to confirm. |
+| 60–84 | `fixed-on-latest` | `Needs Review` | Evidence-rich; ask the reporter to confirm and state the confidence cap. |
+| <60 | `verify-inconclusive` | No field change | Short, honest "couldn't verify" explanation. |
+
+Verdict names are comment and log vocabulary, not GitHub labels. Prepare the exact comment, Project update, assignment, and durable verdict marker as a dry run with `human_review_required: true`; apply only the accepted write set.
 
 **Special case: latest output matches the issue symptom (bug still reproduces on latest).**
 
 This is not a flake — the skill positively confirmed the bug is still live. Don't apply the +50 weight (the bug isn't fixed) and skip the score table entirely.
 
-- Post a "still reproduces on latest" comment with both transcripts.
-- Apply **no label**.
-- Include the marker `<!-- nemoclaw-verify-stale v1 YYYY-MM-DD -->` with today's date so the candidate filter applies the 7-day TTL (Step 3 idempotency).
+- Post a 30–80 word "still reproduces on latest" comment without transcripts. Keep the redacted baseline/latest transcripts in the local activity log as evidence.
+- Make no Project field or label change.
+- Include the marker `<!-- nemoclaw-verify-stale v1 verdict=still-reproduces YYYY-MM-DD -->` with today's date so the candidate filter applies the 7-day TTL (Step 3 idempotency).
 - Next weekly run picks the issue back up after the TTL — if the bug gets fixed in the meantime, that run catches it.
 
-The skill **never closes issues** in any branch. A maintainer pulls that trigger after reviewing the label and comment.
+The skill **never closes issues** in any branch. Project fields, assignments, and public comments require explicit approval of the proposed write set.
 
 ---
 
@@ -157,7 +160,7 @@ Patterns live in a fenced block (not a Markdown table) because patterns 8 and 9 
 
 **File paths under the reporter's home directory** (`/Users/<name>/`, `/home/<name>/`) → replace with `~/`. Run last; catches incidental username PII.
 
-**Comment authoring principle.** Every section in a rendered comment must either change a reader's mind about the verdict, or be cut. Word counts follow from that — **300 is a hard ceiling** for the main verdicts (fixed-on-latest, wontfix). Simple cases (clear PR ref, deterministic check) land under 200. The principle generalizes: comments posted by this skill compete for a maintainer's attention against every other in-flight thread, and "AI-slop" prose — architectural sidebars, file:line citations the maintainer can find via the PR ref, bare-output reproductions when the load-bearing evidence is elsewhere, "if this verification is wrong, please reopen…" boilerplate — actively reduces the comment's signal-to-noise ratio.
+**Comment authoring principle.** Every section in a rendered comment must either change a reader's mind about the verdict, or be cut. Word counts follow from that — **300 is a hard ceiling** for the main verdicts (`fixed-on-latest`, `by-design`). Simple cases (clear PR ref, deterministic check) land under 200. The principle generalizes: comments posted by this skill compete for a maintainer's attention against every other in-flight thread, and "AI-slop" prose — architectural sidebars, file:line citations the maintainer can find via the PR ref, bare-output reproductions when the load-bearing evidence is elsewhere, "if this verification is wrong, please reopen…" boilerplate — actively reduces the comment's signal-to-noise ratio.
 
 **For each section in a draft, ask: would the maintainer reach a different conclusion *without* this section? If no, delete.** Lessons accumulated from real runs:
 
@@ -169,9 +172,9 @@ Patterns live in a fenced block (not a Markdown table) because patterns 8 and 9 
 | Verdict | Target | Rationale |
 |---|---|---|
 | `fixed-on-latest` | **200–300 words** | Header + evidence + verdict + @-mention. Add hardware-substitution caveat or related-failure-mode section only if they shift the maintainer's read. If you're past 300, you're padding. |
-| `wontfix` (by-design) | **200–300 words** | Structurally-fixed + vestigial + what's-not-the-same-bug, each one to two sentences max. The PR ref carries the detail; the comment carries the verdict. |
+| `by-design` | **200–300 words** | Structurally-fixed + vestigial + what's-not-the-same-bug, each one to two sentences max. The PR ref carries the detail; the comment carries the verdict. |
 | `verify-inconclusive` | 100–200 words | One paragraph naming what the skill couldn't establish. No transcripts beyond a single quoted line. |
-| **Still-reproduces (no label)** | **30–80 words** | The reporter already has the symptom; the maintainer can see the issue is open. The skill is just confirming + setting the TTL marker. **No transcripts** (the issue body has them), **no closing reporter @-mention** (the reporter knows their bug is real), **no architectural prose**. One sentence stating "skill ran reproducer on `<latest>`, symptom still present" + one sentence on any partial-fix PR if relevant + marker. That's it. The unanswered-question lead paragraph (rule below) is the one allowed exception when `UNANSWERED_MAINT_LOGIN` is set — it adds one maintainer @-mention as a lead, never a closing pair. |
+| **Still-reproduces** | **30–80 words** | The reporter already has the symptom; the maintainer can see the issue is open. The skill is just confirming + setting the TTL marker. **No transcripts** (the issue body has them), **no closing reporter @-mention** (the reporter knows their bug is real), **no architectural prose**. One sentence stating "skill ran reproducer on `<latest>`, symptom still present" + one sentence on any partial-fix PR if relevant + marker. That's it. The unanswered-question lead paragraph (rule below) is the one allowed exception when `UNANSWERED_MAINT_LOGIN` is set — it adds one maintainer @-mention as a lead, never a closing pair. |
 
 **Cut, by default:**
 
@@ -184,7 +187,7 @@ Patterns live in a fenced block (not a Markdown table) because patterns 8 and 9 
 
 **Mandatory cap caveat.** When the score is capped (Step 9 baseline-validation gating, or any Step 11 degraded-mode path), the rendered Verdict section must include a one-line caveat naming the cap and the reason. Example: `Capped at 84 because Step 9's baseline-validation gate did not run (sandbox-build rot on v0.0.18: Dockerfile symlink layer removed by #2227).` Don't make readers reverse-engineer why the score didn't go higher — name it.
 
-**Mandatory hardware-substitution caveat.** When the issue carries `Platform: DGX Spark` or `Platform: GB10` and Step 7 provisioned a Brev SKU that is not the same silicon (Brev's stoppable GPU catalog is x86 + discrete H100/A100/L40S/T4 — not Grace Hopper / GB10 unified-memory ARM64), the rendered comment must include a one-line "Hardware substitution" note. Example: `Hardware substitution: verified on Brev n1-standard-4:nvidia-tesla-t4 (x86_64 + T4) as a substitute for the reporter's DGX Spark (ARM64 + GB10). For silicon-shape bugs (perf, memory architecture, drivers) this is not a faithful repro — please confirm on actual DGX Spark.` This goes in the metadata block right after `Verification mode:` so it's visible at the top, not buried in the analysis.
+**Mandatory hardware-substitution caveat.** When the issue carries `platform: dgx-spark` or `platform: gb10` and Step 7 provisioned a Brev SKU that is not the same silicon, the rendered comment must include a one-line "Hardware substitution" note. Name both the actual Brev SKU and the reported hardware, and state that performance, memory-architecture, and driver results require confirmation on the real target.
 
 **Mandatory `Verification mode` header line.** All three templates below include a `**Verification mode:**` line in the metadata block, naming what we did and didn't actually run (e.g., "runtime reproduction on Brev <SKU>; baseline + latest both installed and run" for the standard template; "static analysis at the verified-on tag — no runtime reproduction" for the by-design template; "runtime reproduction on Brev <SKU>; bug confirmed live on latest" for still-reproduces). Reader should never have to guess whether the verdict came from real install logs or from static analysis.
 
@@ -253,7 +256,7 @@ The skill becomes the *unsticking voice* on a thread that has gone quiet — nev
 
 ### Verdict
 
-**Confidence:** 88 / 100. Labelling `fixed-on-latest`.
+**Confidence:** 88 / 100. Verdict: `fixed-on-latest`; proposing Project Status `Needs Review`.
 
 <details><summary>Relevant changes since v0.0.31</summary>
 
@@ -264,8 +267,14 @@ The skill becomes the *unsticking voice* on a thread that has gone quiet — nev
 
 @<reporter> — please confirm the symptom is gone on a recent build (≥ v0.0.<Z>) and reopen with a fresh reproducer if you observe otherwise.
 
-<!-- nemoclaw-verify-stale v1 YYYY-MM-DD -->
+<!-- nemoclaw-verify-stale v1 verdict=fixed-on-latest YYYY-MM-DD -->
 ````
+
+For a score below 60, use the same evidence structure only as far as needed for the shorter inconclusive comment, state `Verdict: verify-inconclusive; no Project field change proposed`, and end with:
+
+```text
+<!-- nemoclaw-verify-stale v1 verdict=verify-inconclusive YYYY-MM-DD -->
+```
 
 **Comment template (still reproduces — Step 9 special case).** Keep this minimal — per L174 it caps at 30–80 words, drops transcripts (issue body has them), and omits the closing reporter @-mention (the reporter knows their own bug is real). Only the unanswered-question lead paragraph (when fired) adds an @-mention; no closing dual @-mention even then.
 
@@ -276,89 +285,38 @@ The skill becomes the *unsticking voice* on a thread that has gone quiet — nev
 **Verified on:** v0.0.34
 **Verification mode:** runtime reproduction on Brev `<instance-class>` — bug confirmed live on latest.
 
-Skill ran the reported reproducer on v0.0.34 and observed the same symptom. No label applied; will re-verify on the next weekly pass.
+Skill ran the reported reproducer on v0.0.34 and observed the same symptom. No Project field or label change proposed; will re-verify on the next weekly pass.
 
-<!-- nemoclaw-verify-stale v1 YYYY-MM-DD -->
+<!-- nemoclaw-verify-stale v1 verdict=still-reproduces YYYY-MM-DD -->
 ````
 
 If a partial-fix PR is in flight that targets the same surface, add one sentence naming it between the verification line and the marker: `Partial fix tracked in #NNNN (not yet released).` Keep the total under 80 words.
 
-The trailing HTML comment is the **idempotency marker** Step 3 looks for. Always include today's date in `YYYY-MM-DD` format so the candidate filter can apply the 7-day TTL.
+The trailing HTML comment is the **idempotency marker** Step 3 looks for. Always include today's date in `YYYY-MM-DD` format. Final verdict markers are durable; only `still-reproduces` uses the seven-day TTL.
 
-**Pre-post state-check.** A long-running verification can race with the maintainer closing the issue independently — happened on #2513 and #2519 (mid-batch closes by @jyaunches with their own verification). Re-check `state == OPEN` right before posting. If closed, apply the label tag-only (skipping the comment, since the maintainer's own close-comment is now the authoritative record) and skip the Project 199 move.
+**Authorization boundary.** Before any write, present a dry run containing:
+
+- the verdict and confidence;
+- the exact redacted public comment, including its durable marker;
+- the proposed Project Status change (`Needs Review` only for `fixed-on-latest`; none for inconclusive or still-reproduces);
+- the proposed self-assignment, if any;
+- `human_review_required: true`.
+
+Wait for explicit approval of that exact write set. Comment approval does not authorize a Project change, and Project approval does not authorize modified comment text.
+
+**Pre-post state-check.** A long-running verification can race with a maintainer closing the issue independently. Re-check `state == OPEN` immediately before applying an accepted write set. If closed, skip every write and report that the maintainer's close action is now authoritative.
 
 ```bash
 STATE=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json state --jq .state)
 if [ "$STATE" != "OPEN" ]; then
-  echo "[verify-stale] #$ISSUE_NUMBER closed since verification started — applying label tag-only, skipping comment + tracker move"
-  gh issue edit "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --add-label "$LABEL"
+  echo "[verify-stale] #$ISSUE_NUMBER closed since verification started — skipping Project, assignment, and comment writes"
   exit 0
 fi
 ```
 
-**Post the comment and apply the label:**
+**Apply the accepted write set in canonical order.** Resolve Project 199, Status-field, option, and item IDs from live GitHub data immediately before writing; do not use hardcoded IDs. For an accepted `fixed-on-latest` plan, set Project Status `Needs Review`, then self-assign only if that assignment was accepted. Treat the Project update and accepted assignment as one fail-fast write set: if either write fails, stop before posting the comment. For inconclusive and still-reproduces verdicts, do not change Project fields or assignment. Post the exact accepted comment last.
 
-```bash
-gh issue comment "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --body-file comment.md
-gh issue edit "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --add-label "fixed-on-latest"
-# or for <60:
-# gh issue edit "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --add-label "verify-inconclusive"
-```
-
-**Move the issue to "Needs Review" on the NemoClaw Development Tracker AND self-assign (only on `fixed-on-latest`).** The tracker is GitHub Project [NVIDIA/199](https://github.com/orgs/NVIDIA/projects/199) ("NemoClaw Development Tracker"). When the skill's verdict is `fixed-on-latest`, the issue moves to **Needs Review** AND the issue is assigned to the maintainer who ran the skill (`$GH_IDENTITY` from Step 6.5) — assignment puts the issue in their personal review queue so they don't lose track of what they've staked their name on. After the reporter confirms and the maintainer closes, existing Project automation (or a manual move) advances it to Done. **No move and no assign on `wontfix` / `verify-inconclusive` / no-label-still-reproduces** — those have separate close paths.
-
-This step requires the `project` scope on the maintainer's gh CLI (`gh auth refresh -h github.com -s project` in a real terminal once; OAuth device-code flow). If the scope is missing, the lookup query returns an auth error — fall through with a one-line warning rather than failing the whole run.
-
-```bash
-# Project 199 constants (re-run gh project field-list 199 --owner NVIDIA --format json
-# if the project gets renamed/restructured and these IDs drift):
-PROJECT_ID="PVT_kwDOABpemM4BSCP5"
-STATUS_FIELD_ID="PVTSSF_lADOABpemM4BSCP5zg_r9p8"
-NEEDS_REVIEW_OPTION_ID="5c5922a9"
-
-# Only fire on fixed-on-latest. Skip silently otherwise.
-if [ "$VERDICT" = "fixed-on-latest" ]; then
-  # Find the issue's existing project item, if any.
-  ITEM_ID=$(gh api graphql -f query='
-    query($num: Int!) {
-      repository(owner: "NVIDIA", name: "NemoClaw") {
-        issue(number: $num) {
-          projectItems(first: 10) {
-            nodes { id project { number } }
-          }
-        }
-      }
-    }' -F num="$ISSUE_NUMBER" \
-    --jq '.data.repository.issue.projectItems.nodes[] | select(.project.number == 199) | .id' \
-    2>/dev/null | head -1)
-
-  # If the issue isn't on the project yet, add it. (NV QA bots usually add new
-  # issues automatically, but cover the gap.)
-  if [ -z "$ITEM_ID" ]; then
-    ITEM_ID=$(gh project item-add 199 --owner NVIDIA \
-      --url "https://github.com/NVIDIA/NemoClaw/issues/$ISSUE_NUMBER" \
-      --format json --jq .id 2>/dev/null)
-  fi
-
-  if [ -n "$ITEM_ID" ]; then
-    gh project item-edit \
-      --id "$ITEM_ID" \
-      --project-id "$PROJECT_ID" \
-      --field-id "$STATUS_FIELD_ID" \
-      --single-select-option-id "$NEEDS_REVIEW_OPTION_ID" \
-      >/dev/null && echo "[verify-stale] moved #$ISSUE_NUMBER to 'Needs Review' on Project 199"
-  else
-    echo "[verify-stale] WARN could not resolve project item for #$ISSUE_NUMBER on Project 199 — label applied but tracker not moved"
-  fi
-
-  # Self-assign the issue to the maintainer who ran the skill — puts it in their
-  # personal review queue alongside the Needs Review state.
-  gh issue edit "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --add-assignee "$GH_IDENTITY" \
-    >/dev/null && echo "[verify-stale] assigned #$ISSUE_NUMBER to @$GH_IDENTITY"
-fi
-```
-
-The Step 12 activity log line should record the project move (or the warn-and-skip case) so a maintainer scanning the log can spot tracker drift. Add a `Tracker:` row to the per-issue entry: `Tracker: moved to Needs Review` | `not moved (verdict: <X>)` | `not moved (project lookup failed)`.
+If Project resolution, update, or accepted assignment fails, stop without posting the comment so the accepted write set is not partially represented. Record the Project update, assignment, and comment outcome in the activity log.
 
 ---
 
@@ -369,7 +327,7 @@ Two different failure types, two different responses.
 **Latest-install failure** (Step 8d) or reuse-check / provisioning / harness errors: hard infra failure.
 
 - Print the error.
-- Apply **no label** — infra failures must not pollute the verification record.
+- Apply no Project field or label change — infra failures must not pollute the verification record.
 - Post a short comment **only if explicitly requested by the invoking user**. Default is silent move-on.
 - Continue to the next candidate in batch mode.
 
@@ -418,8 +376,8 @@ After each issue (verified, inconclusive, by-design, or infra-failed), append to
 **Latest install:** succeeded | failed (infra error)
 **Latest result:** not-reproduced (clean) | still-reproduces | partial / flake | n/a (skipped 8d)
 **Confidence:** 88 / 100 | n/a (still-reproduces)
-**Label applied:** fixed-on-latest | verify-inconclusive | status: wont-fix | none (still-reproduces) | none (infra)
-**Tracker:** moved to Needs Review on Project 199 | not moved (verdict: <X>) | not moved (project lookup failed)
+**Verdict marker:** fixed-on-latest | verify-inconclusive | by-design | still-reproduces | none (infra)
+**Project Status:** moved to Needs Review | moved to Won't Fix | unchanged | update failed
 **Assignee:** @<GH_IDENTITY> | not assigned (verdict: <X>)
 **Brev wall time (approx):** N min
 
@@ -443,8 +401,8 @@ At end of a batch session, prepend a session summary:
 ## YYYY-MM-DD — Verify Session
 **Issues considered:** N
 **Verified `fixed-on-latest`:** N
-**Marked `status: wont-fix` (by-design path):** N
-**Marked `verify-inconclusive`:** N
+**Approved `Won't Fix` Project updates (by-design path):** N
+**Recorded `verify-inconclusive` verdicts:** N
 **Local-first short-circuits (no Brev cost):** N
 **Skipped (Windows / macOS / integration / no version):** N
 **Infra failures:** N
@@ -466,14 +424,14 @@ Never stage or commit the log to the NemoClaw repo.
 
 ## Out of Scope (v1)
 
-- Auto-closing issues. Always tag-only; a human pulls the trigger.
+- Auto-closing issues. The skill may make only the explicitly approved Project, assignment, and comment writes described above; a human separately decides whether to close.
 - macOS verification *via the Brev path*. Brev offers no macOS instances. The Step 6.7 local-first short-circuit *does* run on a maintainer's macOS laptop — so manual single-issue runs against pure-CLI bugs work on macOS. The weekly batch cron is Linux-only because that path always uses Brev.
 - Issues requiring third-party integration credentials (Slack, Discord, Telegram, Hermes, OpenClaw, WeChat).
 - Service-account bot identity. v1 runs under each maintainer's own GitHub credentials.
-- Versioned labels. `fixed-on-latest` and `verify-inconclusive` are persistent maintainer-review labels, not per-release labels.
+- Verdict labels. `fixed-on-latest`, `verify-inconclusive`, and `status: wont-fix` are not canonical labels; durable comment markers and Project fields carry the workflow state.
 
 ---
 
 ## Companion Behavior
 
-`nemoclaw-maintainer-cut-release-tag` does not sweep issue labels during release. A `fixed-on-latest` or `verify-inconclusive` label stays until a maintainer removes it or explicitly re-runs verification for that issue. The by-design path uses the existing repo `status: wont-fix` label; that label is also persistent because it is applied for non-skill reasons such as scope or priority decisions.
+`nemoclaw-maintainer-cut-release-tag` does not alter verify-stale verdict markers or Project Status. Those remain durable until a maintainer explicitly re-runs verification or changes the Project field.

@@ -1,14 +1,18 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Tier 0 — Plumbing Gates
 
-Mandatory prerequisites. Any gate failure means the PR cannot be merged in its current state. Five gates total. Run `scripts/collect-gates.sh <pr>` to evaluate gates 1-4 mechanically; run `scripts/check-coderabbit-threads.sh <pr>` for gate 5.
+Mandatory prerequisites. Any gate failure means the PR cannot be merged in its current state. Six gates total. Run `scripts/collect-gates.sh <pr>` to evaluate gates 1-5 mechanically; run `scripts/check-coderabbit-threads.sh <pr>` for gate 6.
 
 ## Contents
 
 - Gate 1: PR state OPEN
 - Gate 2: CI green on latest head SHA
 - Gate 3: Mergeable, no conflicts
-- Gate 4: Branch protection satisfied
-- Gate 5: Automated reviewer threads resolved
+- Gate 4: Contributor compliance satisfied
+- Gate 5: Branch protection satisfied
+- Gate 6: Automated reviewer threads resolved
 
 ## Gate 1: PR state OPEN
 
@@ -36,13 +40,19 @@ The CI rollup must show all required checks passing on the **latest** head SHA, 
 - `DIRTY` — staged changes block merge
 - `BLOCKED` — required checks failing or reviews missing
 
-## Gate 4: Branch protection satisfied
+## Gate 4: Contributor compliance satisfied
 
-`reviewDecision: APPROVED`, plus all branch-protection requirements (CODEOWNERS, DCO, required hooks). The skill defers to branch protection — it does NOT separately verify CODEOWNERS membership or DCO sign-off.
+The PR body must include a valid contributor `Signed-off-by:` declaration, and every commit in the PR must appear as `Verified` in GitHub. Check both conditions directly; a passing CI job is not a substitute for commit verification.
+
+**Why this is a hard kill:** contributor compliance is a self-serve eligibility requirement. Maintainers reject noncompliant PRs and do not amend, sign, force-push, approve, or merge them on the contributor's behalf.
+
+## Gate 5: Branch protection satisfied
+
+`reviewDecision: APPROVED`, plus all branch-protection requirements such as CODEOWNERS and required hooks. The skill may defer CODEOWNERS membership to branch protection, but Gate 4 always checks DCO and GitHub commit verification directly.
 
 **Why defer:** Branch protection rules are the source of truth. Re-implementing the check in the skill would drift from repo policy. If your repo doesn't enforce CODEOWNERS via branch protection, set `codeowners_enforced_via_branch_protection: false` in `repo-policy.md` and add explicit team checks.
 
-## Gate 5: Automated reviewer threads resolved
+## Gate 6: Automated reviewer threads resolved
 
 All threads created by automated reviewers (e.g., CodeRabbit) must be in `resolved: true` state. **Zero unresolved threads is the bar.**
 
@@ -56,6 +66,6 @@ For each gate, the skill records:
 
 - Pass/fail
 - Evidence (head SHA, check names, mergeable state, thread IDs)
-- Whether the failure is **trivial** (auto-fixable: rebase, push sign-off) or **substantive** (real work: CI red, conflicts, missing approvals)
+- Whether the failure is **ineligible** (missing PR-body DCO or any unverified commit), **trivial** (for example, a missing issue link), or **substantive** (CI red, conflicts, or missing approvals)
 
-The trivial/substantive split feeds degraded mode (see `tiebreakers.md`).
+The ineligible/trivial/substantive classification feeds degraded mode (see `tiebreakers.md`). Ineligible PRs are rejected rather than ranked for salvage.

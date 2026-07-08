@@ -118,15 +118,43 @@ describe("lifecycle option normalization", () => {
   });
 
   it("preserves typed rebuild options and still accepts compatibility argv", () => {
-    expect(normalizeRebuildSandboxOptions({ verbose: true, yes: true })).toEqual({
+    expect(
+      normalizeRebuildSandboxOptions({ toolDisclosure: "direct", verbose: true, yes: true }),
+    ).toEqual({
+      toolDisclosure: "direct",
       verbose: true,
       yes: true,
     });
-    expect(normalizeRebuildSandboxOptions(["-v", "--force"])).toEqual({
+    expect(
+      normalizeRebuildSandboxOptions(["-v", "--force", "--tool-disclosure", "progressive"]),
+    ).toEqual({
       force: true,
+      toolDisclosure: "progressive",
       verbose: true,
       yes: false,
     });
+    expect(normalizeRebuildSandboxOptions(["--tool-disclosure=direct"]).toolDisclosure).toBe(
+      "direct",
+    );
+    expect(normalizeRebuildSandboxOptions(["--observability"]).observabilityEnabled).toBe(true);
+    expect(normalizeRebuildSandboxOptions(["--no-observability"]).observabilityEnabled).toBe(false);
+    expect(
+      normalizeRebuildSandboxOptions(["--observability", "--no-observability"])
+        .observabilityEnabled,
+    ).toBe(false);
+    expect(
+      normalizeRebuildSandboxOptions(["--no-observability", "--observability"])
+        .observabilityEnabled,
+    ).toBe(true);
+    expect(() => normalizeRebuildSandboxOptions(["--tool-disclosure", "sometimes"])).toThrow(
+      /progressive, direct/,
+    );
+    expect(() => normalizeRebuildSandboxOptions(["--tool-disclosure"])).toThrow(
+      /progressive, direct/,
+    );
+    expect(() => normalizeRebuildSandboxOptions(["--tool-disclosure="])).toThrow(
+      /progressive, direct/,
+    );
   });
 
   it("preserves typed maintenance options and still accepts compatibility argv", () => {

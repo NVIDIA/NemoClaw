@@ -15,15 +15,15 @@ const requireCache: Record<string, unknown> = require.cache as any;
 // See #3889 and #3954.
 describe("buildShareCommandDeps().checkSandboxPathExists probe argv", () => {
   afterEach(() => {
-    const openshellRuntimePath = require.resolve("../dist/lib/adapters/openshell/runtime");
-    const shareDepsPath = require.resolve("../dist/lib/share-command-deps");
+    const openshellRuntimePath = require.resolve("../src/lib/adapters/openshell/runtime");
+    const shareDepsPath = require.resolve("../src/lib/share-command-deps");
     delete require.cache[openshellRuntimePath];
     delete require.cache[shareDepsPath];
   });
 
   it("targets the sandbox with `-n <name>` so it is not parsed as the command", () => {
-    const openshellRuntimePath = require.resolve("../dist/lib/adapters/openshell/runtime");
-    const shareDepsPath = require.resolve("../dist/lib/share-command-deps");
+    const openshellRuntimePath = require.resolve("../src/lib/adapters/openshell/runtime");
+    const shareDepsPath = require.resolve("../src/lib/share-command-deps");
 
     let recordedArgs: readonly string[] | undefined;
     requireCache[openshellRuntimePath] = {
@@ -39,7 +39,7 @@ describe("buildShareCommandDeps().checkSandboxPathExists probe argv", () => {
     } as any;
     delete require.cache[shareDepsPath];
 
-    const { buildShareCommandDeps } = require("../dist/lib/share-command-deps");
+    const { buildShareCommandDeps } = require("../src/lib/share-command-deps");
     const deps = buildShareCommandDeps();
     const exists = deps.checkSandboxPathExists("prachi-sbox", "/sandbox");
 
@@ -57,8 +57,8 @@ describe("buildShareCommandDeps().checkSandboxPathExists probe argv", () => {
   });
 
   it("reports the path as missing when the probe exits non-zero", () => {
-    const openshellRuntimePath = require.resolve("../dist/lib/adapters/openshell/runtime");
-    const shareDepsPath = require.resolve("../dist/lib/share-command-deps");
+    const openshellRuntimePath = require.resolve("../src/lib/adapters/openshell/runtime");
+    const shareDepsPath = require.resolve("../src/lib/share-command-deps");
 
     requireCache[openshellRuntimePath] = {
       id: openshellRuntimePath,
@@ -70,7 +70,7 @@ describe("buildShareCommandDeps().checkSandboxPathExists probe argv", () => {
     } as any;
     delete require.cache[shareDepsPath];
 
-    const { buildShareCommandDeps } = require("../dist/lib/share-command-deps");
+    const { buildShareCommandDeps } = require("../src/lib/share-command-deps");
     const deps = buildShareCommandDeps();
     expect(deps.checkSandboxPathExists("alpha", "/sandbox/missing")).toBe(false);
   });

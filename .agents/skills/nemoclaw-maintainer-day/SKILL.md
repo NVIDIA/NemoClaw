@@ -8,7 +8,7 @@ user_invocable: true
 
 Execute one pass of the maintainer loop, prioritizing version-targeted work.
 
-**Autonomy:** push small fixes and approve when gates pass. Never merge. Stop and ask for merge decisions, architecture decisions, and unclear contributor intent.
+**Autonomy:** push small fixes and approve when gates pass. Surface contributor/approver overlap reported by the merge gate as an advisory warning; it does not require another reviewer or change merge readiness. Never merge. Stop and ask for merge decisions, architecture decisions, and unclear contributor intent.
 
 ## References
 
@@ -64,7 +64,8 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 ## Commit Hygiene
 
-The prek "Regenerate agent skills from docs" hook auto-stages `.agents/skills/` files. Before every `git add` and `git commit` on a PR branch, run `git reset HEAD .agents/skills/nemoclaw-maintainer-*` to unstage them. Only commit skill files in dedicated skill PRs.
+Only commit skill files when the task intentionally changes agent guidance.
+Keep unrelated `.agents/skills/` changes out of ordinary code or docs PRs.
 
 ## Stop and Ask When
 

@@ -29,7 +29,7 @@ function stripCommandSubstitutionTrailingNewlines(contents: string): string {
   return contents.replace(/\n+$/u, "");
 }
 
-export function isInstallerManagedWrapperContents(contents: string): boolean {
+export function isInstallerManagedWrapperContents(contents: string, binName = "nemoclaw"): boolean {
   const normalized = stripCommandSubstitutionTrailingNewlines(contents);
   const lines = normalized.split("\n");
   if (lines.length !== 3) return false;
@@ -39,7 +39,7 @@ export function isInstallerManagedWrapperContents(contents: string): boolean {
     pathLine.startsWith('export PATH="') &&
     pathLine.endsWith(':$PATH"') &&
     execLine.startsWith('exec "') &&
-    execLine.endsWith('/nemoclaw" "$@"')
+    execLine.endsWith(`/${binName}" "$@"`)
   );
 }
 
@@ -58,7 +58,7 @@ export function isDevShimContents(contents: string): boolean {
   );
 }
 
-export function classifyNemoclawShim(input: ShimInput): ShimClassification {
+export function classifyNemoclawShim(input: ShimInput, binName = "nemoclaw"): ShimClassification {
   if (!input.exists) {
     return { kind: "missing", remove: false, reason: "shim path does not exist" };
   }
@@ -76,7 +76,7 @@ export function classifyNemoclawShim(input: ShimInput): ShimClassification {
   }
 
   const contents = input.contents ?? "";
-  if (isInstallerManagedWrapperContents(contents)) {
+  if (isInstallerManagedWrapperContents(contents, binName)) {
     return { kind: "managed-wrapper", remove: true, reason: "installer-managed wrapper contents" };
   }
 

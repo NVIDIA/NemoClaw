@@ -42,9 +42,9 @@ export interface ChannelManifest {
   /** Policy presets needed when this channel is active. */
   readonly policyPresets?: readonly ChannelPolicyPresetReference[];
   readonly render: readonly ChannelRenderSpec[];
+  readonly hostForward?: ChannelHostForwardSpec;
   readonly runtime?: ChannelRuntimeByAgentSpec;
   readonly agentPackages?: readonly ChannelAgentPackageSpec[];
-  readonly state: ChannelStateSpec;
   readonly hooks: readonly ChannelHookSpec[];
 }
 
@@ -72,7 +72,6 @@ export interface ChannelAuthSpec {
 export interface ChannelInputPromptSpec {
   readonly label: string;
   readonly help?: string;
-  readonly placeholder?: string;
   readonly emptyValueMessage?: string;
 }
 
@@ -85,7 +84,6 @@ interface ChannelInputBaseSpec {
   readonly validValues?: readonly string[];
   readonly formatPattern?: string;
   readonly formatHint?: string;
-  readonly envAliases?: readonly string[];
 }
 
 /** Secret input metadata; values must be referenced, not stored in manifests or plans. */
@@ -144,6 +142,13 @@ export interface ChannelRenderFragmentSpec {
   readonly value: MessagingSerializableValue;
 }
 
+/** Host-side OpenShell forward needed for inbound channel webhooks. */
+export interface ChannelHostForwardSpec {
+  readonly port: MessagingTemplateString;
+  readonly label: string;
+  readonly when?: MessagingTemplateString;
+}
+
 /** Agent-runtime metadata consumed by shared runtime setup and diagnostics. */
 export interface ChannelRuntimeByAgentSpec
   extends Partial<Record<MessagingAgentId, ChannelRuntimeSpec>> {
@@ -196,7 +201,7 @@ export interface ChannelRuntimeSecretScanSpec {
   readonly exitCode?: number;
 }
 
-export type ChannelAgentPackageManager = "openclaw-plugin";
+export type ChannelAgentPackageManager = "openclaw-plugin" | "hermes-uv-pip";
 
 /** Agent package/plugin install the sandbox image build should apply. */
 export interface ChannelAgentPackageSpec {
@@ -205,19 +210,11 @@ export interface ChannelAgentPackageSpec {
   readonly manager: ChannelAgentPackageManager;
   readonly spec: MessagingTemplateString;
   readonly pin?: boolean;
+  readonly integrity?: string;
+  readonly integrityByVersion?: Readonly<Record<string, string>>;
+  readonly tarballUrl?: string;
+  readonly tarballUrlByVersion?: Readonly<Record<string, string>>;
   readonly required?: boolean;
-}
-
-/** State persistence and rebuild-hydration rules owned by the channel. */
-export interface ChannelStateSpec {
-  readonly persist?: Readonly<Record<string, readonly string[]>>;
-  readonly rebuildHydration?: readonly ChannelRebuildHydrationSpec[];
-}
-
-/** Mapping from persisted state back to an env var during rebuild planning. */
-export interface ChannelRebuildHydrationSpec {
-  readonly statePath: MessagingStatePath;
-  readonly env: string;
 }
 
 /** Lifecycle phase where a referenced hook may run. */
@@ -300,6 +297,7 @@ export interface SandboxMessagingChannelPlan {
   readonly configured: boolean;
   readonly disabled: boolean;
   readonly inputs: readonly SandboxMessagingInputReference[];
+  readonly hostForward?: SandboxMessagingHostForwardPlan;
   readonly hooks: readonly SandboxMessagingHookReferencePlan[];
 }
 
@@ -313,6 +311,13 @@ export interface SandboxMessagingInputReference {
   readonly statePath?: MessagingStatePath;
   readonly credentialAvailable?: boolean;
   readonly value?: MessagingSerializableValue;
+}
+
+/** Resolved host-side OpenShell forward for an active messaging channel. */
+export interface SandboxMessagingHostForwardPlan {
+  readonly channelId: MessagingChannelId;
+  readonly port: number;
+  readonly label: string;
 }
 
 /** Plan entry describing an OpenShell provider/env binding to create or attach. */

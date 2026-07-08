@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import type { BackupResult } from "../../../dist/lib/state/sandbox";
+import type { BackupResult } from "../state/sandbox";
 import {
   backupSandboxBeforeRecreate,
   shouldSkipPreRecreateBackup,
-} from "../../../dist/lib/onboard/sandbox-backup-on-recreate";
+} from "./sandbox-backup-on-recreate";
 
 function makeBackup(overrides: Partial<BackupResult> = {}): BackupResult {
   return {
@@ -83,6 +82,7 @@ describe("backupSandboxBeforeRecreate", () => {
       failedDirs: ["workspace"],
       backedUpFiles: [],
       failedFiles: [],
+      error: "Pre-backup audit rejected an unsafe symlink",
     });
     const errorLog = vi.fn();
     const result = backupSandboxBeforeRecreate({
@@ -95,6 +95,7 @@ describe("backupSandboxBeforeRecreate", () => {
     expect(result.failureKind).toBe("empty");
     expect(result.backup).toBeNull();
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("aborting recreate"));
+    expect(errorLog).toHaveBeenCalledWith("  Reason: Pre-backup audit rejected an unsafe symlink");
   });
 
   it("returns ok:false with failureKind=threw when backup throws", () => {

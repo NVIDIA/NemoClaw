@@ -8,6 +8,7 @@ import { upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
+const COMMENT_TITLE = "PR Review Advisor";
 
 type ReviewAdvisorResult = {
   headSha?: string;
@@ -100,6 +101,11 @@ async function main(): Promise<void> {
   const summaryPath = args.summary || "artifacts/pr-review-advisor/pr-review-advisor-summary.md";
   const resultPath =
     args.result || "artifacts/pr-review-advisor/pr-review-advisor-final-result.json";
+  const { marker, title, label } = normalizeCommentOptions({
+    marker: args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER,
+    title: args.title || process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || COMMENT_TITLE,
+    label: args.label || process.env.PR_REVIEW_ADVISOR_COMMENT_LABEL || "PR review advisor",
+  });
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   const runUrl =
     process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
@@ -115,11 +121,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const summary =
-    readIfExists(summaryPath) ||
-    readIfExists("artifacts/pr-review-advisor/pr-review-advisor-summary.md");
-  if (!summary) throw new Error(`No PR review advisor summary found at ${summaryPath}`);
-  const result = readJsonIfExists<ReviewAdvisorResult>(resultPath);
+  const { summary, result } = readCommentArtifacts(summaryPath, resultPath, {
+    summaryExplicit: Boolean(args.summary),
+    resultExplicit: Boolean(args.result),
+  });
   const baseMetadata = {
     runId: process.env.GITHUB_RUN_ID,
     runAttempt: process.env.GITHUB_RUN_ATTEMPT,
@@ -128,7 +133,8 @@ async function main(): Promise<void> {
     summary,
     result,
     runUrl,
-    marker: MARKER,
+    marker,
+    title,
     metadata: baseMetadata,
   });
 
@@ -136,18 +142,70 @@ async function main(): Promise<void> {
     repo,
     pr,
     token,
-    marker: MARKER,
+    marker,
     body,
-    label: "PR review advisor",
+    label,
     bodyForComment: (comment) =>
       buildComment({
         summary,
         result,
         runUrl,
-        marker: MARKER,
+        marker,
+        title,
         metadata: { ...baseMetadata, commentId: String(comment.id) },
       }),
   });
+}
+
+export function normalizeCommentOptions({
+  marker,
+  title,
+  label,
+}: {
+  marker: string;
+  title: string;
+  label: string;
+}): { marker: string; title: string; label: string } {
+  return {
+    marker: validateCommentMarker(marker),
+    title: validateSingleLineCommentField(title, "title"),
+    label: validateSingleLineCommentField(label, "label"),
+  };
+}
+
+function validateCommentMarker(marker: string): string {
+  const value = marker.trim();
+  if (!/^<!--\s+nemoclaw-pr-review-advisor(?:-[a-z0-9-]+)?\s+-->$/.test(value)) {
+    throw new Error(
+      "PR review advisor marker must be a safe nemoclaw-pr-review-advisor HTML comment",
+    );
+  }
+  return value;
+}
+
+function validateSingleLineCommentField(value: string, field: "title" | "label"): string {
+  const normalized = value.trim();
+  if (!normalized || /[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new Error(`PR review advisor ${field} must be a non-empty single-line string`);
+  }
+  return normalized;
+}
+
+export function readCommentArtifacts(
+  summaryPath: string,
+  resultPath: string,
+  options: { summaryExplicit?: boolean; resultExplicit?: boolean } = {},
+): { summary: string; result?: ReviewAdvisorResult } {
+  const summary = options.summaryExplicit
+    ? readIfExists(summaryPath)
+    : readIfExists(summaryPath) ||
+      readIfExists("artifacts/pr-review-advisor/pr-review-advisor-summary.md");
+  if (!summary) throw new Error(`No PR review advisor summary found at ${summaryPath}`);
+  const result = readJsonIfExists<ReviewAdvisorResult>(resultPath);
+  if (options.resultExplicit && !result) {
+    throw new Error(`No PR review advisor result found at ${resultPath}`);
+  }
+  return { summary, result };
 }
 
 export function buildComment({
@@ -155,12 +213,14 @@ export function buildComment({
   result,
   runUrl,
   marker,
+  title,
   metadata,
 }: {
   summary: string;
   result?: ReviewAdvisorResult;
   runUrl?: string;
   marker?: string;
+  title?: string;
   metadata?: CommentMetadata;
 }): string {
   const findingRecords = collectFindingRecords(result);
@@ -185,8 +245,10 @@ export function buildComment({
   const hiddenMetadata = renderHiddenMetadata(result, metadata);
   const posture = reviewPosture(result?.summary?.recommendation);
   const headline = reviewHeadline(result?.summary?.recommendation);
-  return `${marker || MARKER}
-${hiddenMetadata}## PR Review Advisor — ${headline}
+  const heading = validateSingleLineCommentField(title || COMMENT_TITLE, "title");
+  const renderedMarker = validateCommentMarker(marker || MARKER);
+  return `${renderedMarker}
+${hiddenMetadata}## ${heading} — ${headline}
 
 **Merge posture:** ${posture}
 **Primary next action:** ${primaryNextAction(findingRecords, testingFollowups)}

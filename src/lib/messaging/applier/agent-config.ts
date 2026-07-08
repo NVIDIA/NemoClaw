@@ -17,6 +17,7 @@ import type {
   SandboxMessagingJsonRenderPlan,
   SandboxMessagingPlan,
 } from "../manifest";
+import { isProviderPlaceholderForEnvKey } from "../provider-placeholders";
 import { enabledPlanChannels, filterEnabledPlanEntries } from "./plan-filter";
 import type {
   MessagingHookApplyRequest,
@@ -289,24 +290,6 @@ function getJsonPath(root: Record<string, MessagingSerializableValue>, pathValue
     cursor = cursor[segment];
   }
   return cursor;
-}
-
-function isProviderPlaceholderForEnvKey(value: string, envKey: string): boolean {
-  const openShellPrefix = "openshell:resolve:env:";
-  if (value.startsWith(openShellPrefix)) {
-    return placeholderSuffixMatchesEnvKey(value.slice(openShellPrefix.length), envKey);
-  }
-  const aliasPrefix = "-OPENSHELL-RESOLVE-ENV-";
-  const aliasIndex = value.indexOf(aliasPrefix);
-  return aliasIndex > 0
-    ? placeholderSuffixMatchesEnvKey(value.slice(aliasIndex + aliasPrefix.length), envKey)
-    : false;
-}
-
-function placeholderSuffixMatchesEnvKey(suffix: string, envKey: string): boolean {
-  if (suffix === envKey) return true;
-  const revisionPrefix = suffix.match(/^v[0-9]+_/);
-  return revisionPrefix ? suffix.slice(revisionPrefix[0].length) === envKey : false;
 }
 
 function setJsonPath(

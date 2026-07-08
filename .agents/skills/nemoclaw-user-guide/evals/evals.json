@@ -1,0 +1,57 @@
+[
+  {
+    "id": "nemoclaw-user-guide-install-openclaw-001",
+    "question": "Help me install NemoClaw with OpenClaw from my coding assistant. I need the official docs and I do not want to paste secrets into chat.",
+    "expected_skill": "nemoclaw-user-guide",
+    "ground_truth": "A NemoClaw-specific answer that uses the user guide skill to route the assistant to `llms.txt` and the OpenClaw Markdown prerequisites and quickstart pages, asks one setup question at a time, and handles credentials with redacted placeholders instead of chat-transcribed secrets.",
+    "expected_behavior": [
+      "Uses `nemoclaw-user-guide`.",
+      "Starts from `https://docs.nvidia.com/nemoclaw/llms.txt` and the OpenClaw `.md` docs.",
+      "Does not tell the user to paste secrets into chat."
+    ]
+  },
+  {
+    "id": "nemoclaw-user-guide-mcp-server-001",
+    "question": "Configure my coding assistant to search the NemoClaw docs through MCP before answering setup questions.",
+    "expected_skill": "nemoclaw-user-guide",
+    "ground_truth": "A NemoClaw-specific answer that uses the user guide skill to configure the docs MCP server at `https://docs.nvidia.com/nemoclaw/_mcp/server`, mentions the read-only `searchDocs` docs search tool, and gives client-specific setup guidance such as the Claude Code command or Cursor MCP server configuration.",
+    "expected_behavior": [
+      "Uses `nemoclaw-user-guide`.",
+      "Includes `https://docs.nvidia.com/nemoclaw/_mcp/server`.",
+      "Mentions MCP docs search before falling back to Markdown docs."
+    ]
+  },
+  {
+    "id": "nemoclaw-user-guide-hermes-variant-001",
+    "question": "Use the Hermes version of the NemoClaw docs and walk me through the first sandbox setup.",
+    "expected_skill": "nemoclaw-user-guide",
+    "ground_truth": "A NemoClaw-specific answer that selects the Hermes documentation variant, fetches the Hermes Markdown home, prerequisites, and quickstart pages, and avoids mixing OpenClaw-specific instructions unless the difference is explained.",
+    "expected_behavior": [
+      "Uses `nemoclaw-user-guide`.",
+      "Routes to Hermes `.md` pages.",
+      "Keeps instructions variant-specific."
+    ]
+  },
+  {
+    "id": "nemoclaw-user-guide-local-inference-001",
+    "question": "Switch my NemoClaw sandbox to local Ollama and use the Markdown docs instead of guessing.",
+    "expected_skill": "nemoclaw-user-guide",
+    "ground_truth": "A NemoClaw-specific answer that routes through `llms.txt` to the inference Markdown pages, gathers provider and model choices one at a time, and recommends verification after the switch.",
+    "expected_behavior": [
+      "Uses `nemoclaw-user-guide`.",
+      "Fetches inference pages from the Markdown docs.",
+      "Recommends a verification step after configuration."
+    ]
+  },
+  {
+    "id": "nemoclaw-user-guide-policy-troubleshooting-001",
+    "question": "My agent hit a blocked network request. Help me find the right NemoClaw docs for approving it safely.",
+    "expected_skill": "nemoclaw-user-guide",
+    "ground_truth": "A NemoClaw-specific answer that routes to the network-policy Markdown pages and relevant troubleshooting or command reference pages, explains assumptions, and avoids granting broad egress without context.",
+    "expected_behavior": [
+      "Uses `nemoclaw-user-guide`.",
+      "Fetches network policy and troubleshooting Markdown docs.",
+      "Frames approval as a least-privilege workflow."
+    ]
+  }
+]

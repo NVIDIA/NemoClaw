@@ -37,6 +37,31 @@ function runBumpStragglers(fakeGh: string) {
 }
 
 describe("bump-stragglers release housekeeping", () => {
+  it("creates the next label and moves open PRs and issues", () => {
+    const result = runBumpStragglers(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "label list"*) printf '[]' ;;
+  "label create v1.2.4"*) ;;
+  "pr list"*) printf '[{"number":42,"title":"needs more work"}]' ;;
+  "pr edit 42"*) ;;
+  "issue list"*) printf '[{"number":84,"title":"still open"}]' ;;
+  "issue edit 84"*) ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      from: "v1.2.3",
+      to: "v1.2.4",
+      bumped: [
+        { number: 42, title: "needs more work", type: "pr" },
+        { number: 84, title: "still open", type: "issue" },
+      ],
+    });
+  });
+
   it("fails visibly when gh label lookup fails", () => {
     const result = runBumpStragglers(`#!/usr/bin/env bash
 set -euo pipefail

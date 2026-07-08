@@ -8,15 +8,11 @@ import {
   nonEmptyArray,
   nonEmptyCsv,
   nonEmptyObject,
-  nonEmptyString,
   parseBoolean,
   parseList,
   resolvedRenderTemplateReference,
   stateValue,
 } from "../template-resolver-utils";
-
-const DEFAULT_PROXY_HOST = "10.200.0.1";
-const DEFAULT_PROXY_PORT = "3128";
 
 type DiscordGuildConfig = {
   readonly requireMention?: boolean;
@@ -27,8 +23,7 @@ export const resolveDiscordTemplateReference: BuiltInRenderTemplateResolver = (
   reference,
   context,
 ) => {
-  if (reference === "discordProxyUrl")
-    return resolvedRenderTemplateReference(proxyUrl(context.env));
+  if (reference === "discordProxyUrl") return resolvedRenderTemplateReference(undefined);
 
   switch (reference) {
     case "discord.guilds":
@@ -87,10 +82,4 @@ function discordRequireMention(context: RenderTemplateContext): boolean {
     if (typeof guild.requireMention === "boolean") return guild.requireMention;
   }
   return true;
-}
-
-function proxyUrl(env: RenderTemplateContext["env"]): string {
-  const host = nonEmptyString(env?.NEMOCLAW_PROXY_HOST) ?? DEFAULT_PROXY_HOST;
-  const port = nonEmptyString(env?.NEMOCLAW_PROXY_PORT) ?? DEFAULT_PROXY_PORT;
-  return `http://${host}:${port}`;
 }

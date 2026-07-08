@@ -293,7 +293,7 @@ describe("handleFinalizationState", () => {
   // (provoke / create pending) → autoPairScopeApproval (approve / clear
   // pending). Reversing warmup and approval makes the approval pass a no-op and
   // the user's first real run falls back — exactly the bug v2 fixes.
-  it("provokes the scope upgrade after recovery and before the approval pass (#4504-v2)", async () => {
+  it("provokes the scope upgrade after recovery and before the approval pass in v2 (#4504)", async () => {
     const { deps, calls } = createDeps();
 
     await handleFinalizationState(baseOptions(deps));
@@ -318,7 +318,7 @@ describe("handleFinalizationState", () => {
   // proceeds straight to the approval pass, verification, and the dashboard.
   // The dep returning nothing useful (no pending provoked, gateway slow) does
   // not change the downstream flow: behavior degrades to v1, never blocks.
-  it("does not depend on the warm-up succeeding; finalization still completes (#4504-v2)", async () => {
+  it("completes v2 finalization without depending on the warm-up succeeding (#4504)", async () => {
     // The default warm-up mock returns undefined (e.g. gateway not up → the
     // production leaf swallowed and provoked nothing). Finalization must be
     // unaffected.
@@ -338,7 +338,7 @@ describe("handleFinalizationState", () => {
   // upgrade is provoked regardless of which agent the sandbox runs (the
   // contract says run it unconditionally; idempotent once operator.write is
   // paired).
-  it("provokes the scope upgrade regardless of agent type (#4504-v2)", async () => {
+  it("provokes the v2 scope upgrade regardless of agent type (#4504)", async () => {
     const { deps: depsHermes, calls: callsHermes } = createDeps();
     await handleFinalizationState({ ...baseOptions(depsHermes), agent: { name: "hermes" } });
     expect(callsHermes.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");

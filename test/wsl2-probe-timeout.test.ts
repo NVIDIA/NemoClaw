@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
+import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -21,18 +21,16 @@ function isOnboardValidationInternals(
   return value !== null && typeof value.getValidationProbeCurlArgs === "function";
 }
 
-const loadedOnboardValidationModule = await import("../dist/lib/onboard.js");
+const loadedOnboardValidationModule = await import("../src/lib/onboard.js");
 const onboardValidationInternals = isOnboardValidationInternals(loadedOnboardValidationModule)
   ? loadedOnboardValidationModule
-  : isOnboardValidationInternals(loadedOnboardValidationModule.default)
-    ? loadedOnboardValidationModule.default
-    : null;
+  : null;
 if (!isOnboardValidationInternals(onboardValidationInternals)) {
   throw new Error("Expected onboard validation internals to expose getValidationProbeCurlArgs");
 }
 const { getValidationProbeCurlArgs } = onboardValidationInternals;
 
-describe("WSL2 inference verification timeouts (issue #987)", () => {
+describe("WSL2 inference verification timeouts (#987)", () => {
   describe("getValidationProbeCurlArgs", () => {
     it("returns standard timeouts on non-WSL platforms", () => {
       expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
@@ -64,9 +62,9 @@ describe("WSL2 inference verification timeouts (issue #987)", () => {
 
   describe("retry logic in probeOpenAiLikeEndpoint", () => {
     function runProbeWithCurlStatuses(statuses: number[]) {
-      const httpProbePath = require.resolve("../dist/lib/adapters/http/probe.js");
-      const platformPath = require.resolve("../dist/lib/platform.js");
-      const probesPath = require.resolve("../dist/lib/inference/onboard-probes.js");
+      const httpProbePath = require.resolve("../src/lib/adapters/http/probe.js");
+      const platformPath = require.resolve("../src/lib/platform.js");
+      const probesPath = require.resolve("../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
       const platform = require(platformPath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;
@@ -151,9 +149,9 @@ describe("WSL2 inference verification timeouts (issue #987)", () => {
     };
 
     function runProbeWithResults(results: ProbeResultFixture[], opts: { isWsl?: boolean } = {}) {
-      const httpProbePath = require.resolve("../dist/lib/adapters/http/probe.js");
-      const platformPath = require.resolve("../dist/lib/platform.js");
-      const probesPath = require.resolve("../dist/lib/inference/onboard-probes.js");
+      const httpProbePath = require.resolve("../src/lib/adapters/http/probe.js");
+      const platformPath = require.resolve("../src/lib/platform.js");
+      const probesPath = require.resolve("../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
       const platform = require(platformPath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;

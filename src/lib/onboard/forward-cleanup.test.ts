@@ -3,10 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  bestEffortForwardStop,
-  bestEffortForwardStopForSandbox,
-} from "../../../dist/lib/onboard/forward-cleanup";
+import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
 
 function forwardListWith(
   entries: Array<{ sandbox: string; port: number; status?: string }>,

@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Docs / Publish Public
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-publish-public-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  FERN_PUBLIC_INSTANCE: nvidia-nemoclaw.docs.buildwithfern.com/nemoclaw
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: docs-public
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Public docs publishing only runs for release tags whose commits are reachable from origin/main."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install docs dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate doc variants and validate Fern docs
+        run: |
+          npm run docs:sync-agent-variants
+          npm run docs
+
+      - name: Publish public docs
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+        run: |
+          FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
+          cd fern
+          npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_PUBLIC_INSTANCE"

@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { getSandboxInferenceConfig } from "../dist/lib/inference/config.js";
+import { getSandboxInferenceConfig } from "../src/lib/inference/config.js";
 
 // Providers in shouldSkipResponsesProbe (nvidia-prod, nvidia-nim, gemini-api) do
 // not expose /v1/responses. On a provider switch the runtime API resolves to null

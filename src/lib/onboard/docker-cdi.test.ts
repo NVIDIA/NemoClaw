@@ -13,7 +13,7 @@ import {
   getNvidiaCdiSpecPath,
   hasNvidiaCdiSpec,
   parseDockerCdiSpecDirs,
-} from "../../../dist/lib/onboard/docker-cdi";
+} from "./docker-cdi";
 
 function specWithDeviceNodes(deviceNodes: string): string {
   return [

@@ -26,17 +26,17 @@ status: published
 NemoClaw can bake a multi-agent OpenClaw layout into a sandbox image from a single checked-in manifest.
 Supply the manifest at onboard time with `--agents <path>` and NemoClaw embeds the resulting `agents.list` entries, per-agent overrides, and `agents.defaults.subagents` block into `openclaw.json` during the image build.
 
-The schema mirrors OpenClaw's own `agents.list[]` field names, so the same keys you read in [OpenClaw's sub-agents reference](https://docs.openclaw.ai/tools/subagents) appear verbatim in the manifest.
+The schema mirrors OpenClaw's own `agents.list[]` field names, so the same keys from [OpenClaw's sub-agents reference](https://docs.openclaw.ai/tools/subagents) appear verbatim in the manifest.
 
-## When To Use This
+## When to Use This
 
 Use `--agents` when:
 
-- You want a repeatable, GitOps-friendly multi-agent sandbox (manager + workers, or a research / writing split).
+- You want a repeatable, GitOps-friendly multi-agent sandbox, such as a manager-worker layout or a research and writing split.
 - A secondary agent needs its own model (different size, different capability profile).
 - You want OpenClaw's `sessions_spawn` validator to enforce a fixed spawn allowlist, not the broad default.
 
-For a single primary agent on the configured inference route, no manifest is required — the canonical `main` agent is always baked in as the default.
+For a single primary agent on the configured inference route, no manifest is required because the canonical `main` agent is always baked in as the default.
 
 ## Invocation
 
@@ -97,10 +97,10 @@ Operators cannot set `default: true` on a secondary agent and cannot rename the 
 | `id` | yes | Lowercase alphanumeric + `_`/`-`, 1-32 chars, must start with a letter. Cannot be `main`. |
 | `workspace` | auto-filled | Defaults to `/sandbox/.openclaw/workspace-<id>`. Must match the canonical sandbox layout if supplied. |
 | `agentDir` | auto-filled | Defaults to `/sandbox/.openclaw/agents/<id>`. Must match the canonical sandbox layout if supplied. |
-| `tools` | yes | `{profile?, allow?, deny?}`. Must declare a non-empty `allow[]` or `deny[]` — secondary agents inherit no tools by default. |
+| `tools` | yes | `{profile?, allow?, deny?}`. Must declare a non-empty `allow[]` or `deny[]`; secondary agents inherit no tools by default. |
 | `description` | no | Human-readable. Baked verbatim. |
 | `model` | no | `provider/model` reference. The provider must match the onboard provider; cross-provider manifests are not supported. |
-| `subagents` | no | OpenClaw-native sub-agent delegation policy. See below. |
+| `subagents` | no | OpenClaw-native sub-agent delegation policy. Refer to the section below. |
 
 ### Sub-Agent Delegation Block
 
@@ -114,13 +114,15 @@ Both `main.subagents` and `agents[].subagents` use the same shape, which mirrors
 | `thinking` | string | Default thinking level for spawned sub-agents. |
 | `requireAgentId` | boolean | Force the model to pass `agentId` explicitly to `sessions_spawn` rather than defaulting to self. |
 
-`maxSpawnDepth` is **not accepted per-agent** — OpenClaw only honours it on `agents.defaults.subagents`, so the manifest exposes it only under the top-level `defaults` block.
+OpenClaw only honors `maxSpawnDepth` on `agents.defaults.subagents`, so the manifest exposes it only under the top-level `defaults` block.
+Do not set `maxSpawnDepth` per agent.
 
 ### Multi-Model Sandboxes
 
 When a secondary agent declares its own `model` (or `subagents.model`), NemoClaw widens the baked `models.providers[<onboard-provider>].models[]` array with one entry per unique `provider/model` reference.
 The base `contextWindow`, `maxTokens`, `reasoning`, and `input` settings from the onboard route apply to each appended entry.
-Per-model overrides beyond these defaults are out of scope for v1 — edit the generated `openclaw.json` in-place if you need finer control.
+Per-model overrides beyond these defaults are out of scope for v1.
+Edit the generated `openclaw.json` in place if you need finer control.
 
 ## Manager-Worker Example
 
@@ -158,7 +160,7 @@ Workspaces under `/sandbox/.openclaw/workspace-<id>` are preserved across rebuil
 For ad-hoc per-agent edits inside an existing sandbox (no rebuild), use the in-sandbox CLI: `nemoclaw <name> agents add|delete|list`.
 The manifest path is for fixed, checked-in layouts; the CLI passthrough is for interactive work.
 
-## Apply To An Existing Sandbox
+## Apply to an Existing Sandbox
 
 `nemoclaw <name> agents apply -f <agents.yaml>` reconciles the live sandbox roster against the manifest **without a rebuild**.
 The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and drives `openclaw agents add|delete` per item.
@@ -168,13 +170,14 @@ Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides req
 nemoclaw my-assistant agents apply -f ./agents.yaml --yes
 ```
 
-The flag pair `--yes / --non-interactive` is required for scripted use: `--yes` confirms the printed roster diff, and `--non-interactive` makes the verb fail fast when `--yes` is absent rather than waiting for an interactive prompt that scripted callers cannot deliver.
+The `--yes` and `--non-interactive` flags are required for scripted use.
+`--yes` confirms the printed roster diff, and `--non-interactive` makes the verb fail fast when `--yes` is absent rather than waiting for an interactive prompt that scripted callers cannot deliver.
 
 ## Next Steps
 
-Use the following resources for more information:
+Continue with these resources:
 
 - Refer to [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents) for the runtime semantics of `sessions_spawn`, `subagents.allowAgents`, and nesting depth.
 - Refer to [Set Up Task-Specific Sub-Agents](set-up-sub-agent) for the in-sandbox path that edits `agents.list` directly without a rebuild.
-- Refer to [Switch Inference Providers](switch-inference-providers) before swapping the primary onboard provider — per-agent `model` refs must share that provider.
+- Refer to [Switch Inference Providers](switch-inference-providers) before swapping the primary onboard provider because per-agent `model` refs must share that provider.
 - Refer to [Workspace Files](../manage-sandboxes/workspace-files) to understand how per-agent `workspace-<id>` directories are provisioned and persisted across rebuilds.

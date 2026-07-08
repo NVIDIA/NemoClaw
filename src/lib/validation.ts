@@ -20,6 +20,7 @@ export interface SandboxCreateFailure {
     | "sandbox_create_incomplete"
     | "tls_cert_mismatch"
     | "gpu_cdi_injection_failed"
+    | "plugin_install_network_denied"
     | "unknown";
   uploadedToGateway: boolean;
 }
@@ -133,6 +134,48 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
     /nvidia\.com\/gpu[^\n]*(CDI device injection failed|unresolvable CDI devices?)/i.test(text)
   ) {
     return { kind: "gpu_cdi_injection_failed", uploadedToGateway };
+  }
+  // Require BOTH the failed Docker command block containing the plugin-install
+  // step AND npm-prefixed network evidence for the same plugin package. Docker
+  // prints subprocess stderr before its final failed-command summary, so a
+  // prefix-only search can misattribute a later npm command in the same RUN
+  // block. Package correlation keeps that failure on the generic recovery path.
+  // OpenShell exposes only combined Docker text here, so this classifier is the
+  // source boundary until callers can consume a structured plugin-install
+  // failure with package identity; remove the text classifier at that point.
+  // In JavaScript, [^'] matches every character except a single quote,
+  // including newlines (unlike `.` without the dotAll flag), so multi-line
+  // command text is handled correctly. See #4127 / follow-up from #4125.
+  const pluginInstallErrorMatch =
+    /The command '[^']*openclaw plugins install[^']*'\s*returned a non-zero code/i.exec(text);
+  if (pluginInstallErrorMatch) {
+    const segment = text.slice(
+      0,
+      pluginInstallErrorMatch.index + pluginInstallErrorMatch[0].length,
+    );
+    const pluginPackages = [
+      ...pluginInstallErrorMatch[0].matchAll(/(?:npm:)?(@openclaw\/[a-z0-9._-]+)/gi),
+    ].map((match) => match[1].toLowerCase());
+    const npmErrorText = segment
+      .split(/\r?\n/)
+      .filter((line) => /^\s*npm error\b/i.test(line))
+      .join("\n")
+      .toLowerCase();
+    // npm output may print the scoped-package slash literally or percent-
+    // encoded. Normalize comparisons to lowercase so %2F and %2f both match.
+    const hasMatchingPluginPackage = pluginPackages.some((packageName) =>
+      [packageName, packageName.replaceAll("/", "%2f"), encodeURIComponent(packageName)].some(
+        (candidate) => npmErrorText.includes(candidate.toLowerCase()),
+      ),
+    );
+    if (
+      hasMatchingPluginPackage &&
+      /npm error.*(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|network request.*failed|getaddrinfo|fetch failed|socket hang up|network timeout)/i.test(
+        npmErrorText,
+      )
+    ) {
+      return { kind: "plugin_install_network_denied", uploadedToGateway };
+    }
   }
   if (/Created sandbox:/i.test(text)) {
     return { kind: "sandbox_create_incomplete", uploadedToGateway: true };

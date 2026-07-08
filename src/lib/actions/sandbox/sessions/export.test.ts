@@ -15,11 +15,18 @@ vi.mock("../../../adapters/openshell/runtime", () => ({
   runOpenshell: vi.fn(),
 }));
 
+vi.mock("../../../state/registry", () => ({
+  getSandbox: vi.fn(() => null),
+}));
+
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
-import { buildSandboxTarArgv, exportSandboxSessions, parseSessionIndex } from "./export";
+import * as registry from "../../../state/registry";
+import { isWarmupSessionId, WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
+import { buildSandboxTarArgv, exportSandboxSessions } from "./export";
 
 const captureMock = captureOpenshell as unknown as ReturnType<typeof vi.fn>;
 const runMock = runOpenshell as unknown as ReturnType<typeof vi.fn>;
+const getSandboxMock = registry.getSandbox as unknown as ReturnType<typeof vi.fn>;
 
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 let consoleLogSpy: ReturnType<typeof vi.spyOn>;
@@ -28,6 +35,8 @@ beforeEach(() => {
   captureMock.mockReset();
   runMock.mockReset();
   runMock.mockReturnValue({ status: 0, stdout: "", stderr: "" });
+  getSandboxMock.mockReset();
+  getSandboxMock.mockReturnValue(null);
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 });
@@ -66,42 +75,70 @@ describe("buildSandboxTarArgv", () => {
   });
 });
 
-describe("parseSessionIndex", () => {
-  it("accepts a plain JSON array of entries", () => {
-    const output = '[{"key":"agent:main:main","sessionId":"sid-1"}]';
-    expect(parseSessionIndex(output)).toEqual([{ key: "agent:main:main", sessionId: "sid-1" }]);
+describe("isWarmupSessionId", () => {
+  it("matches the onboard warm-up session id prefix (#5511)", () => {
+    expect(isWarmupSessionId(`${WARMUP_SESSION_ID_PREFIX}123`)).toBe(true);
+    expect(isWarmupSessionId("sid-real")).toBe(false);
+  });
+});
+
+describe("exportSandboxSessions warm-up filtering", () => {
+  it("excludes the onboard warm-up session from export-all but keeps real sessions (#5511)", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(
+        JSON.stringify([
+          { key: "agent:main:main", sessionId: `${WARMUP_SESSION_ID_PREFIX}1` },
+          { key: "agent:main:telegram:t-1", sessionId: "sid-real" },
+        ]),
+      ),
+    );
+
+    const result = await exportSandboxSessions({
+      sandboxName: "alpha",
+      out: "./out.tgz",
+      format: "tar",
+    });
+
+    const tarCall = runMock.mock.calls[0]?.[0] as string[];
+    const shellCommand = tarCall[7] as string;
+    expect(result.resolvedSessionIds).toEqual(["sid-real"]);
+    expect(shellCommand).toMatch(/-- \.\/sid-real\.jsonl/);
+    expect(shellCommand).not.toContain(WARMUP_SESSION_ID_PREFIX);
   });
 
-  it("accepts an object wrapper with a sessions array", () => {
-    const output = '{"sessions":[{"key":"agent:main:main","sessionId":"sid-1"}]}';
-    expect(parseSessionIndex(output)).toEqual([{ key: "agent:main:main", sessionId: "sid-1" }]);
+  it("refuses export-all when only the onboard warm-up session remains (#5511)", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(
+        JSON.stringify([
+          { key: "agent:main:explicit:warm", sessionId: `${WARMUP_SESSION_ID_PREFIX}1` },
+        ]),
+      ),
+    );
+
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./sessions-alpha",
+      }),
+    ).rejects.toThrow(/agent 'main' has no sessions to bundle/);
+    expect(runMock).not.toHaveBeenCalled();
   });
 
-  it("treats id as an alias for sessionId", () => {
-    const output = '[{"key":"agent:main:main","id":"sid-1"}]';
-    expect(parseSessionIndex(output)).toEqual([{ key: "agent:main:main", sessionId: "sid-1" }]);
-  });
+  it("still exports a warm-up session when the caller names it explicitly", async () => {
+    const warmupId = `${WARMUP_SESSION_ID_PREFIX}explicit`;
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: warmupId }])),
+    );
 
-  it("tolerates log noise preceding a single-line JSON payload", () => {
-    const output = 'warning: deprecation\n[{"key":"agent:main:main","sessionId":"sid-1"}]';
-    expect(parseSessionIndex(output)).toEqual([{ key: "agent:main:main", sessionId: "sid-1" }]);
-  });
+    const result = await exportSandboxSessions({
+      sandboxName: "alpha",
+      keys: ["agent:main:main"],
+      out: "./out.tgz",
+      format: "tar",
+    });
 
-  it("returns [] when the upstream emits an empty index (empty array)", () => {
-    expect(parseSessionIndex("[]")).toEqual([]);
-  });
-
-  it("returns [] when the upstream emits no output at all", () => {
-    expect(parseSessionIndex("")).toEqual([]);
-  });
-
-  it("returns null when the output is non-empty but no JSON shape is recognised", () => {
-    expect(parseSessionIndex("hello world")).toBeNull();
-  });
-
-  it("returns null when the array is non-empty but every entry uses unknown field names (schema drift)", () => {
-    const output = JSON.stringify([{ alias: "agent:main:main", uuid: "sid-1" }]);
-    expect(parseSessionIndex(output)).toBeNull();
+    expect(result.resolvedSessionIds).toEqual([warmupId]);
+    expect(result.resolvedFiles).toEqual([`${warmupId}.jsonl`]);
   });
 });
 
@@ -444,5 +481,221 @@ describe("exportSandboxSessions", () => {
       hostDest: path.resolve(process.cwd(), "out.tgz"),
     });
     expect(parsed).toHaveProperty("bundleBytes");
+  });
+});
+
+describe("exportSandboxSessions (hermes sandbox)", () => {
+  let mkdtempSpy: ReturnType<typeof vi.spyOn>;
+  let chmodSpy: ReturnType<typeof vi.spyOn>;
+  let renameSpy: ReturnType<typeof vi.spyOn>;
+  let rmSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    mkdtempSpy = vi
+      .spyOn(fs, "mkdtempSync")
+      .mockImplementation((prefix) => `${prefix as string}stubdir`);
+    chmodSpy = vi.spyOn(fs, "chmodSync").mockImplementation(() => {});
+    renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(() => {});
+    rmSpy = vi.spyOn(fs, "rmSync").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    mkdtempSpy.mockRestore();
+    chmodSpy.mockRestore();
+    renameSpy.mockRestore();
+    rmSpy.mockRestore();
+  });
+
+  it("routes to `hermes sessions export` instead of `openclaw sessions list` when the registry marks the sandbox as hermes", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+
+    const result = await exportSandboxSessions({ sandboxName: "alpha" });
+
+    expect(captureMock).not.toHaveBeenCalled();
+
+    const execCall = runMock.mock.calls[0]?.[0] as string[];
+    expect(execCall.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "alpha", "--", "sh", "-c"]);
+    const shellCommand = execCall[7] as string;
+    expect(shellCommand).toMatch(
+      /^umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging && hermes sessions export \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl && chmod 600 \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl$/,
+    );
+
+    const downloadCall = runMock.mock.calls[1]?.[0] as string[];
+    expect(downloadCall.slice(0, 3)).toEqual(["sandbox", "download", "alpha"]);
+    expect(downloadCall[3]).toMatch(
+      /^\/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl$/,
+    );
+    const hostStagingPath = downloadCall.at(-1) as string;
+    expect(hostStagingPath).toContain(".sessions-export-hermes-");
+    expect(hostStagingPath.endsWith("sessions-alpha.jsonl")).toBe(true);
+    expect(hostStagingPath).not.toBe("./sessions-alpha.jsonl");
+
+    const cleanupCall = runMock.mock.calls.at(-1);
+    expect(cleanupCall?.[0]).toContain("rm");
+    expect(cleanupCall?.[0]).toContain("-f");
+
+    expect(chmodSpy).toHaveBeenCalledWith(hostStagingPath, 0o600);
+    expect(renameSpy).toHaveBeenCalledWith(hostStagingPath, "./sessions-alpha.jsonl");
+
+    expect(result).toMatchObject({
+      sandboxName: "alpha",
+      agent: "hermes",
+      format: "jsonl",
+      selectedKeys: "all",
+      resolvedSessionIds: [],
+      resolvedFiles: ["sessions-alpha.jsonl"],
+      hostDest: "./sessions-alpha.jsonl",
+      sessions: [],
+    });
+  });
+
+  it("honours --out for the host destination on a hermes sandbox", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+
+    const result = await exportSandboxSessions({
+      sandboxName: "alpha",
+      out: "./hermes-bundle.jsonl",
+    });
+
+    const downloadCall = runMock.mock.calls[1]?.[0] as string[];
+    const hostStagingPath = downloadCall.at(-1) as string;
+    expect(hostStagingPath).toContain(".sessions-export-hermes-");
+    expect(hostStagingPath.endsWith("hermes-bundle.jsonl")).toBe(true);
+    expect(renameSpy).toHaveBeenCalledWith(hostStagingPath, "./hermes-bundle.jsonl");
+    expect(result.hostDest).toBe("./hermes-bundle.jsonl");
+    expect(result.resolvedFiles).toEqual(["hermes-bundle.jsonl"]);
+  });
+
+  it("aborts the export and skips download when the in-sandbox `hermes sessions export` exits non-zero, while still cleaning up the staging file", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    runMock.mockReturnValueOnce(makeRun(1));
+
+    await expect(exportSandboxSessions({ sandboxName: "alpha" })).rejects.toThrow(
+      /Failed to export hermes sessions/,
+    );
+
+    expect(runMock).toHaveBeenCalledTimes(2);
+    const execCall = runMock.mock.calls[0]?.[0] as string[];
+    expect(execCall.slice(0, 3)).toEqual(["sandbox", "exec", "--name"]);
+    const cleanupCall = runMock.mock.calls[1]?.[0] as string[];
+    expect(cleanupCall).toContain("rm");
+    expect(cleanupCall).toContain("-f");
+    expect(renameSpy).not.toHaveBeenCalled();
+  });
+
+  it("cleans up the in-sandbox staging file even when the host download exits non-zero", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    runMock.mockReturnValueOnce(makeRun(0)).mockReturnValueOnce(makeRun(1));
+
+    await expect(exportSandboxSessions({ sandboxName: "alpha" })).rejects.toThrow(
+      /Failed to download/,
+    );
+    const cleanupCall = runMock.mock.calls.at(-1);
+    expect(cleanupCall?.[0]).toContain("rm");
+    expect(cleanupCall?.[0]).toContain("-f");
+    expect(renameSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when chmod on the staging file errors so a permissive host cannot end up with a world-readable session bundle", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    chmodSpy.mockImplementation(() => {
+      throw new Error("EPERM");
+    });
+
+    await expect(exportSandboxSessions({ sandboxName: "alpha" })).rejects.toThrow(/EPERM/);
+    expect(renameSpy).not.toHaveBeenCalled();
+    const cleanupCall = runMock.mock.calls.at(-1);
+    expect(cleanupCall?.[0]).toContain("rm");
+    expect(cleanupCall?.[0]).toContain("-f");
+  });
+
+  it("refuses non-hermes --agent values, positional keys, --include-trajectory, and --format tar on a hermes sandbox so users see a clear error rather than a silent half-export", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    await expect(exportSandboxSessions({ sandboxName: "alpha", agent: "main" })).rejects.toThrow(
+      /--agent main is OpenClaw-specific/,
+    );
+    await expect(exportSandboxSessions({ sandboxName: "alpha", keys: ["main"] })).rejects.toThrow(
+      /positional session keys are OpenClaw-specific/,
+    );
+    await expect(
+      exportSandboxSessions({ sandboxName: "alpha", includeTrajectory: true }),
+    ).rejects.toThrow(/--include-trajectory is OpenClaw-specific/);
+    await expect(exportSandboxSessions({ sandboxName: "alpha", format: "tar" })).rejects.toThrow(
+      /--format tar is OpenClaw-specific/,
+    );
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts `--agent hermes` as a no-op alias on a hermes sandbox and still routes to `hermes sessions export`", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+
+    const result = await exportSandboxSessions({ sandboxName: "alpha", agent: "hermes" });
+
+    expect(captureMock).not.toHaveBeenCalled();
+    const execCall = runMock.mock.calls[0]?.[0] as string[];
+    const shellCommand = execCall[7] as string;
+    expect(shellCommand).toContain("hermes sessions export");
+    expect(result.agent).toBe("hermes");
+    expect(result.format).toBe("jsonl");
+  });
+
+  it("warns about a non-zero in-sandbox cleanup exit so a leftover sensitive JSONL never disappears silently from the sandbox", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    runMock
+      .mockReturnValueOnce(makeRun(0))
+      .mockReturnValueOnce(makeRun(0))
+      .mockReturnValueOnce(makeRun(2));
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const result = await exportSandboxSessions({ sandboxName: "alpha" });
+      expect(result.agent).toBe("hermes");
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /failed to remove in-sandbox staging file '\/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl'.*sandbox 'alpha'.*exit 2/,
+        ),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it("warns about a non-zero in-sandbox cleanup exit without masking the primary export error", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    runMock.mockReturnValueOnce(makeRun(1)).mockReturnValueOnce(makeRun(3));
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await expect(exportSandboxSessions({ sandboxName: "alpha" })).rejects.toThrow(
+        /Failed to export hermes sessions/,
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/failed to remove in-sandbox staging file.*exit 3/),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it("warns with the local staging directory when host cleanup fails after a finalization error so a leftover JSONL with pasted secrets does not vanish silently", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    chmodSpy.mockImplementation(() => {
+      throw new Error("EPERM");
+    });
+    rmSpy.mockImplementation(() => {
+      throw new Error("EACCES");
+    });
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await expect(exportSandboxSessions({ sandboxName: "alpha" })).rejects.toThrow(/EPERM/);
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /failed to remove local staging directory '.*\.sessions-export-hermes-.*'.*EACCES/,
+        ),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
   });
 });

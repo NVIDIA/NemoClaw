@@ -24,7 +24,6 @@ export interface ConfigPromptField {
   readonly label: string;
   readonly defaultValue?: string;
   readonly help?: string;
-  readonly placeholder?: string;
   readonly emptyValueMessage?: string;
   readonly validValues?: readonly string[];
   readonly format?: RegExp;
@@ -128,7 +127,6 @@ export function resolveManifestConfigPromptField(
     label: input.prompt.label,
     defaultValue: input.defaultValue,
     help: input.prompt.help,
-    placeholder: input.prompt.placeholder,
     emptyValueMessage: input.prompt.emptyValueMessage,
     validValues: input.validValues,
     format: input.formatPattern ? new RegExp(input.formatPattern) : undefined,
@@ -209,8 +207,6 @@ function formatConfigPromptQuestion(field: ConfigPromptField): string {
   const hints: string[] = [];
   if (field.validValues && field.validValues.length > 0) {
     hints.push(field.validValues.join("/"));
-  } else if (field.placeholder) {
-    hints.push(field.placeholder);
   }
   const defaultValue = readDefaultConfigValue(field);
   if (defaultValue) hints.push(`default: ${defaultValue}`);

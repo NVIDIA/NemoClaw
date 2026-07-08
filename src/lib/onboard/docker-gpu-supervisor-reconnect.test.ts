@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getDockerGpuSupervisorReconnectErrorDebouncePolls,
   waitForOpenShellSupervisorReconnect,
-} from "../../../dist/lib/onboard/docker-gpu-supervisor-reconnect";
+} from "./docker-gpu-supervisor-reconnect";
 
 // The Docker GPU patch supervisor-reconnect wait must absorb a transient
 // Error phase reported while OpenShell's sandbox-list cache catches up to

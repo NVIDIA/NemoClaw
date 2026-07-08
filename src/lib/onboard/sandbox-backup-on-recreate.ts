@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import * as sandboxState from "../state/sandbox";
 import type { BackupResult } from "../state/sandbox";
+import * as sandboxState from "../state/sandbox";
 
 export type SandboxBackupImpl = (sandboxName: string) => BackupResult;
 
@@ -44,6 +44,7 @@ export function backupSandboxBeforeRecreate(
       return { ok: false, backup, failureKind: "partial" };
     }
     errorLog("  State backup failed — aborting recreate to prevent data loss.");
+    if (backup.error) errorLog(`  Reason: ${backup.error}`);
     return { ok: false, backup: null, failureKind: "empty" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

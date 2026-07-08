@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOpenClawConfigRestoreInput,
   shouldMergeOpenClawConfigStateFile,
-} from "../../../dist/lib/state/openclaw-config-restore-input";
+} from "./openclaw-config-restore-input";
 
 function bufferJson(value: unknown): Buffer {
   return Buffer.from(JSON.stringify(value));

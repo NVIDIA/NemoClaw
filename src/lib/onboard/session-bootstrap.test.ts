@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../state/onboard-session";
-import { prepareOnboardSession, type OnboardSessionBootstrapDeps } from "./session-bootstrap";
 import type { ResumeConfigConflict } from "./resume-config";
+import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
 
 class ExitError extends Error {
   constructor(readonly code: number) {
@@ -71,6 +71,8 @@ describe("prepareOnboardSession", () => {
         requestedSandboxName: null,
         cannotPrompt: false,
         nonInteractive: true,
+        requestedToolDisclosure: "direct",
+        requestedObservabilityEnabled: true,
       },
       deps,
     );
@@ -79,7 +81,28 @@ describe("prepareOnboardSession", () => {
     expect(result.fromDockerfile).toBe("/abs/Dockerfile.custom");
     expect(result.session?.mode).toBe("non-interactive");
     expect(result.session?.metadata.fromDockerfile).toBe("/abs/Dockerfile.custom");
+    expect(result.session?.toolDisclosure).toBe("direct");
+    expect(result.session?.observabilityEnabled).toBe(true);
+    expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
+  });
+
+  it("defaults a fresh session to progressive disclosure", async () => {
+    const { deps } = createDeps();
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: false,
+        nonInteractive: false,
+      },
+      deps,
+    );
+    expect(result.session?.toolDisclosure).toBe("progressive");
+    expect(result.session?.observabilityEnabled).toBe(false);
+    expect(result.session?.observabilityRequestedExplicitly).toBe(false);
   });
 
   it("resumes an existing session and falls back to the recorded Dockerfile", async () => {
@@ -93,6 +116,8 @@ describe("prepareOnboardSession", () => {
       metadata: { gatewayName: "nemoclaw", fromDockerfile: "Dockerfile.recorded" },
       sandboxName: "demo",
       status: "failed",
+      observabilityEnabled: true,
+      observabilityRequestedExplicitly: true,
       steps: {
         ...createSession().steps,
         sandbox: completeSandboxStep(),
@@ -117,8 +142,42 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.mode).toBe("non-interactive");
     expect(result.session?.failure).toBeNull();
     expect(result.session?.status).toBe("in_progress");
+    expect(result.session?.observabilityEnabled).toBe(true);
+    expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(deps.repairResumeMachineSnapshot).toHaveBeenCalledWith(initial);
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
+  });
+
+  it.each([
+    { recorded: true, requested: false },
+    { recorded: false, requested: true },
+  ])("records an explicit observability request while resuming", async ({
+    recorded,
+    requested,
+  }) => {
+    const { deps } = createDeps(
+      createSession({
+        sandboxName: "demo",
+        observabilityEnabled: recorded,
+        status: "failed",
+      }),
+    );
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: false,
+        nonInteractive: false,
+        requestedObservabilityEnabled: requested,
+      },
+      deps,
+    );
+
+    expect(result.session?.observabilityEnabled).toBe(requested);
+    expect(result.session?.observabilityRequestedExplicitly).toBe(true);
   });
 
   it("records and reports resume conflicts before exiting", async () => {

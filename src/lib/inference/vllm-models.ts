@@ -108,7 +108,24 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     // example NVIDIA publishes for this checkpoint. The previous value
     // (262000) was an undocumented round-down with no headroom rationale.
     maxModelLen: 262144,
-    modelArgs: ["--gpu-memory-utilization", "0.7", "--load-format", "fastsafetensors"],
+    // `--enable-auto-tool-choice` + `--tool-call-parser qwen3_coder` match
+    // the vLLM launch example on the model card at
+    // https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8. Without
+    // them a plain completion succeeds (HTTP 200) but any agent request
+    // that sends `tool_choice: "auto"` fails HTTP 400 with vLLM's
+    // "'auto' tool choice requires --enable-auto-tool-choice and
+    // --tool-call-parser to be set" (#6314) — which blocks every agent
+    // tool-call flow on the generic-Linux managed vLLM default (Spark and
+    // Station defaults already pin their own tool-call parser).
+    modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
+      "--load-format",
+      "fastsafetensors",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+    ],
     gated: false,
     platforms: ["spark", "station", "linux"],
   },
@@ -141,7 +158,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--max-cudagraph-capture-size",
       "128",
       "--speculative-config",
-      `'{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
+      `'{"method":"mtp","num_speculative_tokens":3}'`,
       "--max-num-batched-tokens",
       "8192",
       "--max-num-seqs",
@@ -214,8 +231,8 @@ export const VLLM_EXTRA_ARGS_ENV = "NEMOCLAW_VLLM_EXTRA_ARGS_JSON";
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
  * Returns `null` when the env var is empty so the caller can fall back to
- * the per-platform profile default (Station prefers Qwen3.6-27B, Spark the
- * Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
+ * the per-platform profile default (Station prefers DeepSeek V4 Flash, Spark
+ * the Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
  * Nemotron-Nano-4B for VRAM headroom).
  *
  * Match is case-insensitive against either the `envValue` slug or the full

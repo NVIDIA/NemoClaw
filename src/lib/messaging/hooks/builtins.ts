@@ -4,6 +4,7 @@
 import { createDiscordHookRegistrations, type DiscordHookOptions } from "../channels/discord/hooks";
 import type { OpenClawBridgeHealthHookOptions } from "../channels/openclaw-bridge-health";
 import { createSlackHookRegistrations, type SlackHookOptions } from "../channels/slack/hooks";
+import { createTeamsHookRegistrations, type TeamsHookOptions } from "../channels/teams/hooks";
 import {
   createTelegramHookRegistrations,
   type TelegramHookOptions,
@@ -18,6 +19,7 @@ export interface BuiltInMessagingHookOptions {
   readonly discord?: DiscordHookOptions;
   readonly openclawBridgeHealth?: OpenClawBridgeHealthHookOptions;
   readonly slack?: SlackHookOptions;
+  readonly teams?: TeamsHookOptions;
   readonly telegram?: TelegramHookOptions;
   readonly wechat?: WechatHookOptions;
 }
@@ -33,6 +35,7 @@ export function createBuiltInMessagingHookRegistrations(
     ...createSlackHookRegistrations(
       withOpenClawBridgeHealthOptions(options.slack, options.openclawBridgeHealth),
     ),
+    ...createTeamsHookRegistrations(options.teams),
     ...createTelegramHookRegistrations(
       withOpenClawBridgeHealthOptions(options.telegram, options.openclawBridgeHealth),
     ),
