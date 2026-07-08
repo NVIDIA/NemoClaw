@@ -44,6 +44,7 @@ export function registerRebuildFlowLifecycleTests(): void {
       };
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
+        backupPolicyPresets: ["npm", "bad", "throw"],
         sandboxEntry: { policyPresetsFinalized: true, policyTier: "balanced" },
         mcpPreparation: {
           entries: [mcpEntry],

@@ -145,6 +145,32 @@ describe("rebuild transaction boundary", () => {
     });
   });
 
+  it("keeps finalization guidance when its failure metadata cannot be persisted", async () => {
+    const harness = createRebuildFlowHarness({
+      restoreSandboxState: () => ({
+        success: false,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: ["config"],
+        failedFiles: [],
+      }),
+    });
+    vi.spyOn(harness.transactionStore, "recordFailure").mockRejectedValueOnce(
+      new Error("simulated journal write failure"),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("unverified required post-restore state");
+
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain("State restore was incomplete");
+    expect(harness.transactionStore.load("alpha")).toMatchObject({
+      status: "active",
+      phase: "replacement_created",
+      failure: null,
+    });
+  });
+
   it("leaves a prepared transaction when delete fails after compensation", async () => {
     const harness = createRebuildFlowHarness({
       runOpenshell: (args) =>

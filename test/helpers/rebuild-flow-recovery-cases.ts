@@ -226,12 +226,17 @@ export function registerRebuildFlowRecoveryTests(): void {
           throwOnError: true,
           recoveryManifest: makePreparedRecoveryManifest(),
         }),
-      ).rejects.toThrow("Prepared backup recovery");
+      ).rejects.toThrow("MCP_BRIDGE_RESTORE_UNVERIFIED");
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),
       );
       expect(harness.relockSpy).toHaveBeenCalled();
+      expect(harness.transactionStore.load("alpha")).toMatchObject({
+        status: "active",
+        phase: "replacement_created",
+        failure: { code: "MCP_BRIDGE_RESTORE_UNVERIFIED", retryable: true },
+      });
     });
 
     it("prunes the disabled Teams preset from the final registry policies after rebuild", async () => {
@@ -370,8 +375,9 @@ export function registerRebuildFlowRecoveryTests(): void {
       ).toBeGreaterThan(harness.onboardSpy.mock.invocationCallOrder[0]);
     });
 
-    it("finishes the rebuild while surfacing incomplete post-restore work", async () => {
+    it("retains the transaction when required post-restore work is incomplete", async () => {
       const harness = createRebuildFlowHarness({
+        backupPolicyPresets: ["npm", "bad", "throw"],
         sandboxEntry: { policyPresetsFinalized: true, policyTier: "balanced" },
         executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
         repairMutableConfigPerms: () => ({
@@ -390,7 +396,7 @@ export function registerRebuildFlowRecoveryTests(): void {
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).resolves.toBeUndefined();
+      ).rejects.toThrow("unverified required post-restore state");
 
       const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(output).toContain("rebuilt but some post-restore steps were incomplete");
@@ -408,6 +414,11 @@ export function registerRebuildFlowRecoveryTests(): void {
         policyPresetsFinalized: undefined,
       });
       expect(output).toContain("Policy presets failed to reapply: bad, throw");
+      expect(harness.transactionStore.load("alpha")).toMatchObject({
+        status: "active",
+        phase: "replacement_created",
+        failure: { code: "STATE_RESTORE_INCOMPLETE", retryable: true },
+      });
     });
 
     it("reports both MCP and policy recovery when both restores are incomplete", async () => {
@@ -427,7 +438,7 @@ export function registerRebuildFlowRecoveryTests(): void {
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).resolves.toBeUndefined();
+      ).rejects.toThrow("unverified required post-restore state");
 
       const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(output).toContain("rebuilt but some post-restore steps were incomplete");
@@ -437,6 +448,11 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(harness.errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),
       );
+      expect(harness.transactionStore.load("alpha")).toMatchObject({
+        status: "active",
+        phase: "replacement_created",
+        failure: { code: "MCP_BRIDGE_RESTORE_UNVERIFIED", retryable: true },
+      });
     });
   });
 }

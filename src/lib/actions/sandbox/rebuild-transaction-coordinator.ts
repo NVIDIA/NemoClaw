@@ -15,6 +15,7 @@ import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
+import type { RebuildPostRestoreVerification } from "./rebuild-post-restore-phase";
 
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -237,8 +238,26 @@ export class RebuildTransactionCoordinator {
     });
   }
 
-  async complete(): Promise<void> {
-    if (this.transaction?.phase !== "replacement_created") return;
-    this.transaction = await this.store.complete(this.sandboxName, this.transaction.revision);
+  async finalize(verification: RebuildPostRestoreVerification): Promise<boolean> {
+    if (!verification.complete) {
+      const code = verification.required[0];
+      if (this.transaction?.phase === "replacement_created" && code) {
+        try {
+          this.transaction = await this.store.recordFailure(
+            this.sandboxName,
+            this.transaction.revision,
+            { code, recordedAt: new Date().toISOString(), retryable: true },
+          );
+        } catch {
+          // Completion remains blocked even when best-effort failure metadata
+          // cannot be published; the caller must still emit recovery guidance.
+        }
+      }
+      return false;
+    }
+    if (this.transaction?.phase === "replacement_created") {
+      this.transaction = await this.store.complete(this.sandboxName, this.transaction.revision);
+    }
+    return true;
   }
 }

@@ -340,6 +340,7 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
     it("copies the staged Hermes messaging plan into the rebuild resume session", async () => {
       const plan = makeMessagingPlan();
       const harness = createRebuildFlowHarness({
+        applyPreset: () => true,
         sandboxEntry: {
           agent: "hermes",
           provider: "nvidia-prod",

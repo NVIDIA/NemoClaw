@@ -291,6 +291,7 @@ export function registerRebuildFlowTargetImageTests(): void {
       try {
         const harness = createRebuildFlowHarness({
           applyPreset: () => true,
+          backupPolicyPresets: ["npm", "bad", "throw"],
           sandboxEntry: { provider: "nvidia-prod", model: "nvidia/nemotron" },
           sessionSandboxName: "some-other-sandbox",
         });

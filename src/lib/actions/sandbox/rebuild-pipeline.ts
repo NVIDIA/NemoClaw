@@ -329,7 +329,7 @@ async function rebuildSandboxUnlocked(
         reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
         log,
       });
-      await runRebuildPostRestorePhase({
+      const verification = await runRebuildPostRestorePhase({
         sandboxName,
         sandboxEntry,
         messagingPlan,
@@ -342,14 +342,16 @@ async function rebuildSandboxUnlocked(
         policyPresetReconciliationVerified: restored.policyPresetReconciliationVerified,
         staleRecovery,
         recoveryRecreate,
-        preparedBackupRecovery,
         staleSandboxWasLocked: originalShieldsLocked,
         versionCheck,
         relockShieldsIfNeeded,
         log,
-        bail,
       });
-      await transaction.complete();
+      if (!(await transaction.finalize(verification))) {
+        bail(
+          `Rebuild for '${sandboxName}' has unverified required post-restore state: ${verification.required.join(", ")}. Correct the reported conditions, then retry the rebuild.`,
+        );
+      }
     } finally {
       if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);
     }

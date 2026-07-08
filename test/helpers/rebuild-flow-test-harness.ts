@@ -338,7 +338,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         manifest: {
           backupPath: "/tmp/nemoclaw-rebuild-backup",
           timestamp: "2026-06-01T00:00:00.000Z",
-          policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
+          policyPresets: overrides.backupPolicyPresets ?? ["npm"],
         },
       };
     });

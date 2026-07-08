@@ -164,24 +164,6 @@ export async function restoreMcpAfterRebuild(
   }
 }
 
-export function postRestoreCompleted(status: {
-  messagingHostForwardUnverified: boolean;
-  mcpBridgeRestoreUnverified: boolean;
-  mutableConfigHashRefreshUnverified: boolean;
-  mutablePermsRepairUnverified: boolean;
-  policyPresetRestoreIncomplete: boolean;
-  restoreSucceeded: boolean;
-}): boolean {
-  return (
-    status.restoreSucceeded &&
-    !status.mutablePermsRepairUnverified &&
-    !status.mutableConfigHashRefreshUnverified &&
-    !status.messagingHostForwardUnverified &&
-    !status.mcpBridgeRestoreUnverified &&
-    !status.policyPresetRestoreIncomplete
-  );
-}
-
 export function printMcpRestoreRecovery(
   sandboxName: string,
   mcpBridgeRestoreUnverified: boolean,
