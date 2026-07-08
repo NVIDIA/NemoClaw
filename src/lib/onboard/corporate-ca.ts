@@ -3,6 +3,7 @@
 
 import { X509Certificate } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 
 /**
  * Host corporate-proxy CA import (#6210).
@@ -28,15 +29,6 @@ import fs from "node:fs";
  * env vars the reporter already exports for their corporate proxy; when one of
  * those points at a missing/invalid file we skip it silently rather than break
  * an onboard that never asked for a corporate CA.
- *
- * Scope (#6210, intentionally narrowed): detection is limited to these
- * env-configured sources. NemoClaw deliberately does NOT auto-scan the host
- * system trust store (`/etc/ssl/certs/`): importing an OS trust store wholesale
- * would bake broad, unrelated roots into the sandbox image and widen its trust
- * far beyond the one corporate proxy CA the user needs. A host-store-only CA
- * must be exported into a small PEM and pointed at via one of these vars. This
- * boundary is asserted by `corporate-ca.test.ts` ("does not auto-scan the host
- * trust store") and documented in `docs/reference/troubleshooting.mdx`.
  */
 export const CORPORATE_CA_EXPLICIT_ENV = "NEMOCLAW_CORPORATE_CA_BUNDLE";
 export const CORPORATE_CA_FALLBACK_ENV_VARS = [
@@ -44,6 +36,77 @@ export const CORPORATE_CA_FALLBACK_ENV_VARS = [
   "CURL_CA_BUNDLE",
   "SSL_CERT_FILE",
 ] as const;
+
+/**
+ * Anchor-file extensions each host trust tool actually installs. Debian/Ubuntu
+ * `update-ca-certificates` installs only `*.crt` from its anchor dir; RHEL/Fedora
+ * `update-ca-trust` accepts `*.pem`/`*.crt`/`*.cer`. Matching per-directory keeps
+ * us from importing a staged/backup PEM that is not actually in the host store.
+ */
+const DEBIAN_ANCHOR_EXT_RE = /\.crt$/i;
+const RHEL_ANCHOR_EXT_RE = /\.(?:pem|crt|cer)$/i;
+
+/**
+ * Default host trust-store anchor directories and the extensions each installs.
+ * These are the *administrator-managed anchor source* dirs — not the merged
+ * `/etc/ssl/certs/` output (see {@link CORPORATE_CA_HOST_ANCHOR_DIRS}).
+ */
+const DEFAULT_HOST_ANCHOR_SPECS = [
+  { dir: "/usr/local/share/ca-certificates", extensions: DEBIAN_ANCHOR_EXT_RE },
+  { dir: "/etc/pki/ca-trust/source/anchors", extensions: RHEL_ANCHOR_EXT_RE },
+] as const;
+
+/**
+ * Host trust-store anchor directories scanned as a last resort (#6210
+ * acceptance path). These hold ONLY locally-added anchors: the distro's ~140
+ * public roots live elsewhere and are compiled into the merged
+ * `/etc/ssl/certs/ca-certificates.crt` output — which we deliberately do NOT
+ * scan. Reading the anchor sources lets us import exactly the corporate root the
+ * reporter installed on the DGX Station host without baking broad, unrelated OS
+ * trust into the image. Discovery is bounded by {@link MAX_CORPORATE_CA_CERTS} /
+ * {@link MAX_CORPORATE_CA_BYTES}; a directory that would exceed those caps is
+ * skipped rather than truncated.
+ */
+export const CORPORATE_CA_HOST_ANCHOR_DIRS = DEFAULT_HOST_ANCHOR_SPECS.map(
+  (spec) => spec.dir,
+) as readonly string[];
+
+/**
+ * Override the host anchor directories scanned. A path-list (`path.delimiter`
+ * separated). Set to an empty value to disable host-store scanning entirely.
+ * Lets operators on non-standard distros point at their anchor location, and
+ * keeps host-store discovery deterministic under test.
+ */
+export const CORPORATE_CA_ANCHOR_DIRS_ENV = "NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS";
+
+/** Reported `sourceEnv` when a CA is discovered from the host anchor dirs. */
+export const CORPORATE_CA_HOST_ANCHOR_SOURCE = "host trust store";
+
+/**
+ * Recognized extensions for a directory not in {@link DEFAULT_HOST_ANCHOR_SPECS}
+ * (an operator-supplied override): accept the broader RHEL-style set since the
+ * operator pointed at it explicitly.
+ */
+function anchorExtensionsFor(dir: string): RegExp {
+  return (
+    DEFAULT_HOST_ANCHOR_SPECS.find((spec) => spec.dir === dir)?.extensions ?? RHEL_ANCHOR_EXT_RE
+  );
+}
+
+/**
+ * Bounds on the recursive anchor-directory walk. `update-ca-certificates`
+ * trusts `.crt` files *recursively* under the anchor dir, so discovery must
+ * descend subdirectories; these caps keep a pathological tree from turning
+ * discovery into an unbounded scan.
+ */
+const HOST_ANCHOR_MAX_DEPTH = 8;
+const HOST_ANCHOR_MAX_FILES = 256;
+/**
+ * Cap on directories visited during the walk. Bounds the scan even when an
+ * override points at a broad tree (e.g. `/` or `$HOME`) with few matching
+ * certificate files, so `HOST_ANCHOR_MAX_FILES` alone cannot stop it.
+ */
+const HOST_ANCHOR_MAX_DIRS = 1024;
 
 /** Opt-out: set to a falsey token to disable corporate CA import entirely. */
 export const CORPORATE_CA_DISABLE_ENV = "NEMOCLAW_CORPORATE_CA_IMPORT";
@@ -80,14 +143,31 @@ export class CorporateCaValidationError extends Error {
 }
 
 /**
- * Validate a candidate corporate CA bundle file and return its PEM text.
+ * Join validated PEM CERTIFICATE blocks into a normalized bundle.
+ *
+ * Returns *only* the certificate blocks — each trimmed of surrounding
+ * whitespace and separated by a single newline, with a trailing newline. Any
+ * bytes outside the CERTIFICATE blocks in the source file (an adjacent private
+ * key, comments, arbitrary text) are dropped, so nothing but the validated
+ * public certificates is ever baked into the image build context.
+ */
+function normalizeCertificateBlocks(blocks: readonly string[]): string {
+  return `${blocks.map((block) => block.trim()).join("\n")}\n`;
+}
+
+/**
+ * Validate a candidate corporate CA bundle file and return normalized PEM text.
  *
  * Opens the file once with `O_NOFOLLOW` and validates the *opened* descriptor
  * (via `fstat`, then reads from the same fd) so a symlink/file swap between
  * check and use cannot slip a different file past validation. Rejects
  * symlinks, non-regular files, empty/oversized files, world-writable sources,
- * bundles with no or too many PEM CERTIFICATE blocks, and a leading block that
- * is not a parseable X.509 certificate.
+ * bundles with no or too many PEM CERTIFICATE blocks, and any block that is not
+ * a parseable X.509 certificate.
+ *
+ * Returns a bundle containing only the validated CERTIFICATE blocks (via
+ * {@link normalizeCertificateBlocks}); adjacent private keys or arbitrary
+ * payload in the source file are never returned or baked into the image.
  */
 export function validateCorporateCaFile(filePath: string): string {
   let fd: number;
@@ -149,7 +229,10 @@ export function validateCorporateCaFile(filePath: string): string {
         );
       }
     }
-    return content;
+    // Return only the validated certificate blocks. Anything else in the file
+    // (an adjacent private key, comments, arbitrary payload) is intentionally
+    // dropped so it can never be copied into the build context / image layers.
+    return normalizeCertificateBlocks(blocks);
   } finally {
     fs.closeSync(fd);
   }
@@ -172,10 +255,11 @@ function isDisabled(env: NodeJS.ProcessEnv): boolean {
 /**
  * Resolve a corporate CA bundle from the host environment.
  *
- * Returns `null` when no corporate CA is configured (or import is disabled).
- * Throws {@link CorporateCaValidationError} only when the *explicit*
+ * Returns `null` when no corporate CA env var is configured (or import is
+ * disabled). Throws {@link CorporateCaValidationError} only when the *explicit*
  * `NEMOCLAW_CORPORATE_CA_BUNDLE` is set to an invalid path; invalid fallback
- * env vars are skipped silently.
+ * env vars are skipped silently. Does not touch the host trust store — see
+ * {@link resolveCorporateCaFromHostAnchors} and {@link resolveCorporateCa}.
  */
 export function resolveCorporateCaFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -204,6 +288,128 @@ export function resolveCorporateCaFromEnv(
     }
   }
   return null;
+}
+
+/**
+ * Recursively collect anchor certificate files under a directory, bounded by
+ * {@link HOST_ANCHOR_MAX_DEPTH} / {@link HOST_ANCHOR_MAX_FILES}. Symlinked files
+ * and directories are skipped (a symlink `Dirent` is neither `isFile()` nor
+ * `isDirectory()`), so the walk cannot follow a link out of the anchor tree or
+ * loop. Returns paths in deterministic sorted order.
+ */
+function collectAnchorFiles(root: string, extensions: RegExp): string[] {
+  const out: string[] = [];
+  let dirsVisited = 0;
+  const stack: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+  while (
+    stack.length > 0 &&
+    out.length < HOST_ANCHOR_MAX_FILES &&
+    dirsVisited < HOST_ANCHOR_MAX_DIRS
+  ) {
+    const current = stack.pop();
+    if (current === undefined) break;
+    dirsVisited += 1;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current.dir, { withFileTypes: true });
+    } catch {
+      continue; // Absent/unreadable directory — skip it.
+    }
+    for (const entry of entries) {
+      if (out.length >= HOST_ANCHOR_MAX_FILES) break; // Enforce the cap mid-directory.
+      const full = path.join(current.dir, entry.name);
+      if (entry.isDirectory() && current.depth < HOST_ANCHOR_MAX_DEPTH) {
+        stack.push({ dir: full, depth: current.depth + 1 });
+      } else if (entry.isFile() && extensions.test(entry.name)) {
+        out.push(full);
+      }
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * Resolve a corporate CA from the host administrator-managed anchor directories
+ * (#6210 acceptance path). See {@link CORPORATE_CA_HOST_ANCHOR_DIRS} for why
+ * these bounded source dirs — not the merged `/etc/ssl/certs/` output — are the
+ * safe place to detect an installed corporate root. Each directory is scanned
+ * recursively (matching `update-ca-certificates`), bounded by the depth/file
+ * caps above.
+ *
+ * Returns `null` when no anchor directory yields a usable, bounded bundle.
+ * Never throws: an unreadable/invalid/oversized anchor set is skipped silently
+ * (this is an implicit fallback, like the conventional CA env vars).
+ */
+export function resolveCorporateCaFromHostAnchors(
+  dirs: readonly string[] = CORPORATE_CA_HOST_ANCHOR_DIRS,
+): ResolvedCorporateCa | null {
+  for (const dir of dirs) {
+    const files = collectAnchorFiles(dir, anchorExtensionsFor(dir));
+    const blocks: string[] = [];
+    for (const file of files) {
+      try {
+        // validateCorporateCaFile enforces per-file symlink/size/mode/cert
+        // checks and returns normalized certificate blocks only.
+        blocks.push(validateCorporateCaFile(file).trim());
+      } catch {
+        // Skip an unreadable/invalid anchor file rather than fail discovery.
+      }
+    }
+    if (blocks.length === 0) continue;
+    const pem = normalizeCertificateBlocks(blocks);
+    // Aggregate caps: keep the imported trust scoped to a corporate chain. A
+    // directory that would exceed the caps is skipped, never truncated.
+    const certCount = pem.match(PEM_CERTIFICATE_RE_GLOBAL)?.length ?? 0;
+    if (certCount === 0 || certCount > MAX_CORPORATE_CA_CERTS) continue;
+    if (Buffer.byteLength(pem, "utf8") > MAX_CORPORATE_CA_BYTES) continue;
+    return { pem, sourcePath: dir, sourceEnv: CORPORATE_CA_HOST_ANCHOR_SOURCE };
+  }
+  return null;
+}
+
+/**
+ * Resolve the host anchor directories to scan: the {@link
+ * CORPORATE_CA_ANCHOR_DIRS_ENV} override when set (empty value → no scan), else
+ * the built-in {@link CORPORATE_CA_HOST_ANCHOR_DIRS}. Returns `null` when the
+ * override is unset so the caller can fall back to the defaults.
+ */
+function hostAnchorDirsFromEnv(env: NodeJS.ProcessEnv): readonly string[] | null {
+  const raw = env[CORPORATE_CA_ANCHOR_DIRS_ENV];
+  if (raw === undefined) return null;
+  return raw
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+export interface ResolveCorporateCaOptions {
+  /** Override the host anchor directories scanned (testing seam). */
+  hostAnchorDirs?: readonly string[];
+}
+
+/**
+ * Resolve a corporate CA bundle for the sandbox image (#6210).
+ *
+ * Resolution order:
+ *   1. Explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` (fail-loud when invalid).
+ *   2. Conventional CA env vars (`REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
+ *      `SSL_CERT_FILE`), skipped silently when invalid.
+ *   3. Host administrator-managed anchor directories (overridable/disablable
+ *      via {@link CORPORATE_CA_ANCHOR_DIRS_ENV}), skipped silently.
+ *
+ * Returns `null` when nothing is configured or import is disabled via
+ * `NEMOCLAW_CORPORATE_CA_IMPORT`.
+ */
+export function resolveCorporateCa(
+  env: NodeJS.ProcessEnv = process.env,
+  options: ResolveCorporateCaOptions = {},
+): ResolvedCorporateCa | null {
+  if (isDisabled(env)) return null;
+  const fromEnv = resolveCorporateCaFromEnv(env);
+  if (fromEnv) return fromEnv;
+  const anchorDirs =
+    options.hostAnchorDirs ?? hostAnchorDirsFromEnv(env) ?? CORPORATE_CA_HOST_ANCHOR_DIRS;
+  return resolveCorporateCaFromHostAnchors(anchorDirs);
 }
 
 /** Base64-encode PEM text for a single-line Dockerfile ARG value. */

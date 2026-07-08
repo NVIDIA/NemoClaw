@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { patchStagedDockerfile } from "./dockerfile-patch";
 
@@ -42,6 +42,7 @@ const CA_ENV = [
   "CURL_CA_BUNDLE",
   "SSL_CERT_FILE",
 ];
+const ANCHOR_DIRS_ENV = "NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS";
 const tmpRoots: string[] = [];
 
 function clearCaEnv(): void {
@@ -50,13 +51,19 @@ function clearCaEnv(): void {
   }
 }
 
-beforeEach(clearCaEnv);
+// Disable host trust-store scanning so these tests never depend on real host CA
+// state (e.g. a corporate dev machine with an installed anchor).
+beforeEach(() => {
+  clearCaEnv();
+  process.env[ANCHOR_DIRS_ENV] = "";
+});
 
 afterEach(() => {
   for (const dir of tmpRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
   clearCaEnv();
+  delete process.env[ANCHOR_DIRS_ENV];
 });
 
 function writeCa(): string {
@@ -138,6 +145,21 @@ describe("dockerfile patch — corporate CA baking (#6210)", () => {
 
     const line = corporateCaArgLine(dockerfilePath);
     expect(line?.slice("ARG NEMOCLAW_CORPORATE_CA_B64=".length)).not.toBe("");
+  });
+
+  it("logs the fallback source env var and path when baking a fallback CA", () => {
+    const caPath = writeCa();
+    process.env.REQUESTS_CA_BUNDLE = caPath;
+    const dockerfilePath = dockerfileWith([...BASE_ARGS, "ARG NEMOCLAW_CORPORATE_CA_B64="]);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    patch(dockerfilePath);
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
+
+    const bakeLog = messages.find((message) => message.includes("corporate proxy CA"));
+    expect(bakeLog).toContain("REQUESTS_CA_BUNDLE");
+    expect(bakeLog).toContain(caPath);
   });
 
   it("leaves NEMOCLAW_CORPORATE_CA_B64 empty when no corporate CA is configured", () => {

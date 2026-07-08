@@ -5,7 +5,7 @@
 // *.test.ts files so branching setup stays in named helpers (the changed-test
 // linear-body guardrail counts if statements only in test files).
 
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import https from "node:https";
 import os from "node:os";
@@ -35,10 +35,27 @@ export interface CaMaterial {
 
 export type CaSetup = CaMaterial | { ok: false; reason: string };
 
+// argv-based OpenSSL helpers (no shell string interpolation): paths and
+// subjects are passed as separate arguments so a path can never be re-parsed as
+// a flag or shell token.
 function opensslReqX509(dir: string, cn: string, keyOut: string, certOut: string): void {
-  execSync(
-    `openssl req -x509 -newkey rsa:2048 -keyout "${path.join(dir, keyOut)}" ` +
-      `-out "${path.join(dir, certOut)}" -days 7 -nodes -subj "/CN=${cn}"`,
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-keyout",
+      path.join(dir, keyOut),
+      "-out",
+      path.join(dir, certOut),
+      "-days",
+      "7",
+      "-nodes",
+      "-subj",
+      `/CN=${cn}`,
+    ],
     { stdio: "pipe" },
   );
 }
@@ -53,15 +70,41 @@ function signLeaf(
   const csr = path.join(dir, `${keyOut}.csr`);
   const ext = path.join(dir, `${keyOut}.ext`);
   fs.writeFileSync(ext, "subjectAltName=DNS:localhost,IP:127.0.0.1\n");
-  execSync(
-    `openssl req -newkey rsa:2048 -keyout "${path.join(dir, keyOut)}" -out "${csr}" ` +
-      `-nodes -subj "/CN=localhost"`,
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-newkey",
+      "rsa:2048",
+      "-keyout",
+      path.join(dir, keyOut),
+      "-out",
+      csr,
+      "-nodes",
+      "-subj",
+      "/CN=localhost",
+    ],
     { stdio: "pipe" },
   );
-  execSync(
-    `openssl x509 -req -in "${csr}" -CA "${path.join(dir, caCert)}" ` +
-      `-CAkey "${path.join(dir, caKey)}" -CAcreateserial -out "${path.join(dir, certOut)}" ` +
-      `-days 7 -extfile "${ext}"`,
+  execFileSync(
+    "openssl",
+    [
+      "x509",
+      "-req",
+      "-in",
+      csr,
+      "-CA",
+      path.join(dir, caCert),
+      "-CAkey",
+      path.join(dir, caKey),
+      "-CAcreateserial",
+      "-out",
+      path.join(dir, certOut),
+      "-days",
+      "7",
+      "-extfile",
+      ext,
+    ],
     { stdio: "pipe" },
   );
 }
@@ -73,7 +116,7 @@ function signLeaf(
  */
 export function setupCaMaterial(): CaSetup {
   try {
-    execSync("openssl version", { stdio: "pipe" });
+    execFileSync("openssl", ["version"], { stdio: "pipe" });
   } catch (err) {
     return { ok: false, reason: `openssl missing: ${(err as Error).message}` };
   }

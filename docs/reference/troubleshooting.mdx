@@ -983,11 +983,17 @@ export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem
 $$nemoclaw onboard
 ```
 
-If your corporate CA lives only in the host system trust store, export just your corporate root (and any intermediates) into a small PEM file and point `NEMOCLAW_CORPORATE_CA_BUNDLE` at that file. NemoClaw does not auto-scan the host trust store, and it rejects a full OS trust store (`/etc/ssl/certs/ca-certificates.crt`) — the bundle is capped at a small corporate chain so it never bakes broad, unrelated roots into the image.
+If your corporate CA is already installed in the host system trust store, NemoClaw detects it automatically. It scans the administrator anchor directories (recursively, matching `update-ca-certificates`) — `/usr/local/share/ca-certificates/` on Debian/Ubuntu and `/etc/pki/ca-trust/source/anchors/` on RHEL/Fedora — which is where an administrator drops a root CA before running `update-ca-certificates` / `update-ca-trust`. NemoClaw deliberately does **not** read the merged `/etc/ssl/certs/ca-certificates.crt`, which also contains the distro's public roots; it imports only these bounded anchor sources so it never bakes broad, unrelated OS trust into the image. This host-store detection is a last-resort fallback, tried only after the environment variables above. To scan a non-standard anchor location, set `NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS` to a path-list of directories; set it to an empty value to disable host-store scanning.
 
-When `NEMOCLAW_CORPORATE_CA_BUNDLE` is unset, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, and `SSL_CERT_FILE` are honored as fallbacks (in that order) so an environment that already exports one of those for the corporate proxy works without extra configuration. A fallback variable that points at a missing or invalid file is **skipped silently** (it does not fail onboarding); only the explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` fails loudly when invalid. When a fallback source is baked, onboarding logs which variable and path it used.
+Resolution order:
 
-The bundle must be a readable, non-symlink, non-world-writable PEM file whose leading block parses as an X.509 certificate, capped at a small corporate chain (not a full OS trust store). To disable the import entirely, set `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
+1. Explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` (fails onboarding loudly when set but invalid).
+2. Conventional CA variables `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, then `SSL_CERT_FILE` (each **skipped silently** when it points at a missing or invalid file).
+3. Host administrator anchor directories (skipped silently when absent or unusable).
+
+When a fallback or host-store source is baked, onboarding logs which source and path it used. To be fully explicit — or to import a corporate root that is not installed in an anchor directory — export just your corporate root (and any intermediates) into a small PEM file and point `NEMOCLAW_CORPORATE_CA_BUNDLE` at it.
+
+Every imported source must be a readable, non-symlink, non-world-writable PEM file in which **every** certificate block parses as an X.509 certificate, and the imported trust is capped at a small corporate chain (not a full OS trust store) — a source that would exceed the cap is rejected or skipped rather than truncated. To disable the import entirely, set `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
 
 ### A request inside the sandbox fails with `CONNECT tunnel failed, response 403`
 

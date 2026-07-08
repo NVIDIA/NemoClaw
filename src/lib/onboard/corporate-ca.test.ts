@@ -8,13 +8,17 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  CORPORATE_CA_ANCHOR_DIRS_ENV,
   CORPORATE_CA_DISABLE_ENV,
   CORPORATE_CA_EXPLICIT_ENV,
+  CORPORATE_CA_HOST_ANCHOR_SOURCE,
   CorporateCaValidationError,
   encodeCorporateCaArg,
   MAX_CORPORATE_CA_BYTES,
   MAX_CORPORATE_CA_CERTS,
+  resolveCorporateCa,
   resolveCorporateCaFromEnv,
+  resolveCorporateCaFromHostAnchors,
   validateCorporateCaFile,
 } from "./corporate-ca";
 
@@ -42,6 +46,15 @@ J0N7VBg2CdK6jRjKLQOSOPq3ySCicHhVRI8hxIWotif7mK3jj6D8NRalwmlHgNM=
 `;
 // PEM-shaped but not a parseable certificate.
 const BAD_PEM = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n";
+// A private-key block that must never survive into the returned/baked bundle.
+// Markers are assembled at runtime so the fixture is not itself flagged as a
+// committed private key by the secret scanners.
+const KEY_LABEL = `${"PRIVATE"} KEY`;
+const PRIVATE_KEY = `-----BEGIN ${KEY_LABEL}-----
+MIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEA3+SuP4mGqjr9Vd0F
+super-secret-key-material-that-must-not-be-baked-into-the-image
+-----END ${KEY_LABEL}-----
+`;
 const tmpRoots: string[] = [];
 
 function tmpDir(): string {
@@ -52,6 +65,13 @@ function tmpDir(): string {
 
 function writeCa(dir: string, contents = PEM, mode = 0o644): string {
   const p = path.join(dir, "corp-ca.pem");
+  fs.writeFileSync(p, contents, { mode });
+  fs.chmodSync(p, mode);
+  return p;
+}
+
+function writeAnchor(dir: string, name: string, contents = PEM, mode = 0o644): string {
+  const p = path.join(dir, name);
   fs.writeFileSync(p, contents, { mode });
   fs.chmodSync(p, mode);
   return p;
@@ -121,6 +141,31 @@ describe("validateCorporateCaFile", () => {
     const p = writeCa(tmpDir(), PEM + BAD_PEM);
     expect(() => validateCorporateCaFile(p)).toThrow(/not a valid X\.509 certificate/);
   });
+
+  it("returns only the certificate block, dropping an adjacent private key", () => {
+    const p = writeCa(tmpDir(), `${PEM}\n${PRIVATE_KEY}`);
+    const result = validateCorporateCaFile(p);
+    expect(result).toContain("BEGIN CERTIFICATE");
+    expect(result).not.toContain("PRIVATE KEY");
+    expect(result).not.toContain("super-secret-key-material");
+  });
+
+  it("drops arbitrary non-certificate text surrounding the certificate", () => {
+    const p = writeCa(tmpDir(), `# corp bundle exported 2026\n${PEM}\ntrailing secret note\n`);
+    const result = validateCorporateCaFile(p);
+    expect(result).toContain("BEGIN CERTIFICATE");
+    expect(result).not.toContain("corp bundle exported");
+    expect(result).not.toContain("trailing secret note");
+  });
+
+  it("returns a normalized bundle of exactly the validated certificate blocks", () => {
+    const p = writeCa(tmpDir(), `\n\n${PEM}\n${PEM}\n\n`);
+    const result = validateCorporateCaFile(p);
+    const blocks = result.match(/-----BEGIN CERTIFICATE-----/g) ?? [];
+    expect(blocks).toHaveLength(2);
+    expect(result.endsWith("-----END CERTIFICATE-----\n")).toBe(true);
+    expect(result.startsWith("-----BEGIN CERTIFICATE-----")).toBe(true);
+  });
 });
 
 describe("resolveCorporateCaFromEnv", () => {
@@ -128,19 +173,10 @@ describe("resolveCorporateCaFromEnv", () => {
     expect(resolveCorporateCaFromEnv({})).toBeNull();
   });
 
-  it("does not auto-scan the host trust store, honoring only env-configured sources (#6210)", () => {
-    // A corporate CA present only in a host /etc/ssl/certs/-style location must
-    // not be auto-discovered. #6210 is intentionally narrowed to the explicit
-    // bundle plus REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE/SSL_CERT_FILE fallbacks;
-    // scanning the host store would bake broad, unrelated OS trust into the
-    // image. The same file resolves only when a var points at it, proving the
-    // null is the no-auto-scan contract and not an invalid fixture.
-    const hostStore = tmpDir();
-    const hostCa = writeCa(hostStore);
+  it("does not read the host trust store from env resolution alone (#6210)", () => {
+    // resolveCorporateCaFromEnv is env-only; host anchor discovery lives in
+    // resolveCorporateCaFromHostAnchors / resolveCorporateCa.
     expect(resolveCorporateCaFromEnv({})).toBeNull();
-    expect(resolveCorporateCaFromEnv({ [CORPORATE_CA_EXPLICIT_ENV]: hostCa })?.sourcePath).toBe(
-      hostCa,
-    );
   });
 
   it("resolves the explicit env var first", () => {
@@ -187,6 +223,111 @@ describe("resolveCorporateCaFromEnv", () => {
         [CORPORATE_CA_DISABLE_ENV]: "0",
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveCorporateCaFromHostAnchors host trust-store path (#6210)", () => {
+  it("discovers a corporate root installed in a host anchor directory", () => {
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "corp-proxy-root.crt");
+    const resolved = resolveCorporateCaFromHostAnchors([anchorDir]);
+    expect(resolved?.sourceEnv).toBe(CORPORATE_CA_HOST_ANCHOR_SOURCE);
+    expect(resolved?.sourcePath).toBe(anchorDir);
+    expect(resolved?.pem).toContain("BEGIN CERTIFICATE");
+  });
+
+  it("returns the first anchor directory that yields a bundle", () => {
+    const missing = path.join(tmpDir(), "absent");
+    const present = tmpDir();
+    writeAnchor(present, "corp.crt");
+    expect(resolveCorporateCaFromHostAnchors([missing, present])?.sourcePath).toBe(present);
+  });
+
+  it("returns null when no anchor directory exists", () => {
+    expect(
+      resolveCorporateCaFromHostAnchors([path.join(tmpDir(), "nope"), path.join(tmpDir(), "gone")]),
+    ).toBeNull();
+  });
+
+  it("ignores non-anchor files and empty directories", () => {
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "README.txt", "not a cert\n");
+    expect(resolveCorporateCaFromHostAnchors([anchorDir])).toBeNull();
+  });
+
+  it("skips a directory whose aggregate exceeds the certificate cap", () => {
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "many.crt", PEM.repeat(MAX_CORPORATE_CA_CERTS + 1));
+    expect(resolveCorporateCaFromHostAnchors([anchorDir])).toBeNull();
+  });
+
+  it("aggregates multiple anchor files into one bundle", () => {
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "root-a.crt");
+    writeAnchor(anchorDir, "root-b.crt");
+    const resolved = resolveCorporateCaFromHostAnchors([anchorDir]);
+    expect(resolved?.pem.match(/-----BEGIN CERTIFICATE-----/g)).toHaveLength(2);
+  });
+
+  it("accepts .pem/.cer anchors in an operator-supplied directory", () => {
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "corp-root.pem");
+    expect(resolveCorporateCaFromHostAnchors([anchorDir])?.pem).toContain("BEGIN CERTIFICATE");
+  });
+
+  it("discovers a corporate root nested in an anchor subdirectory", () => {
+    // update-ca-certificates trusts .crt files recursively, e.g.
+    // /usr/local/share/ca-certificates/acme/root.crt.
+    const anchorDir = tmpDir();
+    const sub = path.join(anchorDir, "acme");
+    fs.mkdirSync(sub);
+    writeAnchor(sub, "root.crt");
+    expect(resolveCorporateCaFromHostAnchors([anchorDir])?.pem).toContain("BEGIN CERTIFICATE");
+  });
+});
+
+describe("resolveCorporateCa env then host anchors (#6210)", () => {
+  it("prefers an env-configured CA over the host anchor directory", () => {
+    const envCa = writeCa(tmpDir());
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "corp.crt");
+    const resolved = resolveCorporateCa(
+      { [CORPORATE_CA_EXPLICIT_ENV]: envCa },
+      { hostAnchorDirs: [anchorDir] },
+    );
+    expect(resolved?.sourceEnv).toBe(CORPORATE_CA_EXPLICIT_ENV);
+    expect(resolved?.sourcePath).toBe(envCa);
+  });
+
+  it("falls back to the host anchor directory when no env var is set", () => {
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "corp.crt");
+    const resolved = resolveCorporateCa({}, { hostAnchorDirs: [anchorDir] });
+    expect(resolved?.sourceEnv).toBe(CORPORATE_CA_HOST_ANCHOR_SOURCE);
+  });
+
+  it("honors the disable opt-out even when a host anchor exists", () => {
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "corp.crt");
+    expect(
+      resolveCorporateCa({ [CORPORATE_CA_DISABLE_ENV]: "0" }, { hostAnchorDirs: [anchorDir] }),
+    ).toBeNull();
+  });
+
+  it("returns null when neither env nor host anchors provide a CA", () => {
+    expect(resolveCorporateCa({}, { hostAnchorDirs: [path.join(tmpDir(), "absent")] })).toBeNull();
+  });
+
+  it("reads host anchor directories from the anchor-dirs env override", () => {
+    const anchorDir = tmpDir();
+    writeAnchor(anchorDir, "corp.crt");
+    const resolved = resolveCorporateCa({ [CORPORATE_CA_ANCHOR_DIRS_ENV]: anchorDir });
+    expect(resolved?.sourceEnv).toBe(CORPORATE_CA_HOST_ANCHOR_SOURCE);
+    expect(resolved?.sourcePath).toBe(anchorDir);
+  });
+
+  it("disables host-store scanning when the anchor-dirs override is empty", () => {
+    expect(resolveCorporateCa({ [CORPORATE_CA_ANCHOR_DIRS_ENV]: "" })).toBeNull();
   });
 });
 

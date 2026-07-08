@@ -21,7 +21,7 @@ import {
 import {
   CORPORATE_CA_EXPLICIT_ENV,
   encodeCorporateCaArg,
-  resolveCorporateCaFromEnv,
+  resolveCorporateCa,
 } from "./corporate-ca";
 import {
   dockerfileInstructions,
@@ -328,10 +328,11 @@ export function patchStagedDockerfile(
     );
   }
   // Corporate proxy CA import (#6210). When the host exposes an operator
-  // corporate CA bundle, bake its base64 so the entrypoint can append it to
-  // the OpenShell trust bundle at runtime (never replacing it). The replace is
-  // a silent no-op on custom/legacy Dockerfiles that predate this ARG.
-  const corporateCa = resolveCorporateCaFromEnv(process.env);
+  // corporate CA bundle — via env var or an installed host trust-store anchor —
+  // bake its base64 so the entrypoint can append it to the OpenShell trust
+  // bundle at runtime (never replacing it). The replace is a silent no-op on
+  // custom/legacy Dockerfiles that predate this ARG.
+  const corporateCa = resolveCorporateCa(process.env);
   if (corporateCa) {
     const corporateCaArgPattern = /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m;
     if (corporateCaArgPattern.test(dockerfile)) {
