@@ -692,10 +692,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
     ]);
   });
-
   it("ships a headless inference acceptance check for Deep Agents Code", () => {
     const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
-
     for (const expected of [
       'sandbox_exec "test -d /sandbox/.deepagents"',
       "command -v dcode",
@@ -714,6 +712,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       '-- dcode "$@"',
       "sandbox_dcode_wrapper_contract",
       "NEMOCLAW_DCODE_WRAPPER_CHAIN_OK",
+      "NEMOCLAW_DCODE_EMPTY_EXIT",
+      "login-shell dcode rejects an empty non-interactive prompt with exit 2",
+      "direct-exec dcode rejects an empty non-interactive prompt with exit 2",
       "nemoclaw_connect_probe",
       "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}",
       "connect --probe-only 2>&1",

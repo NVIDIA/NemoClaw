@@ -29,6 +29,7 @@ export interface RebuildBackupPhaseInput {
   preparedRecoveryManifest: RebuildBackupManifest;
   messagingPlan: SandboxMessagingPlan | null;
   webSearchConfig: WebSearchConfig | null;
+  force?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
@@ -36,6 +37,7 @@ export interface RebuildBackupPhaseInput {
 
 export interface RebuildBackupPhaseResult {
   backupManifest: RebuildBackupManifest;
+  backupWasForceSkipped: boolean;
   policyPresets: string[];
   sessionPolicyPresets: string[] | null;
 }
@@ -140,8 +142,11 @@ export function runRebuildBackupPhase(
       input.log,
       input.relockShieldsIfNeeded,
       input.bail,
+      { force: input.force },
     );
   if (backupManifest === undefined) return null;
+  const backupWasForceSkipped =
+    input.force === true && !input.staleRecovery && backupManifest === null;
 
   const registryPolicyPresets = Array.isArray(input.sandboxEntry.policies)
     ? input.sandboxEntry.policies.filter(
@@ -173,5 +178,5 @@ export function runRebuildBackupPhase(
     true,
   ).policyPresets;
 
-  return { backupManifest, policyPresets, sessionPolicyPresets };
+  return { backupManifest, backupWasForceSkipped, policyPresets, sessionPolicyPresets };
 }

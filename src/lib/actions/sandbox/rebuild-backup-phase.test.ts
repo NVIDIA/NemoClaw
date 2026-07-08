@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as sandboxState from "../../state/sandbox";
 import {
   normalizeRebuildObservabilityPolicyPresets,
   normalizeRebuildTargetPolicyPresets,
@@ -11,6 +12,10 @@ import {
 } from "./rebuild-backup-phase";
 
 describe("rebuild web-search policy normalization", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("keeps only the durable Tavily provider and removes stale nous-web", () => {
     expect(
       normalizeRebuildWebSearchPolicyPresets(
@@ -85,6 +90,37 @@ describe("rebuild web-search policy normalization", () => {
 
     expect(result?.policyPresets).toEqual([]);
     expect(result?.sessionPolicyPresets).toEqual([]);
+    expect(result?.backupWasForceSkipped).toBe(false);
+  });
+
+  it("records when --force skips a total backup failure", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".openclaw"],
+      failedFiles: ["openclaw.json"],
+    });
+
+    const result = runRebuildBackupPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw", policies: [] },
+      staleRecovery: false,
+      preparedRecoveryManifest: null,
+      messagingPlan: null,
+      webSearchConfig: null,
+      force: true,
+      log: vi.fn(),
+      bail: (message): never => {
+        throw new Error(message);
+      },
+      relockShieldsIfNeeded: () => true,
+    });
+
+    expect(result?.backupManifest).toBeNull();
+    expect(result?.backupWasForceSkipped).toBe(true);
   });
 
   it("removes stale built-in observability egress from disabled and restricted rebuild targets", () => {
