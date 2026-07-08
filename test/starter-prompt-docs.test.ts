@@ -26,7 +26,8 @@ const localCredentialFormSource = path.join(
   "local-credential-form.html",
 );
 const localCredentialFormUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/local-credential-form.html";
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/23dc96f4c60693ec47d09d442c2149743f7ede11/docs/resources/local-credential-form.html";
+// Keep the digest split so gitleaks does not misclassify this test fixture as an API key.
 const localCredentialFormSha256 = [
   "57068851991cfa3e",
   "547827e564d1c842",
@@ -291,7 +292,8 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain(localCredentialFormUrl);
     expect(promptSource).toContain(localCredentialFormSha256);
     expect(createHash("sha256").update(formSource).digest("hex")).toBe(localCredentialFormSha256);
-    expect(localCredentialFormUrl).toContain("/main/");
+    expect(localCredentialFormUrl).toMatch(/\/[0-9a-f]{40}\//);
+    expect(localCredentialFormUrl).not.toMatch(/\/(?:main|master)\//);
     expect(promptSource).toContain("Do not generate, rewrite, or redesign credential-form HTML.");
     expect(promptSource).toContain("serve it from a helper bound to \\`127.0.0.1\\`");
     expect(promptSource).toContain("?fields=NVIDIA_INFERENCE_API_KEY:secret");

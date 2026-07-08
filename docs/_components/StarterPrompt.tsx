@@ -92,7 +92,7 @@ Instead, collect the required choices from me first, one clickable selection at 
 When you need an API key, bot token, app token, or other secret, prefer the checked-in NemoClaw local credential form instead of chat.
 
 - Ask permission before opening a local credential form.
-- Do not generate, rewrite, or redesign credential-form HTML. Use the repository form template from this URL exactly: https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/local-credential-form.html
+- Do not generate, rewrite, or redesign credential-form HTML. Use the repository form template from this URL exactly: https://raw.githubusercontent.com/NVIDIA/NemoClaw/23dc96f4c60693ec47d09d442c2149743f7ede11/docs/resources/local-credential-form.html
 - Fetch that template or use the local repo copy when available, verify its SHA-256 digest is \`57068851991cfa3e547827e564d1c842243a84c89d3dd14d5900c81d1f7b740b\`, write the exact bytes into a private temporary directory, then serve it from a helper bound to \`127.0.0.1\` on a random local port.
 - Open the served loopback URL, not the raw GitHub URL, in your coding-agent UI's browser. Configure fields with query parameters such as \`?fields=NVIDIA_INFERENCE_API_KEY:secret\` or \`?fields=NEMOCLAW_ENDPOINT_URL:text,NEMOCLAW_MODEL:text,COMPATIBLE_API_KEY:secret\`.
 - Implement only the tiny loopback helper around the template: serve the HTML file, accept its \`POST /submit\` JSON payload, keep submitted values in memory, and expose no external network listener. When serving the HTML response, include the HTTP header \`Content-Security-Policy: frame-ancestors 'none'\` because browsers do not enforce that directive from a meta tag.
