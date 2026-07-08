@@ -32,7 +32,7 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiresManualExpansion).toBe(false);
   });
 
-  it("keeps the canonical cloud-onboard live test in the platform floor", () => {
+  it("keeps the canonical cloud-onboard live test in the platform floor (#6446)", () => {
     const canonical = plan("test/e2e/live/cloud-onboard.test.ts");
     const ordinaryLiveTest = plan("test/e2e/live/full.test.ts");
 

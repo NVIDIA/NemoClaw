@@ -59,7 +59,7 @@ function loadAdvisorSchema(): Record<string, unknown> {
 }
 
 describe("PR review advisor turn trace", () => {
-  it("keeps repeated risk-plan turn context bounded for broad PRs", () => {
+  it("keeps repeated risk-plan turn context bounded for broad PRs (#6446)", () => {
     const changedFiles = Array.from(
       { length: 3000 },
       (_, index) => `src/lib/actions/sandbox/${"x".repeat(180)}-${index}.ts`,
@@ -92,7 +92,7 @@ describe("PR review advisor turn trace", () => {
     expect(exactMetadata).not.toContain(changedFiles[0]);
   });
 
-  it("writes split prompt artifacts with stable ordered filenames", () => {
+  it("writes split prompt artifacts with stable ordered filenames (#6446)", () => {
     const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-prompts-"));
     const turns = buildPromptTurns({
       metadata: metadata(),
@@ -151,7 +151,7 @@ describe("PR review advisor turn trace", () => {
     }
   });
 
-  it("writes each settled advisor turn to a stable traversal-safe text artifact", () => {
+  it("writes each settled advisor turn to a stable traversal-safe text artifact (#6446)", () => {
     const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-turns-"));
     const turnDir = path.join(tmp, "turns");
     try {
@@ -184,7 +184,7 @@ describe("PR review advisor turn trace", () => {
     }
   });
 
-  it("settles completed, rejected, timed-out, and callback-failed turns with partial text", async () => {
+  it("settles completed, rejected, timed-out, and callback-failed turns with partial text (#6446)", async () => {
     const completed: string[] = [];
     const success = await settleAdvisorTurn({
       index: 1,
@@ -193,7 +193,9 @@ describe("PR review advisor turn trace", () => {
       run: async () => {},
       readText: () => "complete notes",
       readError: () => undefined,
-      onTurnComplete: (turn) => completed.push(`${turn.status}:${turn.text}`),
+      onTurnComplete: (turn) => {
+        completed.push(`${turn.status}:${turn.text}`);
+      },
     });
     const timedOut = await settleAdvisorTurn({
       index: 2,
@@ -204,7 +206,9 @@ describe("PR review advisor turn trace", () => {
       },
       readText: () => "partial notes before timeout",
       readError: () => undefined,
-      onTurnComplete: (turn) => completed.push(`${turn.status}:${turn.text}`),
+      onTurnComplete: (turn) => {
+        completed.push(`${turn.status}:${turn.text}`);
+      },
     });
     const rejectedWithoutReason = await settleAdvisorTurn({
       index: 3,
@@ -225,15 +229,26 @@ describe("PR review advisor turn trace", () => {
         throw new Error("artifact disk full");
       },
     });
-    const callbackRejectedWithoutReason = await settleAdvisorTurn({
+    const asyncCallbackFailed = await settleAdvisorTurn({
       index: 5,
       total: 7,
       name: "ci-operations",
       run: async () => {},
       readText: () => "operations notes",
       readError: () => undefined,
+      onTurnComplete: async () => {
+        throw new Error("async artifact disk full");
+      },
+    });
+    const callbackRejectedWithoutReason = await settleAdvisorTurn({
+      index: 6,
+      total: 7,
+      name: "reconcile-findings",
+      run: async () => {},
+      readText: () => "reconciliation notes",
+      readError: () => undefined,
       onTurnComplete: () => {
-        throw undefined;
+        return Promise.reject(undefined);
       },
     });
 
@@ -250,6 +265,7 @@ describe("PR review advisor turn trace", () => {
       turn: { status: "failed", error: "unknown advisor turn failure" },
     });
     expect(callbackFailed.callbackError).toBe("artifact disk full");
+    expect(asyncCallbackFailed.callbackError).toBe("async artifact disk full");
     expect(callbackRejectedWithoutReason.callbackError).toBe(
       "unknown advisor turn callback failure",
     );
@@ -259,7 +275,7 @@ describe("PR review advisor turn trace", () => {
     ]);
   });
 
-  it("treats session, provider-turn, and turn-artifact errors as fatal execution evidence", () => {
+  it("treats session, provider-turn, and turn-artifact errors as fatal execution evidence (#6446)", () => {
     expect(
       advisorExecutionErrors({
         text: "partial",
