@@ -264,6 +264,13 @@ if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "fetch-probe-command-shape" ]
   exit 0
 fi
 
+if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "fetch-success-classification" ]; then
+  expect_fetch_reached "fixture host" "https://approved.example/"
+  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+  [ "$FAILED" -eq 0 ] || exit 1
+  exit 0
+fi
+
 if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "fetch-blocked-classification" ]; then
   expect_fetch_blocked "fixture host" "https://blocked.example/"
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"

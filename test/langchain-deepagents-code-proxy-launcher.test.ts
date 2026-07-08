@@ -279,7 +279,9 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       encoding: "utf8",
     });
     expect(policyRestart.status, policyRestart.stderr).toBe(0);
-    expect(fs.readFileSync(markerFile, "utf8")).toBe("1\n");
+    const restartedLaunch = runLauncher(launcherPath, [], {});
+    expect(restartedLaunch.status, restartedLaunch.stderr).toBe(0);
+    expect(restartedLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=1");
 
     fs.rmSync(ephemeralDir, { recursive: true, force: true });
     expect(fs.existsSync(markerFile)).toBe(true);

@@ -288,9 +288,28 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   });
 
   it.each([
-    ["accepts explicit denial evidence", "FETCH_BLOCKED:network policy denied", 0, "1 passed"],
-    ["rejects an unclassified fetch error", "FETCH_ERROR:opaque 403", 1, "lacked denial evidence"],
-  ] as const)("%s from the fetch_url probe", (_label, fixture, status, expected) => {
+    [
+      "accepts an explicit non-empty success response",
+      "fetch-success-classification",
+      "FETCH_SUCCESS:200:1234",
+      0,
+      "1 passed",
+    ],
+    [
+      "accepts explicit denial evidence",
+      "fetch-blocked-classification",
+      "FETCH_BLOCKED:network policy denied",
+      0,
+      "1 passed",
+    ],
+    [
+      "rejects an unclassified fetch error",
+      "fetch-blocked-classification",
+      "FETCH_ERROR:opaque 403",
+      1,
+      "lacked denial evidence",
+    ],
+  ] as const)("%s from the fetch_url probe", (_label, selfTest, fixture, status, expected) => {
     const result = spawnSync(
       "bash",
       [
@@ -302,7 +321,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       {
         encoding: "utf8",
         env: {
-          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "fetch-blocked-classification",
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: selfTest,
           NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE: fixture,
           PATH: process.env.PATH ?? "/usr/bin:/bin",
         },
