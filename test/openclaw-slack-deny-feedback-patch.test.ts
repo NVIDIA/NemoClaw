@@ -18,6 +18,17 @@ const SLACK_GUARD = path.join(
   "runtime",
   "slack-channel-guard.ts",
 );
+const WHATSAPP_QR_COMPACT = path.join(
+  import.meta.dirname,
+  "..",
+  "src",
+  "lib",
+  "messaging",
+  "channels",
+  "whatsapp",
+  "runtime",
+  "whatsapp-qr-compact.ts",
+);
 
 // Minimal stand-in for the compiled @openclaw/slack prepare module: a denying
 // channel gate that mirrors the real dist's deny-log line and exposes the same
@@ -79,12 +90,17 @@ type FeedbackCall = { method: string; channel?: string; user?: string; text?: st
 
 function runGuardProbe(
   prepareFile: string,
-  options: { loadMode?: "require" | "import"; requireGuardTwice?: boolean } = {},
+  options: {
+    loadMode?: "require" | "import";
+    requireGuardTwice?: boolean;
+    requireWhatsappQrCompact?: boolean;
+  } = {},
 ) {
   const script = `
 const guard = ${JSON.stringify(SLACK_GUARD)};
 require(guard);
 ${options.requireGuardTwice ? "require(guard);" : ""}
+${options.requireWhatsappQrCompact ? `require(${JSON.stringify(WHATSAPP_QR_COMPACT)});` : ""}
 const { pathToFileURL } = require("node:url");
 let prepareSlackMessage;
 async function loadPrepareSlackMessage() {
@@ -254,6 +270,26 @@ describe("OpenClaw Slack denial-feedback patch", () => {
         channel: "C1",
         user: "U999DENIED",
       });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("composes the Slack and WhatsApp synchronous loaders for ESM imports (#6467)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-whatsapp-loaders-"));
+    const prepareFile = writeSlackPackage(tmp, { moduleType: "esm" });
+    try {
+      const { result, output } = runGuardProbe(prepareFile, {
+        loadMode: "import",
+        requireWhatsappQrCompact: true,
+      });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stderr).not.toMatch(/loadSync|returned for the "source" from the "load" hook/u);
+
+      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      expect(mention.result).toBeNull();
+      expect(mention.calls).toHaveLength(1);
+      expect(mention.calls[0].method).toBe("chat.postEphemeral");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -10,16 +10,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  createOpenClawQrTerminalLoaderSource,
+  createOpenClawQrTerminalLoadHook,
   describeOpenClawQrTerminalPatchSkip,
+  isOpenClawQrTerminalRendererSource,
   isQrcodePackage,
   isQrcodeTerminalPackage,
-  isOpenClawQrTerminalRendererSource,
   isReviewedOpenClawQrTerminalRendererIntegrity,
   patchOpenClawQrTerminalRendererSource,
   patchQrcode,
   patchQrcodeTerminal,
   REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
+  registerOpenClawQrTerminalSourceLoader,
   warnWhatsappQrCompact,
 } from "./whatsapp-qr-compact";
 import { makeQrcodeLoadHook } from "./whatsapp-qr-compact-test-helpers";
@@ -167,14 +168,45 @@ describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
     expect(patchOpenClawQrTerminalRendererSource(patched)).toBe(patched);
   });
 
-  it("loader source computes renderer integrity before applying the source rewrite", () => {
-    const loader = createOpenClawQrTerminalLoaderSource();
+  it("passes unrelated module source through the synchronous load hook", () => {
+    const load = createOpenClawQrTerminalLoadHook();
+    const result = { format: "module", source: "const unrelated = true;" };
 
-    expect(loader).toContain('import { createHash } from "node:crypto";');
-    expect(loader).toContain(REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256);
-    expect(loader).toContain("const integrity = sha256Hex(source);");
-    expect(loader).toContain("warnOpenClawQrPatchSkip(skipReason)");
-    expect(loader).toContain("patchOpenClawQrTerminalRendererSource(source, integrity)");
+    expect(load("file:///tmp/unrelated.mjs", {}, () => result)).toBe(result);
+  });
+
+  it("fails closed when the synchronous load hook sees an unreviewed renderer", () => {
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const load = createOpenClawQrTerminalLoadHook();
+    const result = { format: "module", source: OPENCLAW_QR_RENDERER_SOURCE };
+    try {
+      expect(load("file:///tmp/openclaw-renderer.mjs", {}, () => result)).toBe(result);
+      expect(write).toHaveBeenCalledWith(expect.stringContaining("integrity is unreviewed"));
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it("rewrites a reviewed renderer through the synchronous load hook", () => {
+    const load = createOpenClawQrTerminalLoadHook(
+      () => REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
+    );
+    const result = { format: "module", source: Buffer.from(OPENCLAW_QR_RENDERER_SOURCE) };
+
+    expect(load("file:///tmp/openclaw-renderer.mjs", {}, () => result)).toMatchObject({
+      format: "module",
+      source: expect.stringContaining("const COMPACT_MARGIN_MODULES = 4;"),
+    });
+  });
+
+  it("registers a synchronous source hook for OpenClaw module loading (#6467)", () => {
+    const registerHooks = vi.fn();
+    const register = vi.fn();
+
+    expect(registerOpenClawQrTerminalSourceLoader({ register, registerHooks })).toBe(true);
+    expect(registerHooks).toHaveBeenCalledOnce();
+    expect(registerHooks).toHaveBeenCalledWith({ load: expect.any(Function) });
+    expect(register).not.toHaveBeenCalled();
   });
 
   it("emits non-secret loader diagnostics when the source rewrite is skipped", () => {
