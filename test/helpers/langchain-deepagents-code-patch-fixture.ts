@@ -106,6 +106,7 @@ def cli_main():
         "OTEL_ENABLED",
     )
     assert all(os.environ.get(name) == "false" for name in tracing_flags)
+    assert os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] == "1"
     assert os.environ["HOME"] == "/sandbox"
     print("managed-posture-ok")
 `,

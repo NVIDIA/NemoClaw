@@ -894,6 +894,9 @@ def assert_safe_runtime() -> None:
     os.environ["OPENAI_BASE_URL"] = base_url
     os.environ["NEMOCLAW_INFERENCE_BASE_URL"] = base_url
     os.environ["LANGGRAPH_NO_VERSION_CHECK"] = "true"
+    # LangGraph CLI otherwise posts command analytics to a third-party
+    # Supabase collector. Managed sandboxes keep that optional egress closed.
+    os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
     os.environ["OTEL_ENABLED"] = "false"
     for name in (
         "OPENAI_PROXY",

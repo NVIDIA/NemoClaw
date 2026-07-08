@@ -82,6 +82,8 @@ describe("LangChain Deep Agents Code managed package patch", () => {
   });
 
   it.each([
+    ["entrypoint", "__main__.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
+    ["main", "main.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     [
       "agent",
       "agent.py",
@@ -97,6 +99,8 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "tui/widgets/welcome.py",
       "_nemoclaw_original_welcome_banner_update_model = WelcomeBanner.update_model",
     ],
+    ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
+    ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
@@ -111,6 +115,24 @@ describe("LangChain Deep Agents Code managed package patch", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`Managed package ${boundary} patch is incomplete`);
+    expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
+  });
+
+  it("rejects a fully marked package with a stale managed analytics guard", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const target = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
+    const anchor = 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"';
+    const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # stale`);
+    fs.writeFileSync(target, corrupted, "utf8");
+
+    const result = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Managed package patch is partial: helper is missing or stale");
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
 
@@ -194,7 +216,11 @@ else:
     patchFixture(tempDir);
     for (const args of [[], ["tools", "list"], ["tools", "help"]]) {
       const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
-        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          LANGGRAPH_CLI_NO_ANALYTICS: "0",
+        },
         encoding: "utf8",
       });
       expect(result.status, `${args.join(" ")} failed: ${result.stderr}`).toBe(0);
@@ -871,19 +897,75 @@ async def validate():
         assert "managed OpenAI-compatible provider" in str(exc)
     else:
         raise AssertionError("non-managed model provider was allowed")
+    os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "0"
     child_env = server._build_server_env()
     assert child_env["LANGGRAPH_NO_VERSION_CHECK"] == "true"
+    assert child_env["LANGGRAPH_CLI_NO_ANALYTICS"] == "1"
     assert child_env["OTEL_ENABLED"] == "false"
     assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in child_env
     assert "OTEL_EXPORTER_OTLP_HEADERS" not in child_env
+    assert os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] == "0"
 
     os.environ["OPENAI_BASE_URL"] = "https://attacker.example/v1"
     os.environ["LANGGRAPH_NO_VERSION_CHECK"] = "false"
+    os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "0"
     os.environ["OTEL_ENABLED"] = "true"
     _nemoclaw_managed.assert_safe_runtime()
     assert os.environ["OPENAI_BASE_URL"] == "https://inference.local/v1"
     assert os.environ["LANGGRAPH_NO_VERSION_CHECK"] == "true"
+    assert os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] == "1"
     assert os.environ["OTEL_ENABLED"] == "false"
+
+    analytics_child = server.ServerProcess(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os; "
+                "assert os.environ['LANGGRAPH_NO_VERSION_CHECK'] == 'true'; "
+                "assert os.environ['LANGGRAPH_CLI_NO_ANALYTICS'] == '1'; "
+                "assert os.environ['OTEL_ENABLED'] == 'false'; "
+                "assert 'OPENAI_PROXY' not in os.environ; "
+                "assert 'OTEL_EXPORTER_OTLP_ENDPOINT' not in os.environ; "
+                "assert 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT' not in os.environ; "
+                "assert 'OTEL_EXPORTER_OTLP_HEADERS' not in os.environ; "
+                "assert 'OTEL_EXPORTER_OTLP_TRACES_HEADERS' not in os.environ"
+            ),
+        ],
+        os.getcwd(),
+        {
+            "LANGGRAPH_NO_VERSION_CHECK": "false",
+            "LANGGRAPH_CLI_NO_ANALYTICS": "0",
+            "OTEL_ENABLED": "true",
+            "OPENAI_PROXY": "http://attacker.example:8080",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
+            "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
+            "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+        },
+    )
+    analytics_child._persistent_env_overrides.update({
+        "LANGGRAPH_NO_VERSION_CHECK": "false",
+        "LANGGRAPH_CLI_NO_ANALYTICS": "false",
+        "OTEL_ENABLED": "true",
+        "OPENAI_PROXY": "http://attacker.example:8080",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
+        "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+    })
+    analytics_child._env_overrides.update({
+        "LANGGRAPH_NO_VERSION_CHECK": "0",
+        "LANGGRAPH_CLI_NO_ANALYTICS": "0",
+        "OTEL_ENABLED": "1",
+        "OPENAI_PROXY": "http://attacker.example:8080",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
+        "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+    })
+    await analytics_child.start()
+    await analytics_child.restart()
 
     project = Path(${JSON.stringify(tempDir)}) / "project"
     project.mkdir()
