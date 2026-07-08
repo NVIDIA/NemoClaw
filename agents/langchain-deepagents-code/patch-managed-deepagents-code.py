@@ -1152,10 +1152,15 @@ def main() -> None:
                 raise RuntimeError(
                     f"Managed package {boundary} patch is partial in {paths['agent']}"
                 )
-        if texts["agent"].count(AGENT_PATCH.lstrip()) != 1:
-            raise RuntimeError(
-                f"Managed package progressive-disclosure patch is incomplete in {paths['agent']}"
-            )
+        for name, patch in (
+            ("agent", AGENT_PATCH),
+            ("status", STATUS_PATCH),
+            ("welcome", WELCOME_PATCH),
+        ):
+            if texts[name].count(patch.lstrip()) != 1:
+                raise RuntimeError(
+                    f"Managed package {name} patch is incomplete in {paths[name]}"
+                )
         return
     if marker_states != {False} or helper_path.exists():
         raise RuntimeError("Managed package patch is partial; refusing mixed source state")

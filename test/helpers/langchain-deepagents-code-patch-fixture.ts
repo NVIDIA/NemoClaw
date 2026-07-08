@@ -10,6 +10,7 @@ import { addDarwinFcntlSealConstants } from "./darwin-fcntl-seal-fixture";
 
 export const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 export const patcher = path.join(agentDir, "patch-managed-deepagents-code.py");
+const packageFixtureDirs = new Set<string>();
 
 export function writeFixtureFile(root: string, relativePath: string, content: string): void {
   const target = path.join(root, relativePath);
@@ -19,6 +20,7 @@ export function writeFixtureFile(root: string, relativePath: string, content: st
 
 export function createPackageFixture(version = "0.1.34"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
+  packageFixtureDirs.add(tempDir);
   const packageDir = path.join(tempDir, "deepagents_code");
   writeFixtureFile(packageDir, "__init__.py", '"""Test package."""');
   writeFixtureFile(
@@ -603,6 +605,14 @@ Version: ${version}
   fs.chmodSync(managedBaseUrlFile, 0o444);
   return tempDir;
 }
+
+export function cleanupPackageFixtures(): void {
+  for (const tempDir of packageFixtureDirs) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+  packageFixtureDirs.clear();
+}
+
 export function patchFixture(tempDir: string): void {
   execFileSync("python3", [patcher], {
     env: { PATH: process.env.PATH, PYTHONPATH: tempDir },

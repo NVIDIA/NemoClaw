@@ -4,9 +4,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { addDarwinFcntlSealConstants } from "./helpers/darwin-fcntl-seal-fixture";
 import {
+  cleanupPackageFixtures,
   createPackageFixture,
   patcher,
   patchFixture,
@@ -18,6 +19,8 @@ const progressiveDisclosureHarness = path.join(
   "fixtures",
   "deepagents-progressive-disclosure-harness.py",
 );
+
+afterEach(cleanupPackageFixtures);
 
 describe("LangChain Deep Agents Code managed package patch", () => {
   it("fails fast when the Darwin fcntl seal injection anchor is missing", () => {
@@ -76,6 +79,39 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ]) {
       expect(main).toContain(expected);
     }
+  });
+
+  it.each([
+    [
+      "agent",
+      "agent.py",
+      "_nemoclaw_original_build_model_identity_section = build_model_identity_section",
+    ],
+    [
+      "status",
+      "tui/widgets/status.py",
+      "_nemoclaw_original_status_bar_set_model = StatusBar.set_model",
+    ],
+    [
+      "welcome",
+      "tui/widgets/welcome.py",
+      "_nemoclaw_original_welcome_banner_update_model = WelcomeBanner.update_model",
+    ],
+  ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const target = path.join(tempDir, "deepagents_code", relativePath);
+    const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # corrupt`);
+    fs.writeFileSync(target, corrupted, "utf8");
+
+    const result = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`Managed package ${boundary} patch is incomplete`);
+    expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
 
   it("preserves upstream MCP JSON diagnostics around the managed descriptor loader", () => {
