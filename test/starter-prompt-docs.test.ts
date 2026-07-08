@@ -28,10 +28,10 @@ const localCredentialFormSource = path.join(
 const localCredentialFormUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/f11ed0cadfc215cbedcb9bd25da290f9436df1e2/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 = [
-  "83b79b6420ff2c9e",
-  "82c95da6eb714d51",
-  "e118325514df911d",
-  "8ebf5d4327ebda79",
+  "93ce24d100c4448f",
+  "c3b206365148cb6c",
+  "774d84a0f88aae57",
+  "f5ccdb16be8a3b7d",
 ].join("");
 const starterPromptPages = [
   "docs/index.mdx",
@@ -299,7 +299,7 @@ describe("starter prompt docs CTA", () => {
     expect(formSource).not.toContain("sessionStorage");
   });
 
-  it("warns and disables submit when credential fields are missing or invalid (#5048)", () => {
+  it("warns and disables submit when credential fields are missing or invalid (#5048)", async () => {
     const missing = runCredentialForm("http://127.0.0.1:4123/local-credential-form.html");
     expect(missing.submitButton.disabled).toBe(true);
     expect(missing.fieldsElement.children).toHaveLength(0);
@@ -308,11 +308,13 @@ describe("starter prompt docs CTA", () => {
     const invalid = runCredentialForm(
       "http://127.0.0.1:4123/local-credential-form.html?fields=bad-name:secret,VALID_NAME:text",
     );
-    expect(invalid.submitButton.disabled).toBe(false);
+    expect(invalid.submitButton.disabled).toBe(true);
     expect(invalid.fieldsElement.children.map((child) => child.textContent)).toContain(
       "Valid Name",
     );
     expect(invalid.resultElement.allText()).toContain("Rejected specs: bad-name:secret");
+    await invalid.submit();
+    expect(invalid.fetchCalls).toHaveLength(0);
 
     const allInvalid = runCredentialForm(
       "http://127.0.0.1:4123/local-credential-form.html?fields=bad-name:secret",
@@ -351,6 +353,9 @@ describe("starter prompt docs CTA", () => {
     );
     expect(nonLoopback.submitButton.disabled).toBe(true);
     expect(nonLoopback.originNotice.classList.has("warning")).toBe(true);
+    await nonLoopback.submit();
+    expect(nonLoopback.submitButton.disabled).toBe(true);
+    expect(nonLoopback.fetchCalls).toHaveLength(0);
 
     const helperFailure = runCredentialForm(
       "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret",
