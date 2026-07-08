@@ -37,8 +37,35 @@ vi.mock("../../../agent/defs", () => ({
 vi.mock("../../../shields/audit", () => ({
   readRecentShieldsAutoRestore: vi.fn(() => ({ kind: "none" })),
 }));
+vi.mock("../../../../../nemoclaw/src/onboard/config.js", () => ({
+  loadOnboardConfig: vi.fn(() => null),
+  describeOnboardEndpoint: vi.fn(() => "build.nvidia.com"),
+  describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
+}));
 
+import registerPlugin, { type OpenClawPluginApi } from "../../../../../nemoclaw/src/index";
 import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
+
+function createPluginApi(): OpenClawPluginApi {
+  return {
+    id: "nemoclaw",
+    name: "NemoClaw",
+    version: "0.1.0",
+    config: {},
+    pluginConfig: {},
+    logger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    },
+    registerCommand: vi.fn(),
+    registerProvider: vi.fn(),
+    registerService: vi.fn(),
+    resolvePath: vi.fn((value: string) => value),
+    on: vi.fn(),
+  };
+}
 
 describe("runAgentPassthrough", () => {
   beforeEach(() => {
@@ -84,6 +111,39 @@ describe("runAgentPassthrough", () => {
       ["openclaw", "agent", "--agent", "work", "--session-id", "s-1", "-m", "ping"],
       { tty: false },
     );
+  });
+
+  it("keeps a non-JSON agent reply isolated from the plugin banner (#5654)", async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(((chunk) => {
+      stderr.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    const exec = vi.fn(async () => {
+      registerPlugin(createPluginApi());
+      process.stdout.write("ack\n");
+    });
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+
+    try {
+      await runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "main", "-m", "ping"] },
+        { exec, getRecentShieldsAutoRestore: () => ({ kind: "none" }) },
+      );
+    } finally {
+      stdoutWrite.mockRestore();
+      stderrWrite.mockRestore();
+    }
+
+    expect(stdout.join("")).toBe("ack\n");
+    expect(stdout.join("")).not.toContain("NemoClaw registered");
+    expect(stderr.join("")).toContain("NemoClaw registered");
   });
 
   it("uses the captured JSON path for `openclaw agent --json` so provenance can be emitted on stderr", async () => {
