@@ -246,10 +246,13 @@ else
   restart_mode=manual
 fi
 for attempt in $(seq 1 60); do
-  if curl -fsS --connect-timeout 2 http://127.0.0.1:11434/api/tags >/dev/null; then
-    echo "restart_mode=$restart_mode"
-    curl -fsS http://127.0.0.1:11434/api/ps
-    exit 0
+  tags_json="$(curl -fsS --connect-timeout 2 http://127.0.0.1:11434/api/tags 2>/dev/null || true)"
+  if [ -n "$tags_json" ]; then
+    ps_json="$(curl -fsS --connect-timeout 2 http://127.0.0.1:11434/api/ps 2>/dev/null || true)"
+    if [ -n "$ps_json" ]; then
+      printf 'restart_mode=%s\n%s\n' "$restart_mode" "$ps_json"
+      exit 0
+    fi
   fi
   sleep 1
 done
