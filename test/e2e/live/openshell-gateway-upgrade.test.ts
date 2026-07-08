@@ -115,6 +115,19 @@ function escapeRegExpLiteral(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
 
+function extractSha256Digest(imageRef: string): string | null {
+  return imageRef.match(/@sha256:([0-9a-f]{64})$/i)?.[1].toLowerCase() ?? null;
+}
+
+function expectFullGitSha(result: ShellProbeResult, label: string): string {
+  expectExitZero(result, label);
+  const sha = result.stdout.trim();
+  expect(sha, `${label} must produce a full git commit SHA:\n${resultText(result)}`).toMatch(
+    /^[0-9a-f]{40}$/,
+  );
+  return sha;
+}
+
 async function bash(
   host: HostCliClient,
   script: string,
@@ -389,6 +402,7 @@ chmod 755 ${shellQuote(oldInstaller)}`,
     PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
     COMPATIBLE_API_KEY: "dummy",
     NEMOCLAW_REAL_DOCKER: process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker",
+    NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
     NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
     NEMOCLAW_OLD_OPENCLAW_VERSION: OLD_OPENCLAW_VERSION,
     NEMOCLAW_OLD_DOCKER_WRAPPER_LOG: oldDockerLog,
@@ -421,6 +435,14 @@ chmod 755 ${shellQuote(oldInstaller)}`,
   );
 
   const oldLog = fs.readFileSync(oldInstallLog, "utf8");
+  const oldSandboxBaseDigest = extractSha256Digest(OLD_SANDBOX_BASE_IMAGE_REF);
+  if (oldSandboxBaseDigest) {
+    const oldSandboxBasePinPrefix = `sha256:${oldSandboxBaseDigest}`.slice(0, 19);
+    expect(
+      oldLog,
+      `old fixture must pin sandbox base image ${OLD_SANDBOX_BASE_IMAGE_REF}`,
+    ).toContain(`Pinning base image to ${oldSandboxBasePinPrefix}`);
+  }
   const oldOpenClawVersionPattern = escapeRegExpLiteral(OLD_OPENCLAW_VERSION);
   const wrongOldOpenClaw = oldLog.match(
     new RegExp(
@@ -448,17 +470,26 @@ chmod 755 ${shellQuote(oldInstaller)}`,
 
   const sourceHead = await bash(
     host,
-    `if [ -d "$HOME/.nemoclaw/source/.git" ]; then git -C "$HOME/.nemoclaw/source" rev-parse HEAD; fi`,
+    `test -d "$HOME/.nemoclaw/source/.git"
+git -C "$HOME/.nemoclaw/source" rev-parse --verify HEAD`,
     { artifactName: "old-source-head", timeoutMs: 30_000 },
   );
   const expectedHead = await bash(
     host,
-    `resolved=$(git ls-remote https://github.com/NVIDIA/NemoClaw.git ${shellQuote(`refs/tags/${OLD_NEMOCLAW_REF}^{}`)} | awk '{print $1}'); if [ -z "$resolved" ]; then resolved=$(git ls-remote https://github.com/NVIDIA/NemoClaw.git ${shellQuote(`refs/tags/${OLD_NEMOCLAW_REF}`)} | awk '{print $1}'); fi; printf '%s\n' "$resolved"`,
+    `resolved=$(git ls-remote https://github.com/NVIDIA/NemoClaw.git ${shellQuote(`refs/tags/${OLD_NEMOCLAW_REF}^{}`)} | awk '{print $1}')
+if ! [[ "$resolved" =~ ^[0-9a-f]{40}$ ]]; then
+  resolved=$(git ls-remote https://github.com/NVIDIA/NemoClaw.git ${shellQuote(`refs/tags/${OLD_NEMOCLAW_REF}`)} | awk '{print $1}')
+fi
+if ! [[ "$resolved" =~ ^[0-9a-f]{40}$ ]]; then
+  printf 'ERROR: expected %s to resolve to a full commit SHA, got %q\n' ${shellQuote(OLD_NEMOCLAW_REF)} "$resolved" >&2
+  exit 1
+fi
+printf '%s\n' "$resolved"`,
     { artifactName: "old-source-expected-head", timeoutMs: 60_000 },
   );
-  expectExitZero(sourceHead, "read old source head");
-  expectExitZero(expectedHead, "read expected old tag head");
-  expect(sourceHead.stdout.trim()).toBe(expectedHead.stdout.trim());
+  const actualSourceHead = expectFullGitSha(sourceHead, "read old source head");
+  const expectedSourceHead = expectFullGitSha(expectedHead, "read expected old tag head");
+  expect(actualSourceHead).toBe(expectedSourceHead);
 
   await waitForSurvivorReady(host, "old-install");
   const list = await bash(host, `nemoclaw list`, {
