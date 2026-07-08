@@ -548,7 +548,6 @@ describe("nemoclaw-start non-root fallback", () => {
       ["#!/usr/bin/env bash", "set -euo pipefail", fn, "fix_openclaw_ownership"].join("\n"),
       { mode: 0o700 },
     );
-
     try {
       const result = spawnSync("bash", [scriptPath], {
         encoding: "utf-8",
@@ -1554,6 +1553,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
         "not-a-device",
         { requestId: "ok-browser", clientId: "openclaw-control-ui", clientMode: "unknown" },
         { requestId: "ok-browser", clientId: "openclaw-control-ui", clientMode: "unknown" },
+        { requestId: "ok-agent-cli", clientId: "cli", clientMode: "cli" },
         { requestId: "ok-webchat", clientId: "other-client", clientMode: "webchat" },
         { requestId: "reject-me", clientId: "evil-client", clientMode: "unknown" },
       ],
@@ -1592,7 +1592,6 @@ exit 2
     );
 
     const autoPairScript = autoPairPythonScript(src);
-
     try {
       const run = spawnSync("python3", ["-c", autoPairScript], {
         encoding: "utf-8",
@@ -1613,22 +1612,26 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] approved request=ok-browser client=openclaw-control-ui",
       );
+      expect(run.stdout).toContain("[auto-pair] approved request=ok-agent-cli client=cli mode=cli");
       expect(run.stdout).toContain("[auto-pair] rejected unknown client=other-client mode=webchat");
       expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
       expect(run.stdout).toContain(
-        "[auto-pair] browser pairing converged; entering slow-mode approvals=1",
+        "[auto-pair] browser pairing converged; entering slow-mode approvals=2",
       );
-      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["ok-browser"]);
+      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
+        "ok-browser",
+        "ok-agent-cli",
+      ]);
       const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
       expect(envLogLines).toContain("list:ws://127.0.0.1:18789:18789:test-gateway-token");
       expect(envLogLines).toContain("approve:ok-browser:unset:unset:unset");
+      expect(envLogLines).toContain("approve:ok-agent-cli:unset:unset:unset");
       expect(envLogLines).not.toContain("approve:ok-webchat:unset:unset:unset");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 40_000);
 });
-
 describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -1651,7 +1654,7 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
     const stateFile = path.join(tmpDir, "list-count");
     const approveLog = path.join(tmpDir, "approvals.log");
     const browserClient = { clientId: "openclaw-control-ui", clientMode: "webchat" };
-    const cliClient = { clientId: "openclaw-cli", clientMode: "cli" };
+    const cliClient = { clientId: "cli", clientMode: "cli" };
     const initialPending = JSON.stringify({
       pending: [{ requestId: "browser-pair", ...browserClient }],
       paired: [],
@@ -1717,12 +1720,8 @@ exit 2
         "[auto-pair] browser pairing converged; entering slow-mode approvals=1",
       );
       // Concurrent late wave — proxy for two sibling sandboxes' upgrades.
-      expect(run.stdout).toContain(
-        "[auto-pair] approved request=late-cli client=openclaw-cli mode=cli",
-      );
-      expect(run.stdout).toContain(
-        "[auto-pair] approved request=late-cli-b client=openclaw-cli mode=cli",
-      );
+      expect(run.stdout).toContain("[auto-pair] approved request=late-cli client=cli mode=cli");
+      expect(run.stdout).toContain("[auto-pair] approved request=late-cli-b client=cli mode=cli");
       expect(run.stdout).toContain("watcher deadline reached approvals=3");
       // Single marker per poll wave, transition after convergence.
       expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=3 mode=slow");

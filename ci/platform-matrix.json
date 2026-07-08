@@ -93,7 +93,7 @@
       "name": "Other OpenAI-compatible endpoint",
       "status": "caveated",
       "endpoint_type": "Custom OpenAI-compatible",
-      "notes": "Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:120`); the onboarding prompt that surfaces OpenRouter as the worked example is in `handleRemoteProviderSelection` in `src/lib/onboard.ts`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
+      "notes": "Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:208`); the onboarding prompt that surfaces OpenRouter as the worked example is in `handleRemoteProviderSelection` in `src/lib/onboard.ts`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
     },
     {
       "name": "Anthropic",
@@ -129,7 +129,7 @@
       "name": "Local NVIDIA NIM",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard/fatal-runtime-preflight.ts`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
+      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard/fatal-runtime-preflight.ts`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. On Linux arm64 DGX Spark and DGX Station hosts, onboarding warns that some NIM images may not publish a `linux/arm64` manifest; the warning is advisory, and the selected image pull can still fail when the registry has no matching platform manifest. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
     },
     {
       "name": "Local vLLM (already running)",

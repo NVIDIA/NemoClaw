@@ -172,6 +172,8 @@ describe("buildRebuildRecreateOnboardOpts", () => {
       sandboxGpuDevice: null,
       autoYes: true,
       toolDisclosure: "progressive",
+      observabilityEnabled: false,
+      observabilityRequestedExplicitly: false,
     });
   });
 
@@ -182,6 +184,54 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     });
 
     expect(opts.toolDisclosure).toBe("direct");
+  });
+
+  it("carries durable observability intent into inner onboard", () => {
+    const enabled = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      rebuildAgent: "langchain-deepagents-code",
+      sb: { ...dashboard, observabilityEnabled: true },
+    });
+    const legacy = buildRebuildRecreateOnboardOpts({ ...baseArgs, sb: dashboard });
+
+    expect(enabled.observabilityEnabled).toBe(true);
+    expect(legacy.observabilityEnabled).toBe(false);
+  });
+
+  it("carries the authoritative restricted tier with observability into inner onboard", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      rebuildAgent: "langchain-deepagents-code",
+      sb: {
+        observabilityEnabled: true,
+        policyTier: "restricted",
+      },
+    });
+
+    expect(opts.policyTier).toBe("restricted");
+    expect(opts.observabilityEnabled).toBe(true);
+  });
+
+  it("rejects an invalid recorded policy tier before destructive recreate work", () => {
+    expect(() =>
+      buildRebuildRecreateOnboardOpts({
+        ...baseArgs,
+        sb: { ...dashboard, policyTier: "unknown-tier" },
+      }),
+    ).toThrow("Invalid recorded policy tier 'unknown-tier'.");
+  });
+
+  it.each([
+    "openclaw",
+    "hermes",
+  ])("rejects malformed %s observability state before recreate onboarding", (rebuildAgent) => {
+    expect(() =>
+      buildRebuildRecreateOnboardOpts({
+        ...baseArgs,
+        rebuildAgent,
+        sb: { ...dashboard, observabilityEnabled: true },
+      }),
+    ).toThrow("Recorded observability state is valid only for agent 'langchain-deepagents-code'.");
   });
 
   it("forwards noGpu:true for legacy entries with gpuEnabled:false and no sandboxGpuMode", () => {

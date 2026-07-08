@@ -21,6 +21,21 @@ vi.mock("../../messaging-channel-setup", () => ({
 
 const detectMessagingChannelsFromEnvMock = vi.mocked(detectMessagingChannelsFromEnv);
 
+function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
+  return {
+    name,
+    agent: "langchain-deepagents-code",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    credentialEnv: null,
+    preferredInferenceApi: "openai-completions",
+    gatewayName: "nemoclaw",
+    toolDisclosure: "progressive" as const,
+    ...(typeof observabilityEnabled === "boolean" ? { observabilityEnabled } : {}),
+  };
+}
+
 describe("handleSandboxState", () => {
   beforeEach(() => {
     detectMessagingChannelsFromEnvMock.mockReturnValue([]);
@@ -55,7 +70,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: false, toolDisclosure: "progressive" },
+      { recreate: false, toolDisclosure: "progressive", observabilityEnabled: false },
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
@@ -97,6 +112,318 @@ describe("handleSandboxState", () => {
     expect(result.webSearchConfig).toBeNull();
   });
 
+  it("carries durable observability intent in the sandbox create intent", async () => {
+    const session = createSession({
+      observabilityEnabled: true,
+      observabilityRequestedExplicitly: true,
+    });
+    const { deps, calls } = createDeps({
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+      recreate: false,
+      toolDisclosure: "progressive",
+      observabilityEnabled: true,
+      observabilityRequestedExplicitly: true,
+    });
+  });
+
+  it("carries an authoritative rebuild tier in the sandbox create intent", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleSandboxState({
+      ...baseOptions(deps),
+      agent: { name: "langchain-deepagents-code" },
+      authoritativeResumeConfig: true,
+      authoritativePolicyTier: "restricted",
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      policyTier: "restricted",
+    });
+  });
+
+  it("rejects observability for a selected non-DCode agent", async () => {
+    const { deps, calls } = createDeps();
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps),
+        agent: { name: "hermes" },
+        requestedObservabilityEnabled: true,
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith(
+      "  --observability is supported only with --agent langchain-deepagents-code.",
+    );
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("preserves recorded observability when a new onboard run omits the flag", async () => {
+    const session = createSession({ observabilityEnabled: false });
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      observabilityEnabled: true,
+    });
+    expect(session.observabilityEnabled).toBe(true);
+    expect(session.observabilityRequestedExplicitly).toBe(false);
+  });
+
+  it.each([
+    "openclaw",
+    "hermes",
+  ])("requires an explicit observability disable when switching DCode to %s", async (agentName) => {
+    const session = createSession({
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+    });
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        agent: { name: agentName },
+        sandboxName: "saved",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("--no-observability"));
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(session.observabilityEnabled).toBe(true);
+  });
+
+  it("requires an explicit disable when resumed session state has observability enabled", async () => {
+    const session = createSession({
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+      observabilityRequestedExplicitly: true,
+    });
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, false),
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        agent: { name: "hermes" },
+        resume: true,
+        sandboxName: "saved",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("--no-observability"));
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("clears DCode observability during an explicitly acknowledged agent switch", async () => {
+    const session = createSession({
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+    });
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "hermes" },
+      sandboxName: "saved",
+      requestedObservabilityEnabled: false,
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      observabilityEnabled: false,
+      observabilityRequestedExplicitly: true,
+    });
+    expect(session.observabilityEnabled).toBe(false);
+    expect(session.observabilityRequestedExplicitly).toBe(true);
+  });
+
+  it("records an explicit request even when its enabled value already matches", async () => {
+    const session = createSession({ observabilityEnabled: true });
+    const updateSession = vi.fn((mutator: (value: Session) => Session | void) => {
+      return mutator(session) ?? session;
+    });
+    const { deps } = createDeps({
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
+      updateSession,
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+      sandboxName: "saved",
+      requestedObservabilityEnabled: true,
+    });
+
+    expect(session.observabilityEnabled).toBe(true);
+    expect(session.observabilityRequestedExplicitly).toBe(true);
+    expect(updateSession).toHaveBeenCalled();
+  });
+
+  it.each([
+    { recorded: true, requested: false },
+    { recorded: false, requested: true },
+  ])("gives current explicit observability=$requested precedence on resume", async ({
+    recorded,
+    requested,
+  }) => {
+    const session = createSession({
+      sandboxName: "saved",
+      observabilityEnabled: recorded,
+      observabilityRequestedExplicitly: true,
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, recorded),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+      resume: true,
+      sandboxName: "saved",
+      requestedObservabilityEnabled: requested,
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      recreate: true,
+      observabilityEnabled: requested,
+    });
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Observability configuration changed; recreating sandbox.",
+    );
+    expect(session.observabilityEnabled).toBe(requested);
+    expect(session.observabilityRequestedExplicitly).toBe(true);
+  });
+
+  it.each([
+    { recorded: false, requested: true },
+    { recorded: true, requested: false },
+  ])("preserves interrupted explicit observability=$requested over registry=$recorded", async ({
+    recorded,
+    requested,
+  }) => {
+    const session = createSession({
+      sandboxName: "saved",
+      observabilityEnabled: requested,
+      observabilityRequestedExplicitly: true,
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, recorded),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      recreate: true,
+      observabilityEnabled: requested,
+    });
+    expect(session.observabilityEnabled).toBe(requested);
+    expect(session.observabilityRequestedExplicitly).toBe(true);
+  });
+
+  it("does not treat an interrupted omitted request as an explicit disable", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      observabilityEnabled: false,
+      observabilityRequestedExplicitly: false,
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, true),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(session.observabilityEnabled).toBe(true);
+    expect(session.observabilityRequestedExplicitly).toBe(false);
+  });
+
+  it("recreates a ready DCode sandbox before opting out from unknown legacy state", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      observabilityEnabled: false,
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+      resume: true,
+      sandboxName: "saved",
+      requestedObservabilityEnabled: false,
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      recreate: true,
+      observabilityEnabled: false,
+    });
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Observability configuration changed; recreating sandbox.",
+    );
+  });
+
   it("removes the conflicting Hermes nous-web gateway when Tavily is selected", async () => {
     const { deps, calls } = createDeps();
 
@@ -122,7 +449,7 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
-      { recreate: false, toolDisclosure: "progressive" },
+      { recreate: false, toolDisclosure: "progressive", observabilityEnabled: false },
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
     expect(calls.note).toHaveBeenCalledWith(
@@ -227,7 +554,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: "progressive" },
+      { recreate: true, toolDisclosure: "progressive", observabilityEnabled: false },
     );
   });
 
@@ -430,7 +757,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: "progressive" },
+      { recreate: true, toolDisclosure: "progressive", observabilityEnabled: false },
     );
     expect(result.webSearchConfigChanged).toBe(true);
   });
@@ -544,7 +871,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: "progressive" },
+      { recreate: true, toolDisclosure: "progressive", observabilityEnabled: false },
     );
     expect(result.webSearchConfig).toBeNull();
   });

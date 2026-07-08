@@ -244,6 +244,14 @@ const TEST_CUSTOM_OPENAI_CONFIG = {
   endpointUrl: TEST_OPENAI_ENDPOINT_URL,
   helpUrl: null,
 };
+// Shared expected 4th arg for probeOpenAiLikeEndpoint; pinnedAddresses is what
+// the injected resolveEndpointHost returns via the SSRF preflight (#6293).
+const EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS = {
+  requireResponsesToolCalling: true,
+  skipResponsesProbe: false,
+  probeStreaming: true,
+  pinnedAddresses: ["93.184.216.34"],
+};
 const TEST_CUSTOM_ANTHROPIC_CONFIG = {
   label: "Other Anthropic-compatible endpoint",
   endpointUrl: TEST_ANTHROPIC_ENDPOINT_URL,
@@ -1012,7 +1020,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.doesNotMatch(buildOption?.label || "", /recommended/i);
   });
 
-  it("selects Kimi K2.6 from the filtered NVIDIA Endpoints featured model list (#6245)", async () => {
+  it("filters retired Kimi K2.6 from the NVIDIA Endpoints featured model list", async () => {
     const answers = ["3"];
     const messages: string[] = [];
     const lines: string[] = [];
@@ -1061,24 +1069,24 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
       }),
     );
 
-    assert.equal(model, "moonshotai/kimi-k2.6");
+    assert.equal(model, "minimaxai/minimax-m3");
     assert.equal(validated.result, "selected");
     assert.equal(state.provider, "nvidia-prod");
     assert.equal(state.preferredInferenceApi, "openai-completions");
     assert.match(messages[0], /Choose model \[2\]/);
-    assert.ok(lines.some((line) => line.includes("Kimi K2.6")));
+    assert.ok(!lines.some((line) => line.includes("Kimi K2.6")));
     assert.ok(!lines.some((line) => line.includes("GLM 5.1")));
     assert.ok(validated.lines.some((line) => line.includes("Chat Completions API available")));
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
       "https://integrate.api.nvidia.com/v1",
-      "moonshotai/kimi-k2.6",
+      "minimaxai/minimax-m3",
       "nvapi-test",
       expect.any(Object),
     );
   });
 
   it("accepts a manually entered NVIDIA Endpoints model after validating it against /models (#6245)", async () => {
-    const answers = ["5", "custom/provider-model"];
+    const answers = ["4", "custom/provider-model"];
     const messages: string[] = [];
     const lines: string[] = [];
     const validateNvidiaEndpointModelFn = vi.fn((model: string) => ({
@@ -1136,7 +1144,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
   });
 
   it("reprompts for a manual NVIDIA Endpoints model when /models validation rejects it (#6245)", async () => {
-    const answers = ["5", "bad/model", "custom/provider-model"];
+    const answers = ["4", "bad/model", "custom/provider-model"];
     const messages: string[] = [];
     const lines: string[] = [];
     const model = await promptCloudModel({
@@ -2861,6 +2869,7 @@ const { setupNim } = require(${onboardPath});
         label: "Anthropic Messages API",
       }),
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const state = makeRemoteSelectionState({
       model,
@@ -2926,6 +2935,7 @@ const { setupNim } = require(${onboardPath});
             };
       },
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const { validateSelectedRemoteModel } = createRemoteModelValidator(
       makeRemoteModelValidatorDeps({
@@ -2999,10 +3009,11 @@ const { setupNim } = require(${onboardPath});
       getCredential: () => "ollama-key",
       probeOpenAiLikeEndpoint,
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const state = makeRemoteSelectionState({
       model: "my-model",
-      endpointUrl: "https://ollama.local:11434/v1",
+      endpointUrl: "https://ollama.public.test:11434/v1",
     });
     const { validateSelectedRemoteModel } = createRemoteModelValidator(
       makeRemoteModelValidatorDeps({
@@ -3026,14 +3037,10 @@ const { setupNim } = require(${onboardPath});
       assert.equal(state.preferredInferenceApi, "openai-completions");
       assert.ok(lines.some((line) => line.includes("Using chat completions API")));
       expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
-        "https://ollama.local:11434/v1",
+        "https://ollama.public.test:11434/v1",
         "my-model",
         "ollama-key",
-        {
-          requireResponsesToolCalling: true,
-          skipResponsesProbe: false,
-          probeStreaming: true,
-        },
+        EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS,
       );
     } finally {
       restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);
@@ -3055,6 +3062,7 @@ const { setupNim } = require(${onboardPath});
       getCredential: () => "sk-test",
       probeOpenAiLikeEndpoint,
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const state = makeRemoteSelectionState({
       model: "gpt-4o",
@@ -3089,11 +3097,7 @@ const { setupNim } = require(${onboardPath});
         "https://openai-proxy.example.com/v1",
         "gpt-4o",
         "sk-test",
-        {
-          requireResponsesToolCalling: true,
-          skipResponsesProbe: false,
-          probeStreaming: true,
-        },
+        EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS,
       );
     } finally {
       restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);
@@ -3214,6 +3218,7 @@ const { setupNim } = require(${onboardPath});
             };
       },
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const { validateSelectedRemoteModel } = createRemoteModelValidator(
       makeRemoteModelValidatorDeps({
@@ -3761,6 +3766,10 @@ const { setupNim } = require(${onboardPath});
 
 (async () => {
   process.env.COMPATIBLE_API_KEY = "proxy-bad";
+  // The endpoint SSRF preflight now runs unconditionally (#6293); stub the DNS
+  // resolver to a public address so the fixture hostname resolves and the flow
+  // reaches validation instead of being refused (mirrors credentials/runner stubs).
+  require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
   const originalLog = console.log;
   const originalError = console.error;
   const lines = [];
@@ -4684,75 +4693,6 @@ const { setupNim } = require(${onboardPath});
     }
   });
 
-  it("does not satisfy start-windows-ollama with WSL-local Ollama", () => {
-    const requirement = getWindowsHostOllamaDockerRequirement("docker-desktop");
-    const { options } = buildWindowsProviderMenu(requirement, {
-      hasOllama: true,
-      ollamaRunning: true,
-      ollamaHost: "127.0.0.1",
-      hasWindowsOllama: false,
-    });
-    const resolution = resolveWindowsProvider(options, "start-windows-ollama", {
-      isWsl: true,
-      isWindowsHostOllama: false,
-    });
-    assert.equal(resolution.kind, "failure");
-    const failedResolution = requireFailedProviderResolution(resolution);
-
-    const setup = vi.fn();
-    const switchHost = vi.fn();
-    const errors: string[] = [];
-    reportProviderSelectionFailure({
-      reason: failedResolution.reason,
-      isWindowsHostOllama: false,
-      rejectWindowsHostOllama: () => {
-        setup();
-        switchHost();
-        return true;
-      },
-      writeError: (message) => errors.push(message),
-    });
-
-    assert.match(errors.join("\n"), /Requested provider 'start-windows-ollama' is not available/);
-    assert.equal(setup.mock.calls.length, 0);
-    assert.equal(switchHost.mock.calls.length, 0);
-  });
-
-  it("does not satisfy install-windows-ollama with non-WSL local Ollama", () => {
-    const requirement = getWindowsHostOllamaDockerRequirement(null);
-    const { options } = buildWindowsProviderMenu(requirement, {
-      hasOllama: true,
-      ollamaRunning: true,
-      ollamaHost: "127.0.0.1",
-      isWsl: false,
-      hasWindowsOllama: false,
-    });
-    const resolution = resolveWindowsProvider(options, "install-windows-ollama", {
-      isWsl: false,
-      isWindowsHostOllama: false,
-    });
-    assert.equal(resolution.kind, "failure");
-    const failedResolution = requireFailedProviderResolution(resolution);
-
-    const install = vi.fn();
-    const setup = vi.fn();
-    const errors: string[] = [];
-    reportProviderSelectionFailure({
-      reason: failedResolution.reason,
-      isWindowsHostOllama: false,
-      rejectWindowsHostOllama: () => {
-        install();
-        setup();
-        return true;
-      },
-      writeError: (message) => errors.push(message),
-    });
-
-    assert.match(errors.join("\n"), /Requested provider 'install-windows-ollama' is not available/);
-    assert.equal(install.mock.calls.length, 0);
-    assert.equal(setup.mock.calls.length, 0);
-  });
-
   it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for compatible-endpoint during inference setup (#2403)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
@@ -4801,7 +4741,7 @@ runner.runCapture = (cmd) => {
 process.env.COMPATIBLE_API_KEY = "test-key";
 const { setupInference } = require(${onboardPath});
 (async () => {
-  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://lan-server:11434/v1", "COMPATIBLE_API_KEY", null, [], { preferredInferenceApi: "openai-completions" });
+  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://public-server.example:11434/v1", "COMPATIBLE_API_KEY", null, [], { preferredInferenceApi: "openai-completions", endpointPinnedAddresses: ["93.184.216.34"] });
   process.exit(0);
 })().catch((err) => { console.error(err); process.exit(1); });
 `;

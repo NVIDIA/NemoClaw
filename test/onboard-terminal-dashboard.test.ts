@@ -101,6 +101,7 @@ registry.getSandbox = () =>
         gpuEnabled: false,
         agent: "langchain-deepagents-code",
         dashboardPort: 18789,
+        observabilityEnabled: false,
         toolDisclosure: "progressive",
       }
     : null;

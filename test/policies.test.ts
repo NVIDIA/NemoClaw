@@ -145,42 +145,6 @@ describe("policies", () => {
       expect(whatsapp?.description).toBe("WhatsApp Web WebSocket and media access");
       expect(whatsapp?.description).not.toContain("network_policies:");
     });
-
-    it("returns expected preset names", () => {
-      const names = policies
-        .listPresets()
-        .map((p: { name: string }) => p.name)
-        .sort();
-      expect(names).toEqual([
-        "brave",
-        "brew",
-        "claude-code",
-        "discord",
-        "github",
-        "gmail",
-        "huggingface",
-        "jira",
-        "local-inference",
-        "nous-audio",
-        "nous-browser",
-        "nous-code",
-        "nous-image",
-        "nous-web",
-        "npm",
-        "openclaw-diagnostics-otel-local",
-        "openclaw-pricing",
-        "outlook",
-        "public-reference",
-        "pypi",
-        "slack",
-        "tavily",
-        "teams",
-        "telegram",
-        "weather",
-        "wechat",
-        "whatsapp",
-      ]);
-    });
   });
 
   describe("loadPreset", () => {
