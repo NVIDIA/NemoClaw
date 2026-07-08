@@ -163,6 +163,8 @@ describe("sandbox inference route probe result", () => {
   it.each([
     "OK 200\nBROKEN 000",
     "BROKEN 503\nOK 200",
+    "[stdout] OK 200\nBROKEN 000",
+    "[stdout] BROKEN 503\nOK 200",
   ])("does not trust login-shell preamble output (%s) (#6192)", (output) => {
     expect(parseSandboxInferenceRouteProbeResult({ status: 0, output })).toMatchObject({
       healthy: false,
