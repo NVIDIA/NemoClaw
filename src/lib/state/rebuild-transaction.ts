@@ -54,12 +54,6 @@ export interface RebuildTransactionReceiptsV1 {
     readonly manifestTimestamp: string;
     readonly manifestFingerprint: string;
   };
-  readonly registryRemoval?: {
-    readonly entryFingerprint: string;
-    readonly wasDefault: boolean;
-    readonly fallbackDefault: string | null;
-    readonly postRemovalDefaultSelectionRevision: number;
-  };
   readonly oldSandboxDeletion?: {
     readonly observedAt: string;
   };
@@ -123,7 +117,6 @@ export interface RebuildTransactionDiagnosticV1 {
   completedAt: string | null;
   receipts: {
     backup: boolean;
-    registryRemoval: boolean;
     oldSandboxDeletion: boolean;
     replacement: boolean;
   };
@@ -283,39 +276,6 @@ function normalizeIntent(value: unknown, sandboxName: string): RebuildTransactio
 function normalizeReceipts(value: unknown, sandboxName: string): RebuildTransactionReceiptsV1 {
   const receipts = requiredRecord(value, "receipts", sandboxName);
   const backup = requiredRecord(receipts.backup, "receipts.backup", sandboxName);
-  const registryRemovalWasDefault = isRecord(receipts.registryRemoval)
-    ? receipts.registryRemoval.wasDefault
-    : undefined;
-  if (isRecord(receipts.registryRemoval) && typeof registryRemovalWasDefault !== "boolean") {
-    throw transactionError(
-      "CORRUPT",
-      sandboxName,
-      "receipts.registryRemoval.wasDefault is invalid",
-    );
-  }
-  const registryRemoval = isRecord(receipts.registryRemoval)
-    ? {
-        entryFingerprint: fingerprint(
-          receipts.registryRemoval.entryFingerprint,
-          "receipts.registryRemoval.entryFingerprint",
-          sandboxName,
-        ),
-        wasDefault: registryRemovalWasDefault as boolean,
-        fallbackDefault:
-          receipts.registryRemoval.fallbackDefault === null
-            ? null
-            : requiredString(
-                receipts.registryRemoval.fallbackDefault,
-                "receipts.registryRemoval.fallbackDefault",
-                sandboxName,
-              ),
-        postRemovalDefaultSelectionRevision: safeRevision(
-          receipts.registryRemoval.postRemovalDefaultSelectionRevision,
-          "receipts.registryRemoval.postRemovalDefaultSelectionRevision",
-          sandboxName,
-        ),
-      }
-    : undefined;
   const oldSandboxDeletion = isRecord(receipts.oldSandboxDeletion)
     ? {
         observedAt: timestamp(
@@ -352,7 +312,6 @@ function normalizeReceipts(value: unknown, sandboxName: string): RebuildTransact
         sandboxName,
       ),
     },
-    ...(registryRemoval ? { registryRemoval } : {}),
     ...(oldSandboxDeletion ? { oldSandboxDeletion } : {}),
     ...(replacement ? { replacement } : {}),
   };
@@ -420,8 +379,7 @@ function normalizeRecord(value: unknown, sandboxName: string): RebuildTransactio
     throw transactionError("CORRUPT", sandboxName, "is missing the replacement receipt");
   }
   if (
-    (phase === "prepared" &&
-      (receipts.registryRemoval || receipts.oldSandboxDeletion || receipts.replacement)) ||
+    (phase === "prepared" && (receipts.oldSandboxDeletion || receipts.replacement)) ||
     (phase === "old_deleted" && receipts.replacement)
   ) {
     throw transactionError("CORRUPT", sandboxName, "contains receipts from a future phase");
@@ -532,7 +490,7 @@ function assertReceiptHistoryUnchanged(
   next: RebuildTransactionReceiptsV1,
   sandboxName: string,
 ): void {
-  for (const key of ["backup", "registryRemoval", "oldSandboxDeletion", "replacement"] as const) {
+  for (const key of ["backup", "oldSandboxDeletion", "replacement"] as const) {
     if (current[key] !== undefined && !isDeepStrictEqual(current[key], next[key])) {
       throw transactionError(
         "INVALID_TRANSITION",
@@ -707,7 +665,6 @@ export class RebuildTransactionStore {
       completedAt: record.completedAt,
       receipts: {
         backup: true,
-        registryRemoval: record.receipts.registryRemoval !== undefined,
         oldSandboxDeletion: record.receipts.oldSandboxDeletion !== undefined,
         replacement: record.receipts.replacement !== undefined,
       },

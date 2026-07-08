@@ -66,12 +66,6 @@ function preparedReceipts(): RebuildTransactionReceiptsV1 {
 function deletedReceipts(): RebuildTransactionReceiptsV1 {
   return {
     ...preparedReceipts(),
-    registryRemoval: {
-      entryFingerprint: FP_B,
-      wasDefault: true,
-      fallbackDefault: "another-sandbox",
-      postRemovalDefaultSelectionRevision: 4,
-    },
     oldSandboxDeletion: { observedAt: "2026-07-08T00:01:00.000Z" },
   };
 }
@@ -352,19 +346,6 @@ describe("RebuildTransactionStore", () => {
     expectCode(() => store.load(SANDBOX), "CORRUPT");
   });
 
-  it("rejects an incomplete registry-removal receipt", () => {
-    const { stateDir, store } = makeStore();
-    const prepared = store.create(intent(), preparedReceipts());
-    store.transition(SANDBOX, prepared.revision, "old_deleted", deletedReceipts());
-    writeRawRecord(getRebuildTransactionPath(SANDBOX, stateDir), (record) => {
-      const receipts = record.receipts as Record<string, unknown>;
-      const removal = receipts.registryRemoval as Record<string, unknown>;
-      delete removal.wasDefault;
-    });
-
-    expectCode(() => store.load(SANDBOX), "CORRUPT");
-  });
-
   it("rejects invalid and traversal-shaped sandbox names before path construction", () => {
     const { stateDir, store } = makeStore();
     for (const name of ["../escape", "has/slash", "UPPER", "", "a".repeat(64)]) {
@@ -433,7 +414,6 @@ describe("RebuildTransactionStore", () => {
       phase: "prepared",
       receipts: {
         backup: true,
-        registryRemoval: false,
         oldSandboxDeletion: false,
         replacement: false,
       },
