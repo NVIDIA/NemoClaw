@@ -1007,12 +1007,16 @@ describe("pull request and main workflow contracts", () => {
     expect(vitestConfig).toContain('name: "integration"');
     expect(vitestConfig).toContain('include: ["test/**/*.test.{js,ts}"]');
     expect(vitestConfig).toContain('name: "e2e-support"');
-    expect(stepRuns(prWorkflow.jobs["e2e-support"]).join("\n")).toContain(
+    expect(stepRuns(prWorkflow.jobs["e2e-support"])).toEqual([
+      "npm ci --ignore-scripts",
+      "npm run build:cli",
       "npx vitest run --project e2e-support",
-    );
-    expect(stepRuns(mainWorkflow.jobs["e2e-support"]).join("\n")).toContain(
+    ]);
+    expect(stepRuns(mainWorkflow.jobs["e2e-support"])).toEqual([
+      "npm ci --ignore-scripts",
+      "npm run build:cli",
       "npx vitest run --project e2e-support",
-    );
+    ]);
     expect(vitestConfig).toContain('name: "package-contract"');
     expect(vitestConfig).toContain('"test/e2e/**"');
     expect(vitestConfig).toContain('"test/install-express-prompt.test.ts"');

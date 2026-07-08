@@ -25,12 +25,13 @@ function step(job: WorkflowJob, name: string): WorkflowStep {
 }
 
 function collectStrings(value: unknown): string[] {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap(collectStrings);
-  if (value && typeof value === "object") {
-    return Object.values(value).flatMap(collectStrings);
-  }
-  return [];
+  return typeof value === "string"
+    ? [value]
+    : Array.isArray(value)
+      ? value.flatMap(collectStrings)
+      : value && typeof value === "object"
+        ? Object.values(value).flatMap(collectStrings)
+        : [];
 }
 
 describe("post-merge E2E risk gate shadow workflow", () => {

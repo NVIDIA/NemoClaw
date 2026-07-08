@@ -169,6 +169,9 @@ jobs:
       - name: Install E2E support dependencies
         run: npm ci --ignore-scripts
 
+      - name: Build CLI artifacts for E2E support
+        run: npm run build:cli
+
       - name: Run E2E support tests
         run: npx vitest run --project e2e-support
 
