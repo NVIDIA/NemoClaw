@@ -138,7 +138,7 @@ describe("E2E recommendation advisor prompt", () => {
       requiredTests: [],
       optionalTests: [
         {
-          id: "upgrade-stale-sandbox",
+          id: "model-alias",
           reason: "model marked this optional",
           workflow: "e2e.yaml",
           job: "upgrade-stale-sandbox",
