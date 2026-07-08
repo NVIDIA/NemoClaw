@@ -57,28 +57,39 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     const workflow = readYaml<TriggeredWorkflow>(SHADOW_PATH);
     const job = workflow.jobs.shadow;
     const checkout = step(job, "Checkout trusted controller");
+    const workspace = step(job, "Create private controller workspace");
     const start = step(job, "Build plan and dispatch exact-commit E2E");
     const wait = step(job, "Wait for correlated E2E run");
+    const download = step(job, "Download correlated E2E evidence");
     const finish = step(job, "Complete exact-commit shadow check");
     const completionFallback = step(job, "Close shadow check after completion failure");
     const propagateFailure = step(job, "Propagate shadow completion failure");
+    const cleanup = step(job, "Remove private controller workspace");
 
     expect(checkout.with).toMatchObject({
       ref: "${{ github.event.after }}",
       "fetch-depth": 0,
       "persist-credentials": false,
     });
+    expect(workspace.run).toContain('mktemp -d "${RUNNER_TEMP}/nemoclaw-e2e-risk-gate.XXXXXX"');
+    expect(workspace.run).toContain('chmod 700 "$work_dir"');
     expect(start.run).toContain("post-merge-risk-gate.mts --mode start");
     expect(start.run).toContain('--base "${{ github.event.before }}"');
     expect(start.run).toContain('--commit "${{ github.event.after }}"');
+    expect(start.run).toContain('--work-dir "${{ steps.workspace.outputs.work_dir }}"');
     expect(wait.run).toContain("timeout --signal=TERM --kill-after=30s 105m");
+    expect(download.run).toContain('--dir "${{ steps.workspace.outputs.work_dir }}/evidence"');
     expect(finish.id).toBe("finish");
     expect(finish.if).toContain("always()");
     expect(finish["continue-on-error"]).toBe(true);
     expect(finish.run).toContain("post-merge-risk-gate.mts --mode finish");
+    expect(finish.run).toContain('--work-dir "${{ steps.workspace.outputs.work_dir }}"');
     expect(completionFallback.if).toContain("steps.finish.outcome == 'failure'");
     expect(completionFallback.run).toContain("post-merge-risk-gate.mts --mode abandon");
     expect(propagateFailure.if).toContain("steps.finish.outcome == 'failure'");
+    expect(cleanup.if).toContain("always() && steps.workspace.outputs.work_dir != ''");
+    expect(cleanup.run).toContain('rm -rf -- "${{ steps.workspace.outputs.work_dir }}"');
+    expect(collectStrings(workflow).some((value) => value.includes("/tmp/"))).toBe(false);
   });
 
   it("binds every E2E checkout and test signal to the exact merged commit", () => {

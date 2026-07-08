@@ -14,6 +14,7 @@ import {
   classifyRiskEvidence,
   expectedRiskSignalShards,
   findSignalFiles,
+  parseControllerCommand,
   type RiskGateState,
   validateRiskGateState,
   validateRiskPlan,
@@ -82,6 +83,42 @@ describe("post-merge E2E risk gate", () => {
     expect(() => assertTrustedMainPush({ ...trusted, sha: "b".repeat(40) })).toThrow(
       /exact trusted main push/u,
     );
+  });
+
+  it("requires a private controller workspace and parses the abandon check id", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-controller-"));
+    try {
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "start",
+          "--base",
+          "b".repeat(40),
+          "--commit",
+          HEAD_SHA,
+          "--work-dir",
+          workDir,
+        ]),
+      ).toMatchObject({
+        mode: "start",
+        planPath: path.join(workDir, "post-merge-risk-plan.json"),
+        statePath: path.join(workDir, "e2e-risk-gate-state.json"),
+        evidencePath: path.join(workDir, "evidence"),
+      });
+      expect(parseControllerCommand(["--mode", "abandon", "--check-id", "17"])).toEqual({
+        mode: "abandon",
+        checkId: "17",
+      });
+      expect(() => parseControllerCommand(["--mode", "finish"])).toThrow(/--work-dir/u);
+
+      fs.chmodSync(workDir, 0o755);
+      expect(() => parseControllerCommand(["--mode", "finish", "--work-dir", workDir])).toThrow(
+        /owned private absolute directory/u,
+      );
+    } finally {
+      fs.chmodSync(workDir, 0o700);
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
   it("derives changed files from an exact checked-out commit range", () => {

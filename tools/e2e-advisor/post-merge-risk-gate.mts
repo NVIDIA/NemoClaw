@@ -33,6 +33,17 @@ const DEFAULT_EVIDENCE_LIMITS = {
   maxSignalFiles: 12,
 } as const;
 
+type ControllerPaths = {
+  planPath: string;
+  statePath: string;
+  evidencePath: string;
+};
+
+export type ControllerCommand =
+  | ({ mode: "start"; baseSha: string; commitSha: string } & ControllerPaths)
+  | ({ mode: "finish" } & ControllerPaths)
+  | { mode: "abandon"; checkId: string };
+
 type CheckConclusion = "success" | "failure" | "neutral";
 
 type WorkflowRun = {
@@ -86,6 +97,56 @@ export function assertTrustedMainPush(options: {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function requiredArgument(value: string | undefined, name: string): string {
+  if (!value) throw new Error(`--${name} is required`);
+  return value;
+}
+
+export function privateControllerPaths(workDir: string): ControllerPaths {
+  const resolved = path.resolve(workDir);
+  const stat = fs.lstatSync(resolved);
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (
+    resolved !== workDir ||
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    (stat.mode & 0o077) !== 0 ||
+    (currentUid !== null && stat.uid !== currentUid)
+  ) {
+    throw new Error("--work-dir must be an owned private absolute directory");
+  }
+  return {
+    planPath: path.join(resolved, "post-merge-risk-plan.json"),
+    statePath: path.join(resolved, "e2e-risk-gate-state.json"),
+    evidencePath: path.join(resolved, "evidence"),
+  };
+}
+
+export function parseControllerCommand(argv: string[]): ControllerCommand {
+  const args = parseArgs(argv);
+  if (args.mode === "start") {
+    return {
+      mode: "start",
+      baseSha: requiredArgument(args.base, "base"),
+      commitSha: requiredArgument(args.commit, "commit"),
+      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+    };
+  }
+  if (args.mode === "finish") {
+    return {
+      mode: "finish",
+      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+    };
+  }
+  if (args.mode === "abandon") {
+    return {
+      mode: "abandon",
+      checkId: requiredArgument(args.checkId, "check-id"),
+    };
+  }
+  throw new Error("--mode must be start, finish, or abandon");
 }
 
 function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
@@ -733,29 +794,27 @@ async function abandon(checkId: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  const mode = args.mode;
-  if (mode === "start") {
+  const command = parseControllerCommand(process.argv.slice(2));
+  if (command.mode === "start") {
     await start({
-      baseSha: args.base || "",
-      commitSha: args.commit || "",
-      planPath: args.plan || "/tmp/post-merge-risk-plan.json",
-      statePath: args.state || "/tmp/e2e-risk-gate-state.json",
+      baseSha: command.baseSha,
+      commitSha: command.commitSha,
+      planPath: command.planPath,
+      statePath: command.statePath,
     });
     return;
   }
-  if (mode === "finish") {
+  if (command.mode === "finish") {
     await finish({
-      statePath: args.state || "/tmp/e2e-risk-gate-state.json",
-      evidencePath: args.evidence || "/tmp/e2e-risk-evidence",
+      statePath: command.statePath,
+      evidencePath: command.evidencePath,
     });
     return;
   }
-  if (mode === "abandon") {
-    await abandon(args["check-id"] || "");
+  if (command.mode === "abandon") {
+    await abandon(command.checkId);
     return;
   }
-  throw new Error("--mode must be start, finish, or abandon");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

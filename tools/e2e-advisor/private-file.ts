@@ -6,6 +6,19 @@ import fs from "node:fs";
 const NO_FOLLOW = fs.constants.O_NOFOLLOW ?? 0;
 const NON_BLOCK = fs.constants.O_NONBLOCK ?? 0;
 
+function openPrivateFileForWrite(file: string): number {
+  try {
+    return fs.openSync(
+      file,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NO_FOLLOW | NON_BLOCK,
+      0o600,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    return fs.openSync(file, fs.constants.O_WRONLY | NO_FOLLOW | NON_BLOCK);
+  }
+}
+
 export function readPrivateRegularFile(
   file: string,
   options: { allowMissing?: boolean; maxBytes: number },
@@ -33,11 +46,7 @@ export function readPrivateRegularFile(
 }
 
 export function writePrivateRegularFile(file: string, contents: string): void {
-  const descriptor = fs.openSync(
-    file,
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | NO_FOLLOW | NON_BLOCK,
-    0o600,
-  );
+  const descriptor = openPrivateFileForWrite(file);
   try {
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile() || stat.nlink !== 1) {
@@ -45,10 +54,8 @@ export function writePrivateRegularFile(file: string, contents: string): void {
     }
     fs.fchmodSync(descriptor, 0o600);
     fs.ftruncateSync(descriptor, 0);
-    // The caller validates and bounds controller state before this private,
-    // no-follow descriptor write. Persisting that state is intentional.
-    // codeql[js/http-to-file-access]
-    fs.writeFileSync(descriptor, contents, "utf8");
+    // Callers validate and bound state before this exclusive/no-follow write.
+    fs.writeFileSync(descriptor, contents, "utf8"); // codeql[js/http-to-file-access]: intentional validated controller state persistence.
     fs.fsyncSync(descriptor);
   } finally {
     fs.closeSync(descriptor);

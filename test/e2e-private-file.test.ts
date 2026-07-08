@@ -24,6 +24,8 @@ describe("private E2E controller files", () => {
       writePrivateRegularFile(regular, "regular\n");
       expect(readPrivateRegularFile(regular, { maxBytes: 64 })).toBe("regular\n");
       expect(fs.statSync(regular).mode & 0o777).toBe(0o600);
+      writePrivateRegularFile(regular, "updated\n");
+      expect(readPrivateRegularFile(regular, { maxBytes: 64 })).toBe("updated\n");
 
       fs.writeFileSync(target, "protected\n");
       fs.symlinkSync(target, symlink);

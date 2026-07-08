@@ -39,6 +39,15 @@ jobs:
       - name: Install trusted controller dependencies
         run: npm ci --ignore-scripts
 
+      - id: workspace
+        name: Create private controller workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-e2e-risk-gate.XXXXXX")"
+          chmod 700 "$work_dir"
+          printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
+
       - id: start
         name: Build plan and dispatch exact-commit E2E
         continue-on-error: true
@@ -49,15 +58,14 @@ jobs:
           --mode start
           --base "${{ github.event.before }}"
           --commit "${{ github.event.after }}"
-          --plan /tmp/post-merge-risk-plan.json
-          --state /tmp/e2e-risk-gate-state.json
+          --work-dir "${{ steps.workspace.outputs.work_dir }}"
 
       - name: Upload post-merge risk plan
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: post-merge-risk-plan-${{ github.event.after }}
-          path: /tmp/post-merge-risk-plan.json
+          path: ${{ steps.workspace.outputs.work_dir }}/post-merge-risk-plan.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -90,7 +98,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.start.outputs.run_id }}
-        run: gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --dir /tmp/e2e-risk-evidence
+        run: >-
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY"
+          --dir "${{ steps.workspace.outputs.work_dir }}/evidence"
 
       - id: finish
         name: Complete exact-commit shadow check
@@ -101,8 +111,7 @@ jobs:
         run: >-
           node --experimental-strip-types tools/e2e-advisor/post-merge-risk-gate.mts
           --mode finish
-          --state /tmp/e2e-risk-gate-state.json
-          --evidence /tmp/e2e-risk-evidence
+          --work-dir "${{ steps.workspace.outputs.work_dir }}"
 
       - name: Close shadow check after completion failure
         if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.dispatched == 'true' && steps.finish.outcome == 'failure' }}
@@ -116,3 +125,7 @@ jobs:
       - name: Propagate shadow completion failure
         if: ${{ steps.finish.outcome == 'failure' }}
         run: exit 1
+
+      - name: Remove private controller workspace
+        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
+        run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
