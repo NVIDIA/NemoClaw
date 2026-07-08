@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import importlib.util
-from collections.abc import Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -25,12 +25,16 @@ MANAGED_PROFILE_KEYS = (
     "openai:nvidia/nemotron-3-ultra-550b-a55b",
     "openai:nvidia/nvidia/nemotron-3-ultra",
 )
+_INVALID_EXECUTE_COMMAND = "[content]"
+_REGISTERED_CANONICAL_PROFILE: Any | None = None
+_REGISTERED_MANAGED_PROFILE: Any | None = None
 
 # invalidState: Deep Agents resolves pre-built ChatOpenAI models under `openai:`
 # keys, while its native Ultra profile is registered under an NVIDIA key.
-# sourceBoundary: NemoClaw owns only these two managed inference aliases; the
-# prompt, tool overrides, middleware, bootstrap, and canonical profile remain
-# byte-identical Deep Agents artifacts.
+# sourceBoundary: NemoClaw owns only these two managed inference aliases and one
+# exact malformed-tool-call guard layered onto them; the prompt, tool overrides,
+# bootstrap, canonical profile, and upstream source remain byte-identical Deep
+# Agents artifacts.
 # whyPrivateRead: Deep Agents exposes public profile registration and plugin
 # hooks but no public getter/alias API. The exact version/source gates constrain
 # this single registry read; all writes use the public registration function.
@@ -104,33 +108,119 @@ def _require_source(path: Path, label: str, expected_sha256: str) -> None:
     compile(source, str(path), "exec")
 
 
+def _managed_profile_overlay() -> Any:
+    """Build the NemoClaw-only middleware layered onto managed Ultra aliases."""
+    from deepagents.profiles.harness.harness_profiles import (  # noqa: PLC0415
+        HarnessProfile,
+    )
+    from langchain.agents.middleware.types import AgentMiddleware  # noqa: PLC0415
+    from langchain_core.messages import ToolMessage  # noqa: PLC0415
+
+    class NemoClawExecutePlaceholderGuardMiddleware(AgentMiddleware):
+        """Reject Ultra's literal execute placeholder before shell dispatch."""
+
+        name = "NemoClawExecutePlaceholderGuardMiddleware"
+
+        @staticmethod
+        def _reject(request: Any) -> ToolMessage | None:
+            tool_call = request.tool_call
+            name = tool_call.get("name")
+            if name != "execute":
+                return None
+            args = tool_call.get("args")
+            command = args.get("command") if isinstance(args, dict) else None
+            if (
+                not isinstance(command, str)
+                or command.strip().casefold() != _INVALID_EXECUTE_COMMAND
+            ):
+                return None
+            return ToolMessage(
+                content=(
+                    "Error: execute received the placeholder '[content]' instead of "
+                    "a concrete shell command. Provide the complete command and do "
+                    "not retry the placeholder."
+                ),
+                name=name,
+                tool_call_id=tool_call.get("id"),
+                status="error",
+            )
+
+        def wrap_tool_call(
+            self,
+            request: Any,
+            handler: Callable[[Any], Any],
+        ) -> Any:
+            """Reject the placeholder or delegate the original request unchanged."""
+            rejected = self._reject(request)
+            if rejected is not None:
+                return rejected
+            return handler(request)
+
+        async def awrap_tool_call(
+            self,
+            request: Any,
+            handler: Callable[[Any], Awaitable[Any]],
+        ) -> Any:
+            """Apply the same guard on the asynchronous tool-dispatch path."""
+            rejected = self._reject(request)
+            if rejected is not None:
+                return rejected
+            return await handler(request)
+
+    return HarnessProfile(
+        extra_middleware=[NemoClawExecutePlaceholderGuardMiddleware()]
+    )
+
+
 def _register_aliases(
     registry: MutableMapping[str, Any],
     register_profile: Callable[[str, Any], None],
+    overlay: Any,
 ) -> None:
+    global _REGISTERED_CANONICAL_PROFILE  # noqa: PLW0603
+    global _REGISTERED_MANAGED_PROFILE  # noqa: PLW0603
+
     native_profile = registry.get(CANONICAL_PROFILE_KEY)
     if native_profile is None:
         raise _fail(f"canonical profile {CANONICAL_PROFILE_KEY!r} is not registered")
 
     existing = tuple(key in registry for key in MANAGED_PROFILE_KEYS)
     if all(existing):
-        if all(registry[key] is native_profile for key in MANAGED_PROFILE_KEYS):
+        if (
+            native_profile is _REGISTERED_CANONICAL_PROFILE
+            and _REGISTERED_MANAGED_PROFILE is not None
+            and all(
+                registry[key] is _REGISTERED_MANAGED_PROFILE
+                for key in MANAGED_PROFILE_KEYS
+            )
+        ):
             return
-        raise _fail("managed aliases conflict with the reviewed canonical profile")
+        raise _fail("managed aliases conflict with the reviewed managed profile")
     if any(existing):
         raise _fail("managed aliases are in a partial registration state")
 
     try:
-        for key in MANAGED_PROFILE_KEYS:
-            register_profile(key, native_profile)
-        if not all(registry.get(key) is native_profile for key in MANAGED_PROFILE_KEYS):
-            raise _fail(
-                "managed alias registration did not preserve canonical identity"
-            )
+        first_key, second_key = MANAGED_PROFILE_KEYS
+        register_profile(first_key, native_profile)
+        register_profile(first_key, overlay)
+        managed_profile = registry.get(first_key)
+        if managed_profile is None or managed_profile is native_profile:
+            raise _fail("managed profile overlay was not applied")
+        register_profile(second_key, managed_profile)
+        if registry.get(CANONICAL_PROFILE_KEY) is not native_profile:
+            raise _fail("canonical profile changed during managed registration")
+        if not all(
+            registry.get(key) is managed_profile for key in MANAGED_PROFILE_KEYS
+        ):
+            raise _fail("managed alias registration did not preserve managed identity")
     except Exception:
         for key in MANAGED_PROFILE_KEYS:
             registry.pop(key, None)
+        _REGISTERED_CANONICAL_PROFILE = None
+        _REGISTERED_MANAGED_PROFILE = None
         raise
+    _REGISTERED_CANONICAL_PROFILE = native_profile
+    _REGISTERED_MANAGED_PROFILE = managed_profile
 
 
 def register() -> None:
@@ -154,7 +244,11 @@ def register() -> None:
         _HARNESS_PROFILES,
     )
 
-    _register_aliases(_HARNESS_PROFILES, register_harness_profile)
+    _register_aliases(
+        _HARNESS_PROFILES,
+        register_harness_profile,
+        _managed_profile_overlay(),
+    )
 
 
 __all__ = ["register"]

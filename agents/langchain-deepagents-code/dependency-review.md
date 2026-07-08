@@ -23,7 +23,7 @@ NemoClaw no longer vendors or overlays that source.
 - Native profile SHA-256: `c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `75ff7e7a5142cad4305126ccb1b8fc756306e82d4c559ddbc624012fb54ebfc4`
+- Adapter module SHA-256: `ed83417d733f10e71eecde77da5a037f7985d0e4ad4f87f8d9007357802e4e7a`
 - Adapter project metadata SHA-256: `7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
@@ -71,7 +71,10 @@ without consulting an index. Its `deepagents.harness_profiles` entry
 point runs after built-in profiles are registered, reads the reviewed canonical
 profile through one exact-version/hash-gated private registry lookup, and uses
 Deep Agents' public registration API to map it to the two exact `openai:` model
-keys used by NemoClaw's managed OpenAI-compatible `ChatOpenAI` route. The
+keys used by NemoClaw's managed OpenAI-compatible `ChatOpenAI` route. It layers
+one first-party middleware onto those aliases that rejects only a trimmed,
+case-insensitive `[content]` value passed as the complete `execute` command;
+the canonical NVIDIA profile and unrelated models remain unchanged. The
 released SDK has no public profile getter or alias API. The adapter does not add
 a provider-wide OpenAI profile.
 
@@ -82,8 +85,10 @@ Registration is atomic, idempotent, and rejects missing canonical, partial, or
 conflicting alias state. The image validator runs under isolated Python,
 verifies the installed entry-point metadata and adapter source hash before the
 upstream source checks, checks both upstream files again after profile loading,
-resolves the complete native middleware for both aliases, compiles a graph,
-proves parser/native dispatch parity, and confirms an unrelated OpenAI model
+resolves the complete native middleware plus the managed guard for both aliases,
+proves the canonical middleware remains unchanged, compiles a graph, exercises
+sync and async placeholder rejection, proves concrete-command and parser/native
+dispatch parity through the actual graph, and confirms an unrelated OpenAI model
 receives no Ultra behavior. The Docker build separately imports the adapter,
 Deep Agents, and DCode under isolated Python immediately after installation;
 the validator then binds the installed module to its distribution and rechecks
@@ -96,7 +101,8 @@ the fake-Docker unit suite separately pins its diagnostic failure branches.
 
 The reviewed native-profile and bootstrap files stay byte-for-byte unchanged.
 Focused fixtures cover the reviewed version/hash, missing-source,
-missing-canonical, partial/conflicting, rollback, and idempotence states. The
+missing-canonical, partial/conflicting, rollback, idempotence, exact placeholder
+rejection, and unchanged concrete-command states. The
 deleted source-backport license path, `LICENSE.langchain-deepagents`, is not
 staged into the image, and image regression tests enforce that absence.
 

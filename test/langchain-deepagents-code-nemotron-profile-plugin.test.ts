@@ -55,9 +55,19 @@ type PluginFixture = {
 
 type ProbeResult = {
   aliases: boolean[];
+  aliasesShareManagedProfile: boolean;
+  aliasMiddleware: string[];
+  canonicalHasGuard: boolean;
   canonicalPresent: boolean;
   error: string | null;
+  guardProbe: {
+    async: { content: string; id: string; name: string; status: string; calls: number };
+    concrete: { calls: number; command: string; result: string };
+    nonExecute: { calls: number; result: string };
+    sync: { content: string; id: string; name: string; status: string; calls: number };
+  } | null;
   registryKeys: string[];
+  unrelatedPresent: boolean;
 };
 
 function sha256(value: string | Buffer): string {
@@ -113,10 +123,37 @@ function makePluginFixture(
 _HARNESS_PROFILES = {}
 
 
+class HarnessProfile:
+    def __init__(self, *, extra_middleware=()):
+        self.extra_middleware = list(extra_middleware)
+
+
 def register_harness_profile(key, profile):
-    _HARNESS_PROFILES[key] = profile
+    existing = _HARNESS_PROFILES.get(key)
+    if existing is None:
+        _HARNESS_PROFILES[key] = profile
+    else:
+        _HARNESS_PROFILES[key] = HarnessProfile(
+            extra_middleware=[*existing.extra_middleware, *profile.extra_middleware]
+        )
     if os.environ.get("NEMOCLAW_TEST_FAIL_KEY") == key:
         raise RuntimeError(f"injected registration failure for {key}")
+`,
+  );
+  writeFixtureFile(
+    root,
+    "langchain/agents/middleware/types.py",
+    "class AgentMiddleware:\n    pass\n",
+  );
+  writeFixtureFile(
+    root,
+    "langchain_core/messages.py",
+    `class ToolMessage:
+    def __init__(self, *, content, name, tool_call_id, status):
+        self.content = content
+        self.name = name
+        self.tool_call_id = tool_call_id
+        self.status = status
 `,
   );
   const nativeProfilePath = writeFixtureFile(
@@ -169,7 +206,7 @@ function makeValidatorDependencyStubRoot(): string {
     "deepagents/profiles/harness/_nvidia_nemotron_3_ultra.py":
       "class NemotronTextToolCallParser: pass\n",
     "deepagents/profiles/harness/harness_profiles.py":
-      "class HarnessProfile: pass\ndef _harness_profile_for_model(*args, **kwargs): return HarnessProfile()\n",
+      "_HARNESS_PROFILES = {}\nclass HarnessProfile: pass\ndef _harness_profile_for_model(*args, **kwargs): return HarnessProfile()\n",
     "deepagents_code/__init__.py": "",
     "deepagents_code/agent.py": "def create_cli_agent(*args, **kwargs): return None\n",
     "langchain/agents/middleware/types.py": "class AgentMiddleware: pass\n",
@@ -306,18 +343,27 @@ function runPlugin(
     additionalPythonRoots?: string[];
     aliasState?: "complete" | "conflict" | "partial";
     failKey?: string;
+    probeGuard?: boolean;
     registerCalls?: number;
     withCanonical?: boolean;
+    withUnrelated?: boolean;
   } = {},
 ) {
   const pluginPath = prepareFixturePlugin();
   const pluginRoot = path.dirname(path.dirname(pluginPath));
-  const script = `import json
-from deepagents.profiles.harness.harness_profiles import _HARNESS_PROFILES
+  const script = `import asyncio
+import json
+from deepagents.profiles.harness.harness_profiles import HarnessProfile, _HARNESS_PROFILES
 
-canonical = object()
+class NativeMiddleware:
+    pass
+
+canonical = HarnessProfile(extra_middleware=[NativeMiddleware()])
 if ${(options.withCanonical ?? true) ? "True" : "False"}:
     _HARNESS_PROFILES[${JSON.stringify(CANONICAL_MODEL_SPEC)}] = canonical
+unrelated = object()
+if ${options.withUnrelated ? "True" : "False"}:
+    _HARNESS_PROFILES["openai:gpt-4.1-mini"] = unrelated
 
 state = ${JSON.stringify(options.aliasState ?? "")}
 aliases = ${JSON.stringify(MANAGED_MODEL_ALIASES)}
@@ -339,11 +385,105 @@ try:
 except Exception as exc:
     error = str(exc)
 
+guard_probe = None
+aliases_registered = [key in _HARNESS_PROFILES for key in aliases]
+managed_profile = _HARNESS_PROFILES.get(aliases[0]) if all(aliases_registered) else None
+alias_middleware = [
+    type(item).__name__
+    for item in getattr(managed_profile, "extra_middleware", ())
+]
+if error is None and ${options.probeGuard ? "True" : "False"}:
+    guard = next(
+        item
+        for item in managed_profile.extra_middleware
+        if type(item).__name__ == "NemoClawExecutePlaceholderGuardMiddleware"
+    )
+
+    class Request:
+        def __init__(self, name, command, call_id):
+            self.tool_call = {
+                "name": name,
+                "args": {"command": command},
+                "id": call_id,
+            }
+
+    sync_calls = []
+    sync_request = Request("execute", "  [CONTENT]  ", "sync-call")
+
+    def sync_handler(request):
+        sync_calls.append(request)
+        return "sync-handler-result"
+
+    sync_result = guard.wrap_tool_call(sync_request, sync_handler)
+
+    async_calls = []
+    async_request = Request("execute", "[content]", "async-call")
+
+    async def async_handler(request):
+        async_calls.append(request)
+        return "async-handler-result"
+
+    async_result = asyncio.run(guard.awrap_tool_call(async_request, async_handler))
+
+    concrete_calls = []
+    concrete_request = Request("execute", "printf concrete", "concrete-call")
+
+    def concrete_handler(request):
+        concrete_calls.append(request)
+        return "concrete-handler-result"
+
+    concrete_result = guard.wrap_tool_call(concrete_request, concrete_handler)
+
+    non_execute_calls = []
+    non_execute_request = Request("write_file", "[content]", "write-call")
+
+    def non_execute_handler(request):
+        non_execute_calls.append(request)
+        return "non-execute-handler-result"
+
+    non_execute_result = guard.wrap_tool_call(non_execute_request, non_execute_handler)
+    guard_probe = {
+        "sync": {
+            "content": sync_result.content,
+            "id": sync_result.tool_call_id,
+            "name": sync_result.name,
+            "status": sync_result.status,
+            "calls": len(sync_calls),
+        },
+        "async": {
+            "content": async_result.content,
+            "id": async_result.tool_call_id,
+            "name": async_result.name,
+            "status": async_result.status,
+            "calls": len(async_calls),
+        },
+        "concrete": {
+            "calls": len(concrete_calls),
+            "command": concrete_calls[0].tool_call["args"]["command"],
+            "result": concrete_result,
+        },
+        "nonExecute": {
+            "calls": len(non_execute_calls),
+            "result": non_execute_result,
+        },
+    }
+
 print(json.dumps({
-    "aliases": [_HARNESS_PROFILES.get(key) is canonical for key in aliases],
+    "aliases": aliases_registered,
+    "aliasesShareManagedProfile": (
+        all(aliases_registered)
+        and _HARNESS_PROFILES[aliases[0]] is _HARNESS_PROFILES[aliases[1]]
+    ),
+    "aliasMiddleware": alias_middleware,
+    "canonicalHasGuard": any(
+        type(item).__name__ == "NemoClawExecutePlaceholderGuardMiddleware"
+        for item in canonical.extra_middleware
+    ),
     "canonicalPresent": _HARNESS_PROFILES.get(${JSON.stringify(CANONICAL_MODEL_SPEC)}) is canonical,
     "error": error,
+    "guardProbe": guard_probe,
     "registryKeys": sorted(_HARNESS_PROFILES),
+    "unrelatedPresent": _HARNESS_PROFILES.get("openai:gpt-4.1-mini") is unrelated,
 }))
 raise SystemExit(1 if error else 0)
 `;
@@ -481,10 +621,48 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.probe.aliases).toEqual([true, true]);
+    expect(result.probe.aliasesShareManagedProfile).toBe(true);
+    expect(result.probe.aliasMiddleware).toEqual([
+      "NativeMiddleware",
+      "NemoClawExecutePlaceholderGuardMiddleware",
+    ]);
+    expect(result.probe.canonicalHasGuard).toBe(false);
     expect(result.probe.canonicalPresent).toBe(true);
     expect(result.probe.registryKeys).toEqual(
       [...MANAGED_MODEL_ALIASES, CANONICAL_MODEL_SPEC].sort(),
     );
+    expectOfficialSourcesUnchanged(fixture);
+  });
+
+  it("rejects only the exact execute placeholder before sync and async dispatch", () => {
+    const fixture = makePluginFixture();
+    const result = runPlugin(fixture, { probeGuard: true });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.probe.guardProbe).not.toBeNull();
+    expect(result.probe.guardProbe?.sync).toMatchObject({
+      id: "sync-call",
+      name: "execute",
+      status: "error",
+      calls: 0,
+    });
+    expect(result.probe.guardProbe?.sync.content).toContain("placeholder '[content]'");
+    expect(result.probe.guardProbe?.sync.content).toContain("complete command");
+    expect(result.probe.guardProbe?.async).toMatchObject({
+      id: "async-call",
+      name: "execute",
+      status: "error",
+      calls: 0,
+    });
+    expect(result.probe.guardProbe?.concrete).toEqual({
+      calls: 1,
+      command: "printf concrete",
+      result: "concrete-handler-result",
+    });
+    expect(result.probe.guardProbe?.nonExecute).toEqual({
+      calls: 1,
+      result: "non-execute-handler-result",
+    });
     expectOfficialSourcesUnchanged(fixture);
   });
 
@@ -582,12 +760,16 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
   it("rolls back the first alias when the second registration fails", () => {
     const fixture = makePluginFixture();
-    const result = runPlugin(fixture, { failKey: MANAGED_MODEL_ALIASES[1] });
+    const result = runPlugin(fixture, {
+      failKey: MANAGED_MODEL_ALIASES[1],
+      withUnrelated: true,
+    });
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toContain("injected registration failure");
     expect(result.probe.aliases).toEqual([false, false]);
-    expect(result.probe.registryKeys).toEqual([CANONICAL_MODEL_SPEC]);
+    expect(result.probe.unrelatedPresent).toBe(true);
+    expect(result.probe.registryKeys).toEqual([CANONICAL_MODEL_SPEC, "openai:gpt-4.1-mini"].sort());
     expectOfficialSourcesUnchanged(fixture);
   });
 });
