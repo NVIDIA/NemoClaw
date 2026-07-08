@@ -56,6 +56,14 @@ const INSTALL_SCRIPT = /^(?:install\.sh|scripts\/(?:install|setup|dev-setup)[^/]
 const INFERENCE_POLICY_FILE = /(?:^|[/.-])(?:inference|network-policy)(?:[/.-]|$)/;
 const CREDENTIAL_SECURITY_FILE =
   /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|shields|security)(?:[/.-]|$)/i;
+// These checked-in paths and directories are the source boundary for private-network,
+// policy, and shields enforcement but are not all covered by the token heuristics above.
+// Keep the explicit floor until a machine-readable security-owner catalog replaces it.
+const PRIVATE_NETWORK_BOUNDARY_FILES = new Set([
+  "nemoclaw-blueprint/private-networks.yaml",
+  "nemoclaw/src/blueprint/private-networks.ts",
+]);
+const POLICY_SECURITY_FILE = /^src\/lib\/(?:policy|shields)\//;
 
 export const RISK_RULES: readonly RiskRule[] = [
   {
@@ -123,7 +131,9 @@ export const RISK_RULES: readonly RiskRule[] = [
     matches: (file) =>
       file.startsWith("src/lib/inference/") ||
       file.startsWith("src/lib/actions/inference") ||
+      file.startsWith("src/lib/policy/") ||
       file.startsWith("nemoclaw-blueprint/policies/") ||
+      PRIVATE_NETWORK_BOUNDARY_FILES.has(file) ||
       /^src\/lib\/actions\/sandbox\/.*policy/.test(file) ||
       INFERENCE_POLICY_FILE.test(file),
   },
@@ -180,6 +190,8 @@ export const RISK_RULES: readonly RiskRule[] = [
     ],
     matches: (file) =>
       file.startsWith("src/lib/credentials/") ||
+      POLICY_SECURITY_FILE.test(file) ||
+      PRIVATE_NETWORK_BOUNDARY_FILES.has(file) ||
       CREDENTIAL_SECURITY_FILE.test(file) ||
       file.startsWith("nemoclaw/src/blueprint/ssrf"),
   },
