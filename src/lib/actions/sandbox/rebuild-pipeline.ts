@@ -95,6 +95,7 @@ async function rebuildSandboxUnlocked(
     baseImagePreflight,
     liveState,
     recoveryManifest: validatedRecoveryManifest,
+    allowLegacyManagedImageRecovery,
     dcodePreflight,
     preparedImage,
     releaseOnboardLock,
@@ -143,7 +144,7 @@ async function rebuildSandboxUnlocked(
         sandboxName,
         sandboxEntry,
         recoveryManifest,
-        opts.allowLegacyManagedImageRecovery === true,
+        allowLegacyManagedImageRecovery,
         bail,
       );
 
@@ -203,6 +204,7 @@ async function rebuildSandboxUnlocked(
           recordedImage: sandboxEntry.imageTag ?? null,
           nemoclawVersion: sandboxEntry.nemoclawVersion ?? null,
         },
+        legacyManagedImageRecoveryAuthorized: allowLegacyManagedImageRecovery,
         oldSandboxPresent: !staleRecovery,
       });
       await transaction.reconcileObservedDeletion(staleRecovery);

@@ -39,6 +39,41 @@ describe("rebuild transaction boundary", () => {
     });
   });
 
+  it("fails closed with recovery guidance after replacement creation", async () => {
+    const interrupted = createRebuildFlowHarness();
+    vi.spyOn(interrupted.transactionStore, "complete").mockRejectedValueOnce(
+      new Error("simulated process interruption after replacement creation"),
+    );
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("simulated process interruption after replacement creation");
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      status: "active",
+      phase: "replacement_created",
+    });
+
+    const resumed = createRebuildFlowHarness();
+    resumed.runOpenshellSpy.mockClear();
+    await expect(
+      resumed.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        transactionStore: interrupted.transactionStore,
+      }),
+    ).rejects.toThrow("Rebuild transaction recovery failed");
+
+    expect(resumed.errorSpy.mock.calls.flat().join("\n")).toMatch(
+      /cannot be resumed automatically.*snapshot restore/,
+    );
+    expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("does not create a transaction when backup fails", async () => {
     const harness = createRebuildFlowHarness({
       beforeBackup: () => {
@@ -174,6 +209,48 @@ describe("rebuild transaction boundary", () => {
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
+  });
+
+  it("resumes confirmed legacy recovery without the original process options", async () => {
+    const interrupted = createRebuildFlowHarness({
+      sandboxListOutput: "alpha Error",
+      sandboxEntry: { nemoclawVersion: null },
+      managedImageEvidence: false,
+      onboard: () => {
+        throw new Error("simulated process interruption");
+      },
+    });
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+        allowLegacyManagedImageRecovery: true,
+      }),
+    ).rejects.toThrow("Recreate failed");
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      phase: "old_deleted",
+      intent: { source: { legacyManagedImageRecoveryAuthorized: true } },
+    });
+
+    const resumed = createRebuildFlowHarness({
+      staleRecovery: true,
+      sandboxEntry: { nemoclawVersion: null },
+      managedImageEvidence: false,
+    });
+    resumed.runOpenshellSpy.mockClear();
+    await resumed.rebuildSandbox("alpha", ["--yes"], {
+      throwOnError: true,
+      transactionStore: interrupted.transactionStore,
+    });
+
+    expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      phase: "completed",
+      status: "completed",
+    });
   });
 
   it("reconciles prepared state when a fresh coordinator observes deletion", async () => {

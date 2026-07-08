@@ -51,6 +51,11 @@ export function loadRebuildRecovery(
       `Rebuild transaction '${transaction.transactionId}' no longer matches the latest validated backup.`,
     );
   }
+  // Recovery boundary: NemoClaw has a durable replacement receipt but
+  // OpenShell cannot yet prove that the replacement is complete and owns the
+  // recorded identity. The boundary test covers crash-after-create and the
+  // actionable snapshot guidance. Remove this stop only when replacement
+  // identity can be verified safely enough to resume post-restore work.
   if (transaction.phase === "replacement_created") {
     throw new Error(
       `Rebuild transaction '${transaction.transactionId}' already created a replacement, so this phase cannot be resumed automatically in #6435. Inspect the replacement before changing it. Validated backup: ${recoveryManifest.backupPath}. If state restoration is needed, run '${CLI_NAME} ${sandboxName} snapshot restore "${recoveryManifest.timestamp}"'.`,
@@ -68,6 +73,7 @@ async function prepareRebuildTransaction(args: {
   recreateOptions: RebuildRecreateOnboardOpts;
   backupManifest: RebuildBackupManifest;
   imageIdentity: unknown;
+  legacyManagedImageRecoveryAuthorized: boolean;
   oldSandboxPresent: boolean;
 }): Promise<RebuildTransactionRecordV1 | null> {
   if (!args.backupManifest) return null;
@@ -77,6 +83,7 @@ async function prepareRebuildTransaction(args: {
     source: {
       agent: args.sandboxEntry.agent ?? null,
       registryFingerprint: fingerprintRebuildValue(args.sandboxEntry),
+      legacyManagedImageRecoveryAuthorized: args.legacyManagedImageRecoveryAuthorized,
     },
     target: {
       agent: resumeConfig.agent,

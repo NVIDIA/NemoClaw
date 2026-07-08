@@ -66,6 +66,7 @@ export interface RebuildPreflightPhaseResult {
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   liveState: RebuildLiveState;
   recoveryManifest: RebuildManifest | null;
+  allowLegacyManagedImageRecovery: boolean;
   dcodePreflight: DcodeRebuildOrchestrator;
   preparedImage: PreparedRebuildImage | null;
   releaseOnboardLock: () => void;
@@ -107,7 +108,9 @@ export async function runRebuildPreflightPhase(
   let sandboxEntry = initialSandboxEntry;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
-    opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
+    (opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true) ||
+    (recovery.transaction?.status === "active" &&
+      recovery.transaction.intent.source.legacyManagedImageRecoveryAuthorized);
   const recoveryManifest = validatePreparedRecoveryManifest(
     sandboxName,
     sandboxEntry,
@@ -247,6 +250,7 @@ export async function runRebuildPreflightPhase(
         ...preparedTarget,
         liveState,
         recoveryManifest: effectiveRecoveryManifest,
+        allowLegacyManagedImageRecovery,
         dcodePreflight,
         releaseOnboardLock,
         log,
