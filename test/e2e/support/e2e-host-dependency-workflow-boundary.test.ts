@@ -74,8 +74,10 @@ describe("inline E2E host dependency boundary", () => {
     const installIndex = steps.findIndex(
       (step) => step.name === "Install cloud-onboard DCode TUI host dependencies",
     );
+    expect(installIndex).toBeGreaterThanOrEqual(0);
     const install = steps.splice(installIndex, 1)[0]!;
     const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    expect(prepareIndex).toBeGreaterThanOrEqual(0);
     steps.splice(prepareIndex + 1, 0, install);
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 

@@ -3799,11 +3799,15 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     "Install cloud-onboard DCode TUI host dependencies",
     ["expect"],
   );
-  const cloudOnboardHostDependencies = cloudOnboardSteps.find(
-    (step) => step.name === "Install cloud-onboard DCode TUI host dependencies",
+  const cloudOnboardHostDependencies = requireStep(
+    errors,
+    cloudOnboardSteps,
+    "Install cloud-onboard DCode TUI host dependencies",
   );
-  const cloudOnboardPrepareWorkspace = cloudOnboardSteps.find(
-    (step) => step.name === "Prepare E2E workspace",
+  const cloudOnboardPrepareWorkspace = requireStep(
+    errors,
+    cloudOnboardSteps,
+    "Prepare E2E workspace",
   );
   if (
     cloudOnboardHostDependencies &&
