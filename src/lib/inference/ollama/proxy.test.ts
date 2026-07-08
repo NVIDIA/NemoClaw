@@ -140,3 +140,51 @@ describe("promptOllamaModel installed-model fit filter", () => {
     expect(result).not.toBe("nemotron-3-nano:30b");
   });
 });
+
+describe("waitForPulledOllamaModel", () => {
+  it("retries model discovery with bounded backoff after a completed pull (#6038)", () => {
+    const proxy: typeof import("./proxy") = require(PROXY_DIST);
+    const sleeps: number[] = [];
+    let nowMs = 0;
+    let attempts = 0;
+
+    const discovered = proxy.waitForPulledOllamaModel("qwen3.5:9b", {
+      getModelOptions: () => {
+        attempts += 1;
+        return attempts >= 3 ? ["qwen3.5:9b"] : [];
+      },
+      now: () => nowMs,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        nowMs += ms;
+      },
+    });
+
+    expect(discovered).toBe(true);
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([250, 500]);
+  });
+
+  it("fails after the bounded discovery window when Ollama never lists the model (#6038)", () => {
+    const proxy: typeof import("./proxy") = require(PROXY_DIST);
+    const sleeps: number[] = [];
+    let nowMs = 0;
+    let attempts = 0;
+
+    const discovered = proxy.waitForPulledOllamaModel("qwen3.5:9b", {
+      getModelOptions: () => {
+        attempts += 1;
+        return [];
+      },
+      now: () => nowMs,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        nowMs += ms;
+      },
+    });
+
+    expect(discovered).toBe(false);
+    expect(attempts).toBe(8);
+    expect(sleeps).toEqual([250, 500, 1_000, 2_000, 2_000, 2_000, 2_000]);
+  });
+});

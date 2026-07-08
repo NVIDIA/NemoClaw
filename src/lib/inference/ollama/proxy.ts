@@ -11,7 +11,7 @@ const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
-const { waitForPort } = require("../../core/wait");
+const { waitForPort, waitUntil } = require("../../core/wait");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -763,6 +763,31 @@ async function pullOllamaModel(model) {
   return pullOllamaModelViaCli(model);
 }
 
+const PULLED_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
+const PULLED_MODEL_DISCOVERY_ATTEMPTS = 8;
+
+/** Confirm that Ollama exposes a just-pulled model before onboarding continues. */
+function waitForPulledOllamaModel(
+  model: string,
+  deps: {
+    getModelOptions?: () => string[];
+    now?: () => number;
+    sleep?: (ms: number) => void;
+  } = {},
+): boolean {
+  const getModelOptions = deps.getModelOptions ?? getOllamaModelOptions;
+  const now = deps.now ?? Date.now;
+  return waitUntil(() => getModelOptions().includes(model), {
+    deadlineMs: now() + PULLED_MODEL_DISCOVERY_TIMEOUT_MS,
+    initialIntervalMs: 250,
+    maxIntervalMs: 2_000,
+    backoffFactor: 2,
+    maxAttempts: PULLED_MODEL_DISCOVERY_ATTEMPTS,
+    now,
+    sleep: deps.sleep,
+  });
+}
+
 // ── Tools-capability gate (issue #2667) ─────────────────────────
 //
 // Ollama models without the "tools" capability fail at first agent prompt
@@ -878,6 +903,14 @@ async function prepareOllamaModel(
           "Check the model name and that Ollama can access the registry, then try another model.",
       };
     }
+    if (!waitForPulledOllamaModel(model)) {
+      return {
+        ok: false,
+        message:
+          `Ollama pull for '${model}' completed, but Ollama did not list the model afterward. ` +
+          "Wait for Ollama to finish registering the model, then choose it again.",
+      };
+    }
   }
 
   const capCheck = await checkOllamaModelToolSupport(model, interaction);
@@ -969,4 +1002,5 @@ export {
   pullOllamaModel,
   startOllamaAuthProxy,
   unloadOllamaModels,
+  waitForPulledOllamaModel,
 };
