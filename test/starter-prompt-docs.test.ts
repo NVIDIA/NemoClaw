@@ -436,17 +436,17 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("--field NAME:type");
     expect(promptSource).toContain("--execution-profile isolated");
     expect(promptSource).toContain("--execution-profile account-home --cwd");
-    expect(promptSource).toContain("absolute native executable or interpreter path");
-    expect(promptSource).toContain("including configuration roots, source/executable selectors");
-    expect(promptSource).toContain("\\`NPM_CONFIG_*\\` and \\`PIP_*\\`");
-    expect(promptSource).toContain("account home and the approved working directory");
-    expect(promptSource).toContain("\\`--disable\\` as the first argument");
     expect(promptSource).toContain("Never put credentials in argv");
-    expect(promptSource).toContain("<absolute-bash-path> -c");
     expect(promptSource).toContain("Confirm and Run Approved Command");
     expect(promptSource).toContain("do not retry or resubmit");
     expect(promptSource).toContain("exposure minimization, not guaranteed erasure");
-    expect(promptSource).toContain("unsets the exported credential before starting \\`curl\\`");
+    expect(promptSource).toContain("prefer letting that command prompt for the credential itself");
+    expect(promptSource).toContain("Do not hand-assemble a \\`curl | bash\\` wrapper");
+    // The slim prompt delegates install-time credential mechanics to the helper and installer;
+    // guard against the prose curl | bash wrapper synthesis creeping back into the copied prompt.
+    expect(promptSource).not.toContain("<absolute-bash-path> -c");
+    expect(promptSource).not.toContain("non-exported shell variable");
+    expect(promptSource).not.toContain("unsets the exported credential before starting");
     expect(formSource).toContain("<title>NemoClaw Local Credential Form</title>");
     expect(formSource).toContain("Content-Security-Policy");
     expect(formSource).toContain("connect-src 'self';");

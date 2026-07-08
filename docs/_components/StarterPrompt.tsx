@@ -89,32 +89,25 @@ Instead, collect the required choices from me first, one clickable selection at 
 
 ## Handle Tokens Securely and Visually
 
-When you need an API key, bot token, app token, or other secret, prefer the checked-in NemoClaw local credential helper and form instead of chat.
+When you need an API key, bot token, app token, or other secret, use the checked-in NemoClaw local credential helper and form instead of chat.
 
-- Before starting credential collection, determine the exact environment-variable names and exact command argv that will receive them. Explain the command in plain language, say that the form's final confirmation runs that already-approved command immediately, and ask my permission.
-- Do not generate, rewrite, or redesign the helper or form. Use this reviewed pair exactly:
+- Before collecting anything, decide the exact environment-variable names and exact command argv that will receive them. Explain the command in plain language, say that the form's final confirmation runs that already-approved command immediately, and ask my permission.
+- Do not generate, rewrite, or redesign the helper or form. Use this reviewed pair exactly, and verify both SHA-256 digests before use:
   - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/786856661c24aa25c0843bfe1e5bd72f21e927a2/scripts/local-credential-helper.mts (SHA-256 \`04cd84bf261635cd483669f198671636e38da423fbef059d7d052824879a5f85\`)
   - Form: https://raw.githubusercontent.com/NVIDIA/NemoClaw/786856661c24aa25c0843bfe1e5bd72f21e927a2/docs/resources/local-credential-form.html (SHA-256 \`5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8\`)
-- Fetch both files, or use local repository copies when available, and verify both SHA-256 digests before use. Put fetched copies in a private temporary directory with access restricted to the current user.
-- Treat the two immutable URL and digest pairs as one reviewed trust boundary. Stop if either verification fails; do not substitute another URL, helper, form, or digest.
-- The helper requires Node.js 22.16 or newer. If that runtime is unavailable, use a secure local terminal prompt or local app prompt instead; never ask for the value in chat and never fall back to generated helper or form code.
-- Use one explicit execution profile. Choose \`--execution-profile isolated\` for stateless commands; it runs from a private temporary home and working directory that is deleted after the child exits. Choose \`--execution-profile account-home --cwd <approved-absolute-directory>\` only when the command must persist account state, such as a NemoClaw install or onboarding run. Explain that account-home mode trusts existing configuration under the operating-system account home and the approved working directory, and ask my permission for both paths.
-- Use the helper's repeated \`--field NAME:type\` arguments, followed by a literal \`--\` and the exact approved argv. For example:
-- Resolve the approved executable to an absolute native executable or interpreter path before asking permission. The helper rejects PATH-based executable lookup and removes recognized ambient credential-shaped and process-control variables, including configuration roots, source/executable selectors, proxy-routing and TLS-trust overrides, and \`NPM_CONFIG_*\` and \`PIP_*\` package-source settings before applying the selected execution profile and overlaying only the fields collected for the approved command. Approve explicit paths for nested tools when the command needs a non-default PATH. If the command needs a trusted proxy, custom CA, package registry, Python package index, project directory, config file, or profile, select non-secret settings and pre-existing trusted paths in the exact approved argv using the tool's explicit flags. Never put credentials in argv. Use a pre-existing trusted absolute wrapper when the tool requires authenticated configuration or profile discovery that cannot be selected safely through argv. On native Windows, do not target a \`.cmd\` or \`.bat\` file directly; use the absolute \`cmd.exe\` path and make its arguments part of the approved argv.
+- Treat the two immutable URL and digest pairs as one reviewed trust boundary. Stop if either verification fails; do not substitute another URL, helper, form, or digest. Put fetched copies in a private temporary directory restricted to the current user.
+- The helper requires Node.js 22.16 or newer. If that runtime is unavailable, use a secure local terminal prompt or local app prompt instead; never ask for the value in chat and never fall back to generated code.
+- Run the helper with \`--execution-profile isolated\` for stateless commands. Pass one \`--field NAME:type\` per value, then a literal \`--\` and the exact approved argv. The helper serves a one-time \`http://127.0.0.1\` form, accepts a single submission, then runs that argv; it enforces loopback-only access, requires an absolute executable, and strips ambient credential and process-control variables. Never put credentials in argv. For example:
 
 \`\`\`shell
 node --experimental-strip-types <private-dir>/local-credential-helper.mts --execution-profile isolated --form <private-dir>/local-credential-form.html --field NVIDIA_INFERENCE_API_KEY:secret -- <absolute-approved-executable> <approved-args...>
 \`\`\`
 
-- Use \`:secret\` for every secret. Use \`:text\` only for non-secret IDs, allowlists, endpoint URLs, model names, and sandbox names. The helper must reject credential-looking \`:text\` fields and process-control environment names.
-- Keep real credentials out of argv. The helper supplies accepted values only through the child process environment and invokes the frozen argv without adding a shell.
-- Open only the one-time \`http://127.0.0.1\` URL printed by the helper in the coding-agent UI's browser. Do not paste that URL or its fragment capability into chat.
-- In the form, enter the values and choose **Preview Credentials**. Preview is local-only: it clears the inputs and shows a redacted summary without sending a request. Choose **Edit** to discard that snapshot and re-enter every value.
-- Choose **Confirm and Run Approved Command** only after the redacted summary matches the command I already approved. That click makes the form's sole credential-bearing request; the helper accepts at most one valid submission, closes its listener, and starts the exact approved argv.
-- If the form says the outcome is unknown, do not retry or resubmit. Inspect the coding-agent terminal to determine whether the command ran, then start a fresh helper session only if needed.
-- Keep submitted secrets only in memory long enough to start the approved command. Do not print them, write them to logs, commit them, or paste them into chat.
-- Treat in-memory handling as exposure minimization, not guaranteed erasure. The helper wipes mutable request buffers and promptly drops its JavaScript references, but Node.js strings and the approved child process environment cannot be reliably zeroed.
-- After the command finishes, delete any fetched helper and form copies and their private temporary directory.
+- Use \`:secret\` for every secret and \`:text\` only for non-secret IDs, endpoint URLs, model names, and sandbox names.
+- Open only the one-time \`http://127.0.0.1\` URL the helper prints. In the form, enter the values and choose **Preview Credentials** for a redacted local-only summary, or **Edit** to re-enter them. Choose **Confirm and Run Approved Command** once that summary matches the command I approved.
+- If the form says the outcome is unknown, do not retry or resubmit. Check the coding-agent terminal to see whether the command ran, then start a fresh helper session only if needed.
+- Keep secrets in memory only long enough to start the command; treat this as exposure minimization, not guaranteed erasure. Do not print, log, commit, or paste them into chat, and delete the fetched copies afterward.
+- For a command that must persist account state, such as a NemoClaw install or onboarding run, prefer letting that command prompt for the credential itself. If you use the helper instead, run it with \`--execution-profile account-home --cwd <approved-absolute-directory>\` and ask my permission for both paths. Do not hand-assemble a \`curl | bash\` wrapper.
 
 Use this provider mapping for non-interactive setup:
 
@@ -130,8 +123,7 @@ Use this provider mapping for non-interactive setup:
 | Local Ollama | \`ollama\` | Optional \`NEMOCLAW_MODEL\`; set \`NEMOCLAW_YES=1\` only if I approve model download |
 | Model Router | \`routed\` | \`NVIDIA_INFERENCE_API_KEY\` |
 
-For a credentialed \`curl | bash\` install, make the exact approved argv invoke \`<absolute-bash-path> -c\` with a script that copies each credential into a non-exported shell variable, unsets the exported credential before starting \`curl\`, and supplies it only in the environment assignments on the \`bash\` side of the pipe. Use variable references in that script, never real credential values in argv.
-Because the NemoClaw installer persists account files, use the explicitly approved \`account-home\` profile for that helper run. Pass \`--disable\` as the first argument to the fetching \`curl\` so it does not load a curl config; the account home and absolute working directory remain disclosed trusted boundaries for the installer-side \`bash\`.
+When you have the approved values, run the installer with the credentials in the environment on the \`bash\` side of the pipe, not before \`curl\`, and never in a command echoed to chat. For an install-time credential, prefer the installer's own secure prompt over routing it through the helper.
 Do not offer the Hermes Provider option for OpenClaw or Deep Agents.
 
 For example, for an approved Local Ollama setup:
