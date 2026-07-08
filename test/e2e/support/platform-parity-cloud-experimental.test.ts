@@ -26,6 +26,14 @@ import {
 const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
 const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
 const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
+const tavilyBlocked = "BLOCKED:policy denied";
+const observabilityEnabled = "enabled";
+const denialRestored = /returns to the default Tavily denial/;
+const denialNotRestored = /did not restore the default Tavily denial/;
+const policyRemoveFailed = /policy-remove tavily failed/;
+const observabilityPreserved = /preserve enabled observability after policy-remove/;
+const observabilityDriftedAfter = /observability state drifted after policy-remove/;
+const observabilityDriftedBefore = /observability state drifted before Tavily policy mutation/;
 
 function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
   return {
@@ -295,13 +303,23 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   });
 
   it.each([
-    ["BLOCKED:policy denied", "ok", 0, /returns to the default Tavily denial/],
-    ["REACHED:403", "ok", 1, /did not restore the default Tavily denial/],
-    ["BLOCKED:policy denied", "fail", 1, /policy-remove tavily failed/],
-  ])("restores the default Tavily denial after opt-in (%s/%s)", (fixture, removeFixture, status, expected) => {
+    [tavilyBlocked, "ok", observabilityEnabled, 0, denialRestored, observabilityPreserved],
+    ["REACHED:403", "ok", observabilityEnabled, 1, denialNotRestored, observabilityPreserved],
+    [tavilyBlocked, "fail", observabilityEnabled, 1, policyRemoveFailed, observabilityPreserved],
+    [
+      tavilyBlocked,
+      "clear-marker",
+      observabilityEnabled,
+      1,
+      denialRestored,
+      observabilityDriftedAfter,
+    ],
+    [tavilyBlocked, "ok", "disabled", 1, observabilityDriftedBefore, /registry=disabled, marker=1/],
+  ])("restores the default Tavily denial without observability drift (%s/%s/%s)", (fixture, removeFixture, registryFixture, status, expected, observabilityExpected) => {
     const result = spawnSync("bash", [dcodeTavilyCheck], {
       encoding: "utf8",
       env: {
+        NEMOCLAW_E2E_OBSERVABILITY_REGISTRY_FIXTURE: registryFixture,
         NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
         NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
         NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
@@ -312,7 +330,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
-    expect(result.stdout).toContain("managed observability state restores after policy-remove");
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(observabilityExpected);
     expect(fs.readFileSync(dcodeTavilyCheck, "utf8")).toContain("trap restore_tavily_denial EXIT");
   });
 
