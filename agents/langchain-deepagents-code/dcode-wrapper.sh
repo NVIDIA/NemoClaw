@@ -84,9 +84,9 @@ run_dcode() {
 # - Regression: test/langchain-deepagents-code-secret-pattern-parity.test.ts
 #   pins the canonical TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and
 #   SECRET_BLOCK_PATTERNS fingerprints (source + flags), while
-#   test/langchain-deepagents-code-image.test.ts feeds the shared positive
-#   corpus through this wrapper. Any canonical change trips the parity gate and
-#   forces this matcher (and its samples) to update.
+#   test/langchain-deepagents-code-image-credentials.test.ts feeds the shared
+#   positive corpus through this wrapper. Any canonical change trips the parity
+#   gate and forces this matcher (and its samples) to update.
 #   The live no-network acceptance clause is covered by
 #   test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh
 #   which exercises a real sandbox launch under `nemoclaw exec` and inspects
