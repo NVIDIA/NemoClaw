@@ -2029,9 +2029,9 @@ Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms th
 
 </AgentOnly>
 
-### `$$nemoclaw <name> sessions`
-
 <AgentOnly variant="openclaw">
+
+### `$$nemoclaw <name> sessions`
 
 List OpenClaw conversation sessions in the sandbox.
 With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent.
@@ -2045,6 +2045,8 @@ $$nemoclaw my-assistant sessions --all-agents --json
 </AgentOnly>
 <AgentOnly variant="hermes">
 
+### `$$nemoclaw <name> sessions`
+
 List Hermes conversation sessions in the sandbox.
 NemoClaw invokes `hermes sessions list` via `openshell sandbox exec`, forwards native Hermes flags such as `--source` and `--limit`, and streams the output unchanged.
 
@@ -2055,9 +2057,9 @@ $$nemoclaw my-assistant sessions --source cli --limit 20
 
 </AgentOnly>
 
-### `$$nemoclaw <name> sessions list`
-
 <AgentOnly variant="openclaw">
+
+### `$$nemoclaw <name> sessions list`
 
 Invoke `openclaw sessions list` inside the sandbox.
 NemoClaw forwards every flag the in-sandbox CLI accepts (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`) and filters the resulting default table or JSON so internal `nemoclaw-onboard-warmup-*` sessions are hidden.
@@ -2069,6 +2071,8 @@ $$nemoclaw my-assistant sessions list --agent work --json
 
 </AgentOnly>
 <AgentOnly variant="hermes">
+
+### `$$nemoclaw <name> sessions list`
 
 Invoke `hermes sessions list` inside the sandbox.
 NemoClaw forwards native Hermes flags such as `--source` and `--limit` and streams the output unchanged.
@@ -2810,9 +2814,9 @@ $$nemoclaw credentials reset nvidia-prod
 ### `$$nemoclaw gc`
 
 Remove orphaned sandbox Docker images from the host.
-Each `$$nemoclaw onboard` builds an `openshell/sandbox-from:<timestamp>` image (~765 MB).
+Sandbox creation can build images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository.
 The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain.
-This command lists all `openshell/sandbox-from:*` images, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
+This command lists images from both repositories, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
 
 ```bash
 $$nemoclaw gc [--dry-run] [--yes|-y|--force]
