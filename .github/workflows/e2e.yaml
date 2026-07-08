@@ -92,17 +92,13 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::exact-commit runs require a workflow_dispatch from main"; exit 1; }
+          [[ "$RISK_SHADOW" == "true" ]] || { echo "::error::exact-commit inputs require risk_shadow=true"; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA"; exit 1; }
           [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out HEAD does not match checkout_sha"; exit 1; }
           git merge-base --is-ancestor "$CHECKOUT_SHA" origin/main || { echo "::error::checkout_sha must already be reachable from main"; exit 1; }
-          if [[ "$RISK_SHADOW" == "true" ]]; then
-            [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::risk_plan_hash must be a lowercase SHA-256"; exit 1; }
-            [[ "$RISK_CORRELATION" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::risk_correlation must be a lowercase UUIDv4"; exit 1; }
-            [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::shadow risk runs require selective jobs and forbid targets/fan-out"; exit 1; }
-          elif [[ -n "$PLAN_HASH" || -n "$RISK_CORRELATION" ]]; then
-            echo "::error::risk correlation metadata requires risk_shadow=true"
-            exit 1
-          fi
+          [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::risk_plan_hash must be a lowercase SHA-256"; exit 1; }
+          [[ "$RISK_CORRELATION" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::risk_correlation must be a lowercase UUIDv4"; exit 1; }
+          [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::shadow risk runs require selective jobs and forbid targets/fan-out"; exit 1; }
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
