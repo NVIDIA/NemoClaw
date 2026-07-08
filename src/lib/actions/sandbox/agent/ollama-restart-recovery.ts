@@ -138,6 +138,7 @@ function buildWarmCommand(model: string, hostname: string): string[] {
     model,
     prompt: "Hello, reply in less than 5 words",
     stream: false,
+    think: false,
     keep_alive: "15m",
     options: { num_predict: 16 },
   });
@@ -164,15 +165,14 @@ function validateWarmResponse(stdout: string): "ok" | "ollama-error" | "invalid-
       done?: unknown;
       error?: unknown;
       response?: unknown;
+      thinking?: unknown;
     };
     if (typeof parsed.error === "string" && parsed.error.trim() !== "") {
       return "ollama-error";
     }
-    if (
-      parsed.done !== true ||
-      typeof parsed.response !== "string" ||
-      parsed.response.trim() === ""
-    ) {
+    const response = typeof parsed.response === "string" ? parsed.response.trim() : "";
+    const thinking = typeof parsed.thinking === "string" ? parsed.thinking.trim() : "";
+    if (parsed.done !== true || (!response && !thinking)) {
       return "invalid-response";
     }
     return "ok";

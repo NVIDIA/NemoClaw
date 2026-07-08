@@ -26,6 +26,11 @@ function getCommandUrl(command: readonly string[]): string {
   return command.find((arg) => arg.startsWith("http://")) ?? "";
 }
 
+function getCommandBody(command: readonly string[]): Record<string, unknown> {
+  const dataIndex = command.indexOf("-d");
+  return JSON.parse(command[dataIndex + 1] ?? "null") as Record<string, unknown>;
+}
+
 describe("maybeWarmOllamaAfterDaemonRestart", () => {
   it("skips routes that are not local Ollama", () => {
     expect(
@@ -61,6 +66,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
     );
+    expect(getCommandBody(runCaptureExImpl.mock.calls[0][0])).toMatchObject({
+      model: "qwen3.6:35b",
+      stream: false,
+      think: false,
+    });
   });
 
   it("maps an auth-proxy route back to host loopback", () => {
@@ -189,6 +199,22 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         },
       ),
     ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "ollama-error" });
+  });
+
+  it("accepts a completed thinking-only response from a thinking model", () => {
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        {
+          probeRuntimeModelStatus: () => unloadedStatus,
+          runCaptureExImpl: () => ({
+            stdout: JSON.stringify({ response: "", thinking: "The model is ready.", done: true }),
+            exitCode: 0,
+            timedOut: false,
+          }),
+        },
+      ),
+    ).toEqual({ kind: "warmed", ok: true, timedOut: false });
   });
 
   it.each([
