@@ -122,19 +122,132 @@ def _safe_identifier(value: Any, fallback: str) -> str:
     """Sanitize and cap identifiers at 128 characters before Relay receives them."""
     if type(value) is not str:
         return fallback
-    normalized = _SCOPE_NAME_UNSAFE.sub("_", value[:_MAX_SCOPE_NAME_CHARS]).strip("_")
-    return normalized or fallback
+    bounded = value[:_MAX_SCOPE_NAME_CHARS]
+    scrubbed = _scrub_secret_values(
+        bounded, source_was_truncated=len(value) > _MAX_SCOPE_NAME_CHARS
+    )
+    normalized = _SCOPE_NAME_UNSAFE.sub("_", scrubbed).strip("_")
+    return normalized[:_MAX_SCOPE_NAME_CHARS] or fallback
 
 
-def _bounded_string(value: str, budget: _CaptureBudget | None = None) -> str:
+_REDACTED_SECRET_VALUE = "<redacted-secret>"
+# SECURITY -- Invalid state: Relay legitimately carries raw model and tool
+# content, but NemoClaw's managed exporter must not emit recognized credential
+# shapes from that content. This isolated Python package cannot import the
+# canonical TypeScript groups in src/lib/security/secret-patterns.ts, so these
+# expressions mirror them at NemoClaw's final span-projection boundary. Host
+# collector processors remain defense in depth, not the source fix. The parity
+# regression in test/langchain-deepagents-code-secret-pattern-parity.test.ts and
+# the real Relay wire assertions in validate-observability.py guard this mirror.
+# Remove it only when a shared Python artifact or upstream pre-export hook can
+# enforce the same managed redaction contract before OTLP serialization.
+_STANDALONE_SECRET_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"nvapi-[A-Za-z0-9_-]{10,}",
+        r"nvcf-[A-Za-z0-9_-]{10,}",
+        r"ghp_[A-Za-z0-9_-]{10,}",
+        r"github_pat_[A-Za-z0-9_]{30,}",
+        r"sk-proj-[A-Za-z0-9_-]{10,}",
+        r"sk-ant-[A-Za-z0-9_-]{10,}",
+        r"sk-[A-Za-z0-9_-]{20,}",
+        r"(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}",
+        r"A(?:K|S)IA[A-Z0-9]{16}",
+        r"hf_[A-Za-z0-9]{10,}",
+        r"glpat-[A-Za-z0-9_-]{10,}",
+        r"gsk_[A-Za-z0-9]{10,}",
+        r"pypi-[A-Za-z0-9_-]{10,}",
+        r"\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b",
+        r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b",
+        r"\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b",
+        r"tvly-[A-Za-z0-9_-]{10,}",
+        r"lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*",
+        r"(?s)-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----",
+    )
+)
+_ANCHORED_SECRET_PATTERNS = (
+    re.compile(
+        r"(Bearer[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029"
+        r"\u202f\u205f\u3000\ufeff]+)[A-Za-z0-9_.+/=-]{10,}",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"((?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['\"]?)"
+        r"[A-Za-z0-9_.+/=-]{10,}",
+        re.IGNORECASE,
+    ),
+)
+_ANCHORED_SECRET_REPLACEMENT = rf"\g<1>{_REDACTED_SECRET_VALUE}"
+_UNTERMINATED_PRIVATE_KEY_PATTERN = re.compile(
+    r"(?s)-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----.*\Z"
+)
+_TRUNCATED_SECRET_PATTERNS = tuple(
+    re.compile(pattern, flags)
+    for pattern, flags in (
+        (
+            r"(?:nvapi-|nvcf-|ghp_|github_pat_|sk-proj-|sk-ant-|sk-|"
+            r"(?:xox[bpas]|xapp)-|hf_|glpat-|gsk_|pypi-|tvly-|"
+            r"lsv2_(?:pt|sk)_)[A-Za-z0-9_-]*\Z",
+            0,
+        ),
+        (r"A(?:K|S)IA[A-Z0-9]*\Z", 0),
+        (r"(?:bot)?\d{1,10}:[A-Za-z0-9_-]*\Z", 0),
+        (
+            r"[A-Za-z0-9]{1,24}\.[A-Za-z0-9_-]{0,6}"
+            r"(?:\.[A-Za-z0-9_-]*)?\Z",
+            0,
+        ),
+        (
+            r"(?:Bearer[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029"
+            r"\u202f\u205f\u3000\ufeff]+|"
+            r"(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['\"]?)"
+            r"[A-Za-z0-9_.+/=-]*\Z",
+            re.IGNORECASE,
+        ),
+    )
+)
+
+
+def _scrub_secret_values(
+    value: str, *, source_was_truncated: bool = False
+) -> str:
+    """Best-effort redaction of recognized credential-shaped tokens in text."""
+    scrubbed = value
+    for pattern in _STANDALONE_SECRET_PATTERNS:
+        scrubbed = pattern.sub(_REDACTED_SECRET_VALUE, scrubbed)
+    for pattern in _ANCHORED_SECRET_PATTERNS:
+        scrubbed = pattern.sub(_ANCHORED_SECRET_REPLACEMENT, scrubbed)
+    # Bounding can cut a private-key block before its END marker. Once a BEGIN
+    # marker is present, redact the remaining bounded segment rather than emit a
+    # partial key body.
+    scrubbed = _UNTERMINATED_PRIVATE_KEY_PATTERN.sub(
+        _REDACTED_SECRET_VALUE, scrubbed
+    )
+    if source_was_truncated:
+        for pattern in _TRUNCATED_SECRET_PATTERNS:
+            scrubbed = pattern.sub(_REDACTED_SECRET_VALUE, scrubbed)
+    return scrubbed
+
+
+def _bounded_string(
+    value: str,
+    budget: _CaptureBudget | None = None,
+    *,
+    scrub_secrets: bool = False,
+) -> str:
     limit = min(len(value), _MAX_CAPTURE_STRING_CHARS)
     if budget is not None:
         limit = min(limit, budget.remaining_string_chars)
         budget.remaining_string_chars -= limit
+    bounded_source = value if limit == len(value) else value[:limit]
+    if scrub_secrets:
+        bounded_source = _scrub_secret_values(
+            bounded_source, source_was_truncated=limit < len(value)
+        )
     bounded = (
-        value
+        bounded_source
         if limit == len(value)
-        else f"{value[:limit]}...[truncated {len(value) - limit} chars]"
+        else f"{bounded_source}...[truncated {len(value) - limit} chars]"
     )
     # Relay's native JSON bridge requires valid UTF-8. Replace unpaired UTF-16
     # surrogates without rejecting the application value or mutating it in place.
@@ -187,6 +300,18 @@ def _opaque_capture_marker(_value: Any) -> dict[str, str]:
     return {"_omitted_type": "opaque"}
 
 
+def _unique_capture_key(candidate: str, captured: dict[str, Any]) -> str:
+    """Keep redacted or bounded mapping keys distinct without exposing originals."""
+    if candidate not in captured:
+        return candidate
+    for index in range(2, _MAX_CAPTURE_ITEMS + 2):
+        suffix = f"#{index}"
+        unique = f"{candidate[: _MAX_CAPTURE_STRING_CHARS - len(suffix)]}{suffix}"
+        if unique not in captured:
+            return unique
+    return f"_duplicate_key_{len(captured)}"
+
+
 def _capture_jsonable(
     value: Any,
     *,
@@ -209,7 +334,7 @@ def _capture_jsonable(
     if type(value) is float:
         return value if math.isfinite(value) else "<non-finite float>"
     if type(value) is str:
-        return _bounded_string(value, budget)
+        return _bounded_string(value, budget, scrub_secrets=True)
     if type(value) in (bytes, bytearray):
         return f"<{len(value)} bytes>"
     if type(value) is dict:
@@ -230,7 +355,9 @@ def _capture_jsonable(
             if type(key) is not str:
                 omitted_items += 1
                 continue
-            bounded_key = _bounded_string(key, budget)
+            bounded_key = _unique_capture_key(
+                _bounded_string(key, budget, scrub_secrets=True), captured
+            )
             captured[bounded_key] = (
                 _REDACTED_VALUE
                 if _redact_capture_key(key)

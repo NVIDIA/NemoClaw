@@ -38,6 +38,7 @@ export type SandboxBaseImageResolutionMetadata = {
 export type ResolveBaseImageOptions = {
   imageName: string;
   dockerfilePath: string;
+  inputPaths?: string[];
   localTag: string;
   envVar?: string;
   label?: string;
