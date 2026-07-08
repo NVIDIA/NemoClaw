@@ -142,7 +142,7 @@ describe("fixture redaction entry point", () => {
     const discordAssignment = `DISCORD_BOT_TOKEN=${discordReference}`;
     const text = JSON.stringify({
       key: "agent:main:main",
-      replyMarker: "reply-correlation-marker-123",
+      correlationMarker: "reply-correlation-marker-123",
       token: discordReference,
       versionedToken: versionedReference,
       botToken: slackReference,
@@ -153,6 +153,9 @@ describe("fixture redaction entry point", () => {
     const collision = `\uE000 NEMOCLAW_SAFE_CREDENTIAL_REFERENCE_0 \uE001 ${text}`;
     expect(redactString(collision)).toBe(collision);
     expect(redactString(text, [discordReference])).not.toContain(discordReference);
+    expect(redactString('{"replyToken":"opaqueCredentialPayloadZ1234567890"}')).toBe(
+      '{"replyToken":"<REDACTED>"}',
+    );
 
     const privateKey = [
       ["-----BEGIN", "PRIVATE KEY-----"].join(" "),

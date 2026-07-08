@@ -105,6 +105,7 @@ describe("redactForLog", () => {
         DBPass: payload,
         db_pass: payload,
         "db-pass": payload,
+        replyToken: payload,
       }),
     ).toEqual({
       pass: "<REDACTED>",
@@ -114,6 +115,7 @@ describe("redactForLog", () => {
       DBPass: "<REDACTED>",
       db_pass: "<REDACTED>",
       "db-pass": "<REDACTED>",
+      replyToken: "<REDACTED>",
     });
     for (const [assignment, expected] of [
       [`CUSTOM_PASS=${payload}`, "CUSTOM_PASS=<REDACTED>"],
@@ -132,6 +134,8 @@ describe("redactForLog", () => {
       [`replyToken=${payload}`, "replyToken=<REDACTED>"],
       [`{"replyToken":"${payload}"}`, '{"replyToken":"<REDACTED>"}'],
       [`githubToken=${payload}`, "githubToken=<REDACTED>"],
+      [`replyToken=${payload}`, "replyToken=<REDACTED>"],
+      [`{"replyToken":"${payload}"}`, '{"replyToken":"<REDACTED>"}'],
       [`webhookSecret=${payload}`, "webhookSecret=<REDACTED>"],
       [`databaseCredential=${payload}`, "databaseCredential=<REDACTED>"],
       [`customPass=${payload}`, "customPass=<REDACTED>"],
@@ -152,7 +156,7 @@ describe("redactForLog", () => {
       passRate: 0.9,
       passCount: 4,
       passThrough: "enabled",
-      replyMarker: "reply-correlation-marker-123",
+      correlationMarker: "reply-correlation-marker-123",
     };
 
     expect(redactForLog(benign)).toEqual(benign);
@@ -163,7 +167,7 @@ describe("redactForLog", () => {
       "public-key=opaqueVerificationMaterial123 custom-key=opaqueNonSecretPayload123",
       "passRate=opaqueNonSecretPayload123",
       '{"key":"agent:main:main"}',
-      '{"replyMarker":"reply-correlation-marker-123"}',
+      '{"correlationMarker":"reply-correlation-marker-123"}',
     ]) {
       expect(redactSensitiveText(text), text).toBe(text);
       expect(redactFull(text), text).toBe(text);

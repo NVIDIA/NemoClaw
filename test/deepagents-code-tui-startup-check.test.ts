@@ -630,6 +630,11 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         rawSecret: "opaqueCredentialPayloadZ1234567890",
       },
       {
+        name: "reply_token_context",
+        sample: '{"replyToken":"opaqueCredentialPayloadZ1234567890"}',
+        rawSecret: "opaqueCredentialPayloadZ1234567890",
+      },
+      {
         name: "python_extra_next_line_context",
         sample: "API_KEY=12345\u00856789012345",
         rawSecret: "12345\u00856789012345",
@@ -669,7 +674,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       "public-key=opaqueVerificationMaterial123",
       "custom-key=opaqueNonSecretPayload123",
       '{"key":"agent:main:main"}',
-      '{"replyMarker":"reply-correlation-marker-123"}',
+      '{"correlationMarker":"reply-correlation-marker-123"}',
     ]) {
       expect(detectsSecret(benign), benign).toBe("clean");
       expect(redactsSecret(benign), benign).toBe(benign);

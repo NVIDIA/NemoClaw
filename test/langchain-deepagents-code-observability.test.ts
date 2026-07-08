@@ -90,7 +90,7 @@ describe("managed Deep Agents Code observability", () => {
         passRate: 0.9,
         passThrough: "allowed",
         privateKey: "<redacted>",
-        replyMarker: "reply-correlation-marker-123",
+        correlationMarker: "reply-correlation-marker-123",
         replyToken: "<redacted>",
         ReplyToken: "<redacted>",
         reply_token: "<redacted>",

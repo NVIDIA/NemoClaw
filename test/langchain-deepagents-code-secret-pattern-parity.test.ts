@@ -134,7 +134,7 @@ describe("Deep Agents Code secret-pattern parity", () => {
       "passThrough=opaqueNonSecretPayload123",
       "publicKey=opaqueVerificationMaterial123",
       "customKey=opaqueNonSecretPayload123",
-      '{"replyMarker":"reply-correlation-marker-123"}',
+      '{"correlationMarker":"reply-correlation-marker-123"}',
       `${"a".repeat(129)}Secret=opaqueCredentialPayloadZ1234567890`,
     ]) {
       expect(matches(camelPattern, value), value.slice(0, 80)).toBe(false);
@@ -171,7 +171,7 @@ credential_names = [
 ]
 benign_names = [
     "COMPASS", "BYPASS", "passengerCount", "passed", "passRate",
-    "passCount", "passThrough", "publicKey", "customKey", "replyMarker",
+    "passCount", "passThrough", "publicKey", "customKey", "correlationMarker",
 ]
 is_credential_name = lambda name: bool(
     managed._CREDENTIAL_NAME.search(name) or managed._CREDENTIAL_CAMEL_NAME.search(name)
@@ -187,7 +187,7 @@ def environment_is_safe(name, value):
         return False
 try:
     runtime_name_safety = [
-        environment_is_safe("replyMarker", "reply-correlation-marker-123"),
+        environment_is_safe("correlationMarker", "reply-correlation-marker-123"),
         environment_is_safe("replyToken", "opaqueCredentialPayloadZ1234567890"),
         environment_is_safe("replyToken", "sk-abcdefghijklmnopqrstuvwx"),
         environment_is_safe("ReplyToken", "opaqueCredentialPayloadZ1234567890"),
@@ -242,6 +242,9 @@ boundary_value = (
 json.dump({
     "values": [observability._scrub_secret_values(value) for value in values],
     "boundary": observability._bounded_capture(boundary_value),
+    "reply_token": observability._scrub_secret_values(
+        'replyToken="opaqueCredentialPayloadZ1234567890"'
+    ),
 }, sys.stdout)
 `;
     const values = CANONICAL_SECRET_POSITIVE_VECTORS.map((vector) => vector.value);
@@ -249,7 +252,11 @@ json.dump({
       encoding: "utf8",
       input: JSON.stringify(values),
     });
-    const scrubbed = JSON.parse(output) as { values: string[]; boundary: string };
+    const scrubbed = JSON.parse(output) as {
+      values: string[];
+      boundary: string;
+      reply_token: string;
+    };
 
     for (const [index, value] of values.entries()) {
       expect(scrubbed.values[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).toContain(
@@ -261,6 +268,7 @@ json.dump({
     }
     expect(scrubbed.boundary).toContain("<redacted-secret>");
     expect(scrubbed.boundary).not.toContain("Api_Key=ABCDEFG");
+    expect(scrubbed.reply_token).toBe('replyToken="<redacted-secret>"');
   });
 
   it("preserves benign near-misses in managed observability (#6452)", () => {
@@ -288,7 +296,7 @@ json.dump([observability._scrub_secret_values(value) for value in values], sys.s
       "publicKey=opaqueVerificationMaterial123",
       "customKey=opaqueNonSecretPayload123",
       '{"key":"agent:main:main"}',
-      '{"replyMarker":"reply-correlation-marker-123"}',
+      '{"correlationMarker":"reply-correlation-marker-123"}',
       "-----BEGIN PUBLIC KEY-----\\nnot-private\\n-----END PUBLIC KEY-----",
     ];
     const output = execFileSync("python3", ["-I", "-c", probe, observabilityPath], {
