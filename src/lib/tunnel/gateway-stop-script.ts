@@ -71,7 +71,7 @@ if [ -n "$pidfile_owner" ] && [ "$pidfile_owner" = "$marker_owner" ]; then
   raw_pidfile_fields="$(printf '%s\n' "$raw_pidfile_line" | awk '{ print NF }')"
   case "$raw_pidfile_pid:$raw_pidfile_starttime:$raw_pidfile_fields" in
     *[!0-9:]*|''|*:|*:*:0|*:*:1) ;;
-    *)
+    *:*:2)
       current_starttime="$(awk '{ sub(/^[^)]*\) /, ""); split($0, fields, " "); print fields[20] }' "/proc/$raw_pidfile_pid/stat" 2>/dev/null)"
       if [ -n "$current_starttime" ] && [ "$current_starttime" = "$raw_pidfile_starttime" ]; then
         pidfile_pid="$raw_pidfile_pid"

@@ -234,6 +234,16 @@ ${script}`;
   );
 
   it.runIf(process.platform === "linux")(
+    "rejects surplus fields in the trusted gateway PID record",
+    () => {
+      const decoy = spawnWithArgv0("openclaw");
+      const content = `${decoy} ${processStartTime(decoy)} trailing\n`;
+      expect(runStopScript(stopScriptWithGatewayIdentity(decoy, 0o600, content))).toBe(1);
+      expect(isAlive(decoy)).toBe(true);
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
     "spares bare openclaw when gateway identity owner mismatches the process user",
     () => {
       const decoy = spawnWithArgv0("openclaw");
