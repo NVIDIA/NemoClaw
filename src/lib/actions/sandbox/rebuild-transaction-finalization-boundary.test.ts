@@ -48,14 +48,14 @@ describe("rebuild transaction finalization boundary", () => {
 
   it("retains replacement_created when registry reconciliation throws", async () => {
     const secret = "nvapi-abcdefghijklmnopqrstuvwxyz012345";
-    const harness = createRebuildFlowHarness({
-      updateSandbox: (_name, updates) => {
-        const fields = updates as Record<string, unknown>;
-        if (!("agentVersion" in fields && "policies" in fields && "policyTier" in fields)) {
-          return true;
-        }
+    const updateSandbox = vi
+      .fn()
+      .mockReturnValueOnce(true)
+      .mockImplementation(() => {
         throw new Error(`ENOSPC while writing ${secret}`);
-      },
+      });
+    const harness = createRebuildFlowHarness({
+      updateSandbox,
     });
 
     await expect(
