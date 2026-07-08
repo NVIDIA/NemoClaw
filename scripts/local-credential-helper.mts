@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const EXPECTED_LOCAL_CREDENTIAL_FORM_SHA256 =
-  "b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68"; // gitleaks:allow -- checked-in SHA-256 integrity pin
+  "8e135da4fae0bc75d4437a06d4a01dd486cfa03205b272207be28da3e9efc005"; // gitleaks:allow -- checked-in SHA-256 integrity pin
 
 export const LOCAL_CREDENTIAL_HELPER_HOST = "127.0.0.1";
 export const LOCAL_CREDENTIAL_FORM_PATH = "/local-credential-form.html";
@@ -40,13 +40,24 @@ const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "CDPATH",
   "CLASSPATH",
   "COMSPEC",
+  "DOTNET_STARTUP_HOOKS",
   "ENV",
   "GIT_ASKPASS",
+  "GIT_EDITOR",
+  "GIT_EXEC_PATH",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PAGER",
+  "GIT_PROXY_COMMAND",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_SSH",
   "GIT_SSH_COMMAND",
   "GLOBIGNORE",
   "IFS",
   "JAVA_TOOL_OPTIONS",
   "JDK_JAVA_OPTIONS",
+  "LESSCLOSE",
+  "LESSOPEN",
+  "MANPAGER",
   "NODE_EXTRA_CA_CERTS",
   "NODE_OPTIONS",
   "NODE_PATH",
@@ -54,6 +65,7 @@ const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "NPM_CONFIG_NODE_OPTIONS",
   "NPM_CONFIG_SCRIPT_SHELL",
   "NPM_CONFIG_USERCONFIG",
+  "PAGER",
   "PATH",
   "PATHEXT",
   "PERL5LIB",
@@ -123,11 +135,42 @@ export function isCredentialShapedName(name: string): boolean {
 export function isForbiddenChildEnvName(name: string): boolean {
   return (
     FORBIDDEN_CHILD_ENV_NAMES.has(name) ||
+    name.startsWith("BASH_FUNC_") ||
     name.startsWith("LD_") ||
     name.startsWith("DYLD_") ||
     name === "GIT_CONFIG" ||
-    name.startsWith("GIT_CONFIG_")
+    name.startsWith("GIT_CONFIG_") ||
+    name.startsWith("GIT_TRACE")
   );
+}
+
+export function sanitizeInheritedChildEnvironment(
+  environment: NodeJS.ProcessEnv,
+  approvedFieldNames: ReadonlySet<string>,
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(([name, value]) => {
+      const canonicalName = name.toUpperCase();
+      return (
+        value !== undefined &&
+        !approvedFieldNames.has(canonicalName) &&
+        !isCredentialShapedName(canonicalName) &&
+        !isForbiddenChildEnvName(canonicalName)
+      );
+    }),
+  );
+}
+
+function validateApprovedCommandArgv(commandArgv: readonly string[]): void {
+  if (commandArgv.length === 0 || commandArgv[0].length === 0) {
+    throw new Error("An executable must follow the -- separator");
+  }
+  if (commandArgv.some((value) => value.includes("\0"))) {
+    throw new Error("Command arguments must not contain NUL bytes");
+  }
+  if (!path.isAbsolute(commandArgv[0])) {
+    throw new Error("The approved command executable must use an absolute path");
+  }
 }
 
 export function parseCredentialField(spec: string): CredentialField {
@@ -162,12 +205,7 @@ export function parseCliArguments(argv: readonly string[]): LocalCredentialHelpe
 
   const optionArgs = argv.slice(0, separator);
   const commandArgv = argv.slice(separator + 1);
-  if (commandArgv.length === 0 || commandArgv[0].length === 0) {
-    throw new Error("An executable must follow the -- separator");
-  }
-  if (commandArgv.some((value) => value.includes("\0"))) {
-    throw new Error("Command arguments must not contain NUL bytes");
-  }
+  validateApprovedCommandArgv(commandArgv);
 
   let formPath = defaultFormPath();
   let formPathSeen = false;
@@ -500,19 +538,15 @@ export async function startLocalCredentialHelper(options: {
     }),
   );
   const commandArgv = Object.freeze([...options.commandArgv]);
-  if (
-    commandArgv.length === 0 ||
-    !commandArgv[0] ||
-    commandArgv.some((arg) => arg.includes("\0"))
-  ) {
-    throw new Error("Local credential helper requires a NUL-free executable and argv");
-  }
+  validateApprovedCommandArgv(commandArgv);
   const timeoutMs = options.timeoutMs ?? SESSION_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error("Local credential helper timeout must be a positive number");
   }
   const formBytes = Buffer.from(options.formBytes);
-  const trustedEnv = Object.freeze({ ...process.env });
+  const sanitizedAmbientEnv = Object.freeze(
+    sanitizeInheritedChildEnvironment(process.env, fieldNames),
+  );
   const capabilityBytes = randomBytes(32);
   const capability = capabilityBytes.toString("base64url");
   const formRequestTarget = buildFormRequestTarget(fields);
@@ -558,7 +592,7 @@ export async function startLocalCredentialHelper(options: {
   );
 
   const launchApprovedCommand = (values: Record<string, string>): void => {
-    const childEnv: NodeJS.ProcessEnv = { ...trustedEnv, ...values };
+    const childEnv: NodeJS.ProcessEnv = { ...sanitizedAmbientEnv, ...values };
     try {
       child = spawn(commandArgv[0], commandArgv.slice(1), {
         env: childEnv,

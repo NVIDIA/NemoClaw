@@ -93,15 +93,16 @@ When you need an API key, bot token, app token, or other secret, prefer the chec
 
 - Before starting credential collection, determine the exact environment-variable names and exact command argv that will receive them. Explain the command in plain language, say that the form's final confirmation runs that already-approved command immediately, and ask my permission.
 - Do not generate, rewrite, or redesign the helper or form. Use this reviewed pair exactly:
-  - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/854a13265e5821cdd245c72fca8ebc14a2589993/scripts/local-credential-helper.mts (SHA-256 \`54335bf6e1ace853402f74f0e656999ff6fb65cc23fc81c685bc13983b7c40f1\`)
-  - Form: https://raw.githubusercontent.com/NVIDIA/NemoClaw/854a13265e5821cdd245c72fca8ebc14a2589993/docs/resources/local-credential-form.html (SHA-256 \`b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68\`)
+  - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/854a13265e5821cdd245c72fca8ebc14a2589993/scripts/local-credential-helper.mts (SHA-256 \`b2fe93eaa4f4a74845570eb4f14319d7dcce0180a762315e02cf4f2076531a10\`)
+  - Form: https://raw.githubusercontent.com/NVIDIA/NemoClaw/854a13265e5821cdd245c72fca8ebc14a2589993/docs/resources/local-credential-form.html (SHA-256 \`8e135da4fae0bc75d4437a06d4a01dd486cfa03205b272207be28da3e9efc005\`)
 - Fetch both files, or use local repository copies when available, and verify both SHA-256 digests before use. Put fetched copies in a private temporary directory with access restricted to the current user.
 - Treat the two immutable URL and digest pairs as one reviewed trust boundary. Stop if either verification fails; do not substitute another URL, helper, form, or digest.
 - The helper requires Node.js 22.16 or newer. If that runtime is unavailable, use a secure local terminal prompt or local app prompt instead; never ask for the value in chat and never fall back to generated helper or form code.
 - Use the helper's repeated \`--field NAME:type\` arguments, followed by a literal \`--\` and the exact approved argv. For example:
+- Resolve the approved executable to an absolute native executable or interpreter path before asking permission. The helper rejects PATH-based executable lookup and removes recognized ambient credential-shaped and process-control variables before overlaying only the fields collected for the approved command. Approve explicit paths for nested tools when the command needs a non-default PATH. On native Windows, do not target a \`.cmd\` or \`.bat\` file directly; use the absolute \`cmd.exe\` path and make its arguments part of the approved argv.
 
 \`\`\`shell
-node --experimental-strip-types <private-dir>/local-credential-helper.mts --form <private-dir>/local-credential-form.html --field NVIDIA_INFERENCE_API_KEY:secret -- <approved-executable> <approved-args...>
+node --experimental-strip-types <private-dir>/local-credential-helper.mts --form <private-dir>/local-credential-form.html --field NVIDIA_INFERENCE_API_KEY:secret -- <absolute-approved-executable> <approved-args...>
 \`\`\`
 
 - Use \`:secret\` for every secret. Use \`:text\` only for non-secret IDs, allowlists, endpoint URLs, model names, and sandbox names. The helper must reject credential-looking \`:text\` fields and process-control environment names.
@@ -128,7 +129,7 @@ Use this provider mapping for non-interactive setup:
 | Local Ollama | \`ollama\` | Optional \`NEMOCLAW_MODEL\`; set \`NEMOCLAW_YES=1\` only if I approve model download |
 | Model Router | \`routed\` | \`NVIDIA_INFERENCE_API_KEY\` |
 
-For a credentialed \`curl | bash\` install, make the exact approved argv invoke \`bash -c\` with a script that copies each credential into a non-exported shell variable, unsets the exported credential before starting \`curl\`, and supplies it only in the environment assignments on the \`bash\` side of the pipe. Use variable references in that script, never real credential values in argv.
+For a credentialed \`curl | bash\` install, make the exact approved argv invoke \`<absolute-bash-path> -c\` with a script that copies each credential into a non-exported shell variable, unsets the exported credential before starting \`curl\`, and supplies it only in the environment assignments on the \`bash\` side of the pipe. Use variable references in that script, never real credential values in argv.
 Do not offer the Hermes Provider option for OpenClaw or Deep Agents.
 
 For example, for an approved Local Ollama setup:

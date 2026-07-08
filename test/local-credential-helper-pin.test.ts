@@ -15,16 +15,20 @@ const FUNCTION_NAME = "isBlocked";
 const SET_NAME = "BLOCKED_NAMES";
 const VALID_ATOMS = [
   `${SET_NAME}.has(name)`,
+  'name.startsWith("BASH_FUNC_")',
   'name.startsWith("LD_")',
   'name.startsWith("DYLD_")',
   'name === "GIT_CONFIG"',
   'name.startsWith("GIT_CONFIG_")',
+  'name.startsWith("GIT_TRACE")',
 ];
 const EXPECTED_RULES = [
   "exact:GIT_CONFIG",
   "literal-set",
+  "prefix:BASH_FUNC_",
   "prefix:DYLD_",
   "prefix:GIT_CONFIG_",
+  "prefix:GIT_TRACE",
   "prefix:LD_",
 ];
 
@@ -45,10 +49,12 @@ describe("local credential helper pin predicate parity", () => {
   });
 
   it.each([
-    { atom: VALID_ATOMS[1], label: "LD_ prefix" },
-    { atom: VALID_ATOMS[2], label: "DYLD_ prefix" },
-    { atom: VALID_ATOMS[3], label: "exact GIT_CONFIG name" },
-    { atom: VALID_ATOMS[4], label: "GIT_CONFIG_ prefix" },
+    { atom: VALID_ATOMS[1], label: "BASH_FUNC_ prefix" },
+    { atom: VALID_ATOMS[2], label: "LD_ prefix" },
+    { atom: VALID_ATOMS[3], label: "DYLD_ prefix" },
+    { atom: VALID_ATOMS[4], label: "exact GIT_CONFIG name" },
+    { atom: VALID_ATOMS[5], label: "GIT_CONFIG_ prefix" },
+    { atom: VALID_ATOMS[6], label: "GIT_TRACE prefix" },
   ])("detects removal of the $label (#5048)", ({ atom }) => {
     const mutated = VALID_ATOMS.filter((candidate) => candidate !== atom).join(" || ");
 

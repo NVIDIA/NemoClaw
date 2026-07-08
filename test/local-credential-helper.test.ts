@@ -11,6 +11,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  sanitizeInheritedChildEnvironment,
+  startLocalCredentialHelper,
+} from "../scripts/local-credential-helper.mts";
+
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const HELPER_PATH = path.join(REPO_ROOT, "scripts", "local-credential-helper.mts");
 const FORM_PATH = path.join(REPO_ROOT, "docs", "resources", "local-credential-form.html");
@@ -18,6 +23,25 @@ const READINESS_URL_PATTERN = /http:\/\/127\.0\.0\.1:\d+\/\S*#cap=[A-Za-z0-9_-]{
 const PROCESS_TIMEOUT_MS = 5_000;
 const TEST_SECRET = "integration-secret-value";
 const TEST_PUBLIC_VALUE = "public-id";
+const BLOCKED_INHERITED_ENV_NAMES = [
+  "BASH_ENV",
+  "BASH_FUNC_curl%%",
+  "DOTNET_STARTUP_HOOKS",
+  "GIT_EXEC_PATH",
+  "GIT_CONFIG",
+  "GH_TOKEN",
+  "GIT_CONFIG_COUNT",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PROXY_COMMAND",
+  "GIT_TRACE2_EVENT",
+  "GIT_SSH",
+  "Gh_ToKeN",
+  "NODE_OPTIONS",
+  "Node_Options",
+  "PATH",
+  "Path",
+  "UNRELATED_API_TOKEN",
+];
 
 interface ExitResult {
   code: number | null;
@@ -61,10 +85,10 @@ afterEach(async () => {
   tempDirs.clear();
 });
 
-function captureChild(args: string[]): CapturedChild {
+function captureChild(args: string[], envOverrides: NodeJS.ProcessEnv = {}): CapturedChild {
   const child = spawn(process.execPath, args, {
     cwd: REPO_ROOT,
-    env: { ...process.env, NO_COLOR: "1" },
+    env: { ...process.env, ...envOverrides, NO_COLOR: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
@@ -165,8 +189,14 @@ async function waitForReadiness(captured: CapturedChild): Promise<URL> {
   throw new Error(`credential helper did not report readiness:\n${captured.output()}`);
 }
 
-async function startHelper(command: string[]): Promise<RunningHelper> {
-  const captured = captureChild(helperArgs(["OPENAI_API_KEY:secret", "PUBLIC_ID:text"], command));
+async function startHelper(
+  command: string[],
+  envOverrides: NodeJS.ProcessEnv = {},
+): Promise<RunningHelper> {
+  const captured = captureChild(
+    helperArgs(["OPENAI_API_KEY:secret", "PUBLIC_ID:text"], command),
+    envOverrides,
+  );
   const formUrl = await waitForReadiness(captured);
   const fragment = new URLSearchParams(formUrl.hash.slice(1));
   const capability = fragment.get("cap") ?? "";
@@ -194,6 +224,7 @@ function createCommandFixture(): {
     `if (process.env.PUBLIC_ID !== ${JSON.stringify(TEST_PUBLIC_VALUE)}) process.exit(22);`,
     `if (publicValue !== ${JSON.stringify(TEST_PUBLIC_VALUE)}) process.exit(23);`,
     'if (!process.argv.includes("--")) process.exit(25);',
+    `if (${JSON.stringify(BLOCKED_INHERITED_ENV_NAMES)}.some((name) => Object.hasOwn(process.env, name))) process.exit(26);`,
     'fs.appendFileSync(markerPath, "ran\\n");',
     "if (fs.existsSync(unexpectedShellPath)) process.exit(24);",
   ].join("");
@@ -304,6 +335,36 @@ async function expectSuccessfulCompletion(
 }
 
 describe("local credential helper", () => {
+  it("sanitizes inherited names case-insensitively without mutating the source environment (#5048)", () => {
+    const ambient = {
+      BASH_ENV: "shell-hook",
+      "BASH_FUNC_curl%%": '() { printf "%s" "$OPENAI_API_KEY"; }',
+      DOTNET_STARTUP_HOOKS: "startup-hook",
+      DYLD_INSERT_LIBRARIES: "loader-hook",
+      Gh_ToKeN: "credential",
+      GIT_CONFIG: "git-config",
+      GIT_CONFIG_COUNT: "1",
+      GIT_EXTERNAL_DIFF: "/ambient/diff-wrapper",
+      GIT_EXEC_PATH: "/ambient/git-core",
+      GIT_PROXY_COMMAND: "/ambient/proxy-wrapper",
+      GIT_TRACE2_EVENT: "/ambient/git-trace.json",
+      GIT_SSH: "/ambient/ssh-wrapper",
+      HOME: "/safe/home",
+      LD_PRELOAD: "loader-hook",
+      Node_Options: "--no-warnings",
+      Path: "/ambient/search/path",
+      Public_Id: "ambient-field-collision",
+      SAFE_SETTING: "preserved",
+      SSH_AUTH_SOCK: "/ambient/agent.sock",
+    } satisfies NodeJS.ProcessEnv;
+    const original = { ...ambient };
+
+    const sanitized = sanitizeInheritedChildEnvironment(ambient, new Set(["PUBLIC_ID"]));
+
+    expect(sanitized).toEqual({ HOME: "/safe/home", SAFE_SETTING: "preserved" });
+    expect(ambient).toEqual(original);
+  });
+
   it.each([
     {
       fields: ["OPENAI_API_KEY:text"],
@@ -311,6 +372,13 @@ describe("local credential helper", () => {
     },
     { fields: ["PATH:text"], label: "process search path field" },
     { fields: ["NODE_OPTIONS:secret"], label: "Node process-control field" },
+    { fields: ["BASH_FUNC_CURL:secret"], label: "exported Bash function field prefix" },
+    { fields: ["DOTNET_STARTUP_HOOKS:secret"], label: ".NET startup hook field" },
+    { fields: ["GIT_EXEC_PATH:secret"], label: "Git executable path field" },
+    { fields: ["GIT_EXTERNAL_DIFF:secret"], label: "Git external diff field" },
+    { fields: ["GIT_PROXY_COMMAND:secret"], label: "Git proxy command field" },
+    { fields: ["GIT_TRACE2_EVENT:secret"], label: "Git trace field prefix" },
+    { fields: ["GIT_SSH:secret"], label: "Git SSH wrapper field" },
     { fields: ["LD_PRELOAD:secret"], label: "dynamic-loader field prefix" },
     { fields: ["DYLD_INSERT_LIBRARIES:secret"], label: "macOS dynamic-loader field prefix" },
     { fields: ["GIT_CONFIG:secret"], label: "exact Git config process-control field" },
@@ -331,6 +399,33 @@ describe("local credential helper", () => {
 
     expect(result.code).not.toBe(0);
     expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
+  });
+
+  it.each([
+    { executable: "node" },
+    { executable: "./node" },
+  ])("rejects non-absolute approved executable $executable before listening (#5048)", async ({
+    executable,
+  }) => {
+    const captured = captureChild(
+      helperArgs(["OPENAI_API_KEY:secret"], [executable, "-e", "process.exit(0)"]),
+    );
+
+    const result = await withTimeout(captured.closed, PROCESS_TIMEOUT_MS, "relative executable");
+
+    expect(result.code).not.toBe(0);
+    expect(captured.output()).toContain("approved command executable must use an absolute path");
+    expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
+  });
+
+  it("rejects a non-absolute executable through the direct session API (#5048)", async () => {
+    await expect(
+      startLocalCredentialHelper({
+        commandArgv: ["node", "-e", "process.exit(0)"],
+        fields: [{ name: "OPENAI_API_KEY", type: "secret" }],
+        formBytes: fs.readFileSync(FORM_PATH),
+      }),
+    ).rejects.toThrow("approved command executable must use an absolute path");
   });
 
   it("rejects a modified credential form before listening (#5048)", async () => {
@@ -385,6 +480,73 @@ describe("local credential helper", () => {
     expect(stillAvailable.status).toBe(200);
     expect(stillAvailable.body).toBe(result.body);
     expect(commandRunCount(fixture.markerPath)).toBe(0);
+  });
+
+  it("strips inherited credentials and process controls before launching the approved command (#5048)", async () => {
+    const fixture = createCommandFixture();
+    const helper = await startHelper(fixture.command, {
+      BASH_ENV: "ambient-shell-hook",
+      "BASH_FUNC_curl%%": '() { printf "%s" "$OPENAI_API_KEY"; }',
+      DOTNET_STARTUP_HOOKS: "ambient-startup-hook",
+      GIT_EXEC_PATH: "/ambient/git-core",
+      GIT_CONFIG: "ambient-git-config",
+      GH_TOKEN: "ambient-github-token",
+      Gh_ToKeN: "ambient-mixed-case-github-token",
+      GIT_CONFIG_COUNT: "1",
+      GIT_EXTERNAL_DIFF: "/ambient/diff-wrapper",
+      GIT_PROXY_COMMAND: "/ambient/proxy-wrapper",
+      GIT_TRACE2_EVENT: "/ambient/git-trace.json",
+      GIT_SSH: "/ambient/ssh-wrapper",
+      NODE_OPTIONS: "--no-warnings",
+      Node_Options: "--no-warnings",
+      OPENAI_API_KEY: "ambient-openai-key",
+      PATH: "/ambient/search/path",
+      Path: "/ambient/mixed-case/search/path",
+      PUBLIC_ID: "ambient-public-id",
+      UNRELATED_API_TOKEN: "ambient-generic-token",
+    });
+
+    const accepted = await request(helper.formUrl, {
+      body: validBody(),
+      headers: validHeaders(helper),
+      method: "POST",
+      path: "/submit",
+    });
+
+    expect(accepted.status).toBe(202);
+    await expectSuccessfulCompletion(helper, fixture.markerPath);
+  });
+
+  it("blocks an inherited Bash function from intercepting the approved command (#5048)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-bash-test-"));
+    tempDirs.add(dir);
+    const markerPath = path.join(dir, "command-runs.txt");
+    const attackMarkerPath = path.join(dir, "ambient-function-ran.txt");
+    const command = [
+      "/bin/bash",
+      "--noprofile",
+      "--norc",
+      "-c",
+      'curl --version >/dev/null && test ! -e "$ATTACK_MARKER" && printf "ran\\n" > "$1"',
+      "bash",
+      markerPath,
+    ];
+    const helper = await startHelper(command, {
+      ATTACK_MARKER: attackMarkerPath,
+      "BASH_FUNC_curl%%": '() { printf "%s" "$OPENAI_API_KEY" > "$ATTACK_MARKER"; }',
+      PATH: "/ambient/search/path",
+    });
+
+    const accepted = await request(helper.formUrl, {
+      body: validBody(),
+      headers: validHeaders(helper),
+      method: "POST",
+      path: "/submit",
+    });
+
+    expect(accepted.status).toBe(202);
+    await expectSuccessfulCompletion(helper, markerPath);
+    expect(fs.existsSync(attackMarkerPath)).toBe(false);
   });
 
   it("rejects Host, Origin, capability, and CORS probes without consuming the session (#5048)", async () => {

@@ -28,16 +28,16 @@ const localCredentialFormSource = path.join(
 const localCredentialHelperUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/854a13265e5821cdd245c72fca8ebc14a2589993/scripts/local-credential-helper.mts";
 const localCredentialHelperSha256 =
-  "54335bf6e1ace853402f74f0e656999ff6fb65cc23fc81c685bc13983b7c40f1"; // gitleaks:allow -- checked-in SHA-256 fixture
+  "b2fe93eaa4f4a74845570eb4f14319d7dcce0180a762315e02cf4f2076531a10"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/854a13265e5821cdd245c72fca8ebc14a2589993/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 =
-  "b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68"; // gitleaks:allow -- checked-in SHA-256 fixture
+  "8e135da4fae0bc75d4437a06d4a01dd486cfa03205b272207be28da3e9efc005"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormScriptCspHash = [
-  "'sha256-9SWtYAX3",
-  "k4sfukZTBTjWRvoQ",
-  "kNyDDtLbUDlV2rK6",
-  "PyQ='",
+  "'sha256-SqI5spgA",
+  "FKftFmjM+eNmgnd",
+  "hXN96aYrBhOWbBwn",
+  "jFz4='",
 ].join("");
 const localCredentialFormStyleCspHash = [
   "'sha256-W4wSJyrm",
@@ -353,6 +353,11 @@ describe("starter prompt docs CTA", () => {
     );
     expect(promptSource).toContain("exact environment-variable names and exact command argv");
     expect(promptSource).toContain("--field NAME:type");
+    expect(promptSource).toContain("absolute native executable or interpreter path");
+    expect(promptSource).toContain(
+      "removes recognized ambient credential-shaped and process-control variables",
+    );
+    expect(promptSource).toContain("<absolute-bash-path> -c");
     expect(promptSource).toContain("Confirm and Run Approved Command");
     expect(promptSource).toContain("do not retry or resubmit");
     expect(promptSource).toContain("exposure minimization, not guaranteed erasure");
@@ -423,6 +428,13 @@ describe("starter prompt docs CTA", () => {
       "http://127.0.0.1:4123/local-credential-form.html?fields=PRIVATE:text",
       "http://127.0.0.1:4123/local-credential-form.html?fields=PIN:text",
       "http://127.0.0.1:4123/local-credential-form.html?fields=NODE_OPTIONS:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=BASH_FUNC_CURL:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=DOTNET_STARTUP_HOOKS:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_EXEC_PATH:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_EXTERNAL_DIFF:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_PROXY_COMMAND:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_TRACE2_EVENT:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_SSH:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=NPM_CONFIG_USERCONFIG:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=LD_PRELOAD:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=DYLD_INSERT_LIBRARIES:secret",
