@@ -4,17 +4,20 @@
 
 # Source-of-truth review for this pinned third-party patch boundary:
 # invalidState: upstream entrypoints can independently enable credential stores,
-# ambient MCP discovery, update/install flows, first-run model selection, or
-# child-process config paths that bypass NemoClaw's managed inference, policy,
-# and integrity-bound MCP boundaries.
-# sourceBoundary: deepagents-code owns those Python entrypoints; NemoClaw owns the
-# sandbox image posture and therefore validates every patched symbol before build.
+# ambient MCP discovery, update/install flows, first-run model selection,
+# optional LangGraph CLI analytics, or child-process config paths that bypass
+# NemoClaw's managed inference, policy, and integrity-bound MCP boundaries.
+# sourceBoundary: deepagents-code owns those Python entrypoints and child env;
+# langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
+# posture and therefore validates every patched symbol before build.
 # whyNotSourceFix: upstream 0.1.34 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
-# build on drift, and direct-module tests execute the patched start/restart paths.
+# build on drift, while hostile analytics values exercise patched entrypoints and
+# the server start/restart override paths.
 # removalCondition: replace these sites only when a pinned upstream release offers
-# equivalent discovery-free, credential-free, update-disabled managed MCP hooks.
+# equivalent discovery-free, credential-free, update-disabled, analytics-disabled
+# managed hooks before every LangGraph process starts.
 
 from __future__ import annotations
 
