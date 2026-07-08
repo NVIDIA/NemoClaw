@@ -7,9 +7,10 @@
 # Headless `dcode -n "<prompt>"`, run inside a built Deep Agents Code sandbox,
 # must route through the managed https://inference.local/v1 endpoint using the
 # placeholder OpenAI-compatible key NemoClaw writes into config.toml. The login
-# shell path must return PONG with exit 0; provider, connection, DNS, timeout, and
-# ambiguous failures are not acceptable. No real provider/proxy credentials may
-# appear in config.toml, .env, .mcp.json, /tmp/nemoclaw-proxy-env.sh, or output.
+# shell path must reject an empty prompt with exit 2, then return PONG with exit
+# 0 for a real prompt; provider, connection, DNS, timeout, and ambiguous failures
+# are not acceptable. No real provider/proxy credentials may appear in
+# config.toml, .env, .mcp.json, /tmp/nemoclaw-proxy-env.sh, or output.
 # Direct DNS/hosts resolution is intentionally not required: OpenShell's managed
 # proxy routes inference.local when the request follows the normalized path.
 # Keep these phases in one ordered acceptance check: the absent-DNS observation
@@ -126,6 +127,10 @@ is_actionable_inference_error() {
   grep -Eiq 'API key|authentication|authorization|unauthorized|forbidden|rate[ -]?limit|quota|HTTP[[:space:]]*(401|403|404|429|5[0-9]{2})|status[[:space:]]*(401|403|404|429|5[0-9]{2})|(inference\.local|provider|model|NVIDIA|OpenAI).*(error|failed|failure|invalid|unavailable)|(error|failed|failure|invalid|unavailable).*(inference\.local|provider|model|NVIDIA|OpenAI)'
 }
 
+is_empty_prompt_rejection() {
+  grep -Fxq 'NemoClaw: empty non-interactive prompt for -n; provide prompt text.'
+}
+
 # Route reachability is proved separately with /v1/models. This classifier has
 # the stronger #6191 acceptance contract: dcode itself must be usable and return
 # exit-zero PONG, so authentication, quota, provider, and model errors are
@@ -199,6 +204,27 @@ main() {
     pass "managed dcode launcher, wrapper, and Python module are installed"
   else
     fail_test "managed dcode wrapper chain is missing or incomplete"
+  fi
+
+  # The status expansion belongs to the remote login shell.
+  # shellcheck disable=SC2016
+  empty_login_output="$(sandbox_login_exec 'timeout 10 dcode -n ""; status=$?; printf "\nNEMOCLAW_DCODE_EMPTY_EXIT:%s\n" "$status"' || true)"
+  empty_login_exit="$(printf '%s' "$empty_login_output" | sed -n 's/.*NEMOCLAW_DCODE_EMPTY_EXIT:\([0-9]\+\).*/\1/p' | tail -n1)"
+  if [ "$empty_login_exit" = "2" ] && printf '%s\n' "$empty_login_output" | is_empty_prompt_rejection; then
+    pass "login-shell dcode rejects an empty non-interactive prompt with exit 2"
+  else
+    fail_test "login-shell dcode did not reject an empty non-interactive prompt with exit 2 (exit ${empty_login_exit:-unknown})"
+  fi
+
+  if empty_direct_output="$(sandbox_direct_dcode -n "")"; then
+    empty_direct_exit=0
+  else
+    empty_direct_exit=$?
+  fi
+  if [ "$empty_direct_exit" = "2" ] && printf '%s\n' "$empty_direct_output" | is_empty_prompt_rejection; then
+    pass "direct-exec dcode rejects an empty non-interactive prompt with exit 2"
+  else
+    fail_test "direct-exec dcode did not reject an empty non-interactive prompt with exit 2 (exit ${empty_direct_exit})"
   fi
 
   # 1. config.toml points at the managed inference route, not a real provider host.
@@ -289,6 +315,8 @@ DCODE_EXIT:${direct_exit}"
   leak_scan="$(sandbox_exec "$(sandbox_artifact_scan_command)" || true)"
   combined="${config_output}
 ${leak_scan}
+${empty_login_output}
+${empty_direct_output}
 ${dns_hosts_output}
 ${proxy_contract_output}
 ${route_output}

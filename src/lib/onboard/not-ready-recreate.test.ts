@@ -11,6 +11,7 @@ import {
   NotReadySandboxError,
   resolveNotReadyOutcome,
   selectPreUpgradeBackupForCreate,
+  UnsafeCustomImagePluginBackupError,
 } from "./not-ready-recreate";
 
 const BACKUP_PATH = "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-07-01T06-50-40-925Z";
@@ -124,7 +125,7 @@ describe("selectPreUpgradeBackupForCreate", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
     getLatestBackupSpy.mockReturnValue({
       backupPath: BACKUP_PATH,
-    } as ReturnType<typeof sandboxState.getLatestBackup>);
+    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
     expect(
       selectPreUpgradeBackupForCreate({
         liveExists: false,
@@ -136,6 +137,78 @@ describe("selectPreUpgradeBackupForCreate", () => {
     expect(note).toHaveBeenCalledWith(
       expect.stringMatching(/Found pre-upgrade backup for 'my-assistant'/),
     );
+  });
+
+  it("blocks a legacy custom OpenClaw backup before installer recreation (#6108)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    getLatestBackupSpy.mockReturnValue({
+      agentType: "openclaw",
+      dir: "/sandbox/.openclaw",
+      backupPath: BACKUP_PATH,
+      openclawImagePluginInstalls: [],
+    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
+
+    expect(() =>
+      selectPreUpgradeBackupForCreate({
+        liveExists: false,
+        hasExistingRegistryEntry: true,
+        existingSandboxEntry: {
+          name: "my-assistant",
+          agent: "openclaw",
+          fromDockerfile: "/tmp/Dockerfile.custom",
+        },
+        sandboxName: "my-assistant",
+        note,
+      }),
+    ).toThrow(UnsafeCustomImagePluginBackupError);
+
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it("accepts an authoritative custom OpenClaw backup for installer recreation (#6108)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    getLatestBackupSpy.mockReturnValue({
+      agentType: "openclaw",
+      dir: "/sandbox/.openclaw",
+      backupPath: BACKUP_PATH,
+      reconcileOpenClawImagePluginProvenance: true,
+      openclawImagePluginInstalls: [],
+    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
+
+    expect(
+      selectPreUpgradeBackupForCreate({
+        liveExists: false,
+        hasExistingRegistryEntry: true,
+        existingSandboxEntry: {
+          name: "my-assistant",
+          agent: "openclaw",
+          fromDockerfile: "/tmp/Dockerfile.custom",
+        },
+        sandboxName: "my-assistant",
+        note,
+      }),
+    ).toBe(BACKUP_PATH);
+  });
+
+  it("blocks custom OpenClaw installer recreation when no valid backup is readable (#6108)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    getLatestBackupSpy.mockReturnValue(null);
+
+    expect(() =>
+      selectPreUpgradeBackupForCreate({
+        liveExists: false,
+        hasExistingRegistryEntry: true,
+        existingSandboxEntry: {
+          name: "my-assistant",
+          agent: "openclaw",
+          fromDockerfile: "/tmp/Dockerfile.custom",
+        },
+        sandboxName: "my-assistant",
+        note,
+      }),
+    ).toThrow(UnsafeCustomImagePluginBackupError);
+
+    expect(note).not.toHaveBeenCalled();
   });
 
   it("returns null and notes fresh-state recreate when installer restore intent finds no backup", () => {
@@ -202,7 +275,7 @@ describe("applyNonInteractiveNotReadyDecision", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
     getLatestBackupSpy.mockReturnValue({
       backupPath: BACKUP_PATH,
-    } as ReturnType<typeof sandboxState.getLatestBackup>);
+    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
     expect(applyNonInteractiveNotReadyDecision("my-assistant", note)).toBe(BACKUP_PATH);
     expect(note).toHaveBeenCalledWith(
       expect.stringMatching(/recreating and restoring pre-upgrade backup/),
@@ -249,11 +322,54 @@ describe("resolveNotReadyOutcome", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
     getLatestBackupSpy.mockReturnValue({
       backupPath: BACKUP_PATH,
-    } as ReturnType<typeof sandboxState.getLatestBackup>);
+    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
     expect(resolveNotReadyOutcome("my-assistant", note)).toEqual({
       kind: "proceed",
       restoreBackupPath: BACKUP_PATH,
     });
+  });
+
+  it("blocks live not-ready custom OpenClaw recreation with a legacy backup (#6108)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    getLatestBackupSpy.mockReturnValue({
+      agentType: "openclaw",
+      dir: "/sandbox/.openclaw",
+      backupPath: BACKUP_PATH,
+      openclawImagePluginInstalls: [],
+    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
+
+    const outcome = resolveNotReadyOutcome("my-assistant", note, {
+      name: "my-assistant",
+      agent: "openclaw",
+      fromDockerfile: "/tmp/Dockerfile.custom",
+    });
+
+    expect(outcome.kind).toBe("blocked");
+    expect(outcome).toMatchObject({
+      hints: expect.arrayContaining([expect.stringContaining("lacks verified plugin provenance")]),
+    });
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it("blocks an orphan sandbox when the requested target is custom OpenClaw (#6108)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    getLatestBackupSpy.mockReturnValue({
+      agentType: "openclaw",
+      dir: "/sandbox/.openclaw",
+      backupPath: BACKUP_PATH,
+      openclawImagePluginInstalls: [],
+    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
+
+    const outcome = resolveNotReadyOutcome("orphan", note, null, true);
+
+    expect(outcome.kind).toBe("blocked");
+    expect(outcome).toMatchObject({
+      hints: expect.arrayContaining([
+        expect.stringContaining("new sandbox name"),
+        expect.stringContaining("NEMOCLAW_RECREATE_WITHOUT_BACKUP=1"),
+      ]),
+    });
+    expect(note).not.toHaveBeenCalled();
   });
 });
 

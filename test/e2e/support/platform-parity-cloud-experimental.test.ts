@@ -40,6 +40,36 @@ function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeR
 }
 
 describe("P0-E cloud-experimental parity guardrails", () => {
+  it("skips the destructive fresh re-onboard check outside a Deep Agents sandbox", () => {
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
+    try {
+      fs.writeFileSync(path.join(binDir, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const result = spawnSync(
+        "bash",
+        [
+          path.join(
+            process.cwd(),
+            "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+          ),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+            SANDBOX_NAME: "openclaw-sandbox",
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        "04-deepagents-code-fresh-reonboard: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+    } finally {
+      fs.rmSync(binDir, { force: true, recursive: true });
+    }
+  });
+
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
     await SandboxExecCommand.run(
       [

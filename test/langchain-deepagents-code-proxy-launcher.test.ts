@@ -134,6 +134,34 @@ function shellValidatorAccepts(source: string, name: string, value: string): boo
 }
 
 describe("Deep Agents Code direct-exec proxy launcher", () => {
+  it("preserves the empty-prompt failure through the installed launcher chain (#6440)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-empty-prompt-"));
+    try {
+      const launcherPath = path.join(tempDir, "dcode-launcher.sh");
+      const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
+      const launcher = replaceManagedProxyFileConstants(
+        readAgentFile("dcode-launcher.sh").replace(
+          'readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"',
+          `readonly MANAGED_DCODE_WRAPPER="${wrapperPath}"`,
+        ),
+        tempDir,
+      );
+      fs.writeFileSync(launcherPath, launcher, { mode: 0o755 });
+      fs.writeFileSync(wrapperPath, readAgentFile("dcode-wrapper.sh"), { mode: 0o755 });
+      writeManagedProxyFiles(tempDir, DEFAULT_MANAGED_PROXY);
+
+      const result = runLauncher(launcherPath, ["-n", ""], {});
+
+      expect(result.status).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        "NemoClaw: empty non-interactive prompt for -n; provide prompt text.\n",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("ignores hostile PATH and BASH_ENV before launcher and entrypoint normalization", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-shell-entry-"));
     const launcherPath = makeLauncherProxyProbeFixture(tempDir);

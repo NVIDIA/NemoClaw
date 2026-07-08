@@ -330,7 +330,14 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
         const message = await captureMessage(() => bridge[method]("alpha"));
         const sandbox = registry.getSandbox("alpha");
 
-        expect(message).toContain("incomplete MCP destroy transaction");
+        // #6376: the guard message is phase-aware — the pending (phase-two)
+        // marker records confirmed sandbox deletion, so it points at finishing
+        // the destroy rather than the in-place `mcp remove --force` recovery.
+        expect(message).toContain(
+          marker === "destroyPendingAt"
+            ? "past the point of no return"
+            : "incomplete MCP destroy transaction",
+        );
         expect(sandbox?.mcp).toHaveProperty(marker);
         expect(testState.calls).toEqual([]);
         expect(testState.adapterCalls).toEqual([]);
@@ -441,7 +448,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     await bridge.restoreMcpBridgesAfterDestroyAbort("alpha", preparation);
     const sandbox = registry.getSandbox("alpha");
 
-    expect(Object.hasOwn(process.env, "GITHUB_TOKEN")).toBe(true);
+    expect(process.env.GITHUB_TOKEN).toBe("ambient-value-that-must-not-rotate");
     expect([...testState.providers.keys()]).toContain("alpha-mcp-github");
     expect(
       testState.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
@@ -528,6 +535,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
 
     await bridge.restoreMcpBridgesAfterRebuild("alpha", [bridgeEntries.github]);
 
+    expect(process.env.GITHUB_TOKEN).toBe("ambient-value-that-must-not-rotate");
     expect(testState.calls.some((call) => /^provider (create|update) /.test(call))).toBe(false);
     expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
     expect(testState.adapterRegistered).toBe(true);
