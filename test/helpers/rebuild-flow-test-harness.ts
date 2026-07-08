@@ -12,9 +12,9 @@ import {
   createRebuildFlowSession,
   installTerminalStepFailureMock,
   originalSandboxName,
-  type RebuildSandbox,
   type RebuildFlowHarness,
   type RebuildFlowOverrides,
+  type RebuildSandbox,
 } from "./rebuild-flow-test-support";
 
 export { originalSandboxName, snapshotEnv } from "./rebuild-flow-test-support";
@@ -204,7 +204,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     gatewayPort: 8080,
     ...(overrides.sandboxEntry ?? {}),
   };
-  vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
+  let registryEntryPresent = overrides.registryEntryMissing !== true;
+  vi.spyOn(registry, "getSandbox").mockImplementation(() =>
+    registryEntryPresent ? sandboxEntry : null,
+  );
   const initialDefaultSandbox = overrides.defaultSandbox ?? null;
   const preDeleteDefaultSandbox =
     overrides.preDeleteDefaultSandbox !== undefined
@@ -283,6 +286,27 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       const entryName = String((args[0] as { name: string }).name);
       if (currentRegistryEntryNames.has(entryName)) return false;
       currentRegistryEntryNames.add(entryName);
+      return true;
+    });
+  const restoreRebuildRegistryRecoveryIfMissingSpy = vi
+    .spyOn(registry, "restoreRebuildRegistryRecoveryIfMissing")
+    .mockImplementation((...args: unknown[]) => {
+      if (registryEntryPresent) return false;
+      const recovery = args[0] as {
+        entry: { name: string };
+        wasDefault: boolean;
+        defaultSelectionRevision: number;
+      };
+      registryEntryPresent = true;
+      currentRegistryEntryNames.add(recovery.entry.name);
+      if (
+        recovery.wasDefault &&
+        currentDefaultSelectionRevision === recovery.defaultSelectionRevision &&
+        (currentDefaultSandbox === null || !currentRegistryEntryNames.has(currentDefaultSandbox))
+      ) {
+        currentDefaultSandbox = recovery.entry.name;
+        currentDefaultSelectionRevision++;
+      }
       return true;
     });
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
@@ -478,6 +502,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreSandboxEntrySpy,
     restoreSandboxEntryIfMissingSpy,
     restorePreservedSandboxEntryIfMissingSpy,
+    restoreRebuildRegistryRecoveryIfMissingSpy,
     restoreMcpBridgesAfterRebuildSpy,
     warnUnpreservedUserManagedFilesSpy,
     session,

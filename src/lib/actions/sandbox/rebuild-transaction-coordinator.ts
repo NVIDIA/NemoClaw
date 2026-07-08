@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 
 import { CLI_NAME } from "../../cli/branding";
 import {
+  type RebuildRegistryRecoveryV1,
   type RebuildTransactionIntentV1,
   type RebuildTransactionRecordV1,
   type RebuildTransactionStore,
@@ -30,6 +31,10 @@ export function fingerprintRebuildValue(value: unknown): string {
   return `sha256:${crypto.createHash("sha256").update(stableJson(value)).digest("hex")}`;
 }
 
+export function fingerprintRebuildRegistryEntry(value: RebuildSandboxEntry): string {
+  return fingerprintRebuildValue(JSON.parse(JSON.stringify(value)));
+}
+
 export function loadRebuildRecovery(
   store: RebuildTransactionStore,
   sandboxName: string,
@@ -40,6 +45,14 @@ export function loadRebuildRecovery(
   const transaction = store.load(sandboxName);
   if (!transaction || transaction.status === "completed") {
     return { transaction, recoveryManifest: null };
+  }
+  if (
+    fingerprintRebuildRegistryEntry(transaction.intent.source.registryRecovery.entry) !==
+    transaction.intent.source.registryFingerprint
+  ) {
+    throw new Error(
+      `Rebuild transaction '${transaction.transactionId}' no longer matches its registry recovery metadata.`,
+    );
   }
   const recoveryManifest = sandboxState.getLatestBackup(sandboxName);
   if (
@@ -69,6 +82,7 @@ async function prepareRebuildTransaction(args: {
   existing: RebuildTransactionRecordV1 | null;
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
+  registryRecovery: RebuildRegistryRecoveryV1;
   targetConfig: RebuildTargetConfig;
   recreateOptions: RebuildRecreateOnboardOpts;
   backupManifest: RebuildBackupManifest;
@@ -83,7 +97,8 @@ async function prepareRebuildTransaction(args: {
     sandboxName: args.sandboxName,
     source: {
       agent: args.sandboxEntry.agent ?? null,
-      registryFingerprint: fingerprintRebuildValue(args.sandboxEntry),
+      registryFingerprint: fingerprintRebuildRegistryEntry(args.registryRecovery.entry),
+      registryRecovery: args.registryRecovery,
       legacyManagedImageRecoveryAuthorized: args.legacyManagedImageRecoveryAuthorized,
       shieldsLocked: args.shieldsLocked,
     },

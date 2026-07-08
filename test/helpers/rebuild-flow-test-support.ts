@@ -53,6 +53,7 @@ export type RebuildFlowOverrides = {
   restoreMcpBridgesAfterRebuild?: () => Promise<void>;
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
+  registryEntryMissing?: boolean;
   sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
   sandboxListOutput?: string;
@@ -124,6 +125,7 @@ export type RebuildFlowHarness = {
   restoreSandboxEntrySpy: MockInstance;
   restoreSandboxEntryIfMissingSpy: MockInstance;
   restorePreservedSandboxEntryIfMissingSpy: MockInstance;
+  restoreRebuildRegistryRecoveryIfMissingSpy: MockInstance;
   restoreMcpBridgesAfterRebuildSpy: MockInstance;
   warnUnpreservedUserManagedFilesSpy: MockInstance;
   session: RebuildFlowSession;

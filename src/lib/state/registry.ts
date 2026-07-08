@@ -637,6 +637,50 @@ export function restorePreservedSandboxEntryIfMissing(entry: SandboxEntry): bool
   });
 }
 
+/**
+ * SOURCE_OF_TRUTH
+ * Invalid state: an active rebuild journal survives deletion but its preserved
+ * registry row is missing, so a fresh process cannot reconstruct the sandbox.
+ * Source boundary: the journal owns the captured row and default revision;
+ * restoration adds only a missing name and reclaims default only at that exact
+ * revision. The boundary and registry tests cover replacement/default races.
+ * Remove this compensation when rebuild uses atomic build/verify/swap.
+ */
+export function restoreRebuildRegistryRecoveryIfMissing(recovery: {
+  readonly entry: SandboxEntry;
+  readonly wasDefault: boolean;
+  readonly defaultSelectionRevision: number;
+}): boolean {
+  return withLock(() => {
+    const current = load();
+    const { entry } = recovery;
+    if (current.sandboxes[entry.name]) return false;
+
+    const currentRevision = reversibleRemoval.normalizeDefaultSelectionRevision(
+      current.defaultSelectionRevision,
+    );
+    const currentDefaultIsValid =
+      current.defaultSandbox !== null && current.sandboxes[current.defaultSandbox] !== undefined;
+    const stillOwnsDefault =
+      recovery.wasDefault &&
+      currentRevision === recovery.defaultSelectionRevision &&
+      !currentDefaultIsValid;
+    const defaultSandbox = stillOwnsDefault ? entry.name : current.defaultSandbox;
+    const defaultSelectionRevision =
+      defaultSandbox === current.defaultSandbox
+        ? currentRevision
+        : reversibleRemoval.incrementDefaultSelectionRevision(currentRevision);
+
+    save({
+      ...current,
+      sandboxes: { ...current.sandboxes, [entry.name]: entry },
+      defaultSandbox,
+      defaultSelectionRevision,
+    });
+    return true;
+  });
+}
+
 export function listSandboxes(): { sandboxes: SandboxEntry[]; defaultSandbox: string | null } {
   const data = load();
   return {

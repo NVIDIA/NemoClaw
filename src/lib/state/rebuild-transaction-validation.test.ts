@@ -63,6 +63,22 @@ describe("RebuildTransactionStore validation", () => {
       },
     ],
     [
+      "registry recovery entry",
+      (record: Record<string, unknown>) => {
+        const value = record.intent as Record<string, Record<string, unknown>>;
+        const recovery = value.source!.registryRecovery as Record<string, unknown>;
+        recovery.entry = { name: "another-sandbox" };
+      },
+    ],
+    [
+      "registry default ownership revision",
+      (record: Record<string, unknown>) => {
+        const value = record.intent as Record<string, Record<string, unknown>>;
+        const recovery = value.source!.registryRecovery as Record<string, unknown>;
+        recovery.defaultSelectionRevision = -1;
+      },
+    ],
+    [
       "credential environment variable",
       (record: Record<string, unknown>) => {
         const value = record.intent as Record<string, Record<string, unknown>>;

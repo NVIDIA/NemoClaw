@@ -86,6 +86,7 @@ async function rebuildSandboxUnlocked(
   if (!preflight) return;
   const {
     transaction: recoveredTransaction,
+    registryRecovery,
     sandboxEntry,
     rebuildAgent,
     versionCheck,
@@ -199,6 +200,7 @@ async function rebuildSandboxUnlocked(
       // backup, but cannot create a transaction without recovery data.
       await transaction.prepare({
         sandboxEntry,
+        registryRecovery,
         targetConfig,
         recreateOptions,
         backupManifest: backup.backupManifest,

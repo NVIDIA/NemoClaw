@@ -526,6 +526,45 @@ describe("registry", () => {
     expect(registry.getDefault()).toBe("beta");
   });
 
+  it("restores journaled rebuild metadata without stealing a later default", () => {
+    registry.registerSandbox({ name: "alpha", model: "old" });
+    const original = registry.getSandbox("alpha");
+    const capturedRevision = registry.load().defaultSelectionRevision;
+
+    registry.registerSandbox({ name: "beta", model: "new" });
+    registry.setDefault("beta");
+    const changed = registry.load();
+    delete changed.sandboxes.alpha;
+    registry.save(changed);
+
+    expect(
+      registry.restoreRebuildRegistryRecoveryIfMissing({
+        entry: original,
+        wasDefault: true,
+        defaultSelectionRevision: capturedRevision,
+      }),
+    ).toBe(true);
+    expect(registry.getSandbox("alpha")).toMatchObject({ name: "alpha", model: "old" });
+    expect(registry.getDefault()).toBe("beta");
+  });
+
+  it("reclaims journaled default ownership only at the captured revision", () => {
+    registry.registerSandbox({ name: "alpha", model: "old" });
+    const original = registry.getSandbox("alpha");
+    const captured = registry.load();
+    delete captured.sandboxes.alpha;
+    registry.save(captured);
+
+    expect(
+      registry.restoreRebuildRegistryRecoveryIfMissing({
+        entry: original,
+        wasDefault: true,
+        defaultSelectionRevision: captured.defaultSelectionRevision,
+      }),
+    ).toBe(true);
+    expect(registry.getDefault()).toBe("alpha");
+  });
+
   it("serializes a spawned registration that starts during an atomic restore", () => {
     const { spawnSync } = require("child_process");
     registry.registerSandbox({ name: "alpha", model: "original", imageTag: "old-image" });

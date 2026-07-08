@@ -39,6 +39,11 @@ export function intent(
     source: {
       agent: "openclaw",
       registryFingerprint: FP_A,
+      registryRecovery: {
+        entry: { name: SANDBOX, agent: "openclaw" },
+        wasDefault: true,
+        defaultSelectionRevision: 3,
+      },
       legacyManagedImageRecoveryAuthorized: false,
       shieldsLocked: false,
     },

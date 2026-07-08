@@ -13,6 +13,7 @@ import type { ToolDisclosure } from "../tool-disclosure";
 import { ensureConfigDir } from "./config-io";
 import { withMcpLifecycleLock } from "./mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "./paths";
+import type { SandboxEntry } from "./registry";
 
 export const REBUILD_TRANSACTION_VERSION = 1 as const;
 export const REBUILD_TRANSACTION_DIRNAME = "rebuild-transactions";
@@ -32,11 +33,18 @@ export type RebuildTransactionPhaseV1 =
   | "completed";
 export type RebuildTransactionStatusV1 = "active" | "completed";
 
+export interface RebuildRegistryRecoveryV1 {
+  readonly entry: SandboxEntry;
+  readonly wasDefault: boolean;
+  readonly defaultSelectionRevision: number;
+}
+
 export interface RebuildTransactionIntentV1 {
   readonly sandboxName: string;
   readonly source: {
     readonly agent: string | null;
     readonly registryFingerprint: string;
+    readonly registryRecovery: RebuildRegistryRecoveryV1;
     readonly legacyManagedImageRecoveryAuthorized: boolean;
     readonly shieldsLocked: boolean;
   };
@@ -286,6 +294,30 @@ function normalizeIntent(value: unknown, sandboxName: string): RebuildTransactio
   if (typeof source.shieldsLocked !== "boolean") {
     throw transactionError("CORRUPT", sandboxName, "intent.source.shieldsLocked is invalid");
   }
+  const registryRecovery = requiredRecord(
+    source.registryRecovery,
+    "intent.source.registryRecovery",
+    sandboxName,
+  );
+  const registryEntry = requiredRecord(
+    registryRecovery.entry,
+    "intent.source.registryRecovery.entry",
+    sandboxName,
+  );
+  if (registryEntry.name !== sandboxName) {
+    throw transactionError(
+      "CORRUPT",
+      sandboxName,
+      "intent.source.registryRecovery.entry belongs to another sandbox",
+    );
+  }
+  if (typeof registryRecovery.wasDefault !== "boolean") {
+    throw transactionError(
+      "CORRUPT",
+      sandboxName,
+      "intent.source.registryRecovery.wasDefault is invalid",
+    );
+  }
   return {
     sandboxName,
     source: {
@@ -295,6 +327,15 @@ function normalizeIntent(value: unknown, sandboxName: string): RebuildTransactio
         "intent.source.registryFingerprint",
         sandboxName,
       ),
+      registryRecovery: {
+        entry: registryEntry as unknown as SandboxEntry,
+        wasDefault: registryRecovery.wasDefault,
+        defaultSelectionRevision: safeRevision(
+          registryRecovery.defaultSelectionRevision,
+          "intent.source.registryRecovery.defaultSelectionRevision",
+          sandboxName,
+        ),
+      },
       legacyManagedImageRecoveryAuthorized: source.legacyManagedImageRecoveryAuthorized,
       shieldsLocked: source.shieldsLocked,
     },

@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
 } from "../../../../test/helpers/rebuild-flow-test-harness";
+import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 
 installRebuildFlowTestHooks();
 
@@ -204,6 +203,75 @@ describe("rebuild transaction boundary", () => {
       status: "completed",
       phase: "completed",
     });
+    expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("restores a missing registry row from durable recovery metadata", async () => {
+    const interrupted = createRebuildFlowHarness({
+      staleRecovery: true,
+      onboard: () => {
+        throw new Error("simulated process interruption");
+      },
+    });
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Recreate failed");
+
+    const resumed = createRebuildFlowHarness({
+      staleRecovery: true,
+      registryEntryMissing: true,
+    });
+    await resumed.rebuildSandbox("alpha", ["--yes"], {
+      throwOnError: true,
+      transactionStore: interrupted.transactionStore,
+    });
+
+    expect(resumed.restoreRebuildRegistryRecoveryIfMissingSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ entry: expect.objectContaining({ name: "alpha" }) }),
+    );
+    expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      status: "completed",
+      phase: "completed",
+    });
+  });
+
+  it("does not overwrite a replacement registry row during recovery", async () => {
+    const interrupted = createRebuildFlowHarness({
+      staleRecovery: true,
+      onboard: () => {
+        throw new Error("simulated process interruption");
+      },
+    });
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Recreate failed");
+
+    const resumed = createRebuildFlowHarness({
+      staleRecovery: true,
+      sandboxEntry: { model: "replacement-owner" },
+    });
+    await expect(
+      resumed.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        transactionStore: interrupted.transactionStore,
+      }),
+    ).rejects.toThrow("Rebuild registry recovery failed");
+
+    expect(resumed.restoreRebuildRegistryRecoveryIfMissingSpy).not.toHaveBeenCalled();
     expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],

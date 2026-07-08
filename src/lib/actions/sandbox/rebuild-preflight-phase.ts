@@ -6,9 +6,11 @@ import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { redactFull } from "../../security/redact";
 import {
-  RebuildTransactionStore,
+  type RebuildRegistryRecoveryV1,
   type RebuildTransactionRecordV1,
+  RebuildTransactionStore,
 } from "../../state/rebuild-transaction";
+import * as registry from "../../state/registry";
 import type { RebuildManifest } from "../../state/sandbox";
 import {
   preflightRebuildCredentials,
@@ -53,10 +55,14 @@ import {
 } from "./rebuild-prepared-recovery";
 import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
-import { loadRebuildRecovery } from "./rebuild-transaction-coordinator";
+import {
+  fingerprintRebuildRegistryEntry,
+  loadRebuildRecovery,
+} from "./rebuild-transaction-coordinator";
 
 export interface RebuildPreflightPhaseResult {
   transaction: RebuildTransactionRecordV1 | null;
+  registryRecovery: RebuildRegistryRecoveryV1;
   sandboxEntry: RebuildSandboxEntry;
   rebuildAgent: string | null;
   versionCheck: RebuildVersionCheck;
@@ -101,6 +107,29 @@ export async function runRebuildPreflightPhase(
       bail,
     );
     return null;
+  }
+  const activeTransaction = recovery.transaction?.status === "active" ? recovery.transaction : null;
+  if (activeTransaction) {
+    const expectedRegistry = activeTransaction.intent.source.registryRecovery;
+    const currentEntry = registry.getSandbox(sandboxName);
+    if (!currentEntry) {
+      const restored = registry.restoreRebuildRegistryRecoveryIfMissing(expectedRegistry);
+      if (restored) log("Restored missing registry recovery metadata from the rebuild journal");
+    }
+    const recoveredEntry = registry.getSandbox(sandboxName);
+    if (
+      !recoveredEntry ||
+      fingerprintRebuildRegistryEntry(recoveredEntry) !==
+        activeTransaction.intent.source.registryFingerprint
+    ) {
+      printRebuildPreflightFailure(
+        "the registry row is missing or belongs to a replacement that the active rebuild transaction does not own.",
+        "Inspect the current registry and transaction before retrying; no rebuild side effect was attempted.",
+        "Rebuild registry recovery failed",
+        bail,
+      );
+      return null;
+    }
   }
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const initialSandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
@@ -164,6 +193,17 @@ export async function runRebuildPreflightPhase(
     let retainOnboardLock = false;
     try {
       assertRebuildEntryUnchanged(sandboxName, confirmedEntrySnapshot, bail);
+      const lockedRegistry = registry.load();
+      const lockedRegistryEntry = lockedRegistry.sandboxes[sandboxName];
+      if (!lockedRegistryEntry) {
+        bail(`Sandbox '${sandboxName}' disappeared from the registry before rebuild preparation.`);
+        return null;
+      }
+      const registryRecovery = activeTransaction?.intent.source.registryRecovery ?? {
+        entry: JSON.parse(JSON.stringify(lockedRegistryEntry)),
+        wasDefault: lockedRegistry.defaultSandbox === sandboxName,
+        defaultSelectionRevision: lockedRegistry.defaultSelectionRevision ?? 0,
+      };
       const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
       if (!liveState) return null;
       const mcpPreflight = await preflightMcpRebuildState(
@@ -244,6 +284,7 @@ export async function runRebuildPreflightPhase(
       retainPreparedImage = true;
       return {
         transaction: recovery.transaction,
+        registryRecovery,
         sandboxEntry,
         rebuildAgent,
         versionCheck,
