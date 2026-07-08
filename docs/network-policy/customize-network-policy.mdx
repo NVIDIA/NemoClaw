@@ -156,7 +156,7 @@ The symptom in `~/.openclaw/logs` or in the MCP tool output is:
 CONNECT tunnel failed, response 403
 ```
 
-Add a preset with the MCP host, the HTTP methods that Streamable HTTP MCP uses (`GET` and `POST`), and the binaries that talk to the MCP server:
+Add a preset with the MCP host, the exact Streamable HTTP MCP route, the HTTP methods that route uses (`GET` and `POST`), and only the process binary that opens the connection:
 
 ```yaml
 preset:
@@ -171,11 +171,10 @@ network_policies:
         protocol: rest
         enforcement: enforce
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: GET, path: "/mcp" }
+          - allow: { method: POST, path: "/mcp" }
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/local/bin/openclaw }
 ```
 
 Save it under `nemoclaw-blueprint/policies/presets/my-mcp.yaml` and apply it to the running sandbox:
@@ -185,16 +184,19 @@ $$nemoclaw my-assistant policy-add --from-file nemoclaw-blueprint/policies/prese
 ```
 
 NemoClaw prompts for confirmation because the preset targets a custom host that is not part of the vetted allowlist, then reports `Widening sandbox egress — adding: mcp.example.com`.
-Re-invoke the MCP tool and the CONNECT tunnel to `mcp.example.com:443` succeeds.
+For a publicly routed host that passes the separate SSRF checks, re-invoke the MCP tool and confirm that the CONNECT tunnel to `mcp.example.com:443` succeeds.
 
 <Note>
-The `binaries` list must include every process that opens the connection.
-OpenClaw and its Node runtime typically execute as `/usr/local/bin/node` and `/usr/local/bin/openclaw`, and MCP client tools invoked from a shell (for example `curl`) need `/usr/bin/curl`.
+The `binaries` list must include only the process that opens the connection.
+The example assumes the Node runtime opens the MCP connection, so it lists `/usr/local/bin/node`; use `/usr/local/bin/openclaw` instead if that executable is the connection opener in your installation.
+MCP client tools invoked directly from a shell need their own binary path, such as `/usr/bin/curl`.
 Confirm the actual paths on your system with `which node` and `which openclaw`, since install method (for example `nvm` or a user-local install) can change these locations.
 A preset that lists only the endpoint but no matching binary widens the allowlist but no process is authorized to use it, so requests still fail.
 </Note>
 
 <Warning>
+An allowlist entry does not disable OpenShell's SSRF protection or create host routes.
+If the MCP hostname resolves to a private, loopback, or link-local address, adding the policy alone does not make it reachable; establish the required host or VPN route and follow your deployment's approved private-destination configuration.
 `preset.name` must be a lowercase RFC 1123 label (letters, digits, and hyphens; no underscores).
 The `network_policies` key can use underscores because that field feeds the policy schema rather than the preset filename.
 </Warning>
