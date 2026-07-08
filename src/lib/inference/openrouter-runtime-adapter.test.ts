@@ -6,7 +6,10 @@ import type { AddressInfo } from "node:net";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createOpenRouterRuntimeAdapterServer } from "./openrouter-runtime-adapter";
+import {
+  createOpenRouterRuntimeAdapterServer,
+  openRouterRuntimeAuthorizationHash,
+} from "./openrouter-runtime-adapter";
 
 type CapturedRequest = {
   method: string;
@@ -16,6 +19,9 @@ type CapturedRequest = {
 };
 
 const servers: http.Server[] = [];
+const OPENROUTER_TEST_KEY = "sk-or-test";
+const OPENROUTER_TEST_AUTHORIZATION = `Bearer ${OPENROUTER_TEST_KEY}`;
+const OPENROUTER_TEST_AUTHORIZATION_HASH = openRouterRuntimeAuthorizationHash(OPENROUTER_TEST_KEY);
 
 afterEach(async () => {
   await Promise.all(
@@ -69,13 +75,14 @@ describe("OpenRouter Runtime adapter", () => {
     const upstream = await createFakeOpenRouter();
     const adapter = createOpenRouterRuntimeAdapterServer({
       upstreamBaseUrl: `${upstream.baseUrl}/api/v1`,
+      authorizationHash: OPENROUTER_TEST_AUTHORIZATION_HASH,
     });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/v1/chat/completions?debug=1`, {
       method: "POST",
       headers: {
-        Authorization: "Bearer sk-or-test",
+        Authorization: OPENROUTER_TEST_AUTHORIZATION,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://example.invalid/",
         "X-OpenRouter-Title": "wrong title",
@@ -93,7 +100,7 @@ describe("OpenRouter Runtime adapter", () => {
     const request = upstream.captured[0];
     expect(request.method).toBe("POST");
     expect(request.path).toBe("/api/v1/chat/completions?debug=1");
-    expect(request.headers.authorization).toBe("Bearer sk-or-test");
+    expect(request.headers.authorization).toBe(OPENROUTER_TEST_AUTHORIZATION);
     expect(request.headers["http-referer"]).toBe("https://www.nvidia.com/nemoclaw/");
     expect(request.headers["x-openrouter-title"]).toBe("NVIDIA NemoClaw");
     expect(request.headers["x-api-key"]).toBeUndefined();
@@ -104,6 +111,7 @@ describe("OpenRouter Runtime adapter", () => {
     const upstream = await createFakeOpenRouter();
     const adapter = createOpenRouterRuntimeAdapterServer({
       upstreamBaseUrl: `${upstream.baseUrl}/v1`,
+      authorizationHash: OPENROUTER_TEST_AUTHORIZATION_HASH,
     });
     const baseUrl = await listen(adapter);
 
@@ -120,15 +128,40 @@ describe("OpenRouter Runtime adapter", () => {
     expect(upstream.captured).toEqual([]);
   });
 
+  it("rejects requests with an arbitrary bearer value", async () => {
+    const upstream = await createFakeOpenRouter();
+    const adapter = createOpenRouterRuntimeAdapterServer({
+      upstreamBaseUrl: `${upstream.baseUrl}/v1`,
+      authorizationHash: OPENROUTER_TEST_AUTHORIZATION_HASH,
+    });
+    const baseUrl = await listen(adapter);
+
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer anything",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "openrouter/auto", messages: [] }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({
+      error: { code: "unauthorized" },
+    });
+    expect(upstream.captured).toEqual([]);
+  });
+
   it("forwards the OpenAI-compatible models endpoint without a duplicate credential", async () => {
     const upstream = await createFakeOpenRouter();
     const adapter = createOpenRouterRuntimeAdapterServer({
       upstreamBaseUrl: `${upstream.baseUrl}/v1`,
+      authorizationHash: OPENROUTER_TEST_AUTHORIZATION_HASH,
     });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/v1/models`, {
-      headers: { Authorization: "Bearer sk-or-test" },
+      headers: { Authorization: OPENROUTER_TEST_AUTHORIZATION },
     });
 
     expect(response.status).toBe(200);
@@ -137,12 +170,14 @@ describe("OpenRouter Runtime adapter", () => {
       method: "GET",
       path: "/v1/models",
     });
-    expect(upstream.captured[0].headers.authorization).toBe("Bearer sk-or-test");
+    expect(upstream.captured[0].headers.authorization).toBe(OPENROUTER_TEST_AUTHORIZATION);
     expect(upstream.captured[0].headers["http-referer"]).toBe("https://www.nvidia.com/nemoclaw/");
   });
 
   it("keeps health output free of credential material", async () => {
-    const adapter = createOpenRouterRuntimeAdapterServer();
+    const adapter = createOpenRouterRuntimeAdapterServer({
+      authorizationHash: OPENROUTER_TEST_AUTHORIZATION_HASH,
+    });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/health`);
@@ -153,5 +188,6 @@ describe("OpenRouter Runtime adapter", () => {
     expect(text).not.toContain("OPENROUTER_API_KEY");
     expect(text).not.toContain("sk-or-test");
     expect(text).not.toContain("Authorization");
+    expect(text).not.toContain(OPENROUTER_TEST_AUTHORIZATION_HASH);
   });
 });

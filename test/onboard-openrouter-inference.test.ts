@@ -14,6 +14,8 @@ const onboard = require("../src/lib/onboard") as {
 };
 const openrouterRuntimeOnboard =
   require("../src/lib/onboard/openrouter-runtime") as typeof import("../src/lib/onboard/openrouter-runtime.js");
+const openrouterRuntimeAdapter =
+  require("../src/lib/inference/openrouter-runtime-adapter") as typeof import("../src/lib/inference/openrouter-runtime-adapter.js");
 
 const createDirectSetupInferenceHarness = createDirectSetupInferenceHarnessFactory(
   onboard.createSetupInference,
@@ -22,6 +24,11 @@ const createDirectSetupInferenceHarness = createDirectSetupInferenceHarnessFacto
 describe("OpenRouter onboarding inference setup", () => {
   it("configures OpenRouter through the remote provider setup branch (#5826)", async () => {
     await withProcessEnv({ OPENROUTER_API_KEY: "sk-or-test" }, async () => {
+      const ensureAdapter = vi.fn(async () => ({
+        baseUrl: "http://host.openshell.internal:11437/v1",
+        localBaseUrl: "http://127.0.0.1:11437/v1",
+        logPath: "/tmp/openrouter-adapter.log",
+      }));
       const harness = createDirectSetupInferenceHarness({
         overrides: {
           isNonInteractive: () => true,
@@ -29,11 +36,7 @@ describe("OpenRouter onboarding inference setup", () => {
             setupOpenRouterRuntimeInference: (input) =>
               openrouterRuntimeOnboard.setupOpenRouterRuntimeInference({
                 ...input,
-                ensureAdapter: async () => ({
-                  baseUrl: "http://host.openshell.internal:11437/v1",
-                  localBaseUrl: "http://127.0.0.1:11437/v1",
-                  logPath: "/tmp/openrouter-adapter.log",
-                }),
+                ensureAdapter,
               }),
           },
         },
@@ -54,6 +57,10 @@ describe("OpenRouter onboarding inference setup", () => {
         "inference set -g nemoclaw --no-verify --provider openrouter-api --model moonshotai/kimi-k2.6 --timeout 180",
       ]);
       assert.equal(harness.commands[1].env?.OPENROUTER_API_KEY, "sk-or-test");
+      expect(ensureAdapter).toHaveBeenCalledWith({
+        authorizationHash:
+          openrouterRuntimeAdapter.openRouterRuntimeAuthorizationHash("sk-or-test"),
+      });
       assert.ok(
         !commands.some((command) => command.includes("sk-or-test")),
         "OpenRouter key must not appear in argv",

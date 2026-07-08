@@ -24,6 +24,10 @@
     "reason": "Internal child-process setting used only when launching the hidden OpenRouter Runtime header adapter. Users should configure OpenRouter through the managed OpenRouter provider flow instead."
   },
   {
+    "name": "NEMOCLAW_OPENROUTER_RUNTIME_AUTHORIZATION_SHA256",
+    "reason": "Internal child-process setting used only to pass a SHA-256 hash of the OpenShell-owned OpenRouter Authorization header to the hidden local adapter. The raw OpenRouter key remains in the OpenShell provider route."
+  },
+  {
     "name": "NEMOCLAW_BEDROCK_RUNTIME_ENDPOINT_URL",
     "reason": "Internal child-process setting used only to pass the auto-detected Bedrock Runtime endpoint to the hidden local adapter. Not a public user-facing configuration knob."
   },

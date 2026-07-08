@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import http, { type IncomingHttpHeaders, type OutgoingHttpHeaders } from "node:http";
+import crypto from "node:crypto";
 import https from "node:https";
 import path from "node:path";
 
@@ -35,6 +36,7 @@ const STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
 const PID_PATH = path.join(STATE_DIR, "openrouter-runtime-adapter.pid");
 const STATE_PATH = path.join(STATE_DIR, "openrouter-runtime-adapter.json");
 export const LOG_PATH = path.join(STATE_DIR, "openrouter-runtime-adapter.log");
+const AUTHORIZATION_HASH_ENV = "NEMOCLAW_OPENROUTER_RUNTIME_AUTHORIZATION_SHA256";
 
 // TODO(OpenShell middleware): Replace this host-side adapter with native
 // OpenShell provider middleware once OpenShell can inject provider-specific
@@ -63,6 +65,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 const ATTRIBUTION_HEADER_NAMES = new Set(
   OPENROUTER_DEFAULT_HEADERS.map(([name]) => name.toLowerCase()),
 );
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
 
 type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
 type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
@@ -120,6 +123,24 @@ function sendError(res: http.ServerResponse, status: number, code: string, messa
 function firstHeader(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value.find((item) => item.trim())?.trim() ?? null;
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeAuthorizationHash(value: unknown): string | null {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return SHA256_HEX_PATTERN.test(normalized) ? normalized : null;
+}
+
+export function openRouterRuntimeAuthorizationHash(apiKey: string): string {
+  return crypto.createHash("sha256").update(`Bearer ${apiKey}`).digest("hex");
+}
+
+function authorizationMatchesHash(authorization: string, expectedHash: string): boolean {
+  const actual = Buffer.from(
+    crypto.createHash("sha256").update(authorization).digest("hex"),
+    "hex",
+  );
+  const expected = Buffer.from(expectedHash, "hex");
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
 function isAllowedRequest(method: string | undefined, pathname: string): boolean {
@@ -221,10 +242,15 @@ function forwardToOpenRouter(options: {
 }
 
 export function createOpenRouterRuntimeAdapterServer(
-  options: { upstreamBaseUrl?: string | URL; logger?: AdapterLogger } = {},
+  options: {
+    upstreamBaseUrl?: string | URL;
+    authorizationHash?: string | null;
+    logger?: AdapterLogger;
+  } = {},
 ): http.Server {
   const logger = options.logger || defaultAdapterLogger;
   const upstreamBaseUrl = new URL(String(options.upstreamBaseUrl || OPENROUTER_ENDPOINT_URL));
+  const authorizationHash = normalizeAuthorizationHash(options.authorizationHash);
   return http.createServer((req, res) => {
     const started = Date.now();
     const url = new URL(req.url || "/", "http://127.0.0.1");
@@ -232,17 +258,23 @@ export function createOpenRouterRuntimeAdapterServer(
       sendJson(res, 200, {
         ok: true,
         adapter: ADAPTER_ID,
+        authorizationRequired: Boolean(authorizationHash),
         upstreamBaseUrl: upstreamBaseUrl.href.replace(/\/+$/u, ""),
       });
       return;
     }
-    if (!firstHeader(req.headers.authorization)) {
+    const authorization = firstHeader(req.headers.authorization);
+    if (
+      !authorization ||
+      !authorizationHash ||
+      !authorizationMatchesHash(authorization, authorizationHash)
+    ) {
       sendError(res, 401, "unauthorized", "Unauthorized");
       logAdapterEvent(logger, "request_rejected", {
         method: req.method || "unknown",
         path: url.pathname,
         status: 401,
-        reason: "unauthorized",
+        reason: authorization ? "invalid_authorization" : "missing_authorization",
         durationMs: Date.now() - started,
       });
       return;
@@ -272,10 +304,16 @@ export function startOpenRouterRuntimeAdapterFromEnv(): http.Server {
   const port = Number(
     process.env.NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT || OPENROUTER_RUNTIME_ADAPTER_PORT,
   );
+  const authorizationHash = normalizeAuthorizationHash(
+    process.env.NEMOCLAW_OPENROUTER_RUNTIME_AUTHORIZATION_SHA256,
+  );
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error("NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT must be a valid port");
   }
-  const server = createOpenRouterRuntimeAdapterServer();
+  if (!authorizationHash) {
+    throw new Error(`${AUTHORIZATION_HASH_ENV} must be a SHA-256 authorization hash`);
+  }
+  const server = createOpenRouterRuntimeAdapterServer({ authorizationHash });
   server.listen(port, OPENROUTER_RUNTIME_ADAPTER_BIND_HOST, () => {
     defaultAdapterLogger("adapter_ready", {
       bindHost: OPENROUTER_RUNTIME_ADAPTER_BIND_HOST,
@@ -292,6 +330,10 @@ export function startOpenRouterRuntimeAdapterFromEnv(): http.Server {
 
 function loadPersistedPid(): number | null {
   return loadLocalAdapterPid(PID_PATH);
+}
+
+function stateAuthorizationHash(state: JsonObject | null): string | null {
+  return normalizeAuthorizationHash(state?.authorizationHash);
 }
 
 function isAdapterProcess(pid: number | null | undefined): boolean {
@@ -365,16 +407,27 @@ async function waitForAdapterHealth(port = OPENROUTER_RUNTIME_ADAPTER_PORT): Pro
   });
 }
 
-export async function ensureOpenRouterRuntimeAdapter(): Promise<{
+export async function ensureOpenRouterRuntimeAdapter(
+  options: { authorizationHash?: string | null } = {},
+): Promise<{
   baseUrl: string;
   localBaseUrl: string;
   logPath: string;
 }> {
   const priorState = readLocalAdapterJsonFile(STATE_PATH);
+  const priorAuthorizationHash = stateAuthorizationHash(priorState);
+  const authorizationHash =
+    normalizeAuthorizationHash(options.authorizationHash) || priorAuthorizationHash;
+  if (!authorizationHash) {
+    throw new Error(
+      "OpenRouter Runtime adapter requires the OpenRouter credential once to initialize authorization",
+    );
+  }
   const priorPid = loadPersistedPid();
   if (
     isAdapterProcess(priorPid) &&
     priorState?.upstreamBaseUrl === OPENROUTER_ENDPOINT_URL &&
+    priorAuthorizationHash === authorizationHash &&
     (await probeAdapterHealth())
   ) {
     return {
@@ -389,6 +442,7 @@ export async function ensureOpenRouterRuntimeAdapter(): Promise<{
     scriptPath: getAdapterScriptPath(),
     env: {
       NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT: String(OPENROUTER_RUNTIME_ADAPTER_PORT),
+      [AUTHORIZATION_HASH_ENV]: authorizationHash,
     },
     buildEnv: buildSubprocessEnv,
   });
@@ -402,6 +456,7 @@ export async function ensureOpenRouterRuntimeAdapter(): Promise<{
 
   writeLocalAdapterJsonFile(STATE_PATH, {
     upstreamBaseUrl: OPENROUTER_ENDPOINT_URL,
+    authorizationHash,
     pid: child.pid ?? null,
     updatedAt: new Date().toISOString(),
   });

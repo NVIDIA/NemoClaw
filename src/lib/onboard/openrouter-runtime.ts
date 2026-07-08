@@ -7,7 +7,10 @@ import {
   OPENROUTER_PROVIDER_NAME,
   OPENROUTER_PROVIDER_TYPE,
 } from "../inference/openrouter";
-import { ensureOpenRouterRuntimeAdapter } from "../inference/openrouter-runtime-adapter";
+import {
+  ensureOpenRouterRuntimeAdapter,
+  openRouterRuntimeAuthorizationHash,
+} from "../inference/openrouter-runtime-adapter";
 import type { SetupInferenceResult } from "./inference-providers/types";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
 
@@ -80,7 +83,11 @@ export async function setupOpenRouterRuntimeInference(
 
   let adapter: Awaited<ReturnType<typeof ensureOpenRouterRuntimeAdapter>>;
   try {
-    adapter = await (options.ensureAdapter ?? ensureOpenRouterRuntimeAdapter)();
+    adapter = await (options.ensureAdapter ?? ensureOpenRouterRuntimeAdapter)({
+      authorizationHash: credentialValue
+        ? openRouterRuntimeAuthorizationHash(credentialValue)
+        : undefined,
+    });
   } catch (err) {
     options.error(
       `  Failed to start OpenRouter Runtime adapter: ${err instanceof Error ? err.message : String(err)}`,
