@@ -38,6 +38,7 @@ export const TRACING_ENABLE_ENV_NAMES = [
   "LANGCHAIN_TRACING",
   "LANGCHAIN_TRACING_V2",
 ] as const;
+export const ANALYTICS_DISABLE_ENV_NAMES = ["LANGGRAPH_CLI_NO_ANALYTICS"] as const;
 
 export function makeStartScriptFixture(
   tempDir: string,
@@ -137,6 +138,7 @@ export function runStartScriptProxyProbe(
       ...NO_PROXY_ENV_NAMES,
       ...CLEARED_PROXY_ENV_NAMES,
       ...TRACING_ENABLE_ENV_NAMES,
+      ...ANALYTICS_DISABLE_ENV_NAMES,
     ].map((name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`),
     "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy",
     "export ALL_PROXY=socks5://persisted-user:persisted-password@persisted-all-proxy.example:1080",
@@ -147,6 +149,7 @@ export function runStartScriptProxyProbe(
       ...NO_PROXY_ENV_NAMES,
       ...CLEARED_PROXY_ENV_NAMES,
       ...TRACING_ENABLE_ENV_NAMES,
+      ...ANALYTICS_DISABLE_ENV_NAMES,
     ].map((name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`),
   ].join("\n");
   const result = spawnSync("bash", [scriptPath, "bash", "-c", probe], {
