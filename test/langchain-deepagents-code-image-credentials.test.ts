@@ -145,7 +145,6 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     expect(dotenvResult.stderr).not.toContain(value);
     expect(fs.existsSync(dotenvFixture.ranMarker)).toBe(false);
   });
-
   it("allows nemoclaw-managed messaging tokens whose values are intentionally credential-shaped", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
@@ -394,7 +393,6 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
       }
     },
   );
-
   it("allows launch when auth.json is absent (fresh sandbox)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-absent-"));
     const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
@@ -681,7 +679,6 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(fs.existsSync(ranMarker)).toBe(true);
   });
-
   it.each([
     { label: "variable expansion", content: "MY_CRED=$OTHER_SECRET" },
     { label: "command substitution", content: "MY_CRED=$(whoami)" },
