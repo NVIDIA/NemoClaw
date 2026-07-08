@@ -329,6 +329,68 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     expect(isPortListening).toHaveBeenCalledWith(18789);
   });
 
+  it("prefers a port conflict over the untracked-forward fallback (#6099)", () => {
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "EADDRINUSE: address already in use; forward may be running but is not tracked\n",
+      );
+      return { pid: 779 };
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+    const realKill = process.kill;
+    (process as { kill: typeof process.kill }).kill = vi.fn() as unknown as typeof process.kill;
+
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 30, pollIntervalMs: 10, sleepMs: vi.fn(), isPortListening },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("spawn-conflict");
+      expect(isPortListening).not.toHaveBeenCalled();
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
+  });
+
+  it("rate-limits failed live-port probes while waiting (#6099)", () => {
+    let now = 0;
+    const realNow = Date.now;
+    Date.now = () => now;
+    try {
+      const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+      const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+        fs.writeSync(stderr, "forward may be running but is not tracked\n");
+        return { pid: 780 };
+      });
+      const isPortListening = vi.fn().mockReturnValue(false);
+
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        {
+          overallTimeoutMs: 16_000,
+          pollIntervalMs: 500,
+          sleepMs: (ms) => {
+            now += ms;
+          },
+          isPortListening,
+        },
+      );
+
+      expect(result.reason).toBe("timeout");
+      expect(isPortListening).toHaveBeenCalledTimes(4);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   it("keeps waiting (then times out) when openshell reports untracked but the port is not live", () => {
     const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
     const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {

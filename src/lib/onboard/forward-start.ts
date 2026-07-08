@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn as spawnChild } from "node:child_process";
+import { spawn as spawnChild, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -97,15 +97,14 @@ function probeLocalPortListening(port: number): boolean {
   const probeTimeoutMs = 1_500;
   const script =
     'const net=require("net");' +
-    `const s=net.connect(${Number(port)},"127.0.0.1");` +
+    'const s=net.connect(Number(process.argv[1]),"127.0.0.1");' +
     "let settled=false;" +
     "const finish=(code)=>{if(settled)return;settled=true;try{s.destroy();}catch{}process.exit(code);};" +
     `s.setTimeout(${probeTimeoutMs});` +
     's.once("connect",()=>finish(0));' +
     's.once("timeout",()=>finish(1));' +
     's.once("error",()=>finish(1));';
-  const { spawnSync } = require("node:child_process");
-  const res = spawnSync(process.execPath, ["-e", script], {
+  const res = spawnSync(process.execPath, ["-e", script, String(Number(port))], {
     stdio: "ignore",
     timeout: probeTimeoutMs + 2_000,
   });
@@ -291,6 +290,8 @@ export function runDetachedForwardStartWithDiagnostics(
 
     const start = Date.now();
     const deadline = start + overallTimeoutMs;
+    const portProbeIntervalMs = Math.max(pollIntervalMs, 5_000);
+    let nextPortProbeAt = start;
     let lastListSnapshot = "";
     while (Date.now() < deadline) {
       let list = "";
@@ -320,8 +321,11 @@ export function runDetachedForwardStartWithDiagnostics(
       // as confirmed instead of letting onboard time out and roll back a
       // healthy sandbox. The EADDRINUSE conflict check above runs first, so a
       // port held by a *different* process is never mistaken for our forward.
-      if (looksLikeUntrackedForward(diagSoFar) && isPortListening(expect.port)) {
-        return { ok: true, diagnostic: readDiag(), pid, reason: "ok-port-live" };
+      if (looksLikeUntrackedForward(diagSoFar) && Date.now() >= nextPortProbeAt) {
+        nextPortProbeAt = Date.now() + portProbeIntervalMs;
+        if (isPortListening(expect.port)) {
+          return { ok: true, diagnostic: readDiag(), pid, reason: "ok-port-live" };
+        }
       }
       if (onProgress && Date.now() >= nextProgressAt) {
         onProgress({ elapsedMs: Date.now() - start, listSnapshot: list });
