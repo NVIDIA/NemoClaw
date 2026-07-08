@@ -26,7 +26,7 @@ const localCredentialFormSource = path.join(
   "local-credential-form.html",
 );
 const localCredentialFormUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/38841524718af118ab31b9aec5967ebe7a9bfe8e/docs/resources/local-credential-form.html";
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/f11ed0cadfc215cbedcb9bd25da290f9436df1e2/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 = [
   "83b79b6420ff2c9e",
   "82c95da6eb714d51",
