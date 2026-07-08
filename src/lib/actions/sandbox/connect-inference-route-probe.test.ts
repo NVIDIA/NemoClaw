@@ -15,19 +15,21 @@ import {
 } from "./connect-inference-route-probe";
 
 describe("sandbox connect inference route probe argv", () => {
-  it("uses the dcode login-shell proxy contract without inherited proxy variables (#6191)", () => {
+  it("uses root-owned DCode proxy files without login-shell startup code (#6191)", () => {
     const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
       name: "langchain-deepagents-code",
     });
 
     expect(args.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "deep-code", "--", "sh", "-c"]);
-    expect(args.at(-3)).toContain('bash -lc "$1" "$CA_BUNDLE"');
-    expect(args.at(-3)).toContain("-u HTTPS_PROXY");
-    expect(args.at(-3)).toContain("3>&1 1>/dev/null");
-    expect(args.at(-2)).toBe("nemoclaw-ca-capture");
-    expect(args.at(-1)).toContain("exec 1>&3 3>&-");
-    expect(args.at(-1)).toContain('CA_BUNDLE="$0"');
+    expect(args).toHaveLength(8);
+    expect(args.at(-1)).toContain("/usr/local/share/nemoclaw/dcode-proxy-host");
+    expect(args.at(-1)).toContain("/usr/local/share/nemoclaw/dcode-proxy-port");
+    expect(args.at(-1)).toContain("0:444");
+    expect(args.at(-1)).toContain('HTTPS_PROXY="$PROXY_URL"');
     expect(args.at(-1)).toContain("https://inference.local/v1/models");
+    expect(args.at(-1)).not.toContain("bash -lc");
+    expect(args.at(-1)).not.toContain("3>&1");
+    expect(args.at(-1)).not.toContain("/tmp/nemoclaw-proxy-env.sh");
     expect(args.every((arg) => !/[\r\n]/.test(arg))).toBe(true);
   });
 
@@ -52,7 +54,7 @@ describe("sandbox connect inference route probe argv", () => {
     const args = buildSandboxInferenceRouteProbeArgs("alpha", { name: "openclaw" });
     const script = args.at(-1) ?? "";
 
-    expect(script).toContain("/usr/bin/curl -s -o /dev/null");
+    expect(script).toContain("/usr/bin/curl -q -s -o /dev/null");
     expect(script).toContain('CA_BUNDLE="${CURL_CA_BUNDLE:-${SSL_CERT_FILE:-}}"');
     expect(script).toContain('--cacert "$CA_BUNDLE"');
     expect(script).toContain("printf 'UNAVAILABLE OpenShell CA bundle missing or unreadable'");
@@ -83,31 +85,48 @@ describe("sandbox connect inference route probe argv", () => {
   it.each([
     "OK 200",
     "BROKEN 503",
-  ])("isolates DCode login-shell startup output from a %s spoof (#6192)", (spoof) => {
+  ])("does not execute DCode login-shell startup code containing a %s spoof (#6192)", (spoof) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
-    const caBundle = path.join(home, "openshell-ca.pem");
-    const profileMarker = path.join(home, "profile-ran");
-    fs.writeFileSync(caBundle, "test CA boundary", "utf8");
-    fs.writeFileSync(
-      path.join(home, ".bash_profile"),
-      `printf '%s\\n' ${JSON.stringify(spoof)}; printf ran > ${JSON.stringify(profileMarker)}`,
-    );
-    const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
-      name: "langchain-deepagents-code",
-    });
-    const wrapper = String(args.at(-3)).replace("HOME=/sandbox", `HOME=${JSON.stringify(home)}`);
-    const trustedProbe = "exec 1>&3 3>&-; printf 'BROKEN 000'";
+    try {
+      const caBundle = path.join(home, "openshell-ca.pem");
+      const hostFile = path.join(home, "dcode-proxy-host");
+      const portFile = path.join(home, "dcode-proxy-port");
+      const profileMarker = path.join(home, "profile-ran");
+      const curlConfigMarker = path.join(home, "curl-config-ran");
+      fs.writeFileSync(caBundle, "test CA boundary", "utf8");
+      fs.writeFileSync(hostFile, "127.0.0.1\n", { mode: 0o444 });
+      fs.writeFileSync(portFile, "9\n", { mode: 0o444 });
+      fs.chmodSync(hostFile, 0o444);
+      fs.chmodSync(portFile, 0o444);
+      fs.writeFileSync(
+        path.join(home, ".bash_profile"),
+        `printf '%s\\n' ${JSON.stringify(spoof)} >&3; printf ran > ${JSON.stringify(profileMarker)}`,
+      );
+      fs.writeFileSync(
+        path.join(home, ".curlrc"),
+        `trace-ascii = ${JSON.stringify(curlConfigMarker)}\n`,
+      );
+      const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
+        name: "langchain-deepagents-code",
+      });
+      const script = String(args.at(-1))
+        .replace("/usr/local/share/nemoclaw/dcode-proxy-host", hostFile)
+        .replace("/usr/local/share/nemoclaw/dcode-proxy-port", portFile)
+        .replaceAll("0:444", `${process.getuid?.() ?? 0}:444`);
 
-    const result = spawnSync("sh", ["-c", wrapper, String(args.at(-2)), trustedProbe], {
-      encoding: "utf8",
-      env: { ...process.env, CURL_CA_BUNDLE: caBundle, SSL_CERT_FILE: "" },
-    });
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf8",
+        env: { ...process.env, HOME: home, CURL_CA_BUNDLE: caBundle, SSL_CERT_FILE: "" },
+      });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("BROKEN 000");
-    expect(result.stdout).not.toContain(spoof);
-    expect(fs.readFileSync(profileMarker, "utf8")).toBe("ran");
-    fs.rmSync(home, { force: true, recursive: true });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("BROKEN 000");
+      expect(result.stdout).not.toContain(spoof);
+      expect(fs.existsSync(profileMarker)).toBe(false);
+      expect(fs.existsSync(curlConfigMarker)).toBe(false);
+    } finally {
+      fs.rmSync(home, { force: true, recursive: true });
+    }
   });
 });
 

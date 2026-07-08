@@ -27,7 +27,7 @@ const INFERENCE_ROUTE_CA_FROM_ENV = 'CA_BUNDLE="${CURL_CA_BUNDLE:-${SSL_CERT_FIL
 const INFERENCE_ROUTE_CA_VALIDATION =
   '[ -n "$CA_BUNDLE" ] && [ -f "$CA_BUNDLE" ] && [ -r "$CA_BUNDLE" ] || { printf \'UNAVAILABLE OpenShell CA bundle missing or unreadable\'; exit 1; }';
 const INFERENCE_ROUTE_PROBE_CORE_SCRIPT = [
-  "HTTP_CODE=$(/usr/bin/curl -s -o /dev/null -w '%{http_code}' --cacert \"$CA_BUNDLE\" --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
+  "HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' --cacert \"$CA_BUNDLE\" --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
   'case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s\' "$HTTP_CODE" ;; esac',
 ].join("; ");
 export const INFERENCE_ROUTE_PROBE_SCRIPT = [
@@ -35,34 +35,26 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_VALIDATION,
   INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
 ].join("; ");
-const INFERENCE_ROUTE_PROBE_FROM_ARG0_SCRIPT = [
-  // The outer DCode wrapper suppresses login-shell startup stdout. Restore the
-  // capture descriptor only after profile loading completes so profile output
-  // cannot impersonate trusted route evidence.
-  "exec 1>&3 3>&-",
-  'CA_BUNDLE="$0"',
-  INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
-].join("; ");
-
-const PROXY_ENV_KEYS = [
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "NO_PROXY",
-  "no_proxy",
-  "ALL_PROXY",
-  "all_proxy",
-] as const;
-
-const DCODE_INFERENCE_ROUTE_PROBE_WRAPPER = [
+const DCODE_PROXY_HOST_FILE = "/usr/local/share/nemoclaw/dcode-proxy-host";
+const DCODE_PROXY_PORT_FILE = "/usr/local/share/nemoclaw/dcode-proxy-port";
+const DCODE_PROXY_UNAVAILABLE =
+  "UNAVAILABLE managed DCode proxy files are missing, unsafe, or invalid";
+const DCODE_INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_FROM_ENV,
   INFERENCE_ROUTE_CA_VALIDATION,
-  // bash -lc receives CA_BUNDLE as argv[0], so the inner script reads the
-  // exact OpenShell-injected CA path from $0 after the login shell loads. FD 3
-  // preserves the capture stream while startup stdout is discarded; the inner
-  // probe restores it before emitting its result.
-  `exec env ${PROXY_ENV_KEYS.map((key) => `-u ${key}`).join(" ")} HOME=/sandbox bash -lc "$1" "$CA_BUNDLE" 3>&1 1>/dev/null`,
+  `PROXY_HOST_FILE="${DCODE_PROXY_HOST_FILE}"`,
+  `PROXY_PORT_FILE="${DCODE_PROXY_PORT_FILE}"`,
+  `[ -f "$PROXY_HOST_FILE" ] && [ ! -L "$PROXY_HOST_FILE" ] && [ "$(/usr/bin/stat -c '%u:%a' "$PROXY_HOST_FILE" 2>/dev/null)" = "0:444" ] && [ -f "$PROXY_PORT_FILE" ] && [ ! -L "$PROXY_PORT_FILE" ] && [ "$(/usr/bin/stat -c '%u:%a' "$PROXY_PORT_FILE" 2>/dev/null)" = "0:444" ] || { printf '${DCODE_PROXY_UNAVAILABLE}'; exit 1; }`,
+  `PROXY_HOST=$(/usr/bin/cat "$PROXY_HOST_FILE") || { printf '${DCODE_PROXY_UNAVAILABLE}'; exit 1; }`,
+  `PROXY_PORT=$(/usr/bin/cat "$PROXY_PORT_FILE") || { printf '${DCODE_PROXY_UNAVAILABLE}'; exit 1; }`,
+  `case "$PROXY_HOST" in ""|*[!A-Za-z0-9._-]*) printf '${DCODE_PROXY_UNAVAILABLE}'; exit 1 ;; esac`,
+  `case "$PROXY_PORT" in ""|*[!0-9]*) printf '${DCODE_PROXY_UNAVAILABLE}'; exit 1 ;; esac`,
+  `[ "$PROXY_PORT" -ge 1 ] 2>/dev/null && [ "$PROXY_PORT" -le 65535 ] 2>/dev/null || { printf '${DCODE_PROXY_UNAVAILABLE}'; exit 1; }`,
+  'PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+  'export HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" http_proxy="$PROXY_URL" https_proxy="$PROXY_URL"',
+  'export NO_PROXY="localhost,127.0.0.1,::1,${PROXY_HOST}" no_proxy="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+  "unset ALL_PROXY all_proxy OPENAI_PROXY",
+  INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
 ].join("; ");
 
 /**
@@ -81,15 +73,12 @@ export function buildSandboxInferenceRouteProbeArgs(
   const command =
     agent?.name === "langchain-deepagents-code"
       ? [
-          // Capture OpenShell's trusted CA before the login shell sources the
-          // DCode runtime environment. The login shell still reconstructs the
-          // proxy contract from /tmp/nemoclaw-proxy-env.sh after inherited
-          // proxy variables are cleared.
+          // Do not run a login shell: sandbox-writable startup files can write
+          // to every inherited descriptor. Reconstruct only the required proxy
+          // route from immutable image files before running the fixed probe.
           "sh",
           "-c",
-          DCODE_INFERENCE_ROUTE_PROBE_WRAPPER,
-          "nemoclaw-ca-capture",
-          INFERENCE_ROUTE_PROBE_FROM_ARG0_SCRIPT,
+          DCODE_INFERENCE_ROUTE_PROBE_SCRIPT,
         ]
       : ["sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT];
 
