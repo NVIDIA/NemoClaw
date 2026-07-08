@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -32,9 +33,8 @@ function listen(server: http.Server): Promise<string> {
   servers.push(server);
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") throw new Error("expected TCP address");
-      resolve(`http://127.0.0.1:${address.port}`);
+      const { port } = server.address() as AddressInfo;
+      resolve(`http://127.0.0.1:${port}`);
     });
   });
 }
