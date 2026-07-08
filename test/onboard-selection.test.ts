@@ -550,7 +550,6 @@ type ProcessCredentialBackScenario = {
   answers: string[];
   menuSelections?: string[];
   credentialEnv: string;
-  promptPattern: RegExp;
   expectedOutcome?: "back" | "exit";
   env?: Record<string, string>;
   agent?: "hermes";
@@ -562,45 +561,45 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
   {
     name: "OpenAI",
     label: "OpenAI API key",
-    answers: ["3", "back", "1", ""],
+    answers: ["back", ""],
+    menuSelections: ["^OpenAI$", "^NVIDIA Endpoints$"],
     credentialEnv: "OPENAI_API_KEY",
-    promptPattern: /OpenAI API key: /,
   },
   {
     name: "Anthropic",
     label: "Anthropic API key",
-    answers: ["5", "back", "1", ""],
+    answers: ["back", ""],
+    menuSelections: ["^Anthropic$", "^NVIDIA Endpoints$"],
     credentialEnv: "ANTHROPIC_API_KEY",
-    promptPattern: /Anthropic API key: /,
   },
   {
     name: "Anthropic exit",
     label: "Anthropic API key",
-    answers: ["5", "exit"],
+    answers: ["exit"],
+    menuSelections: ["^Anthropic$"],
     credentialEnv: "ANTHROPIC_API_KEY",
-    promptPattern: /Anthropic API key: /,
     expectedOutcome: "exit",
   },
   {
     name: "Google Gemini",
     label: "Google Gemini API key",
-    answers: ["7", "back", "1", ""],
+    answers: ["back", ""],
+    menuSelections: ["^Google Gemini$", "^NVIDIA Endpoints$"],
     credentialEnv: "GEMINI_API_KEY",
-    promptPattern: /Google Gemini API key: /,
   },
   {
     name: "Other OpenAI-compatible endpoint",
     label: "Other OpenAI-compatible endpoint API key",
-    answers: ["4", "https://proxy.example.com/v1", "back", "1", ""],
+    answers: ["https://proxy.example.com/v1", "back", ""],
+    menuSelections: ["^Other OpenAI-compatible endpoint$", "^NVIDIA Endpoints$"],
     credentialEnv: "COMPATIBLE_API_KEY",
-    promptPattern: /Other OpenAI-compatible endpoint API key: /,
   },
   {
     name: "Other Anthropic-compatible endpoint",
     label: "Other Anthropic-compatible endpoint API key",
-    answers: ["6", "https://proxy.example.com", "back", "1", ""],
+    answers: ["https://proxy.example.com", "back", ""],
+    menuSelections: ["^Other Anthropic-compatible endpoint$", "^NVIDIA Endpoints$"],
     credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-    promptPattern: /Other Anthropic-compatible endpoint API key: /,
   },
   {
     name: "Model Router",
@@ -608,7 +607,6 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
     answers: ["back", ""],
     menuSelections: ["Model Router", "NVIDIA Endpoints"],
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    promptPattern: /Model Router API key: /,
   },
   {
     name: "Hermes Provider Nous API key",
@@ -616,7 +614,6 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
     answers: ["back", ""],
     menuSelections: ["Hermes Provider", "Nous API Key", "NVIDIA Endpoints"],
     credentialEnv: "NOUS_API_KEY",
-    promptPattern: /Nous API Key: /,
     agent: "hermes",
   },
   {
@@ -625,7 +622,6 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
     answers: ["", "back", ""],
     menuSelections: ["Local NVIDIA NIM", "NVIDIA Endpoints"],
     credentialEnv: "NGC_API_KEY",
-    promptPattern: /NGC API Key: /,
     env: { NEMOCLAW_EXPERIMENTAL: "1" },
     gpu: {
       type: "nvidia",
@@ -666,9 +662,7 @@ function runCredentialBackScenarioBatch(): Map<string, CredentialBackPayload> {
   const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
   const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
   const nimPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "nim.ts"));
-  const childScenarios = PROCESS_CREDENTIAL_BACK_SCENARIOS.map(
-    ({ promptPattern: _promptPattern, ...scenario }) => scenario,
-  );
+  const childScenarios = PROCESS_CREDENTIAL_BACK_SCENARIOS;
 
   fs.mkdirSync(fakeBin, { recursive: true });
   writeAlwaysOkCurl(fakeBin);
@@ -854,7 +848,9 @@ function runCredentialBackScenarioProcess(scenario: ProcessCredentialBackScenari
       assert.deepEqual(payload.saved, []);
       assert.ok(payload.lines.some((line) => line.includes("Exiting onboarding.")));
       assert.ok(
-        payload.prompts.some((entry) => scenario.promptPattern.test(entry.message) && entry.secret),
+        payload.prompts.some(
+          (entry) => entry.message.includes(`${scenario.label}:`) && entry.secret,
+        ),
       );
       return;
     default:
@@ -862,7 +858,9 @@ function runCredentialBackScenarioProcess(scenario: ProcessCredentialBackScenari
       assert.equal(payload.result?.provider, "nvidia-prod");
       assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
       assert.ok(
-        payload.prompts.some((entry) => scenario.promptPattern.test(entry.message) && entry.secret),
+        payload.prompts.some(
+          (entry) => entry.message.includes(`${scenario.label}:`) && entry.secret,
+        ),
       );
       assert.ok(payload.saved.every((entry) => entry.value !== "back"));
       assert.equal(payload.credentialValue, null);

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
+import { getProbeExtraHeaders } from "../inference/onboard-probes";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
 
 export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
@@ -294,7 +295,8 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),
           authMode: deps.getProbeAuthMode(state.provider),
-          extraHeaders: deps.getProbeExtraHeaders?.(state.provider),
+          extraHeaders:
+            deps.getProbeExtraHeaders?.(state.provider) ?? getProbeExtraHeaders(state.provider),
         },
       );
       if (validation.ok) {

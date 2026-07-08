@@ -29,6 +29,7 @@ const {
   resolveCompatibleEndpointInput,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const setupNimFlow: typeof import("./onboard/setup-nim-flow") = require("./onboard/setup-nim-flow");
+const openrouterSelection: typeof import("./onboard/openrouter-selection") = require("./onboard/openrouter-selection");
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
@@ -810,7 +811,6 @@ const {
   classifyApplyFailure,
   classifySandboxCreateFailure,
   validateNvidiaApiKeyValue,
-  validateOpenRouterApiKeyValue,
   isSafeModelId,
   shouldSkipResponsesProbe,
 } = validation;
@@ -1024,7 +1024,6 @@ const {
   shouldRequireResponsesToolCalling,
   verifyOnboardInferenceSmoke,
   getProbeAuthMode,
-  getProbeExtraHeaders,
   getValidationProbeCurlArgs,
 } = require("./inference/onboard-probes");
 
@@ -1050,14 +1049,12 @@ const { validateSelectedRemoteModel } = createRemoteModelValidator({
   shouldRequireResponsesToolCalling,
   shouldSkipResponsesProbe,
   getProbeAuthMode,
-  getProbeExtraHeaders,
   configureCompatibleEndpointReasoning: reasoningMode.configureCompatibleEndpointReasoning,
 });
 
 const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 const nousModels: typeof import("./inference/nous-models") = require("./inference/nous-models");
-const openrouter: typeof import("./inference/openrouter") = require("./inference/openrouter");
 
 // Build context helpers — delegated to src/lib/build-context.ts
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
@@ -1481,19 +1478,8 @@ function attachGatewayMetadataIfNeeded({
   return false;
 }
 
-async function ensureNamedCredential(
-  envName: string | null,
-  label: string,
-  helpUrl: string | null = null,
-  validator: ((value: string) => string | null) | null = null,
-): Promise<string | typeof BACK_TO_SELECTION> {
-  return credentialPrompt.ensureNamedCredential(envName, label, helpUrl, validator);
-}
-
 // parsePolicyPresetEnv — see urlUtils import above
 // isSafeModelId — see validation import above
-
-// getNonInteractiveProvider, getNonInteractiveModel — moved to onboard-providers.ts
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
@@ -3243,7 +3229,7 @@ async function handleRoutedSelection(
     console.log("  Model Router accepts NVIDIA API keys (nvapi-...).");
     console.log("  Get one at https://build.nvidia.com");
     console.log("");
-    const routerCredentialResult = await ensureNamedCredential(
+    const routerCredentialResult = await credentialPrompt.ensureNamedCredential(
       routerCredentialEnv,
       "Model Router API key",
       null,
@@ -3602,31 +3588,20 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         { resolveProviderCredential, readRecordedInferenceRoute, readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell, args.gatewayName ?? GATEWAY_NAME), note },
       );
     } else {
-      const credentialResult = await ensureNamedCredential(
+      const credentialResult = await credentialPrompt.ensureNamedCredential(
         selectedCredentialEnv,
         `${remoteConfig.label} API key`,
         remoteConfig.helpUrl,
-        selected.key === "openrouter" ? validateOpenRouterApiKeyValue : null,
+        openrouterSelection.credentialValidatorForProvider(selected.key),
       );
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
     }
-    if (
-      isNonInteractive() &&
-      selected.key === "openrouter" &&
-      !state.reuseGatewayCredentialWithoutLocalKey
-    ) {
-      const credentialValue =
-        resolveProviderCredential(selectedCredentialEnv) || getCredential(selectedCredentialEnv) || "";
-      const validationError = validateOpenRouterApiKeyValue(credentialValue);
-      if (validationError) {
-        console.error(validationError);
-        process.exit(1);
-      }
-    }
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
     let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
-    if (selected.key === "openai" || selected.key === "gemini" || selected.key === "openrouter") {
+    if (openrouterSelection.isOpenAiLikeRemoteProvider(selected.key)) {
       const modelAuthMode = getProbeAuthMode(state.provider);
       modelValidator = (candidate) => {
         state.model = candidate;
@@ -3636,10 +3611,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
           state.endpointUrl || remoteConfig.endpointUrl,
           candidate,
           getCredential(selectedCredentialEnv) || "",
-          {
-            ...(modelAuthMode ? { authMode: modelAuthMode } : {}),
-            extraHeaders: getProbeExtraHeaders(state.provider),
-          },
+          openrouterSelection.openAiLikeModelValidationOptions(state.provider, modelAuthMode),
         );
       };
     } else if (selected.key === "anthropic") {
@@ -3656,28 +3628,9 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     while (true) {
       if (isNonInteractive()) {
         state.model = defaultModel;
-      } else if (selected.key === "openrouter") {
-        state.model = await state.openRouterFeaturedModels!.select(
-          requestedModel || (typeof state.model === "string" ? state.model : null),
-          recoveredFromSandbox ? recoveredModel : null,
-          false,
-          process.env.NEMOCLAW_MODEL,
-          {
-            cloudModelMenuLabel: "OpenRouter cloud models",
-            manualCredentialEnv: openrouter.OPENROUTER_CREDENTIAL_ENV,
-            manualCredentialMissingMessage:
-              "  OPENROUTER_API_KEY is required before validating a custom OpenRouter model.",
-            manualModelLabel: "OpenRouter",
-            validateCloudModelFn: (model, apiKey) =>
-              validateOpenAiLikeModel(
-                remoteConfig.label,
-                state.endpointUrl || remoteConfig.endpointUrl,
-                model,
-                apiKey,
-                { extraHeaders: openrouter.getOpenRouterCurlHeaders() },
-              ),
-          },
-        );
+      } else if (openrouterSelection.isOpenRouterProvider(selected.key)) {
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        state.model = await openrouterSelection.selectModel({ state, requestedModel, recoveredFromSandbox, recoveredModel, remoteConfig, validateOpenAiLikeModel });
       } else if (remoteConfig.modelMode === "curated") {
         state.model = await promptRemoteModel(
           remoteConfig.label,

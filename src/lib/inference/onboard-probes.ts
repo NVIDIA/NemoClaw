@@ -227,7 +227,7 @@ function getProbeAuthMode(_provider) {
   return undefined;
 }
 
-function getProbeExtraHeaders(provider) {
+export function getProbeExtraHeaders(provider) {
   if (provider === openrouter.OPENROUTER_PROVIDER_NAME) {
     return openrouter.getOpenRouterCurlHeaders();
   }
