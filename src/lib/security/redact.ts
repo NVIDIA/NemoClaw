@@ -184,7 +184,7 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
     "$1<REDACTED>$2",
   ],
   [
-    /((?:^|[^A-Za-z0-9])(?:"|')?(?:password|passwd|pass)(?:"|')?\s*[:=]\s*(?:"|')?)[^"',}\s]+((?:"|')?)/gi,
+    /((?:^|[^A-Za-z0-9])(?:"|')?(?:password|passwd|pass)(?:"|')?(?:\s*[:=]\s*|\s+)(?:"|')?)[^"',}\s]+((?:"|')?)/gi,
     "$1<REDACTED>$2",
   ],
   ...TOKEN_PREFIX_PATTERNS.map((p): [RegExp, string] => [
