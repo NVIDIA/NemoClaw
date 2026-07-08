@@ -80,9 +80,10 @@ export async function githubApi<T>(
   token: string,
   options: GitHubRequestOptions = {},
 ): Promise<T> {
-  const apiUrl = `https://api.github.com/${apiPath}`;
-  // biome-ignore format: Keep the CodeQL suppression on the alert sink.
-  const response = await fetch(apiUrl, { // codeql[js/file-access-to-http]: fixed GitHub API endpoint with a reviewed payload.
+  // lgtm[js/file-access-to-http] Advisor workflows intentionally send normalized
+  // artifact summaries and strictly validated dispatch inputs to GitHub APIs.
+  // Callers construct apiPath from fixed workflow/comment endpoints, not PR text.
+  const response = await fetch(`https://api.github.com/${apiPath}`, {
     method: options.method || "GET",
     headers: {
       Accept: "application/vnd.github+json",
@@ -91,7 +92,7 @@ export async function githubApi<T>(
       "X-GitHub-Api-Version": "2022-11-28",
       ...(options.userAgent ? { "User-Agent": options.userAgent } : {}),
     },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body), // codeql[js/file-access-to-http]: reviewed summaries and validated controller state go only to fixed GitHub API endpoints.
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   const text = await response.text();
   if (!response.ok) {

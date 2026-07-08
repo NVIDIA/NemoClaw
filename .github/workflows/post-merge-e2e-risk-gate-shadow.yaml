@@ -112,6 +112,8 @@ jobs:
           node --experimental-strip-types tools/e2e-advisor/post-merge-risk-gate.mts
           --mode finish
           --work-dir "${{ steps.workspace.outputs.work_dir }}"
+          --check-id "${{ steps.start.outputs.check_id }}"
+          --run-id "${{ steps.start.outputs.run_id }}"
 
       - name: Close shadow check after completion failure
         if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.dispatched == 'true' && steps.finish.outcome == 'failure' }}

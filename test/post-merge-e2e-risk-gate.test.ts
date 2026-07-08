@@ -28,7 +28,6 @@ const ALLOWED = new Set(["onboard-repair", "onboard-resume"]);
 function state(): RiskGateState {
   return {
     version: 1,
-    repository: "NVIDIA/NemoClaw",
     commitSha: HEAD_SHA,
     planHash: buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] }).planHash,
     correlationId: "12345678-1234-4123-8123-123456789abc",
@@ -38,9 +37,6 @@ function state(): RiskGateState {
       "onboard-resume": ["default"],
     },
     requiresManualExpansion: false,
-    checkRunId: 1,
-    childRunId: 2,
-    childRunUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/2",
   };
 }
 
@@ -107,8 +103,23 @@ describe("post-merge E2E risk gate", () => {
       });
       expect(parseControllerCommand(["--mode", "abandon", "--check-id", "17"])).toEqual({
         mode: "abandon",
-        checkId: "17",
+        checkRunId: 17,
       });
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "finish",
+          "--work-dir",
+          workDir,
+          "--check-id",
+          "17",
+          "--run-id",
+          "23",
+        ]),
+      ).toMatchObject({ mode: "finish", checkRunId: 17, childRunId: 23 });
+      expect(() =>
+        parseControllerCommand(["--mode", "abandon", "--check-id", "9007199254740992"]),
+      ).toThrow(/safe integer range/u);
       expect(() => parseControllerCommand(["--mode", "finish"])).toThrow(/--work-dir/u);
 
       fs.chmodSync(workDir, 0o755);
@@ -163,19 +174,15 @@ describe("post-merge E2E risk gate", () => {
     expect(() => validateRiskPlan(plan, new Set())).toThrow(/unknown E2E job/u);
   });
 
-  it("accepts only bounded gate state for this repository and exact child run", () => {
+  it("accepts only bounded gate state for the exact commit and evidence policy", () => {
     const gate = state();
 
-    expect(validateRiskGateState(gate, gate.repository)).toEqual(gate);
-    expect(() =>
-      validateRiskGateState({ ...gate, repository: "other/repository" }, gate.repository),
-    ).toThrow(/repository/u);
-    expect(() =>
-      validateRiskGateState({ ...gate, childRunUrl: "https://example.com/run" }, gate.repository),
-    ).toThrow(/URL/u);
-    expect(() =>
-      validateRiskGateState({ ...gate, expectedJobs: ["../unsafe"] }, gate.repository),
-    ).toThrow(/expected jobs/u);
+    expect(validateRiskGateState(gate)).toEqual(gate);
+    expect(() => validateRiskGateState({ ...gate, commitSha: "unsafe" })).toThrow(/commit SHA/u);
+    expect(() => validateRiskGateState({ ...gate, expectedJobs: ["../unsafe"] })).toThrow(
+      /expected jobs/u,
+    );
+    expect(() => validateRiskGateState({ ...gate, expectedShards: {} })).toThrow(/shard jobs/u);
   });
 
   it("bounds downloaded risk-evidence traversal by entries, depth, and signals", () => {
@@ -244,6 +251,7 @@ describe("post-merge E2E risk gate", () => {
     });
 
     expect(verdict.conclusion).toBe("success");
+    expect(verdict.summary).not.toContain("onboard-repair");
   });
 
   it.each([
@@ -277,6 +285,7 @@ describe("post-merge E2E risk gate", () => {
     });
 
     expect(verdict.conclusion).toBe("neutral");
+    expect(verdict.summary).not.toContain("onboard-repair");
   });
 
   it("reports a product workflow failure as failure", () => {
@@ -289,6 +298,7 @@ describe("post-merge E2E risk gate", () => {
     });
 
     expect(verdict.conclusion).toBe("failure");
+    expect(verdict.summary).not.toContain("onboard-repair");
   });
 
   it("reports failed exact-SHA test evidence as failure even when the workflow is green", () => {
@@ -301,6 +311,7 @@ describe("post-merge E2E risk gate", () => {
     });
 
     expect(verdict.conclusion).toBe("failure");
+    expect(verdict.summary).not.toContain("onboard-repair");
   });
 
   it("requires every expected matrix shard to pass", () => {
@@ -324,5 +335,6 @@ describe("post-merge E2E risk gate", () => {
 
     expect(complete.conclusion).toBe("success");
     expect(missingShard.conclusion).toBe("neutral");
+    expect(missingShard.summary).not.toContain("security-posture");
   });
 });

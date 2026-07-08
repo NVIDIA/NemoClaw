@@ -54,8 +54,7 @@ export function writePrivateRegularFile(file: string, contents: string): void {
     }
     fs.fchmodSync(descriptor, 0o600);
     fs.ftruncateSync(descriptor, 0);
-    // Callers validate and bound state before this exclusive/no-follow write.
-    fs.writeFileSync(descriptor, contents, "utf8"); // codeql[js/http-to-file-access]: intentional validated controller state persistence.
+    fs.writeFileSync(descriptor, contents, "utf8");
     fs.fsyncSync(descriptor);
   } finally {
     fs.closeSync(descriptor);

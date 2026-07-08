@@ -41,8 +41,8 @@ type ControllerPaths = {
 
 export type ControllerCommand =
   | ({ mode: "start"; baseSha: string; commitSha: string } & ControllerPaths)
-  | ({ mode: "finish" } & ControllerPaths)
-  | { mode: "abandon"; checkId: string };
+  | ({ mode: "finish"; checkRunId: number; childRunId: number } & ControllerPaths)
+  | { mode: "abandon"; checkRunId: number };
 
 type CheckConclusion = "success" | "failure" | "neutral";
 
@@ -62,16 +62,12 @@ type CheckRun = { id: number };
 
 export type RiskGateState = {
   version: 1;
-  repository: string;
   commitSha: string;
   planHash: string;
   correlationId: string;
   expectedJobs: string[];
   expectedShards: Record<string, string[]>;
   requiresManualExpansion: boolean;
-  checkRunId: number;
-  childRunId: number;
-  childRunUrl: string;
 };
 
 export type RiskEvidenceVerdict = {
@@ -102,6 +98,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function requiredArgument(value: string | undefined, name: string): string {
   if (!value) throw new Error(`--${name} is required`);
   return value;
+}
+
+function parsePositiveId(value: string, name: string): number {
+  if (!/^[1-9][0-9]*$/u.test(value)) throw new Error(`${name} must be a positive integer`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${name} exceeds the safe integer range`);
+  return parsed;
 }
 
 export function privateControllerPaths(workDir: string): ControllerPaths {
@@ -138,12 +141,14 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     return {
       mode: "finish",
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+      checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
+      childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
     };
   }
   if (args.mode === "abandon") {
     return {
       mode: "abandon",
-      checkId: requiredArgument(args.checkId, "check-id"),
+      checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
     };
   }
   throw new Error("--mode must be start, finish, or abandon");
@@ -153,14 +158,8 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
   return JSON.parse(readPrivateRegularFile(file, { maxBytes })!);
 }
 
-export function validateRiskGateState(value: unknown, expectedRepository: string): RiskGateState {
+export function validateRiskGateState(value: unknown): RiskGateState {
   if (!isRecord(value) || value.version !== 1) throw new Error("invalid risk-gate state version");
-  if (
-    value.repository !== expectedRepository ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(expectedRepository)
-  ) {
-    throw new Error("risk-gate state repository does not match this workflow");
-  }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
     throw new Error("risk-gate state commit SHA is invalid");
   }
@@ -198,14 +197,6 @@ export function validateRiskGateState(value: unknown, expectedRepository: string
   if (typeof value.requiresManualExpansion !== "boolean") {
     throw new Error("risk-gate manual-expansion state is invalid");
   }
-  if (!Number.isSafeInteger(value.checkRunId) || Number(value.checkRunId) < 1) {
-    throw new Error("risk-gate check id is invalid");
-  }
-  if (!Number.isSafeInteger(value.childRunId) || Number(value.childRunId) < 1) {
-    throw new Error("risk-gate child run id is invalid");
-  }
-  const expectedUrl = `https://github.com/${expectedRepository}/actions/runs/${value.childRunId}`;
-  if (value.childRunUrl !== expectedUrl) throw new Error("risk-gate child run URL is invalid");
   return value as RiskGateState;
 }
 
@@ -288,14 +279,14 @@ export function classifyRiskEvidence(options: {
     return {
       conclusion: "failure",
       title: "Selected E2E workflow failed",
-      summary: `The correlated workflow concluded ${options.workflowConclusion}.`,
+      summary: "The correlated workflow reported a failing terminal conclusion.",
     };
   }
   if (options.workflowConclusion !== "success") {
     return {
       conclusion: "neutral",
       title: "Selected E2E workflow produced no complete signal",
-      summary: `The correlated workflow concluded ${options.workflowConclusion ?? "without a conclusion"}.`,
+      summary: "The correlated workflow did not report a successful terminal conclusion.",
     };
   }
   const byJobShard = new Map<string, E2eRiskSignal>();
@@ -309,7 +300,7 @@ export function classifyRiskEvidence(options: {
     return {
       conclusion: "neutral",
       title: "Selected E2E jobs produced ambiguous evidence",
-      summary: `Multiple risk signals were uploaded for: ${[...duplicates].sort().join(", ")}.`,
+      summary: "More than one signal was uploaded for at least one expected job shard.",
     };
   }
   const expectedEvidence = options.expectedJobs.flatMap((job) =>
@@ -322,7 +313,7 @@ export function classifyRiskEvidence(options: {
     return {
       conclusion: "neutral",
       title: "Selected E2E jobs lack an evidence policy",
-      summary: `No trusted shard policy was found for: ${jobsWithoutShardPolicy.join(", ")}.`,
+      summary: "At least one selected job had no trusted shard policy.",
     };
   }
   const missing = expectedEvidence.filter((key) => !byJobShard.has(key));
@@ -333,7 +324,7 @@ export function classifyRiskEvidence(options: {
     return {
       conclusion: "neutral",
       title: "Selected E2E jobs are missing test evidence",
-      summary: `No risk signal was uploaded for: ${missing.join(", ")}.`,
+      summary: "At least one expected job shard did not upload a bound risk signal.",
     };
   }
   const failed = expectedEvidence.filter((key) => {
@@ -344,7 +335,7 @@ export function classifyRiskEvidence(options: {
     return {
       conclusion: "failure",
       title: "Selected E2E jobs reported test failures",
-      summary: `Failed exact-SHA evidence was reported for: ${failed.join(", ")}.`,
+      summary: "At least one exact-SHA job shard reported a test failure or unhandled error.",
     };
   }
   const partial = expectedEvidence.filter((key) => {
@@ -357,7 +348,7 @@ export function classifyRiskEvidence(options: {
     return {
       conclusion: "neutral",
       title: "Selected E2E jobs produced partial or skipped evidence",
-      summary: `The following jobs did not produce an unskipped pass: ${partial.join(", ")}.`,
+      summary: "At least one expected job shard did not produce a complete, unskipped pass.",
     };
   }
   if (options.requiresManualExpansion) {
@@ -371,7 +362,7 @@ export function classifyRiskEvidence(options: {
   return {
     conclusion: "success",
     title: "All risk-selected E2E jobs passed",
-    summary: `${expectedEvidence.length} exact-SHA job shard(s) produced complete, unskipped evidence.`,
+    summary: "Every expected exact-SHA job shard produced complete, unskipped evidence.",
   };
 }
 
@@ -422,12 +413,12 @@ async function createCheck(
 }
 
 async function completeCheck(
-  state: Pick<RiskGateState, "repository" | "checkRunId">,
+  context: { repository: string; checkRunId: number },
   token: string,
   verdict: RiskEvidenceVerdict,
   detailsUrl?: string,
 ): Promise<void> {
-  await githubApi(`repos/${state.repository}/check-runs/${state.checkRunId}`, token, {
+  await githubApi(`repos/${context.repository}/check-runs/${context.checkRunId}`, token, {
     method: "PATCH",
     body: {
       status: "completed",
@@ -441,14 +432,14 @@ async function completeCheck(
 }
 
 async function completeNeutralAfterControllerError(
-  state: Pick<RiskGateState, "repository" | "checkRunId">,
+  context: { repository: string; checkRunId: number },
   token: string,
   title: string,
   detailsUrl?: string,
 ): Promise<boolean> {
   try {
     await completeCheck(
-      state,
+      context,
       token,
       {
         conclusion: "neutral",
@@ -647,20 +638,16 @@ async function start(options: {
     const child = await findCorrelatedRun(repository, token, correlationId, dispatchedAt);
     const state: RiskGateState = {
       version: 1,
-      repository,
       commitSha: options.commitSha,
       planHash: plan.planHash,
       correlationId,
       expectedJobs: plan.automaticJobs,
       expectedShards,
       requiresManualExpansion: plan.requiresManualExpansion,
-      checkRunId,
-      childRunId: child.id,
-      childRunUrl: child.html_url,
     };
     writePrivateRegularFile(options.statePath, `${JSON.stringify(state, null, 2)}\n`);
-    appendOutput("dispatched", "true");
     appendOutput("run_id", String(child.id));
+    appendOutput("dispatched", "true");
   } catch (error) {
     const finalized = await completeNeutralAfterControllerError(
       { repository, checkRunId },
@@ -727,25 +714,33 @@ export function findSignalFiles(
   return files.sort((left, right) => left.localeCompare(right));
 }
 
-async function finish(options: { statePath: string; evidencePath: string }): Promise<void> {
+async function finish(options: {
+  statePath: string;
+  evidencePath: string;
+  checkRunId: number;
+  childRunId: number;
+}): Promise<void> {
   const token = process.env.GITHUB_TOKEN ?? "";
   const repository = process.env.GITHUB_REPOSITORY ?? "";
-  const state = validateRiskGateState(readRegularJson(options.statePath), repository);
-  if (!token) {
-    throw new Error("valid gate state and GITHUB_TOKEN are required");
+  if (!token || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
+    throw new Error("GITHUB_TOKEN and a safe GITHUB_REPOSITORY are required");
   }
+  const { checkRunId, childRunId } = options;
+  const childRunUrl = `https://github.com/${repository}/actions/runs/${childRunId}`;
+  const context = { repository, checkRunId };
+  const state = validateRiskGateState(readRegularJson(options.statePath));
   try {
     const child = await githubApi<WorkflowRun>(
-      `repos/${state.repository}/actions/runs/${state.childRunId}`,
+      `repos/${repository}/actions/runs/${childRunId}`,
       token,
       { userAgent: "nemoclaw-e2e-risk-gate" },
     );
     if (
-      child.id !== state.childRunId ||
+      child.id !== childRunId ||
       child.name !== "E2E" ||
       child.event !== "workflow_dispatch" ||
       !SHA_PATTERN.test(child.head_sha) ||
-      child.html_url !== state.childRunUrl ||
+      child.html_url !== childRunUrl ||
       child.display_title !== `E2E risk ${state.correlationId}`
     ) {
       throw new Error("correlated E2E workflow identity changed");
@@ -763,29 +758,25 @@ async function finish(options: { statePath: string; evidencePath: string }): Pro
       signals,
       requiresManualExpansion: state.requiresManualExpansion,
     });
-    await completeCheck(state, token, verdict, state.childRunUrl);
+    await completeCheck(context, token, verdict, childRunUrl);
   } catch (error) {
     await completeNeutralAfterControllerError(
-      state,
+      context,
       token,
       "Risk-selected E2E evidence could not be verified",
-      state.childRunUrl,
+      childRunUrl,
     );
     throw error;
   }
 }
 
-async function abandon(checkId: string): Promise<void> {
+async function abandon(checkRunId: number): Promise<void> {
   const token = process.env.GITHUB_TOKEN ?? "";
   const repository = process.env.GITHUB_REPOSITORY ?? "";
-  if (
-    !token ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ||
-    !/^[1-9][0-9]*$/u.test(checkId)
-  ) {
-    throw new Error("GITHUB_TOKEN, a safe GITHUB_REPOSITORY, and numeric --check-id are required");
+  if (!token || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
+    throw new Error("GITHUB_TOKEN and a safe GITHUB_REPOSITORY are required");
   }
-  await completeCheck({ repository, checkRunId: Number(checkId) }, token, {
+  await completeCheck({ repository, checkRunId }, token, {
     conclusion: "neutral",
     title: "Risk-selected E2E controller stopped early",
     summary:
@@ -808,11 +799,13 @@ async function main(): Promise<void> {
     await finish({
       statePath: command.statePath,
       evidencePath: command.evidencePath,
+      checkRunId: command.checkRunId,
+      childRunId: command.childRunId,
     });
     return;
   }
   if (command.mode === "abandon") {
-    await abandon(command.checkId);
+    await abandon(command.checkRunId);
     return;
   }
 }
