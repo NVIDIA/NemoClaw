@@ -22,21 +22,19 @@ installRebuildFlowTestHooks();
 test.skipIf(!role)(
   "runs one rebuild transaction process",
   async () => {
-    if (!stateDir || !eventsFile || (phase !== "prepared" && phase !== "delete_unjournaled")) {
-      throw new Error("Missing rebuild process fixture configuration");
-    }
+    expect(stateDir && eventsFile && (phase === "prepared" || phase === "delete_unjournaled")).toBe(
+      true,
+    );
     const manifest = makePreparedRecoveryManifest();
     const harness = createRebuildFlowHarness({
       staleRecovery: role === "resume" && phase === "delete_unjournaled",
       preDeleteLatestManifest: manifest,
-      runOpenshell: (args) => {
-        if (args[0] === "sandbox" && args[1] === "delete") {
-          fs.appendFileSync(eventsFile, "delete\n");
-        }
-        return { status: 0, output: "" };
-      },
+      runOpenshell: (args) =>
+        args[0] === "sandbox" && args[1] === "delete"
+          ? (fs.appendFileSync(eventsFile!, "delete\n"), { status: 0, output: "" })
+          : { status: 0, output: "" },
     });
-    const transactionStore = new RebuildTransactionStore({ stateDir });
+    const transactionStore = new RebuildTransactionStore({ stateDir: stateDir! });
 
     await harness.rebuildSandbox("alpha", ["--yes"], {
       throwOnError: true,

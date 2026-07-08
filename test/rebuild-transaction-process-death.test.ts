@@ -29,19 +29,20 @@ function runChild(
     let killed = false;
     const capture = (chunk: Buffer) => {
       output += chunk.toString();
-      if (waitForMarker && !killed && output.includes("[e2e] Rebuild interruption point")) {
-        killed = process.kill(-child.pid!, "SIGKILL");
-      }
+      waitForMarker &&
+        !killed &&
+        output.includes("[e2e] Rebuild interruption point") &&
+        (killed = process.kill(-child.pid!, "SIGKILL"));
     };
     child.stdout.on("data", capture);
     child.stderr.on("data", capture);
     child.on("error", reject);
     child.on("close", (code, signal) => resolve({ code, signal, output }));
     setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        process.kill(-child.pid!, "SIGKILL");
-        reject(new Error(`Timed out waiting for rebuild child:\n${output}`));
-      }
+      child.exitCode === null &&
+        child.signalCode === null &&
+        (process.kill(-child.pid!, "SIGKILL"),
+        reject(new Error(`Timed out waiting for rebuild child:\n${output}`)));
     }, 50_000).unref();
   });
 }
