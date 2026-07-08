@@ -2,80 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
-import { loadAgent } from "../../agent/defs";
 import { RD as _RD, D, G, R } from "../../cli/terminal-style";
+import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type {
   MessagingHookApplyRequest,
-  MessagingHookOutputMap,
   MessagingOpenShellRunner,
-  SandboxMessagingPlan,
-} from "../../messaging";
-import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInRenderTemplateResolver,
-  isMessagingSupportedAgent,
-  listSupportedMessagingChannelIdsForAgent,
-  MessagingSetupApplier,
-  MessagingWorkflowPlanner,
-  tryGetMessagingAgentId,
-} from "../../messaging";
+} from "../../messaging/applier/types";
+import type { MessagingHookOutputMap } from "../../messaging/hooks";
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { SandboxEntry } from "../../state/registry";
 import type { RebuildBail } from "./rebuild-credential-preflight";
+import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
 
-/** Build and stage the manifest-derived messaging recreate contract. */
-export async function stageMessagingManifestPlanForRebuild(
-  sandboxName: string,
-  sandboxEntry: SandboxEntry,
-  rebuildAgent: string | null,
-  log: (message: string) => void,
-): Promise<SandboxMessagingPlan | null> {
-  const agent = loadAgent(rebuildAgent || "openclaw");
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
-  const manifests = manifestRegistry.list();
-  const agentId = tryGetMessagingAgentId(agent, manifests);
-  if (agentId === null) {
-    MessagingSetupApplier.clearPlanEnv();
-    log(
-      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not supported by any channel manifest`,
-    );
-    return null;
-  }
-  if (!isMessagingSupportedAgent(agent, manifests)) {
-    MessagingSetupApplier.clearPlanEnv();
-    log(
-      `Messaging manifest rebuild plan skipped: agent '${agent.name}' has no supported messaging channels`,
-    );
-    return null;
-  }
-  const supportedChannelIds = listSupportedMessagingChannelIdsForAgent(manifests, agentId);
-  const planner = new MessagingWorkflowPlanner(
-    manifestRegistry,
-    undefined,
-    createBuiltInRenderTemplateResolver(),
-  );
-  const plan = await planner.buildRebuildPlanFromSandboxEntry({
-    sandboxName,
-    agent: agentId,
-    sandboxEntry,
-    supportedChannelIds,
-  });
-  if (!plan) {
-    MessagingSetupApplier.clearPlanEnv();
-    log("Messaging manifest rebuild plan: no configured channels");
-    return null;
-  }
-  MessagingSetupApplier.writePlanToEnv(plan);
-  if (plan.channels.length === 0) {
-    log("Messaging manifest rebuild plan staged: no configured channels");
-    return plan;
-  }
-  log(
-    `Messaging manifest rebuild plan staged: ${plan.channels
-      .map((channel) => channel.channelId)
-      .join(",")}`,
-  );
-  return plan;
-}
+export { stageMessagingManifestPlanForRebuild };
 
 /** Stage the manifest plan while preserving rebuild's fail-before-delete boundary. */
 export async function stageRebuildMessagingPlanOrBail(

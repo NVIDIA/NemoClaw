@@ -21,6 +21,9 @@ OpenClaw sandboxes also load the NemoClaw plugin for managed inference metadata 
 <AgentOnly variant="hermes">
 Hermes sandboxes receive agent configuration under `/sandbox/.hermes` during onboarding instead of the OpenClaw plugin path.
 </AgentOnly>
+<AgentOnly variant="deepagents">
+Deep Agents sandboxes receive managed `dcode` configuration under `/sandbox/.deepagents` during onboarding instead of the OpenClaw plugin path.
+</AgentOnly>
 You can use that setup directly or adapt it for your own OpenShell integration.
 
 ## High-Level Flow
@@ -29,7 +32,59 @@ NemoClaw keeps the user workflow on the host while OpenShell enforces the sandbo
 The gateway sits between NemoClaw control, the sandbox, inference providers, and external integrations.
 That placement lets NemoClaw configure the environment without giving the agent direct access to host credentials or uncontrolled network egress.
 
-![NemoClaw High-Level Component Diagram](images/nemoclaw-highlevel-component-diagram.png)
+```mermaid
+flowchart TB
+    subgraph TOP_ROW[" "]
+        direction LR
+        TOP_USERS["Users + Operators<br/><small>Developer, admin<br/>end-user channels</small>"]:::hidden
+        TOP_CONTROL["NemoClaw Control<br/><small>CLI, installer, dashboard<br/>onboard + configure</small>"]:::hidden
+        INFERENCE["Inference<br/><small>NVIDIA Endpoints, NIM<br/>or compatible APIs</small>"]:::inference
+        TOP_SANDBOX["NemoClaw Sandbox<br/><small>Selected agent runtime<br/>integration, blueprints, tools</small>"]:::hidden
+        TOP_STATE["State + Artifacts<br/><small>Config, credentials, logs<br/>workspace, policy, transcripts</small>"]:::hidden
+
+        TOP_USERS ~~~ TOP_CONTROL ~~~ INFERENCE ~~~ TOP_SANDBOX ~~~ TOP_STATE
+    end
+
+    subgraph MAIN_ROW[" "]
+        direction LR
+        USERS["Users + Operators<br/><small>Developer, admin<br/>end-user channels</small>"]:::users
+        CONTROL["NemoClaw Control<br/><small>CLI, installer, dashboard<br/>onboard + configure</small>"]:::control
+        GATEWAY["OpenShell Gateway<br/><small>Sandbox lifecycle<br/>networking + policy</small>"]:::gateway
+        SANDBOX["NemoClaw Sandbox<br/><small>Selected agent runtime<br/>integration, blueprints, tools</small>"]:::sandbox
+        STATE["State + Artifacts<br/><small>Config, credentials, logs<br/>workspace, policy, transcripts</small>"]:::state
+
+        USERS --> CONTROL
+        CONTROL --> GATEWAY
+        GATEWAY -->|"egress via gateway"| SANDBOX
+        SANDBOX -.-> STATE
+    end
+
+    subgraph BOTTOM_ROW[" "]
+        direction LR
+        BOTTOM_USERS["Users + Operators<br/><small>Developer, admin<br/>end-user channels</small>"]:::hidden
+        BOTTOM_CONTROL["NemoClaw Control<br/><small>CLI, installer, dashboard<br/>onboard + configure</small>"]:::hidden
+        INTEGRATIONS["Integrations<br/><small>Messaging, MCP<br/>GitHub, npm, PyPI, HF</small>"]:::integrations
+        BOTTOM_SANDBOX["NemoClaw Sandbox<br/><small>Selected agent runtime<br/>integration, blueprints, tools</small>"]:::hidden
+        BOTTOM_STATE["State + Artifacts<br/><small>Config, credentials, logs<br/>workspace, policy, transcripts</small>"]:::hidden
+
+        BOTTOM_USERS ~~~ BOTTOM_CONTROL ~~~ INTEGRATIONS ~~~ BOTTOM_SANDBOX ~~~ BOTTOM_STATE
+    end
+
+    GATEWAY -->|"inference via gateway"| INFERENCE
+    GATEWAY -->|"integrations via gateway"| INTEGRATIONS
+
+    style TOP_ROW fill:transparent,stroke:transparent
+    style MAIN_ROW fill:transparent,stroke:transparent
+    style BOTTOM_ROW fill:transparent,stroke:transparent
+    classDef hidden fill:transparent,stroke:transparent,color:transparent,stroke-width:0px
+    classDef users fill:#d9ecf7,stroke:#6aa6c8,color:#1a1a1a,stroke-width:2px
+    classDef control fill:#d7f0dc,stroke:#5a9f70,color:#1a1a1a,stroke-width:2px
+    classDef gateway fill:#fff1be,stroke:#c4992f,color:#1a1a1a,stroke-width:2px
+    classDef sandbox fill:#e7ddff,stroke:#8c6ccf,color:#1a1a1a,stroke-width:2px
+    classDef state fill:#f7dfe4,stroke:#c86d7d,color:#1a1a1a,stroke-width:2px
+    classDef inference fill:#d5f1f1,stroke:#4fa7a7,color:#1a1a1a,stroke-width:2px
+    classDef integrations fill:#fce6d7,stroke:#c77e55,color:#1a1a1a,stroke-width:2px
+```
 
 The diagram has the following components:
 
@@ -82,6 +137,11 @@ NemoClaw separates host orchestration from sandbox image contents.
 - NemoClaw writes Hermes runtime configuration into `/sandbox/.hermes` during onboarding, including `config.yaml`, environment files, and platform adapter settings for supported messaging channels.
 
 </AgentOnly>
+<AgentOnly variant="deepagents">
+
+- NemoClaw writes Deep Agents runtime configuration into `/sandbox/.deepagents` during onboarding, including `config.toml`, managed MCP projection state, and the inference route used by `dcode`.
+
+</AgentOnly>
 - The _blueprint_ is a versioned YAML package with the sandbox image, policy, inference profile, and supporting assets.
   The runner resolves and verifies the blueprint before applying it through OpenShell.
 
@@ -107,6 +167,9 @@ The sandbox then talks to `inference.local`, while the host owns the actual prov
 When you select the Model Router provider, `inference.local` routes to a host-side router that chooses from the configured NVIDIA model pool for each request.
 <AgentOnly variant="hermes">
 For Hermes, <AgentCli /> `inference set` updates `/sandbox/.hermes/config.yaml` at runtime without rebuilding the sandbox.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+For Deep Agents, the managed `dcode` runtime reads the OpenAI-compatible route that NemoClaw writes into `/sandbox/.deepagents/config.toml`.
 </AgentOnly>
 
 ## Protection Layers
@@ -140,6 +203,15 @@ NemoClaw's runtime context tells supported agents to try allowed network and fil
 
 - Read [Ecosystem](ecosystem) for stack-level relationships and NemoClaw versus OpenShell-only paths.
 - Follow [Quickstart with Hermes](../get-started/quickstart) to launch your first sandbox.
+- Read [Architecture](../reference/architecture) for the full technical structure, including file layouts and the blueprint lifecycle.
+- Read [Inference Options](../inference/inference-options) for detailed provider configuration.
+- For details on the baseline rules, refer to [Network Policies](../reference/network-policies).
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+- Read [Ecosystem](ecosystem) for stack-level relationships and NemoClaw versus OpenShell-only paths.
+- Follow [Quickstart with Deep Agents](../get-started/quickstart) to launch your first sandbox.
 - Read [Architecture](../reference/architecture) for the full technical structure, including file layouts and the blueprint lifecycle.
 - Read [Inference Options](../inference/inference-options) for detailed provider configuration.
 - For details on the baseline rules, refer to [Network Policies](../reference/network-policies).

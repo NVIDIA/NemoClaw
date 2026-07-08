@@ -7,13 +7,19 @@ import { preparePolicyPresetResumeSelection } from "./policy-resume-selection";
 
 type Preset = { name: string; access?: string };
 
-function policies(options: { applied?: string[]; custom?: string[] } = {}) {
-  const setupPresets = ["npm", "brave", "tavily"].map((name) => ({ name }));
+function policies(
+  options: { applied?: string[]; custom?: string[]; customOwnsObservability?: boolean } = {},
+) {
+  const setupPresets = ["npm", "brave", "tavily", "observability-otlp-local"].map((name) => ({
+    name,
+  }));
   const customPresets = (options.custom ?? []).map((name) => ({ name }));
   return {
     setupPolicyPresetSupported: () => true,
     listSetupPolicyPresets: () => setupPresets,
     listCustomPresets: () => customPresets,
+    customPresetOwnsNetworkPolicyKey: () => options.customOwnsObservability === true,
+    removeBuiltinPresetAttribution: () => undefined,
     getAppliedPresets: () => options.applied ?? [],
     clampSetupPolicyPresetNames(
       names: string[],
@@ -78,5 +84,81 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
 
     expect(result.policyPresets).toEqual(["brave", "tavily"]);
     expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+});
+
+describe("preparePolicyPresetResumeSelection observability reconciliation", () => {
+  it("adds the local OTLP preset only while Deep Agents Code observability is enabled", () => {
+    const enabled = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm"],
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+      webSearchConfig: null,
+      webSearchSupported: true,
+    });
+    const disabled = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm", "observability-otlp-local"],
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: false,
+      webSearchConfig: null,
+      webSearchSupported: true,
+    });
+
+    expect(enabled.policyPresets).toEqual(["npm", "observability-otlp-local"]);
+    expect(enabled.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(disabled.policyPresets).toEqual(["npm"]);
+    expect(disabled.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+
+  it("suppresses the enabled local OTLP preset on the restricted tier", () => {
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm"],
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+      webSearchConfig: null,
+      webSearchSupported: true,
+      tierName: "restricted",
+    });
+
+    expect(result.policyPresets).toEqual(["npm"]);
+  });
+
+  it("keeps exact custom OTLP ownership without carrying built-in attribution on resume", () => {
+    const result = preparePolicyPresetResumeSelection(
+      {
+        policies: policies({
+          applied: ["observability-otlp-local", "corp-otel"],
+          custom: ["corp-otel"],
+          customOwnsObservability: true,
+        }),
+      },
+      "alpha",
+      {
+        recordedPolicyPresets: ["observability-otlp-local", "corp-otel"],
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+
+    expect(result.policyPresets).toEqual(["corp-otel"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+
+  it("preserves same-name different-key custom collision semantics on resume", () => {
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ custom: ["observability-otlp-local"] }) },
+      "alpha",
+      {
+        recordedPolicyPresets: ["observability-otlp-local"],
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+
+    expect(result.policyPresets).toEqual(["observability-otlp-local"]);
   });
 });

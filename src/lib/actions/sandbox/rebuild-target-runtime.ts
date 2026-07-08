@@ -58,7 +58,11 @@ async function preflightRebuildWebSearchCredential(
 }
 
 export type RebuildTargetRuntimePreflightResult =
-  | { ok: true; preparedImage: PreparedRebuildImage | null }
+  | {
+      ok: true;
+      preparedImage: PreparedRebuildImage | null;
+      requiresGatewayProviderReconfigure: boolean;
+    }
   | { ok: false };
 
 export async function preflightRebuildTargetRuntime(
@@ -142,6 +146,7 @@ export async function preflightRebuildTargetRuntime(
   }
 
   let preparedImage: PreparedRebuildImage | null = null;
+  let requiresGatewayProviderReconfigure = false;
   if (!options.skipImagePreflight) {
     const customImage = await rebuildImagePreflight.preflightRebuildImage({
       agent: target.agentDefinition,
@@ -192,12 +197,19 @@ export async function preflightRebuildTargetRuntime(
         {
           allowMissingGatewayProviderWithHostCredential:
             options.allowMissingGatewayProviderWithHostCredential,
+          onGatewayProviderReconfigureRequired: () => {
+            requiresGatewayProviderReconfigure = true;
+          },
         },
       )
     ) {
       return { ok: false };
     }
-    const result: RebuildTargetRuntimePreflightResult = { ok: true, preparedImage };
+    const result: RebuildTargetRuntimePreflightResult = {
+      ok: true,
+      preparedImage,
+      requiresGatewayProviderReconfigure,
+    };
     preparedImage = null;
     return result;
   } finally {

@@ -178,6 +178,279 @@ def normalize_dir(directory_fd: int, *, top_level: bool = False) -> None:
             os.close(child_fd)
 
 
+SEALED = 0
+UNSEALED = 1
+INDETERMINATE = 2
+
+
+def fd_mount_id(fd: int) -> int:
+    """Return Linux's mount ID for an open descriptor, failing closed."""
+
+    if not sys.platform.startswith("linux"):
+        raise UnsafeTree()
+    fdinfo_fd = -1
+    try:
+        fdinfo_fd = os.open(
+            f"/proc/self/fdinfo/{fd}",
+            os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+        )
+        payload = os.read(fdinfo_fd, 4097)
+        if len(payload) > 4096:
+            raise UnsafeTree()
+        mount_ids = [
+            line.removeprefix(b"mnt_id:").strip()
+            for line in payload.splitlines()
+            if line.startswith(b"mnt_id:")
+        ]
+        if len(mount_ids) != 1 or not mount_ids[0].isdigit():
+            raise UnsafeTree()
+        return int(mount_ids[0])
+    except OSError as exc:
+        raise UnsafeTree() from exc
+    finally:
+        if fdinfo_fd >= 0:
+            os.close(fdinfo_fd)
+
+
+def open_fixed_files(
+    root_fd: int,
+    root_metadata: os.stat_result,
+    *,
+    uid: int,
+    gid: int,
+    mode: int,
+    root_mount_id: int | None = None,
+) -> list[tuple[str, int, os.stat_result]]:
+    opened_files: list[tuple[str, int, os.stat_result]] = []
+    try:
+        for name in FIXED_FILES:
+            before = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_dev != root_metadata.st_dev
+                or before.st_uid != uid
+                or before.st_gid != gid
+                or stat.S_IMODE(before.st_mode) != mode
+                or before.st_nlink != 1
+            ):
+                raise UnsafeTree()
+            child_fd, opened = open_pinned(root_fd, name, file_flags(), before)
+            try:
+                current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+                if (
+                    stable_file_key(opened) != stable_file_key(before)
+                    or stable_file_key(current) != stable_file_key(opened)
+                    or (
+                        root_mount_id is not None
+                        and fd_mount_id(child_fd) != root_mount_id
+                    )
+                ):
+                    raise UnsafeTree()
+            except Exception:
+                os.close(child_fd)
+                raise
+            opened_files.append((name, child_fd, opened))
+        return opened_files
+    except Exception:
+        for _name, child_fd, _opened in opened_files:
+            os.close(child_fd)
+        raise
+
+
+def fixed_files_have_posture(
+    root_fd: int,
+    root_metadata: os.stat_result,
+    *,
+    uid: int,
+    gid: int,
+    mode: int,
+) -> bool:
+    opened_files: list[tuple[str, int, os.stat_result]] = []
+    try:
+        opened_files = open_fixed_files(
+            root_fd, root_metadata, uid=uid, gid=gid, mode=mode
+        )
+        return True
+    except (OSError, UnsafeTree):
+        return False
+    finally:
+        for _name, child_fd, _opened in opened_files:
+            os.close(child_fd)
+
+
+def classify_seal(root_fd: int, root_metadata: os.stat_result) -> int:
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or root_metadata.st_uid != 0
+        or root_metadata.st_gid != 0
+    ):
+        return INDETERMINATE
+    root_mode = stat.S_IMODE(root_metadata.st_mode)
+    if root_mode == 0o755 and fixed_files_have_posture(
+        root_fd, root_metadata, uid=0, gid=0, mode=0o444
+    ):
+        return SEALED
+    if root_mode == 0o700 and fixed_files_have_posture(
+        root_fd, root_metadata, uid=0, gid=0, mode=0o600
+    ):
+        return UNSEALED
+    return INDETERMINATE
+
+
+def open_config_binding(
+    config_dir: str,
+) -> tuple[int, os.stat_result, int, os.stat_result, str]:
+    normalized = os.path.normpath(config_dir)
+    if not os.path.isabs(normalized) or normalized == os.path.sep:
+        raise UnsafeTree()
+    parent_fd = -1
+    root_fd = -1
+    try:
+        parent_path = os.path.dirname(normalized)
+        config_name = os.path.basename(normalized)
+        parent_fd = os.open(parent_path, directory_flags())
+        before = os.stat(config_name, dir_fd=parent_fd, follow_symlinks=False)
+        root_fd, root_metadata = open_pinned(
+            parent_fd, config_name, directory_flags(), before
+        )
+        return (
+            parent_fd,
+            os.fstat(parent_fd),
+            root_fd,
+            root_metadata,
+            config_name,
+        )
+    except Exception:
+        if root_fd >= 0:
+            os.close(root_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+        raise
+
+
+def mutable_parent_matches(
+    parent_metadata: os.stat_result,
+    sandbox_uid: int,
+    sandbox_gid: int,
+) -> bool:
+    return (
+        stat.S_ISDIR(parent_metadata.st_mode)
+        and parent_metadata.st_uid == sandbox_uid
+        and parent_metadata.st_gid == sandbox_gid
+        and stat.S_IMODE(parent_metadata.st_mode) == 0o755
+    )
+
+
+def classify_config_path(
+    config_dir: str,
+    sandbox_uid: int,
+    sandbox_gid: int,
+) -> int:
+    parent_fd = -1
+    root_fd = -1
+    try:
+        parent_fd, parent_metadata, root_fd, root_metadata, _name = (
+            open_config_binding(config_dir)
+        )
+        state = classify_seal(root_fd, root_metadata)
+        if state != UNSEALED:
+            return state
+        if (
+            not mutable_parent_matches(parent_metadata, sandbox_uid, sandbox_gid)
+            or root_metadata.st_dev != parent_metadata.st_dev
+            or fd_mount_id(root_fd) != fd_mount_id(parent_fd)
+        ):
+            return INDETERMINATE
+        return UNSEALED
+    except (OSError, UnsafeTree):
+        return INDETERMINATE
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
+def reclaim_fixed_files(
+    root_fd: int,
+    opened_files: list[tuple[str, int, os.stat_result]],
+    sandbox_uid: int,
+    sandbox_gid: int,
+) -> None:
+    for name, child_fd, opened in opened_files:
+        os.fchown(child_fd, sandbox_uid, sandbox_gid)
+        os.fchmod(child_fd, 0o660)
+        current = os.fstat(child_fd)
+        if (
+            current.st_uid != sandbox_uid
+            or current.st_gid != sandbox_gid
+            or stat.S_IMODE(current.st_mode) != 0o660
+            or current.st_nlink != 1
+        ):
+            raise UnsafeTree()
+        verify_still_linked(root_fd, name, opened)
+
+
+def reclaim_if_unsealed(config_dir: str, sandbox_uid: int, sandbox_gid: int) -> int:
+    """Classify and, only if unsealed, reclaim a root-collapsed OpenClaw config.
+
+    Pins the parent, config directory, and both fixed files with O_NOFOLLOW so
+    classification and reclaim act on the same inodes. The directory handoff
+    occurs last, after every mutable file is ready for the sandbox identity.
+    """
+    if os.geteuid() != 0 or sandbox_uid <= 0 or sandbox_gid <= 0:
+        return 1
+    parent_fd = -1
+    root_fd = -1
+    opened_files: list[tuple[str, int, os.stat_result]] = []
+    try:
+        parent_fd, parent_metadata, root_fd, root_metadata, config_name = (
+            open_config_binding(config_dir)
+        )
+        seal_state = classify_seal(root_fd, root_metadata)
+        if seal_state == SEALED:
+            return 0
+        if seal_state != UNSEALED:
+            raise UnsafeTree()
+        if (
+            not mutable_parent_matches(parent_metadata, sandbox_uid, sandbox_gid)
+            or root_metadata.st_dev != parent_metadata.st_dev
+            or fd_mount_id(root_fd) != fd_mount_id(parent_fd)
+        ):
+            raise UnsafeTree()
+        opened_files = open_fixed_files(
+            root_fd,
+            root_metadata,
+            uid=0,
+            gid=0,
+            mode=0o600,
+            root_mount_id=fd_mount_id(root_fd),
+        )
+        reclaim_fixed_files(root_fd, opened_files, sandbox_uid, sandbox_gid)
+        os.fchmod(root_fd, 0o000)
+        os.fchown(root_fd, sandbox_uid, sandbox_gid)
+        os.fchmod(root_fd, 0o2770)
+        current = os.stat(config_name, dir_fd=parent_fd, follow_symlinks=False)
+        final_root = os.fstat(root_fd)
+        if (
+            inode_key(current) != inode_key(final_root)
+            or final_root.st_uid != sandbox_uid
+            or final_root.st_gid != sandbox_gid
+            or stat.S_IMODE(final_root.st_mode) != 0o2770
+        ):
+            raise UnsafeTree()
+        return 0
+    except (OSError, UnsafeTree):
+        return 1
+    finally:
+        for _name, child_fd, _opened in opened_files:
+            os.close(child_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
 def config_dir_matches(
     root_fd: int,
     config_dir: str,
@@ -1358,6 +1631,28 @@ def run_root_supervisor(
 
 
 def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "classify-seal":
+        if len(sys.argv) != 5:
+            return 1
+        config_dir = sys.argv[2]
+        try:
+            sandbox_uid = int(sys.argv[3])
+            sandbox_gid = int(sys.argv[4])
+        except ValueError:
+            return INDETERMINATE
+        return classify_config_path(config_dir, sandbox_uid, sandbox_gid)
+
+    if len(sys.argv) >= 2 and sys.argv[1] == "reclaim-if-unsealed":
+        if len(sys.argv) != 5:
+            return 1
+        config_dir = sys.argv[2]
+        try:
+            sandbox_uid = int(sys.argv[3])
+            sandbox_gid = int(sys.argv[4])
+        except ValueError:
+            return 1
+        return reclaim_if_unsealed(config_dir, sandbox_uid, sandbox_gid)
+
     if len(sys.argv) not in {4, 5, 7}:
         return 1
     config_dir = sys.argv[1]

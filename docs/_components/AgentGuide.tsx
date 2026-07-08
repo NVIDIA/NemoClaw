@@ -4,14 +4,14 @@
  */
 
 /**
- * Resolves OpenClaw vs Hermes user-guide variant from injected route data.
+ * Resolves OpenClaw, Hermes, or Deep Agents user-guide variant from injected route data.
  * Prefer passing `variant` or `pathname` from the page or route that renders the
  * component so SSR output does not depend on browser-only globals. The window
  * fallback preserves the current client-side behavior for unwrapped pages.
  */
 declare const React: unknown;
 
-export type GuideVariant = "openclaw" | "hermes";
+export type GuideVariant = "openclaw" | "hermes" | "deepagents";
 export type GuideVariantSource =
   | GuideVariant
   | string
@@ -30,6 +30,7 @@ type GuideContextProps = {
 };
 
 const GUIDE_PATH = "/user-guide/";
+const DEEPAGENTS_PATH = `${GUIDE_PATH}deepagents`;
 const HERMES_PATH = `${GUIDE_PATH}hermes`;
 const OPENCLAW_PATH = `${GUIDE_PATH}openclaw`;
 
@@ -51,11 +52,17 @@ export function guidePath(suffix: string, source?: GuideVariantSource): string {
 }
 
 export function AgentCli(props: GuideContextProps = {}) {
-  return <code>{getGuideVariant(props) === "hermes" ? "nemohermes" : "nemoclaw"}</code>;
+  const variant = getGuideVariant(props);
+  if (variant === "hermes") return <code>nemohermes</code>;
+  if (variant === "deepagents") return <code>nemo-deepagents</code>;
+  return <code>nemoclaw</code>;
 }
 
 export function AgentProductName(props: GuideContextProps = {}) {
-  return <>{getGuideVariant(props) === "hermes" ? "NemoHermes" : "NemoClaw"}</>;
+  const variant = getGuideVariant(props);
+  if (variant === "hermes") return <>NemoHermes</>;
+  if (variant === "deepagents") return <>NemoDeepAgents</>;
+  return <>NemoClaw</>;
 }
 
 export function AgentOnly({
@@ -64,12 +71,14 @@ export function AgentOnly({
   pathname,
   children,
 }: {
-  variant: GuideVariant;
+  variant: GuideVariant | string;
   activeVariant?: GuideVariant | null;
   pathname?: string | null;
   children: unknown;
 }) {
-  if (getGuideVariant({ activeVariant, pathname }) !== variant) {
+  const active = getGuideVariant({ activeVariant, pathname });
+  const variants = variant.split(",").map((item) => item.trim());
+  if (!variants.includes(active)) {
     return null;
   }
   return <>{children}</>;
@@ -97,7 +106,7 @@ export function GuideLink({
 
 function resolveGuideVariant(source?: GuideVariantSource): GuideVariant | null {
   if (!source) return null;
-  if (source === "openclaw" || source === "hermes") return source;
+  if (source === "openclaw" || source === "hermes" || source === "deepagents") return source;
   if (typeof source === "string") return resolveGuideVariantFromPathname(source);
   return (
     source.activeVariant ??
@@ -107,13 +116,16 @@ function resolveGuideVariant(source?: GuideVariantSource): GuideVariant | null {
 }
 
 function resolveGuidePathname(source?: GuideVariantSource): string | null {
-  if (!source || source === "openclaw" || source === "hermes") return null;
+  if (!source || source === "openclaw" || source === "hermes" || source === "deepagents") {
+    return null;
+  }
   if (typeof source === "string") return source;
   return source.pathname ?? null;
 }
 
 function resolveGuideVariantFromPathname(pathname: string | null): GuideVariant | null {
   if (!pathname) return null;
+  if (pathname.includes(DEEPAGENTS_PATH)) return "deepagents";
   if (pathname.includes(HERMES_PATH)) return "hermes";
   if (pathname.includes(OPENCLAW_PATH)) return "openclaw";
   return null;

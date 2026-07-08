@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AuthoritativeRebuildTargetDeps,
   preflightAuthoritativeRebuildTarget,
+  rebuildProviderFlowOptions,
   resolveAuthoritativeOnboardGatewayBinding,
 } from "./authoritative-rebuild-target";
 
@@ -87,6 +88,49 @@ describe("authoritative rebuild gateway binding", () => {
   });
 });
 
+describe("prepared provider reconfiguration handoff", () => {
+  const providerTarget = {
+    sandboxName: "alpha",
+    provider: "compatible-endpoint",
+    model: "nvidia/model",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    endpointUrl: "https://inference.example.test/v1",
+  };
+  const authorizedOptions = {
+    authoritativeResumeConfig: true,
+    resume: true,
+    recreateSandbox: true,
+    onboardLockAlreadyHeld: true,
+    rebuildProviderReconfigure: providerTarget,
+  };
+
+  it("accepts an exact handoff only for a locked authoritative rebuild resume (#6114)", () => {
+    expect(rebuildProviderFlowOptions(authorizedOptions, providerTarget)).toEqual({
+      authoritativeResumeConfig: true,
+      forceInferenceSetup: true,
+    });
+    expect(rebuildProviderFlowOptions({}, providerTarget)).toEqual({
+      authoritativeResumeConfig: false,
+      forceInferenceSetup: false,
+    });
+  });
+
+  it("rejects an unauthorized or mismatched handoff (#6114)", () => {
+    expect(() =>
+      rebuildProviderFlowOptions(
+        { ...authorizedOptions, onboardLockAlreadyHeld: false },
+        providerTarget,
+      ),
+    ).toThrow("requires an authoritative locked rebuild resume");
+    expect(() =>
+      rebuildProviderFlowOptions(authorizedOptions, {
+        ...providerTarget,
+        model: "other/model",
+      }),
+    ).toThrow("does not match the authoritative target");
+  });
+});
+
 describe("authoritative rebuild target preflight", () => {
   it("pins the requested gateway for route and forward checks, then restores it", async () => {
     process.env.OPENSHELL_GATEWAY = "before";
@@ -121,7 +165,7 @@ describe("authoritative rebuild target preflight", () => {
     ).rejects.toThrow("inference route does not match");
   });
 
-  it("defers route validation for prepared recovery until authoritative onboard", async () => {
+  it("defers route validation for prepared recovery until authoritative onboard (#6114)", async () => {
     const targetDeps = deps({ inferenceRouteReady: vi.fn(() => false) });
 
     await expect(
