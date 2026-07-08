@@ -455,6 +455,22 @@ function normalizeRecord(value: unknown, sandboxName: string): RebuildTransactio
   };
 }
 
+function normalizeMutationRecord(
+  value: unknown,
+  sandboxName: string,
+  code: "INVALID_INPUT" | "INVALID_TRANSITION",
+  detail: string,
+): RebuildTransactionRecordV1 {
+  try {
+    return normalizeRecord(value, sandboxName);
+  } catch (error) {
+    if (error instanceof RebuildTransactionError && error.code === "CORRUPT") {
+      throw transactionError(code, sandboxName, detail, error);
+    }
+    throw error;
+  }
+}
+
 function syncDirectory(dirPath: string): void {
   // Durability boundary review:
   // - Invalid state: a published directory entry can be lost after power loss.
@@ -616,35 +632,24 @@ export class RebuildTransactionStore {
     assertSandboxName(intent.sandboxName);
     return this.withMutationLock(intent.sandboxName, () => {
       const now = this.now().toISOString();
-      let record: RebuildTransactionRecordV1;
-      try {
-        record = normalizeRecord(
-          {
-            version: REBUILD_TRANSACTION_VERSION,
-            transactionId: this.transactionId(),
-            revision: 1,
-            status: "active",
-            phase: "prepared",
-            intent,
-            receipts,
-            failure: null,
-            createdAt: now,
-            updatedAt: now,
-            completedAt: null,
-          },
-          intent.sandboxName,
-        );
-      } catch (error) {
-        if (error instanceof RebuildTransactionError && error.code === "CORRUPT") {
-          throw transactionError(
-            "INVALID_INPUT",
-            intent.sandboxName,
-            "creation input is invalid",
-            error,
-          );
-        }
-        throw error;
-      }
+      const record = normalizeMutationRecord(
+        {
+          version: REBUILD_TRANSACTION_VERSION,
+          transactionId: this.transactionId(),
+          revision: 1,
+          status: "active",
+          phase: "prepared",
+          intent,
+          receipts,
+          failure: null,
+          createdAt: now,
+          updatedAt: now,
+          completedAt: null,
+        },
+        intent.sandboxName,
+        "INVALID_INPUT",
+        "creation input is invalid",
+      );
       const existing = this.load(intent.sandboxName);
       if (existing?.status === "active") {
         throw transactionError(
@@ -690,7 +695,7 @@ export class RebuildTransactionStore {
           `cannot refresh recovery inputs from ${current.phase}`,
         );
       }
-      const refreshed = normalizeRecord(
+      const refreshed = normalizeMutationRecord(
         {
           ...current,
           intent,
@@ -700,6 +705,8 @@ export class RebuildTransactionStore {
           updatedAt: this.now().toISOString(),
         },
         sandboxName,
+        "INVALID_INPUT",
+        "prepared refresh input is invalid",
       );
       durablePublish(this.path(sandboxName), refreshed, false);
       return refreshed;
@@ -722,7 +729,7 @@ export class RebuildTransactionStore {
         );
       }
       assertReceiptHistoryUnchanged(current.receipts, receipts, sandboxName);
-      const updated = normalizeRecord(
+      const updated = normalizeMutationRecord(
         {
           ...current,
           phase,
@@ -732,6 +739,8 @@ export class RebuildTransactionStore {
           updatedAt: this.now().toISOString(),
         },
         sandboxName,
+        "INVALID_TRANSITION",
+        "transition input is invalid",
       );
       durablePublish(this.path(sandboxName), updated, false);
       return updated;
@@ -745,7 +754,7 @@ export class RebuildTransactionStore {
   ): Promise<RebuildTransactionRecordV1> {
     return this.withMutationLock(sandboxName, () => {
       const current = this.requireActive(sandboxName, expectedRevision);
-      const updated = normalizeRecord(
+      const updated = normalizeMutationRecord(
         {
           ...current,
           failure,
@@ -753,6 +762,8 @@ export class RebuildTransactionStore {
           updatedAt: this.now().toISOString(),
         },
         sandboxName,
+        "INVALID_INPUT",
+        "failure input is invalid",
       );
       durablePublish(this.path(sandboxName), updated, false);
       return updated;
