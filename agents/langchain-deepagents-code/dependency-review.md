@@ -151,3 +151,35 @@ this review to revalidate the managed adapter. Remove it instead of refreshing
 its hashes only if a future reviewed dependency already provides both exact
 mappings; no external contribution is required. Issue #6424 records the
 NemoClaw-owned replacement of the previous installed-bootstrap mutation.
+
+## Managed observability and ordered policy cleanup
+
+The managed observability marker closes a sandbox lifecycle gap rather than an
+authorization gap. OpenShell policy replacement can clear ephemeral `/tmp`, and
+independent sandbox exec/login processes do not inherit the entrypoint's
+environment, while the host registry and the active OTLP network policy remain
+enabled. OpenShell owns those lifecycle semantics; NemoClaw owns the DCode
+startup and launcher boundary but does not modify OpenShell here. The startup
+script therefore writes only the credential-free enable bit to the persistent
+`/sandbox/.deepagents/.nemoclaw-observability-enabled` workspace path. The
+launcher accepts only a non-symlink regular marker containing exactly `1`, and
+the network policy remains the authority for OTLP access.
+
+Focused launcher fixtures delete unrelated ephemeral state and prove the marker
+survives, reject unsafe directory and marker types, and cover enabled and
+disabled values. The ordered live checks prove Tavily removal restores the
+deny-by-default policy while check 11 independently requires the host registry,
+live policy, and durable sandbox marker to agree. Remove this marker and its
+launcher recovery only when OpenShell propagates the selected observability bit
+to every exec/login process across policy replacement, or when DCode no longer
+needs the bit.
+
+Tavily cleanup persists across sandbox rebuilds because `policy-remove` first
+applies the narrowed live policy and then removes the preset from the sandbox's
+registry-backed policy list, which is the source used by rebuild. The
+`policy-add-remove-session-sync` tests cover successful persisted removal, and
+the snapshot regression `does not resurrect an earlier removed preset` guards
+restore behavior. The E2E EXIT trap is still required for early probe failures
+so the ordered suite cannot leave the current sandbox broader than the registry.
+Remove that trap only when each check receives an isolated sandbox or no longer
+mutates policy.
