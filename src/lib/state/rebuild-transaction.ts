@@ -341,7 +341,7 @@ function normalizeReceipts(value: unknown, sandboxName: string): RebuildTransact
     : undefined;
   return {
     backup: {
-      manifestTimestamp: timestamp(
+      manifestTimestamp: requiredString(
         backup.manifestTimestamp,
         "receipts.backup.manifestTimestamp",
         sandboxName,
