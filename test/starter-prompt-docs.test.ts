@@ -28,12 +28,12 @@ const localCredentialFormSource = path.join(
 const localCredentialFormUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/c9aac7dc12bacdaa4d38af552b893021049ee836/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 =
-  "cc746703ab514cf33d7131915f16e8dc19346b26a4d953c5125be81449d6e6f6"; // gitleaks:allow -- checked-in SHA-256 fixture
+  "b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormScriptCspHash = [
-  "'sha256-7knX1kPQ",
-  "ir4x3z0uoR2GmEi9",
-  "hb0+82UEW2o9BzJD",
-  "520='",
+  "'sha256-9SWtYAX3",
+  "k4sfukZTBTjWRvoQ",
+  "kNyDDtLbUDlV2rK6",
+  "PyQ='",
 ].join("");
 const localCredentialFormStyleCspHash = [
   "'sha256-W4wSJyrm",
@@ -41,6 +41,7 @@ const localCredentialFormStyleCspHash = [
   "msaHh6dbUj9ZlKh",
   "xipME='",
 ].join("");
+const localCredentialCapability = "A".repeat(43);
 const starterPromptPages = [
   "docs/index.mdx",
   "docs/get-started/quickstart.mdx",
@@ -55,6 +56,12 @@ function read(relativePath: string): string {
 
 function urlsIn(content: string): URL[] {
   return Array.from(content.matchAll(/https?:\/\/[^\s"'<>;]+/g), ([match]) => new URL(match));
+}
+
+function withCredentialCapability(url: string, capability = localCredentialCapability): string {
+  const parsed = new URL(url);
+  parsed.hash = `cap=${capability}`;
+  return parsed.href;
 }
 
 function fail(message: string): never {
@@ -104,8 +111,10 @@ class FakeElement {
   autocomplete = "";
   className = "";
   disabled = false;
+  hidden = false;
   id = "";
   name = "";
+  readOnly = false;
   required = false;
   spellcheck = true;
   textContent = "";
@@ -137,11 +146,12 @@ class FakeElement {
   querySelectorAll(selector: string): FakeElement[] {
     const result: FakeElement[] = [];
     const visit = (element: FakeElement) => {
+      const matchesInput = selector === "input" && element.tagName === "input";
       const matchesSecretInput =
         selector === "input[data-secret='true']" &&
         element.tagName === "input" &&
         element.dataset.secret === "true";
-      matchesSecretInput && result.push(element);
+      (matchesInput || matchesSecretInput) && result.push(element);
       for (const child of element.children) {
         visit(child);
       }
@@ -164,6 +174,8 @@ class FakeDocument {
       ["credential-form", "form"],
       ["result", "section"],
       ["submit-button", "button"],
+      ["edit-button", "button"],
+      ["confirm-button", "button"],
       ["origin-notice", "div"],
     ] as const) {
       const element = new FakeElement(tagName);
@@ -173,6 +185,8 @@ class FakeDocument {
     this.getElementById("credential-form").append(
       this.getElementById("fields"),
       this.getElementById("submit-button"),
+      this.getElementById("edit-button"),
+      this.getElementById("confirm-button"),
     );
   }
 
@@ -205,26 +219,46 @@ class FakeFormData {
   }
 }
 
-function runCredentialForm(url: string, fetchImpl = async () => ({ ok: true, status: 200 })) {
+function runCredentialForm(
+  url: string,
+  fetchImpl: (
+    target: string,
+    init?: unknown,
+  ) => Promise<{ ok: boolean; status: number }> = async () => ({ ok: true, status: 202 }),
+) {
   const formSource = fs.readFileSync(localCredentialFormSource, "utf8");
   const script = extractTagContent(formSource, "script");
   const parsedUrl = new URL(url);
   const document = new FakeDocument();
+  const consoleCalls: unknown[][] = [];
   const fetchCalls: Array<{ url: string; init?: unknown }> = [];
+  const historyCalls: string[] = [];
   const context = {
-    console: { error: () => undefined },
+    console: {
+      error: (...args: unknown[]) => consoleCalls.push(args),
+      log: (...args: unknown[]) => consoleCalls.push(args),
+      warn: (...args: unknown[]) => consoleCalls.push(args),
+    },
     document,
     Error,
     fetch: async (target: string, init?: unknown) => {
       fetchCalls.push({ url: target, init });
-      return fetchImpl();
+      return fetchImpl(target, init);
     },
     FormData: FakeFormData,
+    TextEncoder,
     URLSearchParams,
     window: {
+      history: {
+        replaceState: (_state: null, _title: string, target: string) => {
+          historyCalls.push(target);
+        },
+      },
       location: {
+        hash: parsedUrl.hash,
         hostname: parsedUrl.hostname,
         href: parsedUrl.href,
+        pathname: parsedUrl.pathname,
         search: parsedUrl.search,
       },
     },
@@ -232,12 +266,28 @@ function runCredentialForm(url: string, fetchImpl = async () => ({ ok: true, sta
   vm.runInNewContext(script, context);
 
   const form = document.getElementById("credential-form");
+  const click = async (id: string) => {
+    const listener =
+      document.getElementById(id).listeners.get("click") ??
+      fail(`Missing click listener for ${id}`);
+    await listener({ preventDefault: () => undefined });
+  };
   return {
+    confirm: () => click("confirm-button"),
+    confirmButton: document.getElementById("confirm-button"),
+    consoleCalls,
     document,
+    edit: () => click("edit-button"),
+    editButton: document.getElementById("edit-button"),
     fetchCalls,
     fieldsElement: document.getElementById("fields"),
     form,
+    historyCalls,
     originNotice: document.getElementById("origin-notice"),
+    preview: async () => {
+      const listener = form.listeners.get("submit") ?? fail("Missing submit listener");
+      await listener({ preventDefault: () => undefined });
+    },
     resultElement: document.getElementById("result"),
     submit: async () => {
       const listener = form.listeners.get("submit") ?? fail("Missing submit listener");
@@ -317,25 +367,31 @@ describe("starter prompt docs CTA", () => {
     expect(formSource).not.toContain("sessionStorage");
   });
 
-  it("warns and disables submit when credential fields are missing or invalid (#5048)", async () => {
-    const missing = runCredentialForm("http://127.0.0.1:4123/local-credential-form.html");
+  it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {
+    const missing = runCredentialForm(
+      withCredentialCapability("http://127.0.0.1:4123/local-credential-form.html"),
+    );
     expect(missing.submitButton.disabled).toBe(true);
     expect(missing.fieldsElement.children).toHaveLength(0);
     expect(missing.resultElement.allText()).toContain("Credential fields are not configured.");
 
     const invalid = runCredentialForm(
-      "http://127.0.0.1:4123/local-credential-form.html?fields=bad-name:secret,VALID_NAME:text",
+      withCredentialCapability(
+        "http://127.0.0.1:4123/local-credential-form.html?fields=bad-name:secret,VALID_NAME:text",
+      ),
     );
     expect(invalid.submitButton.disabled).toBe(true);
     expect(invalid.fieldsElement.children.map((child) => child.textContent)).toContain(
       "Valid Name",
     );
     expect(invalid.resultElement.allText()).toContain("Rejected specs: bad-name:secret");
-    await invalid.submit();
+    await invalid.preview();
     expect(invalid.fetchCalls).toHaveLength(0);
 
     const allInvalid = runCredentialForm(
-      "http://127.0.0.1:4123/local-credential-form.html?fields=bad-name:secret",
+      withCredentialCapability(
+        "http://127.0.0.1:4123/local-credential-form.html?fields=bad-name:secret",
+      ),
     );
     expect(allInvalid.submitButton.disabled).toBe(true);
     expect(allInvalid.fieldsElement.children).toHaveLength(0);
@@ -349,18 +405,73 @@ describe("starter prompt docs CTA", () => {
       "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,",
       "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret&fields=PUBLIC_ID:text",
       "http://127.0.0.1:4123/local-credential-form.html?field=SECRET_TOKEN:secret&fields=PUBLIC_ID:text",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=NVIDIA_INFERENCE_API_KEY:text",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=WEBHOOK_URL:text",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=PRIVATE:text",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=PIN:text",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=NODE_OPTIONS:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=NPM_CONFIG_USERCONFIG:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=LD_PRELOAD:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=PUBLIC_ID:text&submit=/capture",
     ]) {
-      const malformed = runCredentialForm(malformedUrl);
+      const malformed = runCredentialForm(withCredentialCapability(malformedUrl));
       expect(malformed.submitButton.disabled, malformedUrl).toBe(true);
       expect(malformed.resultElement.allText(), malformedUrl).toContain("rejected");
-      await malformed.submit();
+      await malformed.preview();
       expect(malformed.fetchCalls, malformedUrl).toHaveLength(0);
     }
+
+    const tooManyFields = Array.from({ length: 17 }, (_, index) => `PUBLIC_ID_${index}:text`);
+    const oversizedSchema = runCredentialForm(
+      withCredentialCapability(
+        `http://127.0.0.1:4123/local-credential-form.html?fields=${tooManyFields.join(",")}`,
+      ),
+    );
+    expect(oversizedSchema.submitButton.disabled).toBe(true);
+    expect(oversizedSchema.resultElement.allText()).toContain("too many fields");
+    await oversizedSchema.preview();
+    expect(oversizedSchema.fetchCalls).toHaveLength(0);
   });
 
-  it("submits only to the loopback helper and redacts secret values (#5048)", async () => {
+  it("requires and consumes one fragment capability before enabling preview (#5048)", () => {
+    const withoutCapability = runCredentialForm(
+      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret",
+    );
+    expect(withoutCapability.submitButton.disabled).toBe(true);
+    expect(withoutCapability.resultElement.allText()).toContain(
+      "missing a valid one-time capability",
+    );
+    expect(withoutCapability.historyCalls).toEqual([
+      "/local-credential-form.html?fields=SECRET_TOKEN:secret",
+    ]);
+
+    const malformedCapability = runCredentialForm(
+      withCredentialCapability(
+        "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret",
+        "too-short",
+      ),
+    );
+    expect(malformedCapability.submitButton.disabled).toBe(true);
+    expect(malformedCapability.resultElement.allText()).toContain(
+      "missing a valid one-time capability",
+    );
+
+    const validCapability = runCredentialForm(
+      withCredentialCapability(
+        "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret",
+      ),
+    );
+    expect(validCapability.submitButton.disabled).toBe(false);
+    expect(validCapability.historyCalls).toEqual([
+      "/local-credential-form.html?fields=SECRET_TOKEN:secret",
+    ]);
+  });
+
+  it("previews locally then confirms one frozen, authenticated payload (#5048)", async () => {
     const repeated = runCredentialForm(
-      "http://127.0.0.1:4123/local-credential-form.html?field=SECRET_TOKEN:secret&field=PUBLIC_ID:text",
+      withCredentialCapability(
+        "http://127.0.0.1:4123/local-credential-form.html?field=SECRET_TOKEN:secret&field=PUBLIC_ID:text",
+      ),
     );
     const repeatedInputs = repeated.fieldsElement.children.filter(
       (child) => child.tagName === "input",
@@ -372,7 +483,9 @@ describe("starter prompt docs CTA", () => {
     expect(repeated.submitButton.disabled).toBe(false);
 
     const rendered = runCredentialForm(
-      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,PUBLIC_ID:text&submit=http://127.0.0.1:9/capture",
+      withCredentialCapability(
+        "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,PUBLIC_ID:text",
+      ),
     );
     const inputs = rendered.fieldsElement.children.filter((child) => child.tagName === "input");
     const secretInput = inputs.find((input) => input.name === "SECRET_TOKEN");
@@ -382,35 +495,140 @@ describe("starter prompt docs CTA", () => {
 
     secretInput!.value = "super-secret";
     textInput!.value = "public-id";
-    await rendered.submit();
+    await rendered.preview();
 
-    expect(rendered.fetchCalls).toHaveLength(1);
-    expect(rendered.fetchCalls[0]?.url).toBe("/submit");
+    expect(rendered.fetchCalls).toHaveLength(0);
+    expect(secretInput?.readOnly).toBe(true);
+    expect(textInput?.readOnly).toBe(true);
     expect(secretInput?.value).toBe("");
-    expect(textInput?.value).toBe("public-id");
+    expect(textInput?.value).toBe("");
+    expect(rendered.submitButton.hidden).toBe(true);
+    expect(rendered.editButton.hidden).toBe(false);
+    expect(rendered.confirmButton.hidden).toBe(false);
     expect(rendered.resultElement.allText()).toContain("SECRET_TOKEN=********");
     expect(rendered.resultElement.allText()).toContain("PUBLIC_ID=public-id");
     expect(rendered.resultElement.allText()).not.toContain("super-secret");
+
+    secretInput!.value = "changed-after-preview";
+    textInput!.value = "changed-public-id";
+    await rendered.confirm();
+
+    expect(rendered.fetchCalls).toHaveLength(1);
+    expect(rendered.fetchCalls[0]?.url).toBe("/submit");
+    const request = rendered.fetchCalls[0]?.init as {
+      body: string;
+      cache: string;
+      credentials: string;
+      headers: Record<string, string>;
+      method: string;
+      redirect: string;
+    };
+    expect(request.method).toBe("POST");
+    expect(request.cache).toBe("no-store");
+    expect(request.credentials).toBe("omit");
+    expect(request.redirect).toBe("error");
+    expect(request.headers).toEqual({
+      "Content-Type": "application/json",
+      "X-NemoClaw-Capability": localCredentialCapability,
+    });
+    expect(JSON.parse(request.body)).toEqual({
+      values: { PUBLIC_ID: "public-id", SECRET_TOKEN: "super-secret" },
+    });
+    expect(secretInput?.value).toBe("");
+    expect(textInput?.value).toBe("");
+    expect(rendered.resultElement.allText()).toContain("SECRET_TOKEN=********");
+    expect(rendered.resultElement.allText()).toContain("PUBLIC_ID=public-id");
+    expect(rendered.resultElement.allText()).not.toContain("super-secret");
+    expect(rendered.submitButton.disabled).toBe(true);
+    expect(rendered.confirmButton.disabled).toBe(true);
+    await rendered.confirm();
+    expect(rendered.fetchCalls).toHaveLength(1);
   });
 
-  it("disables submit outside loopback and shows helper-friendly failures (#5048)", async () => {
+  it("discards a preview before accepting edited values (#5048)", async () => {
+    const rendered = runCredentialForm(
+      withCredentialCapability(
+        "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,PUBLIC_ID:text",
+      ),
+    );
+    const inputs = rendered.fieldsElement.children.filter((child) => child.tagName === "input");
+    const secretInput = inputs.find((input) => input.name === "SECRET_TOKEN")!;
+    const textInput = inputs.find((input) => input.name === "PUBLIC_ID")!;
+    secretInput.value = "first-secret";
+    textInput.value = "first-id";
+
+    await rendered.preview();
+    await rendered.edit();
+    expect(rendered.fetchCalls).toHaveLength(0);
+    expect(secretInput.readOnly).toBe(false);
+    expect(textInput.readOnly).toBe(false);
+    expect(secretInput.value).toBe("");
+    expect(textInput.value).toBe("");
+    expect(rendered.submitButton.hidden).toBe(false);
+
+    secretInput.value = "second-secret";
+    textInput.value = "second-id";
+    await rendered.preview();
+    await rendered.confirm();
+    const request = rendered.fetchCalls[0]?.init as { body: string };
+    expect(JSON.parse(request.body)).toEqual({
+      values: { PUBLIC_ID: "second-id", SECRET_TOKEN: "second-secret" },
+    });
+  });
+
+  it("disables non-loopback sessions and permanently locks ambiguous outcomes (#5048)", async () => {
     const nonLoopback = runCredentialForm(
-      "https://example.com/local-credential-form.html?fields=SECRET_TOKEN:secret",
+      withCredentialCapability(
+        "https://example.com/local-credential-form.html?fields=SECRET_TOKEN:secret",
+      ),
     );
     expect(nonLoopback.submitButton.disabled).toBe(true);
     expect(nonLoopback.originNotice.classList.has("warning")).toBe(true);
-    await nonLoopback.submit();
+    await nonLoopback.preview();
     expect(nonLoopback.submitButton.disabled).toBe(true);
     expect(nonLoopback.fetchCalls).toHaveLength(0);
 
     const helperFailure = runCredentialForm(
-      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret",
+      withCredentialCapability(
+        "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret",
+      ),
       async () => ({ ok: false, status: 500 }),
     );
-    await helperFailure.submit();
-    expect(helperFailure.resultElement.allText()).toContain(
-      "Ask your coding agent to check the local helper and reopen the credential form.",
+    const failureInput = helperFailure.fieldsElement.children.find(
+      (child) => child.tagName === "input",
+    )!;
+    failureInput.value = "never-log-this";
+    await helperFailure.preview();
+    await helperFailure.confirm();
+    expect(helperFailure.fetchCalls).toHaveLength(1);
+    expect(helperFailure.resultElement.allText()).toContain("outcome is unknown");
+    expect(helperFailure.resultElement.allText()).toContain("Do not retry or resubmit");
+    expect(helperFailure.resultElement.allText()).not.toContain("never-log-this");
+    expect(failureInput.value).toBe("");
+    expect(helperFailure.submitButton.disabled).toBe(true);
+    expect(helperFailure.confirmButton.disabled).toBe(true);
+    expect(helperFailure.consoleCalls).toHaveLength(0);
+    await helperFailure.preview();
+    await helperFailure.confirm();
+    expect(helperFailure.fetchCalls).toHaveLength(1);
+
+    const networkFailure = runCredentialForm(
+      withCredentialCapability(
+        "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret",
+      ),
+      async () => {
+        throw new Error("response lost after acceptance");
+      },
     );
+    const networkInput = networkFailure.fieldsElement.children.find(
+      (child) => child.tagName === "input",
+    )!;
+    networkInput.value = "also-never-log-this";
+    await networkFailure.preview();
+    await networkFailure.confirm();
+    expect(networkFailure.resultElement.allText()).toContain("outcome is unknown");
+    expect(networkFailure.consoleCalls).toHaveLength(0);
+    expect(networkInput.value).toBe("");
   });
 
   it("keeps Deep Agents as a selectable starter prompt option (#5048)", () => {
