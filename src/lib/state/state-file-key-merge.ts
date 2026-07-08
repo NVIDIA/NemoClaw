@@ -7,6 +7,7 @@ import { shellQuote } from "../runner.js";
 export const KEY_ALLOWLIST_MERGE_PYTHON = String.raw`
 import copy
 import json
+import math
 import os
 import stat
 import sys
@@ -120,6 +121,8 @@ def value_allowed(spec, value):
     if kind == "number":
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return False
+        if not math.isfinite(value):
+            return False
         if "min" in spec and value < spec["min"]:
             return False
         if "max" in spec and value > spec["max"]:
@@ -132,7 +135,7 @@ def value_allowed(spec, value):
             return False
         return True
     if kind == "enum":
-        return value in spec.get("values", [])
+        return any(type(value) is type(candidate) and value == candidate for candidate in spec.get("values", []))
     return False
 
 
@@ -270,11 +273,18 @@ export function stateFileKeyMergeSpec(ownership: StateFileRestoreOwnership): Key
   };
 }
 
+function assertSafeStateFilePath(path: string): void {
+  if (path.startsWith("/") || path.split("/").some((segment) => segment === "..")) {
+    throw new Error(`State file path '${path}' must be a relative path without '..' segments`);
+  }
+}
+
 export function buildKeyAllowlistMergeRestoreCommand(
   dir: string,
   spec: { path: string },
   ownership: StateFileRestoreOwnership,
 ): string {
+  assertSafeStateFilePath(spec.path);
   const normalizedDir = dir.replace(/\/+$/, "");
   const destination = shellQuote(`${normalizedDir}/${spec.path}`);
   const mergeSpec = shellQuote(JSON.stringify(stateFileKeyMergeSpec(ownership)));
