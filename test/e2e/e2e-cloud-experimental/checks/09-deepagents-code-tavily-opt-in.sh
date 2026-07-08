@@ -28,6 +28,12 @@ sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
+observability_marker_value() {
+  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    sh -c 'if test -f /tmp/nemoclaw-observability-enabled; then cat /tmp/nemoclaw-observability-enabled; else printf "absent"; fi' \
+    2>/dev/null
+}
+
 nemoclaw_cli() {
   if [ -f "$CLI" ]; then
     node "$CLI" "$@"
@@ -138,6 +144,8 @@ if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2
   exit 0
 fi
 
+OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
+
 info "Running Deep Agents Code Tavily opt-in check in sandbox: $SANDBOX_NAME"
 
 # shellcheck disable=SC2016 # command substitution must run inside the sandbox.
@@ -222,6 +230,26 @@ elif echo "$REMOVED_PROBE_OUTPUT" | grep -q "REACHED:"; then
   fail_test "managed Deep Agents Code python still reached Tavily after policy-remove: $REMOVED_PROBE_OUTPUT"
 else
   fail_test "post-remove Tavily probe lacked denial evidence: $REMOVED_PROBE_OUTPUT"
+fi
+
+# The temporary Tavily policy belongs only to this check. OpenShell can clear
+# /tmp while applying the narrower replacement policy, so restore an
+# observability marker that existed before the check through the canonical
+# startup helper instead of manufacturing the marker in the test.
+if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ]; then
+  OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
+  if [ "$OBSERVABILITY_MARKER_AFTER" != "1" ]; then
+    RESTORE_OUTPUT="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      /usr/bin/env NEMOCLAW_OBSERVABILITY=1 \
+      /usr/local/bin/nemoclaw-start /usr/bin/true 2>&1)" || \
+      fail_test "could not restore managed observability after policy-remove: $RESTORE_OUTPUT"
+  fi
+  OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
+  if [ "$OBSERVABILITY_MARKER_AFTER" = "1" ]; then
+    pass "managed observability state restores after policy-remove"
+  else
+    fail_test "managed observability marker was not restored after policy-remove"
+  fi
 fi
 
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
