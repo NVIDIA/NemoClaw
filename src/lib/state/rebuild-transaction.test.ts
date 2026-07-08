@@ -292,6 +292,36 @@ describe("RebuildTransactionStore", () => {
     expect(fs.readdirSync(transactionDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("fails safely when atomic create publication reports a cross-device invariant", async () => {
+    const { stateDir, store } = makeStore();
+    vi.spyOn(fs, "linkSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("simulated cross-device link"), { code: "EXDEV" });
+    });
+
+    await expect(store.create(intent(), preparedReceipts())).rejects.toThrow(
+      "state directory changed filesystem",
+    );
+    expect(store.load(SANDBOX)).toBeNull();
+    const transactionDir = path.join(stateDir, REBUILD_TRANSACTION_DIRNAME);
+    expect(fs.readdirSync(transactionDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("commits create when only temporary-link cleanup initially fails", async () => {
+    const { stateDir, store } = makeStore();
+    const unlinkSync = fs.unlinkSync.bind(fs);
+    vi.spyOn(fs, "unlinkSync")
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("simulated cleanup failure"), { code: "EIO" });
+      })
+      .mockImplementation(unlinkSync);
+
+    const created = await store.create(intent(), preparedReceipts());
+
+    expect(store.load(SANDBOX)).toEqual(created);
+    const transactionDir = path.join(stateDir, REBUILD_TRANSACTION_DIRNAME);
+    expect(fs.readdirSync(transactionDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("fails closed for malformed JSON and unknown future versions", async () => {
     const { stateDir, store } = makeStore();
     await store.create(intent(), preparedReceipts());
@@ -331,10 +361,41 @@ describe("RebuildTransactionStore", () => {
         record.updatedAt = "yesterday";
       },
     ],
+    [
+      "backup timestamp",
+      (record: Record<string, unknown>) => {
+        const receipts = record.receipts as Record<string, unknown>;
+        (receipts.backup as Record<string, unknown>).manifestTimestamp = "not-a-date";
+      },
+    ],
+    [
+      "old-sandbox deletion receipt",
+      (record: Record<string, unknown>) => {
+        (record.receipts as Record<string, unknown>).oldSandboxDeletion = "bad";
+      },
+    ],
+    [
+      "replacement receipt",
+      (record: Record<string, unknown>) => {
+        (record.receipts as Record<string, unknown>).replacement = "bad";
+      },
+    ],
   ])("rejects a malformed %s", async (_label, mutate) => {
     const { stateDir, store } = makeStore();
     await store.create(intent(), preparedReceipts());
     writeRawRecord(getRebuildTransactionPath(SANDBOX, stateDir), mutate);
+    await expectCode(() => store.load(SANDBOX), "CORRUPT");
+  });
+
+  it("rejects replacement evidence timestamped before deletion", async () => {
+    const { stateDir, store } = makeStore();
+    await advanceToReplacement(store);
+    const filePath = getRebuildTransactionPath(SANDBOX, stateDir);
+    writeRawRecord(filePath, (record) => {
+      const receipts = record.receipts as Record<string, Record<string, unknown>>;
+      receipts.replacement!.observedAt = "2026-07-08T00:00:30.000Z";
+    });
+
     await expectCode(() => store.load(SANDBOX), "CORRUPT");
   });
 

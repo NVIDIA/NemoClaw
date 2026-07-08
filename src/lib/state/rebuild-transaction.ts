@@ -21,6 +21,7 @@ const MAX_TRANSACTION_BYTES = 256 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const BACKUP_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/;
 
 export type RebuildTransactionPhaseV1 =
   | "prepared"
@@ -192,6 +193,22 @@ function timestamp(value: unknown, label: string, sandboxName: string): string {
   return candidate;
 }
 
+function backupManifestTimestamp(value: unknown, sandboxName: string): string {
+  const candidate = requiredString(value, "receipts.backup.manifestTimestamp", sandboxName);
+  const match = BACKUP_TIMESTAMP_PATTERN.exec(candidate);
+  const parseable = match
+    ? `${match[1]}${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`
+    : candidate;
+  if (!Number.isFinite(Date.parse(parseable))) {
+    throw transactionError(
+      "CORRUPT",
+      sandboxName,
+      "receipts.backup.manifestTimestamp is not a timestamp",
+    );
+  }
+  return candidate;
+}
+
 function fingerprint(value: unknown, label: string, sandboxName: string): string {
   const candidate = requiredString(value, label, sandboxName);
   if (!FINGERPRINT_PATTERN.test(candidate)) {
@@ -277,24 +294,34 @@ function normalizeIntent(value: unknown, sandboxName: string): RebuildTransactio
 function normalizeReceipts(value: unknown, sandboxName: string): RebuildTransactionReceiptsV1 {
   const receipts = requiredRecord(value, "receipts", sandboxName);
   const backup = requiredRecord(receipts.backup, "receipts.backup", sandboxName);
-  const oldSandboxDeletion = isRecord(receipts.oldSandboxDeletion)
+  const oldSandboxDeletionValue = receipts.oldSandboxDeletion;
+  const oldSandboxDeletion =
+    oldSandboxDeletionValue === undefined
+      ? undefined
+      : requiredRecord(oldSandboxDeletionValue, "receipts.oldSandboxDeletion", sandboxName);
+  const normalizedOldSandboxDeletion = oldSandboxDeletion
     ? {
         observedAt: timestamp(
-          receipts.oldSandboxDeletion.observedAt,
+          oldSandboxDeletion.observedAt,
           "receipts.oldSandboxDeletion.observedAt",
           sandboxName,
         ),
       }
     : undefined;
-  const replacement = isRecord(receipts.replacement)
+  const replacementValue = receipts.replacement;
+  const replacement =
+    replacementValue === undefined
+      ? undefined
+      : requiredRecord(replacementValue, "receipts.replacement", sandboxName);
+  const normalizedReplacement = replacement
     ? {
         identityFingerprint: fingerprint(
-          receipts.replacement.identityFingerprint,
+          replacement.identityFingerprint,
           "receipts.replacement.identityFingerprint",
           sandboxName,
         ),
         observedAt: timestamp(
-          receipts.replacement.observedAt,
+          replacement.observedAt,
           "receipts.replacement.observedAt",
           sandboxName,
         ),
@@ -302,19 +329,15 @@ function normalizeReceipts(value: unknown, sandboxName: string): RebuildTransact
     : undefined;
   return {
     backup: {
-      manifestTimestamp: requiredString(
-        backup.manifestTimestamp,
-        "receipts.backup.manifestTimestamp",
-        sandboxName,
-      ),
+      manifestTimestamp: backupManifestTimestamp(backup.manifestTimestamp, sandboxName),
       manifestFingerprint: fingerprint(
         backup.manifestFingerprint,
         "receipts.backup.manifestFingerprint",
         sandboxName,
       ),
     },
-    ...(oldSandboxDeletion ? { oldSandboxDeletion } : {}),
-    ...(replacement ? { replacement } : {}),
+    ...(normalizedOldSandboxDeletion ? { oldSandboxDeletion: normalizedOldSandboxDeletion } : {}),
+    ...(normalizedReplacement ? { replacement: normalizedReplacement } : {}),
   };
 }
 
@@ -385,6 +408,13 @@ function normalizeRecord(value: unknown, sandboxName: string): RebuildTransactio
   ) {
     throw transactionError("CORRUPT", sandboxName, "contains receipts from a future phase");
   }
+  if (
+    receipts.oldSandboxDeletion &&
+    receipts.replacement &&
+    Date.parse(receipts.replacement.observedAt) < Date.parse(receipts.oldSandboxDeletion.observedAt)
+  ) {
+    throw transactionError("CORRUPT", sandboxName, "has out-of-order phase receipts");
+  }
   return {
     version: REBUILD_TRANSACTION_VERSION,
     transactionId,
@@ -401,8 +431,9 @@ function normalizeRecord(value: unknown, sandboxName: string): RebuildTransactio
 }
 
 function syncDirectory(dirPath: string): void {
-  // NemoClaw's supported Linux filesystems persist the directory entry after
-  // fsync. Other platforms may provide weaker directory-fsync guarantees.
+  // Linux persists the directory entry after fsync. Node does not expose
+  // macOS F_FULLFSYNC, so macOS provides best-effort rather than power-loss
+  // durability; schema validation still fails closed after any torn record.
   const fd = fs.openSync(dirPath, fs.constants.O_RDONLY);
   try {
     fs.fsyncSync(fd);
@@ -434,10 +465,28 @@ function durablePublish(
     fs.closeSync(fd);
     fd = null;
     if (createOnly) {
-      // Both paths are deliberately in dirPath, so this hard link cannot cross
-      // a filesystem boundary and fail with EXDEV.
-      fs.linkSync(candidatePath, filePath);
-      fs.unlinkSync(candidatePath);
+      // Both directory entries are in dirPath. Verify the invariant before the
+      // atomic no-replace link; a copy/rename fallback would reintroduce the
+      // concurrent-creator overwrite this path exists to prevent.
+      if (fs.statSync(candidatePath).dev !== fs.statSync(dirPath).dev) {
+        throw new Error("Rebuild transaction candidate crossed a filesystem boundary");
+      }
+      try {
+        fs.linkSync(candidatePath, filePath);
+      } catch (error) {
+        if (isErrnoException(error) && error.code === "EXDEV") {
+          throw new Error(
+            "Rebuild transaction state directory changed filesystem during atomic publication",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+      try {
+        fs.unlinkSync(candidatePath);
+      } catch {
+        // The canonical hard link is already durable; finally retries cleanup.
+      }
     } else {
       fs.renameSync(candidatePath, filePath);
     }
@@ -508,7 +557,8 @@ function assertReceiptHistoryUnchanged(
 
 /** Durable state for the rebuild coordinator. Each mutation acquires the
  * existing per-sandbox lifecycle lock before revision validation and durable
- * publication. Nested calls from an already-locked rebuild are reentrant.
+ * publication. AsyncLocalStorage makes nested calls reentrant within one
+ * process; separate processes always contend on the filesystem lock.
  */
 export class RebuildTransactionStore {
   private readonly stateDir: string;
