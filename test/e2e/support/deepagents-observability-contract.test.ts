@@ -217,6 +217,9 @@ describe("Deep Agents observability policy proof", () => {
       ),
     ).toBe("active");
     expect(
+      observabilityPresetState("  ○ observability-otlp-local — host-local OTLP export\n"),
+    ).toBe("inactive");
+    expect(
       observabilityPresetState(
         "  ○ observability-otlp-local — host-local OTLP export (recorded locally, not active on gateway)\n",
       ),
