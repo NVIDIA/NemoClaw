@@ -60,6 +60,7 @@ describe("E2E target advisor — prompt construction", () => {
     expect(turn.syntheticToolResults?.map((result) => result.toolName)).toEqual([
       "e2e_target_metadata",
       "e2e_target_changed_files",
+      "e2e_target_risk_plan",
       "e2e_target_git_diff",
       "e2e_target_response_schema",
     ]);
@@ -67,8 +68,9 @@ describe("E2E target advisor — prompt construction", () => {
     expect(turn.syntheticToolResults?.[1]?.content).toContain(
       "test/e2e/fixtures/phases/onboarding.ts",
     );
-    expect(turn.syntheticToolResults?.[2]?.content).toContain("+ echo ok");
-    expect(turn.syntheticToolResults?.[3]?.content).toContain("test-schema");
+    expect(turn.syntheticToolResults?.[2]?.content).toContain('"version":1');
+    expect(turn.syntheticToolResults?.[3]?.content).toContain("+ echo ok");
+    expect(turn.syntheticToolResults?.[4]?.content).toContain("test-schema");
   });
 
   it("system prompt is non-empty and points JSON schema lookup at synthetic context", () => {
@@ -99,6 +101,47 @@ describe("E2E target advisor — prompt construction", () => {
 });
 
 describe("E2E target advisor — normalization contract", () => {
+  it("enforces deterministic risk-plan jobs when the model recommends none", () => {
+    const normalized = normalizeE2eTargetAdvisorResult(
+      {
+        required: [],
+        optional: [],
+        noTargetE2eReason: "No E2E needed",
+        confidence: "low",
+      },
+      metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
+    );
+
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "state-backup-restore",
+      "upgrade-stale-sandbox",
+    ]);
+    expect(normalized.required.every((item) => item.required)).toBe(true);
+    expect(normalized.noTargetE2eReason).toBeNull();
+    expect(normalized.confidence).toBe("medium");
+  });
+
+  it("does not let a model downgrade a deterministic risk-plan job", () => {
+    const normalized = normalizeE2eTargetAdvisorResult(
+      {
+        required: [],
+        optional: [
+          {
+            id: "upgrade-stale-sandbox",
+            workflow: E2E_WORKFLOW,
+            selectorType: "job",
+            reason: "model called the regression optional",
+          },
+        ],
+        confidence: "high",
+      },
+      metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
+    );
+
+    expect(normalized.required.map((item) => item.id)).toContain("upgrade-stale-sandbox");
+    expect(normalized.optional.map((item) => item.id)).not.toContain("upgrade-stale-sandbox");
+  });
+
   it("preserves valid recommendations and canonicalizes the dispatch command", () => {
     const raw = {
       version: 1,

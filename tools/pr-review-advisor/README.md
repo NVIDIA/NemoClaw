@@ -29,7 +29,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 2. Checks out advisor implementation code from trusted `main` into `advisor/`.
 3. Checks out PR content into `pr-workdir/` as inert read-only analysis data.
 4. Installs a pinned Pi SDK package with lifecycle scripts disabled.
-5. Waits for repository-required status checks, plus the E2E Advisor recommendation, to leave the pending/in-progress state.
+5. Builds the same deterministic regression risk plan used by E2E Advisor and injects it into the validation review context.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for each configured model variant: the primary GPT-5.5 lane and the Nemotron Ultra lane.
 8. Opens one Pi session per model variant and reviews the PR as a short conversation: orientation/drift, security, acceptance/correctness/tests, then final JSON synthesis.
@@ -37,8 +37,10 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 10. Writes artifacts under the model-specific artifact directory, for example `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
 11. Posts or updates model-specific sticky PR comments marked by `<!-- nemoclaw-pr-review-advisor -->` and `<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->` plus hidden head-SHA, run, and comment-id metadata for follow-up reviews.
 
-The workflow is advisory and must not be configured as a required status check. Making it required can
-create circular wait behavior and defeats the goal of letting it observe settled required-check state.
+The workflow is advisory and must not be configured as a required status check. It uses the
+deterministic plan as review context but does not run its jobs. E2E Advisor emits the corresponding
+plan-backed recommendations separately and likewise does not dispatch E2E. Model availability must
+not become the authority for whether a pull request can merge.
 
 ## Author and agent follow-up
 
@@ -55,7 +57,9 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
 - Previous-review follow-up treats GitHub issue comments as mutable and replayable. A prior advisor comment is accepted only when hidden metadata binds it to the actual comment ID and to a matching PR Review / Advisor workflow run, attempt, head SHA, event, and update-time window. This accepts the residual same-run boundary: another trusted repository workflow would need to post a marker-bearing `github-actions[bot]` comment during the same PR Review / Advisor run window while knowing the run metadata. Fully preventing that requires a durable GitHub comment-to-workflow ownership signal that the REST API does not expose. Replace this local provenance check only if that stronger signal becomes available.
 - During rollout, non-default advisor lanes may see an older trusted `main` checkout that has the workflow matrix but not the matching model/configurable-comment support. The workflow treats that as trusted-main rollout skew, writes low-confidence skip artifacts in the lane-specific artifact directory, and suppresses that lane's sticky PR comment. Do not run PR-controlled advisor code to bypass this gate; remove the gate only after the trusted `main` implementation always supports the parallel advisor lane and configurable sticky markers.
-- Before model analysis, the workflow deterministically waits for required status checks from repository rulesets. If rulesets cannot be read, it falls back to the configured `PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS` list.
+- The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed
+  invariant and required job for missing evidence. Both E2E Advisor result normalizers restore any
+  listed job that a model omits or downgrades.
 
 ## Required secret
 
@@ -92,7 +96,9 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 - `retry-prompts/` — retry synthesis prompt and synthetic tool results when the first output is malformed or low quality.
 - `context/drift-context.json` — deterministic drift, overlap, monolith, and previous-review context.
 - `context/security-context.json` — deterministic security-risk context.
-- `context/validation-context.json` — deterministic acceptance, source-of-truth, static test-inventory, and simplification-signal context.
+- `context/validation-context.json` — deterministic acceptance, source-of-truth, static
+  test-inventory, simplification-signal, and exact-SHA risk-plan context, including the regression
+  invariants reviewed for the PR.
 - `context/pr.diff` — truncated PR diff used by the advisor.
 - `context/previous-advisor-review.md` — previous sticky PR Review Advisor comment when one exists and its hidden run/comment metadata validates.
 - `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.

@@ -98,6 +98,11 @@ test/e2e/
 
 ## CI Entry Points
 
+- `tools/advisors/risk-plan.mts` is the small deterministic selection policy
+  shared by PR Review Advisor and E2E Advisor. It maps changed runtime surfaces
+  to invariant families and canonical `e2e.yaml` jobs; it is not a second test
+  runner or migration-status ledger.
+
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
   JSON summaries plus action, log, and shell command-evidence directories under

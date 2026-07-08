@@ -81,14 +81,6 @@ jobs:
       PI_SDK_VERSION: "0.74.0"
       PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
       PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
-      # This job is advisory and must not be configured as a required status
-      # check. It waits for required checks before model analysis so summaries
-      # are based on settled CI instead of an immediate pending snapshot.
-      PR_REVIEW_ADVISOR_WAIT_FOR_REQUIRED_CHECKS: "1"
-      PR_REVIEW_ADVISOR_WAIT_TIMEOUT_MS: "900000"
-      PR_REVIEW_ADVISOR_WAIT_POLL_MS: "30000"
-      PR_REVIEW_ADVISOR_WAIT_ADDITIONAL_CONTEXTS: "E2E recommendation"
-      PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS: "checks,commit-lint,dco-check,check-hash,changes"
       PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
       PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
       PR_REVIEW_ADVISOR_COMMENT_MARKER: ${{ matrix.advisor.comment_marker }}

@@ -26,6 +26,7 @@ import {
   stringOrDefault,
   stringOrUndefined,
 } from "../advisors/json.mts";
+import { buildRiskPlan, type RiskPlan } from "../advisors/risk-plan.mts";
 import {
   type AdvisorPromptTurn,
   type AdvisorSyntheticToolResult,
@@ -214,6 +215,7 @@ export type DeterministicReviewContext = {
   diffStat: string;
   commits: string[];
   riskyAreas: string[];
+  riskPlan: RiskPlan;
   testDepth: ReviewAdvisorResult["testDepth"];
   staticTestInventory: StaticTestInventory;
   simplificationSignals: SimplificationSignal[];
@@ -334,7 +336,13 @@ async function main(): Promise<void> {
   const changedFiles = getChangedFiles(baseRef, headRef);
   const headSha = getHeadSha(headRef);
   const diff = getDiff(baseRef, headRef, 160000);
-  const deterministic = await collectDeterministicContext({ baseRef, headRef, changedFiles, diff });
+  const deterministic = await collectDeterministicContext({
+    baseRef,
+    headRef,
+    headSha,
+    changedFiles,
+    diff,
+  });
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
   writeDeterministicContextArtifacts(artifacts, deterministic, diff);
   const systemPrompt = buildSystemPrompt();
@@ -647,17 +655,26 @@ export function recordRetryFailureOnFirstPass(
 async function collectDeterministicContext(options: {
   baseRef: string;
   headRef: string;
+  headSha: string;
   changedFiles: string[];
   diff: string;
 }): Promise<DeterministicReviewContext> {
   const github = await collectGitHubContext();
-  const riskyAreas = detectRiskyAreas(options.changedFiles);
-  const testDepth = classifyTestDepth(options.changedFiles, options.diff);
+  const riskPlan = buildRiskPlan({
+    headSha: options.headSha,
+    changedFiles: options.changedFiles,
+  });
+  const riskyAreas = [
+    ...detectRiskyAreas(options.changedFiles),
+    ...riskPlan.families.map((family) => family.id),
+  ].filter((area, index, areas) => areas.indexOf(area) === index);
+  const testDepth = classifyTestDepth(options.changedFiles, options.diff, riskPlan);
   const staticTestInventory = collectStaticTestInventory(options.changedFiles);
   return {
     diffStat: getDiffStat(options.baseRef, options.headRef),
     commits: getCommits(options.baseRef, options.headRef),
     riskyAreas,
+    riskPlan,
     testDepth,
     staticTestInventory,
     simplificationSignals: detectSimplificationSignals(options.changedFiles, options.diff),
@@ -690,6 +707,7 @@ function detectRiskyAreas(changedFiles: string[]): string[] {
 export function classifyTestDepth(
   changedFiles: string[],
   diff = "",
+  riskPlan = buildRiskPlan({ headSha: "test-depth", changedFiles }),
 ): ReviewAdvisorResult["testDepth"] {
   const sourceFiles = changedFiles.filter((file) => !isTestFile(file));
   if (changedFiles.length === 0) {
@@ -701,6 +719,17 @@ export function classifyTestDepth(
       rationale:
         "Changes are limited to tests, documentation, or metadata that cannot affect runtime behavior directly.",
       suggestedTests: ["Run the relevant existing unit/doc validation for the touched files."],
+    };
+  }
+  if (riskPlan.requiredJobs.length > 0) {
+    return {
+      verdict: "runtime_validation_recommended",
+      rationale: `Deterministic regression risks require live validation: ${riskPlan.families
+        .map((family) => family.id)
+        .join(", ")}.`,
+      suggestedTests: riskPlan.requiredJobs.map(
+        (job) => `Run the \`${job.id}\` E2E job for ${job.reasons.join("; ")}.`,
+      ),
     };
   }
   const e2eSignals = sourceFiles.filter(
@@ -1482,6 +1511,7 @@ export function buildSystemPrompt(): string {
     fencedBlock(securityRubric, "markdown"),
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. When more tests would improve confidence, make testDepth.suggestedTests behavior-specific so they can render under 'Test follow-ups to resolve or justify'.",
+    "5a. Deterministic regression risks: when validation context contains a riskPlan, review every listed invariant against the diff and test evidence. Missing evidence for a changed invariant must become a correctness or tests finding with a concrete regression test. Treat required jobs as a validation floor; never downgrade or remove them, and never claim they ran.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
     "7. E2E suite simplicity: when a PR adds or changes files under `test/e2e/`, `.github/workflows/e2e.yaml`, or `tools/e2e/`, take a closer architecture look for new systems. Favor focused tests and local helpers. Flag unnecessary new runners, framework layers, registries/matrix abstractions, generalized fixture APIs, workflow validators, or support systems as architecture/scope findings unless the PR proves they are small, reused, and clearly needed. Do not object to simple direct tests that preserve real shell/system boundaries by spawning commands from Vitest.",
     "8. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
@@ -1560,7 +1590,7 @@ Use the trusted security review skill embedded in the system prompt. For each se
       ],
       prompt: `Turn 3/4 — acceptance, correctness, test depth, and source-of-truth review.
 
-Use the synthetic \`pr_review_validation_context\` tool result attached immediately before this turn plus the PR diff already provided in Turn 1. Inspect linked issue clauses and comments from the deterministic GitHub context when available. Use staticTestInventory to avoid duplicating existing tests and to identify nearby changed test coverage. Use simplificationSignals to look for safe opportunities to delete, use stdlib/native/platform features, remove YAGNI abstractions, or shrink changed code without weakening security or correctness boundaries. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. When tests are advisable, make each suggested test name the concrete behavior or risk to cover. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
+Use the synthetic \`pr_review_validation_context\` tool result attached immediately before this turn plus the PR diff already provided in Turn 1. Inspect linked issue clauses and comments from the deterministic GitHub context when available. Review every invariant and required job in riskPlan as a deterministic validation floor. If the changed behavior lacks evidence for an invariant, emit a correctness or tests finding with the concrete missing regression. Do not claim a listed E2E job ran. Use staticTestInventory to avoid duplicating existing tests and to identify nearby changed test coverage. Use simplificationSignals to look for safe opportunities to delete, use stdlib/native/platform features, remove YAGNI abstractions, or shrink changed code without weakening security or correctness boundaries. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. When tests are advisable, make each suggested test name the concrete behavior or risk to cover. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
 
 Do not produce final JSON yet; reply with concise working notes only.
 `,
@@ -1678,6 +1708,7 @@ function buildSecurityTurnContext(context: DeterministicReviewContext): Record<s
 
 function buildValidationTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
   return {
+    riskPlan: context.riskPlan,
     testDepth: context.testDepth,
     staticTestInventory: context.staticTestInventory,
     simplificationSignals: context.simplificationSignals,

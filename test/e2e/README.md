@@ -68,10 +68,12 @@ phase names. Cold image pulls, first-time model downloads, provider outages,
 and runner or network incidents can still affect the signal, so maintainers
 should inspect the timing table before acting on a warning.
 
-For PRs, E2E Advisor deterministically recommends the `cloud-onboard` target
-when changes affect onboard behavior, trace timing, scorecard analysis, budget
-configuration, or the unified E2E workflow. The scorecard remains the source
-of truth for advisory warm-system trend evaluation.
+For PRs, E2E Advisor builds a stable exact-SHA risk plan. It deterministically
+recommends required jobs for known regression families and still requires
+`cloud-onboard` when changes affect onboard behavior, trace timing, scorecard
+analysis, budget configuration, or the unified E2E workflow. Model advice is
+additive and cannot downgrade the deterministic floor. The scorecard remains
+the source of truth for advisory warm-system trend evaluation.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span

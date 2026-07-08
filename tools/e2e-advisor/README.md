@@ -7,7 +7,7 @@ The E2E Advisor is an SDK-powered PR reviewer for NemoClaw E2E coverage. It runs
 `NVIDIA/NemoClaw` pull requests, asks the advisor model to inspect the PR diff and repository, and posts a sticky
 PR comment with required/optional E2E recommendations.
 
-The advisor recommends E2E coverage from the PR diff and repository context rather than a fixed path-rule table. The advisor model is expected to inspect existing E2E workflows, target definitions, source files, and nearby tests before recommending coverage.
+The advisor combines a small checked-in regression risk plan with model review of the PR diff and repository context. The deterministic plan establishes the minimum required jobs for known high-risk lifecycle, upgrade, agent, inference, messaging, platform, credential, and security surfaces. The model may add adjacent coverage but cannot remove that floor.
 The target advisor also emits canonical `gh workflow run e2e.yaml` commands that use the workflow's `targets` or `jobs` inputs.
 After model output is normalized, the analyzer applies a deterministic safety
 net for timing-sensitive onboard infrastructure: changes to onboard behavior,
@@ -23,7 +23,7 @@ the trusted timing signal.
 2. Skips user-fork PRs; it only analyzes PRs whose head repo is `NVIDIA/NemoClaw`.
 3. Installs the pinned Pi SDK package.
 4. Runs `tools/e2e-advisor/analyze.mts` and `tools/e2e-advisor/targets.mts`.
-5. Writes artifacts under `artifacts/e2e-advisor/`.
+5. Writes the exact-SHA `risk-plan.json` and advisor artifacts under `artifacts/e2e-advisor/`.
 6. Posts or updates sticky PR comments marked by `<!-- nemoclaw-e2e-advisor -->` and `<!-- nemoclaw-e2e-target-advisor -->`.
 
 ## Safety model
@@ -60,6 +60,9 @@ dispatch commands; it does not trigger E2E workflows automatically.
 ## Artifacts
 
 - `e2e-advisor-prompt.md` — task prompt sent to the advisor. Diff, changed files, metadata, and schema are injected into the Pi session as deterministic synthetic tool results and captured in the session transcript.
+- `risk-plan.json` — stable exact-SHA risk families, invariants, required jobs, a capped
+  `automaticJobs` candidate subset, manual-expansion state, and the plan hash. Both E2E
+  advisor projections consume the required-job floor, but neither dispatches it.
 - `e2e-advisor-raw-output.txt` — raw advisor transcript and diagnostics.
 - `e2e-advisor-result.json` — parsed advisor response or execution metadata.
 - `e2e-advisor-session.html` — exported advisor session transcript.

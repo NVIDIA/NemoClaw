@@ -6,6 +6,7 @@ import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { githubGraphql, upsertStickyComment } from "../tools/advisors/github.mts";
+import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
   DEFAULT_ADVISOR_MODEL,
@@ -49,6 +50,7 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
     diffStat: "1 file changed",
     commits: ["abc123 feat: add review advisor"],
     riskyAreas: [],
+    riskPlan: buildRiskPlan({ headSha: "abc123def456", changedFiles: [] }),
     testDepth: {
       verdict: "unit_sufficient",
       rationale: "deterministic fallback",
@@ -217,7 +219,9 @@ describe("PR review advisor", () => {
     expect(
       classifyTestDepth(["src/lib/messaging/channels/slack/policy/openclaw.yaml"]).verdict,
     ).toBe("runtime_validation_recommended");
-    expect(classifyTestDepth(["src/lib/credentials.ts"]).verdict).toBe("mocks_recommended");
+    expect(classifyTestDepth(["src/lib/credentials.ts"]).verdict).toBe(
+      "runtime_validation_recommended",
+    );
     expect(classifyTestDepth(["docs/get-started/quickstart.mdx"]).verdict).toBe("unit_sufficient");
   });
 
@@ -282,6 +286,7 @@ describe("PR review advisor", () => {
     expect(prompt).toContain("Test follow-ups to resolve or justify");
     expect(prompt).toContain("Every finding must be probe-shaped");
     expect(prompt).toContain("Simplification review");
+    expect(prompt).toContain("Deterministic regression risks");
     expect(prompt).toContain("delete, stdlib, native, yagni, or shrink");
     expect(prompt).not.toContain("Consider writing more tests for");
     expect(prompt).toContain("take a closer architecture look for new systems");
@@ -345,6 +350,7 @@ describe("PR review advisor", () => {
     expect(turns[2]?.prompt).not.toContain("localizedPatchSignals");
     expect(turns[2]?.syntheticToolResults?.[0]?.content).toContain("localizedPatchSignals");
     expect(turns[2]?.syntheticToolResults?.[0]?.content).toContain("staticTestInventory");
+    expect(turns[2]?.syntheticToolResults?.[0]?.content).toContain("riskPlan");
     expect(turns[2]?.syntheticToolResults?.[0]?.content).toContain("simplificationSignals");
     expect(turns[3]?.prompt).toContain("<pr_review_advisor_json>");
     expect(turns[3]?.syntheticToolResults?.map((result) => result.toolName)).toEqual([
@@ -468,6 +474,9 @@ describe("PR review advisor", () => {
       expect(
         fs.readFileSync(path.join(tmp, "context", "validation-context.json"), "utf8"),
       ).toContain("staticTestInventory");
+      expect(
+        fs.readFileSync(path.join(tmp, "context", "validation-context.json"), "utf8"),
+      ).toContain("riskPlan");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
