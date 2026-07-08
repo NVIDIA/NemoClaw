@@ -537,6 +537,14 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           rawSecret: "abcdefghijklmnopqrst",
         },
       ],
+      [
+        fingerprint(CONTEXT_PATTERNS[2]),
+        {
+          name: "password_context",
+          sample: "PASSWORD=abcdefghijklmnopqrst",
+          rawSecret: "abcdefghijklmnopqrst",
+        },
+      ],
     ]);
     const extraSamples = [
       { name: "akia", sample: secretFixture("AK", "IA", "ABCDEFGHIJKLMNOP") },
@@ -559,11 +567,6 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       {
         name: "secret_context",
         sample: "SECRET=abcdefghijklmnopqrst",
-        rawSecret: "abcdefghijklmnopqrst",
-      },
-      {
-        name: "password_context",
-        sample: "PASSWORD=abcdefghijklmnopqrst",
         rawSecret: "abcdefghijklmnopqrst",
       },
       {
