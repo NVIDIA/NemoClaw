@@ -299,7 +299,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
-  it("restores Tavily denial and the prior runtime marker for later ordered checks", () => {
+  it("restores Tavily denial while preserving the runtime marker for later ordered checks", () => {
     const result = spawnSync(
       "bash",
       [
@@ -328,7 +328,6 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       "TRACE:opt-in-proof",
       "TRACE:policy-remove",
       "TRACE:post-remove-blocked",
-      "TRACE:observability-restore",
     ]);
   });
 
