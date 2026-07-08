@@ -223,8 +223,24 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   const targetCheckout = requireStep(errors, steps, "Prepare target PR checkout");
   requireRunContains(errors, targetCheckout, '[[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/');
   requireRunContains(errors, targetCheckout, '[[ ! "$TARGET_PR" =~ ^[0-9]+$ ]]');
-  requireRunContains(errors, targetCheckout, '"$TARGET_BASE" == *:*');
-  requireRunContains(errors, targetCheckout, '"$TARGET_BASE" == *..*');
+  const targetBaseGuards = [
+    '-z "$TARGET_BASE"',
+    '"$TARGET_BASE" == -*',
+    '"$TARGET_BASE" == /*',
+    '"$TARGET_BASE" == *..*',
+    '"$TARGET_BASE" == *:*',
+    '"$TARGET_BASE" =~ [[:space:]]',
+    '! "$TARGET_BASE" =~ ^[A-Za-z0-9._/-]+$',
+  ];
+  for (const guard of targetBaseGuards) {
+    requireRunContains(errors, targetCheckout, guard);
+    requireRunOrders(
+      errors,
+      targetCheckout,
+      guard,
+      'git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"',
+    );
+  }
   requireRunOrders(
     errors,
     targetCheckout,
@@ -237,13 +253,6 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     '[[ ! "$TARGET_PR" =~',
     'git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head',
   );
-  requireRunOrders(
-    errors,
-    targetCheckout,
-    '"$TARGET_BASE" == *:*',
-    'git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"',
-  );
-
   const install = requireStep(errors, steps, "Install Pi SDK");
   requireRunContains(errors, install, "--ignore-scripts");
   requireRunContains(errors, install, "$ADVISOR_DIR/node_modules");
