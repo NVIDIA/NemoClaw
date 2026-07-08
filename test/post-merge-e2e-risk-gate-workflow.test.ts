@@ -86,6 +86,7 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     expect(finish["continue-on-error"]).toBe(true);
     expect(finish.run).toContain("post-merge-risk-gate.mts --mode finish");
     expect(finish.run).toContain('--work-dir "${{ steps.workspace.outputs.work_dir }}"');
+    expect(finish.run).toContain('--state-hash "${{ steps.start.outputs.state_hash }}"');
     expect(finish.run).toContain('--check-id "${{ steps.start.outputs.check_id }}"');
     expect(finish.run).toContain('--run-id "${{ steps.start.outputs.run_id }}"');
     expect(completionFallback.if).toContain("steps.finish.outcome == 'failure'");

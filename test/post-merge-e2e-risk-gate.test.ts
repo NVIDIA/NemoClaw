@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -46,6 +47,10 @@ function state(): RiskGateState {
     },
     requiresManualExpansion: false,
   };
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function signal(jobId: string, overrides: Partial<E2eRiskSignal> = {}): E2eRiskSignal {
@@ -119,15 +124,36 @@ describe("post-merge E2E risk gate", () => {
           "finish",
           "--work-dir",
           workDir,
+          "--state-hash",
+          "b".repeat(64),
           "--check-id",
           "17",
           "--run-id",
           "23",
         ]),
-      ).toMatchObject({ mode: "finish", checkRunId: 17, childRunId: 23 });
+      ).toMatchObject({
+        mode: "finish",
+        checkRunId: 17,
+        childRunId: 23,
+        stateHash: "b".repeat(64),
+      });
       expect(() =>
         parseControllerCommand(["--mode", "abandon", "--check-id", "9007199254740992"]),
       ).toThrow(/safe integer range/u);
+      expect(() =>
+        parseControllerCommand([
+          "--mode",
+          "finish",
+          "--work-dir",
+          workDir,
+          "--state-hash",
+          "unsafe",
+          "--check-id",
+          "17",
+          "--run-id",
+          "23",
+        ]),
+      ).toThrow(/state-hash must be a lowercase SHA-256 hash/u);
       expect(() => parseControllerCommand(["--mode", "finish"])).toThrow(/--work-dir/u);
 
       fs.chmodSync(workDir, 0o755);
@@ -247,10 +273,11 @@ describe("post-merge E2E risk gate", () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-finish-"));
     const statePath = path.join(workDir, "e2e-risk-gate-state.json");
     const gate = state();
+    const serializedState = `${JSON.stringify(gate)}\n`;
     const childRunId = 23;
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    fs.writeFileSync(statePath, `${JSON.stringify(gate)}\n`, { mode: 0o600 });
+    fs.writeFileSync(statePath, serializedState, { mode: 0o600 });
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce({
@@ -273,6 +300,7 @@ describe("post-merge E2E risk gate", () => {
     try {
       await finishRiskGate({
         statePath,
+        stateHash: sha256(serializedState),
         evidencePath: path.join(workDir, "evidence"),
         checkRunId: 17,
         childRunId,
@@ -284,6 +312,41 @@ describe("post-merge E2E risk gate", () => {
         status: "completed",
         conclusion: "failure",
         output: { title: "Selected E2E workflow failed" },
+      });
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects changed controller state before classifying downloaded evidence", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-state-"));
+    const statePath = path.join(workDir, "e2e-risk-gate-state.json");
+    const originalState = `${JSON.stringify(state())}\n`;
+    const changedState = `${JSON.stringify({ ...state(), requiresManualExpansion: true })}\n`;
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    fs.writeFileSync(statePath, changedState, { mode: 0o600 });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({ ok: true, text: async () => "{}" } as Response);
+
+    try {
+      await expect(
+        finishRiskGate({
+          statePath,
+          stateHash: sha256(originalState),
+          evidencePath: path.join(workDir, "evidence"),
+          checkRunId: 17,
+          childRunId: 23,
+        }),
+      ).rejects.toThrow(/controller state changed after E2E dispatch/u);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain("check-runs/17");
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+        status: "completed",
+        conclusion: "neutral",
+        output: { title: "Risk-selected E2E evidence could not be verified" },
       });
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });

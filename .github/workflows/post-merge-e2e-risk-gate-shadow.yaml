@@ -112,6 +112,7 @@ jobs:
           node --experimental-strip-types tools/e2e-advisor/post-merge-risk-gate.mts
           --mode finish
           --work-dir "${{ steps.workspace.outputs.work_dir }}"
+          --state-hash "${{ steps.start.outputs.state_hash }}"
           --check-id "${{ steps.start.outputs.check_id }}"
           --run-id "${{ steps.start.outputs.run_id }}"
 

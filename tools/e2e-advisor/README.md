@@ -60,6 +60,12 @@ unhandled-error counts for each job and matrix shard. The controller accepts
 only signals bound to the expected SHA, plan hash, correlation ID, job, and
 shard.
 
+The start step records a SHA-256 digest of its private controller state in a
+GitHub step output. After child artifacts are downloaded, the finish step reads
+that state once and verifies the digest before parsing it or classifying any
+evidence, so downloaded files cannot change the dispatch state used for the
+check result.
+
 The controller writes a check on the merged commit without posting a PR
 comment or running the scheduled/manual scorecard. Complete unskipped evidence
 reports success, selected E2E workflow or test failures for the merged commit report

@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -41,7 +41,12 @@ type ControllerPaths = {
 
 export type ControllerCommand =
   | ({ mode: "start"; baseSha: string; commitSha: string } & ControllerPaths)
-  | ({ mode: "finish"; checkRunId: number; childRunId: number } & ControllerPaths)
+  | ({
+      mode: "finish";
+      checkRunId: number;
+      childRunId: number;
+      stateHash: string;
+    } & ControllerPaths)
   | { mode: "abandon"; checkRunId: number };
 
 type CheckConclusion = "success" | "failure" | "neutral";
@@ -113,6 +118,16 @@ function parsePositiveId(value: string, name: string): number {
   return parsed;
 }
 
+function parseHash(value: string | undefined, name: string): string {
+  const parsed = requiredArgument(value, name);
+  if (!HASH_PATTERN.test(parsed)) throw new Error(`--${name} must be a lowercase SHA-256 hash`);
+  return parsed;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 export function privateControllerPaths(workDir: string): ControllerPaths {
   const resolved = path.resolve(workDir);
   const stat = fs.lstatSync(resolved);
@@ -149,6 +164,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
       checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
       childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
+      stateHash: parseHash(args.stateHash, "state-hash"),
     };
   }
   if (args.mode === "abandon") {
@@ -375,10 +391,12 @@ export function classifyRiskEvidence(options: {
 function appendOutput(name: string, value: string): void {
   const output = process.env.GITHUB_OUTPUT;
   if (!output) return;
-  if (!/^(?:check_id|dispatched|finalized|run_id)$/u.test(name)) {
+  if (!/^(?:check_id|dispatched|finalized|run_id|state_hash)$/u.test(name)) {
     throw new Error("invalid controller output name");
   }
-  if (!/^(?:true|false|[1-9][0-9]*)$/u.test(value)) {
+  const validValue =
+    name === "state_hash" ? HASH_PATTERN.test(value) : /^(?:true|false|[1-9][0-9]*)$/u.test(value);
+  if (!validValue) {
     throw new Error("invalid controller output value");
   }
   const descriptor = fs.openSync(
@@ -388,7 +406,8 @@ function appendOutput(name: string, value: string): void {
   try {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error("GITHUB_OUTPUT must be a regular file");
     // GitHub supplies this output file; values are restricted above to fixed
-    // booleans or positive decimal IDs before the descriptor write.
+    // booleans, positive decimal IDs, or a lowercase SHA-256 digest before the
+    // descriptor write.
     // codeql[js/http-to-file-access]
     fs.writeFileSync(descriptor, `${name}=${value}\n`, "utf8");
   } finally {
@@ -674,7 +693,9 @@ async function start(options: {
       expectedShards,
       requiresManualExpansion: plan.requiresManualExpansion,
     };
-    writePrivateRegularFile(options.statePath, `${JSON.stringify(state, null, 2)}\n`);
+    const serializedState = `${JSON.stringify(state, null, 2)}\n`;
+    writePrivateRegularFile(options.statePath, serializedState);
+    appendOutput("state_hash", sha256(serializedState));
     appendOutput("run_id", String(childRunId));
     appendOutput("dispatched", "true");
   } catch (error) {
@@ -745,6 +766,7 @@ export function findSignalFiles(
 
 export async function finishRiskGate(options: {
   statePath: string;
+  stateHash: string;
   evidencePath: string;
   checkRunId: number;
   childRunId: number;
@@ -757,8 +779,15 @@ export async function finishRiskGate(options: {
   const { checkRunId, childRunId } = options;
   const childRunUrl = `https://github.com/${repository}/actions/runs/${childRunId}`;
   const context = { repository, checkRunId };
-  const state = validateRiskGateState(readRegularJson(options.statePath));
   try {
+    if (!HASH_PATTERN.test(options.stateHash)) throw new Error("controller state hash is invalid");
+    const serializedState = readPrivateRegularFile(options.statePath, {
+      maxBytes: MAX_PLAN_BYTES,
+    })!;
+    if (sha256(serializedState) !== options.stateHash) {
+      throw new Error("controller state changed after E2E dispatch");
+    }
+    const state = validateRiskGateState(JSON.parse(serializedState));
     const child = await githubApi<WorkflowRun>(
       `repos/${repository}/actions/runs/${childRunId}`,
       token,
@@ -827,6 +856,7 @@ async function main(): Promise<void> {
   if (command.mode === "finish") {
     await finishRiskGate({
       statePath: command.statePath,
+      stateHash: command.stateHash,
       evidencePath: command.evidencePath,
       checkRunId: command.checkRunId,
       childRunId: command.childRunId,
