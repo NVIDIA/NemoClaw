@@ -142,7 +142,7 @@ describe("fixture redaction entry point", () => {
     const discordAssignment = `DISCORD_BOT_TOKEN=${discordReference}`;
     const text = JSON.stringify({
       key: "agent:main:main",
-      correlationMarker: "reply-correlation-marker-123",
+      replyMarker: "A2603-REPLY",
       token: discordReference,
       versionedToken: versionedReference,
       botToken: slackReference,
