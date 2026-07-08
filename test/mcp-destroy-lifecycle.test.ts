@@ -669,6 +669,108 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect([...testState.providers.keys()]).not.toContain("alpha-mcp-github");
   });
 
+  it("refuses a plain mcp remove under destroy markers and names the forced recovery (#6376)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: {
+        bridges: { github: bridgeEntries.github },
+        destroyPreparedAt: "2026-07-02T22:49:42.000Z",
+        destroyPendingAt: "2026-07-02T22:49:43.000Z",
+      },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+
+    const message = await captureMessage(() => bridge.removeMcpBridge("alpha", "github"));
+    const sandbox = registry.getSandbox("alpha");
+
+    expect(message).toContain("incomplete MCP destroy transaction");
+    expect(message).toContain("mcp remove github --force");
+    expect(sandbox?.mcp?.bridges).toHaveProperty("github");
+    expect(sandbox?.mcp?.destroyPreparedAt).toBeTruthy();
+  });
+
+  it("clears destroy markers when a forced mcp remove adopts the last entry (#6376)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: {
+        bridges: { github: bridgeEntries.github },
+        destroyPreparedAt: "2026-07-02T22:49:42.000Z",
+        destroyPendingAt: "2026-07-02T22:49:43.000Z",
+      },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const removedPolicies = new Set<string>();
+    testState.removePreset.mockImplementation((_sandbox: string, policyName: string) => {
+      removedPolicies.add(policyName);
+      return true;
+    });
+    testState.getPresetContentGatewayState.mockImplementation(() =>
+      removedPolicies.size > 0 ? "absent" : "match",
+    );
+
+    await bridge.removeMcpBridge("alpha", "github", { force: true });
+    const sandbox = registry.getSandbox("alpha");
+
+    expect(sandbox?.mcp?.bridges ?? {}).not.toHaveProperty("github");
+    expect(sandbox?.mcp?.destroyPreparedAt).toBeUndefined();
+    expect(sandbox?.mcp?.destroyPendingAt).toBeUndefined();
+    expect([...testState.providers.keys()]).not.toContain("alpha-mcp-github");
+  });
+
+  it("keeps destroy markers while other MCP entries still need forced cleanup (#6376)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: {
+        bridges: { github: bridgeEntries.github, slack: bridgeEntries.slack },
+        destroyPreparedAt: "2026-07-02T22:49:42.000Z",
+      },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    registry.addCustomPolicy("alpha", ownedPolicy("slack"));
+    const removedPolicies = new Set<string>();
+    testState.removePreset.mockImplementation((_sandbox: string, policyName: string) => {
+      removedPolicies.add(policyName);
+      return true;
+    });
+    testState.getPresetContentGatewayState.mockImplementation(() =>
+      removedPolicies.size > 0 ? "absent" : "match",
+    );
+
+    await bridge.removeMcpBridge("alpha", "github", { force: true });
+    const afterFirst = registry.getSandbox("alpha");
+    expect(afterFirst?.mcp?.bridges).toHaveProperty("slack");
+    expect(afterFirst?.mcp?.destroyPreparedAt).toBeTruthy();
+
+    await bridge.removeMcpBridge("alpha", "slack", { force: true });
+    const afterSecond = registry.getSandbox("alpha");
+    expect(afterSecond?.mcp?.destroyPreparedAt).toBeUndefined();
+    expect(afterSecond?.mcp?.destroyPendingAt).toBeUndefined();
+  });
+
+  it("clears bare destroy markers when a forced remove finds no entries (#6376)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: {
+        bridges: {},
+        destroyPendingAt: "2026-07-02T22:49:43.000Z",
+      },
+    });
+
+    await bridge.removeMcpBridge("alpha", "github", { force: true });
+    const sandbox = registry.getSandbox("alpha");
+
+    expect(sandbox?.mcp?.destroyPreparedAt).toBeUndefined();
+    expect(sandbox?.mcp?.destroyPendingAt).toBeUndefined();
+  });
+
   it("does not let force delete a drifted global provider", async () => {
     testState.providers.set("alpha-mcp-github", {
       credential: "OTHER_TOKEN",

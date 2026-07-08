@@ -24,10 +24,12 @@ import {
 import {
   assertMcpDestroyNotPending,
   bridgeState,
+  clearMcpDestroyMarkersIfNoBridges,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
   getSandboxOrThrow,
+  hasMcpDestroyMarkers,
   removeBridgeEntry,
 } from "./mcp-bridge-state";
 import {
@@ -102,13 +104,26 @@ async function removeMcpBridgeUnlocked(
   validateSandboxName(sandboxName);
   validateMcpServerName(server);
   const sandbox = getSandboxOrThrow(sandboxName);
-  assertMcpDestroyNotPending(sandbox);
+  // A forced remove is the documented non-destructive recovery from an
+  // incomplete destroy transaction (#6376): it adopts the durable cleanup
+  // manifest for this server instead of requiring full sandbox destruction.
+  const forcedDestroyRecovery = options.force === true && hasMcpDestroyMarkers(sandbox);
+  if (!forcedDestroyRecovery) {
+    assertMcpDestroyNotPending(sandbox);
+  } else {
+    console.log(
+      `  Sandbox '${sandboxName}' has an incomplete MCP destroy transaction; --force adopts its cleanup for '${server}'.`,
+    );
+  }
   const entry = bridgeState(sandbox)[server];
   if (!entry) {
     if (!options.force) {
       throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
     }
     console.log(`  No MCP server '${server}' is registered on sandbox '${sandboxName}'.`);
+    if (clearMcpDestroyMarkersIfNoBridges(sandboxName)) {
+      console.log(`  Cleared the incomplete MCP destroy transaction on sandbox '${sandboxName}'.`);
+    }
     return;
   }
   if (entry.addState === "prepared") {
@@ -118,6 +133,9 @@ async function removeMcpBridgeUnlocked(
     // state another workflow may own.
     removeBridgeEntry(sandboxName, server);
     console.log(`  Cancelled incomplete MCP add for '${server}' on sandbox '${sandboxName}'.`);
+    if (clearMcpDestroyMarkersIfNoBridges(sandboxName)) {
+      console.log(`  Cleared the incomplete MCP destroy transaction on sandbox '${sandboxName}'.`);
+    }
     return;
   }
   // Cleanup follows the adapter persisted with the bridge. Requiring the
@@ -337,4 +355,7 @@ async function removeMcpBridgeUnlocked(
   }
   removeBridgeEntry(sandboxName, server);
   console.log(`  Removed MCP server '${server}' from sandbox '${sandboxName}'.`);
+  if (clearMcpDestroyMarkersIfNoBridges(sandboxName)) {
+    console.log(`  Cleared the incomplete MCP destroy transaction on sandbox '${sandboxName}'.`);
+  }
 }

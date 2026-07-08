@@ -7,6 +7,7 @@ import * as sandboxSession from "../../state/sandbox-session";
 import {
   confirmSandboxRebuildIfNeeded,
   countActiveSandboxSessionsForRebuild,
+  createRebuildCommandContext,
 } from "./rebuild-preflight-confirmation";
 import { isSingleAgentRebuildSupported } from "./rebuild-preflight-guards";
 
@@ -54,6 +55,31 @@ describe("rebuild confirmation", () => {
     const prompt = vi.fn(async () => "n");
     await expect(confirmSandboxRebuildIfNeeded(true, 3, prompt)).resolves.toBe(true);
     expect(prompt).not.toHaveBeenCalled();
+  });
+});
+
+describe("rebuild bail reporting (#6376)", () => {
+  it("prints the failure reason on stderr before exiting in CLI mode", () => {
+    const errors: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((message: unknown) => {
+      errors.push(String(message));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    const { bail } = createRebuildCommandContext({}, {});
+    expect(() => bail("Failed to preserve MCP bridges before rebuild: destroy pending")).toThrow(
+      "exit:1",
+    );
+    expect(errors.join("\n")).toContain("Failed to preserve MCP bridges before rebuild");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+  });
+
+  it("keeps the throwing bail contract when throwOnError is set", () => {
+    const { bail } = createRebuildCommandContext({}, { throwOnError: true });
+    expect(() => bail("boom")).toThrow("boom");
   });
 });
 

@@ -97,11 +97,46 @@ export function setBridgeState(sandboxName: string, bridges: Record<string, McpB
   }
 }
 
+export function hasMcpDestroyMarkers(sandbox: SandboxEntry): boolean {
+  return !!sandbox.mcp?.destroyPreparedAt || !!sandbox.mcp?.destroyPendingAt;
+}
+
 export function assertMcpDestroyNotPending(sandbox: SandboxEntry): void {
-  if (!sandbox.mcp?.destroyPreparedAt && !sandbox.mcp?.destroyPendingAt) return;
+  if (!hasMcpDestroyMarkers(sandbox)) return;
+  const servers = Object.values(bridgeState(sandbox)).map((entry) => entry.server);
+  const removeHint =
+    servers.length > 0
+      ? ` or clear it with: nemoclaw ${sandbox.name} mcp remove ${servers[0]} --force`
+      : ` or clear it with: nemoclaw ${sandbox.name} mcp remove <server> --force`;
   throw new McpBridgeError(
-    `Sandbox '${sandbox.name}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup before using MCP commands.`,
+    `Sandbox '${sandbox.name}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup,${removeHint}`,
   );
+}
+
+/**
+ * Drop the durable destroy markers once no MCP bridge entries remain. A
+ * forced `mcp remove` of the last server adopts the incomplete destroy
+ * transaction's cleanup manifest, so keeping the markers would only block
+ * every MCP and rebuild command with nothing left to clean (#6376).
+ */
+export function clearMcpDestroyMarkersIfNoBridges(sandboxName: string): boolean {
+  const sandbox = getSandboxOrThrow(sandboxName);
+  if (!hasMcpDestroyMarkers(sandbox)) return false;
+  const bridges = bridgeState(sandbox);
+  if (Object.keys(bridges).length > 0) return false;
+  const managedServerNames = sandbox.mcp?.managedServerNames;
+  const updated = registry.updateSandbox(sandboxName, {
+    mcp:
+      managedServerNames && managedServerNames.length > 0
+        ? { bridges: {}, managedServerNames }
+        : undefined,
+  });
+  if (!updated) {
+    throw new McpBridgeError(
+      `Could not clear the MCP destroy markers for sandbox '${sandboxName}'.`,
+    );
+  }
+  return true;
 }
 
 export function assertNoDerivedResourceCollision(

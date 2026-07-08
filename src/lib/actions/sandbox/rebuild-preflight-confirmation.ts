@@ -3,7 +3,7 @@
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import * as agentRuntime from "../../agent/runtime";
-import { B, D, R, YW } from "../../cli/terminal-style";
+import { B, D, R, RD, YW } from "../../cli/terminal-style";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   normalizeRebuildSandboxOptions,
@@ -46,7 +46,14 @@ export function createRebuildCommandContext(
       ? (message: string) => {
           throw new Error(message);
         }
-      : (_message: string, code = 1) => process.exit(code),
+      : (message: string, code = 1) => {
+          // Always surface the reason on stderr: several phases (notably the
+          // MCP destroy-marker guard) reach bail() without printing anything
+          // themselves, and a bare exit 1 gives the operator no diagnosis
+          // (#6376).
+          if (message) console.error(`  ${RD}Rebuild failed:${R} ${redact(message)}`);
+          return process.exit(code);
+        },
   };
 }
 
