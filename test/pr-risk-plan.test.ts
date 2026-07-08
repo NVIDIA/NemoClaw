@@ -35,8 +35,28 @@ describe("deterministic PR risk plan", () => {
   it("does not infer security or inference risk from unrelated path substrings", () => {
     const result = plan("src/lib/actions/sandbox/mcp-bridge-provider.ts", "src/lib/secretary.ts");
 
-    expect(result.families.map((family) => family.id)).toEqual(["shared-agent"]);
-    expect(riskPlanRequiredJobIds(result)).toEqual(["full-e2e", "hermes-e2e"]);
+    expect(result.families.map((family) => family.id)).toEqual(
+      expect.arrayContaining(["lifecycle-state", "shared-agent"]),
+    );
+    expect(result.families.map((family) => family.id)).not.toContain("credentials-security");
+    expect(result.families.map((family) => family.id)).not.toContain("inference-policy");
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(["full-e2e", "hermes-e2e", "onboard-repair", "onboard-resume"]),
+    );
+  });
+
+  it.each([
+    "src/lib/actions/sandbox/connect-flow.ts",
+    "src/lib/actions/sandbox/destroy-flow.ts",
+    "src/lib/actions/sandbox/sessions/export.ts",
+    "src/lib/actions/sandbox/terminal-connect-probe.ts",
+  ])("keeps every sandbox action under the lifecycle-state floor: %s", (file) => {
+    const result = plan(file);
+
+    expect(result.families.map((family) => family.id)).toContain("lifecycle-state");
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(["onboard-repair", "onboard-resume"]),
+    );
   });
 
   it.each([

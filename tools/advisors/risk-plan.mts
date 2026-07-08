@@ -50,8 +50,7 @@ type RiskRule = Omit<RiskPlanFamily, "matchedFiles"> & {
   matches(file: string): boolean;
 };
 
-const STATEFUL_SANDBOX_FILE =
-  /^src\/lib\/actions\/sandbox\/.*(?:gateway|lifecycle|recovery|repair|resume|sandbox|status|survival)/;
+const STATEFUL_SANDBOX_FILE = /^src\/lib\/actions\/sandbox\/.*\.ts$/;
 const MUTATION_FILE = /(?:upgrade|rebuild|snapshot|backup|restore)/;
 const INSTALL_SCRIPT = /^(?:install\.sh|scripts\/(?:install|setup|dev-setup)[^/]*\.(?:sh|js|ts))$/;
 const INFERENCE_POLICY_FILE = /(?:^|[/.-])(?:inference|network-policy)(?:[/.-]|$)/;
