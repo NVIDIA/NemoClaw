@@ -26,11 +26,11 @@ const localCredentialFormSource = path.join(
   "local-credential-form.html",
 );
 const localCredentialHelperUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/6546c085a76f1001ac89a5e47b8179067a3f617a/scripts/local-credential-helper.mts";
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/a5d8d8beb09150e67cc481940f3d461b6a2d092f/scripts/local-credential-helper.mts";
 const localCredentialHelperSha256 =
   "827d47d99bc3b28864f2d29ca2b8480899f9fee21f536e94c0bc1f50e482237d"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/6546c085a76f1001ac89a5e47b8179067a3f617a/docs/resources/local-credential-form.html";
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/a5d8d8beb09150e67cc481940f3d461b6a2d092f/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 =
   "b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormScriptCspHash = [

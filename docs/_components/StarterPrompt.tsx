@@ -93,8 +93,8 @@ When you need an API key, bot token, app token, or other secret, prefer the chec
 
 - Before starting credential collection, determine the exact environment-variable names and exact command argv that will receive them. Explain the command in plain language, say that the form's final confirmation runs that already-approved command immediately, and ask my permission.
 - Do not generate, rewrite, or redesign the helper or form. Use this reviewed pair exactly:
-  - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/6546c085a76f1001ac89a5e47b8179067a3f617a/scripts/local-credential-helper.mts (SHA-256 \`827d47d99bc3b28864f2d29ca2b8480899f9fee21f536e94c0bc1f50e482237d\`)
-  - Form: https://raw.githubusercontent.com/NVIDIA/NemoClaw/6546c085a76f1001ac89a5e47b8179067a3f617a/docs/resources/local-credential-form.html (SHA-256 \`b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68\`)
+  - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/a5d8d8beb09150e67cc481940f3d461b6a2d092f/scripts/local-credential-helper.mts (SHA-256 \`827d47d99bc3b28864f2d29ca2b8480899f9fee21f536e94c0bc1f50e482237d\`)
+  - Form: https://raw.githubusercontent.com/NVIDIA/NemoClaw/a5d8d8beb09150e67cc481940f3d461b6a2d092f/docs/resources/local-credential-form.html (SHA-256 \`b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68\`)
 - Fetch both files, or use local repository copies when available, and verify both SHA-256 digests before use. Put fetched copies in a private temporary directory with access restricted to the current user.
 - Treat the two immutable URL and digest pairs as one reviewed trust boundary. Stop if either verification fails; do not substitute another URL, helper, form, or digest.
 - The helper requires Node.js 22.16 or newer. If that runtime is unavailable, use a secure local terminal prompt or local app prompt instead; never ask for the value in chat and never fall back to generated helper or form code.
