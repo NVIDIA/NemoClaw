@@ -988,8 +988,8 @@ If your corporate CA is already installed in the host system trust store, NemoCl
 Resolution order:
 
 1. Explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` (fails onboarding loudly when set but invalid).
-2. Conventional CA variables `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, then `SSL_CERT_FILE` (each **skipped silently** when it points at a missing or invalid file).
-3. Host administrator anchor directories (skipped silently when absent or unusable).
+2. Conventional CA variables `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, then `SSL_CERT_FILE` (each **skipped with a `WARNING` log** when it is set but points at a missing or invalid file — the import is non-fatal, but the warning tells you it was skipped).
+3. Host administrator anchor directories (an empty or absent directory is skipped silently; a directory that holds candidate files but no valid CA, or that exceeds the size/count caps, is skipped with a `WARNING` log).
 
 When a fallback or host-store source is baked, onboarding logs which source and path it used (`baking corporate proxy CA from …`). If you set a conventional CA variable but the import does not happen, check the onboard build logs: a variable that points at a missing or invalid file is skipped with a `WARNING: … was skipped for corporate CA import` line, and an anchor directory that holds only invalid certificates logs a similar warning. Absence of the `baking …` line means no source validated. Use `NEMOCLAW_CORPORATE_CA_BUNDLE` for explicit, fail-loud behavior. To import a corporate root that is not installed in an anchor directory, export just your corporate root (and any intermediates) into a small PEM file and point `NEMOCLAW_CORPORATE_CA_BUNDLE` at it.
 

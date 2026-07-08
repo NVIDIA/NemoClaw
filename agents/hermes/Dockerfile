@@ -276,8 +276,15 @@ RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-b
 # root, before the USER sandbox drop below.
 # hadolint ignore=DL3059,DL4006
 RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
+      command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image" >&2; exit 1; }; \
+      command -v openssl >/dev/null 2>&1 || { echo "[nemoclaw] openssl is required to validate NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image (#6210)" >&2; exit 1; }; \
       mkdir -p /usr/local/share/nemoclaw \
-      && printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /usr/local/share/nemoclaw/corporate-ca.pem \
+      && { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /tmp/nemoclaw-corporate-ca.decoded 2>/dev/null \
+           || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; } \
+      && awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{f=0}' /tmp/nemoclaw-corporate-ca.decoded > /usr/local/share/nemoclaw/corporate-ca.pem \
+      && rm -f /tmp/nemoclaw-corporate-ca.decoded \
+      && { grep -qF -- "-----BEGIN CERTIFICATE-----" /usr/local/share/nemoclaw/corporate-ca.pem || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
+      && { openssl crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem >/dev/null 2>&1 || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
       && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \
       && chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem \
       && echo "[nemoclaw] baked host corporate-proxy CA into image trust (#6210)"; \
