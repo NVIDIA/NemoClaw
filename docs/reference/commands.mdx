@@ -773,6 +773,11 @@ When the live OpenShell gateway inference route differs from the route recorded 
 It realigns the route only when those registry entries are compatible with the requested provider and model.
 If another sandbox records a conflicting route, `connect` exits non-zero without changing the gateway and names the affected sandboxes.
 Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional compatible route change.
+Before it opens SSH, `connect` probes `https://inference.local/v1/models` from inside the sandbox with the selected agent's trusted CA and proxy context.
+HTTP `200` through `499` confirms that the route is reachable.
+When the probe returns a recognized broken result, `connect` attempts DNS or route repair and verifies the route again.
+When the initial probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
+It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`.
 If the sandbox is registered locally but missing from a healthy gateway, `connect` preserves the registry entry and points you to `rebuild --yes`, `onboard`, or `destroy` instead of deleting the metadata needed for recovery.
 
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
@@ -1080,7 +1085,7 @@ The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `ag
 In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild.
 For terminal runtime sandboxes, the command also checks cgroup OOM kill counters.
 If the counter records an OOM kill, text output prints `Runtime health: degraded (... OOM kill recorded)` and points you to `$$nemoclaw <name> rebuild`; JSON output reports `terminalRuntimeHealth.kind: "degraded"` with the OOM kill count and source counter path.
-The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, or a terminal runtime sandbox reports a recorded OOM kill.
+The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, the authoritative in-sandbox inference route fails or cannot be probed, or a terminal runtime sandbox reports a recorded OOM kill.
 The alias form `$$nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `$$nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
 <AgentOnly variant="deepagents">
@@ -1097,21 +1102,25 @@ $$nemoclaw my-assistant status --json
 $$nemoclaw sandbox status my-assistant --json
 ```
 
-The command probes every inference provider and reports one of three states on the `Inference` line:
+The command probes `https://inference.local/v1/models` from inside the sandbox as the authoritative inference health check.
+This check exercises the same route that agent traffic uses.
+The main `Inference` line reports one of these states:
 
 | State | Meaning |
 |-------|---------|
-| `healthy` | The provider endpoint returned a reachable response. |
-| `unreachable` | The probe failed. The output includes the endpoint URL and a remediation hint. |
-| `not probed` | The endpoint URL is not known (for example, `compatible-*` providers). |
+| `healthy` | The route returned an HTTP status from `200` through `499`. Authentication responses such as `401` and `403` confirm route reachability. |
+| `unhealthy` | The route returned an HTTP status from `500` through `599`. |
+| `unreachable` | The route had a transport failure, returned no final HTTP status (`000` or an interim `100` through `199`), or returned an invalid status outside `100` through `599`. |
+| `not probed` | NemoClaw could not run the authoritative route probe from a reachable sandbox. |
 | `not verified` | NemoClaw could not verify the sandbox or gateway state, so it skips inference probing. |
 
-Local providers (Ollama, vLLM) probe the host-side health endpoint.
-Remote providers (NVIDIA Endpoints, OpenAI, Anthropic, Gemini) use a lightweight reachability check; any HTTP response, including `401` or `403`, counts as reachable.
-No API keys are sent.
+An authentication response confirms that the route is reachable, not that provider credentials are valid.
+The command can also print direct host-side provider checks such as `Inference (upstream)` and provider-specific subprobes.
+These checks are diagnostic only and do not override the authoritative `inference.local` result or determine the command exit status.
 
-For Local Ollama, the command also probes the authenticated proxy and prints an `Inference (auth proxy)` line when a proxy token is available.
-Use that line to distinguish a healthy backend from a broken proxy path that the sandbox uses for inference.
+Local providers add host-side backend diagnostics.
+For Local Ollama, the command can also print an `Inference (auth proxy)` diagnostic when a proxy token is available.
+Use these diagnostics to identify a failing auxiliary hop after checking the main `Inference` line.
 
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
 
@@ -1239,8 +1248,13 @@ The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw g
 For gateway-based agents, it also reports messaging channel conflicts.
 </AgentOnly>
 
+For inference health, `doctor` treats the probe to `https://inference.local/v1/models` from inside the sandbox as authoritative.
+HTTP responses from `200` through `499`, including `401` and `403`, pass this check.
+HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check.
+Direct provider and upstream probes are diagnostics only, so their failure does not fail `doctor` when the authoritative in-sandbox route is healthy.
+
 Warnings do not make the command fail.
-Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.
+Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
 
 <AgentOnly variant="openclaw">

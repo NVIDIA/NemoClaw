@@ -1354,10 +1354,11 @@ Check the active provider and endpoint:
 $$nemoclaw <name> status
 ```
 
-For local Ollama and local vLLM, `$$nemoclaw <name> status` also prints an `Inference` line that probes the host-side health endpoint directly.
-If that line shows `unreachable`, start the local backend first and then retry the request.
-For Local Ollama, current releases also print `Inference (auth proxy)` when a proxy token is available.
-If the backend is healthy but the auth proxy is `unauthorized` or `unreachable`, re-run onboarding so NemoClaw can recreate the proxy token, restart the proxy, and refresh the route.
+The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, so it reflects the route the agent actually uses.
+If that line shows `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop.
+For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately.
+For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available.
+If a local backend or auth-proxy diagnostic fails, start the backend or re-run onboarding so NemoClaw can recreate the proxy token, restart the proxy, and refresh the route.
 
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.

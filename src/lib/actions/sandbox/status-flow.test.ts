@@ -34,7 +34,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Sandbox: alpha");
     expect(output).toContain("Model:    nvidia/nemotron-live");
     expect(output).toContain("Inference: healthy");
-    expect(output).toContain("Inference (gateway):");
+    expect(output).toContain("Inference (ollama backend):");
     expect(output).toContain("Host GPU: yes");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
@@ -52,6 +52,91 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: "unreachable" as const, detail: "inference.local is unreachable" },
+    { label: "unhealthy" as const, detail: "inference.local returned HTTP 503" },
+  ])("reports an $label inference.local route and exits nonzero (#6192)", async (testCase) => {
+    const harness = createStatusFlowHarness({
+      inferenceHealth: {
+        ok: false,
+        probed: true,
+        providerLabel: "Inference route",
+        endpoint: "https://inference.local/v1/models",
+        detail: testCase.detail,
+        failureLabel: testCase.label,
+        subprobes: [
+          {
+            ok: true,
+            probed: true,
+            providerLabel: "NVIDIA Endpoints",
+            endpoint: "https://integrate.api.nvidia.com/v1/models",
+            detail: "upstream reachable",
+            probeLabel: "upstream",
+          },
+        ],
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).not.toContain("Inference: healthy");
+    expect(output).toContain("Inference: ");
+    expect(output).toContain(testCase.label);
+    expect(output).toContain("Inference (upstream):");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("reports an unavailable inference.local probe and exits nonzero (#6192)", async () => {
+    const harness = createStatusFlowHarness({
+      inferenceHealth: {
+        ok: false,
+        probed: false,
+        providerLabel: "Inference route",
+        endpoint: "https://inference.local/v1/models",
+        detail: "Could not probe the route from inside the sandbox.",
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Inference: ");
+    expect(output).toContain("not probed");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("keeps a failed upstream diagnostic non-authoritative in text status (#6192)", async () => {
+    const harness = createStatusFlowHarness({
+      inferenceHealth: {
+        ok: true,
+        probed: true,
+        providerLabel: "Inference route",
+        endpoint: "https://inference.local/v1/models",
+        detail: "route reachable",
+        subprobes: [
+          {
+            ok: false,
+            probed: true,
+            providerLabel: "NVIDIA Endpoints",
+            endpoint: "https://integrate.api.nvidia.com/v1/models",
+            detail: "host-side upstream probe failed",
+            failureLabel: "unreachable",
+            probeLabel: "upstream",
+          },
+        ],
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Inference: healthy");
+    expect(output).toContain("Inference (upstream):");
+    expect(output).toContain("unreachable");
+    expect(process.exitCode).toBeUndefined();
   });
 
   it("probes terminal runtime agent version when cached metadata is missing", async () => {
