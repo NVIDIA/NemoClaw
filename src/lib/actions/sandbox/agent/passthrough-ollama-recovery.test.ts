@@ -113,7 +113,7 @@ function makePassthroughDeps(
   events: string[],
 ): AgentPassthroughDeps {
   return {
-    getSandbox: (() => ({ agent: "openclaw", ...route })) as NonNullable<
+    getSandbox: ((name) => ({ name, agent: "openclaw", ...route })) as NonNullable<
       AgentPassthroughDeps["getSandbox"]
     >,
     ensureLive: (async () => ({ state: "present", output: "Phase: Ready" })) as NonNullable<
