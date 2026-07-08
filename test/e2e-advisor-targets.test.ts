@@ -148,7 +148,12 @@ describe("E2E target advisor — normalization contract", () => {
       metadata({ changedFiles: ["src/lib/actions/sandbox/agents/apply.ts"] }),
     );
 
-    expect(normalized.required.map((item) => item.id)).toEqual(["full-e2e", "hermes-e2e"]);
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "full-e2e",
+      "hermes-e2e",
+      "onboard-repair",
+      "onboard-resume",
+    ]);
     expect(normalized.required.every((item) => item.selectorType === "job")).toBe(true);
     expect(normalized.confidence).toBe("medium");
   });
@@ -449,7 +454,12 @@ describe("E2E target advisor — normalization contract", () => {
       { e2eWorkflowText: "jobs:\n  live-targets:\n    steps: []\n" },
     );
 
-    expect(normalized.required.map((item) => item.id)).toEqual(["full-e2e", "hermes-e2e"]);
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "full-e2e",
+      "hermes-e2e",
+      "onboard-repair",
+      "onboard-resume",
+    ]);
     expect(normalized.noTargetE2eReason).toBeNull();
     expect(normalized.confidence).toBe("medium");
   });
