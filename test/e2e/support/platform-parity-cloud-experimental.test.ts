@@ -321,7 +321,9 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain(
       "managed Deep Agents Code python is blocked again after policy-remove",
     );
-    expect(result.stdout).toContain("managed observability state restores after policy-remove");
+    expect(result.stdout).toContain(
+      "managed observability state remains enabled after policy-remove",
+    );
     expect(result.stdout.split("\n").filter((line) => line.startsWith("TRACE:"))).toEqual([
       "TRACE:opt-in-proof",
       "TRACE:policy-remove",

@@ -32,7 +32,7 @@ observability_marker_value() {
   # Expansion is intentionally deferred to the sandbox shell.
   # shellcheck disable=SC2016
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    sh -c 'marker=/tmp/nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
+    sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
     2>/dev/null
 }
 
@@ -348,10 +348,10 @@ else
   fail_test "post-remove Tavily probe lacked denial evidence: $REMOVED_PROBE_OUTPUT"
 fi
 
-# The temporary Tavily policy belongs only to this check. OpenShell can clear
-# /tmp while applying the narrower replacement policy, so restore an
-# observability marker that existed before policy removal through the canonical
-# startup helper instead of manufacturing the marker in the test.
+# The temporary Tavily policy belongs only to this check. Policy replacement
+# can reset ephemeral /tmp state, while the managed observability bit lives in
+# the persistent /sandbox workspace. If an older runtime loses that bit, repair
+# it through the canonical startup helper instead of manufacturing it here.
 if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ]; then
   OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
   if [ "$OBSERVABILITY_MARKER_AFTER" != "1" ]; then
@@ -362,7 +362,7 @@ if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ]; then
   fi
   OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
   if [ "$OBSERVABILITY_MARKER_AFTER" = "1" ]; then
-    pass "managed observability state restores after policy-remove"
+    pass "managed observability state remains enabled after policy-remove"
   else
     fail_test "managed observability marker was not restored after policy-remove"
   fi
