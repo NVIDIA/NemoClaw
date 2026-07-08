@@ -57,18 +57,22 @@ function startWriter(
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
     child.on("close", (exitCode) => {
-      if (exitCode !== 0) reject(new Error(stderr || `writer exited ${String(exitCode)}`));
-      else resolve(JSON.parse(stdout));
+      exitCode === 0
+        ? resolve(JSON.parse(stdout))
+        : reject(new Error(stderr || `writer exited ${String(exitCode)}`));
     });
   });
 }
 
 async function waitForReady(gate: string, codes: string[]): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt++) {
-    if (codes.every((code) => fs.existsSync(`${gate}.${code}.ready`))) return;
+  let attemptsRemaining = 200;
+  while (
+    !codes.every((code) => fs.existsSync(`${gate}.${code}.ready`)) &&
+    attemptsRemaining-- > 0
+  ) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error("Timed out waiting for transaction writers");
+  expect(codes.every((code) => fs.existsSync(`${gate}.${code}.ready`))).toBe(true);
 }
 
 afterEach(() => {
