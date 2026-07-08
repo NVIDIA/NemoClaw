@@ -63,12 +63,13 @@ Standup converts the recommendation into assignments. Every recommended item sho
 
 ## Release Labels In Project Context
 
-Daily `v0.0.x` labels have different meanings by item kind:
+Daily `v0.0.x` labels have different meanings by item kind and PR state:
 
-- On PRs, the label activates the PR for daily release work. Merged PRs carrying the daily label are candidates for the daily release cutoff.
+- On open PRs, the label activates the PR for daily release work. Open labeled PRs that merge by cutoff are candidates for that release.
+- After a PR merges to `main`, authorized automation adds the earliest containing release label, or the next patch label when no release tag contains the merge yet. This is historical release attribution, not evidence that the PR was activated or ready before merge.
 - On issues, the label is an attention, regression-tracking, or "needs PR for this daily release" signal. It does not include the issue in the release by itself.
 
-Open labeled PRs and issues that miss a tagged release are automatically moved to the next patch label during post-tag housekeeping. Remove a version label without replacement only when the item is deferred, superseded, closed, or no longer part of the daily release cycle.
+Open labeled PRs and issues that miss a tagged release are automatically moved to the next patch label during post-tag housekeeping. Merged PR labels remain as additive release attribution. Remove a version label without replacement only when an open item is deferred, superseded, closed, or no longer part of the daily release cycle.
 
 ## Issue Templates
 

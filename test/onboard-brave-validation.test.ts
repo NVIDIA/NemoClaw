@@ -12,7 +12,7 @@ import { testTimeout } from "./helpers/timeouts";
 const BRAVE_VALIDATION_TEST_TIMEOUT_MS = testTimeout(60_000);
 
 type ConfigureWebSearchOutcome = {
-  result: { fetchEnabled: boolean } | null;
+  result: { fetchEnabled: boolean; provider?: "brave" | "tavily" } | null;
   exitCalls: number[];
   logs: string[];
   warnings: string[];
@@ -121,6 +121,7 @@ function restore() {
       HOME: tmpDir,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
       BRAVE_API_KEY: spec.apiKey,
     },
   });
@@ -142,7 +143,7 @@ function runInteractiveConfigureWebSearch(spec: { answers: string[] }): {
   exitCode: number;
   payload: {
     outcome: "completed" | "exit";
-    result?: { fetchEnabled: boolean } | null;
+    result?: { fetchEnabled: boolean; provider?: "brave" | "tavily" } | null;
     exitCode?: number;
     logs: string[];
     errors: string[];
@@ -176,6 +177,8 @@ const clearEnv = [
   "NEMOCLAW_YES",
   "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_EXPERIMENTAL",
+  "NEMOCLAW_WEB_SEARCH_PROVIDER",
+  "TAVILY_API_KEY",
 ];
 for (const key of clearEnv) {
   delete process.env[key];
@@ -297,6 +300,8 @@ require.cache[require.resolve(${credentialsPath})] = {
   exports: mockedCredentials,
 };
 process.env.BRAVE_API_KEY = "brv-test-key";
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+process.env.NEMOCLAW_WEB_SEARCH_PROVIDER = "brave";
 const { configureWebSearch } = require(${onboardPath});
 const { loadAgent } = require(${agentDefsPath});
 
@@ -356,7 +361,9 @@ require.cache[require.resolve(${credentialsPath})] = {
   exports: mockedCredentials,
 };
 delete process.env.BRAVE_API_KEY;
+delete process.env.TAVILY_API_KEY;
 process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+process.env.NEMOCLAW_WEB_SEARCH_PROVIDER = "brave";
 const { configureWebSearch } = require(${onboardPath});
 (async () => {
   const result = await configureWebSearch(null);
@@ -380,7 +387,7 @@ const { configureWebSearch } = require(${onboardPath});
       });
       expect(result.status).toBe(0);
       const payload = JSON.parse(fs.readFileSync(outputPath, "utf-8"));
-      expect(payload.result).toEqual({ fetchEnabled: true });
+      expect(payload.result).toEqual({ fetchEnabled: true, provider: "brave" });
       expect(payload.braveKey).toBe("saved-brave-key");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -404,7 +411,7 @@ const { configureWebSearch } = require(${onboardPath});
     expect(
       payload.warnings.some((line) => line.includes("Brave Search API key validation failed")),
     ).toBe(true);
-    expect(payload.warnings.some((line) => line.includes("nemoclaw config web-search"))).toBe(true);
+    expect(payload.warnings.some((line) => line.includes("nemoclaw onboard"))).toBe(true);
   });
 
   it("enables Brave Web Search when validation succeeds", () => {
@@ -416,12 +423,12 @@ const { configureWebSearch } = require(${onboardPath});
 
     expect(exitCode).toBe(0);
     expect(payload.exitCalls).toEqual([]);
-    expect(payload.result).toEqual({ fetchEnabled: true });
+    expect(payload.result).toEqual({ fetchEnabled: true, provider: "brave" });
   });
 });
 
 describe("configureWebSearch (interactive)", () => {
-  it("returns to the Brave Search enable prompt when backing out of the API key prompt", () => {
+  it("returns to provider selection when backing out of the Brave API key prompt", () => {
     const { exitCode, payload } = runInteractiveConfigureWebSearch({
       answers: ["y", "back", "n"],
     });
@@ -432,9 +439,9 @@ describe("configureWebSearch (interactive)", () => {
     expect(payload.braveKey).toBeNull();
     expect(payload.errors).toEqual([]);
     expect(payload.saved.every((entry) => entry.value !== "back")).toBe(true);
-    expect(
-      payload.prompts.filter((entry) => /Enable Brave Web Search\?/.test(entry.message)),
-    ).toHaveLength(2);
+    expect(payload.prompts.filter((entry) => /Choose \[1-3\]:/.test(entry.message))).toHaveLength(
+      2,
+    );
     expect(
       payload.prompts.some((entry) => /Brave Search API key: /.test(entry.message) && entry.secret),
     ).toBe(true);

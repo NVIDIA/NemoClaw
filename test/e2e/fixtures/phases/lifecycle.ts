@@ -2,12 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
-import { assertExitZero } from "../clients/command.ts";
+import { assertExitZero, outputContainsReadySandbox } from "../clients/command.ts";
 import type { GatewayClient, HostGatewayRuntime } from "../clients/gateway.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import type { SandboxClient } from "../clients/sandbox.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
+import {
+  type DcodeInvalidCredentialRebuildOptions,
+  isDcodeInvalidCredentialRebuildOptions,
+  simulateDcodeInvalidCredentialRebuild,
+} from "./lifecycle-dcode-invalid-credential.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
+
+export {
+  type DcodeInvalidCredentialRebuildOptions,
+  dcodeInvalidCredentialRebuildOptionsFromRegistryEntry,
+} from "./lifecycle-dcode-invalid-credential.ts";
 
 // Mirror of `OPENSHELL_SANDBOX_NAME_LABEL` in
 // `src/lib/onboard/docker-gpu-patch.ts`. Duplicated here because the
@@ -26,7 +36,7 @@ const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_READY_ATTEMPTS = 30;
 const SANDBOX_READY_DELAY_MS = 5_000;
 
-export type LifecycleProfile = "post-reboot-recovery";
+export type LifecycleProfile = "post-reboot-recovery" | "dcode-rebuild-invalid-credential";
 
 export interface LifecycleCleanup {
   add(name: string, run: () => Promise<void> | void): void;
@@ -54,6 +64,8 @@ export type PostRebootMode = "stop-original" | "rename-to-gpu-backup";
 export interface PostRebootOptions {
   mode?: PostRebootMode;
 }
+
+export type LifecycleSimulationOptions = PostRebootOptions | DcodeInvalidCredentialRebuildOptions;
 
 export interface LifecycleResult {
   profile: LifecycleProfile;
@@ -83,21 +95,6 @@ function sleep(ms: number): Promise<void> {
 function instanceName(instance: NemoClawInstance | string): string {
   const name = typeof instance === "string" ? instance : instance.sandboxName;
   return name;
-}
-
-function stripAnsi(text: string): string {
-  return text.replace(/\u001b\[[0-9;]*m/g, "");
-}
-
-function outputContainsReadySandbox(result: ShellProbeResult, sandboxName: string): boolean {
-  return stripAnsi(`${result.stdout}\n${result.stderr}`)
-    .split(/\r?\n/)
-    .some((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return false;
-      const [name] = trimmed.split(/\s+/);
-      return name === sandboxName && /\bReady\b/i.test(trimmed);
-    });
 }
 
 export class LifecyclePhaseFixture {
@@ -158,11 +155,22 @@ export class LifecyclePhaseFixture {
   async simulate(
     profile: LifecycleProfile,
     instance: NemoClawInstance,
-    options: PostRebootOptions = {},
+    options: LifecycleSimulationOptions = {},
   ): Promise<LifecycleResult> {
     switch (profile) {
       case "post-reboot-recovery":
-        return await this.simulatePostReboot(instance, options);
+        return await this.simulatePostReboot(instance, options as PostRebootOptions);
+      case "dcode-rebuild-invalid-credential":
+        if (!isDcodeInvalidCredentialRebuildOptions(options)) {
+          throw new Error(
+            "dcode-rebuild-invalid-credential requires gateway/provider/credential/model options",
+          );
+        }
+        return await simulateDcodeInvalidCredentialRebuild(instance, options, {
+          host: this.host,
+          sandbox: this.sandbox,
+          cleanup: this.cleanup,
+        });
       default: {
         const _exhaustive: never = profile;
         throw new Error(`Unsupported lifecycle profile '${_exhaustive}'.`);

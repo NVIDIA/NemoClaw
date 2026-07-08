@@ -10,6 +10,11 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 
 const GUARD_PATH = path.resolve("scripts/state-dir-guard.py");
 const fixtures: string[] = [];
+const PYTHON_HAS_DESCRIPTOR_XATTR =
+  spawnSync("python3", [
+    "-c",
+    "import os; assert all(hasattr(os, name) for name in ('listxattr', 'getxattr', 'setxattr'))",
+  ]).status === 0;
 
 const RUN_GUARD_AS_CURRENT_USER = String.raw`
 import importlib.util
@@ -82,6 +87,101 @@ print(json.dumps({
 }))
 `;
 
+const RUN_SYMLINK_POST_CHOWN_RACE = String.raw`
+import importlib.util
+import json
+import os
+import sys
+
+guard_path, config_dir, outside_dir = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard_race", guard_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+identity = module.Identity(
+    root_uid=os.getuid(), root_gid=os.getgid(),
+    sandbox_uid=os.getuid(), sandbox_gid=os.getgid(),
+)
+config_fd = module._open_absolute_dir_nofollow(config_dir)
+plugins_fd = -1
+original_chown = module.os.chown
+try:
+    config_st = os.fstat(config_fd)
+    plugins_st = os.stat("plugins", dir_fd=config_fd, follow_symlinks=False)
+    plugins_fd = module._open_child_dir(config_fd, "plugins", plugins_st)
+    context = module.TraversalContext(
+        config_fd, config_dir, config_st.st_dev, ("plugins",),
+        module.WorkBudget(module.time.monotonic() + 30),
+    )
+
+    def racing_chown(name, uid, gid, *, dir_fd, follow_symlinks):
+        original_chown(name, uid, gid, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+        os.unlink("target", dir_fd=dir_fd)
+        os.symlink(outside_dir, "target", dir_fd=dir_fd)
+
+    module.os.chown = racing_chown
+    try:
+        module._chown_symlink(
+            plugins_fd, "current", "plugins/current", context,
+            "high-risk", "unlock", identity,
+        )
+    except module.GuardOperationError as exc:
+        print(json.dumps(exc.issue.as_json()))
+    else:
+        print(json.dumps({"type": "result", "status": "unexpected-success"}))
+finally:
+    module.os.chown = original_chown
+    if plugins_fd >= 0:
+        os.close(plugins_fd)
+    os.close(config_fd)
+`;
+
+const RUN_FAKE_MOUNT_BOUNDARY = String.raw`
+import importlib.util
+import json
+import os
+import sys
+import time
+
+guard_path, config_dir = sys.argv[1:3]
+spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard_mount", guard_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+config_fd = module._open_absolute_dir_nofollow(config_dir)
+plugins_fd = -1
+original_stat = module.os.stat
+try:
+    config_st = os.fstat(config_fd)
+    plugins_st = original_stat("plugins", dir_fd=config_fd, follow_symlinks=False)
+    plugins_fd = module._open_child_dir(config_fd, "plugins", plugins_st)
+    mounted_st = original_stat("mounted", dir_fd=plugins_fd, follow_symlinks=False)
+    context = module.TraversalContext(
+        config_fd, config_dir, config_st.st_dev, ("plugins",),
+        module.WorkBudget(time.monotonic() + 30),
+    )
+
+    def fake_stat(name, *args, **kwargs):
+        if name == "outside.txt":
+            raise AssertionError("cross-device mount contents were traversed")
+        current = original_stat(name, *args, **kwargs)
+        if name == "mounted" and kwargs.get("dir_fd") == plugins_fd:
+            fields = list(mounted_st)
+            fields[2] = config_st.st_dev + 1
+            return os.stat_result(fields)
+        return current
+
+    module.os.stat = fake_stat
+    issues = []
+    module._scan_dir(context, plugins_fd, "plugins", issues, 0, "preflight")
+    print(json.dumps([issue.as_json() for issue in issues]))
+finally:
+    module.os.stat = original_stat
+    if plugins_fd >= 0:
+        os.close(plugins_fd)
+    os.close(config_fd)
+`;
+
 interface GuardLine {
   type: "issue" | "result";
   code?: string;
@@ -93,10 +193,10 @@ interface GuardLine {
   removedEntries?: number;
 }
 
-function fixture(): { root: string; configDir: string } {
+function fixture(configDirName = ".agent"): { root: string; configDir: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-dir-guard-"));
   fixtures.push(root);
-  const configDir = path.join(root, ".agent");
+  const configDir = path.join(root, configDirName);
   fs.mkdirSync(configDir, { recursive: true });
   // macOS exposes /var through a symlink. The production helper refuses
   // symlinked ancestors, so pass the descriptor-resolved fixture path too.
@@ -137,6 +237,38 @@ afterEach(() => {
 });
 
 describe("state-dir-guard", () => {
+  it("rejects a config root reached through a symlinked ancestor", () => {
+    const rawRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-dir-guard-"));
+    fixtures.push(rawRoot);
+    const root = fs.realpathSync(rawRoot);
+    const realParent = path.join(root, "real-parent");
+    const linkedParent = path.join(root, "linked-parent");
+    const realConfigDir = path.join(realParent, ".agent");
+    fs.mkdirSync(realConfigDir, { recursive: true });
+    fs.symlinkSync(realParent, linkedParent);
+    const configDir = path.join(linkedParent, ".agent");
+
+    const result = runGuard("preflight", configDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(result.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "issue",
+          code: "config-open-failed",
+          path: configDir,
+        }),
+        expect.objectContaining({
+          type: "result",
+          action: "preflight",
+          status: "failed",
+          issueCount: 1,
+        }),
+      ]),
+    );
+  });
+
   it("rejects an external nested symlink without touching its target", () => {
     const { root, configDir } = fixture();
     const pluginDir = path.join(configDir, "plugins", "nested");
@@ -187,6 +319,131 @@ describe("state-dir-guard", () => {
     expect(fs.readlinkSync(path.join(pluginDir, "current"))).toBe("versions/v1");
     expect(mode(pluginDir)).toBe(0o755);
     expect(mode(path.join(versionDir, "plugin.js"))).toBe(0o644);
+  });
+
+  it("rejects a nested symlink target replaced during unlock ownership change", () => {
+    const { root, configDir } = fixture();
+    const pluginsDir = path.join(configDir, "plugins");
+    const currentLink = path.join(pluginsDir, "current");
+    const targetLink = path.join(pluginsDir, "target");
+    const outsideDir = path.join(root, "outside");
+    fs.mkdirSync(path.join(pluginsDir, "versions", "v1"), { recursive: true });
+    fs.mkdirSync(outsideDir);
+    fs.symlinkSync("versions/v1", targetLink);
+    fs.symlinkSync("target", currentLink);
+
+    const result = spawnSync(
+      "python3",
+      ["-c", RUN_SYMLINK_POST_CHOWN_RACE, GUARD_PATH, configDir, outsideDir],
+      { encoding: "utf-8", timeout: 15_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual(
+      expect.objectContaining({
+        type: "issue",
+        code: "symlink-outside-protected-root",
+        path: currentLink,
+      }),
+    );
+    expect(fs.readlinkSync(targetLink)).toBe(outsideDir);
+  });
+
+  it("rejects a descriptor-observed cross-device mount without traversing its contents", () => {
+    const { configDir } = fixture();
+    const mountedDir = path.join(configDir, "plugins", "mounted");
+    const outsideFile = path.join(mountedDir, "outside.txt");
+    fs.mkdirSync(mountedDir, { recursive: true });
+    fs.writeFileSync(outsideFile, "untouched\n");
+
+    const result = spawnSync("python3", ["-c", RUN_FAKE_MOUNT_BOUNDARY, GUARD_PATH, configDir], {
+      encoding: "utf-8",
+      timeout: 15_000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual([
+      expect.objectContaining({
+        type: "issue",
+        code: "cross-device-entry",
+        path: mountedDir,
+      }),
+    ]);
+    expect(fs.readFileSync(outsideFile, "utf-8")).toBe("untouched\n");
+  });
+
+  it("preserves the exact image-owned OpenClaw extension peer link across transitions", () => {
+    const { configDir } = fixture(".openclaw");
+    const peerLink = path.join(configDir, "extensions", "slack", "node_modules", "openclaw");
+    fs.mkdirSync(path.dirname(peerLink), { recursive: true });
+    fs.symlinkSync("/usr/local/lib/node_modules/openclaw", peerLink);
+
+    const preflight = runGuard("preflight", configDir);
+    const locked = runGuard("lock", configDir);
+    const unlocked = runGuard("unlock", configDir);
+
+    expect(preflight.status, preflight.stderr).toBe(0);
+    expect(locked.status, locked.stderr).toBe(0);
+    expect(unlocked.status, unlocked.stderr).toBe(0);
+    expect(fs.lstatSync(peerLink).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(peerLink)).toBe("/usr/local/lib/node_modules/openclaw");
+    expect(locked.lines.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "result",
+        action: "lock",
+        status: "ok",
+        removedEntries: 0,
+      }),
+    );
+  });
+
+  it.each([
+    ["tampered target", "slack", "node_modules/openclaw", "/usr/local/lib/node_modules/other"],
+    [
+      "traversal-shaped extension id",
+      "%2e%2e",
+      "node_modules/openclaw",
+      "/usr/local/lib/node_modules/openclaw",
+    ],
+    ["wrong source path", "slack", "openclaw", "/usr/local/lib/node_modules/openclaw"],
+  ])("rejects a managed extension peer link with a %s", (_case, extensionId, suffix, target) => {
+    const { configDir } = fixture(".openclaw");
+    const peerLink = path.join(configDir, "extensions", extensionId, suffix);
+    fs.mkdirSync(path.dirname(peerLink), { recursive: true });
+    fs.symlinkSync(target, peerLink);
+
+    const result = runGuard("preflight", configDir);
+
+    expect(result.status).toBe(1);
+    expect(result.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "issue",
+          code: "symlink-outside-protected-root",
+          path: peerLink,
+        }),
+      ]),
+    );
+  });
+
+  it("does not trust an OpenClaw peer target under a non-OpenClaw state root", () => {
+    const { configDir } = fixture(".hermes");
+    const peerLink = path.join(configDir, "extensions", "slack", "node_modules", "openclaw");
+    fs.mkdirSync(path.dirname(peerLink), { recursive: true });
+    fs.symlinkSync("/usr/local/lib/node_modules/openclaw", peerLink);
+
+    const result = runGuard("preflight", configDir);
+
+    expect(result.status).toBe(1);
+    expect(result.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "issue",
+          code: "symlink-outside-protected-root",
+          path: peerLink,
+        }),
+      ]),
+    );
   });
 
   it("rejects links from protected code into the writable sessions carveout", () => {
@@ -248,6 +505,58 @@ describe("state-dir-guard", () => {
       fs.closeSync(staleFd);
     }
   });
+
+  it.skipIf(!PYTHON_HAS_DESCRIPTOR_XATTR)(
+    "preserves an extended attribute through fresh-inode lock and unlock",
+    () => {
+      const { configDir } = fixture();
+      const pluginDir = path.join(configDir, "plugins");
+      const pluginPath = path.join(pluginDir, "metadata.js");
+      fs.mkdirSync(pluginDir);
+      fs.writeFileSync(pluginPath, "export {};\n", { mode: 0o660 });
+      const setAttribute = spawnSync(
+        "python3",
+        [
+          "-c",
+          'import os, sys; os.setxattr(sys.argv[1], "user.nemoclaw.test", b"preserved")',
+          pluginPath,
+        ],
+        { encoding: "utf-8" },
+      );
+      expect(setAttribute.status, setAttribute.stderr).toBe(0);
+      const originalInode = fs.statSync(pluginPath).ino;
+
+      const locked = runGuard("lock", configDir);
+      const lockedInode = fs.statSync(pluginPath).ino;
+      const readLockedAttribute = spawnSync(
+        "python3",
+        [
+          "-c",
+          'import os, sys; print(os.getxattr(sys.argv[1], "user.nemoclaw.test").decode())',
+          pluginPath,
+        ],
+        { encoding: "utf-8" },
+      );
+      const unlocked = runGuard("unlock", configDir);
+      const readUnlockedAttribute = spawnSync(
+        "python3",
+        [
+          "-c",
+          'import os, sys; print(os.getxattr(sys.argv[1], "user.nemoclaw.test").decode())',
+          pluginPath,
+        ],
+        { encoding: "utf-8" },
+      );
+
+      expect(locked.status, locked.stderr).toBe(0);
+      expect(lockedInode).not.toBe(originalInode);
+      expect(readLockedAttribute.status, readLockedAttribute.stderr).toBe(0);
+      expect(readLockedAttribute.stdout.trim()).toBe("preserved");
+      expect(unlocked.status, unlocked.stderr).toBe(0);
+      expect(readUnlockedAttribute.status, readUnlockedAttribute.stderr).toBe(0);
+      expect(readUnlockedAttribute.stdout.trim()).toBe("preserved");
+    },
+  );
 
   it(
     "fresh-seals a file even while an attacker continuously writes an old descriptor",

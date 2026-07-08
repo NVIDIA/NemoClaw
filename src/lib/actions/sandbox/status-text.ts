@@ -185,7 +185,7 @@ function printActiveSessions(sandboxName: string): void {
 }
 
 function printShieldsPosture(sandboxName: string): void {
-  const posture = shields.getShieldsPosture(sandboxName, true);
+  const posture = shields.getShieldsPosture(sandboxName, false);
   if (posture.mode === "locked") return;
   const detail =
     posture.mode === "mutable_default"

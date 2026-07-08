@@ -283,6 +283,12 @@ describe("simple global oclif adapters", () => {
     expect(mocks.runStopCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), stopAll: mocks.stopAll }),
     );
+    expect(mocks.runStopCommand.mock.calls).toEqual(
+      expect.arrayContaining([
+        [expect.not.objectContaining({ releaseGatewayPort: true })],
+        [expect.objectContaining({ releaseGatewayPort: true })],
+      ]),
+    );
   });
 
   it("passes uninstall runtime dependencies to the uninstall action", async () => {

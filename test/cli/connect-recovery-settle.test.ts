@@ -91,11 +91,11 @@ describe("CLI dispatch", () => {
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'docker %s\\n\' "$*" >> "$marker_file"',
         'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
-        'if [ "$1" = "ps" ] && [ "$2" = "--format" ]; then',
-        "  echo openshell-alpha",
+        'if [ "$1" = "ps" ]; then',
+        "  printf 'container-id\\topenshell-alpha\\n'",
         "  exit 0",
         "fi",
-        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root openshell-alpha /usr/local/bin/nemoclaw-gateway-control recover "* ]]; then',
+        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root container-id /usr/local/bin/nemoclaw-gateway-control recover "* ]]; then',
         '  nonce="${!#}"',
         '  case "$nonce" in *[!0-9a-f]*|"") exit 64 ;; esac',
         '  [ "${#nonce}" -eq 64 ] || exit 64',
@@ -103,7 +103,7 @@ describe("CLI dispatch", () => {
         "  echo 'GATEWAY_PID=123'",
         "  exit 0",
         "fi",
-        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root openshell-alpha /usr/local/bin/nemoclaw-gateway-control probe "* ]]; then',
+        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root container-id /usr/local/bin/nemoclaw-gateway-control probe "* ]]; then',
         '  nonce="${!#}"',
         '  case "$nonce" in *[!0-9a-f]*|"") exit 64 ;; esac',
         '  [ "${#nonce}" -eq 64 ] || exit 64',
@@ -131,10 +131,10 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("config change requires gateway restart (plugins.installs)");
     const calls = fs.readFileSync(markerFile, "utf8");
     expect(calls).toMatch(
-      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control recover [0-9a-f]{64}$/m,
+      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root container-id \/usr\/local\/bin\/nemoclaw-gateway-control recover [0-9a-f]{64}$/m,
     );
     expect(calls).toMatch(
-      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control probe [0-9a-f]{64}$/m,
+      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root container-id \/usr\/local\/bin\/nemoclaw-gateway-control probe [0-9a-f]{64}$/m,
     );
     expect(calls).toContain("--env LD_PRELOAD=");
     expect(calls).toContain("--env PYTHONPATH=");

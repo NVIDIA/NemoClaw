@@ -53,7 +53,7 @@ Resolve only mechanical conflicts (import ordering, adjacent additions, branch d
 npm test                          # root integration tests
 cd nemoclaw && npm test           # plugin tests
 npm run typecheck:cli             # CLI type check
-make check                        # all linters
+npm run check                     # all repository checks
 ```
 
 Use only commands matching the changed area.

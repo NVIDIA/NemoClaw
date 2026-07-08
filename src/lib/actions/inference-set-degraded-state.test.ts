@@ -32,6 +32,7 @@ describe("runInferenceSet degraded state handling", () => {
       }),
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("keeps gateway and registry consistent when the in-sandbox config write fails (#3726)", async () => {
@@ -52,7 +53,7 @@ describe("runInferenceSet degraded state handling", () => {
     });
 
     const result = await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b", noVerify: true },
+      { provider: "anthropic-prod", model: "claude-sonnet-4-6", noVerify: true },
       deps,
     );
 
@@ -60,14 +61,14 @@ describe("runInferenceSet degraded state handling", () => {
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
-        provider: "nvidia-prod",
-        model: "nvidia/nemotron-3-super-120b-a12b",
+        provider: "anthropic-prod",
+        model: "claude-sonnet-4-6",
       }),
     );
     expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(result).toMatchObject({
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
+      provider: "anthropic-prod",
+      model: "claude-sonnet-4-6",
       inSandboxConfigSynced: false,
     });
     // Warned + pointed at rebuild, and never falsely reports "synced".
@@ -75,6 +76,7 @@ describe("runInferenceSet degraded state handling", () => {
     expect(logged).toMatch(/in-sandbox config failed/);
     expect(logged).toMatch(/rebuild/);
     expect(logged).not.toMatch(/Inference route synced/);
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("reports degraded (not synced) when the in-sandbox hash recompute fails (#3726)", async () => {
@@ -95,7 +97,7 @@ describe("runInferenceSet degraded state handling", () => {
     });
 
     const result = await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b", noVerify: true },
+      { provider: "anthropic-prod", model: "claude-sonnet-4-6", noVerify: true },
       deps,
     );
 
@@ -104,8 +106,8 @@ describe("runInferenceSet degraded state handling", () => {
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
-        provider: "nvidia-prod",
-        model: "nvidia/nemotron-3-super-120b-a12b",
+        provider: "anthropic-prod",
+        model: "claude-sonnet-4-6",
       }),
     );
     expect(result).toMatchObject({ inSandboxConfigSynced: false });
@@ -115,5 +117,6 @@ describe("runInferenceSet degraded state handling", () => {
     expect(logged).toMatch(/integrity hash/);
     expect(logged).toMatch(/rebuild/);
     expect(logged).not.toMatch(/Inference route synced/);
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 });

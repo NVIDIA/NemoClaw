@@ -131,6 +131,8 @@ bootstrap_usage() {
   printf "                                 Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                 Continue after manually backing up and retiring old gateway\n"
+  printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
+  printf "                                 Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_PROVIDER            build | openai | anthropic | anthropicCompatible\n"
   printf "                                 | gemini | ollama | custom | nim-local | vllm | routed\n"
   printf "                                 | hermes-provider\n"

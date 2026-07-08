@@ -8,7 +8,7 @@ import path from "node:path";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { shellQuote } from "../fixtures/clients/command.ts";
+import { assertExitZero as expectExitZero, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -16,11 +16,12 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-export const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
+export { CLI_ENTRYPOINT, expectExitZero, REPO_ROOT };
+
 export const BASE_POLICY = path.join(
   REPO_ROOT,
   "nemoclaw-blueprint",
@@ -33,6 +34,11 @@ export const INSTALL_TIMEOUT_MS = 45 * 60_000;
 export const REBUILD_TIMEOUT_MS = 25 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
 export const LIVE_TIMEOUT_MS = 90 * 60_000;
+export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
+
+// Leave ample headroom beneath OpenShell's strict per-argument ceiling.
+const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
+const SANDBOX_SHELL_BOOTSTRAP = `set -eu; printf '%s' "$@" | base64 -d | sh`;
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -114,6 +120,17 @@ export function isFakeSlackToken(value: string): boolean {
 export function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+export function parseRuntimeProofPort(rawPort: string): number {
+  if (!/^[0-9]+$/u.test(rawPort)) {
+    throw new Error("runtime proof port must contain decimal digits only");
+  }
+  const port = Number(rawPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("runtime proof port must be an integer between 1 and 65535");
+  }
+  return port;
 }
 
 export function isUnresolvedPlaceholderRejection(text: string): boolean {
@@ -318,9 +335,7 @@ export async function runSandboxShell(
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
-  const encodedScript = base64(script);
-  const wrapper = `printf '%s' ${shellQuote(encodedScript)} | base64 -d | sh`;
-  return sandbox.exec(SANDBOX_NAME, ["sh", "-lc", wrapper], {
+  return sandbox.exec(SANDBOX_NAME, buildSandboxShellInvocation(script), {
     artifactName: options.artifactName,
     env: sandboxAccessEnv(),
     redactionValues: options.redactionValues,
@@ -338,24 +353,54 @@ export async function runSandboxNode(
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
-  const envLines = Object.entries(options.env ?? {})
-    .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
-    .join("\n");
-  const scriptName = `/tmp/nemoclaw-${options.artifactName.replace(/[^a-zA-Z0-9_.-]/g, "-")}.mjs`;
-  return runSandboxShell(
-    sandbox,
-    `
-set -eu
-${envLines}
-printf '%s' ${shellQuote(base64(source))} | base64 -d > ${shellQuote(scriptName)}
-node --preserve-symlinks ${shellQuote(scriptName)}
-`,
-    options,
-  );
+  return sandbox.exec(SANDBOX_NAME, buildSandboxNodeInvocation(source, options), {
+    artifactName: options.artifactName,
+    env: sandboxAccessEnv(),
+    redactionValues: options.redactionValues,
+    timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
+  });
 }
 
-export function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label}\n${outputText(result)}`).toBe(0);
+export function buildSandboxNodeInvocation(
+  source: string,
+  options: {
+    artifactName: string;
+    env?: Record<string, string>;
+  },
+): string[] {
+  const environment = Object.entries(options.env ?? {}).map(([key, value]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+      throw new Error(`sandbox Node environment variable name is invalid: ${key}`);
+    }
+    return `export ${key}=${shellQuote(value)}`;
+  });
+  const scriptName = `/tmp/nemoclaw-${options.artifactName.replace(/[^a-zA-Z0-9_.-]/g, "-")}.mjs`;
+  return buildSandboxShellInvocation(`
+set -eu
+${environment.join("\n")}
+printf '%s' ${shellQuote(base64(source))} | base64 -d > ${shellQuote(scriptName)}
+node --preserve-symlinks ${shellQuote(scriptName)}
+`);
+}
+
+export function buildSandboxShellInvocation(script: string): string[] {
+  const encodedScript = base64(script);
+  const chunks: string[] = [];
+  for (let offset = 0; offset < encodedScript.length; offset += SANDBOX_SOURCE_CHUNK_BYTES) {
+    chunks.push(encodedScript.slice(offset, offset + SANDBOX_SOURCE_CHUNK_BYTES));
+  }
+  if (chunks.length === 0) chunks.push("");
+
+  const invocation = ["sh", "-lc", SANDBOX_SHELL_BOOTSTRAP, "nemoclaw-shell-bootstrap", ...chunks];
+  const oversizedArgument = invocation.find(
+    (argument) => Buffer.byteLength(argument, "utf8") >= OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
+  );
+  if (oversizedArgument !== undefined) {
+    throw new Error(
+      `sandbox invocation argument must be smaller than ${OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES} bytes`,
+    );
+  }
+  return invocation;
 }
 
 export function check(condition: boolean, message: string): void {

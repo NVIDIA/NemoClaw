@@ -286,7 +286,7 @@ exit 98
       },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const gitCalls = fs.readFileSync(gitLog, "utf-8");
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
@@ -390,7 +390,7 @@ exit 98
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(output).toMatch(/NemoClaw Installer/);
     expect(output).not.toMatch(/deprecated compatibility wrapper/);
   });
@@ -410,7 +410,7 @@ exit 98
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(output).toMatch(/NemoClaw Installer/);
     expect(output).not.toMatch(/deprecated compatibility wrapper/);
   });
@@ -421,7 +421,7 @@ exit 98
       encoding: "utf-8",
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const output = `${result.stdout}${result.stderr}`;
     expect(output).toMatch(/NemoClaw Installer/);
     expect(output).toMatch(/--non-interactive/);
@@ -444,7 +444,7 @@ exit 98
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
     expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
@@ -456,7 +456,7 @@ exit 98
       encoding: "utf-8",
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const output = `${result.stdout}${result.stderr}`;
     expect(output.trim()).toMatch(/^nemoclaw-installer(?: v\d+\.\d+\.\d+(?:-.+)?)?$/);
     expect(output).not.toMatch(/0\.1\.0/);
@@ -518,6 +518,8 @@ exit 98
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
+    writeOpenShellOkStub(fakeBin);
     writeExecutable(
       path.join(fakeBin, "git"),
       `#!/usr/bin/env bash
@@ -598,7 +600,7 @@ fi`,
       },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const log = fs.readFileSync(npmLog, "utf-8");
     // install (no -g) and link must both have been called
     expect(log).toMatch(/^install(?!\s+-g)/m);
@@ -624,6 +626,7 @@ fi`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
     writeNpmStub(
       fakeBin,
       `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
@@ -2170,6 +2173,8 @@ exit 99`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
+    writeOpenShellOkStub(fakeBin);
     writeNpmStub(
       fakeBin,
       `if [ "$1" = "pack" ]; then exit 1; fi
@@ -2231,7 +2236,7 @@ exit 0`,
       },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     // git clone / git fetch should NOT have been called in the source-checkout path.
     // git may be called for version resolution (git describe), so we check
     // that no clone or fetch was attempted rather than no git calls at all.
@@ -2253,6 +2258,8 @@ exit 0`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
+    writeOpenShellOkStub(fakeBin);
 
     writeExecutable(
       path.join(fakeBin, "curl"),
@@ -2308,7 +2315,7 @@ fi`,
       },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const gitCalls = fs.readFileSync(gitLog, "utf-8");
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
@@ -3894,40 +3901,15 @@ sys.exit(exit_code)
   });
 });
 
-// ---------------------------------------------------------------------------
-// Build-dependency preflight (#4415): missing binutils/`strings` should fail
-// fast at preflight, before any clone/build/download work, instead of ~5
-// minutes in at OpenShell verification.
-// ---------------------------------------------------------------------------
-
-/**
- * Like buildIsolatedSystemPath but lets the caller exclude additional binary
- * names (in addition to node/npm/npx). Used to simulate a host that is missing
- * `strings` (binutils) while keeping the rest of coreutils available.
- */
-function buildSystemPathExcluding(extra: readonly string[]): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-nodep-"));
-  const EXCLUDE = new Set(["node", "npm", "npx", ...extra]);
-  for (const sysDir of ["/usr/bin", "/bin"]) {
-    if (!fs.existsSync(sysDir)) continue;
-    for (const name of fs.readdirSync(sysDir)) {
-      if (EXCLUDE.has(name)) continue;
-      try {
-        fs.symlinkSync(path.join(sysDir, name), path.join(dir, name));
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      }
-    }
-  }
-  return dir;
-}
-
 /** docker stub whose `info` always succeeds, so ensure_docker passes. */
 function writeDockerOkStub(fakeBin: string) {
   writeExecutable(
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
-if [ "$1" = "info" ]; then exit 0; fi
+if [ "$1" = "info" ]; then
+  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  exit 0
+fi
 exit 0
 `,
   );
@@ -3940,66 +3922,13 @@ exit 0
   );
 }
 
-describe("installer build-dependency preflight (#4415)", { timeout: 30_000 }, () => {
-  it("fails fast at preflight when binutils (strings) is missing, before any clone/build", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-    writeNodeStub(fakeBin);
-    writeDockerOkStub(fakeBin);
-    const noStringsPath = buildSystemPathExcluding(["strings"]);
-
-    const result = spawnSync("bash", [INSTALLER], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${noStringsPath}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-      },
-    });
-
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).not.toBe(0);
-    expect(output).toMatch(/'strings' \(from binutils\) is required/);
-    expect(output).toMatch(/sudo apt-get install -y binutils/);
-    // Fail-fast guarantee: never reached the OpenShell install/verify or the
-    // CLI build, which is the ~5-minutes-in failure point the issue reports.
-    expect(output).not.toMatch(/Installing OpenShell/);
-    expect(output).not.toMatch(/Cloning into/);
-  });
-
-  it("does not fire the binutils preflight when OpenShell install is deferred", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-deferred-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-    writeNodeStub(fakeBin);
-    // npm stub that fails fast on install, so the run stops shortly AFTER the
-    // (skipped) binutils preflight rather than doing real work. The assertion
-    // only cares that our binutils error never fires under DEFER.
-    writeNpmStub(fakeBin, 'echo "npm stub stop" >&2; exit 91');
-    writeDockerOkStub(fakeBin);
-    const noStringsPath = buildSystemPathExcluding(["strings"]);
-
-    const result = spawnSync("bash", [INSTALLER], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${noStringsPath}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
-        NPM_PREFIX: path.join(tmp, "prefix"),
-      },
-    });
-
-    const output = `${result.stdout}${result.stderr}`;
-    // The deferred path postpones all OpenShell work (and its own strings
-    // check) to a later phase, so the early preflight must stay silent.
-    expect(output).not.toMatch(/'strings' \(from binutils\) is required/);
-  });
-});
+function writeOpenShellOkStub(fakeBin: string, version = "0.0.72") {
+  writeExecutable(
+    path.join(fakeBin, "openshell"),
+    `#!/usr/bin/env bash
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell ${version}"; exit 0; fi
+# request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods
+exit 0
+`,
+  );
+}

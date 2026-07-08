@@ -47,7 +47,7 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(module).toBeTruthy();
     expect(module).toContain("def approval_request_decision");
     expect(module).toContain("def gateway_approval_env");
-    expect(module).toContain("def recover_failed_scope_approval");
+    expect(module).not.toContain("recover_failed_scope_approval");
   });
 });
 
@@ -98,9 +98,27 @@ describe("auto-pair approval pass behaviour (#4616)", () => {
           requestedScopes: ["operator.pairing"],
         },
         {
+          requestId: "ok-agent-cli",
+          clientId: "cli",
+          clientMode: "cli",
+          requestedScopes: ["operator.pairing"],
+        },
+        {
           requestId: "deny-unknown",
           clientId: "evil",
           clientMode: "unknown",
+          scopes: ["operator.read"],
+        },
+        {
+          requestId: "deny-spoofed-cli-mode",
+          clientId: "evil",
+          clientMode: "cli",
+          scopes: ["operator.write"],
+        },
+        {
+          requestId: "deny-spoofed-webchat-mode",
+          clientId: "evil",
+          clientMode: "webchat",
           scopes: ["operator.read"],
         },
         {
@@ -157,16 +175,16 @@ process.exit(2);
         ? fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n").filter(Boolean)
         : [];
 
-      expect(approvals).toEqual(["ok-webchat", "ok-cli"]);
+      expect(approvals).toEqual(["ok-webchat", "ok-cli", "ok-agent-cli"]);
       // Gateway env stripped on the approve subprocess (#4462 workaround).
-      expect(approveEnv).toEqual(["unset:unset:unset", "unset:unset:unset"]);
-      expect(result.stdout).toContain(`${SUMMARY_MARKER}=2`);
+      expect(approveEnv).toEqual(["unset:unset:unset", "unset:unset:unset", "unset:unset:unset"]);
+      expect(result.stdout).toContain(`${SUMMARY_MARKER}=3`);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("recovers an allowlisted approval failure left pending in device state", () => {
+  it("leaves a failed compatibility-shaped approval retryable without editing device state", () => {
     if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
       return;
     }
@@ -188,8 +206,11 @@ process.exit(2);
           original: {
             requestId: "upgrade-1",
             deviceId: "device-1",
+            publicKey: "public-key-1",
             clientId: "openclaw-cli",
             clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
             scopes: ["operator.write"],
           },
         }),
@@ -199,6 +220,11 @@ process.exit(2);
         JSON.stringify({
           "device-1": {
             deviceId: "device-1",
+            publicKey: "public-key-1",
+            clientId: "openclaw-cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
             scopes: ["operator.pairing"],
             approvedScopes: ["operator.pairing"],
             tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
@@ -210,8 +236,11 @@ process.exit(2);
           {
             requestId: "upgrade-1",
             deviceId: "device-1",
+            publicKey: "public-key-1",
             clientId: "openclaw-cli",
             clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
             scopes: ["operator.write"],
           },
         ],
@@ -250,18 +279,21 @@ process.exit(2);
       const pending = JSON.parse(fs.readFileSync(pendingFile, "utf-8"));
       const paired = JSON.parse(fs.readFileSync(pairedFile, "utf-8"));
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain(`${SUMMARY_MARKER}=1`);
-      expect(pending).toEqual({});
-      expect(paired["device-1"].approvedScopes).toEqual([
-        "operator.pairing",
-        "operator.read",
-        "operator.write",
-      ]);
-      expect(paired["device-1"].tokens.operator.scopes).toEqual([
-        "operator.pairing",
-        "operator.read",
-        "operator.write",
-      ]);
+      expect(result.stdout).toContain(`${SUMMARY_MARKER}=0`);
+      expect(pending).toEqual({
+        original: {
+          requestId: "upgrade-1",
+          deviceId: "device-1",
+          publicKey: "public-key-1",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.write"],
+        },
+      });
+      expect(paired["device-1"].approvedScopes).toEqual(["operator.pairing"]);
+      expect(paired["device-1"].tokens.operator.scopes).toEqual(["operator.pairing"]);
       expect(JSON.stringify(paired)).not.toContain("operator.admin");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

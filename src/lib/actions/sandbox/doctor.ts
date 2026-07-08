@@ -432,7 +432,7 @@ function agentVersionDoctorCheck(sandboxName: string): DoctorCheck {
 }
 
 function shieldsDoctorCheck(sandboxName: string): DoctorCheck {
-  const posture = shields.getShieldsPosture(sandboxName, true);
+  const posture = shields.getShieldsPosture(sandboxName, false);
   const status: DoctorStatus =
     posture.mode === "locked"
       ? "ok"

@@ -13,35 +13,16 @@
 //   - Base environment entries used by Hermes inside OpenShell
 //   - Agent defaults (terminal, memory, skills, display)
 
-import { readHermesBuildSettings } from "./config/build-env.ts";
-import { buildHermesEnvLines } from "./config/hermes-env.ts";
-import { buildHermesConfig, finalizeHermesPlatformToolsets } from "./config/hermes-config.ts";
-import { discoverModelSpecificSetups } from "./config/model-specific-setup.ts";
-import { writeHermesConfigFiles } from "./config/write-config.ts";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { generateHermesConfig } from "./config/generate.ts";
 
-function main(): void {
-  const settings = readHermesBuildSettings(process.env);
-  discoverModelSpecificSetups(
-    "hermes",
-    {
-      model: settings.model,
-      providerKey: settings.providerKey,
-      inferenceApi: settings.inferenceApi,
-      baseUrl: settings.baseUrl,
-    },
-    {
-      env: process.env,
-      scriptDir: import.meta.dirname,
-    },
-  );
-
-  const config = buildHermesConfig(settings);
-  const envLines = buildHermesEnvLines(settings);
-  finalizeHermesPlatformToolsets(config, settings);
-  const written = writeHermesConfigFiles(config, envLines);
-
-  console.log(`[config] Wrote ${written.configPath} (model=${settings.model}, provider=custom)`);
-  console.log(`[config] Wrote ${written.envPath} (${written.envEntryCount} entries)`);
+export function main(): void {
+  generateHermesConfig({ env: process.env, scriptDir: import.meta.dirname });
 }
 
-main();
+function isMainModule(): boolean {
+  return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
+}
+
+if (isMainModule()) main();

@@ -121,6 +121,11 @@ function createConflictFixture() {
     model: "meta/llama-3.3-70b-instruct",
     provider: "nvidia-prod",
     gpuEnabled: false,
+    sandboxGpuMode: "0",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    dashboardPort: 18789,
+    fromDockerfile: null,
     policies: [],
     agent: null,
     messaging: { schemaVersion: 1, plan: teamsPlan(name, "shared-teams-hash") },
@@ -160,8 +165,8 @@ const a = process.argv.slice(2);
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("my-assistant\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
-if (a[0]==="status")                         { process.stdout.write("running\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n"); process.exit(0); }
+if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"nvidia-prod","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference")                      { process.exit(0); }
@@ -209,6 +214,7 @@ function runRebuild(tmpDir: string) {
     env: {
       HOME: tmpDir,
       PATH: `${tmpDir}:${NODE_BIN}:/usr/bin:/bin`,
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_NO_CONNECT_HINT: "1",
       NO_COLOR: "1",

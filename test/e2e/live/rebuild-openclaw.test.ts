@@ -5,14 +5,21 @@ import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import {
+  readJsonFile,
+  readJsonFileOr,
+  restoreFile,
+  snapshotFile,
+  writeJsonFile,
+} from "../fixtures/file-state.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
 
 // The contract stays intentionally local to this live test: build an older
@@ -22,8 +29,6 @@ import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.t
 //
 // Simplicity boundary: no new registry, fixture family, or migration ledger.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const OLD_OPENCLAW_VERSION = "2026.3.11";
 const MARKER_FILE = "/sandbox/.openclaw/workspace/rebuild-marker.txt";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -74,14 +79,6 @@ interface GatewayTokenRotationResult {
   hashValid: boolean;
 }
 
-function resultText(result: ShellProbeResult): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
-function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
-}
-
 function isRetryableOnboardEndpointFailure(result: ShellProbeResult): boolean {
   const text = resultText(result);
   return (
@@ -90,36 +87,6 @@ function isRetryableOnboardEndpointFailure(result: ShellProbeResult): boolean {
       text,
     )
   );
-}
-
-function readJsonFile<T>(file: string, fallback: T): T {
-  if (!fs.existsSync(file)) return fallback;
-  return JSON.parse(fs.readFileSync(file, "utf8")) as T;
-}
-
-function writeJsonFile(file: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-interface FileSnapshot {
-  exists: boolean;
-  content?: string;
-}
-
-function snapshotFile(file: string): FileSnapshot {
-  return fs.existsSync(file)
-    ? { exists: true, content: fs.readFileSync(file, "utf8") }
-    : { exists: false };
-}
-
-function restoreFile(file: string, snapshot: FileSnapshot): void {
-  if (!snapshot.exists) {
-    fs.rmSync(file, { force: true });
-    return;
-  }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, snapshot.content ?? "", "utf8");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -218,7 +185,7 @@ async function configureGatewayInferenceRoute(
   );
 }
 
-function seedRegistryAndSession(): void {
+function seedRegistryAndSession(dashboardPort: number): void {
   // The legacy rebuild regression requires an intentionally old OpenClaw sandbox
   // that NemoClaw cannot create through the normal onboard path because current
   // blueprints reject versions below min_openclaw_version. Create that sandbox
@@ -226,7 +193,7 @@ function seedRegistryAndSession(): void {
   // so `nemoclaw <name> rebuild --yes` exercises the user-visible rebuild
   // boundary. Remove this local seeding once a first-class old-version lifecycle
   // fixture/profile exists.
-  const registry = readJsonFile<{
+  const registry = readJsonFileOr<{
     sandboxes?: Record<string, Record<string, unknown>>;
     defaultSandbox?: string;
   }>(REGISTRY_FILE, {});
@@ -241,6 +208,11 @@ function seedRegistryAndSession(): void {
     policyTier: null,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
+    dashboardPort,
+    // This test creates an old NemoClaw-managed runtime directly through
+    // OpenShell. Record the managed-image provenance explicitly so rebuild
+    // does not have to guess whether an omitted legacy value meant `--from`.
+    fromDockerfile: null,
   };
   registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);
@@ -248,7 +220,7 @@ function seedRegistryAndSession(): void {
   const now = new Date().toISOString();
   const complete = { status: "complete", startedAt: now, completedAt: now, error: null };
   const pending = { status: "pending", startedAt: null, completedAt: null, error: null };
-  const session = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
+  const session = readJsonFileOr<Record<string, unknown>>(SESSION_FILE, {});
   Object.assign(session, {
     sandboxName: SANDBOX_NAME,
     status: "complete",
@@ -275,7 +247,7 @@ function seedRegistryAndSession(): void {
 }
 
 function registrySandbox(): Record<string, unknown> {
-  const data = readJsonFile<{ sandboxes?: Record<string, Record<string, unknown>> }>(
+  const data = readJsonFileOr<{ sandboxes?: Record<string, Record<string, unknown>> }>(
     REGISTRY_FILE,
     {},
   );
@@ -300,7 +272,7 @@ function latestRebuildBackupDir(): string {
 function latestRebuildManifest(backupDir: string): Record<string, unknown> {
   const manifestPath = path.join(backupDir, "rebuild-manifest.json");
   expect(fs.existsSync(manifestPath), `backup manifest missing: ${manifestPath}`).toBe(true);
-  return JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+  return readJsonFile<Record<string, unknown>>(manifestPath);
 }
 
 function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): string[] {
@@ -339,9 +311,10 @@ function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): 
   return leaks;
 }
 
-// Gate this live test on NEMOCLAW_RUN_LIVE_E2E=1. Accidental cli-test-shard
-// discovery must not build Docker images, mutate ~/.nemoclaw, or call NVIDIA.
-test.skipIf(!shouldRunLiveE2E())(
+// The e2e-live Vitest project owns the NEMOCLAW_RUN_LIVE_E2E collection gate.
+// Accidental cli-test-shard discovery must not build Docker images, mutate
+// ~/.nemoclaw, or call NVIDIA.
+test(
   "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and rotates gateway token",
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
@@ -465,6 +438,15 @@ test.skipIf(!shouldRunLiveE2E())(
       });
     }
 
+    const phase1DashboardPort = registrySandbox().dashboardPort;
+    expect(
+      typeof phase1DashboardPort === "number" &&
+        Number.isInteger(phase1DashboardPort) &&
+        phase1DashboardPort > 0 &&
+        phase1DashboardPort <= 65535,
+      "initial onboard must persist the dashboard port used by authoritative rebuild",
+    ).toBe(true);
+
     await openshellBestEffort(
       host,
       ["sandbox", "delete", SANDBOX_NAME],
@@ -482,6 +464,8 @@ test.skipIf(!shouldRunLiveE2E())(
           "build",
           "--build-arg",
           `OPENCLAW_VERSION=${OLD_OPENCLAW_VERSION}`,
+          "--build-arg",
+          "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
           "-f",
           path.join(REPO_ROOT, "Dockerfile.base"),
           "-t",
@@ -612,8 +596,8 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     const preRebuildConfigHash = preHashResult.stdout.trim();
     expect(preRebuildConfigHash).toContain("openclaw.json");
 
-    seedRegistryAndSession();
-    const sessionAfterSeed = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
+    seedRegistryAndSession(phase1DashboardPort as number);
+    const sessionAfterSeed = readJsonFileOr<Record<string, unknown>>(SESSION_FILE, {});
     const seededSteps = sessionAfterSeed.steps as Record<string, { status?: string }> | undefined;
     const seededSandbox = registrySandbox();
     await artifacts.writeJson("phase-4-registry-session-summary.json", {
@@ -621,6 +605,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
         name: seededSandbox.name,
         provider: seededSandbox.provider,
         agentVersion: seededSandbox.agentVersion,
+        dashboardPort: seededSandbox.dashboardPort,
         policyCount: Array.isArray(seededSandbox.policies) ? seededSandbox.policies.length : 0,
       },
       session: {

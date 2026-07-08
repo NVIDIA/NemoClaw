@@ -50,6 +50,7 @@ describe("agent definitions", () => {
       format: "json",
     });
     expect(openclaw.inferenceProviderOptions).toEqual([]);
+    expect(openclaw.mcpCapability).toEqual({ support: "bridge", adapter: "mcporter" });
     // OpenClaw uses device_pairing web auth — no fetchable bearer token.
     expect(openclaw.webAuth).toEqual({ method: "none", env: null });
     // #5027: openclaw.json must be declared as a durable state file so
@@ -73,6 +74,7 @@ describe("agent definitions", () => {
       format: "yaml",
     });
     expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
+    expect(hermes.mcpCapability).toEqual({ support: "bridge", adapter: "hermes-config" });
     expect(hermes.healthProbe?.url).toBe("http://localhost:8642/health");
     expect(hermes.forwardPort).toBe(18789);
     expect(hermes.forward_ports).toEqual([18789, 8642]);
@@ -109,11 +111,12 @@ describe("agent definitions", () => {
       smoke_commands: [
         "dcode --version",
         "test -s /sandbox/.deepagents/config.toml && echo NEMOCLAW_DEEPAGENTS_CONFIG_OK",
+        'empty_prompt=; output="$(timeout 10 dcode -n "$empty_prompt" 2>&1)"; status=$?; [ "$status" -eq 2 ] && [ "$output" = "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ] && echo NEMOCLAW_DCODE_EMPTY_PROMPT_OK',
       ],
     });
     expect(deepAgentsCode.binary_path).toBe("/usr/local/bin/dcode");
     expect(deepAgentsCode.versionCommand).toBe("dcode --version");
-    expect(deepAgentsCode.expectedVersion).toBe("0.1.12");
+    expect(deepAgentsCode.expectedVersion).toBe("0.1.34");
     expect(deepAgentsCode.healthProbe).toBeNull();
     expect(deepAgentsCode.forwardPort).toBe(0);
     expect(deepAgentsCode.configPaths).toEqual({
@@ -123,13 +126,15 @@ describe("agent definitions", () => {
       format: "toml",
     });
     expect(deepAgentsCode.inference?.provider_type).toBe("openai_compatible");
+    expect(deepAgentsCode.inference?.default_model).toBe("nvidia/nemotron-3-ultra-550b-a55b");
+    expect(deepAgentsCode.mcpCapability).toEqual({
+      support: "bridge",
+      adapter: "deepagents-config",
+    });
     expect(deepAgentsCode.stateDirs).toEqual([".state", "skills", "agent/skills"]);
-    expect(deepAgentsCode.stateFiles).toEqual([
-      { path: "config.toml", strategy: "copy" },
-      { path: "hooks.json", strategy: "copy" },
-    ]);
+    expect(deepAgentsCode.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
     expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
-    expect(deepAgentsCode.userManagedFiles).toEqual([".env", ".mcp.json"]);
+    expect(deepAgentsCode.userManagedFiles).toEqual([".deepagents/.env", ".deepagents/.mcp.json"]);
   });
 
   it("orders OpenClaw first in interactive choices", () => {
@@ -292,6 +297,52 @@ describe("agent definitions", () => {
     );
 
     expect(() => loadAgent(agentName)).toThrow(/inference\.provider_type/);
+  });
+
+  it.each([
+    "42",
+    '"bad model"',
+  ])("rejects invalid inference default models in manifests (%s)", (defaultModel) => {
+    const agentName = `invalid-inference-default-model-${String(Date.now())}-${defaultModel.length}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Inference Default",
+        "inference:",
+        `  default_model: ${defaultModel}`,
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/inference\.default_model/);
+  });
+
+  it("rejects invalid MCP bridge adapter declarations in manifests", () => {
+    const agentName = `invalid-mcp-adapter-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken MCP",
+        "mcp:",
+        "  support: bridge",
+        "  adapter: unsupported-adapter",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/mcp\.adapter/);
+  });
+
+  it("requires an MCP adapter when bridge support is declared", () => {
+    const agentName = `missing-mcp-adapter-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "display_name: Missing MCP Adapter", "mcp:", "  support: bridge"].join(
+        "\n",
+      ),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/mcp\.adapter/);
   });
 
   it("loads terminal runtime manifests without OpenClaw gateway defaults", () => {

@@ -658,6 +658,10 @@ describe("built-in channel manifests", () => {
       manager: "openclaw-plugin",
       spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
       pin: true,
+      integrity:
+        "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+      tarballUrl:
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
       required: true,
     });
     expect(wechatManifest.hooks.map((hook) => hook.handler)).toEqual([
@@ -843,6 +847,13 @@ describe("built-in channel manifests", () => {
       manager: "openclaw-plugin",
       spec: "npm:@openclaw/msteams@{{openclaw.version}}",
       pin: true,
+      integrityByVersion: {
+        "2026.6.10":
+          "sha512-GjHnCPvjbnI0C7mEFcdT2uKDH4/WwOe2dZBfQiWxBtkE76m6TNG0J9dJjD4mc8/pk8rXSO0cWw+KV9jzWtF9VA==",
+      },
+      tarballUrlByVersion: {
+        "2026.6.10": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.6.10.tgz",
+      },
       required: true,
     });
     expect(teamsManifest.agentPackages).toContainEqual({

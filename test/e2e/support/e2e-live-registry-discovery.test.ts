@@ -101,4 +101,21 @@ describe("live target registry discovery support", () => {
       reasons: [],
     });
   });
+
+  it("wires the canonical DCode target through invalid-credential rebuild lifecycle", () => {
+    const target = listTargets().find(
+      (entry) => entry.id === "ubuntu-repo-cloud-langchain-deepagents-code",
+    );
+
+    expect(target).toBeTruthy();
+    expect(target!.environment?.lifecycle).toBe("dcode-rebuild-invalid-credential");
+    expect(liveTargetSupport(target!)).toMatchObject({ supported: true, reasons: [] });
+    expect(buildLiveTargetRunPlan(target!).phases).toEqual([
+      "environment",
+      "onboarding",
+      "lifecycle",
+      "state-validation",
+    ]);
+    expect(target!.requiredSecrets).toContain("NVIDIA_INFERENCE_API_KEY");
+  });
 });

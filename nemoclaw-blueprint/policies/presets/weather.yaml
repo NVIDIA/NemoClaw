@@ -10,7 +10,9 @@ network_policies:
     name: weather
     endpoints:
       # Host the bundled OpenClaw weather skill calls with curl on the pinned
-      # OpenClaw version declared by agents/openclaw/manifest.yaml (2026.5.27).
+      # OpenClaw version declared by agents/openclaw/manifest.yaml (2026.6.10).
+      # Reviewed package/skills/weather/SKILL.md SHA-256:
+      # 62ab4821aa873949d1c1091836be1659a42b32caadce4bd145f5505a1ceaeec1.
       # Revalidate this host whenever that version changes; replace this prose
       # contract with parsed skill metadata if OpenClaw exposes it.
       # Paths are /<location> (city, region, airport code, or coordinates) and /:help.

@@ -24,7 +24,7 @@ type WeatherPreset = {
   };
 };
 
-const REVIEWED_WTTR_WEATHER_SKILL_OPENCLAW_VERSION = "2026.5.27";
+const REVIEWED_WTTR_WEATHER_SKILL_OPENCLAW_VERSION = "2026.6.10";
 
 describe("weather policy preset", () => {
   it("allows only current weather hosts and keeps wttr.in read-only (#1417)", () => {

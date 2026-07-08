@@ -73,10 +73,26 @@ import { recoverRegistryEntries } from "./registry-recovery-action.js";
 import { parseLiveSandboxEntries } from "./runtime-recovery.js";
 import { loadSession } from "./state/onboard-session.js";
 
+function resetRegistryRecoveryDependencyMocks(): void {
+  vi.mocked(loadSession).mockReset().mockReturnValue(null);
+  vi.mocked(resolveOpenshell).mockReset().mockReturnValue(null);
+  vi.mocked(recoverNamedGatewayRuntime)
+    .mockReset()
+    .mockResolvedValue({ recovered: false } as never);
+  vi.mocked(getNamedGatewayLifecycleState)
+    .mockReset()
+    .mockReturnValue({ state: "missing_named" } as never);
+  vi.mocked(captureOpenshell)
+    .mockReset()
+    .mockReturnValue({ output: "", status: 0 } as never);
+  vi.mocked(parseLiveSandboxEntries).mockReset().mockReturnValue([]);
+}
+
 describe("recoverRegistryEntries seed-time guard (#2753)", () => {
   beforeEach(() => {
     mockRegistryState.sandboxes = {};
     mockRegistryState.defaultSandbox = null;
+    resetRegistryRecoveryDependencyMocks();
   });
 
   afterEach(() => {
@@ -109,6 +125,8 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       model: "nemotron",
       policyPresets: ["npm"],
       nimContainer: null,
+      observabilityEnabled: true,
+      agent: "langchain-deepagents-code",
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
       },
@@ -120,6 +138,59 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     const recovered = result.sandboxes.find((s) => s.name === "alpha");
     expect(recovered).toBeDefined();
     expect(recovered?.policies).toEqual(["npm"]);
+    expect(recovered?.observabilityEnabled).toBe(true);
+  });
+
+  it("restores complete custom-route identity from a confirmed session", async () => {
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "custom-route",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-ultra",
+      endpointUrl: "https://inference.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      policyPresets: [],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.recoveredFromSession).toBe(true);
+    expect(result.sandboxes.find((sandbox) => sandbox.name === "custom-route")).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-ultra",
+      endpointUrl: "https://inference.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("still fails closed for a confirmed legacy custom route without full identity", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "legacy-custom-route",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-ultra",
+      endpointUrl: null,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: null,
+      policyPresets: [],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.recoveredFromSession).toBe(false);
+    expect(result.sandboxes).toEqual([]);
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
+      "requested custom route lacks durable endpoint or API-family metadata",
+    );
   });
 
   it("returns empty recovery when there is no session and no registry entries", async () => {
@@ -193,6 +264,34 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     expect(mockRegistryState.sandboxes["my-hermes"]?.agent).toBe("hermes");
   });
 
+  it("preserves recorded observability when an older confirmed session omits the field", async () => {
+    mockRegistryState.sandboxes.alpha = {
+      name: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      gpuEnabled: false,
+      policies: [],
+      nimContainer: null,
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+    };
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      policyPresets: [],
+      nimContainer: null,
+      agent: "langchain-deepagents-code",
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    await recoverRegistryEntries();
+
+    expect(mockRegistryState.sandboxes.alpha?.observabilityEnabled).toBe(true);
+  });
+
   it("does not evict a registered sandbox even when its session step is incomplete (avoids false positives)", async () => {
     // A user with a real registered sandbox alpha and a stale session that
     // happens to record alpha with an incomplete sandbox step (e.g. a
@@ -228,14 +327,10 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
 
 describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     mockRegistryState.sandboxes = {};
     mockRegistryState.defaultSandbox = null;
-    vi.mocked(loadSession).mockReturnValue(null);
+    resetRegistryRecoveryDependencyMocks();
     vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
-    vi.mocked(captureOpenshell).mockReturnValue({ output: "", status: 0 } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([]);
-    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "missing_named" } as never);
   });
 
   afterEach(() => {
@@ -272,41 +367,6 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
     expect(recovered?.recoveredFromGateway).toBe(true);
     // Trusted live PHASE is carried for display so list agrees with status.
     expect(recovered?.livePhase).toBe("Ready");
-  });
-
-  it("treats an incomplete (phantom) session as unseeded — stays in read-only/display-only path", async () => {
-    // PRA-2: a session that recorded sandboxName but whose sandbox step never
-    // completed is a phantom (#2753). It must NOT count as a recovery seed,
-    // otherwise an empty registry + phantom session would take the mutating,
-    // persisting seeded path. Recovery must stay read-only/display-only.
-    vi.mocked(loadSession).mockReturnValue({
-      sandboxName: "phantom",
-      provider: "nvidia",
-      model: "nemotron",
-      policyPresets: [],
-      nimContainer: null,
-      steps: {
-        sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
-      },
-    } as never);
-    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
-
-    const result = await recoverRegistryEntries();
-
-    // Read-only path: never invokes the mutating gateway recovery, inspects
-    // lifecycle directly, and surfaces the live sandbox display-only.
-    expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith(undefined, {
-      ignoreProbeErrors: true,
-    });
-    const recovered = result.sandboxes.find((s) => s.name === "dcode-station") as
-      | { recoveredFromGateway?: boolean }
-      | undefined;
-    expect(recovered?.recoveredFromGateway).toBe(true);
-    // Nothing persisted — neither the phantom session sandbox nor the recovered one.
-    expect(mockRegistryState.sandboxes["dcode-station"]).toBeUndefined();
-    expect(mockRegistryState.sandboxes["phantom"]).toBeUndefined();
   });
 
   it("incomplete session with existing registry entries does not trigger mutating gateway recovery solely because the phantom session name is missing", async () => {

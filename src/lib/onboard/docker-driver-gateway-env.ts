@@ -46,6 +46,7 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
 
 export interface BuildDockerDriverGatewayEnvOptions {
   platform?: NodeJS.Platform;
+  gatewayPort?: number;
   stateDir: string;
   dockerNetworkName?: string;
   getDockerSupervisorImage: () => string;
@@ -63,12 +64,14 @@ export function getGatewayPortCheckOptions(): { host: string } {
   return { host: GATEWAY_BIND_ADDRESS };
 }
 
-export function getGatewayStartNetworkEnv(): Record<string, string> {
+export function getGatewayStartNetworkEnv(
+  gatewayPort: number = GATEWAY_PORT,
+): Record<string, string> {
   return {
     OPENSHELL_BIND_ADDRESS: GATEWAY_BIND_ADDRESS,
-    OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
+    OPENSHELL_SERVER_PORT: String(gatewayPort),
     OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(),
-    OPENSHELL_SSH_GATEWAY_PORT: String(GATEWAY_PORT),
+    OPENSHELL_SSH_GATEWAY_PORT: String(gatewayPort),
   };
 }
 
@@ -181,8 +184,8 @@ export function assertDockerDriverGatewayAuthConfigSafe(gatewayEnv: Record<strin
   );
 }
 
-export function getDockerDriverGatewayEndpoint(): string {
-  return getGatewayHttpsEndpoint();
+export function getDockerDriverGatewayEndpoint(gatewayPort: number = GATEWAY_PORT): string {
+  return getGatewayHttpsEndpoint(gatewayPort);
 }
 
 export function warnIfGatewayWildcardBindAddress(): void {
@@ -194,6 +197,7 @@ export function warnIfGatewayWildcardBindAddress(): void {
 
 export function buildDockerDriverGatewayEnv({
   platform = process.platform,
+  gatewayPort = GATEWAY_PORT,
   stateDir,
   dockerNetworkName = "openshell-docker",
   getDockerSupervisorImage,
@@ -201,10 +205,10 @@ export function buildDockerDriverGatewayEnv({
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
   const env: Record<string, string> = {
     OPENSHELL_DRIVERS: "docker",
-    ...getGatewayStartNetworkEnv(),
+    ...getGatewayStartNetworkEnv(gatewayPort),
     ...buildDockerDriverGatewayLocalTlsEnv(stateDir),
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
-    OPENSHELL_GRPC_ENDPOINT: getDockerDriverGatewayEndpoint(),
+    OPENSHELL_GRPC_ENDPOINT: getDockerDriverGatewayEndpoint(gatewayPort),
     OPENSHELL_DOCKER_NETWORK_NAME: dockerNetworkName,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getDockerSupervisorImage(),
   };

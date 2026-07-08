@@ -13,8 +13,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -23,10 +23,9 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
 const CONFIG_HASH_PATH = `${CONFIG_DIR}/.config-hash`;
@@ -36,7 +35,6 @@ const STATE_FILE = (sandboxName: string) =>
 const TIMER_FILE = (sandboxName: string) =>
   path.join(os.homedir(), ".nemoclaw", "state", `shields-timer-${sandboxName}.json`);
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-shields";
-const RUN_SHIELDS_TEST = shouldRunLiveE2E() ? test : test.skip;
 
 const TEST_TIMEOUT_MS = 45 * 60_000;
 const INSTALL_TIMEOUT_MS = 25 * 60_000;
@@ -45,10 +43,6 @@ const TIMER_POLL_TIMEOUT_MS = 75_000;
 const TIMER_POLL_INTERVAL_MS = 5_000;
 
 validateSandboxName(SANDBOX_NAME);
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -224,429 +218,412 @@ function readTimerMarker(sandboxName: string): {
   return JSON.parse(fs.readFileSync(TIMER_FILE(sandboxName), "utf8"));
 }
 
-RUN_SHIELDS_TEST(
-  "shields-config: live shields up/down locks config and detects drift",
-  { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    await artifacts.writeJson("target.json", {
-      id: "shields-config",
-      runner: "vitest",
-      boundary: "live-sandbox-shields-config",
-      contracts: [
-        "source install creates a live OpenClaw sandbox",
-        "default config starts mutable with unified .openclaw layout",
-        "documented nemoclaw exec doctor path preserves 2770/660 and gateway writes",
-        "shields up locks config/workspace and config get redacts secrets",
-        "host-root chmod-write-chmod tamper is detected as content drift",
-        "shields down restores mutable modes and records audit JSONL",
-        "dead auto-restore timer inline recovery re-locks config and .config-hash",
-        "double shields-up/down operations are rejected",
-      ],
-    });
+test("shields-config: live shields up/down locks config and detects drift", {
+  timeout: TEST_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  await artifacts.target.declare({
+    id: "shields-config",
+    boundary: "live-sandbox-shields-config",
+    contracts: [
+      "source install creates a live OpenClaw sandbox",
+      "default config starts mutable with unified .openclaw layout",
+      "documented nemoclaw exec doctor path preserves 2770/660 and gateway writes",
+      "shields up locks config/workspace and config get redacts secrets",
+      "host-root chmod-write-chmod tamper is detected as content drift",
+      "shields down restores mutable modes and records audit JSONL",
+      "dead auto-restore timer inline recovery re-locks config and .config-hash",
+      "double shields-up/down operations are rejected",
+    ],
+  });
 
-    const dockerInfo = await docker(host, ["info"], {
-      artifactName: "prereq-docker-info",
-      timeoutMs: 30_000,
-    });
-    if (dockerInfo.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(
-          `Docker is required for shields-config live E2E: ${resultText(dockerInfo)}`,
-        );
-      }
-      skip("Docker is required for shields-config live E2E");
+  const dockerInfo = await docker(host, ["info"], {
+    artifactName: "prereq-docker-info",
+    timeoutMs: 30_000,
+  });
+  if (dockerInfo.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(`Docker is required for shields-config live E2E: ${resultText(dockerInfo)}`);
     }
+    skip("Docker is required for shields-config live E2E");
+  }
 
-    const hosted = requireHostedInferenceConfig(secrets);
-    const apiKey = hosted.apiKey;
+  const hosted = requireHostedInferenceConfig(secrets);
+  const apiKey = hosted.apiKey;
 
-    await cleanupSandbox(host, sandbox, "pre-cleanup");
-    cleanup.add(`destroy shields-config sandbox ${SANDBOX_NAME}`, async () => {
-      await cleanupSandbox(host, sandbox, "cleanup");
+  await cleanupSandbox(host, sandbox, "pre-cleanup");
+  cleanup.add(`destroy shields-config sandbox ${SANDBOX_NAME}`, async () => {
+    await cleanupSandbox(host, sandbox, "cleanup");
+  });
+
+  const install = await installedShellCommand(
+    host,
+    `cd ${JSON.stringify(REPO_ROOT)} && bash install.sh --non-interactive --fresh`,
+    {
+      artifactName: "phase-1-install-shields-config",
+      env: commandEnv({
+        ...hosted.env,
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+      }),
+      redactionValues: [apiKey],
+      timeoutMs: INSTALL_TIMEOUT_MS,
+    },
+  );
+  expect(install.exitCode, resultText(install)).toBe(0);
+
+  const cliVersion = await installedShellCommand(
+    host,
+    "command -v nemoclaw && command -v openshell",
+    {
+      artifactName: "phase-1-installed-commands-on-path",
+    },
+  );
+  expect(cliVersion.exitCode, resultText(cliVersion)).toBe(0);
+
+  const configDefault = await statPath(sandbox, CONFIG_PATH, "phase-2-config-perms-default");
+  expect(configDefault.mode).toBe("660");
+  expect(configDefault.owner).toBe("sandbox:sandbox");
+  const dirDefault = await statPath(sandbox, CONFIG_DIR, "phase-2-config-dir-perms-default");
+  expect(dirDefault.mode).toBe("2770");
+  expect(dirDefault.owner).toBe("sandbox:sandbox");
+
+  const doctor = await runNemoclaw(
+    host,
+    [
+      SANDBOX_NAME,
+      "exec",
+      "--",
+      "bash",
+      "-c",
+      'openclaw doctor --fix; rc=$?; printf "doctor_exit:%s\\n" "$rc"; stat -c "doctor_file_mode:%a" /sandbox/.openclaw/openclaw.json; stat -c "doctor_dir_mode:%a" /sandbox/.openclaw',
+    ],
+    {
+      artifactName: "phase-2b-documented-exec-doctor-fix",
+      timeoutMs: 5 * 60_000,
+    },
+  );
+  expect(doctor.exitCode, resultText(doctor)).toBe(0);
+  expect(resultText(doctor)).toMatch(/doctor_exit:\d+/);
+  expect(resultText(doctor)).toContain("doctor_file_mode:600");
+  expect(resultText(doctor)).toContain("doctor_dir_mode:700");
+
+  const configAfterDoctor = await statPath(
+    sandbox,
+    CONFIG_PATH,
+    "phase-2b-config-perms-after-doctor",
+  );
+  expect(configAfterDoctor).toMatchObject({ mode: "660", owner: "sandbox:sandbox" });
+  const dirAfterDoctor = await statPath(
+    sandbox,
+    CONFIG_DIR,
+    "phase-2b-config-dir-perms-after-doctor",
+  );
+  expect(dirAfterDoctor).toMatchObject({ mode: "2770", owner: "sandbox:sandbox" });
+
+  const containerId = await findSandboxContainer(host);
+  const gatewayWrite = await docker(
+    host,
+    ["exec", "-u", "gateway", containerId, "sh", "-c", `printf ' ' >>${CONFIG_PATH}`],
+    {
+      artifactName: "phase-2b-gateway-config-append-after-doctor",
+      timeoutMs: 30_000,
+    },
+  );
+  expect(gatewayWrite.exitCode, resultText(gatewayWrite)).toBe(0);
+  const refreshHash = await sandboxShell(
+    sandbox,
+    `cd ${CONFIG_DIR} && sha256sum openclaw.json >.config-hash`,
+    { artifactName: "phase-2b-refresh-hash-after-gateway-write" },
+  );
+  expect(refreshHash.exitCode, resultText(refreshHash)).toBe(0);
+
+  const statusDefault = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+    artifactName: "phase-2-shields-status-default",
+  });
+  expect(statusDefault.exitCode, resultText(statusDefault)).toBe(0);
+  expect(statusDefault.stdout).toContain("Shields: NOT CONFIGURED");
+
+  const layoutProbe = await sandboxShell(
+    sandbox,
+    [
+      `bad=0`,
+      `if [ -e /sandbox/.openclaw-data ] || [ -L /sandbox/.openclaw-data ]; then echo "legacy data dir exists: /sandbox/.openclaw-data"; bad=1; fi`,
+      `for entry in /sandbox/.openclaw/*; do [ -L "$entry" ] || continue; target="$(readlink -f "$entry" 2>/dev/null || readlink "$entry" 2>/dev/null || true)"; case "$target" in /sandbox/.openclaw-data/*) echo "legacy symlink remains: $entry -> $target"; bad=1 ;; esac; done`,
+      `exit "$bad"`,
+    ].join("; "),
+    { artifactName: "phase-2-unified-openclaw-layout" },
+  );
+  expect(layoutProbe.exitCode, resultText(layoutProbe)).toBe(0);
+  expect(resultText(layoutProbe).trim()).toBe("");
+
+  const shieldsUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-3-shields-up",
+  });
+  expect(shieldsUp.exitCode, resultText(shieldsUp)).toBe(0);
+  expect(resultText(shieldsUp)).toContain("Lockdown active");
+
+  const configUp = await statPath(sandbox, CONFIG_PATH, "phase-3-config-perms-up");
+  expect(configUp.mode).toMatch(/^4[0-4][0-4]$/);
+  expect(configUp.owner).toBe("root:root");
+
+  const writeUp = await sandboxShell(
+    sandbox,
+    `echo 'TAMPERED' >> ${CONFIG_PATH} 2>&1 && echo WRITABLE || echo BLOCKED`,
+    { artifactName: "phase-3-config-write-blocked" },
+  );
+  expect(resultText(writeUp)).toMatch(
+    /BLOCKED|Permission denied|Read-only|Operation not permitted/,
+  );
+
+  const workspaceUp = await sandboxShell(
+    sandbox,
+    "touch /sandbox/.openclaw/workspace/.shields-up-probe 2>&1 && echo WRITABLE || echo BLOCKED",
+    { artifactName: "phase-3-workspace-write-blocked" },
+  );
+  expect(resultText(workspaceUp)).toMatch(
+    /BLOCKED|Permission denied|Read-only|Operation not permitted/,
+  );
+
+  const configGet = await runNemoclaw(host, [SANDBOX_NAME, "config", "get"], {
+    artifactName: "phase-4-config-get",
+    redactionValues: [apiKey],
+  });
+  expect(configGet.exitCode, resultText(configGet)).toBe(0);
+  expect(configGet.stdout).toContain("{");
+  expect(configGet.stdout).not.toMatch(/nvapi-|sk-|Bearer /);
+  expect(configGet.stdout).not.toContain('"gateway"');
+
+  const dotpath = await runNemoclaw(host, [SANDBOX_NAME, "config", "get", "--key", "inference"], {
+    artifactName: "phase-4-config-get-dotpath",
+    redactionValues: [apiKey],
+  });
+  if (dotpath.exitCode === 0 && dotpath.stdout.trim() !== "" && dotpath.stdout.trim() !== "null") {
+    expect(dotpath.stdout).not.toMatch(/nvapi-|sk-|Bearer /);
+  } else {
+    await artifacts.writeJson("phase-4-dotpath-non-fatal.json", {
+      exitCode: dotpath.exitCode,
+      stdout: dotpath.stdout.trim(),
+      stderr: dotpath.stderr.trim(),
+      note: "config get --key inference is non-fatal because the inference key may not exist",
     });
+  }
 
-    const install = await installedShellCommand(
-      host,
-      `cd ${JSON.stringify(REPO_ROOT)} && bash install.sh --non-interactive`,
-      {
-        artifactName: "phase-1-install-shields-config",
-        env: commandEnv({
-          ...hosted.env,
-          NEMOCLAW_RECREATE_SANDBOX: "1",
-        }),
-        redactionValues: [apiKey],
-        timeoutMs: INSTALL_TIMEOUT_MS,
-      },
-    );
-    expect(install.exitCode, resultText(install)).toBe(0);
+  const statusUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+    artifactName: "phase-5-shields-status-up",
+  });
+  expect(statusUp.exitCode, resultText(statusUp)).toBe(0);
+  expect(statusUp.stdout).toContain("Shields: UP");
 
-    const cliVersion = await installedShellCommand(
-      host,
-      "command -v nemoclaw && command -v openshell",
-      {
-        artifactName: "phase-1-installed-commands-on-path",
-      },
-    );
-    expect(cliVersion.exitCode, resultText(cliVersion)).toBe(0);
-
-    const configDefault = await statPath(sandbox, CONFIG_PATH, "phase-2-config-perms-default");
-    expect(configDefault.mode).toBe("660");
-    expect(configDefault.owner).toBe("sandbox:sandbox");
-    const dirDefault = await statPath(sandbox, CONFIG_DIR, "phase-2-config-dir-perms-default");
-    expect(dirDefault.mode).toBe("2770");
-    expect(dirDefault.owner).toBe("sandbox:sandbox");
-
-    const doctor = await runNemoclaw(
-      host,
+  const originalConfig = path.join(os.tmpdir(), `nemoclaw-shields-orig-${process.pid}.json`);
+  await readOriginalConfig(host, containerId, originalConfig);
+  try {
+    const tamper = await host.command(
+      "bash",
       [
-        SANDBOX_NAME,
-        "exec",
-        "--",
-        "bash",
-        "-c",
-        'openclaw doctor --fix; rc=$?; printf "doctor_exit:%s\\n" "$rc"; stat -c "doctor_file_mode:%a" /sandbox/.openclaw/openclaw.json; stat -c "doctor_dir_mode:%a" /sandbox/.openclaw',
+        "-lc",
+        [
+          `had_immutable=false`,
+          `if docker exec -u 0 ${containerId} lsattr -d ${CONFIG_PATH} 2>/dev/null | awk '{print $1}' | grep -q i; then had_immutable=true; fi`,
+          `docker exec -u 0 ${containerId} sh -c 'chattr -i ${CONFIG_PATH} 2>/dev/null || true; chmod 644 ${CONFIG_PATH} && printf " " >> ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}'`,
+          `if [ "$had_immutable" = true ]; then docker exec -u 0 ${containerId} chattr +i ${CONFIG_PATH} >/dev/null 2>&1 || true; fi`,
+        ].join("\n"),
       ],
       {
-        artifactName: "phase-2b-documented-exec-doctor-fix",
-        timeoutMs: 5 * 60_000,
-      },
-    );
-    expect(doctor.exitCode, resultText(doctor)).toBe(0);
-    expect(resultText(doctor)).toMatch(/doctor_exit:\d+/);
-    expect(resultText(doctor)).toContain("doctor_file_mode:600");
-    expect(resultText(doctor)).toContain("doctor_dir_mode:700");
-
-    const configAfterDoctor = await statPath(
-      sandbox,
-      CONFIG_PATH,
-      "phase-2b-config-perms-after-doctor",
-    );
-    expect(configAfterDoctor).toMatchObject({ mode: "660", owner: "sandbox:sandbox" });
-    const dirAfterDoctor = await statPath(
-      sandbox,
-      CONFIG_DIR,
-      "phase-2b-config-dir-perms-after-doctor",
-    );
-    expect(dirAfterDoctor).toMatchObject({ mode: "2770", owner: "sandbox:sandbox" });
-
-    const containerId = await findSandboxContainer(host);
-    const gatewayWrite = await docker(
-      host,
-      ["exec", "-u", "gateway", containerId, "sh", "-c", `printf ' ' >>${CONFIG_PATH}`],
-      {
-        artifactName: "phase-2b-gateway-config-append-after-doctor",
+        artifactName: "phase-5b-host-root-tamper",
+        env: commandEnv(),
         timeoutMs: 30_000,
       },
     );
-    expect(gatewayWrite.exitCode, resultText(gatewayWrite)).toBe(0);
-    const refreshHash = await sandboxShell(
-      sandbox,
-      `cd ${CONFIG_DIR} && sha256sum openclaw.json >.config-hash`,
-      { artifactName: "phase-2b-refresh-hash-after-gateway-write" },
-    );
-    expect(refreshHash.exitCode, resultText(refreshHash)).toBe(0);
+    expect(tamper.exitCode, resultText(tamper)).toBe(0);
 
-    const statusDefault = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-      artifactName: "phase-2-shields-status-default",
-    });
-    expect(statusDefault.exitCode, resultText(statusDefault)).toBe(0);
-    expect(statusDefault.stdout).toContain("Shields: NOT CONFIGURED");
-
-    const layoutProbe = await sandboxShell(
-      sandbox,
-      [
-        `bad=0`,
-        `if [ -e /sandbox/.openclaw-data ] || [ -L /sandbox/.openclaw-data ]; then echo "legacy data dir exists: /sandbox/.openclaw-data"; bad=1; fi`,
-        `for entry in /sandbox/.openclaw/*; do [ -L "$entry" ] || continue; target="$(readlink -f "$entry" 2>/dev/null || readlink "$entry" 2>/dev/null || true)"; case "$target" in /sandbox/.openclaw-data/*) echo "legacy symlink remains: $entry -> $target"; bad=1 ;; esac; done`,
-        `exit "$bad"`,
-      ].join("; "),
-      { artifactName: "phase-2-unified-openclaw-layout" },
-    );
-    expect(layoutProbe.exitCode, resultText(layoutProbe)).toBe(0);
-    expect(resultText(layoutProbe).trim()).toBe("");
-
-    const shieldsUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
-      artifactName: "phase-3-shields-up",
-    });
-    expect(shieldsUp.exitCode, resultText(shieldsUp)).toBe(0);
-    expect(resultText(shieldsUp)).toContain("Lockdown active");
-
-    const configUp = await statPath(sandbox, CONFIG_PATH, "phase-3-config-perms-up");
-    expect(configUp.mode).toMatch(/^4[0-4][0-4]$/);
-    expect(configUp.owner).toBe("root:root");
-
-    const writeUp = await sandboxShell(
-      sandbox,
-      `echo 'TAMPERED' >> ${CONFIG_PATH} 2>&1 && echo WRITABLE || echo BLOCKED`,
-      { artifactName: "phase-3-config-write-blocked" },
-    );
-    expect(resultText(writeUp)).toMatch(
-      /BLOCKED|Permission denied|Read-only|Operation not permitted/,
-    );
-
-    const workspaceUp = await sandboxShell(
-      sandbox,
-      "touch /sandbox/.openclaw/workspace/.shields-up-probe 2>&1 && echo WRITABLE || echo BLOCKED",
-      { artifactName: "phase-3-workspace-write-blocked" },
-    );
-    expect(resultText(workspaceUp)).toMatch(
-      /BLOCKED|Permission denied|Read-only|Operation not permitted/,
-    );
-
-    const configGet = await runNemoclaw(host, [SANDBOX_NAME, "config", "get"], {
-      artifactName: "phase-4-config-get",
-      redactionValues: [apiKey],
-    });
-    expect(configGet.exitCode, resultText(configGet)).toBe(0);
-    expect(configGet.stdout).toContain("{");
-    expect(configGet.stdout).not.toMatch(/nvapi-|sk-|Bearer /);
-    expect(configGet.stdout).not.toContain('"gateway"');
-
-    const dotpath = await runNemoclaw(host, [SANDBOX_NAME, "config", "get", "--key", "inference"], {
-      artifactName: "phase-4-config-get-dotpath",
-      redactionValues: [apiKey],
-    });
-    if (
-      dotpath.exitCode === 0 &&
-      dotpath.stdout.trim() !== "" &&
-      dotpath.stdout.trim() !== "null"
-    ) {
-      expect(dotpath.stdout).not.toMatch(/nvapi-|sk-|Bearer /);
-    } else {
-      await artifacts.writeJson("phase-4-dotpath-non-fatal.json", {
-        exitCode: dotpath.exitCode,
-        stdout: dotpath.stdout.trim(),
-        stderr: dotpath.stderr.trim(),
-        note: "config get --key inference is non-fatal because the inference key may not exist",
-      });
-    }
-
-    const statusUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-      artifactName: "phase-5-shields-status-up",
-    });
-    expect(statusUp.exitCode, resultText(statusUp)).toBe(0);
-    expect(statusUp.stdout).toContain("Shields: UP");
-
-    const originalConfig = path.join(os.tmpdir(), `nemoclaw-shields-orig-${process.pid}.json`);
-    await readOriginalConfig(host, containerId, originalConfig);
-    try {
-      const tamper = await host.command(
-        "bash",
-        [
-          "-lc",
-          [
-            `had_immutable=false`,
-            `if docker exec -u 0 ${containerId} lsattr -d ${CONFIG_PATH} 2>/dev/null | awk '{print $1}' | grep -q i; then had_immutable=true; fi`,
-            `docker exec -u 0 ${containerId} sh -c 'chattr -i ${CONFIG_PATH} 2>/dev/null || true; chmod 644 ${CONFIG_PATH} && printf " " >> ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}'`,
-            `if [ "$had_immutable" = true ]; then docker exec -u 0 ${containerId} chattr +i ${CONFIG_PATH} >/dev/null 2>&1 || true; fi`,
-          ].join("\n"),
-        ],
-        {
-          artifactName: "phase-5b-host-root-tamper",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(tamper.exitCode, resultText(tamper)).toBe(0);
-
-      const afterTamper = await docker(
-        host,
-        ["exec", containerId, "stat", "-c", "%a %U:%G", CONFIG_PATH],
-        {
-          artifactName: "phase-5b-perms-after-tamper",
-          timeoutMs: 30_000,
-        },
-      );
-      expect(afterTamper.exitCode, resultText(afterTamper)).toBe(0);
-      expect(afterTamper.stdout.trim()).toBe("444 root:root");
-
-      const statusTamper = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-        artifactName: "phase-5b-shields-status-drifted",
-      });
-      expect(statusTamper.exitCode, resultText(statusTamper)).toBe(2);
-      expect(resultText(statusTamper)).toContain("UP (DRIFTED");
-      expect(resultText(statusTamper)).toContain("content drifted");
-
-      const reUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
-        artifactName: "phase-5b-shields-up-refuses-tamper",
-      });
-      expect(reUp.exitCode, resultText(reUp)).not.toBe(0);
-      expect(resultText(reUp)).toContain("Refusing to re-seal");
-    } finally {
-      await host.command(
-        "bash",
-        [
-          "-lc",
-          `docker exec -i -u 0 ${containerId} sh -c 'chattr -i ${CONFIG_PATH} 2>/dev/null || true; chmod 644 ${CONFIG_PATH} && cat > ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH} && chattr +i ${CONFIG_PATH} 2>/dev/null || true' < ${originalConfig}`,
-        ],
-        {
-          artifactName: "phase-5b-restore-original-config",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      fs.rmSync(originalConfig, { force: true });
-    }
-
-    const statusRestored = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-      artifactName: "phase-5b-shields-status-restored",
-    });
-    expect(statusRestored.exitCode, resultText(statusRestored)).toBe(0);
-    expect(statusRestored.stdout).toContain("Shields: UP (lockdown active)");
-
-    const shieldsDown = await runNemoclaw(
+    const afterTamper = await docker(
       host,
-      [
-        SANDBOX_NAME,
-        "shields",
-        "down",
-        "--timeout",
-        "5m",
-        "--reason",
-        "E2E shields lifecycle test",
-      ],
-      { artifactName: "phase-6-shields-down" },
-    );
-    expect(shieldsDown.exitCode, resultText(shieldsDown)).toBe(0);
-    expect(resultText(shieldsDown)).toContain("Config unlocked");
-
-    const configDown = await statPath(sandbox, CONFIG_PATH, "phase-6-config-perms-down");
-    expect(configDown.mode).toBe("660");
-    expect(configDown.owner).toBe("sandbox:sandbox");
-    const dirDown = await statPath(sandbox, CONFIG_DIR, "phase-6-config-dir-perms-down");
-    expect(dirDown.mode).toBe("2770");
-    expect(dirDown.owner).toBe("sandbox:sandbox");
-    const workspaceDown = await sandboxShell(
-      sandbox,
-      "touch /sandbox/.openclaw/workspace/.shields-down-probe 2>&1 && rm -f /sandbox/.openclaw/workspace/.shields-down-probe && echo WRITABLE || echo BLOCKED",
-      { artifactName: "phase-6-workspace-write-restored" },
-    );
-    expect(resultText(workspaceDown)).toContain("WRITABLE");
-
-    const statusDown = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-      artifactName: "phase-7-shields-status-down",
-    });
-    expect(statusDown.exitCode, resultText(statusDown)).toBe(0);
-    expect(statusDown.stdout).toContain("Shields: DOWN");
-    expect(statusDown.stdout).toContain("E2E shields lifecycle test");
-    expect(statusDown.stdout).toMatch(/Auto-lockdown in:|remaining/i);
-
-    const restoreUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
-      artifactName: "phase-7-restore-shields-up",
-    });
-    expect(restoreUp.exitCode, resultText(restoreUp)).toBe(0);
-
-    expect(fs.existsSync(AUDIT_FILE), `${AUDIT_FILE} should exist`).toBe(true);
-    const auditText = fs.readFileSync(AUDIT_FILE, "utf8");
-    const auditEntries = readAuditEntries();
-    const upCount = auditText.split('"shields_up"').length - 1;
-    const downCount = auditText.split('"shields_down"').length - 1;
-    expect(upCount).toBeGreaterThanOrEqual(2);
-    expect(downCount).toBeGreaterThanOrEqual(1);
-    expect(auditText).not.toMatch(/nvapi-|sk-|Bearer /);
-    await artifacts.writeJson("phase-8-audit-summary.json", {
-      entries: auditEntries.length,
-      upCount,
-      downCount,
-    });
-
-    const timerDown = await runNemoclaw(
-      host,
-      [SANDBOX_NAME, "shields", "down", "--timeout", "10s", "--reason", "Auto-restore timer E2E"],
-      { artifactName: "phase-9-shields-down-timer" },
-    );
-    expect(timerDown.exitCode, resultText(timerDown)).toBe(0);
-    const timerMarker = readTimerMarker(SANDBOX_NAME);
-    process.kill(timerMarker.pid, "SIGKILL");
-    const statusTimer = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-      artifactName: "phase-9-status-down-before-auto-restore",
-    });
-    expect(statusTimer.stdout).toContain("Shields: DOWN");
-
-    const deadline = Date.now() + TIMER_POLL_TIMEOUT_MS;
-    let restored = false;
-    let lastTimerStatus = "";
-    for (let attempt = 1; Date.now() < deadline; attempt += 1) {
-      const waitForRestoreAt = Math.max(0, new Date(timerMarker.restoreAt).getTime() - Date.now());
-      await delay(Math.max(TIMER_POLL_INTERVAL_MS, waitForRestoreAt + 1_000));
-      const poll = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-        artifactName: `phase-9-status-dead-timer-inline-restore-poll-${attempt}`,
-      });
-      lastTimerStatus = resultText(poll);
-      if (lastTimerStatus.includes("Shields: UP")) {
-        restored = true;
-        break;
-      }
-    }
-    expect(restored, lastTimerStatus).toBe(true);
-    const dirTimer = await statPath(
-      sandbox,
-      CONFIG_DIR,
-      "phase-9-config-dir-perms-after-dead-timer-inline-restore",
-    );
-    expect(dirTimer).toMatchObject({ mode: "755", owner: "root:root" });
-    const configTimer = await statPath(
-      sandbox,
-      CONFIG_PATH,
-      "phase-9-config-perms-after-dead-timer-inline-restore",
-    );
-    expect(configTimer).toMatchObject({ mode: "444", owner: "root:root" });
-    const hashTimer = await statPath(
-      sandbox,
-      CONFIG_HASH_PATH,
-      "phase-9-config-hash-perms-after-dead-timer-inline-restore",
-    );
-    expect(hashTimer).toMatchObject({ mode: "444", owner: "root:root" });
-    const stateAfterTimer = JSON.parse(fs.readFileSync(STATE_FILE(SANDBOX_NAME), "utf8"));
-    expect(stateAfterTimer.fileHashes).toMatchObject({
-      [CONFIG_PATH]: expect.any(String),
-      [CONFIG_HASH_PATH]: expect.any(String),
-    });
-    expect(readAuditEntries()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          action: "shields_auto_restore",
-          policy_snapshot: timerMarker.snapshotPath,
-        }),
-      ]),
-    );
-
-    const doubleUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
-      artifactName: "phase-10-double-shields-up",
-    });
-    expect(doubleUp.exitCode, resultText(doubleUp)).toBe(0);
-    expect(resultText(doubleUp)).toContain("already active");
-
-    const cleanupDown = await runNemoclaw(
-      host,
-      [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "Cleanup"],
-      { artifactName: "phase-10-cleanup-shields-down" },
-    );
-    expect(cleanupDown.exitCode, resultText(cleanupDown)).toBe(0);
-
-    const doubleDown = await runNemoclaw(
-      host,
-      [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "Should fail"],
-      { artifactName: "phase-11-double-shields-down" },
-    );
-    expect(doubleDown.exitCode, resultText(doubleDown)).not.toBe(0);
-    expect(resultText(doubleDown)).toContain("already unlocked");
-
-    await artifacts.writeJson("target-result.json", {
-      id: "shields-config",
-      sandboxName: SANDBOX_NAME,
-      assertions: {
-        install: true,
-        mutableDefault: true,
-        documentedExecDoctorPreservesGatewayWrites: true,
-        shieldsUpLock: true,
-        configGetRedaction: true,
-        contentDriftDetection: true,
-        shieldsDownMutableRestore: true,
-        auditTrail: true,
-        deadTimerInlineAutoRestore: true,
-        doubleOperationRejection: true,
+      ["exec", containerId, "stat", "-c", "%a %U:%G", CONFIG_PATH],
+      {
+        artifactName: "phase-5b-perms-after-tamper",
+        timeoutMs: 30_000,
       },
+    );
+    expect(afterTamper.exitCode, resultText(afterTamper)).toBe(0);
+    expect(afterTamper.stdout.trim()).toBe("444 root:root");
+
+    const statusTamper = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+      artifactName: "phase-5b-shields-status-drifted",
     });
-  },
-);
+    expect(statusTamper.exitCode, resultText(statusTamper)).toBe(2);
+    expect(resultText(statusTamper)).toContain("UP (DRIFTED");
+    expect(resultText(statusTamper)).toContain("content drifted");
+
+    const reUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+      artifactName: "phase-5b-shields-up-refuses-tamper",
+    });
+    expect(reUp.exitCode, resultText(reUp)).not.toBe(0);
+    expect(resultText(reUp)).toContain("Refusing to re-seal");
+  } finally {
+    await host.command(
+      "bash",
+      [
+        "-lc",
+        `docker exec -i -u 0 ${containerId} sh -c 'chattr -i ${CONFIG_PATH} 2>/dev/null || true; chmod 644 ${CONFIG_PATH} && cat > ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH} && chattr +i ${CONFIG_PATH} 2>/dev/null || true' < ${originalConfig}`,
+      ],
+      {
+        artifactName: "phase-5b-restore-original-config",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    fs.rmSync(originalConfig, { force: true });
+  }
+
+  const statusRestored = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+    artifactName: "phase-5b-shields-status-restored",
+  });
+  expect(statusRestored.exitCode, resultText(statusRestored)).toBe(0);
+  expect(statusRestored.stdout).toContain("Shields: UP (lockdown active)");
+
+  const shieldsDown = await runNemoclaw(
+    host,
+    [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "E2E shields lifecycle test"],
+    { artifactName: "phase-6-shields-down" },
+  );
+  expect(shieldsDown.exitCode, resultText(shieldsDown)).toBe(0);
+  expect(resultText(shieldsDown)).toContain("Config unlocked");
+
+  const configDown = await statPath(sandbox, CONFIG_PATH, "phase-6-config-perms-down");
+  expect(configDown.mode).toBe("660");
+  expect(configDown.owner).toBe("sandbox:sandbox");
+  const dirDown = await statPath(sandbox, CONFIG_DIR, "phase-6-config-dir-perms-down");
+  expect(dirDown.mode).toBe("2770");
+  expect(dirDown.owner).toBe("sandbox:sandbox");
+  const workspaceDown = await sandboxShell(
+    sandbox,
+    "touch /sandbox/.openclaw/workspace/.shields-down-probe 2>&1 && rm -f /sandbox/.openclaw/workspace/.shields-down-probe && echo WRITABLE || echo BLOCKED",
+    { artifactName: "phase-6-workspace-write-restored" },
+  );
+  expect(resultText(workspaceDown)).toContain("WRITABLE");
+
+  const statusDown = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+    artifactName: "phase-7-shields-status-down",
+  });
+  expect(statusDown.exitCode, resultText(statusDown)).toBe(0);
+  expect(statusDown.stdout).toContain("Shields: DOWN");
+  expect(statusDown.stdout).toContain("E2E shields lifecycle test");
+  expect(statusDown.stdout).toMatch(/Auto-lockdown in:|remaining/i);
+
+  const restoreUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-7-restore-shields-up",
+  });
+  expect(restoreUp.exitCode, resultText(restoreUp)).toBe(0);
+
+  expect(fs.existsSync(AUDIT_FILE), `${AUDIT_FILE} should exist`).toBe(true);
+  const auditText = fs.readFileSync(AUDIT_FILE, "utf8");
+  const auditEntries = readAuditEntries();
+  const upCount = auditText.split('"shields_up"').length - 1;
+  const downCount = auditText.split('"shields_down"').length - 1;
+  expect(upCount).toBeGreaterThanOrEqual(2);
+  expect(downCount).toBeGreaterThanOrEqual(1);
+  expect(auditText).not.toMatch(/nvapi-|sk-|Bearer /);
+  await artifacts.writeJson("phase-8-audit-summary.json", {
+    entries: auditEntries.length,
+    upCount,
+    downCount,
+  });
+
+  const timerDown = await runNemoclaw(
+    host,
+    [SANDBOX_NAME, "shields", "down", "--timeout", "10s", "--reason", "Auto-restore timer E2E"],
+    { artifactName: "phase-9-shields-down-timer" },
+  );
+  expect(timerDown.exitCode, resultText(timerDown)).toBe(0);
+  const timerMarker = readTimerMarker(SANDBOX_NAME);
+  process.kill(timerMarker.pid, "SIGKILL");
+  const statusTimer = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+    artifactName: "phase-9-status-down-before-auto-restore",
+  });
+  expect(statusTimer.stdout).toContain("Shields: DOWN");
+
+  const deadline = Date.now() + TIMER_POLL_TIMEOUT_MS;
+  let restored = false;
+  let lastTimerStatus = "";
+  for (let attempt = 1; Date.now() < deadline; attempt += 1) {
+    const waitForRestoreAt = Math.max(0, new Date(timerMarker.restoreAt).getTime() - Date.now());
+    await delay(Math.max(TIMER_POLL_INTERVAL_MS, waitForRestoreAt + 1_000));
+    const poll = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+      artifactName: `phase-9-status-dead-timer-inline-restore-poll-${attempt}`,
+    });
+    lastTimerStatus = resultText(poll);
+    if (lastTimerStatus.includes("Shields: UP")) {
+      restored = true;
+      break;
+    }
+  }
+  expect(restored, lastTimerStatus).toBe(true);
+  const dirTimer = await statPath(
+    sandbox,
+    CONFIG_DIR,
+    "phase-9-config-dir-perms-after-dead-timer-inline-restore",
+  );
+  expect(dirTimer).toMatchObject({ mode: "755", owner: "root:root" });
+  const configTimer = await statPath(
+    sandbox,
+    CONFIG_PATH,
+    "phase-9-config-perms-after-dead-timer-inline-restore",
+  );
+  expect(configTimer).toMatchObject({ mode: "444", owner: "root:root" });
+  const hashTimer = await statPath(
+    sandbox,
+    CONFIG_HASH_PATH,
+    "phase-9-config-hash-perms-after-dead-timer-inline-restore",
+  );
+  expect(hashTimer).toMatchObject({ mode: "444", owner: "root:root" });
+  const stateAfterTimer = JSON.parse(fs.readFileSync(STATE_FILE(SANDBOX_NAME), "utf8"));
+  expect(stateAfterTimer.fileHashes).toMatchObject({
+    [CONFIG_PATH]: expect.any(String),
+    [CONFIG_HASH_PATH]: expect.any(String),
+  });
+  expect(readAuditEntries()).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        action: "shields_auto_restore",
+        policy_snapshot: timerMarker.snapshotPath,
+      }),
+    ]),
+  );
+
+  const doubleUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-10-double-shields-up",
+  });
+  expect(doubleUp.exitCode, resultText(doubleUp)).toBe(0);
+  expect(resultText(doubleUp)).toContain("already active");
+
+  const cleanupDown = await runNemoclaw(
+    host,
+    [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "Cleanup"],
+    { artifactName: "phase-10-cleanup-shields-down" },
+  );
+  expect(cleanupDown.exitCode, resultText(cleanupDown)).toBe(0);
+
+  const doubleDown = await runNemoclaw(
+    host,
+    [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "Should fail"],
+    { artifactName: "phase-11-double-shields-down" },
+  );
+  expect(doubleDown.exitCode, resultText(doubleDown)).not.toBe(0);
+  expect(resultText(doubleDown)).toContain("already unlocked");
+
+  await artifacts.target.complete({
+    id: "shields-config",
+    sandboxName: SANDBOX_NAME,
+    assertions: {
+      install: true,
+      mutableDefault: true,
+      documentedExecDoctorPreservesGatewayWrites: true,
+      shieldsUpLock: true,
+      configGetRedaction: true,
+      contentDriftDetection: true,
+      shieldsDownMutableRestore: true,
+      auditTrail: true,
+      deadTimerInlineAutoRestore: true,
+      doubleOperationRejection: true,
+    },
+  });
+});

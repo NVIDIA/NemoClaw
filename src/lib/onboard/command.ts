@@ -5,8 +5,15 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
+import {
+  resolveToolDisclosureRequest,
+  TOOL_DISCLOSURE_ENV,
+  type ToolDisclosure,
+} from "../tool-disclosure";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
+import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
+import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
@@ -22,6 +29,8 @@ export interface OnboardCommandOptions {
   acceptThirdPartySoftware: boolean;
   agent: string | null;
   agentsManifest: string | null;
+  toolDisclosure: ToolDisclosure | null;
+  observabilityEnabled: boolean | null;
   controlUiPort: number | null;
   gpu: boolean;
   noGpu: boolean;
@@ -122,11 +131,32 @@ function resolveSandboxGpu(flags: OnboardFlags): "enable" | "disable" | null {
   return null;
 }
 
+function validateObservabilityAgent(
+  requested: boolean | undefined,
+  agent: string | null,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  if (
+    agent &&
+    managedSandboxFeatureIssue(DCODE_OBSERVABILITY_FEATURE, { agent, requested }) ===
+      "unsupported-request"
+  ) {
+    fail(deps, "  --observability is supported only with --agent langchain-deepagents-code.");
+  }
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
 ): OnboardCommandOptions {
   const agent = resolveAgent(flags.agent, deps);
+  validateObservabilityAgent(flags.observability, agent, deps);
+  let toolDisclosure: ToolDisclosure | null;
+  try {
+    toolDisclosure = resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
   return {
     nonInteractive: flags["non-interactive"] === true,
     resume: flags.resume === true,
@@ -140,6 +170,8 @@ export function resolveOnboardOptions(
       flags[NOTICE_ACCEPT_FLAG_NAME] === true || String(deps.env[NOTICE_ACCEPT_ENV] || "") === "1",
     agent,
     agentsManifest: resolveAgentsManifest(flags.agents, agent, deps),
+    toolDisclosure,
+    observabilityEnabled: typeof flags.observability === "boolean" ? flags.observability : null,
     controlUiPort: flags["control-ui-port"] ?? null,
     gpu: flags.gpu === true,
     noGpu: flags["no-gpu"] === true,
@@ -159,6 +191,10 @@ function isPromptCancellation(error: unknown): boolean {
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
   if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
+  // Keep direct callers and the legacy monolithic onboard path on the same
+  // canonical source. No value is written for the default so resume/rebuild
+  // can distinguish an explicit request from an unset environment.
+  if (options.toolDisclosure) process.env[TOOL_DISCLOSURE_ENV] = options.toolDisclosure;
   if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest);
   try {
     await deps.runOnboard(options);

@@ -38,6 +38,7 @@ nemoclaw_cli() {
 
 python_probe_source() {
   cat <<'PY'
+import json
 import sys
 import urllib.error
 import urllib.request
@@ -62,8 +63,14 @@ def is_policy_denial(text):
 
 
 url = sys.argv[1]
+request = urllib.request.Request(
+    url,
+    data=json.dumps({'query': 'nemoclaw reachability probe', 'max_results': 1}).encode('utf-8'),
+    headers={'Content-Type': 'application/json'},
+    method='POST',
+)
 try:
-    with urllib.request.urlopen(url, timeout=8) as response:
+    with urllib.request.urlopen(request, timeout=8) as response:
         print(f'REACHED:{response.status}')
 except urllib.error.HTTPError as exc:
     body = ''
@@ -122,7 +129,7 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "probe-command-shape" ]; then
         ;;
     esac
   }
-  python_probe "https://api.tavily.com/"
+  python_probe "https://api.tavily.com/search"
   exit 0
 fi
 
@@ -161,7 +168,7 @@ pass "tavily policy preset applies"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
 
-PROBE_OUTPUT="$(python_probe "https://api.tavily.com/")"
+PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search")"
 if echo "$PROBE_OUTPUT" | grep -q "REACHED:"; then
   pass "managed Deep Agents Code python can reach Tavily after policy-add"
 elif echo "$PROBE_OUTPUT" | grep -q "BLOCKED:"; then
@@ -170,7 +177,7 @@ else
   fail_test "Tavily probe lacked reachability evidence after policy-add: $PROBE_OUTPUT"
 fi
 
-SYSTEM_PROBE_OUTPUT="$(python_probe "https://api.tavily.com/" "/usr/bin/python3" || true)"
+SYSTEM_PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search" "/usr/bin/python3" || true)"
 if echo "$SYSTEM_PROBE_OUTPUT" | grep -q "BLOCKED:" && ! echo "$SYSTEM_PROBE_OUTPUT" | grep -q "REACHED:"; then
   pass "system Python remains blocked from Tavily after policy-add"
 elif echo "$SYSTEM_PROBE_OUTPUT" | grep -q "REACHED:"; then
@@ -181,7 +188,7 @@ fi
 
 PROJECT_OUT="$(sandbox_exec "if ! test -x ${PROJECT_PYTHON@Q}; then python3 -m venv --copies ${PROJECT_VENV@Q}; fi; test -x ${PROJECT_PYTHON@Q} && readlink -f ${PROJECT_PYTHON@Q}" || true)"
 if echo "$PROJECT_OUT" | grep -Fxq "$PROJECT_PYTHON"; then
-  PROJECT_PROBE_OUTPUT="$(python_probe "https://api.tavily.com/" "$PROJECT_PYTHON" || true)"
+  PROJECT_PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search" "$PROJECT_PYTHON" || true)"
   if echo "$PROJECT_PROBE_OUTPUT" | grep -q "BLOCKED:" && ! echo "$PROJECT_PROBE_OUTPUT" | grep -q "REACHED:"; then
     pass "project venv Python under /sandbox remains blocked from Tavily after policy-add"
   elif echo "$PROJECT_PROBE_OUTPUT" | grep -q "REACHED:"; then

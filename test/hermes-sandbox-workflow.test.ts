@@ -29,4 +29,29 @@ describe("Hermes sandbox image workflow", () => {
     expect(install.index).toBeLessThan(secretBoundary.index);
     expect(install.index).toBeLessThan(rootEntrypoint.index);
   });
+
+  it("builds Hermes once, reuses that image for both probes, and cleans up last", () => {
+    const steps = workflow.jobs["build-hermes-sandbox-image"].steps ?? [];
+    const build = requireStep(steps, "Build Hermes production image");
+    const secretBoundary = requireStep(steps, "Run Hermes sandbox secret boundary test");
+    const secretArtifacts = requireStep(steps, "Upload Hermes sandbox secret boundary artifacts");
+    const rootEntrypoint = requireStep(steps, "Run Hermes root entrypoint smoke Vitest test");
+    const rootArtifacts = requireStep(steps, "Upload Hermes root entrypoint smoke artifacts");
+    const cleanup = requireStep(steps, "Clean up Docker auth");
+    const buildCommand = 'docker build "${build_args[@]}" -t nemoclaw-hermes-production .';
+
+    expect(steps.filter((step) => step.run?.includes(buildCommand))).toHaveLength(1);
+    expect(build.step.run).toContain("build_args=(-f agents/hermes/Dockerfile");
+    expect(build.step.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
+    expect(build.step.run).toContain(buildCommand);
+    expect(secretBoundary.step.env?.NEMOCLAW_HERMES_TEST_IMAGE).toBe("nemoclaw-hermes-production");
+    expect(rootEntrypoint.step.env?.NEMOCLAW_HERMES_TEST_IMAGE).toBe("nemoclaw-hermes-production");
+    expect(build.index).toBeLessThan(secretBoundary.index);
+    expect(secretBoundary.index).toBeLessThan(secretArtifacts.index);
+    expect(secretArtifacts.index).toBeLessThan(rootEntrypoint.index);
+    expect(rootEntrypoint.index).toBeLessThan(rootArtifacts.index);
+    expect(rootArtifacts.index).toBeLessThan(cleanup.index);
+    expect(cleanup.index).toBe(steps.length - 1);
+    expect(cleanup.step.if).toBe("always()");
+  });
 });

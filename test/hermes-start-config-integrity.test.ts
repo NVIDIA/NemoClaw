@@ -22,7 +22,7 @@ function extractShellFunctionFromSource(src: string, name: string): string {
   return `${name}() {${match?.[1] ?? ""}\n}`;
 }
 
-function runHermesConfigIntegrityVerifierAsRoot() {
+function runHermesConfigIntegrityVerifierAsRoot(inspectStatus: 0 | 1) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-integrity-"));
   const scriptPath = path.join(tmpDir, "run.sh");
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -37,11 +37,13 @@ function runHermesConfigIntegrityVerifierAsRoot() {
       "set -euo pipefail",
       'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
       'verify_config_integrity() { printf "verify:%s:%s:stepped=%s\\n" "$1" "$2" "${NEMOCLAW_TEST_STEPPED_DOWN:-0}"; }',
+      `inspect_hermes_mcp_integrity() { return ${inspectStatus}; }`,
       extractShellFunctionFromSource(src, "verify_hermes_config_integrity"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(hashFile)}`,
       "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_TEST_STEPPED_DOWN=1)",
-      "verify_hermes_config_integrity",
+      "HERMES_RESTART_FAILURE_CODE=internal",
+      'if verify_hermes_config_integrity; then printf "result=success failure-code=%s\\n" "$HERMES_RESTART_FAILURE_CODE"; else printf "result=failure failure-code=%s\\n" "$HERMES_RESTART_FAILURE_CODE"; fi',
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -173,10 +175,19 @@ function runLockedParentStartupPreflight(parentMetadata: string) {
 
 describe("agents/hermes/start.sh config integrity", () => {
   it("verifies the strict Hermes hash through the sandbox identity in root mode", () => {
-    const result = runHermesConfigIntegrityVerifierAsRoot();
+    const result = runHermesConfigIntegrityVerifierAsRoot(0);
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout.trim()).toMatch(/:stepped=1$/);
+    expect(result.stdout).toMatch(/:stepped=1$/m);
+    expect(result.stdout).toContain("result=success failure-code=internal");
+  });
+
+  it("classifies failed MCP integrity inspection as an MCP restart failure", () => {
+    const result = runHermesConfigIntegrityVerifierAsRoot(1);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toMatch(/:stepped=1$/m);
+    expect(result.stdout).toContain("result=failure failure-code=mcp-integrity");
   });
 
   it("prepares root dashboard home and seeds config through the sandbox identity", {

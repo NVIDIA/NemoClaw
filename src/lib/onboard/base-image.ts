@@ -7,6 +7,7 @@ import {
   defaultOpenclawBaseDockerfile,
   resolveSandboxBaseImage,
   OPENCLAW_SANDBOX_BASE_IMAGE as SANDBOX_BASE_IMAGE,
+  type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import { getInstalledOpenshellVersion } from "./openshell-version";
 
@@ -17,8 +18,18 @@ import { getInstalledOpenshellVersion } from "./openshell-version";
  * requires a newer glibc than the published image provides.
  */
 export function pullAndResolveBaseImageDigest(
-  options: { requireOpenshellSandboxAbi?: boolean } = {},
-): { digest: string | null; ref: string; source?: string; glibcVersion?: string | null } | null {
+  options: {
+    requireOpenshellSandboxAbi?: boolean;
+    resolutionHint?: SandboxBaseImageResolutionMetadata | null;
+    forceRefresh?: boolean;
+  } = {},
+): {
+  digest: string | null;
+  ref: string;
+  source?: string;
+  glibcVersion?: string | null;
+  metadata?: SandboxBaseImageResolutionMetadata;
+} | null {
   return resolveSandboxBaseImage({
     imageName: SANDBOX_BASE_IMAGE,
     dockerfilePath: defaultOpenclawBaseDockerfile(ROOT),
@@ -26,6 +37,8 @@ export function pullAndResolveBaseImageDigest(
     envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
     label: "OpenClaw sandbox base image",
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
+    resolutionHint: options.resolutionHint,
+    forceRefresh: options.forceRefresh,
     rootDir: ROOT,
   });
 }

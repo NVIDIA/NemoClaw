@@ -19,7 +19,7 @@ homepage: "https://openclaw.ai"
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
-expected_version: "2026.5.27"
+expected_version: "2026.6.10"
 version_scheme: calendar
 gateway_command: "openclaw gateway run"
 
@@ -80,6 +80,11 @@ web_auth_method: device_pairing
 inference:
   provider_type: gateway_managed
   proxy_support: explicit  # configured in openclaw.json providers block
+
+# ── MCP server support ───────────────────────────────────────────
+mcp:
+  support: bridge
+  adapter: mcporter
 
 # ── Phone-home hosts ───────────────────────────────────────────
 phone_home_hosts:

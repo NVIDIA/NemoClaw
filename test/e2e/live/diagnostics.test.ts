@@ -12,16 +12,15 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-diag-${process.pid}`;
 const DEBUG_QUICK_TIMEOUT_MS = 30_000;
 const INSTALL_TIMEOUT_MS = 35 * 60_000;
@@ -35,10 +34,6 @@ type RawCommandResult = {
   stderr: string;
   error?: Error;
 };
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function rawResultText(result: Pick<RawCommandResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -73,19 +68,12 @@ function runRawNodeCliForLeakAssertion(
 }
 
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const base = buildAvailabilityProbeEnv();
-  return {
-    ...base,
-    HOME: home,
-    PATH: [path.join(home, ".local", "bin"), base.PATH].filter(Boolean).join(":"),
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+  return testHomeEnvironment(home, {
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     ...extra,
-  };
+  });
 }
 
 async function bestEffort(run: () => Promise<unknown>): Promise<void> {
@@ -124,78 +112,48 @@ function assertNoSecretInExtractedArchive(extractDir: string, apiKey: string): v
   expect(patternLeaks, "debug archive must not contain nvapi-shaped credentials").toEqual([]);
 }
 
-const runDiagnosticsTest = shouldRunLiveE2E() ? test : test.skip;
+test("diagnostics CLI creates sanitized archives and validates sandbox/credential diagnostics", {
+  timeout: TEST_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  expect(
+    fs.existsSync(CLI_ENTRYPOINT),
+    "run `npm run build:cli` before live repo CLI targets",
+  ).toBe(true);
 
-runDiagnosticsTest(
-  "diagnostics CLI creates sanitized archives and validates sandbox/credential diagnostics",
-  { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
+  const hosted = requireHostedInferenceConfig(secrets);
+  const apiKey = hosted.apiKey;
+  await artifacts.target.declare({
+    id: "diagnostics",
+    boundary: "debug-archive-install-sh-docker-openshell-sandbox-exec-credentials",
+    sandboxName: SANDBOX_NAME,
+    contracts: [
+      "nemoclaw --version exits zero and prints semver",
+      "nemoclaw debug --quick creates a non-empty archive within the quick timeout",
+      "nemoclaw debug --output creates an extractable archive without NVIDIA credential values",
+      "debug --sandbox accepts a registered sandbox and rejects an unknown sandbox without a partial archive",
+      "sandbox openclaw.json is readable through real OpenShell sandbox exec and host status includes model data",
+      "credentials list hides secret values and credentials reset removes the provider credential from the gateway",
+    ],
+  });
 
-    const hosted = requireHostedInferenceConfig(secrets);
-    const apiKey = hosted.apiKey;
-    await artifacts.writeJson("target.json", {
-      id: "diagnostics",
-      runner: "vitest",
-      boundary: "debug-archive-install-sh-docker-openshell-sandbox-exec-credentials",
-      sandboxName: SANDBOX_NAME,
-      contracts: [
-        "nemoclaw --version exits zero and prints semver",
-        "nemoclaw debug --quick creates a non-empty archive within the quick timeout",
-        "nemoclaw debug --output creates an extractable archive without NVIDIA credential values",
-        "debug --sandbox accepts a registered sandbox and rejects an unknown sandbox without a partial archive",
-        "sandbox openclaw.json is readable through real OpenShell sandbox exec and host status includes model data",
-        "credentials list hides secret values and credentials reset removes the provider credential from the gateway",
-      ],
-    });
-
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-diagnostics",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for diagnostics live E2E: ${resultText(docker)}`);
-      }
-      skip("Docker is required for diagnostics live E2E");
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info-diagnostics",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  if (docker.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(`Docker is required for diagnostics live E2E: ${resultText(docker)}`);
     }
+    skip("Docker is required for diagnostics live E2E");
+  }
 
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-diagnostics-home-"));
-    cleanup.add(`remove diagnostics state for ${SANDBOX_NAME}`, async () => {
-      const env = testEnv(home);
-      await bestEffort(() =>
-        host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-          artifactName: "cleanup-nemoclaw-destroy-diagnostics",
-          env,
-          redactionValues: [apiKey],
-          timeoutMs: 120_000,
-        }),
-      );
-      await bestEffort(() =>
-        host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
-          artifactName: "cleanup-openshell-sandbox-delete-diagnostics",
-          env,
-          timeoutMs: 60_000,
-        }),
-      );
-      await bestEffort(() =>
-        host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-          artifactName: "cleanup-openshell-gateway-destroy-diagnostics",
-          env,
-          timeoutMs: 120_000,
-        }),
-      );
-      fs.rmSync(home, { recursive: true, force: true });
-    });
-
-    const env = testEnv(home, hosted.env);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-diagnostics-home-"));
+  cleanup.add(`remove diagnostics state for ${SANDBOX_NAME}`, async () => {
+    const env = testEnv(home);
     await bestEffort(() =>
       host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "pre-cleanup-nemoclaw-destroy-diagnostics",
+        artifactName: "cleanup-nemoclaw-destroy-diagnostics",
         env,
         redactionValues: [apiKey],
         timeoutMs: 120_000,
@@ -203,234 +161,252 @@ runDiagnosticsTest(
     );
     await bestEffort(() =>
       host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
-        artifactName: "pre-cleanup-openshell-sandbox-delete-diagnostics",
+        artifactName: "cleanup-openshell-sandbox-delete-diagnostics",
         env,
         timeoutMs: 60_000,
       }),
     );
-
-    const version = await host.command("node", [CLI_ENTRYPOINT, "--version"], {
-      artifactName: "diagnostics-nemoclaw-version",
-      env: testEnv(home),
-      timeoutMs: 30_000,
-    });
-    expect(version.exitCode, resultText(version)).toBe(0);
-    expect(resultText(version)).toMatch(/\d+\.\d+\.\d+/);
-
-    const quickDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-debug-quick-"));
-    const quickArchive = path.join(quickDir, "quick-debug.tar.gz");
-    const quickStartedAt = Date.now();
-    const quick = await host.command(
-      "node",
-      [CLI_ENTRYPOINT, "debug", "--quick", "--output", quickArchive],
-      {
-        artifactName: "diagnostics-debug-quick",
-        env: testEnv(home, { NEMOCLAW_SANDBOX_NAME: "" }),
-        timeoutMs: DEBUG_QUICK_TIMEOUT_MS,
-      },
-    );
-    const quickElapsedMs = Date.now() - quickStartedAt;
-    expect(quick.exitCode, resultText(quick)).toBe(0);
-    expect(fs.existsSync(quickArchive), "debug --quick must create an archive").toBe(true);
-    expect(
-      fs.statSync(quickArchive).size,
-      "debug --quick archive must be non-empty",
-    ).toBeGreaterThan(0);
-    expect(
-      quickElapsedMs,
-      "debug --quick must complete within the legacy 30s process timeout plus harness scheduling grace",
-    ).toBeLessThanOrEqual(DEBUG_QUICK_TIMEOUT_MS + 5_000);
-
-    const install = await host.command(
-      "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
-      {
-        artifactName: "install-and-onboard-diagnostics",
-        cwd: REPO_ROOT,
+    await bestEffort(() =>
+      host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+        artifactName: "cleanup-openshell-gateway-destroy-diagnostics",
         env,
-        redactionValues: [apiKey],
-        timeoutMs: INSTALL_TIMEOUT_MS,
-      },
+        timeoutMs: 120_000,
+      }),
     );
-    expect(install.exitCode, resultText(install)).toBe(0);
+    fs.rmSync(home, { recursive: true, force: true });
+  });
 
-    const fullDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-debug-full-"));
-    const fullArchive = path.join(fullDir, "debug-full.tar.gz");
-    const extractDir = path.join(fullDir, "extracted");
-    fs.mkdirSync(extractDir, { recursive: true });
-    const fullDebug = await host.command(
-      "node",
-      [CLI_ENTRYPOINT, "debug", "--output", fullArchive],
-      {
-        artifactName: "diagnostics-debug-full",
-        env,
-        redactionValues: [apiKey],
-        timeoutMs: 180_000,
-      },
-    );
-    expect(fullDebug.exitCode, resultText(fullDebug)).toBe(0);
-    expect(fs.existsSync(fullArchive), "debug --output must create an archive").toBe(true);
-    expect(
-      fs.statSync(fullArchive).size,
-      "debug --output archive must be non-empty",
-    ).toBeGreaterThan(0);
-    const extract = await host.command("tar", ["xzf", fullArchive, "-C", extractDir], {
-      artifactName: "diagnostics-debug-full-extract",
-      env: testEnv(home),
+  const env = testEnv(home, hosted.env);
+  await bestEffort(() =>
+    host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+      artifactName: "pre-cleanup-nemoclaw-destroy-diagnostics",
+      env,
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
+    }),
+  );
+  await bestEffort(() =>
+    host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
+      artifactName: "pre-cleanup-openshell-sandbox-delete-diagnostics",
+      env,
       timeoutMs: 60_000,
-    });
-    expect(extract.exitCode, resultText(extract)).toBe(0);
-    assertNoSecretInExtractedArchive(extractDir, apiKey);
+    }),
+  );
 
-    const knownArchive = path.join(fullDir, "known-sandbox.tar.gz");
-    const knownSandboxDebug = await host.command(
+  const version = await host.command("node", [CLI_ENTRYPOINT, "--version"], {
+    artifactName: "diagnostics-nemoclaw-version",
+    env: testEnv(home),
+    timeoutMs: 30_000,
+  });
+  expect(version.exitCode, resultText(version)).toBe(0);
+  expect(resultText(version)).toMatch(/\d+\.\d+\.\d+/);
+
+  const quickDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-debug-quick-"));
+  const quickArchive = path.join(quickDir, "quick-debug.tar.gz");
+  const quickStartedAt = Date.now();
+  const quick = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "debug", "--quick", "--output", quickArchive],
+    {
+      artifactName: "diagnostics-debug-quick",
+      env: testEnv(home, { NEMOCLAW_SANDBOX_NAME: "" }),
+      timeoutMs: DEBUG_QUICK_TIMEOUT_MS,
+    },
+  );
+  const quickElapsedMs = Date.now() - quickStartedAt;
+  expect(quick.exitCode, resultText(quick)).toBe(0);
+  expect(fs.existsSync(quickArchive), "debug --quick must create an archive").toBe(true);
+  expect(fs.statSync(quickArchive).size, "debug --quick archive must be non-empty").toBeGreaterThan(
+    0,
+  );
+  expect(
+    quickElapsedMs,
+    "debug --quick must complete within the legacy 30s process timeout plus harness scheduling grace",
+  ).toBeLessThanOrEqual(DEBUG_QUICK_TIMEOUT_MS + 5_000);
+
+  const install = await host.command(
+    "bash",
+    ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+    {
+      artifactName: "install-and-onboard-diagnostics",
+      cwd: REPO_ROOT,
+      env,
+      redactionValues: [apiKey],
+      timeoutMs: INSTALL_TIMEOUT_MS,
+    },
+  );
+  expect(install.exitCode, resultText(install)).toBe(0);
+
+  const fullDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-debug-full-"));
+  const fullArchive = path.join(fullDir, "debug-full.tar.gz");
+  const extractDir = path.join(fullDir, "extracted");
+  fs.mkdirSync(extractDir, { recursive: true });
+  const fullDebug = await host.command("node", [CLI_ENTRYPOINT, "debug", "--output", fullArchive], {
+    artifactName: "diagnostics-debug-full",
+    env,
+    redactionValues: [apiKey],
+    timeoutMs: 180_000,
+  });
+  expect(fullDebug.exitCode, resultText(fullDebug)).toBe(0);
+  expect(fs.existsSync(fullArchive), "debug --output must create an archive").toBe(true);
+  expect(fs.statSync(fullArchive).size, "debug --output archive must be non-empty").toBeGreaterThan(
+    0,
+  );
+  const extract = await host.command("tar", ["xzf", fullArchive, "-C", extractDir], {
+    artifactName: "diagnostics-debug-full-extract",
+    env: testEnv(home),
+    timeoutMs: 60_000,
+  });
+  expect(extract.exitCode, resultText(extract)).toBe(0);
+  assertNoSecretInExtractedArchive(extractDir, apiKey);
+
+  const knownArchive = path.join(fullDir, "known-sandbox.tar.gz");
+  const knownSandboxDebug = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "debug", "--quick", "--sandbox", SANDBOX_NAME, "--output", knownArchive],
+    {
+      artifactName: "diagnostics-debug-known-sandbox",
+      env,
+      redactionValues: [apiKey],
+      timeoutMs: DEBUG_QUICK_TIMEOUT_MS,
+    },
+  );
+  expect(knownSandboxDebug.exitCode, resultText(knownSandboxDebug)).toBe(0);
+  expect(fs.existsSync(knownArchive), "registered --sandbox must create an archive").toBe(true);
+  expect(
+    fs.statSync(knownArchive).size,
+    "registered --sandbox archive must be non-empty",
+  ).toBeGreaterThan(0);
+
+  const missingName = `nemoclaw-e2e-missing-${process.pid}-${Date.now()}`;
+  const missingArchive = path.join(fullDir, "unknown-sandbox.tar.gz");
+  const unknownSandboxDebug = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "debug", "--quick", "--sandbox", missingName, "--output", missingArchive],
+    {
+      artifactName: "diagnostics-debug-unknown-sandbox",
+      env,
+      redactionValues: [apiKey],
+      timeoutMs: DEBUG_QUICK_TIMEOUT_MS,
+    },
+  );
+  const unknownText = resultText(unknownSandboxDebug);
+  expect(unknownSandboxDebug.exitCode, unknownText).not.toBe(0);
+  expect(unknownText).toContain(missingName);
+  expect(unknownText).toMatch(/not registered/i);
+  expect(fs.existsSync(missingArchive), "unknown --sandbox must not leave a partial archive").toBe(
+    false,
+  );
+
+  const config = await sandbox.exec(
+    SANDBOX_NAME,
+    ["sh", "-lc", "cat /sandbox/.openclaw/openclaw.json"],
+    {
+      artifactName: "diagnostics-sandbox-openclaw-config",
+      env,
+      redactionValues: [apiKey],
+      timeoutMs: 60_000,
+    },
+  );
+  expect(config.exitCode, resultText(config)).toBe(0);
+  expect(config.stdout.trim(), "openclaw.json must be readable inside sandbox").not.toBe("");
+
+  const status = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
+    artifactName: "diagnostics-nemoclaw-status",
+    env,
+    redactionValues: [apiKey],
+    timeoutMs: 60_000,
+  });
+  expect(status.exitCode, resultText(status)).toBe(0);
+  expect(resultText(status)).toMatch(/Model/i);
+
+  const rawCredentialsList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
+  const credentialsText = rawResultText(rawCredentialsList);
+  expect(rawCredentialsList.status, redactForAssertion(credentialsText, apiKey)).toBe(0);
+  expect(
+    credentialsText.includes(apiKey),
+    "credentials list must not expose the exact NVIDIA_INFERENCE_API_KEY",
+  ).toBe(false);
+  expect(
+    /nvapi-[A-Za-z0-9_-]{10,}/.test(credentialsText),
+    "credentials list must not expose nvapi-shaped values",
+  ).toBe(false);
+  expect(
+    credentialsText.includes(hosted.providerName) ||
+      /No provider credentials registered/i.test(credentialsText),
+  ).toBe(true);
+
+  await host.command("node", [CLI_ENTRYPOINT, "credentials", "list"], {
+    artifactName: "diagnostics-credentials-list",
+    env,
+    redactionValues: [apiKey],
+    timeoutMs: 60_000,
+  });
+
+  let credentialsResetExercised = false;
+  let postResetCredentialsListRedacted = false;
+  let providerCredentialAbsentBeforeReset = false;
+  if (credentialsText.includes(hosted.providerName)) {
+    credentialsResetExercised = true;
+    const reset = await host.command(
       "node",
-      [CLI_ENTRYPOINT, "debug", "--quick", "--sandbox", SANDBOX_NAME, "--output", knownArchive],
+      [CLI_ENTRYPOINT, "credentials", "reset", hosted.providerName, "--yes"],
       {
-        artifactName: "diagnostics-debug-known-sandbox",
-        env,
-        redactionValues: [apiKey],
-        timeoutMs: DEBUG_QUICK_TIMEOUT_MS,
-      },
-    );
-    expect(knownSandboxDebug.exitCode, resultText(knownSandboxDebug)).toBe(0);
-    expect(fs.existsSync(knownArchive), "registered --sandbox must create an archive").toBe(true);
-    expect(
-      fs.statSync(knownArchive).size,
-      "registered --sandbox archive must be non-empty",
-    ).toBeGreaterThan(0);
-
-    const missingName = `nemoclaw-e2e-missing-${process.pid}-${Date.now()}`;
-    const missingArchive = path.join(fullDir, "unknown-sandbox.tar.gz");
-    const unknownSandboxDebug = await host.command(
-      "node",
-      [CLI_ENTRYPOINT, "debug", "--quick", "--sandbox", missingName, "--output", missingArchive],
-      {
-        artifactName: "diagnostics-debug-unknown-sandbox",
-        env,
-        redactionValues: [apiKey],
-        timeoutMs: DEBUG_QUICK_TIMEOUT_MS,
-      },
-    );
-    const unknownText = resultText(unknownSandboxDebug);
-    expect(unknownSandboxDebug.exitCode, unknownText).not.toBe(0);
-    expect(unknownText).toContain(missingName);
-    expect(unknownText).toMatch(/not registered/i);
-    expect(
-      fs.existsSync(missingArchive),
-      "unknown --sandbox must not leave a partial archive",
-    ).toBe(false);
-
-    const config = await sandbox.exec(
-      SANDBOX_NAME,
-      ["sh", "-lc", "cat /sandbox/.openclaw/openclaw.json"],
-      {
-        artifactName: "diagnostics-sandbox-openclaw-config",
+        artifactName: "diagnostics-credentials-reset",
         env,
         redactionValues: [apiKey],
         timeoutMs: 60_000,
       },
     );
-    expect(config.exitCode, resultText(config)).toBe(0);
-    expect(config.stdout.trim(), "openclaw.json must be readable inside sandbox").not.toBe("");
+    expect(reset.exitCode, resultText(reset)).toBe(0);
+    expect(resultText(reset)).toContain(`Removed provider '${hosted.providerName}'`);
 
-    const status = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
-      artifactName: "diagnostics-nemoclaw-status",
-      env,
-      redactionValues: [apiKey],
-      timeoutMs: 60_000,
-    });
-    expect(status.exitCode, resultText(status)).toBe(0);
-    expect(resultText(status)).toMatch(/Model/i);
-
-    const rawCredentialsList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
-    const credentialsText = rawResultText(rawCredentialsList);
-    expect(rawCredentialsList.status, redactForAssertion(credentialsText, apiKey)).toBe(0);
+    const rawPostResetList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
+    const postResetText = rawResultText(rawPostResetList);
+    expect(rawPostResetList.status, redactForAssertion(postResetText, apiKey)).toBe(0);
+    expect(postResetText.includes(hosted.providerName)).toBe(false);
     expect(
-      credentialsText.includes(apiKey),
-      "credentials list must not expose the exact NVIDIA_INFERENCE_API_KEY",
+      postResetText.includes(apiKey),
+      "post-reset credentials list must not expose the exact NVIDIA_INFERENCE_API_KEY",
     ).toBe(false);
     expect(
-      /nvapi-[A-Za-z0-9_-]{10,}/.test(credentialsText),
-      "credentials list must not expose nvapi-shaped values",
+      /nvapi-[A-Za-z0-9_-]{10,}/.test(postResetText),
+      "post-reset credentials list must not expose nvapi-shaped values",
     ).toBe(false);
-    expect(
-      credentialsText.includes(hosted.providerName) ||
-        /No provider credentials registered/i.test(credentialsText),
-    ).toBe(true);
+    postResetCredentialsListRedacted = !postResetText.includes(apiKey);
 
     await host.command("node", [CLI_ENTRYPOINT, "credentials", "list"], {
-      artifactName: "diagnostics-credentials-list",
+      artifactName: "diagnostics-credentials-list-after-reset",
       env,
       redactionValues: [apiKey],
       timeoutMs: 60_000,
     });
-
-    let credentialsResetExercised = false;
-    let postResetCredentialsListRedacted = false;
-    let providerCredentialAbsentBeforeReset = false;
-    if (credentialsText.includes(hosted.providerName)) {
-      credentialsResetExercised = true;
-      const reset = await host.command(
-        "node",
-        [CLI_ENTRYPOINT, "credentials", "reset", hosted.providerName, "--yes"],
-        {
-          artifactName: "diagnostics-credentials-reset",
-          env,
-          redactionValues: [apiKey],
-          timeoutMs: 60_000,
-        },
-      );
-      expect(reset.exitCode, resultText(reset)).toBe(0);
-      expect(resultText(reset)).toContain(`Removed provider '${hosted.providerName}'`);
-
-      const rawPostResetList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
-      const postResetText = rawResultText(rawPostResetList);
-      expect(rawPostResetList.status, redactForAssertion(postResetText, apiKey)).toBe(0);
-      expect(postResetText.includes(hosted.providerName)).toBe(false);
-      expect(
-        postResetText.includes(apiKey),
-        "post-reset credentials list must not expose the exact NVIDIA_INFERENCE_API_KEY",
-      ).toBe(false);
-      expect(
-        /nvapi-[A-Za-z0-9_-]{10,}/.test(postResetText),
-        "post-reset credentials list must not expose nvapi-shaped values",
-      ).toBe(false);
-      postResetCredentialsListRedacted = !postResetText.includes(apiKey);
-
-      await host.command("node", [CLI_ENTRYPOINT, "credentials", "list"], {
-        artifactName: "diagnostics-credentials-list-after-reset",
-        env,
-        redactionValues: [apiKey],
-        timeoutMs: 60_000,
-      });
-    } else {
-      providerCredentialAbsentBeforeReset = true;
-      await artifacts.writeJson("credentials-reset.skip.json", {
-        provider: hosted.providerName,
-        reason: `credentials list reported no ${hosted.providerName} provider credential after install/onboard`,
-        acceptedNoProviderStore: /No provider credentials registered/i.test(credentialsText),
-      });
-    }
-
-    await artifacts.writeJson("target-result.json", {
-      id: "diagnostics",
-      sandboxName: SANDBOX_NAME,
-      model: hosted.model,
-      assertions: {
-        versionPrintedSemver: /\d+\.\d+\.\d+/.test(resultText(version)),
-        quickDebugArchiveCreated: fs.existsSync(quickArchive) && fs.statSync(quickArchive).size > 0,
-        fullDebugArchiveCreated: fs.existsSync(fullArchive) && fs.statSync(fullArchive).size > 0,
-        fullDebugArchiveSanitized: true,
-        registeredSandboxDebugAccepted: knownSandboxDebug.exitCode === 0,
-        unknownSandboxDebugRejected: unknownSandboxDebug.exitCode !== 0,
-        sandboxConfigReadable: config.exitCode === 0 && config.stdout.trim().length > 0,
-        statusShowsModel: /Model/i.test(resultText(status)),
-        credentialsListRedacted: !credentialsText.includes(apiKey),
-        credentialsResetExercised,
-        providerCredentialAbsentBeforeReset,
-        postResetCredentialsListRedacted,
-      },
+  } else {
+    providerCredentialAbsentBeforeReset = true;
+    await artifacts.writeJson("credentials-reset.skip.json", {
+      provider: hosted.providerName,
+      reason: `credentials list reported no ${hosted.providerName} provider credential after install/onboard`,
+      acceptedNoProviderStore: /No provider credentials registered/i.test(credentialsText),
     });
-  },
-);
+  }
+
+  await artifacts.target.complete({
+    id: "diagnostics",
+    sandboxName: SANDBOX_NAME,
+    model: hosted.model,
+    assertions: {
+      versionPrintedSemver: /\d+\.\d+\.\d+/.test(resultText(version)),
+      quickDebugArchiveCreated: fs.existsSync(quickArchive) && fs.statSync(quickArchive).size > 0,
+      fullDebugArchiveCreated: fs.existsSync(fullArchive) && fs.statSync(fullArchive).size > 0,
+      fullDebugArchiveSanitized: true,
+      registeredSandboxDebugAccepted: knownSandboxDebug.exitCode === 0,
+      unknownSandboxDebugRejected: unknownSandboxDebug.exitCode !== 0,
+      sandboxConfigReadable: config.exitCode === 0 && config.stdout.trim().length > 0,
+      statusShowsModel: /Model/i.test(resultText(status)),
+      credentialsListRedacted: !credentialsText.includes(apiKey),
+      credentialsResetExercised,
+      providerCredentialAbsentBeforeReset,
+      postResetCredentialsListRedacted,
+    },
+  });
+});

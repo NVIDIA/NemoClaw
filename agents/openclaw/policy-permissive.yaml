@@ -317,3 +317,17 @@ network_policies:
         access: full
     binaries:
       - { path: "/**" }
+
+  # Shields-down policies intentionally keep full host and binary scope. The
+  # maintained Tavily preset and provider profiles constrain normal access.
+  tavily:
+    name: tavily
+    endpoints:
+      - host: api.tavily.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        access: full
+    binaries:
+      - { path: "/**" }

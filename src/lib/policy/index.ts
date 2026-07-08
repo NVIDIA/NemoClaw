@@ -3,7 +3,15 @@
 //
 // Policy preset management — list, load, merge, and apply presets.
 
-import type { JsonObject, JsonValue } from "../core/json-types";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import readline from "node:readline";
+import YAML from "yaml";
+
+// Namespace access keeps resolveOpenshell spyable in focused policy tests.
+import * as openshellResolveModule from "../adapters/openshell/resolve";
+import { loadAgent } from "../agent/defs";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
@@ -13,28 +21,29 @@ import {
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
 } from "../messaging/channels";
+import { ROOT, run, runCapture } from "../runner";
+import * as registry from "../state/registry";
 import {
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
 } from "./commands";
+import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
 import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./merge";
-
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
-const readline = require("readline");
-const YAML = require("yaml");
-const { ROOT, run, runCapture } = require("../runner");
-const registry = require("../state/registry");
-const { loadAgent } = require("../agent/defs");
-// Late-binding access via the module exports so tests can spy on
-// resolveOpenshell without rewiring requires.
-const openshellResolveModule = require("../adapters/openshell/resolve");
+import { findUnexpectedExistingPolicyKey } from "./preset-ownership";
+import {
+  isPolicyDocument,
+  isPolicyObject,
+  isPresetPolicyMap,
+  type PolicyDocument,
+  type PolicyObject,
+  type PolicyValue,
+  parseNetworkPolicies,
+} from "./preset-parsing";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -44,15 +53,6 @@ type PresetInfo = {
   file: string;
   name: string;
   description: string;
-};
-
-// Re-use shared JSON types under policy-domain names.
-type PolicyValue = JsonValue;
-type PolicyObject = JsonObject;
-
-type PolicyDocument = PolicyObject & {
-  version?: number;
-  network_policies?: PolicyObject;
 };
 
 type SelectionOptions = {
@@ -75,10 +75,6 @@ type SetupPolicyPresetSupportOptions = {
   webSearchSupported?: boolean | null;
   agent?: string | null;
 };
-
-function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * Enumerate every built-in preset and return `{ file, name, description }`
@@ -141,30 +137,6 @@ function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): stri
 function loadPreset(name: string): string | null {
   return loadPresetForAgent(name, { agent: "openclaw" });
 }
-
-function isPolicyObject(value: PolicyValue): value is PolicyObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isPresetPolicyMap(value: PolicyValue): value is PolicyObject {
-  return (
-    isPolicyObject(value) &&
-    Object.keys(value).length > 0 &&
-    Object.values(value).every(isPolicyObject)
-  );
-}
-
-function parseNetworkPolicies(content: string | null | undefined): PolicyObject | null {
-  if (!content) return null;
-  try {
-    const parsed = YAML.parse(content);
-    const networkPolicies = isPolicyDocument(parsed) ? parsed.network_policies : null;
-    return isPolicyObject(networkPolicies) ? networkPolicies : null;
-  } catch {
-    return null;
-  }
-}
-
 // The single sandbox->host bridge hostname OpenShell provisions. An endpoint
 // that pins `allowed_ips` for THIS host is the legitimate host-gateway flow
 // (e.g. web_fetch to host.openshell.internal); `allowed_ips` on any other host
@@ -204,6 +176,12 @@ function parsePresetPolicyKeys(presetContent: string | null | undefined): string
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) return [];
   return Object.keys(parseNetworkPolicies(`network_policies:\n${presetEntries}`) || {});
+}
+
+/** Preserve invalid registered content as indeterminate for ownership decisions. */
+function parsePresetPolicyKeysForOwnership(presetContent: string): string[] | null {
+  const networkPolicies = parseNetworkPolicies(presetContent);
+  return networkPolicies === null ? null : Object.keys(networkPolicies);
 }
 
 const AGENT_PRESET_KEY_ALIASES: Readonly<Record<string, readonly string[]>> =
@@ -361,7 +339,8 @@ function setupPolicyPresetSupported(
   name: string,
   options: SetupPolicyPresetSupportOptions = {},
 ): boolean {
-  return name !== "brave" || options.webSearchSupported !== false;
+  const isWebSearchPreset = name === "brave" || name === "tavily";
+  return !isWebSearchPreset || options.webSearchSupported !== false;
 }
 
 function filterSetupPolicyPresets<T extends { name: string }>(
@@ -440,12 +419,13 @@ function parseCurrentPolicyOrEmpty(raw: string | null | undefined): string {
 /**
  * Pre-spawn check used at command entry points before any
  * `run(buildPolicy*Command(...))`. If the binary cannot be resolved, prints
- * every location checked and an install hint, then exits nonzero — instead
- * of letting the spawn surface as the opaque `spawnSync openshell ENOENT`
- * (issue #4224).
+ * every location checked and an install hint. Normal command entry points
+ * exit nonzero; transactional lifecycle callers can request `nonFatal` and
+ * retain control for rollback instead of surfacing the opaque
+ * `spawnSync openshell ENOENT` (issue #4224).
  */
-function assertOpenshellResolvable(): void {
-  if (openshellResolveModule.resolveOpenshell()) return;
+function assertOpenshellResolvable(options: { nonFatal?: boolean } = {}): boolean {
+  if (openshellResolveModule.resolveOpenshell()) return true;
 
   const home = process.env.HOME;
   const override = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -470,7 +450,29 @@ function assertOpenshellResolvable(): void {
   console.error(
     "  Install OpenShell (https://github.com/NVIDIA/OpenShell) or set NEMOCLAW_OPENSHELL_BIN to an absolute, executable path.",
   );
+  if (options.nonFatal) return false;
   process.exit(1);
+}
+
+/**
+ * Apply a policy file while optionally keeping control in the caller on
+ * failure. Lifecycle code that owns compensating actions must use nonFatal so
+ * a failed OpenShell mutation cannot bypass its rollback through process.exit.
+ */
+function setPolicyFile(
+  policyFile: string,
+  sandboxName: string,
+  options: { nonFatal?: boolean } = {},
+): boolean {
+  const result = run(buildPolicySetCommand(policyFile, sandboxName), {
+    ignoreError: options.nonFatal === true,
+  });
+  if (!options.nonFatal) return true;
+  if (!result.error && result.status === 0) return true;
+
+  const detail = result.error?.message ?? `exit ${result.status ?? "unknown"}`;
+  console.error(`  Failed to update policy for sandbox '${sandboxName}' (${detail}).`);
+  return false;
 }
 
 /**
@@ -667,7 +669,11 @@ function removePresetFromPolicy(
  * Returns `false` if the preset is unknown or has no `network_policies`
  * section.
  */
-function removePreset(sandboxName: string, presetName: string): boolean {
+function removePreset(
+  sandboxName: string,
+  presetName: string,
+  options: { nonFatal?: boolean; skipRegistryUpdate?: boolean } = {},
+): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
@@ -732,14 +738,14 @@ function removePreset(sandboxName: string, presetName: string): boolean {
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
-  assertOpenshellResolvable();
+  if (!assertOpenshellResolvable(options)) return false;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
   fs.writeFileSync(tmpFile, updated, { encoding: "utf-8", mode: 0o600 });
 
   try {
-    run(buildPolicySetCommand(tmpFile, sandboxName));
+    if (!setPolicyFile(tmpFile, sandboxName, options)) return false;
     console.log(`  Removed preset: ${presetName}`);
   } finally {
     try {
@@ -754,7 +760,7 @@ function removePreset(sandboxName: string, presetName: string): boolean {
     }
   }
 
-  const sandbox = registry.getSandbox(sandboxName);
+  const sandbox = options.skipRegistryUpdate ? undefined : registry.getSandbox(sandboxName);
   if (sandbox) {
     if (isCustom) {
       registry.removeCustomPolicyByName(sandboxName, presetName);
@@ -838,7 +844,12 @@ function applyPresetContent(
   sandboxName: string,
   presetName: string,
   presetContent: string,
-  options: { custom?: { sourcePath?: string } } = {},
+  options: {
+    custom?: { sourcePath?: string };
+    expectedExistingNetworkPolicyContent?: string | null;
+    nonFatal?: boolean;
+    skipRegistryUpdate?: boolean;
+  } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
@@ -884,6 +895,27 @@ function applyPresetContent(
     );
     return false;
   }
+  if (Object.prototype.hasOwnProperty.call(options, "expectedExistingNetworkPolicyContent")) {
+    let collision: string | null = null;
+    try {
+      collision = findUnexpectedExistingPolicyKey(
+        currentPolicy,
+        presetEntries,
+        options.expectedExistingNetworkPolicyContent ?? null,
+      );
+    } catch {
+      console.error(
+        `  Could not validate network policy key ownership for '${presetName}'; refusing to apply it.`,
+      );
+      return false;
+    }
+    if (collision) {
+      console.error(
+        `  Network policy key '${collision}' does not match the exact state owned by '${presetName}'; refusing to replace it.`,
+      );
+      return false;
+    }
+  }
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
   const endpoints = getPresetEndpoints(presetContent);
@@ -893,14 +925,14 @@ function applyPresetContent(
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
-  assertOpenshellResolvable();
+  if (!assertOpenshellResolvable(options)) return false;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
   fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
   try {
-    run(buildPolicySetCommand(tmpFile, sandboxName));
+    if (!setPolicyFile(tmpFile, sandboxName, options)) return false;
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {
@@ -915,6 +947,12 @@ function applyPresetContent(
       /* ignored */
     }
   }
+
+  // Some multi-resource lifecycle callers reserve ownership in the registry
+  // before mutating the live gateway. That ordering prevents a successful
+  // policy set followed by a registry-write failure from leaving an unowned
+  // live key. They explicitly request no second registry write here.
+  if (options.skipRegistryUpdate) return true;
 
   const sandbox = registry.getSandbox(sandboxName);
   if (sandbox) {
@@ -1221,32 +1259,58 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
   }));
 }
 
-/**
- * True when every `network_policies` key declared in `content` is present in
- * `gatewayPolicyNames`. Works for both built-in preset YAML and the custom
- * preset YAML stored under a sandbox's registry entry — keeping a single
- * matching rule means `policy-list` and `status` stay consistent for either
- * preset source. (#3590)
- */
-function presetMatchesGateway(
-  content: string | null,
-  gatewayPolicyNames: ReadonlySet<string>,
-): boolean {
-  const entries = extractPresetEntries(content);
-  if (!entries) return false;
-
-  let presetPolicies;
+/** Return whether registered custom content owns an exact live network-policy key. */
+function customPresetOwnsNetworkPolicyKey(sandboxName: string, policyKey: string): boolean {
+  let candidates: ReturnType<typeof registry.getCustomPolicies>;
   try {
-    const presetParsed = YAML.parse("network_policies:\n" + entries);
-    presetPolicies = presetParsed?.network_policies;
+    candidates = [];
+    for (const entry of registry.getCustomPolicies(sandboxName)) {
+      const keys = parsePresetPolicyKeysForOwnership(entry.content);
+      if (keys === null) {
+        throw new Error("invalid registered custom policy content");
+      }
+      if (keys.includes(policyKey)) candidates.push(entry);
+    }
   } catch {
-    return false;
+    throw new Error(
+      `Could not inspect registered custom policy ownership for '${policyKey}' in sandbox '${sandboxName}'; refusing to reconcile overlapping built-in policy content.`,
+    );
   }
+  if (candidates.length === 0) return false;
 
-  if (!presetPolicies || typeof presetPolicies !== "object") return false;
+  let rawPolicy: string;
+  try {
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
+  } catch {
+    throw new Error(
+      `Could not read live policy ownership for '${policyKey}' in sandbox '${sandboxName}'; refusing to reconcile overlapping built-in policy content.`,
+    );
+  }
+  const states = candidates.map((entry) =>
+    inspectPresetContentGatewayState({
+      readPolicy: () => rawPolicy,
+      parseCurrentPolicy: parseCurrentPolicyOrEmpty,
+      extractPresetEntries,
+      presetContent: entry.content,
+      policyKey,
+    }),
+  );
+  if (states.includes("match")) return true;
+  if (states.includes(null)) {
+    throw new Error(
+      `Could not determine live policy ownership for '${policyKey}' in sandbox '${sandboxName}'; refusing to reconcile overlapping built-in policy content.`,
+    );
+  }
+  return false;
+}
 
-  const presetKeys = Object.keys(presetPolicies);
-  return presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k));
+/** Drop built-in registry attribution without mutating overlapping live policy content. */
+function removeBuiltinPresetAttribution(sandboxName: string, presetName: string): void {
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) return;
+  const policies = (sandbox.policies ?? []).filter((name) => name !== presetName);
+  if (policies.length === (sandbox.policies ?? []).length) return;
+  registry.updateSandbox(sandboxName, { policies });
 }
 
 /**
@@ -1262,54 +1326,50 @@ function presetMatchesGateway(
  * matching presets" (`[]`).
  */
 function getGatewayPresets(sandboxName: string): string[] | null {
-  let rawPolicy = "";
-  try {
-    rawPolicy = runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true });
-  } catch {
-    return null;
-  }
-
-  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
-  if (!currentPolicy) return null;
-
-  let parsed;
-  try {
-    parsed = YAML.parse(currentPolicy);
-  } catch {
-    return null;
-  }
-
-  if (!parsed || typeof parsed !== "object") return null;
-
-  // Gateway returned valid YAML but has no network_policies section —
-  // this is a reachable gateway with an empty/default policy.
-  const gatewayPolicies = parsed.network_policies;
-  if (!gatewayPolicies || typeof gatewayPolicies !== "object" || Array.isArray(gatewayPolicies)) {
-    return [];
-  }
-
-  const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
-  const matched: string[] = [];
   let sandboxAgent: string | null = null;
   try {
     sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
   } catch {
     sandboxAgent = null;
   }
+  return inspectGatewayPresetNames({
+    readPolicy: () => runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true }),
+    parseCurrentPolicy: parseCurrentPolicyOrEmpty,
+    extractPresetEntries,
+    sources: () => [
+      ...listPresets({ agent: sandboxAgent }).map((preset) => ({
+        name: preset.name,
+        content: loadPresetForSandbox(sandboxName, preset.name),
+      })),
+      ...registry.getCustomPolicies(sandboxName).map((entry) => ({
+        name: entry.name,
+        content: entry.content,
+      })),
+    ],
+  });
+}
 
-  for (const preset of listPresets({ agent: sandboxAgent })) {
-    if (presetMatchesGateway(loadPresetForSandbox(sandboxName, preset.name), gatewayPolicyNames)) {
-      matched.push(preset.name);
-    }
-  }
+/**
+ * Compare the full network-policy entries in a preset with the live gateway
+ * policy. Unlike getGatewayPresets(), this detects same-key policy drift.
+ */
+function getPresetContentGatewayState(
+  sandboxName: string,
+  presetContent: string,
+  policyKey?: string,
+): "match" | "absent" | "drift" | null {
+  return inspectPresetContentGatewayState({
+    readPolicy: () => runCapture(buildPolicyGetCommand(sandboxName)),
+    parseCurrentPolicy: parseCurrentPolicyOrEmpty,
+    extractPresetEntries,
+    presetContent,
+    policyKey,
+  });
+}
 
-  for (const entry of registry.getCustomPolicies(sandboxName)) {
-    if (presetMatchesGateway(entry.content, gatewayPolicyNames)) {
-      matched.push(entry.name);
-    }
-  }
-
-  return matched;
+function presetContentMatchesGateway(sandboxName: string, presetContent: string): boolean | null {
+  const state = getPresetContentGatewayState(sandboxName, presetContent);
+  return state === null ? null : state === "match";
 }
 
 /**
@@ -1430,10 +1490,12 @@ export {
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
   clampSetupPolicyPresetNames,
+  customPresetOwnsNetworkPolicyKey,
   extractPresetEntries,
   filterSetupPolicyPresets,
   getAppliedPresets,
   getGatewayPresets,
+  getPresetContentGatewayState,
   getPresetEndpoints,
   getPresetValidationWarning,
   isMessagingChannelPolicyPreset,
@@ -1450,6 +1512,8 @@ export {
   PRESETS_DIR,
   parseCurrentPolicyOrEmpty as parseCurrentPolicy,
   parsePresetPolicyKeys,
+  presetContentMatchesGateway,
+  removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,
   resolvePermissivePolicyPath,

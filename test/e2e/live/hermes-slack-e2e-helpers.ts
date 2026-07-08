@@ -221,9 +221,8 @@ export async function runHermesSlackE2E({
     await cleanupHermesSlack({ host, apiKey, artifactPrefix: "cleanup-hermes-slack" });
   });
 
-  await artifacts.writeJson("target.json", {
+  await artifacts.target.declare({
     id: "hermes-slack-e2e",
-    runner: "vitest",
     boundary: "bash install.sh --non-interactive + Hermes Slack sandbox runtime",
     sandboxName: SANDBOX_NAME,
     providerNames: [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`],
@@ -488,7 +487,7 @@ current_pid="$$"
 for p in /proc/[0-9]*; do
   pid=$(basename "$p")
   [ "$pid" = "$current_pid" ] && continue
-  cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true)
+  cmd=$( { tr "\000" " " < "$p/cmdline"; } 2>/dev/null || true)
   case "$cmd" in *"$decode_needle"*) echo PROCESS_DECODE_PROXY ;; esac
 done`,
     [],
@@ -638,7 +637,7 @@ PY`,
     }
   }
 
-  await artifacts.writeJson("target-result.json", {
+  await artifacts.target.complete({
     id: "hermes-slack-e2e",
     assertions: {
       installerAndCliAvailable: true,

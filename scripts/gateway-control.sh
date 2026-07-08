@@ -117,6 +117,7 @@ for _ in $(seq 1 900); do
             secret-boundary-refusal) fail "SECRET_BOUNDARY_REFUSED" ;;
             unsafe-config) fail "GATEWAY_UNSAFE_CONFIG_PATH" ;;
             hash-mismatch) fail "GATEWAY_CONFIG_HASH_MISMATCH" ;;
+            mcp-integrity | mcp-reconcile-required) fail "HERMES_MCP_CONFIG_DRIFT" ;;
             preload-missing) fail "GATEWAY_GUARDS_MISSING" ;;
             health-timeout) fail "GATEWAY_HEALTH_TIMEOUT" ;;
             *) fail "GATEWAY_FAILED" ;;

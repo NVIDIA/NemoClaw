@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
+const INSTALLED_APPROVAL_POLICY = "/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py";
 const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
 const CHANNEL_RUNTIME_SCRIPTS = path.join(import.meta.dirname, "..", "src/lib/messaging/channels");
 const JSON5_MODULE = path.join(import.meta.dirname, "..", "nemoclaw", "node_modules", "json5");
@@ -158,8 +159,8 @@ function startScriptHeredoc(src: string, marker: string): string {
   }).outputText;
 }
 
-function trustedApprovalPolicyFile(): string {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-helper-"));
+function trustedApprovalPolicyFile(tmpDir?: string): string {
+  tmpDir ??= fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-helper-"));
   const helperPath = path.join(tmpDir, "openclaw_device_approval_policy.py");
   fs.copyFileSync(path.join(APPROVAL_POLICY_DIR, "openclaw_device_approval_policy.py"), helperPath);
   fs.chmodSync(helperPath, 0o444);
@@ -547,7 +548,6 @@ describe("nemoclaw-start non-root fallback", () => {
       ["#!/usr/bin/env bash", "set -euo pipefail", fn, "fix_openclaw_ownership"].join("\n"),
       { mode: 0o700 },
     );
-
     try {
       const result = spawnSync("bash", [scriptPath], {
         encoding: "utf-8",
@@ -710,10 +710,10 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("http://127.0.0.1:18790/");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
-    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='token'");
   });
-
   it("writes OpenClaw state env for connect-shell pairing approval (#3730)", () => {
     const { result, envFile } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: { token: "token" } } }),
@@ -741,13 +741,13 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(configAfter.gateway.auth.token).toEqual(expect.any(String));
     expect(configAfter.gateway.auth.token).not.toBe("");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
-    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).toContain(`export OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
     expect(envFile).not.toContain("stale-token");
     expect(hashAfter).not.toBe("initial-hash\n");
     expect(hashAfter).toMatch(/ openclaw\.json\n$/);
   });
-
   it("rotates an existing gateway token before writing the runtime shell env (#4517)", () => {
     const oldToken = "old-token-before-rebuild";
     const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
@@ -882,10 +882,9 @@ describe("nemoclaw-start configure guard behavior", () => {
       `#!/usr/bin/env bash\nprintf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
       { mode: 0o755 },
     );
-    const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`.replaceAll(
-      "/tmp/nemoclaw-proxy-env.sh",
-      proxyEnv,
-    );
+    const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`
+      .replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnv)
+      .replaceAll(INSTALLED_APPROVAL_POLICY, trustedApprovalPolicyFile(tmpDir));
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
@@ -976,7 +975,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-  it("unsets gateway env and recovers constrained replacement state (#4462)", () => {
+  it("unsets gateway env and leaves failed approval state to OpenClaw (#4462)", () => {
     const setup = writeProxyEnvWithGuard();
     const stateDir = path.join(setup.tmpDir, "openclaw-state");
     const devicesDir = path.join(stateDir, "devices");
@@ -987,11 +986,11 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.mkdirSync(devicesDir, { recursive: true });
       fs.writeFileSync(
         pendingFile,
-        '{"original":{"requestId":"request-1","deviceId":"device-1","scopes":["operator.write"]}}',
+        '{"original":{"requestId":"request-1","deviceId":"device-1","publicKey":"public-key-1","clientId":"openclaw-cli","clientMode":"cli","role":"operator","roles":["operator"],"scopes":["operator.write"]}}',
       );
       fs.writeFileSync(
         pairedFile,
-        '{"device-1":{"deviceId":"device-1","scopes":["operator.pairing"],"approvedScopes":["operator.pairing"],"tokens":{"operator":{"role":"operator","scopes":["operator.pairing"]}}}}',
+        '{"device-1":{"deviceId":"device-1","publicKey":"public-key-1","clientId":"openclaw-cli","clientMode":"cli","role":"operator","roles":["operator"],"scopes":["operator.pairing"],"approvedScopes":["operator.pairing"],"tokens":{"operator":{"role":"operator","scopes":["operator.pairing"]}}}}',
       );
     };
     fs.writeFileSync(
@@ -999,7 +998,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       `#!/usr/bin/env bash
 printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(setup.commandLog)}
 cat > "\${OPENCLAW_STATE_DIR}/devices/pending.json" <<'JSON'
-{"replacement":{"requestId":"replacement-1","deviceId":"device-1","scopes":["operator.write","operator.pairing","operator.read","operator.admin"]}}
+{"replacement":{"requestId":"replacement-1","deviceId":"device-1","publicKey":"public-key-1","role":"operator","roles":["operator"],"scopes":["operator.write","operator.pairing","operator.read","operator.admin"],"isRepair":true}}
 JSON
 if [ -n "\${CASE_REPLACEMENT_ID:-}" ]; then echo "gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: \${CASE_REPLACEMENT_ID})" >&2; else echo "gateway connect failed: G" >&2; fi
 exit 1
@@ -1007,11 +1006,7 @@ exit 1
       { mode: 0o755 },
     );
     try {
-      for (const [replacementId, shouldRecover] of [
-        ["replacement-1", true],
-        ["replacement-10", false],
-        ["", true],
-      ] as const) {
+      for (const replacementId of ["replacement-1", "replacement-10", ""]) {
         resetState();
         const result = runGuardedShell(setup, [
           `export OPENCLAW_STATE_DIR=${JSON.stringify(stateDir)}`,
@@ -1020,27 +1015,20 @@ exit 1
         ]);
         const paired = readJson(pairedFile);
         const pending = readJson(pendingFile);
-        expect(result.status).toBe(shouldRecover ? 0 : 1);
+        expect(result.status).toBe(1);
         expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain(
           "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
         );
-        const expectedScopes = shouldRecover
-          ? ["operator.pairing", "operator.read", "operator.write"]
-          : ["operator.pairing"];
         for (const scopes of [
           paired["device-1"].approvedScopes,
           paired["device-1"].scopes,
           paired["device-1"].tokens.operator.scopes,
         ]) {
-          expect(scopes).toEqual(expectedScopes);
+          expect(scopes).toEqual(["operator.pairing"]);
         }
         expect(JSON.stringify(paired)).not.toContain("operator.admin");
-        expect(shouldRecover ? pending : pending.replacement.requestId).toEqual(
-          shouldRecover ? {} : "replacement-1",
-        );
-        expect(
-          shouldRecover ? JSON.parse(result.stdout).compatibility : pending.replacement.requestId,
-        ).toBe(shouldRecover ? "openclaw-approve-recovered-replacement" : "replacement-1");
+        expect(pending.replacement.requestId).toBe("replacement-1");
+        expect(result.stderr).toContain("gateway connect failed");
       }
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
@@ -1554,7 +1542,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
     }
   });
 
-  it("approves only whitelisted clients and does not reprocess handled requests", () => {
+  it("approves only known client identities and does not reprocess handled requests", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "list-count");
@@ -1565,6 +1553,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
         "not-a-device",
         { requestId: "ok-browser", clientId: "openclaw-control-ui", clientMode: "unknown" },
         { requestId: "ok-browser", clientId: "openclaw-control-ui", clientMode: "unknown" },
+        { requestId: "ok-agent-cli", clientId: "cli", clientMode: "cli" },
         { requestId: "ok-webchat", clientId: "other-client", clientMode: "webchat" },
         { requestId: "reject-me", clientId: "evil-client", clientMode: "unknown" },
       ],
@@ -1603,7 +1592,6 @@ exit 2
     );
 
     const autoPairScript = autoPairPythonScript(src);
-
     try {
       const run = spawnSync("python3", ["-c", autoPairScript], {
         encoding: "utf-8",
@@ -1624,25 +1612,26 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] approved request=ok-browser client=openclaw-control-ui",
       );
-      expect(run.stdout).toContain("[auto-pair] approved request=ok-webchat client=other-client");
+      expect(run.stdout).toContain("[auto-pair] approved request=ok-agent-cli client=cli mode=cli");
+      expect(run.stdout).toContain("[auto-pair] rejected unknown client=other-client mode=webchat");
       expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
       expect(run.stdout).toContain(
         "[auto-pair] browser pairing converged; entering slow-mode approvals=2",
       );
       expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
         "ok-browser",
-        "ok-webchat",
+        "ok-agent-cli",
       ]);
       const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
       expect(envLogLines).toContain("list:ws://127.0.0.1:18789:18789:test-gateway-token");
       expect(envLogLines).toContain("approve:ok-browser:unset:unset:unset");
-      expect(envLogLines).toContain("approve:ok-webchat:unset:unset:unset");
+      expect(envLogLines).toContain("approve:ok-agent-cli:unset:unset:unset");
+      expect(envLogLines).not.toContain("approve:ok-webchat:unset:unset:unset");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 40_000);
 });
-
 describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -1665,7 +1654,7 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
     const stateFile = path.join(tmpDir, "list-count");
     const approveLog = path.join(tmpDir, "approvals.log");
     const browserClient = { clientId: "openclaw-control-ui", clientMode: "webchat" };
-    const cliClient = { clientId: "openclaw-cli", clientMode: "cli" };
+    const cliClient = { clientId: "cli", clientMode: "cli" };
     const initialPending = JSON.stringify({
       pending: [{ requestId: "browser-pair", ...browserClient }],
       paired: [],
@@ -1731,12 +1720,8 @@ exit 2
         "[auto-pair] browser pairing converged; entering slow-mode approvals=1",
       );
       // Concurrent late wave — proxy for two sibling sandboxes' upgrades.
-      expect(run.stdout).toContain(
-        "[auto-pair] approved request=late-cli client=openclaw-cli mode=cli",
-      );
-      expect(run.stdout).toContain(
-        "[auto-pair] approved request=late-cli-b client=openclaw-cli mode=cli",
-      );
+      expect(run.stdout).toContain("[auto-pair] approved request=late-cli client=cli mode=cli");
+      expect(run.stdout).toContain("[auto-pair] approved request=late-cli-b client=cli mode=cli");
       expect(run.stdout).toContain("watcher deadline reached approvals=3");
       // Single marker per poll wave, transition after convergence.
       expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=3 mode=slow");
@@ -2718,10 +2703,6 @@ describe("seed_default_workspace_templates (#3240)", () => {
     const stepDownLog = path.join(tmpDir, "step-down.log");
     fs.mkdirSync(workspaceDir, { recursive: true });
     writeTemplates(templatesDir);
-    fs.mkdirSync(path.join(tmpDir, "openclaw", "docs", "reference"), { recursive: true });
-    fs.cpSync(templatesDir, path.join(tmpDir, "openclaw", "docs", "reference", "templates"), {
-      recursive: true,
-    });
     const configPath = path.join(tmpDir, "openclaw.json");
     fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { skipBootstrap: true } } }));
     const scriptPath = path.join(tmpDir, "seed-as-sandbox.sh");
@@ -2732,9 +2713,10 @@ describe("seed_default_workspace_templates (#3240)", () => {
     const seedAsSandbox = extractShellFunctionFromSource(
       src,
       "seed_default_workspace_templates_as_sandbox",
-    )
-      .replaceAll("/sandbox/.openclaw/workspace", workspaceDir)
-      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath);
+    ).replace(
+      "seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json",
+      `seed_default_workspace_templates ${JSON.stringify(workspaceDir)} ${JSON.stringify(templatesDir)} ${JSON.stringify(configPath)}`,
+    );
     fs.writeFileSync(
       scriptPath,
       [
@@ -2742,7 +2724,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
         "set -euo pipefail",
         `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$0" >"$STEP_DOWN_LOG"; exec "$@"' sandbox-step-down)`,
-        `seed_default_workspace_templates() { printf 'seeded\\n' > ${JSON.stringify(path.join(workspaceDir, "SOUL.md"))}; }`,
+        extractShellFunctionFromSource(src, "seed_default_workspace_templates"),
         runStepDown,
         seedAsSandbox,
         "seed_default_workspace_templates_as_sandbox",
@@ -2757,7 +2739,10 @@ describe("seed_default_workspace_templates (#3240)", () => {
       });
       expect(result.status, result.stderr || result.stdout).toBe(0);
       expect(fs.readFileSync(stepDownLog, "utf-8").trim()).toBe("sandbox-step-down");
+      expect(fs.existsSync(path.join(workspaceDir, "AGENTS.md"))).toBe(true);
       expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+      expect(fs.existsSync(path.join(workspaceDir, "BOOTSTRAP.md"))).toBe(false);
+      expect(result.stderr).toContain("seeded 6 default workspace template");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -4032,7 +4017,7 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=${JSON.stringify(helperPath)}`,
-      helperFns,
+      `${extractShellFunction("resolve_mutable_config_normalizer")}\n${helperFns}`,
       fn,
       "recover_openclaw_config_if_empty",
     ]
@@ -4143,7 +4128,7 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      extractShellFunction("normalize_mutable_config_perms").replaceAll("/sandbox", root),
+      `${extractShellFunction("resolve_mutable_config_normalizer")}\n${extractShellFunction("normalize_mutable_config_perms").replaceAll("/sandbox", root)}`,
       "normalize_mutable_config_perms",
     ]
       .filter(Boolean)

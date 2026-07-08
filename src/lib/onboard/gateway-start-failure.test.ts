@@ -4,7 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { classifyGatewayStartFailure } from "../validation";
-import { reportLegacyGatewayStartResultFailure } from "./gateway-start-failure";
+import {
+  createFinalGatewayStartFailureHandler,
+  reportLegacyGatewayStartResultFailure,
+} from "./gateway-start-failure";
 
 describe("classifyGatewayStartFailure", () => {
   // Regression: NemoClaw #2347. When Colima is stopped on macOS, the
@@ -76,5 +79,31 @@ describe("reportLegacyGatewayStartResultFailure", () => {
       expect.stringContaining("Gateway start returned before healthy"),
     );
     expect(log.mock.calls[0][0]).not.toContain("\x1b");
+  });
+});
+
+describe("createFinalGatewayStartFailureHandler", () => {
+  it("normalizes diagnostics before redacting secrets split by terminal control bytes", () => {
+    const printed: string[] = [];
+    const handleFailure = createFinalGatewayStartFailureHandler({
+      getGatewayName: () => "nemoclaw-test",
+      collectDiagnostics: () => "NVIDIA_API_KEY=ghp_abcde\r\x1b[31mfghijklmno\x1b[0m",
+      cleanupGateway: vi.fn(),
+    });
+
+    expect(() =>
+      handleFailure({
+        retries: 0,
+        printError: (message = "") => printed.push(message),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      }),
+    ).toThrow("exit 1");
+
+    const output = printed.join("\n");
+    expect(output).not.toContain("\x1b");
+    expect(output).not.toContain("fghijklmno");
+    expect(output).toMatch(/NVIDIA_API_KEY=ghp_\*+/);
   });
 });

@@ -9,12 +9,15 @@ Daily release labels coordinate release work. They do not classify issues and th
 
 - PRs own the release-inclusion meaning of daily version labels.
 - Engineers and agents may add the current `v0.0.x` label to open PRs to activate them for day work.
+- After a PR merges to `main`, the trusted post-merge workflow records it automatically. If a release tag already contains the merge, the workflow uses the earliest containing release; otherwise it finds the highest strict-ancestor release tag and adds its next patch label.
+- Post-merge assignment is additive and idempotent. It creates the next release label with the canonical metadata when needed and never removes an existing version label.
+- A scheduled and manually dispatchable reconciliation pass repairs missed or failed merge events across the current train and completed releases tagged within the seven-day retention window.
 - Issues may also carry daily version labels when they need a PR, fix, or regression follow-up for the daily tag.
 - Applying a daily version label is not a readiness claim.
 - Release includes PRs that both carry the daily version label and are merged by cutoff.
 - Issue version labels are tracking signals only; an issue label does not include work in the release without a merged labeled PR.
 - Open PRs and issues that miss a tagged release carry forward automatically by moving from the released version label to the next patch label.
-- A PR or issue leaves the daily release cycle only when its version label is removed without a replacement.
+- An open PR or issue leaves the daily release cycle only when its version label is removed without a replacement. Merged PR labels record release attribution and remain subject to the history and pruning rules below.
 - Version labels are pruned after seven days only after durable release history is preserved and no open PR still carries or depends on the old label.
 
 ## Release-Prep Docs
@@ -71,7 +74,7 @@ Old version labels may be deleted only when all conditions are true:
 
 1. The label is older than seven days.
 2. Durable release history has been preserved in tags, release notes, Agent Feed artifacts, or equivalent reports.
-3. No open PR or issue still carries or depends on the old label after post-tag housekeeping.
+3. No open PR or issue still carries or depends on the old label after post-tag housekeeping, and the label is outside the post-merge reconciliation window.
 4. The current authorization context explicitly allows label pruning.
 
 Pruning is a cleanup operation, not part of ordinary daily triage.

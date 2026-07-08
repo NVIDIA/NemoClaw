@@ -43,6 +43,27 @@ export interface ResolvedOnboardEntryOptions {
   cannotPrompt: boolean;
 }
 
+type NonInteractiveEntryOptions = { nonInteractive?: boolean };
+
+/** Scope the CLI flag to helpers that still read the compatibility environment variable. */
+export function withNonInteractiveEnvironment<Options extends NonInteractiveEntryOptions>(
+  run: (options?: Options) => Promise<void>,
+  env: NodeJS.ProcessEnv = process.env,
+): (options?: Options) => Promise<void> {
+  return async (options) => {
+    if (options?.nonInteractive !== true) return run(options);
+
+    const previous = env.NEMOCLAW_NON_INTERACTIVE;
+    env.NEMOCLAW_NON_INTERACTIVE = "1";
+    try {
+      await run(options);
+    } finally {
+      if (previous === undefined) delete env.NEMOCLAW_NON_INTERACTIVE;
+      else env.NEMOCLAW_NON_INTERACTIVE = previous;
+    }
+  };
+}
+
 export function resolveOnboardEntryOptions(
   input: OnboardEntryOptionsInput,
   deps: OnboardEntryOptionsDeps,

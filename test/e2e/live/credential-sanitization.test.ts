@@ -12,9 +12,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import YAML from "yaml";
-
 import {
   isCredentialField,
   isSensitiveFile,
@@ -22,12 +20,13 @@ import {
   stripCredentials,
 } from "../../../src/lib/security/credential-filter.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const BLUEPRINT_FILE = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-credential-sanitization-${process.pid}`;
@@ -44,21 +43,8 @@ type Blueprint = {
   components?: { sandbox?: { image?: unknown } };
 };
 
-function resultText(result: CommandText): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const base = buildAvailabilityProbeEnv();
-  return {
-    ...base,
-    HOME: home,
-    PATH: [path.join(home, ".local", "bin"), base.PATH].filter(Boolean).join(":"),
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-    ...extra,
-  };
+  return testHomeEnvironment(home, extra);
 }
 
 async function bestEffort(run: () => Promise<unknown>): Promise<void> {
@@ -297,9 +283,8 @@ runCredentialSanitizationTest(
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "credential-sanitization",
-      runner: "vitest",
       boundary: "install-sh-onboard-and-sandbox-exec",
       sandboxName: SANDBOX_NAME,
       contracts: [

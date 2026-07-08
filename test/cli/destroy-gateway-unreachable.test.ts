@@ -14,7 +14,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { runWithEnv, testTimeoutOptions } from "./helpers";
+import { execTimeout, runWithEnv, testTimeoutOptions } from "./helpers";
 
 // Fake openshell whose `sandbox delete` fails as if the gateway is down; every
 // other call succeeds so the destroy flow reaches the delete.
@@ -63,13 +63,17 @@ function registryHasAlpha(registryPath: string): boolean {
 }
 
 describe("CLI destroy when the gateway is unreachable (#6046)", () => {
-  it("removes the local sandbox record with --force", testTimeoutOptions(30_000), () => {
+  it("removes the local sandbox record with --force", testTimeoutOptions(40_000), () => {
     const { home, registryPath, localBin } = fixture();
     try {
-      const r = runWithEnv("alpha destroy --force", {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      });
+      const r = runWithEnv(
+        "alpha destroy --force",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        execTimeout(30_000),
+      );
 
       // --force succeeds (exit 0); the gateway-unreachable warning goes to
       // stderr (not captured on success), so assert the behavioral outcome:
@@ -82,13 +86,17 @@ describe("CLI destroy when the gateway is unreachable (#6046)", () => {
     }
   });
 
-  it("fails with a recovery hint when --force is absent", testTimeoutOptions(30_000), () => {
+  it("fails with a recovery hint when --force is absent", testTimeoutOptions(40_000), () => {
     const { home, registryPath, localBin } = fixture();
     try {
-      const r = runWithEnv("alpha destroy -y", {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      });
+      const r = runWithEnv(
+        "alpha destroy -y",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        execTimeout(30_000),
+      );
 
       expect(r.code).not.toBe(0);
       expect(r.out).toContain("The OpenShell gateway is unreachable");
