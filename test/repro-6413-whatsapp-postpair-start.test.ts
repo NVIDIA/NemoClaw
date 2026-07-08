@@ -57,6 +57,9 @@ interface ReconcileRunOptions {
   // Caller-supplied OPENCLAW_GATEWAY_URL override. When set and different from
   // the trusted private URL, the token-bearing reconcile must be skipped.
   callerGatewayUrl?: string;
+  // Spoof the caller-mutable NEMOCLAW_* compatibility alias after the readonly
+  // trust anchor has been installed. Security decisions must ignore it.
+  callerPrivateGatewayAlias?: string;
   // Set `set -e` in the wrapper before invoking the login, to prove the login
   // exit status is still captured and the reconcile guarantees hold.
   errexit?: boolean;
@@ -127,11 +130,18 @@ describe("WhatsApp post-pair gateway channel start (#6413)", () => {
           : `export OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.callerGatewayUrl)}`,
         "unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
         `export NEMOCLAW_OPENCLAW_GATEWAY_URL=${JSON.stringify(PRIVATE_GATEWAY_URL)}`,
+        `_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL=${JSON.stringify(PRIVATE_GATEWAY_URL)}`,
+        "builtin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL",
         "export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1",
         opts.ambientToken === undefined
           ? "unset OPENCLAW_GATEWAY_TOKEN"
           : `export OPENCLAW_GATEWAY_TOKEN=${JSON.stringify(opts.ambientToken)}`,
         guard,
+        ...(opts.callerPrivateGatewayAlias === undefined
+          ? []
+          : [
+              `export NEMOCLAW_OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.callerPrivateGatewayAlias)}`,
+            ]),
         ...(opts.errexit ? ["set -e"] : []),
         `openclaw ${(opts.loginArgs ?? ["channels", "login", "--channel", "whatsapp"])
           .map((arg) => JSON.stringify(arg))
@@ -249,6 +259,25 @@ describe("WhatsApp post-pair gateway channel start (#6413)", () => {
     // Login ran, but with the token stripped, and no reconcile fired.
     const loginCalls = r.calls.filter((line) => line.startsWith("ARGS=channels login "));
     expect(loginCalls).toHaveLength(1);
+    expect(loginCalls[0]).toContain("TOKEN=unset");
+    expect(gatewayCallLines(r.calls)).toHaveLength(0);
+    expect(r.calls.every((line) => !line.includes(GATEWAY_TOKEN))).toBe(true);
+    expect(r.stderr).toContain("custom gateway URL");
+  });
+
+  it("rejects a caller that spoofs both mutable gateway URL aliases (#6413)", () => {
+    const attackerUrl = "ws://attacker.example.test:1234";
+    const r = runLoginThroughGuard({
+      configuredToken: GATEWAY_TOKEN,
+      ambientToken: GATEWAY_TOKEN,
+      callerGatewayUrl: attackerUrl,
+      callerPrivateGatewayAlias: attackerUrl,
+    });
+
+    expect(r.stdout).toContain("GUARD_EXIT=0");
+    const loginCalls = r.calls.filter((line) => line.startsWith("ARGS=channels login "));
+    expect(loginCalls).toHaveLength(1);
+    expect(loginCalls[0]).toContain(`URL=${attackerUrl}`);
     expect(loginCalls[0]).toContain("TOKEN=unset");
     expect(gatewayCallLines(r.calls)).toHaveLength(0);
     expect(r.calls.every((line) => !line.includes(GATEWAY_TOKEN))).toBe(true);

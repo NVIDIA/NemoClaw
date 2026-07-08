@@ -183,6 +183,8 @@ describe("gateway websocket url host derivation", () => {
       expect(result.status, result.stderr).toBe(0);
       const envFile = fs.readFileSync(envFilePath, "utf-8");
       expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://10.200.0.2:18790'");
+      expect(envFile).toContain("_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL='ws://10.200.0.2:18790'");
+      expect(envFile).toContain("builtin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL");
       expect(envFile).toContain("export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'");
       expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL=");
       expect(envFile).not.toContain("export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=");

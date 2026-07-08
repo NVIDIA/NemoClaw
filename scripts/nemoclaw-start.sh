@@ -3265,6 +3265,14 @@ PROXYEOF
       # Preserve NemoClaw's sandbox-interface dial-back URL for the few
       # NemoClaw-owned commands that require it without forcing ordinary
       # OpenClaw CLI clients onto the explicit remote-gateway pairing path.
+      # Keep a separate readonly anchor for token-bearing helpers. The exported
+      # compatibility alias is intentionally caller-mutable, so it must never
+      # decide where a gateway token may be sent. The conditional assignment
+      # makes repeated sourcing idempotent; a conflicting preexisting readonly
+      # value fails closed instead of becoming the trust anchor.
+      printf "if [ \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" != '%s' ]; then\\n" "$_escaped_gateway_url"
+      printf "  _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL='%s'\\n" "$_escaped_gateway_url"
+      printf "fi\\nbuiltin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL\\n"
       printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
       cat <<'GATEWAYURLENVEOF'
 # Equality identifies NemoClaw's inherited private-interface value. A different
@@ -3594,12 +3602,13 @@ openclaw() {
             _nemoclaw_connect_node_options="$(_nemoclaw_messaging_connect_node_options)"
             # The shared gateway token (ambient in connect shells; see the
             # runtime env at OPENCLAW_GATEWAY_TOKEN) must never reach a
-            # caller-selected gateway. NemoClaw injects its trusted private URL
-            # as NEMOCLAW_OPENCLAW_GATEWAY_URL; the login tolerates a
-            # caller-supplied OPENCLAW_GATEWAY_URL override, so classify whether
-            # this login is aimed at the trusted URL. Only the trusted URL may
-            # carry the token — for the login itself and for the reconcile.
-            _nemoclaw_whatsapp_trusted_url="${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}"
+            # caller-selected gateway. The public NEMOCLAW_* compatibility
+            # alias is caller-mutable, so only the readonly value baked into the
+            # generated root-owned runtime file may act as the trust anchor.
+            # The login tolerates a caller-supplied OPENCLAW_GATEWAY_URL
+            # override; only the baked URL may carry the token, for either the
+            # login itself or the reconcile.
+            _nemoclaw_whatsapp_trusted_url="${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}"
             _nemoclaw_whatsapp_url_is_trusted=0
             if [ -n "$_nemoclaw_whatsapp_trusted_url" ] &&
               [ "$_nemoclaw_whatsapp_gateway_url" = "$_nemoclaw_whatsapp_trusted_url" ]; then
@@ -3626,12 +3635,16 @@ openclaw() {
               # shared gateway token; strip it so the login there falls back to
               # device auth, matching the #6291 WhatsApp-login boundary.
               [ "$_nemoclaw_whatsapp_url_is_trusted" = "1" ] || builtin unset OPENCLAW_GATEWAY_TOKEN
-              export OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url"
-              export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws"
               if [ -n "$_nemoclaw_connect_node_options" ]; then
-                export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options"
+                OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                  OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                  NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
+                  command openclaw "$@"
+              else
+                OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                  OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                  command openclaw "$@"
               fi
-              command openclaw "$@"
             )
             _whatsapp_login_exit=$?
             if [ "$_whatsapp_login_exit" -ne 0 ]; then
