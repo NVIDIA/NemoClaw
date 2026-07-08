@@ -162,6 +162,8 @@ prepare_runtime_env() {
     printf '%s\n' 'export LANGCHAIN_TRACING_V2=false'
     printf '%s\n' 'export DEEPAGENTS_CODE_OFFLINE=1'
     printf '%s\n' 'export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system'
+    # Intentionally omit the trusted proxy when unset: its absence signals
+    # unmanaged mode, where the upstream fetch transport remains authoritative.
     write_export_if_set DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL
     # shellcheck disable=SC2016
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'

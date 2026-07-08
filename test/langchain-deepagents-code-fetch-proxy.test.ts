@@ -168,6 +168,173 @@ print("root-owned-proxy-verification-ok")
     expect(check).not.toContain("'403 client error: forbidden'");
   });
 
+  it("pins concurrent CA bundle mutation fetches to original trust bytes or generic failure", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const proxyUrl = "http://managed-proxy.internal:3128";
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import os
+import sys
+import types
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Event, Lock, Thread
+
+PINNED_FETCH_COUNT = 4
+INVALID_FETCH_COUNT = 2
+pinned_ready = Event()
+swap_complete = Event()
+invalid_attempts_complete = Event()
+release_pinned = Event()
+state_lock = Lock()
+pinned_transport_count = 0
+successful_ca_contents = []
+sessions = []
+mutation_errors = []
+
+class Response:
+    status_code = 200
+    headers = {}
+
+    def raise_for_status(self):
+        return None
+
+class Session:
+    def __init__(self):
+        self.trust_env = True
+        self.closed = False
+        sessions.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.closed = True
+
+    def get(self, _url, **kwargs):
+        global pinned_transport_count
+        with state_lock:
+            pinned_transport_count += 1
+            if pinned_transport_count == PINNED_FETCH_COUNT:
+                pinned_ready.set()
+        assert release_pinned.wait(10), "timed out waiting for concurrent CA bundle mutation"
+        ca_contents = Path(kwargs["verify"]).read_text(encoding="utf-8")
+        with state_lock:
+            successful_ca_contents.append(ca_contents)
+        return Response()
+
+requests = types.ModuleType("requests")
+requests.Session = Session
+requests.exceptions = types.SimpleNamespace(TooManyRedirects=RuntimeError)
+sys.modules["requests"] = requests
+
+from deepagents_code import _nemoclaw_managed, tools
+
+root = Path(${JSON.stringify(tempDir)})
+proxy_host_file = root / "managed-proxy-host"
+proxy_port_file = root / "managed-proxy-port"
+managed_ca_file = root / "managed-ca.pem"
+attacker_ca_file = root / "attacker-ca.pem"
+proxy_host_file.write_text("managed-proxy.internal\\n", encoding="utf-8")
+proxy_port_file.write_text("3128\\n", encoding="utf-8")
+managed_ca_file.write_text("trusted CA bundle\\n", encoding="utf-8")
+attacker_ca_file.write_text("attacker CA bundle\\n", encoding="utf-8")
+for trusted_file in (proxy_host_file, proxy_port_file, managed_ca_file, attacker_ca_file):
+    trusted_file.chmod(0o444)
+
+_nemoclaw_managed._MANAGED_PROXY_HOST_FILE = proxy_host_file
+_nemoclaw_managed._MANAGED_PROXY_PORT_FILE = proxy_port_file
+_nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = managed_ca_file
+_nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
+
+for name in (
+    "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+):
+    os.environ[name] = ${JSON.stringify(proxyUrl)}
+
+def fetch_outcome(index):
+    try:
+        response = tools._fetch_with_redirects(
+            f"https://raw.githubusercontent.com/example/concurrent-ca-bundle-{index}",
+            timeout=8,
+        )
+    except tools._UrlValidationError as exc:
+        return ("error", str(exc))
+    return ("success", response.status_code)
+
+def atomically_symlink_swap_ca_bundle():
+    try:
+        assert pinned_ready.wait(10), "managed fetches did not reach the pinned transport"
+        replacement = root / "managed-ca-symlink-replacement"
+        replacement.symlink_to(attacker_ca_file)
+        os.replace(replacement, managed_ca_file)
+        swap_complete.set()
+        assert invalid_attempts_complete.wait(10), "invalid fetches did not observe CA mutation"
+    except BaseException as exc:
+        mutation_errors.append(repr(exc))
+        swap_complete.set()
+    finally:
+        release_pinned.set()
+
+mutator = Thread(target=atomically_symlink_swap_ca_bundle, name="ca-bundle-mutator")
+mutator.start()
+with ThreadPoolExecutor(max_workers=PINNED_FETCH_COUNT + INVALID_FETCH_COUNT) as executor:
+    try:
+        pinned_futures = [executor.submit(fetch_outcome, index) for index in range(PINNED_FETCH_COUNT)]
+        assert swap_complete.wait(10), "atomic CA bundle swap did not complete"
+        invalid_futures = [
+            executor.submit(fetch_outcome, PINNED_FETCH_COUNT + index)
+            for index in range(INVALID_FETCH_COUNT)
+        ]
+        invalid_results = [future.result(timeout=10) for future in invalid_futures]
+        invalid_attempts_complete.set()
+        pinned_results = [future.result(timeout=10) for future in pinned_futures]
+    finally:
+        invalid_attempts_complete.set()
+        release_pinned.set()
+
+mutator.join(timeout=10)
+assert not mutator.is_alive()
+assert mutation_errors == []
+assert pinned_results == [("success", 200)] * PINNED_FETCH_COUNT
+assert invalid_results == [
+    ("error", "managed fetch CA bundle is invalid")
+] * INVALID_FETCH_COUNT
+assert successful_ca_contents == ["trusted CA bundle\\n"] * PINNED_FETCH_COUNT
+assert all("attacker" not in contents for contents in successful_ca_contents)
+assert managed_ca_file.is_symlink()
+assert managed_ca_file.read_text(encoding="utf-8") == "attacker CA bundle\\n"
+assert len(sessions) == PINNED_FETCH_COUNT
+assert all(session.closed for session in sessions)
+print("concurrent-ca-bundle-mutation-ok")
+`,
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL: proxyUrl,
+          HTTP_PROXY: proxyUrl,
+          HTTPS_PROXY: proxyUrl,
+          http_proxy: proxyUrl,
+          https_proxy: proxyUrl,
+        },
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("concurrent-ca-bundle-mutation-ok");
+  });
+
   it("keeps redirects and concurrent fetches behind the explicit proxy without direct DNS", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
@@ -615,6 +782,11 @@ print("managed-fetch-proxy-ok")
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("managed-fetch-proxy-ok");
+  });
+
+  it("preserves unmanaged fallback when proxy env is absent", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
 
     const withoutDelegation = spawnSync(
       "python3",
@@ -631,6 +803,7 @@ print("managed-fetch-proxy-ok")
         encoding: "utf8",
       },
     );
+
     expect(withoutDelegation.status, withoutDelegation.stderr).toBe(0);
   });
 });
