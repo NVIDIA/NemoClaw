@@ -314,11 +314,17 @@ jobs:
           set -euo pipefail
           printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}" >> "${GITHUB_ENV}"
 
-      # The selected target ref executes a PR-modifiable TUI check. GitHub-hosted
-      # jobs cannot use a repository-owned host image, and caching privileged
-      # dpkg state between clean runners is not supported. Keep the one-package
-      # host setup inline in reviewed workflow YAML and scoped to the only typed
-      # target that consumes expect.
+      # invalidState: the selected PR-modifiable TUI check needs a PTY driver,
+      # but the fixed GitHub-hosted runner image does not provide expect.
+      # sourceBoundary: this trusted workflow owns host setup; the PR-controlled
+      # check only verifies and consumes expect without privilege.
+      # whyNotSourceFix: GitHub-hosted jobs cannot use a repository-owned host
+      # image, and caching privileged dpkg state between clean runners is not
+      # supported.
+      # regressionTest: the workflow-boundary suite pins this target, condition,
+      # ordering, retry contract, and exact one-package apt allowlist.
+      # removalCondition: remove the install when the hosted runner supplies
+      # expect or the acceptance check no longer requires a PTY.
       - name: Install Deep Agents Code TUI host dependencies
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
         shell: bash

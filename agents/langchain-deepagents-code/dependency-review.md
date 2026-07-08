@@ -30,6 +30,10 @@ OpenAI-compatible `ChatOpenAI` route. It is atomic, idempotent, and fails closed
 on version, source, bootstrap, or partial-state drift. The image build applies
 the patch and runs the complete profile and dispatch validator against the
 installed hash-locked wheels, while focused fixtures cover failure states.
+This build-time site-packages mutation is the deliberate managed-image adapter;
+the released package is never changed at runtime. The deleted source-backport
+license path, `LICENSE.langchain-deepagents`, is not staged into the image, and
+the image regression tests enforce that absence.
 
 Deep Agents Code `0.1.34` is the released consumer; prerelease risk is limited
 to its exact `deepagents==0.7.0a6` SDK pin. That risk is accepted because the
@@ -39,9 +43,11 @@ version, middleware, graph, and dispatch checks fail closed.
 The exact version and source-hash gates are also the executable lifecycle
 tracker for the alias bridge: any dependency change stops the image build with
 an explicit instruction to check for native managed-alias support, and requires
-this review to be updated. No standalone removal issue is used for this bridge,
-as covered by the admin-maintainer source-of-truth approval for this change
+this review to be updated. The admin-maintainer override for this
+source-of-truth decision records that the review is satisfied on the ancestor
+containing this policy
 ([PR review](https://github.com/NVIDIA/NemoClaw/pull/6416#pullrequestreview-4649633900)).
-When Deep Agents natively recognizes both managed keys, that mandatory
-dependency review removes the bridge instead of updating its versions or
-hashes.
+That approval accepts this mandatory dependency-review gate as sufficient
+removal accountability, so no standalone removal issue is used. When Deep
+Agents natively recognizes both managed keys, the dependency review removes the
+bridge instead of updating its versions or hashes.
