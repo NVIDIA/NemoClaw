@@ -46,7 +46,7 @@ readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
 readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"
 readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"
 readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=0
-# Mirrors the credential-name prefix bounds in canonical CONTEXT_PATTERNS.
+# Shared bound for canonical credential prefixes and OpenShell env identifiers.
 readonly CREDENTIAL_NAME_PREFIX_MAX_LENGTH=128
 
 managed_auto_approval_file_metadata() {

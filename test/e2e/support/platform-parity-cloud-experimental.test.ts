@@ -295,13 +295,15 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   });
 
   it.each([
-    { fixture: "BLOCKED:policy denied", status: 0 },
-    { fixture: "REACHED:403", status: 1 },
-  ])("restores the default Tavily denial after opt-in ($fixture)", ({ fixture, status }) => {
+    ["BLOCKED:policy denied", "ok", 0, /returns to the default Tavily denial/],
+    ["REACHED:403", "ok", 1, /did not restore the default Tavily denial/],
+    ["BLOCKED:policy denied", "fail", 1, /policy-remove tavily failed/],
+  ])("restores the default Tavily denial after opt-in (%s/%s)", (fixture, removeFixture, status, expected) => {
     const result = spawnSync("bash", [dcodeTavilyCheck], {
       encoding: "utf8",
       env: {
         NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
+        NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
         NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         SANDBOX_NAME: "deepagents-sandbox",
@@ -309,6 +311,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
     expect(fs.readFileSync(dcodeTavilyCheck, "utf8")).toContain("trap restore_tavily_denial EXIT");
   });
 

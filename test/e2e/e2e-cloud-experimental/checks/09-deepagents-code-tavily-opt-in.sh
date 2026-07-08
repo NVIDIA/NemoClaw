@@ -152,9 +152,11 @@ fi
 
 if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
   nemoclaw_cli() {
-    [[ "$*" == "$SANDBOX_NAME policy-remove tavily --yes" ]]
+    [[ "$*" == "$SANDBOX_NAME policy-remove tavily --yes" &&
+      "${NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE:-ok}" == "ok" ]]
   }
   NEMOCLAW_E2E_POLICY_SETTLE_SECONDS=0 restore_tavily_denial
+  [ "$FAILED" -eq 0 ]
   exit 0
 fi
 
@@ -189,8 +191,8 @@ APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
-pass "tavily policy preset applies"
 trap restore_tavily_denial EXIT
+pass "tavily policy preset applies"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
 
@@ -227,7 +229,8 @@ else
 fi
 
 # Do not leak this check's durable opt-in into later sequential checks.
-restore_tavily_denial && trap - EXIT
+restore_tavily_denial || true
+trap - EXIT
 
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ] || exit 1
