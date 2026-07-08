@@ -147,7 +147,6 @@ restore_observability_state() {
 
 restore_tavily_denial() {
   local cleanup_status=0 remove_output post_remove_probe_output
-  OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
   if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
     fail_test "policy-remove tavily failed after the opt-in proof: $remove_output"
     cleanup_status=1
@@ -203,6 +202,8 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
     [[ "$*" == "sandbox exec --name $SANDBOX_NAME -- /usr/bin/env NEMOCLAW_OBSERVABILITY=1 /usr/local/bin/nemoclaw-start /usr/bin/true" ]] || return 1
     printf '%s\n' "1" >"$OBSERVABILITY_MARKER_FIXTURE"
   }
+  OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value)"
+  printf '%s\n' "absent" >"$OBSERVABILITY_MARKER_FIXTURE"
   NEMOCLAW_E2E_POLICY_SETTLE_SECONDS=0 restore_tavily_denial
   [ "$(cat "$OBSERVABILITY_MARKER_FIXTURE")" = "1" ]
   [ "$FAILED" -eq 0 ]
@@ -215,6 +216,11 @@ if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2
 fi
 
 info "Running Deep Agents Code Tavily opt-in check in sandbox: $SANDBOX_NAME"
+
+OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value)" || {
+  fail_test "could not capture managed observability before Tavily policy mutation"
+  exit 1
+}
 
 # shellcheck disable=SC2016 # command substitution must run inside the sandbox.
 PYTHON_REAL="$(sandbox_exec 'readlink -f "$(command -v python3)"' || true)"
