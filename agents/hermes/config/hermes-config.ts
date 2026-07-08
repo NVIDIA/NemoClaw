@@ -103,7 +103,7 @@ export function buildHermesConfig(
   };
 
   const config: Record<string, unknown> = {
-    _config_version: 30,
+    _config_version: 32,
     _nemoclaw_upstream: upstream,
     model: modelConfig,
     providers: {
@@ -117,6 +117,10 @@ export function buildHermesConfig(
     agent: {
       max_turns: 60,
       reasoning_effort: "medium",
+      // Hermes config migrations v30 -> v32 disable the old implicit
+      // verify-on-stop behavior once. Generated configs start at v32, so
+      // persist the same migrated value instead of inheriting "auto".
+      verify_on_stop: false,
     },
     tools: {
       tool_search: {

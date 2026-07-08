@@ -175,7 +175,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
 RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     || { echo "ERROR: validate-hermes-env-secret-boundary.py missing or not executable" >&2; exit 1; }
 
-# Hermes v0.17.0 computes `sessions list` preview from the first user message,
+# Hermes v0.18.0 computes `sessions list` preview from the first user message,
 # while #5254's user-facing expectation is that the existing row reflects the
 # latest resumed/continued one-shot turn. Patch only the pinned query shape and
 # prove the SessionDB list contract at build time so a Hermes update cannot
@@ -203,7 +203,7 @@ PY
 # chain tampering of the build context (an attacker rewriting the file has to
 # also rewrite the Dockerfile-committed hash, which reviewers gate). Regenerate
 # with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py}`.
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=34ef50ea993c776f28312bcf659e908eeae3c07e4094a49e513cb320eee6538f
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=ec8b0e4d6254175929d5a02240acd6af25e94774a30b36ba5c6f5a69c32fb9d7
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=970d7ff03bc409ff1d5ca46bfdbd2a42ac28a32a810ccc147a508301bff38496
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -232,10 +232,10 @@ RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
         echo "ERROR: could not parse Hermes semver from: $hermes_version_output" >&2; \
         exit 1; \
     fi \
-    && if [ "$hermes_semver" != "0.17.0" ] \
+    && if [ "$hermes_semver" != "0.18.0" ] \
         && { grep -q '_translate_resumed_oneshot' /usr/local/lib/nemoclaw/hermes-wrapper.py \
           || grep -q 'EXPECTED_OCCURRENCES' /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py; }; then \
-        echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.17.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
+        echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.18.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
         exit 1; \
     fi
 # This runs before `/usr/local/bin/hermes` is moved to `hermes.real`, so the

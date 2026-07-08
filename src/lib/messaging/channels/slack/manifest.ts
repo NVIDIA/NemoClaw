@@ -168,6 +168,9 @@ export const slackManifest = {
         path: "platforms.slack",
         value: {
           enabled: true,
+          extra: {
+            rich_blocks: true,
+          },
         },
       },
     },
