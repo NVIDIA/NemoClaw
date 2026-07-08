@@ -12,6 +12,7 @@ import {
   SandboxClient,
   StateClient,
 } from "./clients/index.ts";
+import { DockerPrerequisite, DockerProbe } from "./docker-probe.ts";
 import {
   EnvironmentPhaseFixture,
   LifecyclePhaseFixture,
@@ -26,6 +27,7 @@ export interface E2ETargetFixtures {
   artifacts: ArtifactSink;
   cleanup: CleanupRegistry;
   secrets: SecretStore;
+  docker: DockerPrerequisite;
   shellProbe: ShellProbe;
   host: HostCliClient;
   gateway: GatewayClient;
@@ -54,6 +56,10 @@ export const test = base.extend<E2ETargetFixtures>({
         rootDir: artifacts.rootDir,
       });
     }
+  },
+  docker: async ({ artifacts, secrets, skip }, use) => {
+    const probe = new DockerProbe(artifacts, (text, extra) => secrets.redact(text, extra));
+    await use(new DockerPrerequisite(probe, skip));
   },
   cleanup: async ({ artifacts, secrets }, use) => {
     const cleanup = new CleanupRegistry((text) => secrets.redact(text));

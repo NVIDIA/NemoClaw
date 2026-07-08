@@ -3579,7 +3579,33 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   requireRunContains(errors, configureTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
   requireRunContains(errors, configureTrace, '>> "${GITHUB_ENV}"');
 
+  const dcodeHostDependencies = requireStep(
+    errors,
+    steps,
+    "Install Deep Agents Code TUI host dependencies",
+  );
+  validateInlineHostDependencyInstall(
+    errors,
+    "live",
+    steps,
+    "Install Deep Agents Code TUI host dependencies",
+    ["expect"],
+  );
+  if (
+    dcodeHostDependencies?.if !==
+    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
+  ) {
+    errors.push("live DCode TUI host dependencies must be scoped to the typed DCode target");
+  }
+
   const prepareWorkspace = requireStep(errors, steps, "Prepare E2E workspace");
+  if (
+    dcodeHostDependencies &&
+    prepareWorkspace &&
+    steps.indexOf(dcodeHostDependencies) >= steps.indexOf(prepareWorkspace)
+  ) {
+    errors.push("live DCode TUI host dependencies must be installed before workspace prep");
+  }
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
   const runVitestEnv = asRecord(runVitest?.env);

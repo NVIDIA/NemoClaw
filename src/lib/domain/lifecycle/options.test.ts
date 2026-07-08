@@ -136,6 +136,16 @@ describe("lifecycle option normalization", () => {
     expect(normalizeRebuildSandboxOptions(["--tool-disclosure=direct"]).toolDisclosure).toBe(
       "direct",
     );
+    expect(normalizeRebuildSandboxOptions(["--observability"]).observabilityEnabled).toBe(true);
+    expect(normalizeRebuildSandboxOptions(["--no-observability"]).observabilityEnabled).toBe(false);
+    expect(
+      normalizeRebuildSandboxOptions(["--observability", "--no-observability"])
+        .observabilityEnabled,
+    ).toBe(false);
+    expect(
+      normalizeRebuildSandboxOptions(["--no-observability", "--observability"])
+        .observabilityEnabled,
+    ).toBe(true);
     expect(() => normalizeRebuildSandboxOptions(["--tool-disclosure", "sometimes"])).toThrow(
       /progressive, direct/,
     );

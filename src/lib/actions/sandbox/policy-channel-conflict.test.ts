@@ -6,50 +6,36 @@
 // assert only on the mocked module boundaries — never on the private helper
 // names — so they survive a refactor of the internal conflict-check plumbing.
 //
-// policy-channel.ts loads several dependencies through CommonJS `require()`.
-// Load the source module and its dependencies through the shared source hook
-// so `vi.spyOn` observes one require cache without depending on a CLI build.
-//
-// isNonInteractive is destructured at module load (`const { isNonInteractive }
-// = require("../../onboard")`), so it cannot be spied after load; it reads
-// process.env.NEMOCLAW_NON_INTERACTIVE === "1" at call time, which we drive
-// directly. The real messaging/applier, sandbox/channels, and credential-hash
-// modules run unmocked so the genuine hash + conflict logic is exercised.
-
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireSource = createRequire(import.meta.url);
-const D = (p: string) => requireSource(`../../${p}`);
+import * as runtime from "../../adapters/openshell/runtime";
+import * as defs from "../../agent/defs";
+import * as store from "../../credentials/store";
+import * as gatewayRuntime from "../../gateway-runtime-action";
+import * as policy from "../../policy";
+import { hashCredential } from "../../security/credential-hash";
+import * as onboardSession from "../../state/onboard-session";
+import type { SandboxEntry } from "../../state/registry";
+import * as registry from "../../state/registry";
+import * as messagingHostForwardLifecycle from "./messaging-host-forward-lifecycle";
+import { addSandboxChannel, startSandboxChannel } from "./policy-channel";
+import { policyChannelDependencies } from "./policy-channel-dependencies";
+import * as processRecovery from "./process-recovery";
 
-type SandboxEntry = import("../../state/registry").SandboxEntry;
+function agentFixture(name: string): defs.AgentDefinition {
+  return { name } as defs.AgentDefinition;
+}
 
-// Real source dependency modules (shared require cache with the SUT).
-const store = D("credentials/store.js");
-const registry = D("state/registry.js");
-const providers = D("onboard/providers.js");
-const runtime = D("adapters/openshell/runtime.js");
-const gatewayRuntime = D("gateway-runtime-action.js");
-const defs = D("agent/defs.js");
-const rebuild = D("actions/sandbox/rebuild.js");
-const messagingHostForwardLifecycle = D("actions/sandbox/messaging-host-forward-lifecycle.js");
-const processRecovery = D("actions/sandbox/process-recovery.js");
-const onboardSession = D("state/onboard-session.js");
-const policy = D("policy/index.js");
-const { hashCredential } = D("security/credential-hash.js") as {
-  hashCredential: (v: string) => string | null;
-};
-const { addSandboxChannel, startSandboxChannel } = D("actions/sandbox/policy-channel.js") as {
-  addSandboxChannel: (
-    name: string,
-    options?: { channel?: string; dryRun?: boolean; force?: boolean },
-  ) => Promise<void>;
-  startSandboxChannel: (
-    name: string,
-    options?: { channel?: string; dryRun?: boolean; force?: boolean },
-  ) => Promise<void>;
-};
+function successfulOpenshellResult(): ReturnType<typeof runtime.runOpenshell> {
+  return {
+    pid: 0,
+    output: [null, "", ""],
+    stdout: "",
+    stderr: "",
+    status: 0,
+    signal: null,
+  };
+}
 
 const TELEGRAM_TOKEN = "123456:AAH-secret-bot-token-value";
 const TELEGRAM_HASH = hashCredential(TELEGRAM_TOKEN) as string;
@@ -310,15 +296,23 @@ beforeEach(() => {
     .mockReturnValue({ sandboxes: [], defaultSandbox: null });
   updateSandboxMock = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
 
-  // onboard/providers seam (gateway probe + register).
-  vi.spyOn(providers, "providerExistsInGateway").mockReturnValue(false);
-  upsertMock = vi.spyOn(providers, "upsertMessagingProviders").mockImplementation(() => undefined);
+  // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
+  upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
 
   // openshell runtime + gateway recovery.
-  runOpenshellMock = vi
-    .spyOn(runtime, "runOpenshell")
-    .mockReturnValue({ status: 0, stdout: "", stderr: "" });
-  vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({ recovered: true });
+  runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
+  const healthyGatewayState = {
+    state: "healthy_named",
+    status: "",
+    gatewayInfo: "",
+    activeGateway: "nemoclaw",
+  } as const;
+  vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+    recovered: true,
+    before: healthyGatewayState,
+    after: healthyGatewayState,
+    attempted: false,
+  });
 
   // Credentials store: staged token (no real prompt) + controllable prompt.
   getCredentialMock = vi.spyOn(store, "getCredential").mockReturnValue(null);
@@ -326,9 +320,7 @@ beforeEach(() => {
   vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
 
   // Agent gate: OpenClaw support is derived from channel manifests.
-  vi.spyOn(defs, "loadAgent").mockReturnValue({
-    name: "openclaw",
-  });
+  vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("openclaw"));
 
   // Policy seam. addSandboxChannel gates on loadPreset()/parsePresetPolicyKeys()
   // up front (the channel must ship a preset with network_policies); stub both
@@ -342,7 +334,9 @@ beforeEach(() => {
   vi.spyOn(policy, "getAppliedPresets").mockReturnValue([]);
 
   // Downstream rebuild is not under test.
-  rebuildSandboxMock = vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
+  rebuildSandboxMock = vi
+    .spyOn(policyChannelDependencies, "rebuildSandbox")
+    .mockResolvedValue(undefined);
   ensureMessagingHostForwardAfterRebuildMock = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
     .mockReturnValue(true);
@@ -361,7 +355,9 @@ beforeEach(() => {
 
   // onboard-session for the wechat host-qr branch.
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
-  vi.spyOn(onboardSession, "updateSession").mockImplementation(() => undefined);
+  vi.spyOn(onboardSession, "updateSession").mockReturnValue(
+    undefined as unknown as onboardSession.Session,
+  );
 });
 
 afterEach(() => {

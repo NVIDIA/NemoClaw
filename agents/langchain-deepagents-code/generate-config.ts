@@ -88,11 +88,7 @@ function tomlArray(values: readonly string[]): string {
 
 function modelNameForOpenAiProvider(model: string): string {
   const trimmed = model.trim();
-  const providerSeparator = trimmed.indexOf(":");
-  if (providerSeparator > 0) {
-    return trimmed.slice(providerSeparator + 1);
-  }
-  return trimmed;
+  return trimmed.startsWith("openai:") ? trimmed.slice("openai:".length) : trimmed;
 }
 
 function buildConfig(settings: Settings): string {

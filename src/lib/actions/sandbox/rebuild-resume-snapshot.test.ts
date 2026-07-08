@@ -1,23 +1,35 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
+import * as resolve from "../../adapters/openshell/resolve";
+import * as openshellRuntime from "../../adapters/openshell/runtime";
+import * as agentDefs from "../../agent/defs";
+import * as agentRuntime from "../../agent/runtime";
+import * as gatewayRuntime from "../../gateway-runtime-action";
+import * as nim from "../../inference/nim";
+import * as resumeRepair from "../../onboard/resume-machine-repair";
+import * as sandboxList from "../../openshell-sandbox-list";
+import * as sandboxVersion from "../../sandbox/version";
 import type { Session } from "../../state/onboard-session";
-
-type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
-
-const requireDist = createRequire(import.meta.url);
-const rebuildModulePath = "./rebuild.js";
+import * as onboardSession from "../../state/onboard-session";
+import * as registry from "../../state/registry";
+import * as sandboxState from "../../state/sandbox";
+import * as sandboxSession from "../../state/sandbox-session";
+import * as destroy from "./destroy";
+import { rebuildSandbox } from "./rebuild";
+import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
+import * as rebuildShields from "./rebuild-shields";
+import * as rebuildUsageNotice from "./rebuild-usage-notice";
 
 function cloneSession(session: Session): Session {
   return JSON.parse(JSON.stringify(session));
 }
 
 describe("rebuild resume snapshot repair", () => {
-  let rebuildSandbox: RebuildSandbox;
   let spies: MockInstance[];
   let errorSpy: MockInstance;
   let logSpy: MockInstance;
@@ -44,30 +56,9 @@ describe("rebuild resume snapshot repair", () => {
     observed.preRepairResumable = null;
     observed.repairedMachineState = null;
     observed.sandboxEnvInsideOnboard = null;
-    delete require.cache[requireDist.resolve(rebuildModulePath)];
 
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
-    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
-    const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
-    const sandboxList = requireDist("../../openshell-sandbox-list.js");
-    const resolve = requireDist("../../adapters/openshell/resolve.js");
-    const agentDefs = requireDist("../../agent/defs.js");
-    const agentRuntime = requireDist("../../agent/runtime.js");
-    const onboardMod = requireDist("../../onboard.js");
-    const resumeRepair = requireDist("../../onboard/resume-machine-repair.js");
-    const onboardSession = requireDist("../../state/onboard-session.js");
-    const registry = requireDist("../../state/registry.js");
-    const sandboxSession = requireDist("../../state/sandbox-session.js");
-    const sandboxState = requireDist("../../state/sandbox.js");
-    const sandboxVersion = requireDist("../../sandbox/version.js");
-    const destroy = requireDist("./destroy.js");
-    const rebuildShields = requireDist("./rebuild-shields.js");
-    const rebuildImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
-    const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
-    const nim = requireDist("../../inference/nim.js");
 
     session = onboardSession.createSession({
       sandboxName: "alpha",
@@ -101,11 +92,14 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
       vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
         recovered: true,
-        before: { state: "healthy_named" },
-        after: { state: "healthy_named" },
+        before: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
+        after: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
+        attempted: false,
       }),
       vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
         result: { status: 0, output: "alpha Ready" },
+        recoveryAttempted: false,
+        recoverySucceeded: false,
       }),
       vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null),
       vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
@@ -115,7 +109,11 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
       vi.spyOn(onboardSession, "loadSession").mockImplementation(loadSession),
       vi.spyOn(onboardSession, "updateSession").mockImplementation(updateSession),
-      vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true }),
+      vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
+        acquired: true,
+        lockFile: "/tmp/nemoclaw-onboard.lock",
+        stale: false,
+      }),
       vi.spyOn(onboardSession, "releaseOnboardLock").mockImplementation(() => undefined),
       vi.spyOn(onboardSession, "markStepFailed").mockImplementation(() => loadSession()),
       vi.spyOn(registry, "getSandbox").mockReturnValue({
@@ -157,33 +155,37 @@ describe("rebuild resume snapshot repair", () => {
           policyPresets: [],
         },
       } as never),
-      vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0, output: "" }),
-      vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined),
+      vi
+        .spyOn(openshellRuntime, "runOpenshell")
+        .mockReturnValue({ status: 0, output: "" } as never),
+      vi.spyOn(destroy, "removeSandboxRegistryEntry").mockReturnValue(true),
       vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined),
       vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined),
       vi.spyOn(nim, "detectGpu").mockReturnValue(null),
-      vi.spyOn(onboardMod, "preflightAuthoritativeRebuildTarget").mockResolvedValue(undefined),
+      vi
+        .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")
+        .mockResolvedValue(undefined),
       vi.spyOn(rebuildImagePreflight, "preflightRebuildImage").mockResolvedValue({
         ok: true,
         imageTag: null,
-      }),
+      } as never),
       vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true),
-      vi.spyOn(onboardMod, "onboard").mockImplementation(async (options: unknown) => {
-        observed.handoffOptions = options as Record<string, unknown>;
-        const reopened = onboardSession.loadSession();
-        observed.preRepairMachineState = reopened.machine.state;
-        observed.preRepairPreflightStatus = reopened.steps.preflight.status;
-        observed.preRepairGatewayStatus = reopened.steps.gateway.status;
-        observed.preRepairStatus = reopened.status;
-        observed.preRepairResumable = reopened.resumable;
-        resumeRepair.repairResumeMachineSnapshot(reopened, "2026-06-01T00:01:00.000Z");
-        observed.repairedMachineState = reopened.machine.state;
-        observed.sandboxEnvInsideOnboard = process.env.NEMOCLAW_SANDBOX_NAME ?? null;
-        throw new Error("stop-after-resume-repair-probe");
-      }),
+      vi
+        .spyOn(rebuildOnboardDependencies, "onboard")
+        .mockImplementation(async (options: unknown) => {
+          observed.handoffOptions = options as Record<string, unknown>;
+          const reopened = onboardSession.loadSession() as Session;
+          observed.preRepairMachineState = reopened.machine.state;
+          observed.preRepairPreflightStatus = reopened.steps.preflight.status;
+          observed.preRepairGatewayStatus = reopened.steps.gateway.status;
+          observed.preRepairStatus = reopened.status;
+          observed.preRepairResumable = reopened.resumable;
+          resumeRepair.repairResumeMachineSnapshot(reopened, "2026-06-01T00:01:00.000Z");
+          observed.repairedMachineState = reopened.machine.state;
+          observed.sandboxEnvInsideOnboard = process.env.NEMOCLAW_SANDBOX_NAME ?? null;
+          throw new Error("stop-after-resume-repair-probe");
+        }),
     );
-
-    ({ rebuildSandbox } = requireDist(rebuildModulePath));
   });
 
   afterEach(() => {
@@ -195,10 +197,9 @@ describe("rebuild resume snapshot repair", () => {
     } else {
       process.env.NEMOCLAW_SANDBOX_NAME = originalSandboxName;
     }
-    delete require.cache[requireDist.resolve(rebuildModulePath)];
   });
 
-  it("replaces complete history with a target-scoped resume snapshot", async () => {
+  it("replaces complete history with a target-scoped resume snapshot (#6245)", async () => {
     await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
       "Recreate failed",
     );

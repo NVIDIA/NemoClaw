@@ -34,8 +34,8 @@ const CALLER_ALWAYS = "always()";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const EXPECTED_UPLOAD_JOB_COUNT = 73;
-const EXPECTED_DEFAULT_CALLER_COUNT = 62;
+const EXPECTED_UPLOAD_JOB_COUNT = 74;
+const EXPECTED_DEFAULT_CALLER_COUNT = 63;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {

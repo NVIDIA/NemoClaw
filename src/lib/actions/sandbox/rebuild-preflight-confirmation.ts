@@ -29,6 +29,7 @@ export function createRebuildCommandContext(
   bail: RebuildBail;
   log: RebuildLog;
   requestedToolDisclosure: ToolDisclosure | undefined;
+  requestedObservabilityEnabled: boolean | undefined;
   skipConfirm: boolean;
 } {
   const normalized = normalizeRebuildSandboxOptions(options);
@@ -39,6 +40,7 @@ export function createRebuildCommandContext(
           console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${redact(message)}${R}`)
       : () => {},
     requestedToolDisclosure: normalized.toolDisclosure,
+    requestedObservabilityEnabled: normalized.observabilityEnabled,
     skipConfirm: normalized.yes === true || normalized.force === true,
     bail: opts.throwOnError
       ? (message: string) => {

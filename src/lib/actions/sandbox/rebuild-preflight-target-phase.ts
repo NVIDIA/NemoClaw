@@ -4,6 +4,7 @@
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
+import { createRebuildProviderReconfigureHandoff } from "../../onboard/rebuild-route-handoff";
 import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -49,11 +50,24 @@ export async function prepareRebuildTargetPreflights(args: {
   rebuildAgent: string | null;
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
+  requestedObservabilityEnabled?: boolean;
+  allowLegacyManagedImageRecovery?: boolean;
+  preparedBackupRecovery?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
-  const { sandboxName, sandboxEntry, rebuildAgent, autoYes, requestedToolDisclosure, log, bail } =
-    args;
+  const {
+    sandboxName,
+    sandboxEntry,
+    rebuildAgent,
+    autoYes,
+    requestedToolDisclosure,
+    requestedObservabilityEnabled,
+    allowLegacyManagedImageRecovery,
+    preparedBackupRecovery,
+    log,
+    bail,
+  } = args;
   hydrateMessagingConfigForRebuild(sandboxName, log);
   if (!(await ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail)))
     return null;
@@ -65,6 +79,7 @@ export async function prepareRebuildTargetPreflights(args: {
     log,
     bail,
     requestedToolDisclosure,
+    allowLegacyManagedImageRecovery,
   );
   if (!targetConfig) return null;
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;
@@ -85,6 +100,9 @@ export async function prepareRebuildTargetPreflights(args: {
   // session. Use that authoritative value for both preflight and inner onboard,
   // never the raw registry fallback used while constructing generic options.
   recreateOptions.toolDisclosure = durableConfig.toolDisclosure;
+  recreateOptions.observabilityEnabled =
+    requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
+  recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,
@@ -115,7 +133,13 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   });
   if (
-    !(await preflightAuthoritativeOnboardRuntime(sandboxName, resumeConfig, recreateOptions, bail))
+    !(await preflightAuthoritativeOnboardRuntime(
+      sandboxName,
+      resumeConfig,
+      recreateOptions,
+      bail,
+      preparedBackupRecovery ? { deferInferenceRouteUntilOnboard: true } : {},
+    ))
   ) {
     return null;
   }
@@ -142,12 +166,29 @@ export async function prepareRebuildTargetPreflights(args: {
       recreateOptions,
       log,
       bail,
-      { skipImagePreflight: rebuildsDcodeSandbox },
+      {
+        allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
+        skipImagePreflight: rebuildsDcodeSandbox,
+      },
     );
   } finally {
     restoreBaseImageOverride();
   }
   if (!targetRuntimePreflight.ok) return null;
+
+  if (targetRuntimePreflight.requiresGatewayProviderReconfigure) {
+    if (!resumeConfig.credentialEnv) {
+      bail("Prepared provider reconfiguration is missing its credential binding");
+      return null;
+    }
+    recreateOptions.rebuildProviderReconfigure = createRebuildProviderReconfigureHandoff({
+      sandboxName,
+      provider: resumeConfig.provider,
+      model: resumeConfig.model,
+      credentialEnv: resumeConfig.credentialEnv,
+      endpointUrl: resumeConfig.endpointUrl,
+    });
+  }
 
   const preparedImage = targetRuntimePreflight.preparedImage;
   let retainPreparedImage = false;

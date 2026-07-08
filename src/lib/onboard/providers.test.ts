@@ -12,6 +12,7 @@ const {
   HOSTED_INFERENCE_MODEL,
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
+  REMOTE_PROVIDER_CONFIG,
   buildProviderArgs,
   getRequestedModelHint,
   getRequestedProviderHint,
@@ -25,6 +26,14 @@ const {
   HOSTED_INFERENCE_MODEL: string;
   NON_INTERACTIVE_PROVIDER_ALIASES: Record<string, string>;
   NON_INTERACTIVE_PROVIDER_KEYS: Set<string>;
+  REMOTE_PROVIDER_CONFIG: Record<
+    string,
+    {
+      providerName: string;
+      providerType: string;
+      credentialEnv: string;
+    }
+  >;
   buildProviderArgs: (
     action: "create" | "update",
     name: string,
@@ -105,6 +114,27 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
+  it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.anthropicCompatible;
+
+    // Remote provider setup can replace this registration with type=openai
+    // after an agent selects and verifies the endpoint's OpenAI surface.
+    expect(provider).toMatchObject({
+      providerName: "compatible-anthropic-endpoint",
+      providerType: "anthropic",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+    });
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        "https://inference-api.nvidia.com",
+      ),
+    ).toContain("ANTHROPIC_BASE_URL=https://inference-api.nvidia.com");
+  });
+
   it("builds create arguments for generic providers", () => {
     const args = buildProviderArgs(
       "create",

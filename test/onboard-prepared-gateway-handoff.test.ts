@@ -156,11 +156,11 @@ describe("prepared DCode gateway handoff", () => {
     });
   });
 
-  it("continues clearing an ordinary onboard run's ambient gateway (#6195)", () => {
+  it("scopes an ordinary onboard run to the default gateway (#6315)", () => {
     assert.deepEqual(runHandoffScenario("ordinary"), {
       error: null,
       flowCalls: 1,
-      gatewayAtInitialFlow: null,
+      gatewayAtInitialFlow: "nemoclaw",
     });
   });
 

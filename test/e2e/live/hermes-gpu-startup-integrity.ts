@@ -76,18 +76,23 @@ def parse_hash(data, label):
         text = data.decode("ascii")
     except UnicodeDecodeError:
         fail(f"{label} is not ASCII")
-    if not text.endswith("\\n"):
-        fail(f"{label} is missing its final newline")
-    lines = text.splitlines()
+    parts = text.split("\\n")
+    if len(parts) != 4 or parts[-1] != "":
+        fail(f"{label} does not contain exactly three records")
+    lines = parts[:2]
     expected_paths = (str(config_path), str(env_path))
-    if len(lines) != len(expected_paths):
-        fail(f"{label} does not contain exactly two records")
     digests = []
     for line, expected_path in zip(lines, expected_paths):
         match = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
         if match is None or match.group(2) != expected_path:
-            fail(f"{label} contains an unexpected record")
+            fail(f"{label} contains an unexpected file record")
         digests.append(match.group(1))
+    state_match = re.fullmatch(
+        r"# nemoclaw-hermes-mcp-state-v1 intended=([0-9a-f]{64}) applied=([0-9a-f]{64})",
+        parts[2],
+    )
+    if state_match is None:
+        fail(f"{label} contains an unexpected MCP state record")
     return tuple(digests)
 
 def digest(data):

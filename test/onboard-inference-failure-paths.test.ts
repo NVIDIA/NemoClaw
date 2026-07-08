@@ -71,12 +71,27 @@ function stubMissingBedrockAuth(): void {
 
 function expectNoPostFailureSideEffects(
   harness: DirectSetupInferenceHarness,
-  expectedCommands = ["gateway select nemoclaw"],
+  expectedCommands: string[] = [],
 ): void {
   expect(harness.commands.map(({ command }) => command)).toEqual(expectedCommands);
   expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
   expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
   expect(harness.updateSandbox).not.toHaveBeenCalled();
+}
+
+function expectNemoclawScopedRunner(
+  harness: DirectSetupInferenceHarness,
+  runOpenshell: SetupInferenceDeps["runOpenshell"],
+): void {
+  expect(runOpenshell).not.toBe(harness.runOpenshell);
+  const commandCount = harness.commands.length;
+  runOpenshell(["provider", "list"], { ignoreError: true });
+  expect(harness.commands.at(-1)).toEqual({
+    command: "provider list -g nemoclaw",
+    env: undefined,
+    ignoreError: true,
+  });
+  harness.commands.splice(commandCount);
 }
 
 describe("setupInference dependency failures", () => {
@@ -177,6 +192,7 @@ describe("setupInference dependency failures", () => {
       "OPENAI_API_KEY",
       expect.any(String),
       { OPENAI_API_KEY: "openai-secret" },
+      "nemoclaw",
     );
     expect(promptValidationRecovery).not.toHaveBeenCalled();
     expect(exitProcess).toHaveBeenCalledOnce();
@@ -223,8 +239,7 @@ describe("setupInference dependency failures", () => {
     expect(harness.errors.join("\n")).toContain("route failed");
     expect(harness.errors.join("\n")).not.toContain(NVIDIA_REDACTION_CANARY);
     expectNoPostFailureSideEffects(harness, [
-      "gateway select nemoclaw",
-      "inference set --no-verify --provider openai-api --model gpt-test",
+      "inference set -g nemoclaw --no-verify --provider openai-api --model gpt-test",
     ]);
   });
 
@@ -348,6 +363,9 @@ describe("setupInference dependency failures", () => {
     expect(harness.errors).toEqual([
       "  container cannot reach Ollama",
       "  Diagnostic: proxy probe failed",
+      ...(process.platform === "darwin"
+        ? ["  On macOS, local inference also depends on OpenShell host routing support."]
+        : []),
     ]);
     expectNoPostFailureSideEffects(harness);
   });
@@ -384,13 +402,17 @@ describe("setupInference dependency failures", () => {
 
   it("exits through injected Hermes boundaries when provider storage is unavailable", async () => {
     const exitProcess = createInjectedExit();
-    const isHermesProviderRegistered = vi.fn(() => true);
+    const isHermesProviderRegistered = vi.fn(
+      (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => true,
+    );
     const ensureHermesProviderApiKeyCredentials = vi.fn(async () => ({}));
     const ensureHermesProviderOAuthCredentials = vi.fn(async () => ({}));
-    const checkHermesProviderStoreReachable = vi.fn(() => ({
-      ok: false,
-      message: "provider store unavailable",
-    }));
+    const checkHermesProviderStoreReachable = vi.fn(
+      (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => ({
+        ok: false,
+        message: "provider store unavailable",
+      }),
+    );
     const harness = createDirectSetupInferenceHarness({
       overrides: {
         isNonInteractive: () => true,
@@ -409,7 +431,8 @@ describe("setupInference dependency failures", () => {
       harness.setupInference("test-box", "moonshotai/kimi-k2.6", "hermes-provider"),
     ).rejects.toThrow("EXIT_CALLED:1");
 
-    expect(checkHermesProviderStoreReachable).toHaveBeenCalledWith(harness.runOpenshell);
+    const runGatewayOpenshell = checkHermesProviderStoreReachable.mock.calls[0][0];
+    expectNemoclawScopedRunner(harness, runGatewayOpenshell);
     expect(isHermesProviderRegistered).not.toHaveBeenCalled();
     expect(ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
     expect(ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
@@ -425,14 +448,18 @@ describe("setupInference dependency failures", () => {
 
   it("exits through injected boundaries when Hermes API-key preparation throws", async () => {
     const exitProcess = createInjectedExit();
-    const isHermesProviderRegistered = vi.fn(() => false);
+    const isHermesProviderRegistered = vi.fn(
+      (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => false,
+    );
     const ensureHermesProviderApiKeyCredentials = vi.fn(async () => {
       throw new Error("API-key preparation failed");
     });
     const ensureHermesProviderOAuthCredentials = vi.fn(async () => ({}));
     const providerExistsInGateway = vi.fn(() => true);
     const resolveHermesNousApiKey = vi.fn(() => "nous-secret");
-    const checkHermesProviderStoreReachable = vi.fn(() => ({ ok: true }));
+    const checkHermesProviderStoreReachable = vi.fn(
+      (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => ({ ok: true }),
+    );
     const harness = createDirectSetupInferenceHarness({
       overrides: {
         isNonInteractive: () => true,
@@ -461,13 +488,14 @@ describe("setupInference dependency failures", () => {
       ),
     ).rejects.toThrow("EXIT_CALLED:1");
 
-    expect(checkHermesProviderStoreReachable).toHaveBeenCalledWith(harness.runOpenshell);
-    expect(isHermesProviderRegistered).toHaveBeenCalledWith(harness.runOpenshell);
+    const runGatewayOpenshell = checkHermesProviderStoreReachable.mock.calls[0][0];
+    expectNemoclawScopedRunner(harness, runGatewayOpenshell);
+    expect(isHermesProviderRegistered).toHaveBeenCalledWith(runGatewayOpenshell);
     expect(providerExistsInGateway).not.toHaveBeenCalled();
     expect(ensureHermesProviderApiKeyCredentials).toHaveBeenCalledOnce();
     expect(ensureHermesProviderApiKeyCredentials).toHaveBeenCalledWith("test-box", {
       apiKey: "nous-secret",
-      runOpenshell: harness.runOpenshell,
+      runOpenshell: runGatewayOpenshell,
       baseUrl: undefined,
     });
     expect(ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
@@ -481,14 +509,18 @@ describe("setupInference dependency failures", () => {
 
   it("exits through injected boundaries when Hermes OAuth preparation throws", async () => {
     const exitProcess = createInjectedExit();
-    const isHermesProviderRegistered = vi.fn(() => false);
+    const isHermesProviderRegistered = vi.fn(
+      (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => false,
+    );
     const ensureHermesProviderApiKeyCredentials = vi.fn(async () => ({}));
     const ensureHermesProviderOAuthCredentials = vi.fn(async () => {
       throw new Error("OAuth preparation failed");
     });
     const providerExistsInGateway = vi.fn(() => true);
     const resolveHermesNousApiKey = vi.fn(() => "unused-key");
-    const checkHermesProviderStoreReachable = vi.fn(() => ({ ok: true }));
+    const checkHermesProviderStoreReachable = vi.fn(
+      (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => ({ ok: true }),
+    );
     const harness = createDirectSetupInferenceHarness({
       overrides: {
         isNonInteractive: () => true,
@@ -517,15 +549,16 @@ describe("setupInference dependency failures", () => {
       ),
     ).rejects.toThrow("EXIT_CALLED:1");
 
-    expect(checkHermesProviderStoreReachable).toHaveBeenCalledWith(harness.runOpenshell);
-    expect(isHermesProviderRegistered).toHaveBeenCalledWith(harness.runOpenshell);
+    const runGatewayOpenshell = checkHermesProviderStoreReachable.mock.calls[0][0];
+    expectNemoclawScopedRunner(harness, runGatewayOpenshell);
+    expect(isHermesProviderRegistered).toHaveBeenCalledWith(runGatewayOpenshell);
     expect(providerExistsInGateway).not.toHaveBeenCalled();
     expect(resolveHermesNousApiKey).not.toHaveBeenCalled();
     expect(ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
     expect(ensureHermesProviderOAuthCredentials).toHaveBeenCalledOnce();
     expect(ensureHermesProviderOAuthCredentials).toHaveBeenCalledWith("test-box", {
       allowInteractiveLogin: false,
-      runOpenshell: harness.runOpenshell,
+      runOpenshell: runGatewayOpenshell,
       baseUrl: undefined,
       toolGatewayPresets: [],
     });
@@ -779,8 +812,7 @@ describe("setupInference dependency failures", () => {
       "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",
     ]);
     expectNoPostFailureSideEffects(harness, [
-      "gateway select nemoclaw",
-      `inference set --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
+      `inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
     ]);
   });
 
@@ -823,8 +855,7 @@ describe("setupInference dependency failures", () => {
       "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",
     ]);
     expectNoPostFailureSideEffects(harness, [
-      "gateway select nemoclaw",
-      `inference set --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
+      `inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
     ]);
   });
 
@@ -887,7 +918,9 @@ describe("setupInference dependency failures", () => {
     const reconcileModelRouter = vi.fn(async () => {});
     const upsertProvider = vi.fn(() => ({ ok: true }));
     const hydrateCredentialEnv = vi.fn(() => "unused-secret");
-    const upsertRoutedProvider = vi.fn(() => ({
+    const upsertRoutedProvider = vi.fn<
+      SetupInferenceDeps["routedInference"]["upsertRoutedProvider"]
+    >(() => ({
       ok: false,
       result: { status: 29, message: "routed provider registration rejected" },
     }));
@@ -918,10 +951,30 @@ describe("setupInference dependency failures", () => {
       "nvidia-router",
       "http://host.openshell.internal:4000/v1",
       "NVIDIA_INFERENCE_API_KEY",
-      { upsertProvider, hydrateCredentialEnv },
+      {
+        upsertProvider: expect.any(Function),
+        hydrateCredentialEnv,
+      },
     );
+    const routedUpsertProvider = upsertRoutedProvider.mock.calls[0][3].upsertProvider;
+    expect(routedUpsertProvider).not.toBe(upsertProvider);
     expect(upsertProvider).not.toHaveBeenCalled();
     expect(hydrateCredentialEnv).not.toHaveBeenCalled();
+    routedUpsertProvider(
+      "nvidia-router",
+      "openai",
+      "NVIDIA_INFERENCE_API_KEY",
+      "http://host.openshell.internal:4000/v1",
+      { NVIDIA_INFERENCE_API_KEY: "test-secret" },
+    );
+    expect(upsertProvider).toHaveBeenCalledWith(
+      "nvidia-router",
+      "openai",
+      "NVIDIA_INFERENCE_API_KEY",
+      "http://host.openshell.internal:4000/v1",
+      { NVIDIA_INFERENCE_API_KEY: "test-secret" },
+      "nemoclaw",
+    );
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(29);
     expect(harness.errors).toEqual(["  routed provider registration rejected"]);
@@ -970,8 +1023,7 @@ describe("setupInference dependency failures", () => {
     expect(harness.errors.join("\n")).toContain("routed apply failed");
     expect(harness.errors.join("\n")).not.toContain(NVIDIA_REDACTION_CANARY);
     expectNoPostFailureSideEffects(harness, [
-      "gateway select nemoclaw",
-      "inference set --no-verify --provider nvidia-router --model router/model",
+      "inference set -g nemoclaw --no-verify --provider nvidia-router --model router/model",
     ]);
   });
 
@@ -1001,15 +1053,19 @@ describe("setupInference dependency failures", () => {
     expect(reconcileModelRouter).toHaveBeenCalledOnce();
     expect(upsertRoutedProvider).toHaveBeenCalledOnce();
     expect(harness.commands).toEqual([
-      { command: "gateway select nemoclaw", ignoreError: true, env: undefined },
       {
-        command: "inference set --no-verify --provider nvidia-router --model router/model",
+        command:
+          "inference set -g nemoclaw --no-verify --provider nvidia-router --model router/model",
         ignoreError: true,
         env: undefined,
       },
     ]);
     expect(harness.verifyInferenceRoute).toHaveBeenCalledOnce();
-    expect(harness.verifyInferenceRoute).toHaveBeenCalledWith("nvidia-router", "router/model");
+    expect(harness.verifyInferenceRoute).toHaveBeenCalledWith(
+      "nemoclaw",
+      "nvidia-router",
+      "router/model",
+    );
     expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
     expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith({
       provider: "nvidia-router",
@@ -1021,6 +1077,10 @@ describe("setupInference dependency failures", () => {
     expect(harness.updateSandbox).toHaveBeenCalledWith("test-box", {
       model: "router/model",
       provider: "nvidia-router",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: null,
+      gatewayName: "nemoclaw",
     });
     expect(harness.logs).toEqual(["  ✓ Inference route set: nvidia-router / router/model"]);
     expect(harness.errors).toEqual([]);

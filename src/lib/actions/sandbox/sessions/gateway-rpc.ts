@@ -6,6 +6,7 @@ import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
 import { redactFull } from "../../../security/redact";
 import { runSandboxAutoPairApprovalPass } from "../auto-pair-approval";
+import { buildTrustedProxyEnvSourceShell } from "../trusted-proxy-env";
 import { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
 
 export { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
@@ -127,32 +128,10 @@ const GATEWAY_ADMIN_RPC_SCRIPT_B64 = Buffer.from(GATEWAY_ADMIN_RPC_SCRIPT, "utf8
   "base64",
 );
 
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
 export function buildGatewayAdminRpcShell(proxyEnvPath = "/tmp/nemoclaw-proxy-env.sh"): string {
   return `
 set -e
-proxy_env=${shellSingleQuote(proxyEnvPath)}
-if [ -e "$proxy_env" ] || [ -L "$proxy_env" ]; then
-  if [ -L "$proxy_env" ] || [ ! -f "$proxy_env" ]; then
-    echo "[SECURITY] $proxy_env is unsafe (expected regular root-owned mode 444 file)" >&2
-    exit 126
-  fi
-  perms="$(stat -c '%a' "$proxy_env" 2>/dev/null || stat -f '%Lp' "$proxy_env" 2>/dev/null || echo unknown)"
-  owner="$(stat -c '%U' "$proxy_env" 2>/dev/null || stat -f '%Su' "$proxy_env" 2>/dev/null || echo unknown)"
-  if [ "$(id -u)" -eq 0 ]; then
-    if [ "$owner" != "root" ] || [ "$perms" != "444" ]; then
-      echo "[SECURITY] $proxy_env has unsafe permissions: owner=$owner mode=$perms (expected root:444)" >&2
-      exit 126
-    fi
-  elif [ "$perms" != "444" ]; then
-    echo "[SECURITY] $proxy_env has unsafe permissions: mode=$perms (expected 444)" >&2
-    exit 126
-  fi
-  . "$proxy_env" >/dev/null 2>&1
-fi
+${buildTrustedProxyEnvSourceShell(proxyEnvPath)}
 export NEMOCLAW_GATEWAY_RPC_METHOD="$3"
 export NEMOCLAW_GATEWAY_RPC_PARAMS_B64="$4"
 exec node --input-type=module --eval "$1" "$2"

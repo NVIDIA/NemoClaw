@@ -78,6 +78,18 @@ export function renderMcpBridgeStatus(
     console.log(
       `    env: ${status.env.ready ? "ready" : status.env.missing.length > 0 ? `missing ${status.env.missing.join(", ")}` : "not ready"}`,
     );
+    const resolution = status.provider.credentialResolution;
+    if (resolution) {
+      console.log(
+        `    credential resolution: ${
+          resolution.ok === true
+            ? `verified (HTTP ${resolution.httpStatus})`
+            : resolution.ok === false
+              ? `FAILED (HTTP ${resolution.httpStatus})`
+              : `unknown${resolution.detail ? ` (${resolution.detail})` : ""}`
+        }`,
+      );
+    }
     for (const warning of status.warnings) console.log(`    warning: ${warning}`);
   }
   console.log("");

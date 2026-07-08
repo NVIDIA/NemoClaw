@@ -22,6 +22,10 @@ import {
   providerShapeDetail,
 } from "./mcp-bridge-provider";
 import {
+  credentialResolutionWarning,
+  probeCredentialResolution,
+} from "./mcp-bridge-resolution-probe";
+import {
   bridgeState,
   ensureSandboxGatewaySelected,
   getSandboxAgent,
@@ -117,9 +121,19 @@ function getAdapterRegistration(
   };
 }
 
+export interface McpBridgeStatusOptions {
+  /**
+   * Run the wire-level credential-resolution probe for each entry (#6379).
+   * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
+   * the dispatch layer enables it only where the operator asked for it.
+   */
+  probeCredentialResolution?: boolean;
+}
+
 export async function statusMcpBridge(
   sandboxName: string,
   server?: string,
+  options: McpBridgeStatusOptions = {},
 ): Promise<McpBridgeStatus[]> {
   validateSandboxName(sandboxName);
   if (server !== undefined) validateMcpServerName(server);
@@ -173,6 +187,7 @@ export async function statusMcpBridge(
   return entries.map(([name, entry]) => {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
+    const policyPresence = getPolicyPresence(sandboxName, entry);
     const hasCredentialBinding =
       !!entry &&
       Array.isArray(entry.env) &&
@@ -208,6 +223,24 @@ export async function statusMcpBridge(
     }
     const unsafeCredentialMayBeAttached =
       !!credentialWarning && !!entry?.providerName && attached !== false;
+    const credentialResolution =
+      options.probeCredentialResolution && entry
+        ? unsafeCredentialMayBeAttached
+          ? {
+              ok: null,
+              detail:
+                "probe skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
+            }
+          : probeCredentialResolution(sandboxName, entry, support.adapter, {
+              policyGatewayPresent: policyPresence,
+              providerAttached: attached,
+              providerCredentialReady,
+            })
+        : undefined;
+    const resolutionWarning = credentialResolution
+      ? credentialResolutionWarning(entry?.env[0], credentialResolution)
+      : undefined;
+    if (resolutionWarning) warnings.push(resolutionWarning);
     return {
       server: name,
       agent: entry?.agent ?? agent.name,
@@ -230,11 +263,12 @@ export async function statusMcpBridge(
         attached,
         credentialReady: entry ? providerCredentialReady : null,
         ...(providerDetail ? { detail: providerDetail } : {}),
+        ...(credentialResolution ? { credentialResolution } : {}),
       },
       policy: {
         name: entry?.policyName,
         registryPresent: !!registeredPolicy,
-        gatewayPresent: getPolicyPresence(sandboxName, entry),
+        gatewayPresent: policyPresence,
       },
       adapter: unsafeCredentialMayBeAttached
         ? {

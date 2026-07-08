@@ -89,7 +89,7 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
     });
   });
 
-  it("prints the missing-flags redirect without calling runInferenceSet", async () => {
+  it("prints guarded missing-flags guidance without calling runInferenceSet", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -101,6 +101,7 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
       expect(error).toHaveBeenCalledWith(
         expect.stringContaining("inference set requires --provider and --model"),
       );
+      expect(error).not.toHaveBeenCalledWith(expect.stringContaining("openshell inference set"));
     } finally {
       process.exitCode = previousExitCode;
       error.mockRestore();

@@ -64,6 +64,8 @@ describe("connectSandbox route lifecycle", () => {
       [
         "inference",
         "set",
+        "-g",
+        "nemoclaw",
         "--provider",
         "anthropic-prod",
         "--model",
@@ -122,7 +124,7 @@ describe("connectSandbox route lifecycle", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
-      ["inference", "get"],
+      ["inference", "get", "-g", "nemoclaw"],
       expect.any(Object),
     );
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
@@ -141,7 +143,7 @@ describe("connectSandbox route lifecycle", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
-      ["inference", "get"],
+      ["inference", "get", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
@@ -167,6 +169,8 @@ describe("connectSandbox route lifecycle", () => {
       [
         "inference",
         "set",
+        "-g",
+        "nemoclaw",
         "--provider",
         "nvidia-prod",
         "--model",

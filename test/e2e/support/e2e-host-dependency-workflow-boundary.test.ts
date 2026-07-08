@@ -28,6 +28,12 @@ function readWorkflow(): Workflow {
 describe("inline E2E host dependency boundary", () => {
   it.each([
     {
+      jobName: "live",
+      stepName: "Install Deep Agents Code TUI host dependencies",
+      expected:
+        "live host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
+    },
+    {
       jobName: "network-policy",
       stepName: "Install network-policy host dependencies",
       expected:

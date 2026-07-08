@@ -5,6 +5,13 @@ import { describe, expect, it } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
 import { patchOpenClawInferenceConfig } from "./inference-set";
 
+function providerModels(config: ConfigObject, providerKey: string): ConfigObject[] {
+  const models = config.models as ConfigObject;
+  const providers = models.providers as ConfigObject;
+  const provider = providers[providerKey] as ConfigObject;
+  return provider.models as ConfigObject[];
+}
+
 describe("patchOpenClawInferenceConfig", () => {
   it("writes provider-qualified model refs while preserving model metadata", () => {
     const config: ConfigObject = {
@@ -83,7 +90,7 @@ describe("patchOpenClawInferenceConfig", () => {
     expect(result.changed).toBe(false);
   });
 
-  it("switches Anthropic routes to the Anthropic provider namespace", () => {
+  it("seeds new Anthropic routes with the required default reply budget", () => {
     const config: ConfigObject = { agents: {}, models: { providers: {} } };
 
     patchOpenClawInferenceConfig(config, "anthropic-prod", "claude-sonnet-4-6");
@@ -98,9 +105,87 @@ describe("patchOpenClawInferenceConfig", () => {
           baseUrl: "https://inference.local",
           apiKey: "unused",
           api: "anthropic-messages",
-          models: [{ id: "claude-sonnet-4-6", name: "anthropic/claude-sonnet-4-6" }],
+          models: [
+            {
+              id: "claude-sonnet-4-6",
+              name: "anthropic/claude-sonnet-4-6",
+              maxTokens: 4096,
+            },
+          ],
         },
       },
     });
+  });
+
+  it("inherits the active reply budget when creating an Anthropic provider", () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/model-a" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [
+              { id: "extra-model", name: "inference/extra-model", maxTokens: 16384 },
+              { id: "model-a", name: "inference/model-a", maxTokens: 8192 },
+            ],
+          },
+        },
+      },
+    };
+
+    patchOpenClawInferenceConfig(config, "anthropic-prod", "claude-sonnet-4-6");
+
+    expect(providerModels(config, "anthropic")).toEqual([
+      {
+        id: "claude-sonnet-4-6",
+        name: "anthropic/claude-sonnet-4-6",
+        maxTokens: 8192,
+      },
+    ]);
+  });
+
+  it("preserves a valid Anthropic target reply budget over the active provider value", () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/model-a" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [{ id: "model-a", name: "inference/model-a", maxTokens: 8192 }],
+          },
+          anthropic: {
+            models: [{ id: "old-model", name: "anthropic/old-model", maxTokens: 2048 }],
+          },
+        },
+      },
+    };
+
+    patchOpenClawInferenceConfig(config, "anthropic-prod", "claude-sonnet-4-6");
+
+    expect(providerModels(config, "anthropic")).toEqual([
+      {
+        id: "claude-sonnet-4-6",
+        name: "anthropic/claude-sonnet-4-6",
+        maxTokens: 2048,
+      },
+    ]);
+  });
+
+  it("defaults invalid active and target Anthropic reply budgets", () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/model-a" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [{ id: "model-a", name: "inference/model-a", maxTokens: 1e308 }],
+          },
+          anthropic: {
+            models: [{ id: "old-model", name: "anthropic/old-model", maxTokens: 1.5 }],
+          },
+        },
+      },
+    };
+
+    patchOpenClawInferenceConfig(config, "anthropic-prod", "claude-sonnet-4-6");
+
+    expect(providerModels(config, "anthropic")[0]?.maxTokens).toBe(4096);
   });
 });

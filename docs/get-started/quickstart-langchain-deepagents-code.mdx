@@ -2,20 +2,52 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 title: "Quickstart with LangChain Deep Agents Code"
-sidebar-title: "LangChain Deep Agents Code"
-description: "Create a NemoClaw sandbox that runs LangChain Deep Agents Code as a terminal harness."
-description-agent: "Creates a NemoClaw sandbox that runs LangChain Deep Agents Code as a terminal harness. Use when testing dcode with NemoClaw-managed inference."
-keywords: ["langchain deep agents code nemoclaw", "dcode openshell sandbox", "langchain coding agent"]
-topics: ["get-started", "terminal-runtime", "langchain-deepagents-code"]
-tags: ["deep-agents-code", "dcode", "managed-inference"]
+sidebar-title: "Quickstart with Deep Agents"
+description: "Create and operate a NemoClaw sandbox for LangChain Deep Agents Code with managed inference and backend-neutral OTLP tracing."
+description-agent: "Creates and operates a NemoClaw sandbox that runs LangChain Deep Agents Code with managed inference and backend-neutral OTLP trace export through a host-side collector, including LangSmith. Use when installing or testing dcode, enabling observability, or configuring a local OpenTelemetry collector for LangSmith."
+keywords: ["langchain deep agents code nemoclaw", "dcode openshell sandbox", "langchain coding agent", "dcode otlp tracing"]
+topics: ["get-started", "terminal-runtime", "langchain-deepagents-code", "observability"]
+tags: ["deep-agents-code", "dcode", "managed-inference", "otlp"]
 difficulty: "intermediate"
 audience: "operators"
 status: published
 content:
   type: "get_started"
 ---
+import { StarterPromptFallback } from "../_components/StarterPrompt";
+import { StarterPromptButton } from "../_components/StarterPromptButton";
 
-Use this guide to build an OpenShell sandbox with the `dcode` terminal coding agent installed and configured for NemoClaw-managed inference.
+Use NemoClaw for Deep Agents to create an OpenShell sandbox that runs LangChain Deep Agents Code.
+The `nemo-deepagents` command is an alias for `nemoclaw` with the `langchain-deepagents-code` agent pre-selected.
+
+Review the [Prerequisites](prerequisites) before starting.
+Install Docker, start it, and verify that the current shell can reach it before Deep Agents onboarding builds the sandbox image.
+On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.
+If it changes group membership, run the printed `newgrp docker` recovery command before rerunning the installer.
+On macOS, start Docker Desktop or Colima before you run the installer.
+
+## Start from Your Coding Agent
+
+Copy the starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want the assistant to install NemoClaw with you.
+The prompt points your agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+It also asks your agent to confirm LangChain Deep Agents Code as the selected agent before it builds the install or onboard command.
+
+<StarterPromptButton />
+
+<StarterPromptFallback />
+
+## Install and Onboard
+
+Start the installer with `NEMOCLAW_AGENT=langchain-deepagents-code` set in your shell.
+The installer installs the CLI, selects the `nemo-deepagents` alias, and runs the guided onboarding flow.
+
+```bash
+export NEMOCLAW_AGENT=langchain-deepagents-code
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+The hosted installer follows the last-known-good (`lkg`) release tag by default, so this command installs the maintained Deep Agents-capable build without a version override.
+If NemoClaw is already installed, start Deep Agents onboarding directly.
 
 ## Onboard
 
@@ -31,14 +63,26 @@ nemoclaw onboard --agent deepagents
 nemoclaw onboard --agent langchain
 ```
 
-The image installs hash-locked Deep Agents Code `0.1.30` with NVIDIA provider support.
+The onboard wizard asks for an inference provider, model, any required credential, sandbox name, and policy tier before it prints the review summary.
+At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+The default Deep Agents sandbox name is `deepagents-code`.
+Use a distinct sandbox name, such as `my-deepagents`, so you can run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
+For provider-specific prompts, refer to [Inference Options](../inference/inference-options).
+
+The image installs hash-locked Deep Agents Code `0.1.34` with NVIDIA provider support.
 After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
 Fresh and resumed onboarding exit nonzero instead of reporting the runtime ready when the installed version is too old, uses an incompatible version scheme, or cannot be verified.
 If the version check fails, review the reported version error and run `nemo-deepagents <sandbox-name> rebuild` before resuming onboarding.
 NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
+When you use NVIDIA Endpoints without selecting another model, new Deep Agents Code sandboxes default to `nvidia/nemotron-3-ultra-550b-a55b`.
+For this model, the managed image maps the OpenAI-compatible route to Deep Agents `0.7.0a6`'s native Nemotron 3 Ultra harness profile, including model-specific tool-calling, filesystem, retry, context, and final-answer safeguards.
+Rebuild existing Deep Agents Code sandboxes after upgrading to NemoClaw v0.0.76 or later so their image includes this profile.
+This agent-specific default does not change the shared Nemotron 3 Super default for OpenClaw and Hermes.
 NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
 Deep Agents Code reaches `inference.local` through the managed OpenShell L7 proxy rather than direct sandbox DNS.
 The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
+Managed interactive sessions keep Deep Agents Code's optional first-run name prompt, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
+Press Enter at the name prompt to continue without setting a name.
 
 ## Choose the Default Sandbox
 
@@ -67,7 +111,7 @@ dcode -n "Summarize this repository"
 ```
 
 The managed `dcode`, `dcode.real`, and `deepagents-code` launchers use `/opt/venv/bin/python3 -I` to run the pinned package with an isolated import path and `HOME=/sandbox`.
-They disable Deep Agents Code package update checks and the LangGraph server version check, block CLI and TUI update/install commands, and disable nested remote sandbox providers, remote async subagents, MCP commands and project auto-loading, startup commands, executable hooks, ACP mode, interpreter tool calling, shell allow-list overrides, LangSmith tracing, and OpenTelemetry export.
+They disable Deep Agents Code package update checks and the LangGraph server version check, block CLI and TUI update/install commands, and disable nested remote sandbox providers, remote async subagents, MCP commands and project auto-loading, startup commands, executable hooks, ACP mode, interpreter tool calling, shell allow-list overrides, native LangSmith tracing, and ambient OpenTelemetry exporter configuration.
 The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
 It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
 CLI and TUI model parameter overrides and custom rubric models are blocked.
@@ -109,7 +153,11 @@ For project-specific Python dependencies, create a separate virtual environment 
 ## State and Backup
 
 Deep Agents Code state lives under `/sandbox/.deepagents`.
-NemoClaw snapshot and rebuild flows preserve the app state directory, skills, and generated config when those files exist.
+NemoClaw snapshot and rebuild flows preserve the app state directory and skills when those paths exist.
+During managed re-onboarding, NemoClaw restores only these `config.toml` preferences from backup: boolean `ui.show_scrollbar`, boolean `ui.show_url_open_toast`, boolean `threads.relative_time`, and `threads.sort_order` when it is `updated_at` or `created_at`.
+Freshly generated model routing, update settings, provider metadata, and all other configuration remain authoritative.
+NemoClaw drops all other backup settings, including `ui.theme`, behavior-bearing keys, unknown keys, and security-sensitive keys.
+It recreates the sandbox when its live `dcode identity` output is unreadable or does not match the selected provider and model, then records the selection only after the restored runtime passes the same check.
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
 NemoClaw intentionally does not back up `.deepagents/.env` or the user-owned `.deepagents/.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there.
@@ -117,24 +165,25 @@ The managed `.deepagents/.nemoclaw-mcp.json` projection is also excluded because
 Service credentials remain in OpenShell provider state.
 It also does not preserve `hooks.json`; executable Deep Agents Code hooks are disabled in the managed harness.
 If `.deepagents/.state/auth.json` contains upstream credentials, or `.deepagents/.state/chatgpt-auth.json` exists, the managed Deep Agents Code launch paths refuse to start until that credential state is removed.
-Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, and prepares the replacement from the recorded provider, model, reasoning, and web search settings with a pinned base and fingerprinted context.
+Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, and prepares the replacement from the recorded provider, model, policy, and build inputs with a pinned base and fingerprinted context.
 Initial failures stop before backup.
 After backup, NemoClaw rechecks the target, route, and retained build inputs before changing MCP state, then checks again after MCP preparation and before stopping inference or deleting the old sandbox.
 If the final check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
-Rebuild also preserves the standalone Deep Agents Code `tavily` preset and replays recorded custom policies from their exact stored content.
+Rebuild also preserves the standalone Deep Agents Code `tavily` preset, the recorded observability choice unless explicitly overridden, and recorded custom policies from their exact stored content.
 
-## Optional Web Search
+## Optional Tavily Egress
 
-Deep Agents Code can reach Tavily web search once you register a Tavily credential with the OpenShell gateway on the host.
+Deep Agents Code does not currently have a NemoClaw-managed web-search feature.
+If your project code or a manually configured tool needs Tavily, opt the sandbox Python egress path into Tavily explicitly.
 Register the raw key only with the OpenShell gateway on the host, not inside the sandbox, in `.env`, or in Deep Agents config files.
 The gateway injects it at egress instead.
 The managed Deep Agents Code entry points reject credential-shaped process environment values, disable project `.env` and global `/sandbox/.deepagents/.env` loading, and block upstream `/auth`, `/connect`, startup/onboarding credential prompts, model-selector credential prompts, notification-service key prompts, and ChatGPT OAuth.
 These controls apply to Deep Agents Code and do not sanitize arbitrary Python programs in the sandbox.
 Use NemoClaw-managed credential paths when support is available instead of storing service keys inside Deep Agents Code state.
-NemoClaw does not enable Tavily or LangSmith by default for this harness.
-The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
+NemoClaw does not enable Tavily or observability by default for this harness.
+The sandbox policy denies `api.tavily.com` until you opt into Tavily and continues to deny direct `api.smith.langchain.com` egress when you enable observability.
 
-To enable Tavily for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
+To allow Tavily egress for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
 The policy preset is a per-sandbox managed-Python opt-in, but provider registration is gateway-wide: `tavily-search` attaches to every sandbox that you build or rebuild afterward.
 
 ```bash
@@ -168,14 +217,384 @@ This does not unregister the gateway-wide `tavily-search` provider; its credenti
 When no sandbox needs the provider, destroy those sandboxes or detach it from each one with `openshell sandbox provider detach <sandbox-name> tavily-search`, then remove it globally with `nemo-deepagents credentials reset tavily-search --yes`.
 OpenShell rejects provider deletion while any sandbox still has it attached.
 
-### Tracing (LangSmith and OpenTelemetry)
+## Export Traces Through a Local Collector
 
-NemoClaw does not support LangSmith or OpenTelemetry tracing for this managed harness.
-`start.sh` does not persist user-supplied tracing credentials, projects, or replica endpoints in the shared shell environment.
-No policy preset opens `api.smith.langchain.com`, and no supported mechanism injects `LANGSMITH_API_KEY`.
-The managed launch paths force the supported LangSmith and LangChain tracing enable flags, including their `V2` and `DEEPAGENTS_CODE_`-prefixed variants, to `false`.
-They force `OTEL_ENABLED=false`, reject OTLP exporter endpoints and headers, remove those variables from the LangGraph child process, and reject LangSmith and LangChain replica endpoint configuration.
-Adding egress endpoints alone does not enable tracing; treat it as unsupported until NemoClaw ships a maintained integration.
+NemoClaw can export Deep Agents Code traces to an OTLP/HTTP collector that you operate on the host.
+The sandbox always targets one local collector address, while the collector owns the remote backend, credentials, TLS, batching, retry, and optional filtering.
+Changing from LangSmith to another OTLP-compatible backend does not require a sandbox rebuild or policy change.
+
+The complete example below uses the primary tested NemoClaw platform, Linux with Docker, and the official OpenTelemetry Collector Contrib `0.155.0` image.
+It binds the unauthenticated receiver only to the private Docker bridge address that the target sandbox resolves as `host.openshell.internal`.
+Do not publish this receiver as `0.0.0.0:4318` on the host.
+For general image and configuration-file mechanics, refer to [Install the Collector with Docker](https://opentelemetry.io/docs/collector/install/docker/).
+
+### Understand the Export Boundary
+
+Trace export is off by default and requires an explicit onboarding choice.
+When enabled, the managed exporter can include bounded prompts, model responses, tool arguments, tool results, operation names, model and tool names, and success or error information.
+Treat the resulting traces as sensitive application data even when your normal prompts do not contain secrets.
+
+Managed capture selects at most 8,000 source characters from each captured string before adding truncation metadata, limits each mapping or sequence to 50 items, and limits nesting to 8 levels.
+Each captured value also has an aggregate budget of 2,048 traversed nodes and 50,000 source string characters.
+Repeated or cyclic containers are replaced with a reference-omission marker instead of being expanded again.
+After bounding a value, a JSON encoding longer than 50,000 characters is replaced by a constant opaque marker and a 16,000-character serialized preview.
+Other opaque objects are replaced by the same constant marker without reading their class name or string representation.
+It replaces binary values with their byte count and bounds dictionary key names, replacing credential-shaped matches in those names with `<redacted-secret>`.
+When a dictionary key matches a recognized credential, header, cookie, password, token, checkpoint, resume, or interrupt class, it replaces the associated value with `<redacted>`.
+It also replaces original exception text with a stable redacted error.
+Model request traces include only the bounded messages and sanitized model identifier.
+They exclude request headers, `model_settings`, `response_format`, and tool definitions or schemas.
+Model and tool spans carry the bounded content used for debugging.
+LangGraph node scopes export only bounded node names, a static LangGraph integration label, and success or error status.
+They omit raw graph inputs and outputs, callback metadata, checkpoint payloads, and interrupt or resume values so a node span does not duplicate the full conversation and graph state.
+These controls bound payload shape and remove recognized key classes.
+As a best-effort second layer, the managed exporter also scrubs recognized credential-shaped tokens, such as provider API keys, bearer tokens, and private key blocks, from bounded prompt, response, tool, and other captured string content and replaces each match with `<redacted-secret>`.
+Identifier fields are scrubbed before sanitization and carry the identifier-safe text `redacted-secret` instead.
+This value scrubbing is pattern-based and not exhaustive: a secret in an obfuscated or unrecognized form, or any sensitive text that does not match a known credential shape, can still be exported.
+Complete redaction depends on upstream content controls and on the redaction processors you run in the host collector.
+
+The sandbox sends OTLP/HTTP protobuf requests only to `http://host.openshell.internal:4318/v1/traces` and reports `service.name=nemoclaw-langchain-deepagents-code`.
+The OTLP library adds standard transport headers such as content type and content length, but the managed exporter cannot add operator-supplied custom or authentication headers.
+It cannot select a remote endpoint or receive a backend credential.
+Native LangSmith tracing and ambient OpenTelemetry exporter configuration remain disabled inside the sandbox.
+Do not put `LANGSMITH_API_KEY` or another backend credential in the sandbox.
+
+Exporter initialization, delivery, and flush failures do not stop Deep Agents Code work.
+This fail-open behavior keeps tracing outages from blocking the agent, but it also means successful agent work does not prove that traces were delivered.
+
+<Warning title="Treat the receiver and trace content as trust boundaries">
+The `observability-otlp-local` preset authorizes `/opt/venv/bin/python3*`, which is the executable OpenShell observes for Deep Agents Code.
+That permission is process-wide for the managed Python environment rather than limited to the `dcode` launcher.
+Sandbox Python can forge spans, resource attributes, and `service.name`, so the collector must not use trace fields as authenticated tenant identity.
+Any process that can reach this receiver can submit trace content without a receiver credential.
+Bind the receiver only to the private sandbox bridge, use it only with trusted local sandboxes, and apply your organization's filtering or redaction requirements in the host collector before remote export.
+This path is not a multi-tenant identity or data-loss-prevention boundary.
+</Warning>
+
+### Enable Trace Export
+
+Set the sandbox name in the host shell, then opt in during initial onboarding.
+
+```bash
+export SANDBOX_NAME=my-dcode
+nemo-deepagents onboard --name "$SANDBOX_NAME" --observability
+```
+
+NemoClaw records the choice with the onboarding session and sandbox.
+Resume and rebuild operations preserve it without requiring the flag again.
+
+To enable tracing on an existing Deep Agents Code sandbox, use the transactional rebuild opt-in.
+NemoClaw backs up the declared agent state, preserves managed MCP providers and adapter state, recreates the sandbox, and restores the backup.
+Finish active `dcode` tasks first because Deep Agents Code backup refuses to capture state while a task is running.
+
+```bash
+export SANDBOX_NAME=my-dcode
+nemo-deepagents "$SANDBOX_NAME" rebuild --observability --yes
+```
+
+The setting is part of the sandbox startup environment, so changing it cannot reuse the existing sandbox process.
+
+### Recover a Skipped Policy
+
+Balanced and Open policy tiers add the `observability-otlp-local` preset during onboarding.
+The Restricted tier suppresses it.
+`NEMOCLAW_POLICY_MODE=skip` skips policy application and reconciliation during non-interactive onboarding.
+On a new sandbox, either choice leaves the preset inactive, so the fail-open exporter cannot reach the collector until you add it.
+On an existing sandbox, skip mode leaves the current live policy unchanged.
+
+Inspect the effective policy first.
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" policy-list
+```
+
+If `observability-otlp-local` is not active, preview and apply it.
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" policy-add observability-otlp-local --dry-run
+nemo-deepagents "$SANDBOX_NAME" policy-add observability-otlp-local --yes
+```
+
+The preset permits only `POST /v1/traces` to `host.openshell.internal:4318` from `/opt/venv/bin/python3*`.
+On the Restricted tier, the next onboarding or rebuild reconciliation removes this manually added preset unless you change tiers.
+
+### Create LangSmith Credentials
+
+LangSmith is one possible downstream backend for the same backend-neutral receiver.
+Create a workspace-scoped service key for the collector when your LangSmith plan supports service keys.
+Otherwise, create a personal access token for the collector.
+Record the target workspace ID from LangSmith settings because this configuration sends `X-Tenant-Id` explicitly.
+For key types, permissions, and the workspace ID location, refer to [Create an account and API key](https://docs.langchain.com/langsmith/create-account-api-key).
+
+Set the credential only in the host shell that starts the collector.
+The following endpoint is for the default US LangSmith Cloud deployment.
+
+```bash
+read -rsp "LangSmith API key: " LANGSMITH_API_KEY
+printf '\n'
+export LANGSMITH_API_KEY
+export LANGSMITH_WORKSPACE_ID='replace-with-workspace-id'
+export LANGSMITH_PROJECT=nemoclaw-dcode
+export LANGSMITH_OTLP_TRACES_ENDPOINT=https://api.smith.langchain.com/otel/v1/traces
+```
+
+Use `https://eu.api.smith.langchain.com/otel/v1/traces` for the EU deployment, `https://apac.api.smith.langchain.com/otel/v1/traces` for the GCP-hosted APAC deployment, or `https://aws.api.smith.langchain.com/otel/v1/traces` for the AWS-hosted US deployment.
+For a self-hosted deployment, append `/api/v1/otel/v1/traces` to the LangSmith instance origin, for example `https://langsmith.example.com/api/v1/otel/v1/traces`.
+The self-hosted OTLP base is `/api/v1/otel`, and the per-signal traces exporter adds `/v1/traces`.
+The `X-Tenant-Id` header in the collector configuration selects the workspace and is required for organization-scoped service keys.
+For current endpoint guidance and supported OpenTelemetry field mappings, refer to [Trace with OpenTelemetry](https://docs.langchain.com/langsmith/trace-with-opentelemetry).
+
+### Find the Private Host Bind Address
+
+Resolve `host.openshell.internal` from the target sandbox, then verify that the resulting private IPv4 address belongs to a host interface.
+This recipe intentionally supports the Linux Docker topology and fails closed if the address is empty, public, or not assigned to the host.
+
+```bash
+OTLP_BIND_IP="$(
+  nemo-deepagents "$SANDBOX_NAME" exec -- \
+    sh -lc "getent ahostsv4 host.openshell.internal | awk 'NR == 1 { print \$1 }'"
+)"
+
+if [ -z "$OTLP_BIND_IP" ]; then
+  printf '%s\n' 'Could not resolve host.openshell.internal from the sandbox.' >&2
+  exit 1
+fi
+
+case "$OTLP_BIND_IP" in
+  10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) ;;
+  *)
+    printf 'Refusing non-private collector bind address: %s\n' "$OTLP_BIND_IP" >&2
+    exit 1
+    ;;
+esac
+
+if ! ip -o -4 address show \
+  | awk '{ sub(/\/.*/, "", $4); print $4 }' \
+  | grep -Fxq "$OTLP_BIND_IP"; then
+  printf 'Address is not assigned to this host: %s\n' "$OTLP_BIND_IP" >&2
+  exit 1
+fi
+
+printf 'Collector bind address: %s\n' "$OTLP_BIND_IP"
+```
+
+Binding to the bridge address prevents ordinary LAN exposure, but other trusted local containers can still have a route to it.
+Use a host firewall or equivalent ACL if your Docker host runs containers outside your trust boundary.
+NemoClaw does not support shared multi-user hosts as a security boundary.
+
+### Configure the Collector
+
+Create an owner-only directory for the collector configuration.
+
+```bash
+export OTEL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nemoclaw/otel"
+install -d -m 700 "$OTEL_CONFIG_DIR"
+```
+
+Save the following configuration as `$OTEL_CONFIG_DIR/collector.yaml`.
+The `debug` exporter uses basic verbosity, which records receipt counts in the collector log without printing complete span payloads.
+This example deliberately preserves the useful trace content selected by the explicit sandbox opt-in.
+Add organization-required filtering or redaction processors before `batch` if your data policy requires them.
+For a LangSmith-specific example, refer to [Trace redaction through an OpenTelemetry Collector](https://docs.langchain.com/langsmith/otel-gateway-trace-redaction).
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: basic
+  otlphttp/langsmith:
+    traces_endpoint: "${env:LANGSMITH_OTLP_TRACES_ENDPOINT}"
+    headers:
+      x-api-key: "${env:LANGSMITH_API_KEY}"
+      Langsmith-Project: "${env:LANGSMITH_PROJECT}"
+      X-Tenant-Id: "${env:LANGSMITH_WORKSPACE_ID}"
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug, otlphttp/langsmith]
+```
+
+Restrict the configuration file to the current host user.
+
+```bash
+chmod 600 "$OTEL_CONFIG_DIR/collector.yaml"
+```
+
+The receiver uses `0.0.0.0` only inside the collector container.
+The Docker command in the next section publishes it on the host's exact private bridge address rather than every host interface.
+
+### Start and Verify the Collector
+
+Pull the pinned Contrib image and validate the effective configuration before starting a long-running collector.
+The Contrib distribution is used because it contains the processors and extensions in this configuration.
+The commands run the collector as your current host user so it can read the owner-only bind-mounted configuration without widening its file mode.
+
+```bash
+export COLLECTOR_IMAGE=ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.155.0@sha256:4935caa35e9a4cb387e35732e8fb22b2b5759af8d12e7043357f03837f6e8df5
+: "${LANGSMITH_API_KEY:?Set LANGSMITH_API_KEY in this host shell.}"
+: "${LANGSMITH_WORKSPACE_ID:?Set LANGSMITH_WORKSPACE_ID in this host shell.}"
+: "${LANGSMITH_PROJECT:?Set LANGSMITH_PROJECT in this host shell.}"
+: "${LANGSMITH_OTLP_TRACES_ENDPOINT:?Set LANGSMITH_OTLP_TRACES_ENDPOINT in this host shell.}"
+: "${OTLP_BIND_IP:?Run the private bind address step first.}"
+: "${OTEL_CONFIG_DIR:?Run the collector configuration step first.}"
+docker pull "$COLLECTOR_IMAGE"
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --memory 512m \
+  --pids-limit 128 \
+  --env LANGSMITH_API_KEY \
+  --env LANGSMITH_WORKSPACE_ID \
+  --env LANGSMITH_PROJECT \
+  --env LANGSMITH_OTLP_TRACES_ENDPOINT \
+  --mount "type=bind,src=${OTEL_CONFIG_DIR}/collector.yaml,dst=/etc/otelcol-contrib/config.yaml,readonly" \
+  "$COLLECTOR_IMAGE" \
+  validate --config=/etc/otelcol-contrib/config.yaml
+```
+
+An invalid configuration exits nonzero and prints the component or field that needs correction.
+Start the collector only after validation succeeds.
+
+```bash
+docker run --detach \
+  --name nemoclaw-otel-langsmith \
+  --restart unless-stopped \
+  --user "$(id -u):$(id -g)" \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --memory 512m \
+  --pids-limit 128 \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  --publish "${OTLP_BIND_IP}:4318:4318/tcp" \
+  --publish 127.0.0.1:13133:13133/tcp \
+  --env LANGSMITH_API_KEY \
+  --env LANGSMITH_WORKSPACE_ID \
+  --env LANGSMITH_PROJECT \
+  --env LANGSMITH_OTLP_TRACES_ENDPOINT \
+  --mount "type=bind,src=${OTEL_CONFIG_DIR}/collector.yaml,dst=/etc/otelcol-contrib/config.yaml,readonly" \
+  "$COLLECTOR_IMAGE" \
+  --config=/etc/otelcol-contrib/config.yaml
+
+unset LANGSMITH_API_KEY
+```
+
+Users who can control the Docker daemon can inspect the collector process and its environment.
+Use your organization's container secret injection mechanism instead of environment variables when Docker operator access is outside the credential trust boundary.
+
+Verify the loopback-only health endpoint and the published receiver address.
+
+```bash
+curl -fsS http://127.0.0.1:13133/
+docker port nemoclaw-otel-langsmith 4318/tcp
+docker logs --tail 30 nemoclaw-otel-langsmith
+```
+
+The port output must show the value of `$OTLP_BIND_IP`, not `0.0.0.0` or `[::]`.
+
+### Verify Traces End to End
+
+Run a short headless Deep Agents Code task to generate a managed trace.
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" exec -- \
+  dcode -n "Reply with the single word traced."
+```
+
+Confirm that the collector received a trace batch and did not report a LangSmith exporter error.
+
+```bash
+docker logs --since 5m nemoclaw-otel-langsmith 2>&1 | tail -n 100
+```
+
+The basic debug exporter prints a trace count without printing the full payload.
+Then open the project named by `$LANGSMITH_PROJECT` in the [LangSmith UI](https://smith.langchain.com/) and confirm that the new trace is present.
+Both checks are required because the debug exporter can succeed while the remote LangSmith exporter fails.
+The LangSmith trace should include bounded model inputs and outputs rather than metadata alone.
+A representative task that invokes a tool should also show its bounded arguments and result on the associated tool span.
+LangGraph node scopes intentionally remain operation-only as described in the export boundary above.
+
+### Stop or Disable Trace Export
+
+NemoClaw does not start, stop, upgrade, or remove this operator-owned collector container.
+Stop and restart the host collector without changing the sandbox configuration.
+While the collector is stopped, trace delivery fails open and Deep Agents Code continues working.
+
+```bash
+docker stop nemoclaw-otel-langsmith
+docker start nemoclaw-otel-langsmith
+```
+
+To revoke the sandbox's collector reachability immediately, remove the policy preset.
+This does not change the recorded observability choice.
+A later rebuild restores the matching preset on Balanced and Open tiers, while Restricted continues to suppress it.
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" policy-remove observability-otlp-local --yes
+```
+
+To disable instrumentation persistently, use the transactional rebuild negative flag.
+NemoClaw performs the state-preserving recreation while preserving managed MCP providers and adapter state.
+Finish active `dcode` tasks before running the command.
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" rebuild --no-observability --yes
+```
+
+Remove the collector only after every sandbox that uses it has been disabled or had the policy removed.
+
+```bash
+docker rm -f nemoclaw-otel-langsmith
+```
+
+Recreate the collector container after changing its configuration, endpoint, project, workspace, or API key.
+
+### Troubleshoot Trace Export
+
+Use the following checks to isolate each hop in the export path.
+For additional collector diagnostics, refer to [Troubleshooting the OpenTelemetry Collector](https://opentelemetry.io/docs/collector/troubleshooting/).
+
+| Symptom | Check and action |
+| --- | --- |
+| Collector exits at startup | Run the validation command again, then inspect `docker logs nemoclaw-otel-langsmith`. Confirm that the image is the Contrib `0.155.0` image and that all four `LANGSMITH_*` variables were set when the container was created. |
+| Port `4318` is already allocated | Run `ss -ltnp 'sport = :4318'` and stop the conflicting listener. The managed sandbox endpoint is fixed, so changing the collector port does not work. |
+| Collector is healthy but logs no trace count | Run `policy-list` and add `observability-otlp-local` if it is absent. Confirm that `docker port` shows the current `$OTLP_BIND_IP`. Run `nemo-deepagents <sandbox> rebuild --observability --yes` if the existing sandbox was originally started without the opt-in. |
+| Collector logs `401` | Replace an invalid or expired LangSmith API key, then recreate the collector container. |
+| Collector logs `403` | Confirm the service key can write to the target workspace and that `LANGSMITH_WORKSPACE_ID` matches that workspace. Organization-scoped service keys require `X-Tenant-Id`. |
+| Collector logs `404` | Confirm that `LANGSMITH_OTLP_TRACES_ENDPOINT` uses the correct US, EU, GCP-hosted APAC, AWS-hosted US, or self-hosted API base and ends in `/otel/v1/traces`. |
+| Collector logs `429` | Review LangSmith ingestion and plan limits, then allow the configured sending queue and retry policy to drain. |
+| Debug exporter logs traces but the LangSmith project is empty | Inspect the same collector log for remote exporter errors, then verify the endpoint, project, workspace ID, and API key. |
+| Agent succeeds while every trace check fails | This is expected fail-open behavior. Troubleshoot the policy, receiver bind, collector health, and remote exporter independently rather than using the agent exit status as delivery evidence. |
 
 ## Troubleshooting
 
@@ -189,6 +608,7 @@ nemo-deepagents <sandbox-name> snapshot create --name before-change
 ```
 
 If you upgrade from a release that persisted LangSmith environment values, rebuild each existing Deep Agents Code sandbox so its image includes the corrected `start.sh`.
+If an existing sandbox displays `Choose a Recommended Model`, rebuild it so its image includes the managed startup behavior.
 
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.
 If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime.
@@ -199,6 +619,9 @@ There is no dashboard port or long-running gateway process for this harness.
 ## Next Steps
 
 - [Inference Options](../inference/inference-options) explains how to choose a provider and model.
+- [Workspace Files](../manage-sandboxes/workspace-files) explains `/sandbox/.deepagents`, memory, skills, and what NemoClaw preserves.
 - [Backup and Restore](../manage-sandboxes/backup-restore) explains snapshot and rebuild preservation.
-- [Runtime Controls](../manage-sandboxes/runtime-controls) explains sandbox mutability and host-side control boundaries.
+- [Network Policies](../reference/network-policies#local-otlp-trace-export) explains the local collector egress preset.
 - [Troubleshooting](../reference/troubleshooting) covers common setup and runtime issues.
+- [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) explains managed MCP configuration for Deep Agents sandboxes.
+- [Deep Agents Code overview](https://docs.langchain.com/oss/python/deepagents/code/overview) explains upstream `dcode` capabilities and commands.

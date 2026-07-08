@@ -15,7 +15,6 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 // Preserve the user-visible contract: onboard OpenClaw without messaging,
@@ -364,9 +363,7 @@ async function telegramEgressProbe(
   return { result, status: "inconclusive" };
 }
 
-const liveTest = shouldRunLiveE2E() ? test : test.skip;
-
-liveTest(
+test(
   "channels add/remove telegram updates registry, gateway, policy, and sandbox state",
   testTimeoutOptions(TEST_TIMEOUT_MS),
   async ({ artifacts, cleanup, environment, host, lifecycle, onboard, sandbox }) => {
@@ -398,9 +395,8 @@ liveTest(
       onboarding: "cloud-openclaw",
     });
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "channels-add-remove",
-      runner: "vitest",
       sandboxName: SANDBOX_NAME,
       contract: [
         "onboard creates an OpenClaw sandbox with no Telegram channel",

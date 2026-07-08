@@ -223,6 +223,58 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
   // ── Gateway-as-source-of-truth path (the #3175 user-reported repro) ──
 
+  it("preserves an explicit model override when the live gateway reports a conflicting model", () => {
+    const initial = {
+      agents: { defaults: { model: { primary: "anthropic/claude-sonnet-4-6" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "anthropic/claude-sonnet-4-6", name: "anthropic/claude-sonnet-4-6" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash } = runReconcile(initial, {
+      env: { NEMOCLAW_MODEL_OVERRIDE: "anthropic/claude-sonnet-4-6" },
+      gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    expect(result.status).toBe(0);
+    expect(config).toEqual(initial);
+    expect(hash).toBe("oldhash\n");
+  });
+
+  it("still reconciles from the live gateway when no explicit model override is set", () => {
+    const { result, config, hash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "nvidia-routed", name: "inference/nvidia-routed" }],
+            },
+          },
+        },
+      },
+      { gatewayModel: "nvidia/nemotron-3-super-120b-a12b" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe(
+      "inference/nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(config.models.providers.inference.models[0].name).toBe(
+      "inference/nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(config.models.providers.inference.models[0].id).toBe(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(hash).not.toBe("oldhash\n");
+    expect(hash).toContain("openclaw.json");
+  });
+
   it("patches primary AND models[0] to the live gateway model when both file fields are stale", () => {
     const { result, config, hash } = runReconcile(
       {
@@ -319,6 +371,91 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
     // models[0] is untouched in legacy-fallback mode.
     expect(config.models.providers.inference.models[0].id).toBe("nvidia/new-model");
+  });
+
+  // ── Explicit override wins over gateway reconciliation (#6065) ──
+  //
+  // #5874 re-architected gateway recovery and left reconcile running after
+  // apply_model_override with no guard, so its inference/-qualifying pass
+  // silently overwrote the user's explicit NEMOCLAW_MODEL_OVERRIDE. That
+  // regression only surfaced in the live `runtime-overrides` E2E, which does
+  // not run on PR CI. These mocked shell-units pin the guard in the PR gate.
+
+  it("leaves an explicit NEMOCLAW_MODEL_OVERRIDE untouched even when the gateway reports a divergent model", () => {
+    const { result, config, hash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/user/explicit-choice" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "user/explicit-choice", name: "inference/user/explicit-choice" }],
+            },
+          },
+        },
+      },
+      {
+        env: { NEMOCLAW_MODEL_OVERRIDE: "user/explicit-choice" },
+        gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    // Without the guard, the gateway probe would rewrite primary AND models[0]
+    // to the divergent inference/-qualified value; the override must survive.
+    expect(config.agents.defaults.model.primary).toBe("inference/user/explicit-choice");
+    expect(config.models.providers.inference.models[0].id).toBe("user/explicit-choice");
+    expect(hash).toBe("oldhash\n");
+  });
+
+  it("does not fall back to the in-file reconcile when NEMOCLAW_MODEL_OVERRIDE is set", () => {
+    // Even the legacy no-gateway path must be skipped: apply_model_override has
+    // already written the user's choice, so a stale file model must not win.
+    const { result, config, hash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/user/explicit-choice" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [
+                { id: "nvidia/stale-file-model", name: "inference/nvidia/stale-file-model" },
+              ],
+            },
+          },
+        },
+      },
+      { env: { NEMOCLAW_MODEL_OVERRIDE: "user/explicit-choice" } },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/user/explicit-choice");
+    expect(hash).toBe("oldhash\n");
+  });
+
+  it("still reconciles to the gateway model when NEMOCLAW_MODEL_OVERRIDE is unset", () => {
+    // Guard is scoped to explicit overrides only; the normal drift-correction
+    // path must keep working (regression fence around the early return itself).
+    const { result, config, hash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "nvidia-routed", name: "inference/nvidia-routed" }],
+            },
+          },
+        },
+      },
+      { gatewayModel: "nvidia/nemotron-3-super-120b-a12b" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe(
+      "inference/nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(hash).not.toBe("oldhash\n");
   });
 
   it("falls back to the in-file reconcile when the gateway probe emits malformed JSON", () => {
