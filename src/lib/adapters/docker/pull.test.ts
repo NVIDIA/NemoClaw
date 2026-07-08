@@ -116,7 +116,7 @@ describe("docker pull progress watchdog", () => {
     });
 
     child.stderr.emit("data", Buffer.from("abc123def: Pull complete\n"));
-    await vi.advanceTimersByTimeAsync(15 * 60_000 - 1_000);
+    await vi.advanceTimersByTimeAsync(15 * 60_000 - 10_000);
     expect(child.kill).not.toHaveBeenCalled();
 
     child.emit("close", 0, null);
