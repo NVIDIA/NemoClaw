@@ -107,4 +107,38 @@ describe("E2E risk signal reporter", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("refuses a symlinked prior signal without modifying its target", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    const target = path.join(dir, "target.json");
+    const signalFile = path.join(dir, RISK_SIGNAL_FILE);
+    try {
+      fs.writeFileSync(target, "protected\n");
+      fs.symlinkSync(target, signalFile);
+
+      expect(() =>
+        writeRiskSignal(environment(dir), [moduleWithStates(["passed"])], [], "passed"),
+      ).toThrow();
+      expect(fs.readFileSync(target, "utf8")).toBe("protected\n");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a hardlinked prior signal before truncating its target", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    const target = path.join(dir, "target.json");
+    const signalFile = path.join(dir, RISK_SIGNAL_FILE);
+    try {
+      fs.writeFileSync(target, "protected\n");
+      fs.linkSync(target, signalFile);
+
+      expect(() =>
+        writeRiskSignal(environment(dir), [moduleWithStates(["passed"])], [], "passed"),
+      ).toThrow(/private regular file/u);
+      expect(fs.readFileSync(target, "utf8")).toBe("protected\n");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

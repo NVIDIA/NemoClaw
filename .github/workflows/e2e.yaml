@@ -54,7 +54,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.risk_correlation || inputs.targets || 'supported' }}-${{ inputs.jobs || 'all-jobs' }}
+  group: e2e-${{ github.ref }}-${{ inputs.risk_shadow && github.run_id || inputs.targets || 'supported' }}-${{ inputs.risk_shadow && 'risk-shadow' || inputs.jobs || 'all-jobs' }}
   cancel-in-progress: false
 
 env:

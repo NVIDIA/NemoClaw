@@ -13,7 +13,9 @@ import {
   changedFilesBetween,
   classifyRiskEvidence,
   expectedRiskSignalShards,
+  findSignalFiles,
   type RiskGateState,
+  validateRiskGateState,
   validateRiskPlan,
   validateSignal,
 } from "../tools/e2e-advisor/post-merge-risk-gate.mts";
@@ -122,6 +124,54 @@ describe("post-merge E2E risk gate", () => {
       /deterministic hash/u,
     );
     expect(() => validateRiskPlan(plan, new Set())).toThrow(/unknown E2E job/u);
+  });
+
+  it("accepts only bounded gate state for this repository and exact child run", () => {
+    const gate = state();
+
+    expect(validateRiskGateState(gate, gate.repository)).toEqual(gate);
+    expect(() =>
+      validateRiskGateState({ ...gate, repository: "other/repository" }, gate.repository),
+    ).toThrow(/repository/u);
+    expect(() =>
+      validateRiskGateState({ ...gate, childRunUrl: "https://example.com/run" }, gate.repository),
+    ).toThrow(/URL/u);
+    expect(() =>
+      validateRiskGateState({ ...gate, expectedJobs: ["../unsafe"] }, gate.repository),
+    ).toThrow(/expected jobs/u);
+  });
+
+  it("bounds downloaded risk-evidence traversal by entries, depth, and signals", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-evidence-"));
+    const rootLink = `${directory}-link`;
+    const nested = path.join(directory, "artifact", "live", "job");
+    try {
+      fs.mkdirSync(nested, { recursive: true });
+      const signalFile = path.join(nested, "risk-signal.json");
+      fs.writeFileSync(signalFile, "{}\n");
+
+      expect(findSignalFiles(directory)).toEqual([signalFile]);
+      expect(() =>
+        findSignalFiles(directory, { maxDepth: 2, maxEntries: 10, maxSignalFiles: 2 }),
+      ).toThrow(/depth limit/u);
+      expect(() =>
+        findSignalFiles(directory, { maxDepth: 8, maxEntries: 2, maxSignalFiles: 2 }),
+      ).toThrow(/entry limit/u);
+      const second = path.join(directory, "artifact-2");
+      fs.mkdirSync(second);
+      fs.writeFileSync(path.join(second, "risk-signal.json"), "{}\n");
+      expect(() =>
+        findSignalFiles(directory, { maxDepth: 8, maxEntries: 10, maxSignalFiles: 1 }),
+      ).toThrow(/signal-file limit/u);
+      expect(() =>
+        findSignalFiles(directory, { maxDepth: 8, maxEntries: 10, maxSignalFiles: 0 }),
+      ).toThrow(/limits are invalid/u);
+      fs.symlinkSync(directory, rootLink, "dir");
+      expect(() => findSignalFiles(rootLink)).toThrow(/root must be a directory, not a symlink/u);
+    } finally {
+      fs.rmSync(rootLink, { force: true });
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("accepts only signals bound to the expected job, SHA, plan, and correlation", () => {

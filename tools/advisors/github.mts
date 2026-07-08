@@ -80,9 +80,9 @@ export async function githubApi<T>(
   token: string,
   options: GitHubRequestOptions = {},
 ): Promise<T> {
-  // lgtm[js/file-access-to-http] Advisor workflows intentionally send normalized
-  // artifact summaries and strictly validated dispatch inputs to GitHub APIs.
-  // Callers construct apiPath from fixed workflow/comment endpoints, not PR text.
+  // Advisor workflows intentionally send normalized artifact summaries and
+  // strictly validated dispatch inputs to fixed GitHub API endpoints.
+  // codeql[js/file-access-to-http]
   const response = await fetch(`https://api.github.com/${apiPath}`, {
     method: options.method || "GET",
     headers: {
@@ -92,6 +92,8 @@ export async function githubApi<T>(
       "X-GitHub-Api-Version": "2022-11-28",
       ...(options.userAgent ? { "User-Agent": options.userAgent } : {}),
     },
+    // Sending reviewed file-derived summaries is this adapter's purpose.
+    // codeql[js/file-access-to-http]
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   const text = await response.text();

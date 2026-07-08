@@ -16,6 +16,7 @@ const E2E_PATH = ".github/workflows/e2e.yaml";
 type TriggeredWorkflow = Workflow & {
   on?: Record<string, unknown>;
   permissions?: Record<string, string>;
+  concurrency?: { group: string; "cancel-in-progress": boolean };
 };
 
 function step(job: WorkflowJob, name: string): WorkflowStep {
@@ -59,6 +60,8 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     const start = step(job, "Build plan and dispatch exact-commit E2E");
     const wait = step(job, "Wait for correlated E2E run");
     const finish = step(job, "Complete exact-commit shadow check");
+    const completionFallback = step(job, "Close shadow check after completion failure");
+    const propagateFailure = step(job, "Propagate shadow completion failure");
 
     expect(checkout.with).toMatchObject({
       ref: "${{ github.event.after }}",
@@ -68,15 +71,24 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     expect(start.run).toContain("post-merge-risk-gate.mts --mode start");
     expect(start.run).toContain('--base "${{ github.event.before }}"');
     expect(start.run).toContain('--commit "${{ github.event.after }}"');
-    expect(wait.run).toContain("timeout --signal=TERM --kill-after=30s 100m");
+    expect(wait.run).toContain("timeout --signal=TERM --kill-after=30s 105m");
+    expect(finish.id).toBe("finish");
     expect(finish.if).toContain("always()");
+    expect(finish["continue-on-error"]).toBe(true);
     expect(finish.run).toContain("post-merge-risk-gate.mts --mode finish");
+    expect(completionFallback.if).toContain("steps.finish.outcome == 'failure'");
+    expect(completionFallback.run).toContain("post-merge-risk-gate.mts --mode abandon");
+    expect(propagateFailure.if).toContain("steps.finish.outcome == 'failure'");
   });
 
   it("binds every E2E checkout and test signal to the exact merged commit", () => {
-    const workflow = readYaml<Workflow & { env?: Record<string, string>; "run-name"?: string }>(
-      E2E_PATH,
-    );
+    const workflow = readYaml<
+      Workflow & {
+        env?: Record<string, string>;
+        "run-name"?: string;
+        concurrency?: { group: string; "cancel-in-progress": boolean };
+      }
+    >(E2E_PATH);
     const allSteps = Object.values(workflow.jobs).flatMap((job) => job.steps ?? []);
     const checkouts = allSteps.filter((candidate) =>
       candidate.uses?.startsWith("actions/checkout@"),
@@ -86,6 +98,8 @@ describe("post-merge E2E risk gate shadow workflow", () => {
       .filter((run) => run.includes("npx vitest run --project e2e-live"));
 
     expect(workflow["run-name"]).toContain("inputs.risk_correlation");
+    expect(workflow.concurrency?.group).not.toContain("inputs.risk_correlation");
+    expect(workflow.concurrency?.group).toContain("inputs.risk_shadow && github.run_id");
     expect(workflow.env).toMatchObject({
       NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
       NEMOCLAW_E2E_RISK_PLAN_HASH: "${{ inputs.risk_plan_hash }}",

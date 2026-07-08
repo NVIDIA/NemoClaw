@@ -8,6 +8,7 @@ on:
     branches: [main]
 
 permissions:
+  # Required to dispatch the separate E2E workflow; no other Actions mutation is performed.
   actions: write
   checks: write
   contents: read
@@ -80,7 +81,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.start.outputs.run_id }}
         run: >-
-          timeout --signal=TERM --kill-after=30s 100m
+          timeout --signal=TERM --kill-after=30s 105m
           gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status
 
       - name: Download correlated E2E evidence
@@ -91,8 +92,10 @@ jobs:
           RUN_ID: ${{ steps.start.outputs.run_id }}
         run: gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --dir /tmp/e2e-risk-evidence
 
-      - name: Complete exact-commit shadow check
+      - id: finish
+        name: Complete exact-commit shadow check
         if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
@@ -100,3 +103,16 @@ jobs:
           --mode finish
           --state /tmp/e2e-risk-gate-state.json
           --evidence /tmp/e2e-risk-evidence
+
+      - name: Close shadow check after completion failure
+        if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.dispatched == 'true' && steps.finish.outcome == 'failure' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e-advisor/post-merge-risk-gate.mts
+          --mode abandon
+          --check-id "${{ steps.start.outputs.check_id }}"
+
+      - name: Propagate shadow completion failure
+        if: ${{ steps.finish.outcome == 'failure' }}
+        run: exit 1

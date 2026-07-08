@@ -15,6 +15,7 @@ import { githubApi } from "../advisors/github.mts";
 import { parseArgs } from "../advisors/io.mts";
 import { buildRiskPlan, type RiskPlan } from "../advisors/risk-plan.mts";
 import { readFreeStandingJobsInventory } from "../e2e/workflow-boundary.mts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
 
 const E2E_WORKFLOW = "e2e.yaml";
@@ -26,6 +27,11 @@ const SHARD_PATTERN = /^(?:default|[A-Za-z0-9][A-Za-z0-9_-]*)$/u;
 const CORRELATION_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const MAX_PLAN_BYTES = 1024 * 1024;
+const DEFAULT_EVIDENCE_LIMITS = {
+  maxDepth: 8,
+  maxEntries: 4096,
+  maxSignalFiles: 12,
+} as const;
 
 type CheckConclusion = "success" | "failure" | "neutral";
 
@@ -83,10 +89,63 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${file} must be a regular file`);
-  if (stat.size > maxBytes) throw new Error(`${file} exceeds ${maxBytes} bytes`);
-  return JSON.parse(fs.readFileSync(file, "utf8"));
+  return JSON.parse(readPrivateRegularFile(file, { maxBytes })!);
+}
+
+export function validateRiskGateState(value: unknown, expectedRepository: string): RiskGateState {
+  if (!isRecord(value) || value.version !== 1) throw new Error("invalid risk-gate state version");
+  if (
+    value.repository !== expectedRepository ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(expectedRepository)
+  ) {
+    throw new Error("risk-gate state repository does not match this workflow");
+  }
+  if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
+    throw new Error("risk-gate state commit SHA is invalid");
+  }
+  if (typeof value.planHash !== "string" || !HASH_PATTERN.test(value.planHash)) {
+    throw new Error("risk-gate state plan hash is invalid");
+  }
+  if (typeof value.correlationId !== "string" || !CORRELATION_PATTERN.test(value.correlationId)) {
+    throw new Error("risk-gate state correlation id is invalid");
+  }
+  if (
+    !Array.isArray(value.expectedJobs) ||
+    value.expectedJobs.length < 1 ||
+    value.expectedJobs.length > 3 ||
+    !value.expectedJobs.every((job) => typeof job === "string" && JOB_PATTERN.test(job)) ||
+    new Set(value.expectedJobs).size !== value.expectedJobs.length
+  ) {
+    throw new Error("risk-gate state expected jobs are invalid");
+  }
+  if (!isRecord(value.expectedShards)) throw new Error("risk-gate state shards are invalid");
+  const shardJobs = Object.keys(value.expectedShards).sort();
+  if (JSON.stringify(shardJobs) !== JSON.stringify([...value.expectedJobs].sort())) {
+    throw new Error("risk-gate state shard jobs do not match expected jobs");
+  }
+  for (const job of value.expectedJobs) {
+    const shards = value.expectedShards[job];
+    if (
+      !Array.isArray(shards) ||
+      shards.length < 1 ||
+      new Set(shards).size !== shards.length ||
+      !shards.every((shard) => typeof shard === "string" && SHARD_PATTERN.test(shard))
+    ) {
+      throw new Error(`risk-gate state shards are invalid for ${job}`);
+    }
+  }
+  if (typeof value.requiresManualExpansion !== "boolean") {
+    throw new Error("risk-gate manual-expansion state is invalid");
+  }
+  if (!Number.isSafeInteger(value.checkRunId) || Number(value.checkRunId) < 1) {
+    throw new Error("risk-gate check id is invalid");
+  }
+  if (!Number.isSafeInteger(value.childRunId) || Number(value.childRunId) < 1) {
+    throw new Error("risk-gate child run id is invalid");
+  }
+  const expectedUrl = `https://github.com/${expectedRepository}/actions/runs/${value.childRunId}`;
+  if (value.childRunUrl !== expectedUrl) throw new Error("risk-gate child run URL is invalid");
+  return value as RiskGateState;
 }
 
 export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string>): RiskPlan {
@@ -207,6 +266,9 @@ export function classifyRiskEvidence(options: {
   }
   const missing = expectedEvidence.filter((key) => !byJobShard.has(key));
   if (missing.length > 0) {
+    // Missing bound evidence is unverifiable, not proof that product behavior
+    // failed. Shadow checks become green only for complete evidence; neutral
+    // keeps incomplete infrastructure evidence from masquerading as a pass.
     return {
       conclusion: "neutral",
       title: "Selected E2E jobs are missing test evidence",
@@ -254,7 +316,26 @@ export function classifyRiskEvidence(options: {
 
 function appendOutput(name: string, value: string): void {
   const output = process.env.GITHUB_OUTPUT;
-  if (output) fs.appendFileSync(output, `${name}=${value}\n`);
+  if (!output) return;
+  if (!/^(?:check_id|dispatched|finalized|run_id)$/u.test(name)) {
+    throw new Error("invalid controller output name");
+  }
+  if (!/^(?:true|false|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error("invalid controller output value");
+  }
+  const descriptor = fs.openSync(
+    output,
+    fs.constants.O_WRONLY | fs.constants.O_APPEND | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error("GITHUB_OUTPUT must be a regular file");
+    // GitHub supplies this output file; values are restricted above to fixed
+    // booleans or positive decimal IDs before the descriptor write.
+    // codeql[js/http-to-file-access]
+    fs.writeFileSync(descriptor, `${name}=${value}\n`, "utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 async function createCheck(
@@ -274,6 +355,8 @@ async function createCheck(
     },
     userAgent: "nemoclaw-e2e-risk-gate",
   });
+  if (!Number.isSafeInteger(check.id) || check.id < 1)
+    throw new Error("GitHub returned an invalid check id");
   return check.id;
 }
 
@@ -414,7 +497,14 @@ async function findCorrelatedRun(
     );
     const match = payload.workflow_runs.find(
       (run) =>
-        run.display_title === expectedTitle && Date.parse(run.created_at) >= dispatchedAt - 5000,
+        run.display_title === expectedTitle &&
+        run.name === "E2E" &&
+        run.event === "workflow_dispatch" &&
+        SHA_PATTERN.test(run.head_sha) &&
+        Number.isSafeInteger(run.id) &&
+        run.id > 0 &&
+        run.html_url === `https://github.com/${repository}/actions/runs/${run.id}` &&
+        Date.parse(run.created_at) >= dispatchedAt - 5000,
     );
     if (match) return match;
     await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -440,6 +530,9 @@ async function start(options: {
     commitSha: options.commitSha,
   });
 
+  // The inventory and controller are both read from the exact trusted main
+  // commit. A second copied allowlist would drift without adding a trust
+  // boundary: compromising this inventory already means compromising main.
   const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
   const plan = validateRiskPlan(
     buildRiskPlan({
@@ -448,7 +541,7 @@ async function start(options: {
     }),
     allowedJobs,
   );
-  fs.writeFileSync(options.planPath, `${JSON.stringify(plan, null, 2)}\n`, { mode: 0o600 });
+  writePrivateRegularFile(options.planPath, `${JSON.stringify(plan, null, 2)}\n`);
 
   const checkRunId = await createCheck(
     repository,
@@ -504,7 +597,7 @@ async function start(options: {
       childRunId: child.id,
       childRunUrl: child.html_url,
     };
-    fs.writeFileSync(options.statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+    writePrivateRegularFile(options.statePath, `${JSON.stringify(state, null, 2)}\n`);
     appendOutput("dispatched", "true");
     appendOutput("run_id", String(child.id));
   } catch (error) {
@@ -518,25 +611,66 @@ async function start(options: {
   }
 }
 
-function findSignalFiles(root: string): string[] {
+export function findSignalFiles(
+  root: string,
+  limits: {
+    maxDepth: number;
+    maxEntries: number;
+    maxSignalFiles: number;
+  } = DEFAULT_EVIDENCE_LIMITS,
+): string[] {
   if (!fs.existsSync(root)) return [];
+  if (
+    !Number.isSafeInteger(limits.maxDepth) ||
+    limits.maxDepth < 0 ||
+    !Number.isSafeInteger(limits.maxEntries) ||
+    limits.maxEntries < 1 ||
+    !Number.isSafeInteger(limits.maxSignalFiles) ||
+    limits.maxSignalFiles < 1
+  ) {
+    throw new Error("risk evidence traversal limits are invalid");
+  }
+  const rootStat = fs.lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error("risk evidence root must be a directory, not a symlink");
+  }
   const files: string[] = [];
-  const visit = (directory: string): void => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const full = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) throw new Error("risk evidence must not contain symlinks");
-      if (entry.isDirectory()) visit(full);
-      else if (entry.isFile() && entry.name === "risk-signal.json") files.push(full);
+  let entriesVisited = 0;
+  const visit = (directory: string, depth: number): void => {
+    const handle = fs.opendirSync(directory);
+    try {
+      let entry = handle.readSync();
+      while (entry !== null) {
+        entriesVisited += 1;
+        if (entriesVisited > limits.maxEntries) {
+          throw new Error("risk evidence exceeds the entry limit");
+        }
+        const full = path.join(directory, entry.name);
+        if (entry.isSymbolicLink()) throw new Error("risk evidence must not contain symlinks");
+        if (entry.isDirectory()) {
+          if (depth >= limits.maxDepth) throw new Error("risk evidence exceeds the depth limit");
+          visit(full, depth + 1);
+        } else if (entry.isFile() && entry.name === "risk-signal.json") {
+          files.push(full);
+          if (files.length > limits.maxSignalFiles) {
+            throw new Error("risk evidence exceeds the signal-file limit");
+          }
+        }
+        entry = handle.readSync();
+      }
+    } finally {
+      handle.closeSync();
     }
   };
-  visit(root);
+  visit(root, 0);
   return files.sort((left, right) => left.localeCompare(right));
 }
 
 async function finish(options: { statePath: string; evidencePath: string }): Promise<void> {
   const token = process.env.GITHUB_TOKEN ?? "";
-  const state = readRegularJson(options.statePath) as RiskGateState;
-  if (!token || state.version !== 1 || !SHA_PATTERN.test(state.commitSha)) {
+  const repository = process.env.GITHUB_REPOSITORY ?? "";
+  const state = validateRiskGateState(readRegularJson(options.statePath), repository);
+  if (!token) {
     throw new Error("valid gate state and GITHUB_TOKEN are required");
   }
   try {
@@ -549,6 +683,8 @@ async function finish(options: { statePath: string; evidencePath: string }): Pro
       child.id !== state.childRunId ||
       child.name !== "E2E" ||
       child.event !== "workflow_dispatch" ||
+      !SHA_PATTERN.test(child.head_sha) ||
+      child.html_url !== state.childRunUrl ||
       child.display_title !== `E2E risk ${state.correlationId}`
     ) {
       throw new Error("correlated E2E workflow identity changed");

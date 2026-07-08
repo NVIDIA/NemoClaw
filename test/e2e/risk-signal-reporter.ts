@@ -7,6 +7,10 @@ import path from "node:path";
 
 import type { TestModule } from "vitest/node";
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
+import {
+  readPrivateRegularFile,
+  writePrivateRegularFile,
+} from "../../tools/e2e-advisor/private-file.ts";
 import type { E2eRiskSignal } from "../../tools/e2e-advisor/risk-signal.ts";
 
 export const RISK_SIGNAL_FILE = "risk-signal.json";
@@ -93,6 +97,9 @@ function mergeSignal(previous: E2eRiskSignal | null, current: E2eRiskSignal): E2
   ) {
     throw new Error("risk signal metadata changed between Vitest invocations");
   }
+  // Each call represents a separate Vitest command in the same job/shard;
+  // Vitest has already collapsed retries inside that command. Summing keeps
+  // failures sticky, because any failed or unhandled count makes the gate red.
   return {
     ...current,
     passed: previous.passed + current.passed,
@@ -110,12 +117,8 @@ function mergeSignal(previous: E2eRiskSignal | null, current: E2eRiskSignal): E2
 }
 
 function readPrevious(file: string): E2eRiskSignal | null {
-  if (!fs.existsSync(file)) return null;
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error("risk signal output must be a regular file");
-  }
-  return JSON.parse(fs.readFileSync(file, "utf8")) as E2eRiskSignal;
+  const contents = readPrivateRegularFile(file, { allowMissing: true, maxBytes: 64 * 1024 });
+  return contents === null ? null : (JSON.parse(contents) as E2eRiskSignal);
 }
 
 export function writeRiskSignal(
@@ -139,7 +142,7 @@ export function writeRiskSignal(
   fs.mkdirSync(environment.artifactDir, { recursive: true });
   const file = path.join(environment.artifactDir, RISK_SIGNAL_FILE);
   const merged = mergeSignal(readPrevious(file), signal);
-  fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
+  writePrivateRegularFile(file, `${JSON.stringify(merged, null, 2)}\n`);
   return merged;
 }
 
