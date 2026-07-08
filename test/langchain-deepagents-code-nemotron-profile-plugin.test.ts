@@ -20,6 +20,14 @@ const pluginSourcePath = path.join(
 );
 const pluginProjectPath = path.join(pluginProjectDir, "pyproject.toml");
 const validatorPath = path.join(agentDir, "validate-nemotron-ultra-profile.py");
+const e2eProfileCheckPath = path.join(
+  repoRoot,
+  "test",
+  "e2e",
+  "e2e-cloud-experimental",
+  "checks",
+  "03-deepagents-code-nemotron-ultra-profile.sh",
+);
 const pythonBin = execFileSync("python3", ["-c", "import sys; print(sys.executable)"], {
   encoding: "utf8",
 }).trim();
@@ -61,10 +69,26 @@ type ProbeResult = {
   canonicalPresent: boolean;
   error: string | null;
   guardProbe: {
-    async: { content: string; id: string; name: string; status: string; calls: number };
+    async: {
+      content: string;
+      id: string;
+      legacyText: string;
+      name: string;
+      status: string;
+      text: string;
+      calls: number;
+    };
     concrete: { calls: number; command: string; result: string };
     nonExecute: { calls: number; result: string };
-    sync: { content: string; id: string; name: string; status: string; calls: number };
+    sync: {
+      content: string;
+      id: string;
+      legacyText: string;
+      name: string;
+      status: string;
+      text: string;
+      calls: number;
+    };
   } | null;
   registryKeys: string[];
   unrelatedPresent: boolean;
@@ -148,12 +172,29 @@ def register_harness_profile(key, profile):
   writeFixtureFile(
     root,
     "langchain_core/messages.py",
-    `class ToolMessage:
+    `class TextAccessor(str):
+    def __call__(self):
+        return str(self)
+
+
+class ToolMessage:
     def __init__(self, *, content, name, tool_call_id, status):
         self.content = content
         self.name = name
         self.tool_call_id = tool_call_id
         self.status = status
+
+    @property
+    def text(self):
+        if isinstance(self.content, str):
+            value = self.content
+        else:
+            value = "".join(
+                block if isinstance(block, str) else block.get("text", "")
+                for block in self.content
+                if isinstance(block, str) or block.get("type") == "text"
+            )
+        return TextAccessor(value)
 `,
   );
   const nativeProfilePath = writeFixtureFile(
@@ -446,15 +487,19 @@ if error is None and ${options.probeGuard ? "True" : "False"}:
         "sync": {
             "content": sync_result.content,
             "id": sync_result.tool_call_id,
+            "legacyText": sync_result.text(),
             "name": sync_result.name,
             "status": sync_result.status,
+            "text": str(sync_result.text),
             "calls": len(sync_calls),
         },
         "async": {
             "content": async_result.content,
             "id": async_result.tool_call_id,
+            "legacyText": async_result.text(),
             "name": async_result.name,
             "status": async_result.status,
+            "text": str(async_result.text),
             "calls": len(async_calls),
         },
         "concrete": {
@@ -648,12 +693,18 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     });
     expect(result.probe.guardProbe?.sync.content).toContain("placeholder '[content]'");
     expect(result.probe.guardProbe?.sync.content).toContain("complete command");
+    expect(result.probe.guardProbe?.sync.text).toBe(result.probe.guardProbe?.sync.content);
+    expect(result.probe.guardProbe?.sync.legacyText).toBe(result.probe.guardProbe?.sync.content);
     expect(result.probe.guardProbe?.async).toMatchObject({
       id: "async-call",
       name: "execute",
       status: "error",
       calls: 0,
     });
+    expect(result.probe.guardProbe?.async.content).toContain("placeholder '[content]'");
+    expect(result.probe.guardProbe?.async.content).toContain("complete command");
+    expect(result.probe.guardProbe?.async.text).toBe(result.probe.guardProbe?.async.content);
+    expect(result.probe.guardProbe?.async.legacyText).toBe(result.probe.guardProbe?.async.content);
     expect(result.probe.guardProbe?.concrete).toEqual({
       calls: 1,
       command: "printf concrete",
@@ -664,6 +715,22 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
       result: "non-execute-handler-result",
     });
     expectOfficialSourcesUnchanged(fixture);
+  });
+
+  it("pins guard validators to the ToolMessage string-content API", () => {
+    const requirements = fs.readFileSync(path.join(agentDir, "requirements.lock"), "utf8");
+    const validator = fs.readFileSync(validatorPath, "utf8");
+    const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
+
+    expect(requirements).toMatch(/^langchain-core==1\.4\.8 /m);
+    for (const source of [validator, e2eCheck]) {
+      expect(source).toContain("isinstance(sync_result.content, str)");
+      expect(source).toContain("isinstance(async_result.content, str)");
+      expect(source).toContain('"complete command" in sync_result.content');
+      expect(source).toContain('"complete command" in async_result.content');
+      expect(source).not.toContain("sync_result.text");
+      expect(source).not.toContain("async_result.text");
+    }
   });
 
   it.each([

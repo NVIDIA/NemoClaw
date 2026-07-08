@@ -99,6 +99,11 @@ function modelNameForOpenAiProvider(model: string): string {
 function buildConfig(settings: Settings): string {
   const model = modelNameForOpenAiProvider(settings.model);
   const defaultModel = `openai:${model}`;
+  // Source boundary: NVIDIA's Ultra serving template owns the empty assistant
+  // content behavior; this generator owns only the managed per-model request
+  // parameters. Keep the exact invalid state, regression proof, and separate
+  // removal conditions for this option and the dispatch guard in
+  // dependency-review.md under "Managed Ultra compatibility workarounds."
   const modelParams = NEMOTRON_ULTRA_MODEL_IDS.has(model)
     ? [
         "",

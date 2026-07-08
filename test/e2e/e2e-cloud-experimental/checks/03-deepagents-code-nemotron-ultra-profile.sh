@@ -226,7 +226,9 @@ assert sync_calls == []
 assert sync_result.tool_call_id == "e2e-sync"
 assert sync_result.name == "execute"
 assert sync_result.status == "error"
-assert "complete command" in sync_result.text
+assert isinstance(sync_result.content, str)
+assert "placeholder '[content]'" in sync_result.content
+assert "complete command" in sync_result.content
 
 async_calls = []
 async_request = GuardRequest("execute", "[content]", "e2e-async")
@@ -243,6 +245,9 @@ assert async_calls == []
 assert async_result.tool_call_id == "e2e-async"
 assert async_result.name == "execute"
 assert async_result.status == "error"
+assert isinstance(async_result.content, str)
+assert "placeholder '[content]'" in async_result.content
+assert "complete command" in async_result.content
 
 concrete_calls = []
 concrete_request = GuardRequest("execute", "printf concrete", "e2e-concrete")

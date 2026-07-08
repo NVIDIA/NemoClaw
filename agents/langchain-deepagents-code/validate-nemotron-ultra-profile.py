@@ -47,7 +47,7 @@ EXPECTED_PROFILE_ENTRY_POINT = (
 )
 EXPECTED_PLUGIN_LICENSE_EXPRESSION = "Apache-2.0"
 EXPECTED_PLUGIN_SOURCE_SHA256 = (
-    "ed83417d733f10e71eecde77da5a037f7985d0e4ad4f87f8d9007357802e4e7a"
+    "691c07906ff2df0fdc6d4bcd6d9af2fe9c8d2640db30463cd4f79235912629b2"
 )
 EXPECTED_NATIVE_PROFILE_SHA256 = (
     "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
@@ -315,8 +315,12 @@ def validate_direct_guard_contract() -> None:
         sync_result.status == "error", "sync guard did not mark the result as error"
     )
     require(
-        "placeholder '[content]'" in sync_result.text
-        and "complete command" in sync_result.text,
+        isinstance(sync_result.content, str),
+        "sync guard result content is not text",
+    )
+    require(
+        "placeholder '[content]'" in sync_result.content
+        and "complete command" in sync_result.content,
         "sync guard result is not actionable",
     )
 
@@ -338,6 +342,15 @@ def validate_direct_guard_contract() -> None:
     require(async_result.name == "execute", "async guard lost tool name")
     require(
         async_result.status == "error", "async guard did not mark the result as error"
+    )
+    require(
+        isinstance(async_result.content, str),
+        "async guard result content is not text",
+    )
+    require(
+        "placeholder '[content]'" in async_result.content
+        and "complete command" in async_result.content,
+        "async guard result is not actionable",
     )
 
     concrete_calls: list[GuardRequest] = []

@@ -26,8 +26,10 @@ MANAGED_PROFILE_KEYS = (
     "openai:nvidia/nvidia/nemotron-3-ultra",
 )
 _INVALID_EXECUTE_COMMAND = "[content]"
-_REGISTERED_CANONICAL_PROFILE: Any | None = None
-_REGISTERED_MANAGED_PROFILE: Any | None = None
+_REGISTERED_PROFILES: dict[str, Any | None] = {
+    "canonical": None,
+    "managed": None,
+}
 
 # invalidState: Deep Agents resolves pre-built ChatOpenAI models under `openai:`
 # keys, while its native Ultra profile is registered under an NVIDIA key.
@@ -177,9 +179,6 @@ def _register_aliases(
     register_profile: Callable[[str, Any], None],
     overlay: Any,
 ) -> None:
-    global _REGISTERED_CANONICAL_PROFILE  # noqa: PLW0603
-    global _REGISTERED_MANAGED_PROFILE  # noqa: PLW0603
-
     native_profile = registry.get(CANONICAL_PROFILE_KEY)
     if native_profile is None:
         raise _fail(f"canonical profile {CANONICAL_PROFILE_KEY!r} is not registered")
@@ -187,10 +186,10 @@ def _register_aliases(
     existing = tuple(key in registry for key in MANAGED_PROFILE_KEYS)
     if all(existing):
         if (
-            native_profile is _REGISTERED_CANONICAL_PROFILE
-            and _REGISTERED_MANAGED_PROFILE is not None
+            native_profile is _REGISTERED_PROFILES["canonical"]
+            and _REGISTERED_PROFILES["managed"] is not None
             and all(
-                registry[key] is _REGISTERED_MANAGED_PROFILE
+                registry[key] is _REGISTERED_PROFILES["managed"]
                 for key in MANAGED_PROFILE_KEYS
             )
         ):
@@ -216,11 +215,11 @@ def _register_aliases(
     except Exception:
         for key in MANAGED_PROFILE_KEYS:
             registry.pop(key, None)
-        _REGISTERED_CANONICAL_PROFILE = None
-        _REGISTERED_MANAGED_PROFILE = None
+        _REGISTERED_PROFILES["canonical"] = None
+        _REGISTERED_PROFILES["managed"] = None
         raise
-    _REGISTERED_CANONICAL_PROFILE = native_profile
-    _REGISTERED_MANAGED_PROFILE = managed_profile
+    _REGISTERED_PROFILES["canonical"] = native_profile
+    _REGISTERED_PROFILES["managed"] = managed_profile
 
 
 def register() -> None:

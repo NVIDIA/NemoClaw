@@ -23,7 +23,7 @@ NemoClaw no longer vendors or overlays that source.
 - Native profile SHA-256: `c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `ed83417d733f10e71eecde77da5a037f7985d0e4ad4f87f8d9007357802e4e7a`
+- Adapter module SHA-256: `691c07906ff2df0fdc6d4bcd6d9af2fe9c8d2640db30463cd4f79235912629b2`
 - Adapter project metadata SHA-256: `7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
@@ -77,6 +77,44 @@ case-insensitive `[content]` value passed as the complete `execute` command;
 the canonical NVIDIA profile and unrelated models remain unchanged. The
 released SDK has no public profile getter or alias API. The adapter does not add
 a provider-wide OpenAI profile.
+
+### Managed Ultra compatibility workarounds
+
+Two localized behaviors close separate invalid states on the managed Ultra
+aliases. They are not a new provider profile and do not modify the reviewed
+canonical NVIDIA profile.
+
+For `force_nonempty_content`, the invalid state originates in the NVIDIA Ultra
+chat template/serving path: a Chat Completions response that combines reasoning
+and tool calls can otherwise carry empty assistant content. That response shape
+is outside NemoClaw; this repository owns only the generated DCode provider
+configuration, so `generate-config.ts` supplies the model-specific template
+argument at that request boundary. Fixing the serving template, model, or
+third-party client in this repository would require vendoring an upstream
+component and would violate the released-dependency boundary. The focused config
+tests prove both managed Ultra IDs receive the argument and unrelated models do
+not; the Deep Agents E2E verifies the installed request shape. Remove this
+argument only after a reviewed serving-template or client update produces
+nonempty assistant content for reasoning-plus-tool-call turns without it, and
+the live DCode Ultra E2E passes for both managed model IDs with the override
+deleted.
+
+For the exact `[content]` guard, the invalid state is a model-produced tool call
+whose complete `execute.command` is the literal placeholder (ignoring only outer
+whitespace and case). The released Deep Agents parser/profile can carry that
+argument to normal tool middleware, where an unrestricted execute backend would
+otherwise treat it as a shell command. The model/provider emission and the
+hash-locked `deepagents==0.7.0a6` canonical profile are upstream boundaries;
+NemoClaw owns the two managed aliases and the final middleware immediately before
+dispatch. The adapter therefore rejects only that observed complete argument and
+leaves concrete commands, other tools, the canonical NVIDIA profile, and
+unrelated models unchanged. Focused fixture tests plus the isolated image
+validator cover sync and async rejection, concrete and non-execute pass-through,
+and graph dispatch with shell restrictions disabled; the Deep Agents E2E repeats
+the installed guard contract. Remove the guard only after a reviewed model,
+serving-template, and Deep Agents update no longer emits or converts `[content]`
+into an execute call across native and repaired tool-call paths, and those tests
+plus the live DCode Ultra E2E pass with the middleware removed.
 
 The adapter verifies the exact DCode and Deep Agents versions plus the official
 native-profile and bootstrap source hashes. It also binds the imported Deep
