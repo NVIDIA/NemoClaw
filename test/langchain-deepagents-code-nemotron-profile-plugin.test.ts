@@ -42,6 +42,7 @@ const MANAGED_MODEL_ALIASES = [
   "openai:nvidia/nemotron-3-ultra-550b-a55b",
   "openai:nvidia/nvidia/nemotron-3-ultra",
 ] as const;
+const MANAGED_MODEL_IDS = MANAGED_MODEL_ALIASES.map((alias) => alias.slice("openai:".length));
 
 const NATIVE_PROFILE_SOURCE = `"""Focused native Nemotron profile fixture."""
 
@@ -79,6 +80,12 @@ type ProbeResult = {
       calls: number;
     };
     concrete: { calls: number; command: string; result: string };
+    internalWhitespace: {
+      calls: number;
+      content: string;
+      id: string;
+      status: string;
+    };
     nonExecute: { calls: number; result: string };
     sync: {
       content: string;
@@ -96,6 +103,12 @@ type ProbeResult = {
 
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function managedUltraModelIdsIn(source: string): string[] {
+  return [
+    ...new Set(source.match(/nvidia\/(?:nvidia\/)?nemotron-3-ultra(?:-550b-a55b)?/g) ?? []),
+  ].sort();
 }
 
 function replaceHashDefinitions(
@@ -383,6 +396,7 @@ function runPlugin(
   options: {
     additionalPythonRoots?: string[];
     aliasState?: "complete" | "conflict" | "partial";
+    concurrentRegisterCalls?: number;
     failKey?: string;
     probeGuard?: boolean;
     registerCalls?: number;
@@ -394,6 +408,8 @@ function runPlugin(
   const pluginRoot = path.dirname(path.dirname(pluginPath));
   const script = `import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from deepagents.profiles.harness.harness_profiles import HarnessProfile, _HARNESS_PROFILES
 
 class NativeMiddleware:
@@ -421,8 +437,21 @@ from nemoclaw_deepagents_profile import register
 
 error = None
 try:
-    for _ in range(${options.registerCalls ?? 1}):
-        register()
+    concurrent_calls = ${options.concurrentRegisterCalls ?? 0}
+    if concurrent_calls:
+        barrier = Barrier(concurrent_calls)
+
+        def register_concurrently():
+            barrier.wait()
+            register()
+
+        with ThreadPoolExecutor(max_workers=concurrent_calls) as executor:
+            futures = [executor.submit(register_concurrently) for _ in range(concurrent_calls)]
+            for future in futures:
+                future.result()
+    else:
+        for _ in range(${options.registerCalls ?? 1}):
+            register()
 except Exception as exc:
     error = str(exc)
 
@@ -475,6 +504,19 @@ if error is None and ${options.probeGuard ? "True" : "False"}:
 
     concrete_result = guard.wrap_tool_call(concrete_request, concrete_handler)
 
+    internal_whitespace_calls = []
+    internal_whitespace_request = Request(
+        "execute", "\\t[  content  ]\\n", "internal-whitespace-call"
+    )
+
+    def internal_whitespace_handler(request):
+        internal_whitespace_calls.append(request)
+        return "internal-whitespace-handler-result"
+
+    internal_whitespace_result = guard.wrap_tool_call(
+        internal_whitespace_request, internal_whitespace_handler
+    )
+
     non_execute_calls = []
     non_execute_request = Request("write_file", "[content]", "write-call")
 
@@ -506,6 +548,12 @@ if error is None and ${options.probeGuard ? "True" : "False"}:
             "calls": len(concrete_calls),
             "command": concrete_calls[0].tool_call["args"]["command"],
             "result": concrete_result,
+        },
+        "internalWhitespace": {
+            "calls": len(internal_whitespace_calls),
+            "content": internal_whitespace_result.content,
+            "id": internal_whitespace_result.tool_call_id,
+            "status": internal_whitespace_result.status,
         },
         "nonExecute": {
             "calls": len(non_execute_calls),
@@ -603,6 +651,19 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(project).toContain('"deepagents==0.7.0a6"');
   });
 
+  it("keeps language-local managed Ultra model ID allowlists in sync", () => {
+    const expected = [...MANAGED_MODEL_IDS].sort();
+    for (const sourcePath of [
+      path.join(agentDir, "generate-config.ts"),
+      validatorPath,
+      pluginSourcePath,
+      e2eProfileCheckPath,
+    ]) {
+      const source = fs.readFileSync(sourcePath, "utf8");
+      expect(managedUltraModelIdsIn(source), path.relative(repoRoot, sourcePath)).toEqual(expected);
+    }
+  });
+
   it("accepts the exact plugin, then rejects source substitution", () => {
     const root = makeValidatorStubRoot("nemoclaw-managed-aliases");
     expect(runEntryPointValidationWithRoots([root]).status).toBe(0);
@@ -679,7 +740,26 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expectOfficialSourcesUnchanged(fixture);
   });
 
-  it("rejects only the exact execute placeholder before sync and async dispatch", () => {
+  it("atomically registers one managed profile when plugin discovery races", () => {
+    const fixture = makePluginFixture();
+    const result = runPlugin(fixture, { concurrentRegisterCalls: 8 });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.probe.aliases).toEqual([true, true]);
+    expect(result.probe.aliasesShareManagedProfile).toBe(true);
+    expect(result.probe.aliasMiddleware).toEqual([
+      "NativeMiddleware",
+      "NemoClawExecutePlaceholderGuardMiddleware",
+    ]);
+    expect(result.probe.canonicalHasGuard).toBe(false);
+    expect(result.probe.canonicalPresent).toBe(true);
+    expect(result.probe.registryKeys).toEqual(
+      [...MANAGED_MODEL_ALIASES, CANONICAL_MODEL_SPEC].sort(),
+    );
+    expectOfficialSourcesUnchanged(fixture);
+  });
+
+  it("rejects execute placeholder whitespace variants before sync and async dispatch", () => {
     const fixture = makePluginFixture();
     const result = runPlugin(fixture, { probeGuard: true });
 
@@ -710,6 +790,14 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
       command: "printf concrete",
       result: "concrete-handler-result",
     });
+    expect(result.probe.guardProbe?.internalWhitespace).toMatchObject({
+      calls: 0,
+      id: "internal-whitespace-call",
+      status: "error",
+    });
+    expect(result.probe.guardProbe?.internalWhitespace.content).toContain(
+      "placeholder '[content]'",
+    );
     expect(result.probe.guardProbe?.nonExecute).toEqual({
       calls: 1,
       result: "non-execute-handler-result",

@@ -47,7 +47,7 @@ EXPECTED_PROFILE_ENTRY_POINT = (
 )
 EXPECTED_PLUGIN_LICENSE_EXPRESSION = "Apache-2.0"
 EXPECTED_PLUGIN_SOURCE_SHA256 = (
-    "691c07906ff2df0fdc6d4bcd6d9af2fe9c8d2640db30463cd4f79235912629b2"
+    "1cee6afafcbe545f5d095c94cb0ad81ff2a1512f84ad9d128a69a9b3d72b3def"
 )
 EXPECTED_NATIVE_PROFILE_SHA256 = (
     "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
@@ -77,7 +77,7 @@ MANAGED_GUARD = "NemoClawExecutePlaceholderGuardMiddleware"
 EXPECTED_MANAGED_MIDDLEWARE = (*EXPECTED_NATIVE_MIDDLEWARE, MANAGED_GUARD)
 DISPATCH_COMMAND = "printf NEMOCLAW_DISPATCH_OK"
 DENIED_DISPATCH_COMMAND = "uname -a"
-PLACEHOLDER_COMMAND = "  [CONTENT]  "
+PLACEHOLDER_COMMAND = "\t[  CONTENT  ]\n"
 
 
 def require(condition: bool, message: str) -> None:
@@ -507,8 +507,14 @@ def validate_parser_dispatch_parity() -> None:
         "denied execute command did not preserve the managed rejection result",
     )
 
-    # Run without DCode's restrictive headless shell allow-list so this graph
-    # assertion proves the profile middleware itself supplies the rejection.
+    # invalidState: a literal placeholder reaches an unrestricted shell backend.
+    # sourceBoundary: this assertion mirrors the profile plugin's `_reject`
+    # method and intentionally bypasses DCode's separate headless allow-list so
+    # it isolates the installed profile middleware.
+    # regressionTest: direct sync/async checks above and this real graph dispatch
+    # must both reject the whitespace-normalized placeholder.
+    # removalCondition: remove this case with the guard under the reviewed
+    # dependency-review.md condition; neither may outlive the other.
     placeholder = validate_dispatch_case(
         PLACEHOLDER_COMMAND,
         restrict_shell=False,

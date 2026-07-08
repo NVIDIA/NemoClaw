@@ -7,6 +7,8 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import importlib.util
+import re
+import threading
 from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from typing import Any
@@ -25,11 +27,8 @@ MANAGED_PROFILE_KEYS = (
     "openai:nvidia/nemotron-3-ultra-550b-a55b",
     "openai:nvidia/nvidia/nemotron-3-ultra",
 )
-_INVALID_EXECUTE_COMMAND = "[content]"
-_REGISTERED_PROFILES: dict[str, Any | None] = {
-    "canonical": None,
-    "managed": None,
-}
+_INVALID_EXECUTE_COMMAND = re.compile(r"\[\s*content\s*\]", re.IGNORECASE)
+_REGISTRATION_LOCK = threading.Lock()
 
 # invalidState: Deep Agents resolves pre-built ChatOpenAI models under `openai:`
 # keys, while its native Ultra profile is registered under an NVIDIA key.
@@ -131,10 +130,9 @@ def _managed_profile_overlay() -> Any:
                 return None
             args = tool_call.get("args")
             command = args.get("command") if isinstance(args, dict) else None
-            if (
-                not isinstance(command, str)
-                or command.strip().casefold() != _INVALID_EXECUTE_COMMAND
-            ):
+            if not isinstance(command, str) or _INVALID_EXECUTE_COMMAND.fullmatch(
+                command.strip()
+            ) is None:
                 return None
             return ToolMessage(
                 content=(
@@ -185,13 +183,26 @@ def _register_aliases(
 
     existing = tuple(key in registry for key in MANAGED_PROFILE_KEYS)
     if all(existing):
-        if (
-            native_profile is _REGISTERED_PROFILES["canonical"]
-            and _REGISTERED_PROFILES["managed"] is not None
+        managed_profile = registry[MANAGED_PROFILE_KEYS[0]]
+        native_middleware = tuple(getattr(native_profile, "extra_middleware", ()))
+        managed_middleware = tuple(getattr(managed_profile, "extra_middleware", ()))
+        preserves_native_middleware = (
+            len(managed_middleware) == len(native_middleware) + 1
             and all(
-                registry[key] is _REGISTERED_PROFILES["managed"]
-                for key in MANAGED_PROFILE_KEYS
+                managed_item is native_item
+                for managed_item, native_item in zip(
+                    managed_middleware, native_middleware, strict=False
+                )
             )
+        )
+        guard = managed_middleware[-1] if preserves_native_middleware else None
+        if (
+            managed_profile is not native_profile
+            and all(registry[key] is managed_profile for key in MANAGED_PROFILE_KEYS)
+            and guard is not None
+            and type(guard).__name__
+            == "NemoClawExecutePlaceholderGuardMiddleware"
+            and type(guard).__module__ == __name__
         ):
             return
         raise _fail("managed aliases conflict with the reviewed managed profile")
@@ -215,11 +226,7 @@ def _register_aliases(
     except Exception:
         for key in MANAGED_PROFILE_KEYS:
             registry.pop(key, None)
-        _REGISTERED_PROFILES["canonical"] = None
-        _REGISTERED_PROFILES["managed"] = None
         raise
-    _REGISTERED_PROFILES["canonical"] = native_profile
-    _REGISTERED_PROFILES["managed"] = managed_profile
 
 
 def register() -> None:
@@ -243,11 +250,15 @@ def register() -> None:
         _HARNESS_PROFILES,
     )
 
-    _register_aliases(
-        _HARNESS_PROFILES,
-        register_harness_profile,
-        _managed_profile_overlay(),
-    )
+    # Plugin discovery can race when several managed agents initialize at once.
+    # The registry is the source of truth; this lock only makes its multi-key
+    # transaction atomic and stores no parallel registration state.
+    with _REGISTRATION_LOCK:
+        _register_aliases(
+            _HARNESS_PROFILES,
+            register_harness_profile,
+            _managed_profile_overlay(),
+        )
 
 
 __all__ = ["register"]

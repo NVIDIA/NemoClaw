@@ -210,7 +210,7 @@ class GuardRequest:
 
 
 sync_calls = []
-sync_request = GuardRequest("execute", "  [CONTENT]  ", "e2e-sync")
+sync_request = GuardRequest("execute", "\t[  CONTENT  ]\n", "e2e-sync")
 
 
 def sync_handler(request):

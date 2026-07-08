@@ -23,7 +23,7 @@ NemoClaw no longer vendors or overlays that source.
 - Native profile SHA-256: `c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `691c07906ff2df0fdc6d4bcd6d9af2fe9c8d2640db30463cd4f79235912629b2`
+- Adapter module SHA-256: `1cee6afafcbe545f5d095c94cb0ad81ff2a1512f84ad9d128a69a9b3d72b3def`
 - Adapter project metadata SHA-256: `7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
@@ -74,8 +74,9 @@ point runs after built-in profiles are registered, reads the reviewed canonical
 profile through one exact-version/hash-gated private registry lookup, and uses
 Deep Agents' public registration API to map it to the two exact `openai:` model
 keys used by NemoClaw's managed OpenAI-compatible `ChatOpenAI` route. It layers
-one first-party middleware onto those aliases that rejects only a trimmed,
-case-insensitive `[content]` value passed as the complete `execute` command;
+one first-party middleware onto those aliases that rejects only a
+case-insensitive `[content]` value, with optional whitespace around the token
+and brackets, passed as the complete `execute` command;
 the canonical NVIDIA profile and unrelated models remain unchanged. The
 released SDK has no public profile getter or alias API. The adapter does not add
 a provider-wide OpenAI profile.
@@ -85,6 +86,14 @@ a provider-wide OpenAI profile.
 Two localized behaviors close separate invalid states on the managed Ultra
 aliases. They are not a new provider profile and do not modify the reviewed
 canonical NVIDIA profile.
+
+The two managed model IDs remain language-local constants in the TypeScript
+config generator and the isolated Python image/plugin validators. Those
+components run on opposite sides of the offline wheel-install boundary, so a
+shared runtime data file would enlarge the installed trust surface solely to
+deduplicate two immutable strings. The focused profile-plugin suite extracts
+the identifiers from every production consumer and requires the exact sets to
+match, preventing drift without adding another mutable build artifact.
 
 For `force_nonempty_content`, the invalid state originates in the NVIDIA Ultra
 chat template/serving path: a Chat Completions response that combines reasoning
@@ -101,9 +110,9 @@ nonempty assistant content for reasoning-plus-tool-call turns without it, and
 the live DCode Ultra E2E passes for both managed model IDs with the override
 deleted.
 
-For the exact `[content]` guard, the invalid state is a model-produced tool call
-whose complete `execute.command` is the literal placeholder (ignoring only outer
-whitespace and case). The released Deep Agents parser/profile can carry that
+For the `[content]` guard, the invalid state is a model-produced tool call whose
+complete `execute.command` is the placeholder, ignoring case and whitespace
+around the token and brackets. The released Deep Agents parser/profile can carry that
 argument to normal tool middleware, where an unrestricted execute backend would
 otherwise treat it as a shell command. The model/provider emission and the
 hash-locked `deepagents==0.7.0a6` canonical profile are upstream boundaries;
@@ -121,8 +130,9 @@ plus the live DCode Ultra E2E pass with the middleware removed.
 The adapter verifies the exact DCode and Deep Agents versions plus the official
 native-profile and bootstrap source hashes. It also binds the imported Deep
 Agents package to the distribution that supplied the reviewed version.
-Registration is atomic, idempotent, and rejects missing canonical, partial, or
-conflicting alias state. The image validator runs under isolated Python,
+Registration uses the Deep Agents registry itself as its only idempotency
+source, serializes the multi-key transaction for concurrent plugin discovery,
+and rejects missing canonical, partial, or conflicting alias state. The image validator runs under isolated Python,
 verifies the installed entry-point metadata and adapter source hash before the
 upstream source checks, checks both upstream files again after profile loading,
 resolves the complete native middleware plus the managed guard for both aliases,
