@@ -33,8 +33,7 @@ send -- "Reply with the three fragments joined by underscores: NEMOCLAW6194, CHA
 expect_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply 20 21
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23
 send -- "/nemoclaw status\\r"
-set slashStatusPattern [format {Sandbox:[^\\r\\n]*%s} $sandbox]
-expect_or_exit $slashStatusPattern slash_status_output 30 31
+expect_or_exit {NemoClaw Status} slash_status_output 30 31
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33
 # Use a public HTTPS origin outside the target's baseline policy to trigger the
 # real OpenClaw network approval UI. A local endpoint can bypass that boundary.

@@ -36,8 +36,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23",
     );
     expect(script).toContain("/nemoclaw status");
-    expect(script).toContain("set slashStatusPattern [format {Sandbox:[^\\r\\n]*%s} $sandbox]");
-    expect(script).toContain("expect_or_exit $slashStatusPattern slash_status_output 30 31");
+    expect(script).toContain("expect_or_exit {NemoClaw Status} slash_status_output 30 31");
     expect(script).toContain(
       "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33",
     );

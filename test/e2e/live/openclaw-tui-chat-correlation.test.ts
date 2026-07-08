@@ -628,6 +628,9 @@ test(
         combined,
         "post-idle slash command must render status output before timeout",
       ).toContain("ISSUE6194_MARK slash_status_output");
+      expect(combined, "rendered status output must include its sandbox field").toMatch(
+        /NemoClaw Status[\s\S]*Sandbox:/u,
+      );
       expect(combined, "TUI must return to connected idle after /nemoclaw status").toContain(
         "ISSUE6194_MARK connected_idle_after_status",
       );
