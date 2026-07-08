@@ -555,7 +555,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
         displayName: "Hermes Agent",
         binary_path: "/usr/local/bin/hermes",
         gateway_command: "hermes gateway run",
-        forwardPort: 8642,
+        forwardPort: 18789,
         healthProbe: {
           url: "http://127.0.0.1:8642/health",
           port: 8642,
@@ -575,7 +575,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
         status: 0,
         output:
           "SANDBOX  BIND  PORT  PID  STATUS\n" +
-          "hermes-box  127.0.0.1  8642  12345  running\n" +
+          "hermes-box  127.0.0.1  18789  12345  running\n" +
           "hermes-box  127.0.0.1  9119  12346  running",
       });
       vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
@@ -1121,7 +1121,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     );
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
       name: "hermes",
-      forwardPort: 8642,
+      forwardPort: 18789,
       displayName: "Hermes Agent",
     });
     vi.spyOn(registry, "getSandbox").mockReturnValue({
@@ -1132,13 +1132,13 @@ hermes-box  127.0.0.1  8642  12346  running`;
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
       status: 0,
-      output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  8642  12346  ${forwardStarted ? "running" : "dead"}\nhermes-box  127.0.0.1  18789  12345  running`,
+      output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  18789  12345  ${forwardStarted ? "running" : "dead"}`,
     }));
     const runOpenshell = vi
       .spyOn(openshellRuntime, "runOpenshell")
       .mockImplementation((rawArgs: unknown) => {
         const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        if (args[0] === "forward" && args[1] === "start" && args.includes("8642")) {
+        if (args[0] === "forward" && args[1] === "start" && args.includes("18789")) {
           forwardStarted = true;
         }
         return { status: 0 } as never;
@@ -1159,7 +1159,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "8642", "hermes-box"],
+      ["forward", "start", "--background", "18789", "hermes-box"],
       { ignoreError: true },
     );
   });
