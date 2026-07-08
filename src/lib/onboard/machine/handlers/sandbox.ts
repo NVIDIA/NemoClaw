@@ -16,16 +16,14 @@ import {
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
-import { hasInvalidSessionDcodeAutoApprovalMode } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
-  DCODE_AUTO_APPROVAL_FEATURE,
   type DcodeAutoApprovalMode,
-  dcodeAutoApprovalModeOrDefault,
+  DEFAULT_DCODE_AUTO_APPROVAL_MODE,
   hasDcodeAutoApprovalDrift,
-  invalidRecordedDcodeAutoApprovalMode,
+  resolveDcodeAutoApprovalRequest,
 } from "../../dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../gateway-binding";
 import {
@@ -307,18 +305,6 @@ function observabilityRequestValidationError(
   return null;
 }
 
-function dcodeAutoApprovalRequestValidationError(
-  issue: ManagedSandboxFeatureIssue | null,
-): string | null {
-  if (issue === "unsupported-request") {
-    return "  --dcode-auto-approval thread-opt-in is supported only with the managed --agent langchain-deepagents-code image.";
-  }
-  if (issue === "recorded-state-on-unsupported-agent") {
-    return "  Recorded DCode auto-approval belongs to the existing Deep Agents Code sandbox. Pass --dcode-auto-approval disabled explicitly when switching agents.";
-  }
-  return null;
-}
-
 class SandboxStateFlow<
   Gpu,
   Agent,
@@ -327,6 +313,8 @@ class SandboxStateFlow<
   SandboxGpuConfig,
   ResourceProfile,
 > {
+  private dcodeAutoApprovalMode: DcodeAutoApprovalMode = DEFAULT_DCODE_AUTO_APPROVAL_MODE;
+
   constructor(
     private readonly options: SandboxStateOptions<
       Gpu,
@@ -482,7 +470,7 @@ class SandboxStateFlow<
           isDcodeAgent((this.options.agent as { name?: string } | null)?.name),
         hasRegistryEntry: registryEntry !== null,
         recordedDcodeAutoApprovalMode: registryEntry?.dcodeAutoApprovalMode,
-        requestedDcodeAutoApprovalMode: state.session?.dcodeAutoApprovalMode,
+        requestedDcodeAutoApprovalMode: this.dcodeAutoApprovalMode,
       }),
       ...toolDisclosureSignals,
       ...dcodeResumeSignals,
@@ -536,53 +524,20 @@ class SandboxStateFlow<
     const registryEntry = state.sandboxName
       ? this.deps.getSandboxRegistryEntry(state.sandboxName)
       : null;
-    if (
-      hasInvalidSessionDcodeAutoApprovalMode(state.session) ||
-      invalidRecordedDcodeAutoApprovalMode(registryEntry?.dcodeAutoApprovalMode)
-    ) {
-      this.deps.error(
-        "  Recorded DCode auto-approval mode is invalid. Refusing to enable or reuse the sandbox; repair the recorded state to 'disabled' before retrying.",
-      );
-      return this.deps.exitProcess(1);
-    }
     const selectedAgent = this.options.fromDockerfile
       ? null
       : (this.options.agent as { name?: string } | null)?.name;
-    const resolution = resolveManagedSandboxFeature(DCODE_AUTO_APPROVAL_FEATURE, {
+    const resolution = resolveDcodeAutoApprovalRequest({
       agent: selectedAgent,
-      requested: this.options.requestedDcodeAutoApprovalMode,
-      resume: this.options.resume,
-      sessionValue: state.session?.dcodeAutoApprovalMode,
-      sessionRequestedExplicitly: state.session?.dcodeAutoApprovalRequestedExplicitly,
-      registryValue: registryEntry?.dcodeAutoApprovalMode,
+      requestedMode: this.options.requestedDcodeAutoApprovalMode,
+      recordedMode: registryEntry?.dcodeAutoApprovalMode,
     });
-    const validationError = dcodeAutoApprovalRequestValidationError(resolution.issue);
-    if (validationError) {
-      this.deps.error(validationError);
+    if (resolution.error) {
+      this.deps.error(resolution.error);
       return this.deps.exitProcess(1);
     }
-    if (resolution.requestedExplicitly && resolution.value === "thread-opt-in") {
-      this.deps.note(
-        "  Warning: DCode thread opt-in can let subsequent tool calls, including shell commands, run without further confirmation inside OpenShell. This capability alone does not activate auto-approval; each thread must still opt in.",
-      );
-    }
-    if (
-      !managedSandboxFeatureNeedsSessionUpdate(
-        DCODE_AUTO_APPROVAL_FEATURE,
-        state.session?.dcodeAutoApprovalMode,
-        state.session?.dcodeAutoApprovalRequestedExplicitly,
-        resolution,
-      )
-    ) {
-      return state;
-    }
-    const session = this.deps.updateSession((current) => {
-      current.dcodeAutoApprovalMode = resolution.value;
-      current.dcodeAutoApprovalRequestedExplicitly =
-        current.dcodeAutoApprovalRequestedExplicitly || resolution.requestedExplicitly;
-      return current;
-    });
-    return { ...state, session };
+    this.dcodeAutoApprovalMode = resolution.mode;
+    return state;
   }
 
   private assertGatewayRouteCompatible(sandboxName: string | null): void {
@@ -768,11 +723,9 @@ class SandboxStateFlow<
               ...(state.session?.observabilityRequestedExplicitly === true
                 ? { observabilityRequestedExplicitly: true as const }
                 : {}),
-              dcodeAutoApprovalMode: dcodeAutoApprovalModeOrDefault(
-                state.session?.dcodeAutoApprovalMode,
-              ),
-              ...(state.session?.dcodeAutoApprovalRequestedExplicitly === true
-                ? { dcodeAutoApprovalRequestedExplicitly: true as const }
+              ...(!this.options.fromDockerfile &&
+              isDcodeAgent((this.options.agent as { name?: string } | null)?.name)
+                ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
                 : {}),
               ...(this.options.authoritativePolicyTier
                 ? { policyTier: this.options.authoritativePolicyTier }

@@ -36,7 +36,7 @@ export {
 import type { WebSearchProvider } from "../inference/web-search";
 import {
   type DcodeAutoApprovalMode,
-  normalizeDcodeAutoApprovalMode,
+  isDcodeAutoApprovalMode,
 } from "../onboard/dcode-auto-approval";
 import {
   cloneSandboxMessagingState,
@@ -113,8 +113,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   observabilityEnabled?: boolean;
   /** Image-baked permission to expose DCode's per-thread auto-approval opt-in. */
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
-  /** Whether the operator explicitly selected the recorded capability mode. */
-  dcodeAutoApprovalRequestedExplicitly?: boolean;
   /** Durable provider identity for enabled managed web search. */
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
@@ -501,8 +499,9 @@ export function registerSandbox(entry: SandboxEntry): void {
       toolDisclosure: normalizeToolDisclosure(entry.toolDisclosure) ?? undefined,
       observabilityEnabled:
         typeof entry.observabilityEnabled === "boolean" ? entry.observabilityEnabled : undefined,
-      dcodeAutoApprovalMode: normalizeDcodeAutoApprovalMode(entry.dcodeAutoApprovalMode),
-      dcodeAutoApprovalRequestedExplicitly: entry.dcodeAutoApprovalRequestedExplicitly === true,
+      dcodeAutoApprovalMode: isDcodeAutoApprovalMode(entry.dcodeAutoApprovalMode)
+        ? entry.dcodeAutoApprovalMode
+        : undefined,
       webSearchProvider:
         entry.webSearchEnabled === true &&
         (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")

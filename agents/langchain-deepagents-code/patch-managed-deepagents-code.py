@@ -200,6 +200,18 @@ _nemoclaw_original_absolutize_launch_relative_path = (
 )
 
 
+async def _nemoclaw_run_thread_transition(self, operation, *args) -> None:
+    session_state = getattr(self, "_session_state", None)
+    previous_thread_id = getattr(session_state, "thread_id", None)
+    try:
+        await operation(self, *args)
+    finally:
+        session_state = getattr(self, "_session_state", None)
+        current_thread_id = getattr(session_state, "thread_id", None)
+        if current_thread_id is not None and current_thread_id != previous_thread_id:
+            _nemoclaw_reset_thread_auto_approval(self)
+
+
 async def _nemoclaw_handle_command(self, command: str) -> None:
     normalized = command.lower().strip()
     tokens = normalized.split()
@@ -220,47 +232,23 @@ async def _nemoclaw_handle_command(self, command: str) -> None:
     if normalized not in {"/clear", "/force-clear"}:
         await _nemoclaw_original_handle_command(self, command)
         return
-    session_state = getattr(self, "_session_state", None)
-    previous_thread_id = getattr(session_state, "thread_id", None)
-    try:
-        await _nemoclaw_original_handle_command(self, command)
-    finally:
-        session_state = getattr(self, "_session_state", None)
-        current_thread_id = getattr(session_state, "thread_id", None)
-        if current_thread_id is not None and current_thread_id != previous_thread_id:
-            _nemoclaw_reset_thread_auto_approval(self)
+    await _nemoclaw_run_thread_transition(
+        self, _nemoclaw_original_handle_command, command
+    )
 
 
 async def _nemoclaw_resume_thread(self, thread_id: str) -> None:
-    session_state = getattr(self, "_session_state", None)
-    previous_thread_id = getattr(session_state, "thread_id", None)
-    try:
-        await _nemoclaw_original_resume_thread(self, thread_id)
-    finally:
-        session_state = getattr(self, "_session_state", None)
-        current_thread_id = getattr(session_state, "thread_id", None)
-        if (
-            current_thread_id is not None
-            and current_thread_id != previous_thread_id
-        ):
-            _nemoclaw_reset_thread_auto_approval(self)
+    await _nemoclaw_run_thread_transition(
+        self, _nemoclaw_original_resume_thread, thread_id
+    )
 
 
 async def _nemoclaw_restart_server_for_agent_swap(
     self, agent_name: str
 ) -> None:
-    session_state = getattr(self, "_session_state", None)
-    previous_thread_id = getattr(session_state, "thread_id", None)
-    try:
-        await _nemoclaw_original_restart_server_for_agent_swap(self, agent_name)
-    finally:
-        session_state = getattr(self, "_session_state", None)
-        current_thread_id = getattr(session_state, "thread_id", None)
-        if (
-            current_thread_id is not None
-            and current_thread_id != previous_thread_id
-        ):
-            _nemoclaw_reset_thread_auto_approval(self)
+    await _nemoclaw_run_thread_transition(
+        self, _nemoclaw_original_restart_server_for_agent_swap, agent_name
+    )
 
 
 async def _nemoclaw_switch_model(
@@ -351,17 +339,21 @@ async def _nemoclaw_block_auto_approve(self) -> None:
     )
 
 
+def _nemoclaw_notify_auto_approval_warning(self) -> None:
+    self.notify(
+        _NEMOCLAW_AUTO_APPROVAL_WARNING,
+        severity="warning",
+        markup=False,
+    )
+
+
 async def _nemoclaw_on_auto_approve_enabled(self) -> None:
     if not _nemoclaw_auto_approval_is_allowed():
         await _nemoclaw_block_auto_approve(self)
         return
     await _nemoclaw_original_on_auto_approve_enabled(self)
     if getattr(self, "_auto_approve", False):
-        self.notify(
-            _NEMOCLAW_AUTO_APPROVAL_WARNING,
-            severity="warning",
-            markup=False,
-        )
+        _nemoclaw_notify_auto_approval_warning(self)
 
 
 async def _nemoclaw_action_toggle_auto_approve(self) -> None:
@@ -371,11 +363,7 @@ async def _nemoclaw_action_toggle_auto_approve(self) -> None:
     was_enabled = bool(getattr(self, "_auto_approve", False))
     await _nemoclaw_original_action_toggle_auto_approve(self)
     if not was_enabled and getattr(self, "_auto_approve", False):
-        self.notify(
-            _NEMOCLAW_AUTO_APPROVAL_WARNING,
-            severity="warning",
-            markup=False,
-        )
+        _nemoclaw_notify_auto_approval_warning(self)
 
 
 async def _nemoclaw_block_rubric_model(self, model_spec: str | None) -> None:

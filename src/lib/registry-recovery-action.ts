@@ -18,7 +18,6 @@ import { resolveGatewayName, resolveSandboxGatewayName } from "./onboard/gateway
 import { validateName } from "./runner";
 import { parseLiveSandboxEntries } from "./runtime-recovery";
 import * as onboardSession from "./state/onboard-session";
-import { hasInvalidSessionDcodeAutoApprovalMode } from "./state/onboard-session-dcode-auto-approval";
 import type { SandboxEntry } from "./state/registry";
 import * as registry from "./state/registry";
 import { getSandboxEntryInference } from "./state/registry-entry-view";
@@ -48,8 +47,6 @@ type RecoveredSandboxMetadata = Partial<
     | "nimContainer"
     | "agent"
     | "observabilityEnabled"
-    | "dcodeAutoApprovalMode"
-    | "dcodeAutoApprovalRequestedExplicitly"
     | "endpointUrl"
     | "credentialEnv"
     | "preferredInferenceApi"
@@ -92,11 +89,6 @@ function buildRecoveredSandboxEntry(
   }
   if (typeof metadata.observabilityEnabled === "boolean") {
     entry.observabilityEnabled = metadata.observabilityEnabled;
-  }
-  if (metadata.dcodeAutoApprovalMode !== undefined) {
-    entry.dcodeAutoApprovalMode = metadata.dcodeAutoApprovalMode;
-    entry.dcodeAutoApprovalRequestedExplicitly =
-      metadata.dcodeAutoApprovalRequestedExplicitly === true;
   }
   return entry;
 }
@@ -243,8 +235,6 @@ function seedRecoveryMetadata(
       ...(typeof session.observabilityEnabled === "boolean"
         ? { observabilityEnabled: session.observabilityEnabled }
         : {}),
-      dcodeAutoApprovalMode: session.dcodeAutoApprovalMode,
-      dcodeAutoApprovalRequestedExplicitly: session.dcodeAutoApprovalRequestedExplicitly,
     }),
   );
   const sessionSandboxMissing = !current.sandboxes.some(
@@ -460,16 +450,6 @@ export async function recoverRegistryEntries({
   const current = registry.listSandboxes();
   const session = onboardSession.loadSession();
   const recoveryCheck = shouldRecoverRegistryEntries(current, session, requestedSandboxName);
-  if (
-    recoveryCheck.shouldRecover &&
-    isSessionSandboxConfirmed(session) &&
-    hasInvalidSessionDcodeAutoApprovalMode(session)
-  ) {
-    console.warn(
-      "  Skipping unsafe registry recovery: the confirmed onboard session records an invalid DCode auto-approval mode. Repair or clear that session before retrying.",
-    );
-    return { ...current, recoveredFromSession: false, recoveredFromGateway: 0 };
-  }
   if (!recoveryCheck.shouldRecover) {
     return { ...current, recoveredFromSession: false, recoveredFromGateway: 0 };
   }
@@ -489,16 +469,6 @@ export async function recoverRegistryEntries({
       lockedSession,
       requestedSandboxName,
     );
-    if (
-      lockedCheck.shouldRecover &&
-      isSessionSandboxConfirmed(lockedSession) &&
-      hasInvalidSessionDcodeAutoApprovalMode(lockedSession)
-    ) {
-      console.warn(
-        "  Skipping unsafe registry recovery: the confirmed onboard session records an invalid DCode auto-approval mode. Repair or clear that session before retrying.",
-      );
-      return { ...lockedCurrent, recoveredFromSession: false, recoveredFromGateway: 0 };
-    }
     return lockedCheck.shouldRecover
       ? recoverRegistryEntriesFromSnapshot(
           lockedCurrent,

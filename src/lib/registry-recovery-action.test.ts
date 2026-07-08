@@ -3,7 +3,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { preserveInvalidSessionDcodeAutoApprovalMode } from "./state/onboard-session-dcode-auto-approval.js";
 import type { SandboxEntry } from "./state/registry.js";
 
 interface MockRegistryState {
@@ -127,8 +126,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       policyPresets: ["npm"],
       nimContainer: null,
       observabilityEnabled: true,
-      dcodeAutoApprovalMode: "thread-opt-in",
-      dcodeAutoApprovalRequestedExplicitly: true,
       agent: "langchain-deepagents-code",
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -142,77 +139,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     expect(recovered).toBeDefined();
     expect(recovered?.policies).toEqual(["npm"]);
     expect(recovered?.observabilityEnabled).toBe(true);
-    expect(recovered?.dcodeAutoApprovalMode).toBe("thread-opt-in");
-    expect(recovered?.dcodeAutoApprovalRequestedExplicitly).toBe(true);
-  });
-
-  it("refuses to recover a normalized session whose recorded mode was malformed (#6478)", async () => {
-    const normalizedSession = {
-      sandboxName: "alpha",
-      provider: "nvidia",
-      model: "nemotron",
-      policyPresets: [],
-      nimContainer: null,
-      agent: "langchain-deepagents-code",
-      dcodeAutoApprovalMode: "disabled",
-      dcodeAutoApprovalRequestedExplicitly: false,
-      steps: {
-        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
-      },
-    };
-    preserveInvalidSessionDcodeAutoApprovalMode(
-      { dcodeAutoApprovalMode: "always" },
-      normalizedSession,
-    );
-    vi.mocked(loadSession).mockReturnValue(normalizedSession as never);
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    const result = await recoverRegistryEntries();
-
-    expect(result.recoveredFromSession).toBe(false);
-    expect(result.recoveredFromGateway).toBe(0);
-    expect(result.sandboxes).toEqual([]);
-    expect(mockRegistryState.sandboxes.alpha).toBeUndefined();
-    expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("invalid DCode auto-approval");
-  });
-
-  it("rechecks malformed session state after acquiring the gateway lock (#6478)", async () => {
-    const validSession = {
-      sandboxName: "alpha",
-      provider: "nvidia",
-      model: "nemotron",
-      policyPresets: [],
-      nimContainer: null,
-      agent: "langchain-deepagents-code",
-      dcodeAutoApprovalMode: "thread-opt-in",
-      dcodeAutoApprovalRequestedExplicitly: true,
-      steps: {
-        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
-      },
-    };
-    const malformedLockedSession = {
-      ...validSession,
-      dcodeAutoApprovalMode: "disabled",
-      dcodeAutoApprovalRequestedExplicitly: false,
-    };
-    preserveInvalidSessionDcodeAutoApprovalMode(
-      { dcodeAutoApprovalMode: "always" },
-      malformedLockedSession,
-    );
-    vi.mocked(loadSession)
-      .mockReturnValueOnce(validSession as never)
-      .mockReturnValueOnce(malformedLockedSession as never);
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    const result = await recoverRegistryEntries();
-
-    expect(result.recoveredFromSession).toBe(false);
-    expect(result.recoveredFromGateway).toBe(0);
-    expect(result.sandboxes).toEqual([]);
-    expect(mockRegistryState.sandboxes.alpha).toBeUndefined();
-    expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("invalid DCode auto-approval");
   });
 
   it("restores complete custom-route identity from a confirmed session", async () => {

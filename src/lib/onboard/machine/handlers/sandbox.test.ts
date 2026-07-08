@@ -79,7 +79,6 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        dcodeAutoApprovalMode: "disabled",
       },
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith(
@@ -126,7 +125,6 @@ describe("handleSandboxState", () => {
     const session = createSession({
       observabilityEnabled: true,
       observabilityRequestedExplicitly: true,
-      dcodeAutoApprovalMode: "disabled",
     });
     const { deps, calls } = createDeps({
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
@@ -163,13 +161,9 @@ describe("handleSandboxState", () => {
     });
   });
 
-  it("warns and carries explicit thread opt-in in the create intent (#6478)", async () => {
+  it("carries authoritative thread opt-in in the create intent (#6478)", async () => {
     const session = createSession();
-    const { deps, calls } = createDeps({
-      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
-        return mutator(session) ?? session;
-      }),
-    });
+    const { deps, calls } = createDeps();
 
     await handleSandboxState({
       ...baseOptions(deps, session),
@@ -177,23 +171,14 @@ describe("handleSandboxState", () => {
       requestedDcodeAutoApprovalMode: "thread-opt-in",
     });
 
-    expect(calls.note).toHaveBeenCalledWith(expect.stringContaining("including shell commands"));
-    expect(calls.note).toHaveBeenCalledWith(
-      expect.stringContaining("does not activate auto-approval"),
-    );
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
       dcodeAutoApprovalMode: "thread-opt-in",
-      dcodeAutoApprovalRequestedExplicitly: true,
     });
-    expect(session.dcodeAutoApprovalMode).toBe("thread-opt-in");
-    expect(session.dcodeAutoApprovalRequestedExplicitly).toBe(true);
   });
 
   it("recreates a ready DCode sandbox when the image-baked mode changes (#6478)", async () => {
     const session = createSession({
       sandboxName: "saved",
-      dcodeAutoApprovalMode: "thread-opt-in",
-      dcodeAutoApprovalRequestedExplicitly: true,
     });
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
@@ -209,6 +194,7 @@ describe("handleSandboxState", () => {
       agent: { name: "langchain-deepagents-code" },
       resume: true,
       sandboxName: "saved",
+      requestedDcodeAutoApprovalMode: "thread-opt-in",
     });
 
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
@@ -541,7 +527,6 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        dcodeAutoApprovalMode: "disabled",
       },
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
@@ -651,7 +636,6 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        dcodeAutoApprovalMode: "disabled",
       },
     );
   });
@@ -859,7 +843,6 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        dcodeAutoApprovalMode: "disabled",
       },
     );
     expect(result.webSearchConfigChanged).toBe(true);
@@ -978,7 +961,6 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        dcodeAutoApprovalMode: "disabled",
       },
     );
     expect(result.webSearchConfig).toBeNull();

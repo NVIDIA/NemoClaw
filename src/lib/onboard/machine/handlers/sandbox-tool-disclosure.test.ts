@@ -120,12 +120,7 @@ describe("handleSandboxState tool disclosure", () => {
       null,
       [],
       null,
-      {
-        recreate: true,
-        toolDisclosure: requestedMode,
-        observabilityEnabled: false,
-        dcodeAutoApprovalMode: "disabled",
-      },
+      { recreate: true, toolDisclosure: requestedMode, observabilityEnabled: false },
     );
   });
 

@@ -306,7 +306,18 @@ main() {
   run_boundary_check "OpenShell network policy boundary" "$NETWORK_BOUNDARY_CHECK"
   run_boundary_check "managed credential boundary" "$CREDENTIAL_BOUNDARY_CHECK"
 
-  printf '%s: 5 passed, 0 failed\n' "$PREFIX"
+  info "Disabling thread-opt-in through the named sandbox rebuild interface"
+  rebuild_output="$(
+    "$CLI" "$SANDBOX_NAME" rebuild --yes \
+      --dcode-auto-approval disabled 2>&1
+  )" || fail "named sandbox rebuild could not disable thread-opt-in: $rebuild_output"
+
+  assert_capability_projection disabled
+  assert_status_mode disabled
+  assert_default_denial_ignores_ambient_override
+  pass "named sandbox rebuild restores trusted default denial"
+
+  printf '%s: 6 passed, 0 failed\n' "$PREFIX"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

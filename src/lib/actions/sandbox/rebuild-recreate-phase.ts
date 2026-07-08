@@ -110,8 +110,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
-        dcodeAutoApprovalMode: recreateOptions.dcodeAutoApprovalMode,
-        dcodeAutoApprovalRequestedExplicitly: recreateOptions.dcodeAutoApprovalRequestedExplicitly,
         observabilityEnabled: recreateOptions.observabilityEnabled,
         observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
@@ -153,8 +151,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.compatibleEndpointReasoning = resumeConfig.compatibleEndpointReasoning;
     s.endpointUrl = resumeConfig.endpointUrl;
     s.toolDisclosure = rebuildDurableConfig.toolDisclosure;
-    s.dcodeAutoApprovalMode = recreateOptions.dcodeAutoApprovalMode;
-    s.dcodeAutoApprovalRequestedExplicitly = recreateOptions.dcodeAutoApprovalRequestedExplicitly;
     s.observabilityEnabled = recreateOptions.observabilityEnabled;
     s.observabilityRequestedExplicitly = recreateOptions.observabilityRequestedExplicitly;
     return s;

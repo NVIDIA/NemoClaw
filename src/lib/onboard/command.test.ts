@@ -45,7 +45,6 @@ describe("onboard command options", () => {
           agent: "dcode",
           "tool-disclosure": "direct",
           observability: true,
-          "dcode-auto-approval": "disabled",
           "control-ui-port": 18790,
           gpu: true,
           yes: true,
@@ -68,7 +67,6 @@ describe("onboard command options", () => {
       agentsManifest: null,
       toolDisclosure: "direct",
       observabilityEnabled: true,
-      dcodeAutoApprovalMode: "disabled",
       controlUiPort: 18790,
       gpu: true,
       noGpu: false,
@@ -92,7 +90,6 @@ describe("onboard command options", () => {
       agentsManifest: null,
       toolDisclosure: null,
       observabilityEnabled: null,
-      dcodeAutoApprovalMode: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -108,22 +105,6 @@ describe("onboard command options", () => {
         { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
       ).observabilityEnabled,
     ).toBe(false);
-  });
-
-  it("accepts DCode thread opt-in only for the managed DCode image", () => {
-    const knownAgents = () => ["openclaw", "hermes", "langchain-deepagents-code"];
-    expect(
-      resolve(
-        { agent: "dcode", "dcode-auto-approval": "thread-opt-in" },
-        { listAgents: knownAgents },
-      ).dcodeAutoApprovalMode,
-    ).toBe("thread-opt-in");
-    expect(() =>
-      resolve(
-        { agent: "hermes", "dcode-auto-approval": "thread-opt-in" },
-        { listAgents: knownAgents },
-      ),
-    ).toThrow("exit:1");
   });
 
   it("accepts the environment-based third-party notice acknowledgement", () => {

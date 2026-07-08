@@ -4,6 +4,7 @@
 import {
   type ManagedSandboxFeature,
   managedSandboxFeatureHasDrift,
+  resolveManagedSandboxFeature,
 } from "./managed-sandbox-feature";
 import { DCODE_AGENT_NAME, isDcodeAgent } from "./observability-policy-presets";
 
@@ -39,6 +40,32 @@ export const DCODE_AUTO_APPROVAL_FEATURE: ManagedSandboxFeature<DcodeAutoApprova
   supportsAgent: isDcodeAgent,
 };
 
+export function resolveDcodeAutoApprovalRequest(input: {
+  agent: string | null | undefined;
+  requestedMode: DcodeAutoApprovalMode | null | undefined;
+  recordedMode: unknown;
+}): { mode: DcodeAutoApprovalMode; error: string | null } {
+  if (invalidRecordedDcodeAutoApprovalMode(input.recordedMode)) {
+    return {
+      mode: DEFAULT_DCODE_AUTO_APPROVAL_MODE,
+      error:
+        "  Recorded DCode auto-approval mode is invalid. Refusing to enable or reuse the sandbox; repair the recorded state to 'disabled' before retrying.",
+    };
+  }
+  const resolution = resolveManagedSandboxFeature(DCODE_AUTO_APPROVAL_FEATURE, {
+    agent: input.agent,
+    requested: input.requestedMode,
+    registryValue: isDcodeAutoApprovalMode(input.recordedMode) ? input.recordedMode : null,
+  });
+  const error =
+    resolution.issue === "unsupported-request"
+      ? "  --dcode-auto-approval thread-opt-in is supported only with the managed --agent langchain-deepagents-code image."
+      : resolution.issue === "recorded-state-on-unsupported-agent"
+        ? "  Recorded DCode auto-approval belongs to the existing Deep Agents Code sandbox. Pass --dcode-auto-approval disabled explicitly when switching agents."
+        : null;
+  return { mode: resolution.value, error };
+}
+
 export function hasDcodeAutoApprovalDrift(options: {
   liveExists: boolean;
   managedDcodeAgent: boolean;
@@ -73,4 +100,45 @@ export function hasRegisteredDcodeAutoApprovalDrift(
     recordedDcodeAutoApprovalMode: registryEntry?.dcodeAutoApprovalMode,
     requestedDcodeAutoApprovalMode,
   });
+}
+
+export function prepareDcodeAutoApprovalCreatePlan(
+  input: {
+    sandboxName: string;
+    liveExists: boolean;
+    managedDcodeAgent: boolean;
+    registryEntry: { dcodeAutoApprovalMode?: unknown } | null;
+    requestedMode: unknown;
+  },
+  deps: { error(message: string): void; exitProcess(code: number): never } = {
+    error: console.error,
+    exitProcess: (code) => process.exit(code),
+  },
+): { mode: DcodeAutoApprovalMode; hasDrift: boolean; rebuildFlag: string } {
+  if (input.liveExists && input.managedDcodeAgent && !input.registryEntry) {
+    deps.error(
+      `  Sandbox '${input.sandboxName}' is live but missing its NemoClaw registry record; refusing unverified DCode reuse or recreation.`,
+    );
+    deps.error(
+      "  Choose a different sandbox name, or remove the orphan explicitly with OpenShell.",
+    );
+    deps.exitProcess(1);
+  }
+  if (invalidRecordedDcodeAutoApprovalMode(input.registryEntry?.dcodeAutoApprovalMode)) {
+    deps.error(
+      "  Recorded DCode auto-approval mode is invalid. Refusing to enable or reuse the sandbox; repair the recorded state to 'disabled' before retrying.",
+    );
+    deps.exitProcess(1);
+  }
+  const mode = dcodeAutoApprovalModeOrDefault(input.requestedMode);
+  return {
+    mode,
+    hasDrift: hasRegisteredDcodeAutoApprovalDrift(
+      input.liveExists,
+      input.managedDcodeAgent,
+      input.registryEntry,
+      mode,
+    ),
+    rebuildFlag: input.managedDcodeAgent ? ` --dcode-auto-approval ${mode}` : "",
+  };
 }

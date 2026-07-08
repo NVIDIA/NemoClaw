@@ -99,23 +99,6 @@ describe("rebuildSandbox DCode flow: preflight", () => {
     expectNoDcodeMutation(harness);
   });
 
-  it("rejects an invalid matching-session DCode auto-approval mode before mutation (#6478)", async () => {
-    const harness = createRebuildFlowHarness({
-      agentName: "langchain-deepagents-code",
-      sandboxEntry: makeDcodeSandboxEntry(),
-    });
-    configureDcodeSession(harness);
-    harness.session.dcodeAutoApprovalMode = "always";
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Recorded DCode auto-approval state is invalid");
-
-    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
-    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
-    expectNoDcodeMutation(harness);
-  });
-
   it("rejects a stored DCode route failure before any rebuild mutation (#6195)", async () => {
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",

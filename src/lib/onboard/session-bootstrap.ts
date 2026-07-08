@@ -1,15 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveAgentNameAlias } from "../agent/defs";
 import type { Session } from "../state/onboard-session";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
-import {
-  DCODE_AUTO_APPROVAL_FEATURE,
-  type DcodeAutoApprovalMode,
-  DEFAULT_DCODE_AUTO_APPROVAL_MODE,
-} from "./dcode-auto-approval";
-import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import type { ResumeConfigConflict } from "./resume-config";
 
 export interface OnboardSessionBootstrapInput {
@@ -24,7 +17,6 @@ export interface OnboardSessionBootstrapInput {
   envAgent?: string | null;
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
-  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -44,7 +36,6 @@ export interface OnboardSessionBootstrapDeps {
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
       observabilityEnabled?: boolean | null;
-      dcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
       authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
@@ -152,9 +143,7 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
-  const requestedResumeAgent = input.agentFlag || input.envAgent || session?.agent || null;
-  const resumeAgent = resolveAgentNameAlias(requestedResumeAgent) ?? requestedResumeAgent;
-  deps.setOnboardBrandingAgent(resumeAgent);
+  deps.setOnboardBrandingAgent(input.agentFlag || session?.agent || input.envAgent || null);
   if (!session || session.resumable === false) {
     reportMissingResumeSession(deps);
   }
@@ -172,22 +161,10 @@ async function prepareResumeSession(
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
-    dcodeAutoApprovalMode: input.requestedDcodeAutoApprovalMode ?? null,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
     await exitForResumeConflicts(resumeConflicts, deps);
-  }
-  if (
-    managedSandboxFeatureIssue(DCODE_AUTO_APPROVAL_FEATURE, {
-      agent: resumeAgent,
-      requested: input.requestedDcodeAutoApprovalMode,
-    }) === "unsupported-request"
-  ) {
-    deps.error(
-      "  --dcode-auto-approval thread-opt-in is supported only with the managed --agent langchain-deepagents-code image.",
-    );
-    deps.exitProcess(1);
   }
 
   deps.updateSession((current: Session) => {
@@ -195,10 +172,6 @@ async function prepareResumeSession(
     if (typeof input.requestedObservabilityEnabled === "boolean") {
       current.observabilityEnabled = input.requestedObservabilityEnabled;
       current.observabilityRequestedExplicitly = true;
-    }
-    if (input.requestedDcodeAutoApprovalMode) {
-      current.dcodeAutoApprovalMode = input.requestedDcodeAutoApprovalMode;
-      current.dcodeAutoApprovalRequestedExplicitly = true;
     }
     current.mode = mode(input.nonInteractive);
     current.failure = null;
@@ -226,9 +199,6 @@ function prepareFreshSession(
       toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
       observabilityEnabled: input.requestedObservabilityEnabled === true,
       observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
-      dcodeAutoApprovalMode:
-        input.requestedDcodeAutoApprovalMode ?? DEFAULT_DCODE_AUTO_APPROVAL_MODE,
-      dcodeAutoApprovalRequestedExplicitly: Boolean(input.requestedDcodeAutoApprovalMode),
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
     }),
   );

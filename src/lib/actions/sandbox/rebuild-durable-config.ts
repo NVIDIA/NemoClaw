@@ -26,11 +26,7 @@ import {
   invalidRecordedDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
-import {
-  hasInvalidSessionDcodeAutoApprovalMode,
-  hasInvalidSessionToolDisclosure,
-  type Session,
-} from "../../state/onboard-session";
+import { hasInvalidSessionToolDisclosure, type Session } from "../../state/onboard-session";
 import {
   DEFAULT_TOOL_DISCLOSURE,
   invalidRecordedToolDisclosure,
@@ -211,16 +207,12 @@ export function resolveRebuildDurableConfig(
     requestedToolDisclosure ??
     normalizeToolDisclosure(recordedToolDisclosure) ??
     DEFAULT_TOOL_DISCLOSURE;
-  const recordedDcodeAutoApprovalMode =
-    entry.dcodeAutoApprovalMode !== undefined && entry.dcodeAutoApprovalMode !== null
-      ? entry.dcodeAutoApprovalMode
-      : matchingSession?.dcodeAutoApprovalMode;
-  const dcodeAutoApprovalModeError =
-    invalidRecordedDcodeAutoApprovalMode(recordedDcodeAutoApprovalMode) ||
-    ((entry.dcodeAutoApprovalMode === undefined || entry.dcodeAutoApprovalMode === null) &&
-      hasInvalidSessionDcodeAutoApprovalMode(matchingSession))
-      ? "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in"
-      : null;
+  const recordedDcodeAutoApprovalMode = entry.dcodeAutoApprovalMode;
+  const dcodeAutoApprovalModeError = invalidRecordedDcodeAutoApprovalMode(
+    recordedDcodeAutoApprovalMode,
+  )
+    ? "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in"
+    : null;
   const dcodeAutoApprovalMode =
     requestedDcodeAutoApprovalMode ?? dcodeAutoApprovalModeOrDefault(recordedDcodeAutoApprovalMode);
   const recordedFromDockerfile: unknown =

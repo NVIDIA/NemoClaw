@@ -168,7 +168,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--dcode-auto-approval <disabled|thread-opt-in>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -198,7 +198,7 @@ For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `de
 #### `--resume` and `--fresh`
 
 NemoClaw records onboarding progress so interrupted runs can continue.
-Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, Deep Agents auto-approval capability, and custom Dockerfile path recorded by the original run.
+Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, and custom Dockerfile path recorded by the original run.
 Completed onboarding sessions are not resumable.
 Use `--resume` only for interrupted `in_progress` sessions, not to change provider, model, agent, or sandbox recreation settings after onboarding has completed.
 During resume, NemoClaw reruns preflight, gateway, provider, and sandbox repair checks even when the saved session has already reached a later nonterminal onboarding phase.
@@ -232,36 +232,6 @@ $$nemoclaw onboard --name my-assistant --recreate-sandbox --tool-disclosure dire
 
 Without an explicit flag or environment value, recreation preserves the recorded setting and only falls back to `progressive` for legacy state.
 Resuming an interrupted session with a different explicit setting fails with a conflict instead of changing behavior mid-session.
-
-<AgentOnly variant="deepagents">
-
-#### `--dcode-auto-approval <disabled|thread-opt-in>`
-
-Configure whether a managed Deep Agents Code sandbox permits explicit thread-scoped auto-approval.
-The default `disabled` mode keeps the TUI auto-approval choice and `dcode -y` unavailable.
-The `thread-opt-in` mode makes those explicit activation paths available, but it does not turn auto-approval on for a thread by itself.
-
-```bash
-$$nemoclaw onboard --dcode-auto-approval thread-opt-in
-nemoclaw onboard --agent langchain-deepagents-code --dcode-auto-approval thread-opt-in
-```
-
-When a thread opts in, tool calls, including shell commands, can run without further confirmation until a thread boundary resets the state.
-A new `dcode` process, `/clear`, `/force-clear`, a thread switch or resume, and an agent switch each return to manual approval.
-The TUI shows the active-state indicator and warning for the current thread.
-The host-side `$$nemoclaw <name> status` output reports the configured capability instead of the state of a live TUI thread.
-
-The positive mode applies only to the built-in managed `langchain-deepagents-code` image.
-NemoClaw rejects `thread-opt-in` for OpenClaw, Hermes, and custom `--from` images.
-Pass `--dcode-auto-approval disabled` when you need to revoke the capability or clear recorded Deep Agents state before switching agents.
-Changing the mode recreates the sandbox because the mode lives in a root-owned image file, and ambient runtime environment values cannot enable it.
-
-```bash
-$$nemoclaw my-dcode rebuild --dcode-auto-approval disabled --yes
-```
-
-The capability does not bypass OpenShell policy, credential isolation, managed inference, managed MCP validation, or other managed runtime controls.
-It also does not change the separate `dcode -n` headless boundary.
 
 #### `--observability` and `--no-observability`
 
@@ -2344,7 +2314,7 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 | `--yes`, `-y`, `--force` | Skip the confirmation prompt |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
-| `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. Enabling prints a warning, and either value requires sandbox recreation. |
+| `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
 | `--observability`, `--no-observability` | Enable or disable managed trace export for a LangChain Deep Agents Code sandbox during the transactional rebuild. This path preserves managed MCP providers and adapter state. |
 
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox.
@@ -2797,7 +2767,7 @@ The `$$nemoclaw setup` command is deprecated.
 Use `$$nemoclaw onboard` instead.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -2810,7 +2780,7 @@ The `$$nemoclaw setup-spark` command is deprecated.
 Use the standard installer and run `$$nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark

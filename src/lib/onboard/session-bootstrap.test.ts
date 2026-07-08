@@ -73,7 +73,6 @@ describe("prepareOnboardSession", () => {
         nonInteractive: true,
         requestedToolDisclosure: "direct",
         requestedObservabilityEnabled: true,
-        requestedDcodeAutoApprovalMode: "thread-opt-in",
       },
       deps,
     );
@@ -85,8 +84,6 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.toolDisclosure).toBe("direct");
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
-    expect(result.session?.dcodeAutoApprovalMode).toBe("thread-opt-in");
-    expect(result.session?.dcodeAutoApprovalRequestedExplicitly).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
   });
 
@@ -106,8 +103,6 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.toolDisclosure).toBe("progressive");
     expect(result.session?.observabilityEnabled).toBe(false);
     expect(result.session?.observabilityRequestedExplicitly).toBe(false);
-    expect(result.session?.dcodeAutoApprovalMode).toBe("disabled");
-    expect(result.session?.dcodeAutoApprovalRequestedExplicitly).toBe(false);
   });
 
   it("resumes an existing session and falls back to the recorded Dockerfile", async () => {
@@ -150,7 +145,7 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(deps.repairResumeMachineSnapshot).toHaveBeenCalledWith(initial);
-    expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("openclaw");
+    expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
   });
 
   it.each([
@@ -183,125 +178,6 @@ describe("prepareOnboardSession", () => {
 
     expect(result.session?.observabilityEnabled).toBe(requested);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
-  });
-
-  it("records an explicit DCode auto-approval request while resuming (#6478)", async () => {
-    const { deps } = createDeps(
-      createSession({
-        agent: "langchain-deepagents-code",
-        sandboxName: "demo",
-        dcodeAutoApprovalMode: "disabled",
-        status: "failed",
-      }),
-    );
-
-    const result = await prepareOnboardSession(
-      {
-        resume: true,
-        fresh: false,
-        requestedFromDockerfile: null,
-        requestedSandboxName: null,
-        cannotPrompt: false,
-        nonInteractive: false,
-        requestedDcodeAutoApprovalMode: "thread-opt-in",
-      },
-      deps,
-    );
-
-    expect(result.session?.dcodeAutoApprovalMode).toBe("thread-opt-in");
-    expect(result.session?.dcodeAutoApprovalRequestedExplicitly).toBe(true);
-  });
-
-  it("rejects unsupported resume auto-approval before mutating durable state (#6478)", async () => {
-    const initial = createSession({
-      agent: "hermes",
-      sandboxName: "demo",
-      dcodeAutoApprovalMode: "disabled",
-      dcodeAutoApprovalRequestedExplicitly: true,
-      status: "failed",
-    });
-    const before = structuredClone(initial);
-    const { deps, getSession } = createDeps(initial);
-
-    await expect(
-      prepareOnboardSession(
-        {
-          resume: true,
-          fresh: false,
-          requestedFromDockerfile: null,
-          requestedSandboxName: null,
-          cannotPrompt: false,
-          nonInteractive: false,
-          requestedDcodeAutoApprovalMode: "thread-opt-in",
-        },
-        deps,
-      ),
-    ).rejects.toThrow(ExitError);
-
-    expect(deps.updateSession).not.toHaveBeenCalled();
-    expect(getSession()).toEqual(before);
-    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("supported only"));
-    expect(deps.exitProcess).toHaveBeenCalledWith(1);
-  });
-
-  it("lets the environment agent override resumed DCode state before mutation (#6478)", async () => {
-    const initial = createSession({
-      agent: "langchain-deepagents-code",
-      sandboxName: "demo",
-      dcodeAutoApprovalMode: "disabled",
-      status: "failed",
-    });
-    const before = structuredClone(initial);
-    const { deps, getSession } = createDeps(initial);
-
-    await expect(
-      prepareOnboardSession(
-        {
-          resume: true,
-          fresh: false,
-          requestedFromDockerfile: null,
-          requestedSandboxName: null,
-          cannotPrompt: false,
-          nonInteractive: false,
-          envAgent: "hermes",
-          requestedDcodeAutoApprovalMode: "thread-opt-in",
-        },
-        deps,
-      ),
-    ).rejects.toThrow(ExitError);
-
-    expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
-    expect(deps.updateSession).not.toHaveBeenCalled();
-    expect(getSession()).toEqual(before);
-  });
-
-  it("canonicalizes a DCode environment alias before resume validation (#6478)", async () => {
-    const { deps } = createDeps(
-      createSession({
-        agent: "hermes",
-        sandboxName: "demo",
-        dcodeAutoApprovalMode: "disabled",
-        status: "failed",
-      }),
-    );
-
-    const result = await prepareOnboardSession(
-      {
-        resume: true,
-        fresh: false,
-        requestedFromDockerfile: null,
-        requestedSandboxName: null,
-        cannotPrompt: false,
-        nonInteractive: false,
-        envAgent: "dcode",
-        requestedDcodeAutoApprovalMode: "thread-opt-in",
-      },
-      deps,
-    );
-
-    expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("langchain-deepagents-code");
-    expect(result.session?.dcodeAutoApprovalMode).toBe("thread-opt-in");
-    expect(result.session?.dcodeAutoApprovalRequestedExplicitly).toBe(true);
   });
 
   it("records and reports resume conflicts before exiting", async () => {

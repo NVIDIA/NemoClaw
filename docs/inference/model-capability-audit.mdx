@@ -80,7 +80,7 @@ Do not infer the active state of a TUI thread from the host-side configured mode
 | Evidence case | Required checks |
 |---|---|
 | Default-disabled interactive | Host status reports `disabled`, the TUI auto-approval choice and `dcode -y` fail closed, and ordinary interactive tool requests still prompt. |
-| Capability configuration | Initial onboarding or named rebuild with `--dcode-auto-approval thread-opt-in` succeeds, host status reports `thread-opt-in`, and the operation records the exact NemoClaw commit and Deep Agents Code version. |
+| Capability configuration | A named rebuild with `--dcode-auto-approval thread-opt-in` succeeds, host status reports `thread-opt-in`, and the operation records the exact NemoClaw commit and Deep Agents Code version. |
 | Explicit thread activation | The operator selects **Auto-approve for this thread** or launches `dcode -y`, the TUI shows the active-state indicator and warning, and more than one tool call completes without another prompt in that same thread. |
 | Thread reset | A new process, `/clear`, `/force-clear`, a thread switch or resume, and an agent switch each return to manual approval before another explicit opt-in. |
 | Residual controls | Enabled-mode evidence repeats network-policy denial and credential non-disclosure checks and confirms that managed inference, MCP, filesystem, and process restrictions remain active. |

@@ -137,13 +137,7 @@ Use the interactive TUI when you need to inspect each destructive tool request b
 Managed Deep Agents sandboxes keep interactive thread auto-approval disabled by default.
 In this mode, the TUI auto-approval choice and `dcode -y` fail closed.
 
-Enable the capability during initial onboarding when you want individual threads to be able to opt in.
-
-```bash
-nemo-deepagents onboard --dcode-auto-approval thread-opt-in
-```
-
-Changing an existing sandbox requires a transactional rebuild because NemoClaw bakes the capability into the managed image.
+Enable the capability for a named sandbox through a transactional rebuild because NemoClaw bakes the capability into the managed image.
 
 ```bash
 nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes

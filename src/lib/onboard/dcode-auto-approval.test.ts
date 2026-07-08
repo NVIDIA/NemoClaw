@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   DCODE_AUTO_APPROVAL_BUILD_ARG,
@@ -11,6 +11,7 @@ import {
   hasDcodeAutoApprovalDrift,
   invalidRecordedDcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
+  prepareDcodeAutoApprovalCreatePlan,
 } from "./dcode-auto-approval";
 
 describe("DCode auto-approval capability", () => {
@@ -63,5 +64,46 @@ describe("DCode auto-approval capability", () => {
       }),
     ).toBe(true);
     expect(normalizeDcodeAutoApprovalMode("always")).toBe("disabled");
+  });
+
+  it("prepares the managed create projection and rebuild flag (#6478)", () => {
+    expect(
+      prepareDcodeAutoApprovalCreatePlan({
+        sandboxName: "alpha",
+        liveExists: true,
+        managedDcodeAgent: true,
+        registryEntry: { dcodeAutoApprovalMode: "disabled" },
+        requestedMode: "thread-opt-in",
+      }),
+    ).toEqual({
+      mode: "thread-opt-in",
+      hasDrift: true,
+      rebuildFlag: " --dcode-auto-approval thread-opt-in",
+    });
+  });
+
+  it.each([
+    ["orphaned", null, "missing its NemoClaw registry record"],
+    ["malformed", { dcodeAutoApprovalMode: "always" }, "mode is invalid"],
+  ])("rejects %s create state before mutation (#6478)", (_label, registryEntry, message) => {
+    const error = vi.fn();
+    expect(() =>
+      prepareDcodeAutoApprovalCreatePlan(
+        {
+          sandboxName: "alpha",
+          liveExists: true,
+          managedDcodeAgent: true,
+          registryEntry,
+          requestedMode: "thread-opt-in",
+        },
+        {
+          error,
+          exitProcess: vi.fn(() => {
+            throw new Error("exit 1");
+          }),
+        },
+      ),
+    ).toThrow("exit 1");
+    expect(error.mock.calls.flat().join("\n")).toContain(message);
   });
 });

@@ -516,7 +516,7 @@ If the container runtime restricts `ulimit` modification, the entrypoint logs a 
 
 Managed Deep Agents sandboxes separate the host-configured capability from the active approval state of each TUI thread.
 The default `disabled` mode keeps the TUI auto-approval choice and `dcode -y` unavailable.
-An operator can select `thread-opt-in` during onboarding or a named transactional rebuild, but each thread still requires an explicit TUI choice or `dcode -y` invocation before tool calls run without further confirmation.
+An operator can select `thread-opt-in` through a named transactional rebuild, but each thread still requires an explicit TUI choice or `dcode -y` invocation before tool calls run without further confirmation.
 
 NemoClaw stores the configured mode in a root-owned, mode `0444` image file rather than trusting runtime environment variables.
 A missing, malformed, symlinked, writable, unreadable, or incorrectly owned capability file resolves to `disabled`.
@@ -529,7 +529,7 @@ The host-side `status` command reports only the configured capability because it
 | Aspect | Detail |
 |---|---|
 | Default | `disabled`. Interactive tool calls keep their approval prompts, and thread auto-approval cannot be selected. |
-| What you can change | Use `--dcode-auto-approval thread-opt-in` during managed Deep Agents onboarding or rebuild. Use `--dcode-auto-approval disabled` in another rebuild to revoke the capability. |
+| What you can change | Use `--dcode-auto-approval thread-opt-in` during a named managed Deep Agents rebuild. Use `--dcode-auto-approval disabled` in another rebuild to revoke the capability. |
 | Risk if enabled | A prompt injection, untrusted repository, or mistaken plan can cause tool calls, including shell commands, to run without another human confirmation for the rest of the active thread. |
 | Remaining controls | OpenShell egress policy, credential isolation and rewriting, the managed inference route, managed MCP validation, filesystem and process controls, and the other managed runtime restrictions remain active. |
 | Recommendation | Keep `disabled` for sensitive or unfamiliar work. Enable `thread-opt-in` only for bounded tasks in a reviewed workspace, watch the active-state indicator, and start a new thread or rebuild with `disabled` when unattended tool execution is no longer acceptable. |
