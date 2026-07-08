@@ -175,6 +175,13 @@ describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
     expect(load("file:///tmp/unrelated.mjs", {}, () => result)).toBe(result);
   });
 
+  it("passes unsupported non-text module source through without throwing", () => {
+    const load = createOpenClawQrTerminalLoadHook();
+    const result = { format: "module", source: {} };
+
+    expect(load("file:///tmp/unsupported.mjs", {}, () => result)).toBe(result);
+  });
+
   it("fails closed when the synchronous load hook sees an unreviewed renderer", () => {
     const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const load = createOpenClawQrTerminalLoadHook();
@@ -207,6 +214,24 @@ describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
     expect(registerHooks).toHaveBeenCalledOnce();
     expect(registerHooks).toHaveBeenCalledWith({ load: expect.any(Function) });
     expect(register).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes unavailable and failed synchronous hook registration", () => {
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(registerOpenClawQrTerminalSourceLoader({})).toBe(false);
+      expect(
+        registerOpenClawQrTerminalSourceLoader({
+          registerHooks() {
+            throw new Error("registration failed");
+          },
+        }),
+      ).toBe(false);
+      expect(write).toHaveBeenNthCalledWith(1, expect.stringContaining("is unavailable"));
+      expect(write).toHaveBeenNthCalledWith(2, expect.stringContaining("registration failed"));
+    } finally {
+      write.mockRestore();
+    }
   });
 
   it("emits non-secret loader diagnostics when the source rewrite is skipped", () => {

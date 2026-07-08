@@ -145,8 +145,12 @@ function patchOpenClawQrTerminalRendererSource(source: string, integrity?: strin
 
 function decodeOpenClawQrTerminalSource(source) {
   if (typeof source === "string") return source;
-  if (source && typeof Buffer !== "undefined") return Buffer.from(source).toString("utf8");
-  return "";
+  if (typeof Buffer !== "undefined") {
+    if (Buffer.isBuffer(source)) return source.toString("utf8");
+    if (source instanceof Uint8Array) return Buffer.from(source).toString("utf8");
+    if (source instanceof ArrayBuffer) return Buffer.from(source).toString("utf8");
+  }
+  return null;
 }
 
 function createOpenClawQrTerminalLoadHook(sha256Hex?) {
@@ -160,7 +164,7 @@ function createOpenClawQrTerminalLoadHook(sha256Hex?) {
     var result = nextLoad(url, context);
     if (!result || result.format !== "module") return result;
     var source = decodeOpenClawQrTerminalSource(result.source);
-    if (!isOpenClawQrTerminalRendererSource(source)) return result;
+    if (source === null || !isOpenClawQrTerminalRendererSource(source)) return result;
     var integrity = sha256Hex(source);
     var skipReason = describeOpenClawQrTerminalPatchSkip(source, integrity);
     if (skipReason) {
