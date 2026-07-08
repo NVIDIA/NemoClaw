@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as policies from "../../policy";
 import * as sandboxState from "../../state/sandbox";
 import { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
-import { resolveRestoredPolicyRegistryState } from "./rebuild-post-restore-phase";
+import {
+  printSuccessfulRebuildSummary,
+  resolveRestoredPolicyRegistryState,
+} from "./rebuild-post-restore-phase";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 
 const BUILTIN_OBSERVABILITY_CONTENT =
@@ -470,5 +473,26 @@ describe("rebuild policy restore fidelity", () => {
       resolveRestoredPolicyRegistryState({ policyPresetsFinalized: true }, [], ["tavily"])
         .policyPresetsFinalized,
     ).toBeUndefined();
+  });
+
+  it("retains the force-skipped backup warning in the successful final summary", () => {
+    const writeLine = vi.fn();
+
+    printSuccessfulRebuildSummary(
+      {
+        sandboxName: "alpha",
+        backupManifest: null,
+        backupWasForceSkipped: true,
+        staleRecovery: false,
+        rebuiltAgentName: "OpenClaw",
+        expectedVersion: "2026.6.10",
+      },
+      writeLine,
+    );
+
+    const output = writeLine.mock.calls.flat().join("\n");
+    expect(output).toContain("Sandbox 'alpha' rebuilt successfully");
+    expect(output).toContain("Backup was skipped via --force after a total backup failure");
+    expect(output).toContain("prior workspace state was not preserved");
   });
 });

@@ -312,6 +312,7 @@ async function rebuildSandboxUnlocked(
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         restoreSucceeded: restored.restoreSucceeded,
+        backupWasForceSkipped: backup.backupWasForceSkipped,
         failedPresets: restored.failedPresets,
         finalBuiltinPresets: restored.finalBuiltinPresets,
         failedPresetRemovals: restored.failedPresetRemovals,
