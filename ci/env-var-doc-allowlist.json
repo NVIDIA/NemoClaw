@@ -74,5 +74,9 @@
   {
     "name": "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK",
     "reason": "Internal one-process handoff from Docker GPU patch preparation into sandbox creation. Rebuild scopes and restores it; users must not set it."
+  },
+  {
+    "name": "NEMOCLAW_REBUILD_PROCESS_FIXTURE",
+    "reason": "Internal process-death integration-test capability that must equal the child process's temporary HOME before rebuild fault injection can stop the process. Never user-set."
   }
 ]

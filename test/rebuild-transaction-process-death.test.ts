@@ -61,6 +61,7 @@ describe("rebuild process-death recovery", () => {
       const fixtureEnv = {
         ...process.env,
         HOME: root,
+        NEMOCLAW_REBUILD_PROCESS_FIXTURE: root,
         NEMOCLAW_REBUILD_PROCESS_PHASE: phase,
         NEMOCLAW_REBUILD_PROCESS_STATE_DIR: stateDir,
         NEMOCLAW_REBUILD_PROCESS_EVENTS: eventsFile,

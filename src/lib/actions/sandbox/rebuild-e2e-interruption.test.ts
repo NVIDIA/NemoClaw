@@ -11,8 +11,8 @@ afterEach(() => {
 });
 
 describe("rebuild E2E interruption hook", () => {
-  it("is inert outside a Vitest process even when failure-injection variables leak", () => {
-    vi.stubEnv("VITEST", "");
+  it("is inert without the private process-death fixture boundary", () => {
+    vi.stubEnv("VITEST", "true");
     vi.stubEnv("NEMOCLAW_E2E_FAILURE_INJECTION", "1");
     vi.stubEnv("NEMOCLAW_E2E_FORCE_FAIL_AT_STEP", "rebuild_prepared");
     const kill = vi.spyOn(process, "kill").mockReturnValue(true);
@@ -24,6 +24,8 @@ describe("rebuild E2E interruption hook", () => {
 
   it("stops only the explicitly selected checkpoint in Vitest", () => {
     vi.stubEnv("VITEST", "true");
+    vi.stubEnv("HOME", "/tmp/rebuild-process-fixture");
+    vi.stubEnv("NEMOCLAW_REBUILD_PROCESS_FIXTURE", "/tmp/rebuild-process-fixture");
     vi.stubEnv("NEMOCLAW_E2E_FAILURE_INJECTION", "1");
     vi.stubEnv("NEMOCLAW_E2E_FORCE_FAIL_AT_STEP", "rebuild_prepared");
     const kill = vi.spyOn(process, "kill").mockReturnValue(true);
