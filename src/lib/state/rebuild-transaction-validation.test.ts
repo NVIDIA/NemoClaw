@@ -56,6 +56,13 @@ describe("RebuildTransactionStore validation", () => {
       },
     ],
     [
+      "source shields posture",
+      (record: Record<string, unknown>) => {
+        const value = record.intent as Record<string, Record<string, unknown>>;
+        value.source!.shieldsLocked = "yes";
+      },
+    ],
+    [
       "credential environment variable",
       (record: Record<string, unknown>) => {
         const value = record.intent as Record<string, Record<string, unknown>>;
