@@ -40,6 +40,7 @@ export {
   getSandboxStatusReport,
   isInferenceHealthFailing,
   maybeGetSandboxStatusInferenceHealth,
+  resolveSandboxStatusDcodeAutoApprovalMode,
   type SandboxStatusReport,
   type SandboxStatusSnapshot,
 } from "./status-snapshot";

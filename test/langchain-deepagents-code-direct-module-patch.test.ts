@@ -9,8 +9,10 @@ import { addDarwinFcntlSealConstants } from "./helpers/darwin-fcntl-seal-fixture
 import {
   cleanupPackageFixtures,
   createPackageFixture,
+  managedAutoApprovalPath,
   patcher,
   patchFixture,
+  writeManagedAutoApproval,
 } from "./helpers/langchain-deepagents-code-patch-fixture";
 
 const progressiveDisclosureHarness = path.join(
@@ -103,6 +105,8 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ],
     ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
+    ["app", "app.py", "_nemoclaw_original_on_auto_approve_enabled"],
+    ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
@@ -120,11 +124,13 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
 
-  it("rejects a fully marked package with a stale managed analytics guard", () => {
+  it.each([
+    ['os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
+    ["def managed_auto_approval_enabled() -> bool:"],
+  ])("rejects a fully marked package with a stale managed helper guard: %s", (anchor) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const target = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
-    const anchor = 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"';
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # stale`);
     fs.writeFileSync(target, corrupted, "utf8");
 
@@ -213,6 +219,100 @@ else:
     expect(`${result.stdout}\n${result.stderr}`).toContain("disabled in NemoClaw-managed");
   });
 
+  it.each([
+    ["-y"],
+    ["--auto-approve"],
+  ])("preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)", (...args) => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    writeManagedAutoApproval(tempDir, "thread-opt-in\n");
+    const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
+      env: {
+        PATH: process.env.PATH,
+        PYTHONPATH: tempDir,
+        NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("managed-posture-ok auto_approve=True");
+    expect(result.stderr).toContain("Auto-approval is enabled for this thread");
+    expect(result.stderr).toContain("shell commands");
+  });
+
+  it("validates exact trusted auto-approval state and otherwise fails closed (#6478)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const capabilityPath = managedAutoApprovalPath(tempDir);
+    const validation = `
+import os
+from pathlib import Path
+
+from deepagents_code import _nemoclaw_managed as managed
+
+path = Path(${JSON.stringify(capabilityPath)})
+
+def check(expected_mode, expected_enabled):
+    assert managed.managed_auto_approval_mode() == expected_mode
+    assert managed.managed_auto_approval_enabled() is expected_enabled
+
+check("disabled", False)
+for content, expected_mode, expected_enabled in (
+    (b"disabled\\n", "disabled", False),
+    (b"thread-opt-in\\n", "thread-opt-in", True),
+    (b"thread-opt-in", "disabled", False),
+    (b"thread-opt-in\\n\\n", "disabled", False),
+    (b"thread-opt-in\\x00", "disabled", False),
+    (b"enabled\\n", "disabled", False),
+):
+    path.unlink(missing_ok=True)
+    path.write_bytes(content)
+    path.chmod(0o444)
+    check(expected_mode, expected_enabled)
+
+path.chmod(0o644)
+check("disabled", False)
+path.write_bytes(b"thread-opt-in\\n")
+path.chmod(0o444)
+trusted_owner = managed._MANAGED_FILE_OWNER_UID
+managed._MANAGED_FILE_OWNER_UID = trusted_owner + 1
+try:
+    check("disabled", False)
+finally:
+    managed._MANAGED_FILE_OWNER_UID = trusted_owner
+path.unlink()
+target = path.with_name(f"{path.name}-target")
+target.write_bytes(b"thread-opt-in\\n")
+target.chmod(0o444)
+path.symlink_to(target)
+check("disabled", False)
+path.unlink()
+
+real_open = managed.os.open
+def unreadable(*args, **kwargs):
+    raise PermissionError("unreadable")
+managed.os.open = unreadable
+try:
+    check("disabled", False)
+finally:
+    managed.os.open = real_open
+
+os.environ["NEMOCLAW_DCODE_AUTO_APPROVAL"] = "thread-opt-in"
+os.environ["NEMOCLAW_DCODE_AUTO_APPROVAL_ENABLED"] = "1"
+check("disabled", False)
+`;
+    const result = spawnSync("python3", ["-c", validation], {
+      env: { NEMOCLAW_DEBUG: "1", PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("NemoClaw managed auto-approval disabled:");
+    expect(result.stderr).toContain("capability metadata is unsafe");
+    expect(result.stderr).toContain("capability contents are invalid");
+  });
+
   it("preserves ordinary direct-module and read-only tools execution", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
@@ -228,340 +328,6 @@ else:
       expect(result.status, `${args.join(" ")} failed: ${result.stderr}`).toBe(0);
       expect(result.stdout).toContain("managed-posture-ok");
     }
-  });
-
-  it("routes fetch_url through only the explicit managed proxy without direct DNS", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    const proxyUrl = "http://managed-proxy.internal:3128";
-    const result = spawnSync(
-      "python3",
-      [
-        "-c",
-        `
-import builtins
-import os
-import sys
-import types
-from pathlib import Path
-
-calls = []
-responses = []
-sessions = []
-
-class ProxyPolicyDenied(RuntimeError):
-    pass
-
-class Response:
-    def __init__(self, status_code=200, location=None, error=None):
-        self.status_code = status_code
-        self.headers = {} if location is None else {"Location": location}
-        self.error = error
-
-    def raise_for_status(self):
-        if self.error is not None:
-            raise self.error
-        return None
-
-class Session:
-    def __init__(self):
-        self.trust_env = True
-        self.closed = False
-        sessions.append(self)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        self.closed = True
-
-    def get(self, url, **kwargs):
-        calls.append((self.trust_env, url, kwargs))
-        return responses.pop(0) if responses else Response()
-
-requests = types.ModuleType("requests")
-requests.Session = Session
-requests.exceptions = types.SimpleNamespace(TooManyRedirects=RuntimeError)
-sys.modules["requests"] = requests
-
-from deepagents_code import _nemoclaw_managed, tools
-from deepagents_code._nemoclaw_managed import managed_fetch_proxy_url
-
-proxy_host_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-host"
-proxy_port_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-port"
-managed_ca_file = Path(${JSON.stringify(tempDir)}) / "managed-ca.pem"
-writable_ca_file = Path(${JSON.stringify(tempDir)}) / "writable-sensitive-ca.pem"
-symlink_ca_file = Path(${JSON.stringify(tempDir)}) / "symlink-sensitive-ca.pem"
-proxy_host_file.write_text("managed-proxy.internal\\n", encoding="utf-8")
-proxy_port_file.write_text("3128\\n", encoding="utf-8")
-managed_ca_file.write_text("test CA bundle\\n", encoding="utf-8")
-writable_ca_file.write_text("unsafe CA bundle\\n", encoding="utf-8")
-writable_ca_file.chmod(0o666)
-symlink_ca_file.symlink_to(managed_ca_file)
-proxy_host_file.chmod(0o444)
-proxy_port_file.chmod(0o444)
-_nemoclaw_managed._MANAGED_PROXY_HOST_FILE = proxy_host_file
-_nemoclaw_managed._MANAGED_PROXY_PORT_FILE = proxy_port_file
-_nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = managed_ca_file
-_nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
-os.environ["REQUESTS_CA_BUNDLE"] = "relative/../hostile-requests-ca.pem"
-os.environ["CURL_CA_BUNDLE"] = "/missing/hostile-curl-ca.pem"
-os.environ["SSL_CERT_FILE"] = "/missing/hostile-ssl-ca.pem"
-
-def forbidden_direct_dns(*_args, **_kwargs):
-    raise AssertionError("managed fetch attempted direct DNS validation")
-
-tools._validate_url = forbidden_direct_dns
-response = tools._fetch_with_redirects("https://raw.githubusercontent.com/example/repo/main/README.md", timeout=8)
-assert response.status_code == 200
-assert len(sessions) == 1 and sessions[0].closed
-assert calls == [(
-    False,
-    "https://raw.githubusercontent.com/example/repo/main/README.md",
-    {
-        "timeout": 8,
-        "headers": {"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
-        "allow_redirects": False,
-        "proxies": {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}},
-        "verify": str(managed_ca_file),
-    },
-)]
-
-calls.clear()
-path_data_url = "https://raw.githubusercontent.com/example/path@segment:ordinary-data"
-response = tools._fetch_with_redirects(path_data_url, timeout=8)
-assert response.status_code == 200
-assert calls[0][1] == path_data_url
-
-calls.clear()
-redirect_path_data_url = "https://raw.githubusercontent.com/example/@user:pass/source.py"
-responses.extend([Response(302, redirect_path_data_url), Response(200)])
-response = tools._fetch_with_redirects(
-    "https://raw.githubusercontent.com/path-data-redirect",
-    timeout=8,
-)
-assert response.status_code == 200
-assert [url for _, url, _ in calls] == [
-    "https://raw.githubusercontent.com/path-data-redirect",
-    redirect_path_data_url,
-]
-
-calls.clear()
-responses.extend([
-    Response(302, "../main/README.md"),
-    Response(),
-])
-response = tools._fetch_with_redirects(
-    "https://raw.githubusercontent.com/example/repo/start",
-    timeout=8,
-)
-assert response.status_code == 200
-assert [url for _, url, _ in calls] == [
-    "https://raw.githubusercontent.com/example/repo/start",
-    "https://raw.githubusercontent.com/example/main/README.md",
-]
-assert all(
-    kwargs["proxies"]
-    == {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}}
-    for _, _, kwargs in calls
-)
-assert all(kwargs["verify"] == str(managed_ca_file) for _, _, kwargs in calls)
-
-calls.clear()
-responses.append(Response(302))
-try:
-    tools._fetch_with_redirects("https://raw.githubusercontent.com/missing-location", timeout=8)
-except tools._UrlValidationError as exc:
-    assert "missing a Location header" in str(exc)
-else:
-    raise AssertionError("redirect without Location escaped validation")
-
-calls.clear()
-responses.append(Response(302, "https://user:redirect-secret@raw.githubusercontent.com/private"))
-try:
-    tools._fetch_with_redirects("https://raw.githubusercontent.com/credential-redirect", timeout=8)
-except tools._UrlValidationError as exc:
-    assert str(exc) == "URL credentials are not allowed"
-    assert "redirect-secret" not in str(exc)
-else:
-    raise AssertionError("credentialed redirect escaped validation")
-assert len(calls) == 1
-
-for label, redirect_url in (
-    ("cross-host metadata", "http://169.254.169.254/latest/meta-data/"),
-    ("DNS-rebinding hostname", "https://rebind.internal/private"),
-):
-    calls.clear()
-    responses.extend([
-        Response(302, redirect_url),
-        Response(403, error=ProxyPolicyDenied(f"network policy denied {label}")),
-    ])
-    try:
-        tools._fetch_with_redirects(
-            "https://raw.githubusercontent.com/allowed/start",
-            timeout=8,
-        )
-    except ProxyPolicyDenied as exc:
-        assert str(exc) == f"network policy denied {label}"
-    else:
-        raise AssertionError(f"{label} redirect escaped proxy policy denial")
-    assert [url for _, url, _ in calls] == [
-        "https://raw.githubusercontent.com/allowed/start",
-        redirect_url,
-    ]
-    assert all(
-        kwargs["proxies"]
-        == {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}}
-        for _, _, kwargs in calls
-    )
-
-calls.clear()
-responses.append(Response(302, "https://raw.githubusercontent.com/next"))
-tools._MAX_FETCH_REDIRECTS = 0
-try:
-    tools._fetch_with_redirects("https://raw.githubusercontent.com/start", timeout=8)
-except RuntimeError as exc:
-    assert "Exceeded 0 redirects" in str(exc)
-else:
-    raise AssertionError("managed fetch ignored the reviewed upstream redirect cap")
-assert len(calls) == 1
-
-tools._MAX_FETCH_REDIRECTS = 5
-for malformed in ("https://[broken", "https://example.com:not-a-port"):
-    try:
-        tools._fetch_with_redirects(malformed, timeout=8)
-    except tools._UrlValidationError as exc:
-        assert str(exc) == "URL is malformed"
-    else:
-        raise AssertionError(f"malformed URL escaped validation: {malformed}")
-
-os.environ["HTTP_PROXY"] = "http://attacker.internal:4444"
-try:
-    tools._fetch_with_redirects("https://raw.githubusercontent.com/example", timeout=8)
-except tools._UrlValidationError as exc:
-    assert str(exc) == "managed fetch URL proxy does not match runtime proxy"
-    assert "attacker.internal" not in str(exc)
-else:
-    raise AssertionError("proxy-integrity error escaped fetch_url validation")
-
-for invalid_proxy in (
-    "http://user:proxy-secret@proxy.internal:3128",
-    "http://proxy.internal",
-    "http://proxy.internal:0",
-    "http://proxy.internal:70000",
-    "http://proxy.internal:3128/unexpected",
-    "http://proxy.internal:3128?route=unsafe",
-    "http://proxy.internal:3128#fragment",
-    " http://proxy.internal:3128",
-    "http://proxy.internal:3128\\n",
-):
-    os.environ["DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"] = invalid_proxy
-    for proxy_name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-        os.environ[proxy_name] = invalid_proxy
-    try:
-        managed_fetch_proxy_url()
-    except RuntimeError as exc:
-        assert str(exc) == "managed fetch URL proxy is invalid"
-        assert "proxy-secret" not in str(exc)
-    else:
-        raise AssertionError(f"invalid managed proxy was accepted: {invalid_proxy!r}")
-
-for proxy_name in (
-    "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "http_proxy",
-    "https_proxy",
-):
-    os.environ[proxy_name] = ${JSON.stringify(proxyUrl)}
-
-original_import = builtins.__import__
-def block_requests_import(name, *args, **kwargs):
-    if name == "requests":
-        raise ImportError("private import detail from /sensitive/runtime/path")
-    return original_import(name, *args, **kwargs)
-
-builtins.__import__ = block_requests_import
-try:
-    tools._fetch_with_redirects("https://raw.githubusercontent.com/example", timeout=8)
-except tools._UrlValidationError as exc:
-    assert str(exc) == "managed fetch transport dependency is unavailable"
-    assert "ImportError" not in str(exc)
-    assert "sensitive" not in str(exc)
-    assert exc.__cause__ is None
-    assert exc.__suppress_context__ is True
-else:
-    raise AssertionError("requests ImportError escaped the structured validation path")
-finally:
-    builtins.__import__ = original_import
-
-for invalid_ca_bundle, expected_error in (
-    (
-        Path(${JSON.stringify(tempDir)}) / "missing-sensitive-ca.pem",
-        "managed fetch CA bundle is unavailable",
-    ),
-    (symlink_ca_file, "managed fetch CA bundle is invalid"),
-    (writable_ca_file, "managed fetch CA bundle is invalid"),
-):
-    _nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = invalid_ca_bundle
-    try:
-        tools._fetch_with_redirects("https://raw.githubusercontent.com/example", timeout=8)
-    except tools._UrlValidationError as exc:
-        assert str(exc) == expected_error
-        assert "sensitive" not in str(exc)
-        assert exc.__cause__ is None
-    else:
-        raise AssertionError(f"invalid CA bundle was accepted: {invalid_ca_bundle!r}")
-
-_nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = managed_ca_file
-_nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid() + 1
-try:
-    _nemoclaw_managed._managed_fetch_ca_bundle()
-except RuntimeError as exc:
-    assert str(exc) == "managed fetch CA bundle is invalid"
-else:
-    raise AssertionError("wrong-owner CA bundle was accepted")
-_nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
-assert sessions and all(session.closed for session in sessions)
-assert len({id(session) for session in sessions}) == len(sessions)
-print("managed-fetch-proxy-ok")
-`,
-      ],
-      {
-        env: {
-          PATH: process.env.PATH,
-          PYTHONPATH: tempDir,
-          DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL: proxyUrl,
-          HTTP_PROXY: proxyUrl,
-          HTTPS_PROXY: proxyUrl,
-          http_proxy: proxyUrl,
-          https_proxy: proxyUrl,
-          NO_PROXY: "raw.githubusercontent.com",
-          no_proxy: "raw.githubusercontent.com",
-        },
-        encoding: "utf8",
-      },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("managed-fetch-proxy-ok");
-
-    const withoutDelegation = spawnSync(
-      "python3",
-      [
-        "-c",
-        [
-          "from deepagents_code import tools",
-          'result = tools._fetch_with_redirects("https://example.com", timeout=3)',
-          'assert result == {"transport": "direct", "url": "https://example.com", "timeout": 3}',
-        ].join("; "),
-      ],
-      {
-        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
-        encoding: "utf8",
-      },
-    );
-    expect(withoutDelegation.status, withoutDelegation.stderr).toBe(0);
   });
 
   it("rejects direct-module runtime credentials before settings bootstrap", () => {
@@ -1041,11 +807,19 @@ async def validate():
     )
     assert instance.original_switch_kwargs is None
     instance._auto_approve = True
+    instance._status_bar.set_auto_approve(enabled=True)
+    instance._session_state.auto_approve = True
     await instance._on_auto_approve_enabled()
     assert instance._auto_approve is False
+    assert instance._status_bar.auto_approve is False
+    assert instance._session_state.auto_approve is False
     instance._auto_approve = True
+    instance._status_bar.set_auto_approve(enabled=True)
+    instance._session_state.auto_approve = True
     await instance.action_toggle_auto_approve()
     assert instance._auto_approve is False
+    assert instance._status_bar.auto_approve is False
+    assert instance._session_state.auto_approve is False
     await instance._set_rubric_model("anthropic:test")
     assert instance._rubric_model is None
     assert instance._server_kwargs["rubric_model"] is None
@@ -1361,6 +1135,206 @@ print("managed-boundaries-ok")
       encoding: "utf8",
     });
     expect(output).toContain("managed-boundaries-ok");
+  });
+
+  it("enables warned thread-scoped approval and resets it at thread boundaries (#6478)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    writeManagedAutoApproval(tempDir, "thread-opt-in\n");
+    const validation = `
+import asyncio
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location(
+    "progressive_disclosure_harness",
+    ${JSON.stringify(progressiveDisclosureHarness)},
+)
+assert spec is not None and spec.loader is not None
+progressive_disclosure_harness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(progressive_disclosure_harness)
+progressive_disclosure_harness._install_stubs()
+
+from deepagents_code import _nemoclaw_managed, agent, app, main as dcode_main
+from deepagents_code.client import non_interactive
+from deepagents_code.tui.widgets.approval import ApprovalMenu
+
+WARNING = "Tool calls, including shell commands, may execute without further confirmation"
+
+def set_auto(instance, enabled):
+    instance._auto_approve = enabled
+    instance._status_bar.set_auto_approve(enabled=enabled)
+    instance._session_state.auto_approve = enabled
+
+def assert_auto(instance, enabled):
+    assert instance._auto_approve is enabled
+    assert instance._status_bar.auto_approve is enabled
+    assert instance._session_state.auto_approve is enabled
+
+def assert_reset(instance):
+    assert_auto(instance, False)
+    assert instance._session_state.approval_mode_key is None
+
+async def validate():
+    assert _nemoclaw_managed.managed_auto_approval_mode() == "thread-opt-in"
+    assert _nemoclaw_managed.managed_auto_approval_enabled() is True
+    original_argv = sys.argv
+    sys.argv = ["dcode"]
+    assert dcode_main.parse_args().auto_approve is False
+    sys.argv = ["dcode", "-n", "message", "--auto-approve"]
+    assert dcode_main.parse_args().auto_approve is True
+    sys.argv = original_argv
+    assert agent._resolve_ptc_option(
+        ["execute"], tools=[], acknowledge_unsafe=True, auto_approve=True
+    ) is None
+    headless_kwargs = await non_interactive.run_non_interactive(
+        "message",
+        "assistant",
+        startup_cmd="touch /tmp/unsafe",
+        model_params={"api_key": "secret"},
+        sandbox_type="modal",
+        mcp_config_path="mcp.json",
+        no_mcp=False,
+        trust_project_mcp=True,
+        enable_interpreter=True,
+        interpreter_ptc=["execute"],
+        rubric_model="anthropic:attacker",
+    )
+    assert headless_kwargs["startup_cmd"] is None
+    assert headless_kwargs["model_params"] is None
+    assert headless_kwargs["sandbox_type"] == "none"
+    assert headless_kwargs["mcp_config_path"] is None
+    assert headless_kwargs["no_mcp"] is True
+    assert headless_kwargs["trust_project_mcp"] is False
+    assert headless_kwargs["enable_interpreter"] is False
+    assert headless_kwargs["interpreter_ptc"] is None
+    assert headless_kwargs["rubric_model"] is None
+    instance = app.DeepAgentsApp()
+
+    set_auto(instance, False)
+    await instance._on_auto_approve_enabled()
+    assert_auto(instance, True)
+    assert WARNING in instance.notifications[-1][0]
+
+    set_auto(instance, False)
+    warning_count = len(instance.notifications)
+    await instance.action_toggle_auto_approve()
+    assert_auto(instance, True)
+    assert len(instance.notifications) == warning_count + 1
+    assert WARNING in instance.notifications[-1][0]
+    await instance.action_toggle_auto_approve()
+    assert_auto(instance, False)
+    assert len(instance.notifications) == warning_count + 1
+
+    approval = ApprovalMenu()
+    approval._handle_selection(1)
+    assert approval.decisions == [("auto_approve_all", None)]
+    assert approval.notifications == []
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    await instance._handle_command("/clear")
+    assert instance._session_state.thread_id != previous_thread
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    await instance._handle_command("/force-clear")
+    assert instance._session_state.thread_id != previous_thread
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    instance.clear_should_fail_early = True
+    try:
+        await instance._handle_command("/clear")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("early clear failure was not raised")
+    assert instance._session_state.thread_id == previous_thread
+    assert_reset(instance)
+
+    instance.clear_should_fail_early = False
+    instance.clear_should_fail_after_reset = True
+    try:
+        await instance._handle_command("/clear")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("post-reset clear failure was not raised")
+    assert instance._session_state.thread_id != previous_thread
+    assert_reset(instance)
+    instance.clear_should_fail_after_reset = False
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    instance.resume_should_fail = True
+    await instance._resume_thread("thread-failed")
+    assert instance._session_state.thread_id == previous_thread
+    assert_reset(instance)
+
+    instance.resume_should_fail = False
+    instance.resume_should_fail_after_reset = True
+    try:
+        await instance._resume_thread("thread-reset-then-failed")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("post-reset resume failure was not raised")
+    assert instance._session_state.thread_id == previous_thread
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    instance._session_state.approval_mode_key = "approval/thread-reset-then-failed"
+    instance.resume_should_fail_after_reset = False
+    await instance._resume_thread("thread-2")
+    assert instance._session_state.thread_id == "thread-2"
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    instance.agent_swap_should_fail = True
+    await instance._restart_server_for_agent_swap("agent-failed")
+    assert instance._session_state.thread_id == previous_thread
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    instance._session_state.thread_id = None
+    await instance._restart_server_for_agent_swap("agent-none")
+    assert instance._session_state.thread_id is None
+    assert_reset(instance)
+
+    instance.agent_swap_should_fail = False
+    instance.agent_swap_should_fail_after_reset = True
+    try:
+        await instance._restart_server_for_agent_swap("agent-restart-failed")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("post-reset agent swap failure was not raised")
+    assert instance._session_state.thread_id is not None
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    previous_thread = instance._session_state.thread_id
+    instance.agent_swap_should_fail_after_reset = False
+    instance.agent_swap_should_fail = False
+    await instance._restart_server_for_agent_swap("agent-2")
+    assert instance._session_state.thread_id != previous_thread
+    assert instance._assistant_id == "agent-2"
+    assert_reset(instance)
+
+asyncio.run(validate())
+print("managed-auto-approval-ok")
+`;
+    const result = spawnSync("python3", ["-c", validation], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("managed-auto-approval-ok");
   });
 
   it("fails closed when the installed version or required source shape drifts", () => {

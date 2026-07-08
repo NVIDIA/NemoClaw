@@ -144,6 +144,7 @@ describe("showSandboxStatus flow", () => {
       sandboxEntry: {
         agent: "langchain-deepagents-code",
         agentVersion: null,
+        dcodeAutoApprovalMode: "thread-opt-in",
       },
     });
 
@@ -151,6 +152,7 @@ describe("showSandboxStatus flow", () => {
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("Harness:  LangChain Deep Agents Code (terminal)");
+    expect(output).toContain("DCode auto-approval capability: thread-opt-in");
     expect(output).toContain("Agent:    LangChain Deep Agents Code v0.1.0");
     expect(output).toContain("Update:");
     expect(output).toContain("Run `nemoclaw alpha rebuild` to upgrade");

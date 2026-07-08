@@ -53,10 +53,22 @@ def parse_args():
 def cli_main():
     return parse_args()
 `,
-  "app.py": fs.readFileSync(
-    path.join(repoRoot, "test", "fixtures", "langchain-deepagents-code", "app.py"),
-    "utf8",
-  ),
+  "app.py": fs
+    .readFileSync(
+      path.join(repoRoot, "test", "fixtures", "langchain-deepagents-code", "app.py"),
+      "utf8",
+    )
+    .replace(
+      "    async def _switch_model(self, model_spec, **kwargs):\n",
+      `    async def _resume_thread(self, thread_id):
+        del thread_id
+
+    async def _restart_server_for_agent_swap(self, agent_name):
+        del agent_name
+
+    async def _switch_model(self, model_spec, **kwargs):
+`,
+    ),
   "auth_store.py": `from __future__ import annotations
 
 class StoredCredential: pass

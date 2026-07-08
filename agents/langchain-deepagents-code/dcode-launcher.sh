@@ -6,6 +6,10 @@
 
 set -euo pipefail
 unset BASH_ENV ENV
+while IFS= read -r _nemoclaw_auto_approval_env; do
+  unset "$_nemoclaw_auto_approval_env"
+done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
+unset _nemoclaw_auto_approval_env
 
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
 readonly MANAGED_OBSERVABILITY_MARKER="/tmp/nemoclaw-observability-enabled"

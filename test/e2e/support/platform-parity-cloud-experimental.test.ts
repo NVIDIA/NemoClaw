@@ -347,6 +347,15 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
+  it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
+    const scriptPath = path.join(
+      process.cwd(),
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+    );
+    const result = spawnSync("bash", ["-n", scriptPath], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("registers executable Deep Agents cloud-experimental checks", () => {
     expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
@@ -358,6 +367,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
     ]);
 
     for (const scriptPath of DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS) {
@@ -403,6 +413,11 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
       ),
     ).toBe(8 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      ),
+    ).toBe(35 * 60_000);
   });
 
   it("documents Deep Agents check scripts in generated launch/QA evidence", () => {
