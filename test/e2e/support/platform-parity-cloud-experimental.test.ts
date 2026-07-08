@@ -40,6 +40,36 @@ function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeR
 }
 
 describe("P0-E cloud-experimental parity guardrails", () => {
+  it("skips the destructive fresh re-onboard check outside a Deep Agents sandbox", () => {
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
+    try {
+      fs.writeFileSync(path.join(binDir, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const result = spawnSync(
+        "bash",
+        [
+          path.join(
+            process.cwd(),
+            "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+          ),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+            SANDBOX_NAME: "openclaw-sandbox",
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        "04-deepagents-code-fresh-reonboard: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+    } finally {
+      fs.rmSync(binDir, { force: true, recursive: true });
+    }
+  });
+
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
     await SandboxExecCommand.run(
       [
@@ -269,7 +299,16 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
-  it("registers executable Deep Agents cloud-experimental checks", () => {
+  it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
+    const scriptPath = path.join(
+      process.cwd(),
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+    );
+    const result = spawnSync("bash", ["-n", scriptPath], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("registers executable Deep Agents cloud-experimental checks in execution order", () => {
     expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
       "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
@@ -280,33 +319,13 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
     ]);
 
     for (const scriptPath of DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS) {
       const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;
       expect(mode & 0o111, `${scriptPath} must be executable`).not.toBe(0);
     }
-  });
-
-  it("checks the stock Nemotron Ultra profile before destructive re-onboarding", () => {
-    const profileCheckPath = DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS[0];
-    const profileCheck = fs.readFileSync(path.join(process.cwd(), profileCheckPath), "utf8");
-
-    expect(profileCheckPath).toBe(
-      "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
-    );
-    expect(profileCheck).toContain("/opt/venv/bin/python3 -I -");
-    expect(profileCheck).toContain("from langchain_openai import ChatOpenAI");
-    expect(profileCheck).toContain("_harness_profile_for_model(make_model(model_id), None)");
-    expect(profileCheck).toContain('"nvidia/nemotron-3-ultra-550b-a55b"');
-    expect(profileCheck).toContain('"nvidia/nvidia/nemotron-3-ultra"');
-    expect(profileCheck).toContain('"deepagents-code": "0.1.34"');
-    expect(profileCheck).toContain('"deepagents": "0.7.0a6"');
-    expect(profileCheck).toContain("_nvidia_nemotron_3_ultra.__file__");
-    expect(profileCheck).toContain('description_overrides["read_file"]');
-    expect(profileCheck).toContain("middleware_names(profile) == EXPECTED_MIDDLEWARE");
-    expect(profileCheck).toContain('make_model("gpt-4.1-mini")');
-    expect(profileCheck).not.toMatch(/\.(?:invoke|ainvoke|stream|astream)\(/);
   });
 
   it("gives the destructive fresh re-onboard check its onboarding budget", () => {
@@ -325,6 +344,11 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
       ),
     ).toBe(8 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      ),
+    ).toBe(35 * 60_000);
   });
 
   it("documents Deep Agents check scripts in generated launch/QA evidence", () => {

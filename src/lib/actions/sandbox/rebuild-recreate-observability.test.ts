@@ -15,6 +15,8 @@ import type { RebuildResumeConfig } from "./rebuild-resume-config";
 const DCODE_AGENT = "langchain-deepagents-code";
 
 const durableConfig: RebuildDurableConfig = {
+  dcodeAutoApprovalMode: "disabled",
+  dcodeAutoApprovalModeError: null,
   fromDockerfile: null,
   fromDockerfileError: null,
   hermesAuthMethod: null,
@@ -55,6 +57,8 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   onboardLockAlreadyHeld: true,
   autoYes: true,
   toolDisclosure: "progressive",
+  dcodeAutoApprovalMode: "disabled",
+  dcodeAutoApprovalRequestedExplicitly: false,
   observabilityEnabled: true,
   observabilityRequestedExplicitly: true,
   policyTier: "restricted",

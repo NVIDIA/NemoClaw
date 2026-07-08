@@ -85,6 +85,14 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     os.environ.pop("PYTHONPATH", None)
     os.environ.pop("OPENAI_PROXY", None)
 
+    from deepagents_code._nemoclaw_managed import (
+        assert_safe_runtime as _nemoclaw_assert_safe_runtime,
+        managed_auto_approval_enabled as _nemoclaw_managed_auto_approval_enabled,
+        managed_mcp_config_path as _nemoclaw_managed_mcp_config_path,
+    )
+
+    nemoclaw_auto_approval_enabled = _nemoclaw_managed_auto_approval_enabled()
+
     blocked_command = getattr(args, "command", None)
     if blocked_command == "mcp":
         parser.error("MCP commands are disabled in NemoClaw-managed Deep Agents Code sandboxes")
@@ -108,7 +116,7 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         parser.error("--interpreter-tools is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "interpreter", None) is True:
         parser.error("--interpreter is disabled in NemoClaw-managed Deep Agents Code sandboxes")
-    if getattr(args, "auto_approve", False):
+    if getattr(args, "auto_approve", False) and not nemoclaw_auto_approval_enabled:
         parser.error("--auto-approve is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "acp", False):
         parser.error("--acp is disabled in NemoClaw-managed Deep Agents Code sandboxes")
@@ -121,11 +129,6 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.sandbox_snapshot_name = None
     if hasattr(args, "sandbox_setup"):
         args.sandbox_setup = None
-    from deepagents_code._nemoclaw_managed import (
-        assert_safe_runtime as _nemoclaw_assert_safe_runtime,
-        managed_mcp_config_path as _nemoclaw_managed_mcp_config_path,
-    )
-
     # Load only NemoClaw's dedicated projection. The helper canonicalizes it
     # into a process-local integrity-bound snapshot; user/project discovery is
     # disabled separately in the patched MCP loader.
@@ -143,7 +146,7 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.interpreter = False
     if hasattr(args, "interpreter_tools"):
         args.interpreter_tools = None
-    if hasattr(args, "auto_approve"):
+    if hasattr(args, "auto_approve") and not nemoclaw_auto_approval_enabled:
         args.auto_approve = False
     if hasattr(args, "rubric_model"):
         args.rubric_model = None
@@ -153,6 +156,17 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.startup_cmd = None
 
     _nemoclaw_assert_safe_runtime()
+    if (
+        getattr(args, "auto_approve", False)
+        and nemoclaw_auto_approval_enabled
+        and not getattr(args, "non_interactive_message", None)
+    ):
+        print(
+            "WARNING: Auto-approval is enabled for this thread. Tool calls, "
+            "including shell commands, may execute without further confirmation "
+            "inside the sandbox.",
+            file=sys.stderr,
+        )
 '''
 
 APP_PATCH = r'''
@@ -162,11 +176,33 @@ _NEMOCLAW_MANAGED_UI_MESSAGE = (
     "NemoClaw manages credentials, dependencies, updates, and MCP for this "
     "sandbox. Use NemoClaw policy/configuration on the host instead."
 )
+_NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE = (
+    "Auto-approval is disabled in NemoClaw-managed sandboxes."
+)
+_NEMOCLAW_AUTO_APPROVAL_WARNING = (
+    "Auto-approval is enabled for this thread. Tool calls, including shell "
+    "commands, may execute without further confirmation inside the sandbox."
+)
 _nemoclaw_original_handle_command = DeepAgentsApp._handle_command
+_nemoclaw_original_resume_thread = DeepAgentsApp._resume_thread
+_nemoclaw_original_restart_server_for_agent_swap = (
+    DeepAgentsApp._restart_server_for_agent_swap
+)
 _nemoclaw_original_switch_model = DeepAgentsApp._switch_model
+_nemoclaw_original_on_auto_approve_enabled = (
+    DeepAgentsApp._on_auto_approve_enabled
+)
+_nemoclaw_original_action_toggle_auto_approve = (
+    DeepAgentsApp.action_toggle_auto_approve
+)
 _nemoclaw_original_absolutize_launch_relative_path = (
     DeepAgentsApp._absolutize_launch_relative_path
 )
+
+
+async def _nemoclaw_run_thread_transition(self, operation, *args) -> None:
+    _nemoclaw_reset_thread_auto_approval(self)
+    await operation(self, *args)
 
 
 async def _nemoclaw_handle_command(self, command: str) -> None:
@@ -186,7 +222,26 @@ async def _nemoclaw_handle_command(self, command: str) -> None:
         await self._mount_message(UserMessage(command))
         await self._mount_message(AppMessage(_NEMOCLAW_MANAGED_UI_MESSAGE))
         return
-    await _nemoclaw_original_handle_command(self, command)
+    if normalized not in {"/clear", "/force-clear"}:
+        await _nemoclaw_original_handle_command(self, command)
+        return
+    await _nemoclaw_run_thread_transition(
+        self, _nemoclaw_original_handle_command, command
+    )
+
+
+async def _nemoclaw_resume_thread(self, thread_id: str) -> None:
+    await _nemoclaw_run_thread_transition(
+        self, _nemoclaw_original_resume_thread, thread_id
+    )
+
+
+async def _nemoclaw_restart_server_for_agent_swap(
+    self, agent_name: str
+) -> None:
+    await _nemoclaw_run_thread_transition(
+        self, _nemoclaw_original_restart_server_for_agent_swap, agent_name
+    )
 
 
 async def _nemoclaw_switch_model(
@@ -253,17 +308,55 @@ async def _nemoclaw_block_auto_update(self) -> None:
     self.notify(_NEMOCLAW_MANAGED_UI_MESSAGE, severity="warning", markup=False)
 
 
-async def _nemoclaw_block_auto_approve(self) -> None:
+def _nemoclaw_auto_approval_is_allowed() -> bool:
+    from deepagents_code._nemoclaw_managed import managed_auto_approval_enabled
+
+    return managed_auto_approval_enabled()
+
+
+def _nemoclaw_reset_thread_auto_approval(self) -> None:
     self._auto_approve = False
     if getattr(self, "_status_bar", None) is not None:
         self._status_bar.set_auto_approve(enabled=False)
     if getattr(self, "_session_state", None) is not None:
         self._session_state.auto_approve = False
+        self._session_state.approval_mode_key = None
+
+
+async def _nemoclaw_block_auto_approve(self) -> None:
+    _nemoclaw_reset_thread_auto_approval(self)
     self.notify(
-        "Auto-approval is disabled in NemoClaw-managed sandboxes.",
+        _NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE,
         severity="warning",
         markup=False,
     )
+
+
+def _nemoclaw_notify_auto_approval_warning(self) -> None:
+    self.notify(
+        _NEMOCLAW_AUTO_APPROVAL_WARNING,
+        severity="warning",
+        markup=False,
+    )
+
+
+async def _nemoclaw_on_auto_approve_enabled(self) -> None:
+    if not _nemoclaw_auto_approval_is_allowed():
+        await _nemoclaw_block_auto_approve(self)
+        return
+    await _nemoclaw_original_on_auto_approve_enabled(self)
+    if getattr(self, "_auto_approve", False):
+        _nemoclaw_notify_auto_approval_warning(self)
+
+
+async def _nemoclaw_action_toggle_auto_approve(self) -> None:
+    if not _nemoclaw_auto_approval_is_allowed():
+        await _nemoclaw_block_auto_approve(self)
+        return
+    was_enabled = bool(getattr(self, "_auto_approve", False))
+    await _nemoclaw_original_action_toggle_auto_approve(self)
+    if not was_enabled and getattr(self, "_auto_approve", False):
+        _nemoclaw_notify_auto_approval_warning(self)
 
 
 async def _nemoclaw_block_rubric_model(self, model_spec: str | None) -> None:
@@ -332,6 +425,10 @@ def _nemoclaw_block_mcp_login(self, server_name: str) -> None:
 
 
 DeepAgentsApp._handle_command = _nemoclaw_handle_command
+DeepAgentsApp._resume_thread = _nemoclaw_resume_thread
+DeepAgentsApp._restart_server_for_agent_swap = (
+    _nemoclaw_restart_server_for_agent_swap
+)
 DeepAgentsApp._switch_model = _nemoclaw_switch_model
 DeepAgentsApp._absolutize_launch_relative_path = staticmethod(
     _nemoclaw_absolutize_launch_relative_path
@@ -342,8 +439,10 @@ DeepAgentsApp._handle_install_command = _nemoclaw_block_install_command
 DeepAgentsApp._install_extra = _nemoclaw_block_install_extra
 DeepAgentsApp._handle_install_package = _nemoclaw_block_install_package
 DeepAgentsApp._handle_auto_update_toggle = _nemoclaw_block_auto_update
-DeepAgentsApp._on_auto_approve_enabled = _nemoclaw_block_auto_approve
-DeepAgentsApp.action_toggle_auto_approve = _nemoclaw_block_auto_approve
+DeepAgentsApp._on_auto_approve_enabled = _nemoclaw_on_auto_approve_enabled
+DeepAgentsApp.action_toggle_auto_approve = (
+    _nemoclaw_action_toggle_auto_approve
+)
 DeepAgentsApp._set_rubric_model = _nemoclaw_block_rubric_model
 DeepAgentsApp._prompt_launch_tavily = _nemoclaw_skip_launch_tavily
 DeepAgentsApp._prompt_launch_dependencies_then_model = _nemoclaw_skip_launch_model
@@ -653,16 +752,26 @@ async def _run_startup_command(command, console, *, quiet: bool) -> None:
 APPROVAL_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
+_NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE = (
+    "Auto-approval is disabled in NemoClaw-managed sandboxes."
+)
 _nemoclaw_original_approval_selection = ApprovalMenu._handle_selection
 
 
 def _nemoclaw_handle_approval_selection(
     self, option: int, *, reject_message: str | None = None
 ) -> None:
-    """Refuse the thread-wide auto-approval choice without approving this batch."""
+    """Gate the thread-wide auto-approval choice on the managed capability."""
     if option == 1:
+        from deepagents_code._nemoclaw_managed import managed_auto_approval_enabled
+
+        if managed_auto_approval_enabled():
+            _nemoclaw_original_approval_selection(
+                self, option, reject_message=reject_message
+            )
+            return
         self.app.notify(
-            "Auto-approval is disabled in NemoClaw-managed sandboxes.",
+            _NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE,
             severity="warning",
             markup=False,
         )
@@ -1161,6 +1270,10 @@ def main() -> None:
             else ""
         )
         analytics_guard = 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'
+        auto_approval_guards = (
+            "def managed_auto_approval_mode() -> str:",
+            "def managed_auto_approval_enabled() -> bool:",
+        )
         if (
             PATCH_MARKER not in helper_source
             or sum(
@@ -1168,6 +1281,14 @@ def main() -> None:
                 for line in helper_source.splitlines()
             )
             != 1
+            or any(
+                sum(
+                    line.strip() == guard
+                    for line in helper_source.splitlines()
+                )
+                != 1
+                for guard in auto_approval_guards
+            )
         ):
             raise RuntimeError(
                 "Managed package patch is partial: helper is missing or stale"
@@ -1189,6 +1310,8 @@ def main() -> None:
         for name, patch in (
             ("entrypoint", ENTRYPOINT_PATCH),
             ("main", MAIN_PATCH),
+            ("app", APP_PATCH),
+            ("approval", APPROVAL_PATCH),
             ("agent", AGENT_PATCH),
             ("status", STATUS_PATCH),
             ("welcome", WELCOME_PATCH),
@@ -1229,6 +1352,8 @@ def main() -> None:
             "_handle_command",
             "_handle_install_command",
             "_handle_install_package",
+            "_restart_server_for_agent_swap",
+            "_resume_thread",
             "_handle_update_action",
             "_handle_update_command",
             "_install_extra",

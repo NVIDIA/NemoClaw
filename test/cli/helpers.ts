@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -286,6 +286,15 @@ export function writeHealthyDockerStub(localBin: string): void {
   );
 }
 
+export function healthyInferenceRouteStubLines(): string[] {
+  return [
+    'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+    "  echo 'OK 200'",
+    "  exit 0",
+    "fi",
+  ];
+}
+
 export const FAKE_OPENCLAW_LOG_LINE = "openclaw gateway log: policy checker ready";
 export const FAKE_OPENSHELL_LOG_LINE = "openshell audit log: DENIED example.com:443";
 
@@ -365,6 +374,10 @@ export function createDoctorTestSetup(
       `marker_file=${JSON.stringify(markerFile)}`,
       'printf \'%s\\n\' "$*" >> "$marker_file"',
       ...openshellLines,
+      'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+      "  echo 'OK 200'",
+      "  exit 0",
+      "fi",
       "exit 0",
     ].join("\n"),
     { mode: 0o755 },

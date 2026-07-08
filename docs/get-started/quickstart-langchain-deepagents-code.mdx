@@ -125,12 +125,44 @@ Stdio commands, extra headers, raw credentials, and unrelated top-level configur
 For authenticated MCP setup and credential rotation, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
 This isolated-mode guarantee applies to those managed launchers, not arbitrary Python commands in the sandbox.
 
-Interactive shell execution and other destructive tools remain behind human-in-the-loop approval prompts.
-Thread-wide auto-approval and shell allow-list auto-approval are disabled.
+Interactive shell execution and other destructive tools remain behind human-in-the-loop approval prompts by default.
+Thread-wide auto-approval is unavailable unless you enable the managed thread opt-in capability, and shell allow-list auto-approval remains disabled.
 Headless `dcode -n` is an explicit automation boundary.
 It has no approval UI and automatically approves non-shell tool requests, including file writes and edits.
 The managed headless path still disables shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP configuration, nested remote sandboxes, remote async subagents, and alternate model routes.
 Use the interactive TUI when you need to inspect each destructive tool request before it runs.
+
+### Configure Thread Auto-Approval
+
+Managed Deep Agents sandboxes keep interactive thread auto-approval disabled by default.
+In this mode, the TUI auto-approval choice and `dcode -y` fail closed.
+
+Enable the capability for a named sandbox through a transactional rebuild because NemoClaw bakes the capability into the managed image.
+
+```bash
+nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes
+```
+
+The `thread-opt-in` setting grants permission to activate auto-approval, but it does not activate auto-approval by itself.
+For each thread, select **Auto-approve for this thread** in the approval menu or start that `dcode` process with `dcode -y`.
+The TUI shows the upstream active-state indicator and a warning while the current thread can run tool calls, including shell commands, without further confirmation.
+
+NemoClaw resets the active state when you start a new `dcode` process, run `/clear` or `/force-clear`, switch or resume a different thread, or switch agents.
+You must opt in again after each reset.
+The host-side status command reports the configured capability, not whether one live TUI thread currently has auto-approval active.
+
+```bash
+nemo-deepagents <sandbox-name> status
+```
+
+Thread auto-approval does not bypass OpenShell network policy, credential isolation, the managed inference route, managed MCP validation, or the other Deep Agents runtime restrictions described above.
+Headless `dcode -n` remains a separate automation boundary with non-shell auto-approval and managed shell execution disabled.
+
+Return the sandbox to the default posture with another transactional rebuild.
+
+```bash
+nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval disabled --yes
+```
 
 To confirm which sandbox a session is in, run the identity command:
 

@@ -8,6 +8,7 @@ import {
   normalizeRebuildObservabilityPolicyPresets,
   normalizeRebuildTargetPolicyPresets,
   normalizeRebuildWebSearchPolicyPresets,
+  type RebuildBackupPhaseInput,
   runRebuildBackupPhase,
 } from "./rebuild-backup-phase";
 
@@ -193,5 +194,105 @@ describe("rebuild web-search policy normalization", () => {
         null,
       ),
     ).toEqual(["npm", "future-agent-required"]);
+  });
+});
+
+describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
+  const completeMarkedManifest = {
+    agentType: "openclaw",
+    dir: "/sandbox/.openclaw",
+    backupPath: "/tmp/custom-openclaw-backup",
+    reconcileOpenClawImagePluginProvenance: true,
+    openclawImagePluginInstalls: [],
+  } as never;
+
+  function customOpenClawInput(overrides: Record<string, unknown> = {}): RebuildBackupPhaseInput {
+    return {
+      sandboxName: "custom-openclaw",
+      sandboxEntry: {
+        name: "custom-openclaw",
+        agent: "openclaw",
+        fromDockerfile: "/tmp/Dockerfile.custom",
+      },
+      staleRecovery: false,
+      preparedRecoveryManifest: null,
+      messagingPlan: null,
+      webSearchConfig: null,
+      log: vi.fn(),
+      bail: (message: string): never => {
+        throw new Error(message);
+      },
+      relockShieldsIfNeeded: vi.fn(() => true),
+      ...overrides,
+    } as RebuildBackupPhaseInput;
+  }
+
+  it("blocks a live custom image with missing registry provenance before backup", () => {
+    const backupStateForRebuild = vi.fn();
+    const input = customOpenClawInput();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() => runRebuildBackupPhase(input, backupStateForRebuild)).toThrow(
+      "Custom-image OpenClaw plugin provenance is unavailable.",
+    );
+
+    expect(backupStateForRebuild).not.toHaveBeenCalled();
+    expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("new sandbox name"));
+    expect(errorLog).not.toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_RECREATE_WITHOUT_BACKUP"),
+    );
+    errorLog.mockRestore();
+  });
+
+  it("uses a marked prepared manifest when registry provenance is missing", () => {
+    const backupStateForRebuild = vi.fn();
+    const input = customOpenClawInput({ preparedRecoveryManifest: completeMarkedManifest });
+
+    const result = runRebuildBackupPhase(input, backupStateForRebuild);
+
+    expect(result?.backupManifest).toBe(completeMarkedManifest);
+    expect(backupStateForRebuild).not.toHaveBeenCalled();
+  });
+
+  it("blocks an unmarked legacy prepared manifest before deletion", () => {
+    const backupStateForRebuild = vi.fn();
+    const input = customOpenClawInput({
+      preparedRecoveryManifest: {
+        agentType: "openclaw",
+        dir: "/sandbox/.openclaw",
+        backupPath: "/tmp/legacy-custom-openclaw-backup",
+        openclawImagePluginInstalls: [],
+      },
+    });
+
+    expect(() => runRebuildBackupPhase(input, backupStateForRebuild)).toThrow(
+      "Custom-image OpenClaw plugin provenance is unavailable.",
+    );
+
+    expect(backupStateForRebuild).not.toHaveBeenCalled();
+  });
+
+  it("revalidates a newly generated backup manifest before deletion", () => {
+    const backupStateForRebuild = vi.fn(() => ({
+      agentType: "openclaw",
+      dir: "/sandbox/.openclaw",
+      backupPath: "/tmp/incomplete-custom-openclaw-backup",
+      reconcileOpenClawImagePluginProvenance: true,
+    }));
+    const input = customOpenClawInput({
+      sandboxEntry: {
+        name: "custom-openclaw",
+        agent: "openclaw",
+        fromDockerfile: "/tmp/Dockerfile.custom",
+        openclawImagePluginInstalls: [],
+      },
+    });
+
+    expect(() => runRebuildBackupPhase(input, backupStateForRebuild as never)).toThrow(
+      "Custom-image OpenClaw plugin provenance is unavailable.",
+    );
+
+    expect(backupStateForRebuild).toHaveBeenCalledOnce();
   });
 });

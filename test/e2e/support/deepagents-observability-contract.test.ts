@@ -239,6 +239,11 @@ describe("Deep Agents observability policy proof", () => {
     ).toBe(true);
     expect(
       hasConfirmedOpenShellPolicyDenial(
+        'curl: (22) Th{"detail":"POST host.openshell.internal:4318/v1/traces not permitted by policy","error":"policy_denied"}e requested URL returned error: 403',
+      ),
+    ).toBe(true);
+    expect(
+      hasConfirmedOpenShellPolicyDenial(
         "nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'dcode-test'.",
       ),
     ).toBe(true);
