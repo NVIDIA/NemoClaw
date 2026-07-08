@@ -3234,10 +3234,14 @@ jobs:
         legacy:
           - id: v0.0.36
             nemoclaw_ref: v0.0.36
+            nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
+            installer_sha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f"
             openshell_version: 0.0.36
             openclaw_version: 2026.4.24
           - id: v0.0.55
             nemoclaw_ref: v0.0.55
+            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
+            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
             openshell_version: 0.0.44
             openclaw_version: 2026.5.22
     env:
@@ -3250,6 +3254,8 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
       NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.legacy.nemoclaw_ref }}
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.legacy.nemoclaw_commit }}
+      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.legacy.installer_sha256 }}
       NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.legacy.openshell_version }}
       NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.legacy.openclaw_version }}
       OPENSHELL_GATEWAY: "nemoclaw"
