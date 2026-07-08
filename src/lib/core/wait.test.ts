@@ -18,12 +18,13 @@ import {
 function spawnResult(
   status: number | null,
   error?: Error,
+  signal: NodeJS.Signals | null = null,
 ): ReturnType<typeof childProcess.spawnSync> {
   return {
     error,
     output: [],
     pid: 1,
-    signal: null,
+    signal,
     status,
     stderr: "",
     stdout: "",
@@ -131,6 +132,17 @@ describe("waitUntil", () => {
   it("requires a deadline or attempt cap for injected options", () => {
     expect(() => waitUntil(() => true, {})).toThrow("waitUntil requires deadlineMs or maxAttempts");
   });
+
+  it("stops before evaluating the condition when the clock is not finite", () => {
+    const condition = vi.fn(() => true);
+    const sleep = vi.fn();
+
+    const result = waitUntil(condition, { deadlineMs: 100, now: () => Number.NaN, sleep });
+
+    expect(result).toBe(false);
+    expect(condition).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
 });
 
 describe("waitUntilAsync", () => {
@@ -156,6 +168,20 @@ describe("waitUntilAsync", () => {
     expect(condition).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(5);
   });
+
+  it("propagates a rejected condition without sleeping", async () => {
+    const sleep = vi.fn();
+
+    const waiting = waitUntilAsync(
+      async () => {
+        throw new Error("condition failed");
+      },
+      { deadlineMs: 100, now: () => 0, sleep },
+    );
+
+    await expect(waiting).rejects.toThrow("condition failed");
+    expect(sleep).not.toHaveBeenCalled();
+  });
 });
 
 describe("waitForPort", () => {
@@ -177,7 +203,23 @@ describe("waitForPort", () => {
     expect(waitForPort(8_080, 1)).toBe(true);
     expect(spawnSync).toHaveBeenCalledTimes(2);
     expect(spawnSync.mock.calls[1]?.[0]).toBe(process.execPath);
-    expect(spawnSync.mock.calls[1]?.[1]?.at(-1)).toBe("8080");
+    const fallbackArgs = spawnSync.mock.calls[1]?.[1];
+    expect(fallbackArgs?.[0]).toBe("-e");
+    expect(fallbackArgs?.[1]).toContain("const p=Number(process.argv[1])");
+    expect(fallbackArgs?.[1]).not.toContain("8080");
+    expect(fallbackArgs?.at(-1)).toBe("8080");
+  });
+
+  it("returns false when the Node TCP probe times out", () => {
+    expireAfterOneAttempt();
+    const spawnSync = vi
+      .spyOn(childProcess, "spawnSync")
+      .mockReturnValueOnce(spawnResult(null, new Error("spawnSync nc ENOENT")))
+      .mockReturnValueOnce(spawnResult(null, undefined, "SIGTERM"));
+
+    expect(waitForPort(8_080, 1)).toBe(false);
+    expect(spawnSync).toHaveBeenCalledTimes(2);
+    expect(spawnSync.mock.calls[1]?.[2]).toMatchObject({ timeout: 2_000 });
   });
 
   it("returns false after an unsuccessful probe reaches its deadline", () => {
