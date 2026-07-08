@@ -13,6 +13,12 @@ describe("DCode auto-approval Dockerfile patch", () => {
         "thread-opt-in",
       ),
     ).toBe("FROM scratch\nARG NEMOCLAW_DCODE_AUTO_APPROVAL=thread-opt-in\n");
+    expect(
+      patchDcodeAutoApprovalDockerArg(
+        "ARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled # stale comment\n",
+        "thread-opt-in",
+      ),
+    ).toBe("ARG NEMOCLAW_DCODE_AUTO_APPROVAL=thread-opt-in\n");
   });
 
   it.each([

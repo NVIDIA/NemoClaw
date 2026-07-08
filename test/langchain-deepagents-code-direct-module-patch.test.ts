@@ -301,11 +301,14 @@ os.environ["NEMOCLAW_DCODE_AUTO_APPROVAL_ENABLED"] = "1"
 check("disabled", False)
 `;
     const result = spawnSync("python3", ["-c", validation], {
-      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      env: { NEMOCLAW_DEBUG: "1", PATH: process.env.PATH, PYTHONPATH: tempDir },
       encoding: "utf8",
     });
 
     expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("NemoClaw managed auto-approval disabled:");
+    expect(result.stderr).toContain("capability metadata is unsafe");
+    expect(result.stderr).toContain("capability contents are invalid");
   });
 
   it("preserves ordinary direct-module and read-only tools execution", () => {

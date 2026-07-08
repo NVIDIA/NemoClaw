@@ -13,6 +13,7 @@ import json
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 from urllib.parse import urlparse, urlsplit
 
@@ -873,17 +874,29 @@ def managed_inference_base_url() -> str:
     return value
 
 
+def _disabled_auto_approval(reason: str) -> str:
+    if os.environ.get("NEMOCLAW_DEBUG") == "1":
+        print(
+            f"NemoClaw managed auto-approval disabled: {reason}",
+            file=sys.stderr,
+        )
+    return _AUTO_APPROVAL_DISABLED
+
+
 def managed_auto_approval_mode() -> str:
     """Return the trusted managed auto-approval mode, failing closed."""
+    # The image build owns this file, but runtime must tolerate missing or
+    # malformed image state and fail closed. Keep this check until sandbox
+    # images are immutable end to end; direct-module tests pin rejected shapes.
     path = _AUTO_APPROVAL_FILE
     try:
         if path.is_symlink():
-            return _AUTO_APPROVAL_DISABLED
+            return _disabled_auto_approval("capability path is a symlink")
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags)
     except OSError:
-        return _AUTO_APPROVAL_DISABLED
+        return _disabled_auto_approval("capability file is missing or unreadable")
 
     try:
         metadata = os.fstat(descriptor)
@@ -895,20 +908,20 @@ def managed_auto_approval_mode() -> str:
                 len(content) for content in _AUTO_APPROVAL_CONTENTS
             }
         ):
-            return _AUTO_APPROVAL_DISABLED
+            return _disabled_auto_approval("capability metadata is unsafe")
 
         chunks: list[bytes] = []
         remaining = metadata.st_size
         while remaining:
             chunk = os.read(descriptor, remaining)
             if not chunk:
-                return _AUTO_APPROVAL_DISABLED
+                return _disabled_auto_approval("capability file was truncated")
             chunks.append(chunk)
             remaining -= len(chunk)
         if os.read(descriptor, 1):
-            return _AUTO_APPROVAL_DISABLED
+            return _disabled_auto_approval("capability file changed while reading")
     except OSError:
-        return _AUTO_APPROVAL_DISABLED
+        return _disabled_auto_approval("capability file read failed")
     finally:
         try:
             os.close(descriptor)
@@ -916,8 +929,8 @@ def managed_auto_approval_mode() -> str:
             # Cleanup cannot weaken the fail-closed capability result.
             pass
 
-    return _AUTO_APPROVAL_CONTENTS.get(
-        b"".join(chunks), _AUTO_APPROVAL_DISABLED
+    return _AUTO_APPROVAL_CONTENTS.get(b"".join(chunks)) or _disabled_auto_approval(
+        "capability contents are invalid"
     )
 
 
