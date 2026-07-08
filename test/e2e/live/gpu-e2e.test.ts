@@ -287,7 +287,7 @@ exit 1`,
   expect(recovered.exitCode, resultText(recovered)).toBe(0);
   expect(resultText(recovered)).toContain("Checking Ollama model readiness after daemon restart");
   expect(resultText(recovered)).toContain(`Ollama model '${model}' is loaded and ready.`);
-  expect(resultText(recovered)).toMatch(/pong/i);
+  expect(chatContent(recovered.stdout)).toMatch(/pong/i);
 
   const loaded = await host.command("curl", ["-fsS", "http://127.0.0.1:11434/api/ps"], {
     artifactName: "ollama-model-loaded-after-recovery",
