@@ -92,6 +92,8 @@ If the selected model declares that it does not support tool calling, onboarding
 The validation also requires structured chat-completions tool calls.
 If the model leaks tool-call JSON as plain message text, onboarding stops so you can choose a model that returns tool calls in the expected response field.
 If a host-side validation probe times out, NemoClaw retries the Ollama tool-call validation with a larger timeout before failing the setup.
+Each Ollama-backed OpenClaw agent passthrough checks the registered route to see whether the selected model is still loaded.
+If the daemon is reachable but the model is unloaded, NemoClaw sends a bounded warm-up request before dispatching to OpenClaw.
 </AgentOnly>
 On WSL, if you choose the Windows-host Ollama path, NemoClaw uses `host.docker.internal:11434` and pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
 
