@@ -265,6 +265,37 @@ describe("sandbox base-image warm resolution", () => {
     ]);
   });
 
+  it("rejects a pulled base when custom runtime validation fails (#6456)", () => {
+    const options = resolutionOptions();
+    const staleRef = `${IMAGE_NAME}:stale-dcode`;
+    const validateImage = vi.fn(() => false);
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 0 });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(
+      resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: staleRef,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
+        },
+        validateImage,
+        validationDescription: "deepagents-code==0.1.34",
+      }),
+    ).toBeNull();
+    expect(dockerMocks.pull).toHaveBeenCalledWith(staleRef, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(validateImage).toHaveBeenCalledWith(staleRef);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("deepagents-code==0.1.34"));
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it("fails closed instead of trusting an existing local tag when base inputs are dirty (#4680)", () => {
     sourceMocks.inputsDirty.mockReturnValue(true);
     dockerMocks.imageInspect.mockReturnValue({ status: 0 });

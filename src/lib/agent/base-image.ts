@@ -169,6 +169,13 @@ function deepAgentsCodeBaseImageMatchesVersion(imageRef: string, expectedVersion
     [
       "run",
       "--rm",
+      "--network",
+      "none",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--read-only",
       "--entrypoint",
       "/opt/venv/bin/python3",
       imageRef,
@@ -178,7 +185,15 @@ function deepAgentsCodeBaseImageMatchesVersion(imageRef: string, expectedVersion
     ],
     { ignoreError: true, timeout: 20_000 },
   );
-  return output.trim() === expectedVersion;
+  const installedVersion = output.trim();
+  if (!installedVersion) {
+    console.warn(
+      `  Warning: ${imageRef} returned no Deep Agents Code version output; ` +
+        `rejecting the base image (expected ${DEEPAGENTS_CODE_DISTRIBUTION}==${expectedVersion}).`,
+    );
+    return false;
+  }
+  return installedVersion === expectedVersion;
 }
 
 function createAgentBaseImageResolutionOptions(
@@ -190,7 +205,10 @@ function createAgentBaseImageResolutionOptions(
   const deepAgentsCodeExpectedVersion =
     agent.name === "langchain-deepagents-code" ? agent.expectedVersion : null;
   if (agent.name === "langchain-deepagents-code" && !deepAgentsCodeExpectedVersion) {
-    throw new Error("LangChain Deep Agents Code manifest is missing expected_version");
+    throw new Error(
+      `Agent '${agent.name}' (${agent.displayName}) manifest is missing expected_version ` +
+        "required for base-image validation",
+    );
   }
   const validateImage =
     agent.name === "hermes"
@@ -203,9 +221,16 @@ function createAgentBaseImageResolutionOptions(
   return {
     imageName,
     dockerfilePath,
+    // The shared resolver intentionally retains its existing global
+    // Dockerfile.base/blueprint inputs in addition to these agent inputs. That
+    // conservative invalidation applies to every agent; decoupling the cache
+    // policy is a separate cross-agent change rather than part of #6456.
     inputPaths:
       agent.name === "langchain-deepagents-code"
-        ? [path.join(path.dirname(dockerfilePath), "requirements.lock")]
+        ? [
+            path.join(path.dirname(dockerfilePath), "manifest.yaml"),
+            path.join(path.dirname(dockerfilePath), "requirements.lock"),
+          ]
         : undefined,
     localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
     envVar: getAgentSandboxBaseImageEnvVar(agent.name),

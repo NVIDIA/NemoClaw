@@ -101,6 +101,13 @@ describe("agent base image provisioning", () => {
         [
           "run",
           "--rm",
+          "--network",
+          "none",
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges",
+          "--read-only",
           "--entrypoint",
           "/opt/venv/bin/python3",
           "dcode-base:current",
@@ -113,9 +120,24 @@ describe("agent base image provisioning", () => {
 
       dockerCaptureMock.mockReturnValue("0.1.12");
       expect(options.validateImage?.("dcode-base:stale")).toBe(false);
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      dockerCaptureMock.mockReturnValue("");
+      expect(options.validateImage?.("dcode-base:unreadable")).toBe(false);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "dcode-base:unreadable returned no Deep Agents Code version output",
+        ),
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("deepagents-code==0.1.34"));
+      warn.mockRestore();
+
       expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          inputPaths: ["/test/root/agents/langchain-deepagents-code/requirements.lock"],
+          inputPaths: [
+            "/test/root/agents/langchain-deepagents-code/manifest.yaml",
+            "/test/root/agents/langchain-deepagents-code/requirements.lock",
+          ],
           validateImage: expect.any(Function),
           validationDescription: "deepagents-code==0.1.34",
         }),
@@ -134,7 +156,9 @@ describe("agent base image provisioning", () => {
             dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
           }),
         ),
-      ).toThrow("LangChain Deep Agents Code manifest is missing expected_version");
+      ).toThrow(
+        "Agent 'langchain-deepagents-code' (LangChain Deep Agents Code) manifest is missing expected_version required for base-image validation",
+      );
       expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
     });
   });
