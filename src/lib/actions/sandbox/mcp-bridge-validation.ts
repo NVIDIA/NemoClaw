@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import type { McpBridgeEntry } from "../../state/registry";
-import { isSubprocessEnvNameAllowed } from "../../subprocess-env";
+import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 import {
   McpBridgeError,
   type ParsedEnvReference,
@@ -27,6 +29,78 @@ export {
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VALID_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const VALID_SANDBOX_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+const OPENSHELL_VERSION_OUTPUT_RE =
+  /^openshell\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
+const OPENSHELL_VERSION_PROBE_TIMEOUT_MS = 5_000;
+const OPENSHELL_VERSION_PROBE_MAX_BUFFER_BYTES = 16 * 1_024;
+const EXPECTED_OPENSHELL_VERSION = childVisibleCredentialManifest.openshellVersion;
+
+type OpenshellVersionCommandResult = Pick<
+  SpawnSyncReturns<string>,
+  "error" | "status" | "stderr" | "stdout"
+>;
+
+export interface McpCredentialBoundaryRuntimeDeps {
+  resolveOpenshell?: () => string | null;
+  runVersionCommand?: (binary: string) => OpenshellVersionCommandResult;
+}
+
+function runOpenshellVersionCommand(binary: string): OpenshellVersionCommandResult {
+  return spawnSync(binary, ["--version"], {
+    encoding: "utf8",
+    env: buildSubprocessEnv(),
+    maxBuffer: OPENSHELL_VERSION_PROBE_MAX_BUFFER_BYTES,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: OPENSHELL_VERSION_PROBE_TIMEOUT_MS,
+  });
+}
+
+function credentialBoundaryVersionError(actual: string, detail: string): McpBridgeError {
+  return new McpBridgeError(
+    `OpenShell credential boundary runtime version check failed: expected ${EXPECTED_OPENSHELL_VERSION}, actual ${actual} (${detail}). Install OpenShell ${EXPECTED_OPENSHELL_VERSION}, or point NEMOCLAW_OPENSHELL_BIN to that version, then retry.`,
+  );
+}
+
+/**
+ * Bind the static child-visible credential manifest to the host OpenShell CLI
+ * that will establish a provider credential. Credential-establishing lifecycle
+ * boundaries call this once immediately before their first side effect;
+ * deliberately avoiding a cache ensures a long-running CLI process cannot
+ * retain stale approval after the binary changes. Teardown skips this check so
+ * a version mismatch cannot strand detach/delete cleanup that only revokes
+ * credential access.
+ */
+export function assertMcpCredentialBoundaryRuntimeVersion(
+  deps: McpCredentialBoundaryRuntimeDeps = {},
+): void {
+  const binary = (deps.resolveOpenshell ?? resolveOpenshell)();
+  if (!binary) {
+    throw credentialBoundaryVersionError("<missing>", "openshell binary not found");
+  }
+
+  const result = (deps.runVersionCommand ?? runOpenshellVersionCommand)(binary);
+  if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code;
+    const detail = code === "ENOENT" ? "openshell binary not found" : "openshell --version failed";
+    throw credentialBoundaryVersionError("<unavailable>", detail);
+  }
+  if (result.status !== 0) {
+    throw credentialBoundaryVersionError(
+      "<unavailable>",
+      `openshell --version exited with status ${String(result.status)}`,
+    );
+  }
+
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+  const actualVersion = output.match(OPENSHELL_VERSION_OUTPUT_RE)?.[1];
+  if (!actualVersion) {
+    throw credentialBoundaryVersionError("<unparseable>", "invalid openshell --version output");
+  }
+  if (actualVersion !== EXPECTED_OPENSHELL_VERSION) {
+    throw credentialBoundaryVersionError(actualVersion, "version mismatch");
+  }
+}
+
 // invalidState: an MCP bearer name aliases a child-visible or process-control
 // key and exposes or executes the provider value outside the intended request.
 // sourceBoundary: the versioned JSON manifest pins OpenShell-owned keys to the

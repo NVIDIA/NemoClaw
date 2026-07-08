@@ -39,9 +39,83 @@ function mode(filePath: string): number {
   return fs.statSync(filePath).mode & 0o7777;
 }
 
+function replaceRequired(source: string, target: string, replacement: string): string {
+  const parts = source.split(target);
+  expect(parts, `Expected exactly one replacement target: ${target}`).toHaveLength(2);
+  return `${parts[0]}${replacement}${parts[1]}`;
+}
+
 const oneShotFunction = extractShellFunction("run_oneshot_command");
+const resolveNormalizerFunction = extractShellFunction("resolve_mutable_config_normalizer");
 
 describe("nemoclaw-start one-shot command lifecycle", () => {
+  it("sources the trusted runtime env before preserving one-shot argv (#4504)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-env-"));
+    const runtimeEnv = path.join(root, "runtime-env.sh");
+    fs.writeFileSync(runtimeEnv, 'export NEMOCLAW_ONESHOT_ENV_MARKER="runtime-loaded"\n');
+    const script = [
+      "set -euo pipefail",
+      "normalize_mutable_config_perms() { :; }",
+      oneShotFunction,
+      `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(runtimeEnv)}`,
+      `run_oneshot_command bash -c 'printf "marker=%s arg=%s\\n" "$NEMOCLAW_ONESHOT_ENV_MARKER" "$1"' bash ${JSON.stringify("space ; quote' marker")}`,
+    ].join("\n");
+
+    try {
+      const result = runBash(script);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("marker=runtime-loaded arg=space ; quote' marker");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps runtime routing without ambiently inheriting the gateway token (#6291)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-token-"));
+    const runtimeEnv = path.join(root, "runtime-env.sh");
+    fs.writeFileSync(
+      runtimeEnv,
+      [
+        'export OPENCLAW_STATE_DIR="/sandbox/.openclaw"',
+        'export OPENCLAW_GATEWAY_PORT="18789"',
+        'export OPENCLAW_GATEWAY_TOKEN="gateway-token-sentinel"',
+        "",
+      ].join("\n"),
+    );
+    const script = [
+      "set -euo pipefail",
+      "normalize_mutable_config_perms() { :; }",
+      oneShotFunction,
+      `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(runtimeEnv)}`,
+      `run_oneshot_command bash -c 'printf "state=%s port=%s token=[%s]\\n" "$OPENCLAW_STATE_DIR" "$OPENCLAW_GATEWAY_PORT" "${"${OPENCLAW_GATEWAY_TOKEN:-}"}"'`,
+    ].join("\n");
+
+    try {
+      const result = runBash(script);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("state=/sandbox/.openclaw port=18789 token=[]");
+      expect(result.stdout).not.toContain("gateway-token-sentinel");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reinterpret a command-leading exec option (#4504)", () => {
+    const script = [
+      "set -euo pipefail",
+      "normalize_mutable_config_perms() { :; }",
+      oneShotFunction,
+      "rc=0",
+      "run_oneshot_command -a spoofed-argv-zero /usr/bin/printf SHOULD_NOT_RUN || rc=$?",
+      'printf "rc=%s\\n" "$rc"',
+    ].join("\n");
+
+    const result = runBash(script);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("rc=127");
+    expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
+  });
+
   it("restores a real mutable config tree and preserves child exit status (#6047)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-perms-"));
     const configDir = path.join(root, ".openclaw");
@@ -49,12 +123,14 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
     fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n");
 
-    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+    const normalizeFunction = replaceRequired(
+      extractShellFunction("normalize_mutable_config_perms"),
       'local config_dir="/sandbox/.openclaw"',
       `local config_dir=${JSON.stringify(configDir)}`,
     );
     const script = [
       "set -euo pipefail",
+      resolveNormalizerFunction,
       normalizeFunction,
       oneShotFunction,
       "rc=0",
@@ -150,12 +226,14 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     fs.writeFileSync(protectedTarget, "protected\n", { mode: 0o640 });
     const initialProtectedMode = mode(protectedTarget);
 
-    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+    const normalizeFunction = replaceRequired(
+      extractShellFunction("normalize_mutable_config_perms"),
       'local config_dir="/sandbox/.openclaw"',
       `local config_dir=${JSON.stringify(configDir)}`,
     );
     const script = [
       "set -euo pipefail",
+      resolveNormalizerFunction,
       normalizeFunction,
       oneShotFunction,
       "rc=0",
@@ -188,12 +266,14 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     const initialProtectedMode = mode(protectedTarget);
     fs.symlinkSync(protectedTarget, configDir);
 
-    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+    const normalizeFunction = replaceRequired(
+      extractShellFunction("normalize_mutable_config_perms"),
       'local config_dir="/sandbox/.openclaw"',
       `local config_dir=${JSON.stringify(configDir)}`,
     );
     const script = [
       "set -euo pipefail",
+      resolveNormalizerFunction,
       normalizeFunction,
       "rc=0",
       "normalize_mutable_config_perms || rc=$?",
@@ -224,8 +304,9 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     fs.chmodSync(configDir, 0o700);
     fs.chmodSync(path.join(configDir, "openclaw.json"), 0o600);
 
-    const injectedNormalizer = normalizerSource.replace(
-      "        return root_fd, capture_source_fd\n",
+    const injectedNormalizer = replaceRequired(
+      normalizerSource,
+      "        return root_fd, capture_source_fd\n    except Exception:\n",
       [
         `        os.rename(config_dir, ${JSON.stringify(normalizedDir)})`,
         "        os.mkdir(config_dir, 0o700)",
@@ -236,17 +317,20 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
         '        os.chmod(os.path.join(config_dir, "openclaw.json"), 0o600)',
         '        os.chmod(os.path.join(config_dir, ".config-hash"), 0o600)',
         "        return root_fd, capture_source_fd",
+        "    except Exception:",
         "",
       ].join("\n"),
     );
     fs.writeFileSync(normalizerPath, injectedNormalizer);
-    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+    const normalizeFunction = replaceRequired(
+      extractShellFunction("normalize_mutable_config_perms"),
       'local config_dir="/sandbox/.openclaw"',
       `local config_dir=${JSON.stringify(configDir)}`,
     );
     const script = [
       "set -euo pipefail",
       `export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=${JSON.stringify(normalizerPath)}`,
+      resolveNormalizerFunction,
       normalizeFunction,
       "rc=0",
       "normalize_mutable_config_perms || rc=$?",
@@ -283,12 +367,14 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
       fs.writeFileSync(path.join(configDir, `filler-${index}`), "x\n");
     }
 
-    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+    const normalizeFunction = replaceRequired(
+      extractShellFunction("normalize_mutable_config_perms"),
       'local config_dir="/sandbox/.openclaw"',
       `local config_dir=${JSON.stringify(configDir)}`,
     );
     const script = [
       "set -euo pipefail",
+      resolveNormalizerFunction,
       normalizeFunction,
       oneShotFunction,
       "rc=0",
@@ -328,4 +414,259 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+const classifyFunction = extractShellFunction("classify_openclaw_config_seal");
+const reclaimFunction = extractShellFunction("reclaim_collapsed_mutable_config");
+const prepareStartupFunction = extractShellFunction("prepare_openclaw_config_startup");
+const runningAsRoot = process.getuid?.() === 0;
+
+function runClassify(configDir: string) {
+  const script = [
+    "set -uo pipefail",
+    resolveNormalizerFunction,
+    classifyFunction,
+    "rc=0",
+    `classify_openclaw_config_seal ${JSON.stringify(configDir)} || rc=$?`,
+    'printf "rc=%s\\n" "$rc"',
+  ].join("\n");
+  return runBash(script);
+}
+
+describe("nemoclaw-start mutable config startup ordering", () => {
+  it.each([
+    [1, ["guard:revoke-startup-ready", "reclaim", "guard:recover"]],
+    [2, ["guard:revoke-startup-ready", "guard:recover"]],
+  ])("orders seal state %s before transaction recovery (#6300)", (sealState, expected) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-order-"));
+    const events = path.join(root, "events");
+    const script = [
+      "set -euo pipefail",
+      `events=${JSON.stringify(events)}`,
+      'run_openclaw_config_guard() { printf "guard:%s\\n" "$1" >>"$events"; }',
+      'openclaw_config_dir_owner() { printf "root\\n"; }',
+      `classify_openclaw_config_seal() { return ${String(sealState)}; }`,
+      'reclaim_collapsed_mutable_config() { printf "reclaim\\n" >>"$events"; }',
+      "stat() { return 1; }",
+      prepareStartupFunction,
+      "prepare_openclaw_config_startup",
+    ].join("\n");
+    try {
+      expect(runBash(script).status).toBe(0);
+      expect(fs.readFileSync(events, "utf-8").trim().split("\n")).toEqual(expected);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("nemoclaw-start mutable config seal classification", () => {
+  it("reports a non-root mutable directory as indeterminate (#6300)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-mutable-"));
+    const configDir = path.join(root, ".openclaw");
+    fs.mkdirSync(configDir, 0o2770);
+    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+    try {
+      expect(runClassify(configDir).stdout).toContain("rc=2");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(runningAsRoot)(
+    "requires both fixed files to match the exact root-owned sealed posture (#6300)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-owner-"));
+      const configDir = path.join(root, ".openclaw");
+      fs.mkdirSync(configDir, 0o755);
+      const configFile = path.join(configDir, "openclaw.json");
+      const hashFile = path.join(configDir, ".config-hash");
+      fs.writeFileSync(configFile, "{}\n");
+      fs.writeFileSync(hashFile, "hash\n");
+      fs.chmodSync(configFile, 0o444);
+      fs.chmodSync(hashFile, 0o444);
+      try {
+        expect(runClassify(configDir).stdout).toContain("rc=0");
+        fs.rmSync(hashFile);
+        expect(runClassify(configDir).stdout).toContain("rc=2");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("reports a missing config directory as indeterminate (#6300)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-missing-"));
+    try {
+      expect(runClassify(path.join(root, ".openclaw")).stdout).toContain("rc=2");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a symlinked config directory as indeterminate (#6300)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-symlink-"));
+    const realDir = path.join(root, "real");
+    const linkDir = path.join(root, ".openclaw");
+    fs.mkdirSync(realDir, 0o2770);
+    fs.symlinkSync(realDir, linkDir);
+    try {
+      expect(runClassify(linkDir).stdout).toContain("rc=2");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+const nobodyUid = spawnSync("id", ["-u", "nobody"], { encoding: "utf-8" }).stdout.trim();
+const nobodyGid = spawnSync("id", ["-g", "nobody"], { encoding: "utf-8" }).stdout.trim();
+
+describe("nemoclaw-start mutable config reclaim", () => {
+  it.skipIf(runningAsRoot)(
+    "fails closed without root and leaves the tree untouched (#6300)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-nonroot-"));
+      const configDir = path.join(root, ".openclaw");
+      fs.mkdirSync(configDir, 0o2770);
+      fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+      const beforeUid = fs.statSync(configDir).uid;
+      const script = [
+        "set -uo pipefail",
+        resolveNormalizerFunction,
+        classifyFunction,
+        reclaimFunction,
+        "rc=0",
+        `reclaim_collapsed_mutable_config ${JSON.stringify(configDir)} || rc=$?`,
+        'printf "rc=%s\\n" "$rc"',
+      ].join("\n");
+      try {
+        const result = runBash(script);
+        expect(result.stdout).toContain("rc=1");
+        expect(result.stderr).toContain("root privileges are required");
+        expect(fs.statSync(configDir).uid).toBe(beforeUid);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(runningAsRoot)(
+    "reclaims a root-owned collapsed config to the sandbox contract and permits sandbox writes (#6300)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-root-"));
+      fs.chownSync(root, Number(nobodyUid), Number(nobodyGid));
+      fs.chmodSync(root, 0o755);
+      const configDir = path.join(root, ".openclaw");
+      fs.mkdirSync(configDir);
+      fs.chmodSync(configDir, 0o700);
+      const configFile = path.join(configDir, "openclaw.json");
+      const hashFile = path.join(configDir, ".config-hash");
+      fs.writeFileSync(configFile, "{}\n");
+      fs.chmodSync(configFile, 0o600);
+      fs.writeFileSync(hashFile, "hash\n");
+      fs.chmodSync(hashFile, 0o600);
+
+      const normalizeFunction = replaceRequired(
+        extractShellFunction("normalize_mutable_config_perms"),
+        'local config_dir="/sandbox/.openclaw"',
+        `local config_dir=${JSON.stringify(configDir)}`,
+      );
+      const patchedReclaimFunction = replaceRequired(
+        replaceRequired(reclaimFunction, "id -u sandbox", `echo ${JSON.stringify(nobodyUid)}`),
+        "id -g sandbox",
+        `echo ${JSON.stringify(nobodyGid)}`,
+      );
+      const script = [
+        "set -euo pipefail",
+        resolveNormalizerFunction,
+        classifyFunction,
+        patchedReclaimFunction,
+        normalizeFunction,
+        "normalize_mutable_config_perms",
+      ].join("\n");
+
+      try {
+        const result = runBash(script);
+        expect(result.status).toBe(0);
+        expect(mode(configDir)).toBe(0o2770);
+        expect(mode(configFile)).toBe(0o660);
+        expect(mode(hashFile)).toBe(0o660);
+        expect(fs.statSync(configDir).uid.toString()).toBe(nobodyUid);
+        expect(fs.statSync(configDir).gid.toString()).toBe(nobodyGid);
+
+        const writeCheck = spawnSync("setpriv", [
+          `--reuid=${nobodyUid}`,
+          `--regid=${nobodyGid}`,
+          "--clear-groups",
+          "--",
+          "touch",
+          path.join(configDir, "nemoclaw-write-check"),
+        ]);
+        expect(writeCheck.status).toBe(0);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(runningAsRoot)(
+    "leaves a root-owned recovery baseline untouched during reclaim (#6307)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-baseline-"));
+      fs.chownSync(root, Number(nobodyUid), Number(nobodyGid));
+      fs.chmodSync(root, 0o755);
+      const configDir = path.join(root, ".openclaw");
+      fs.mkdirSync(configDir);
+      fs.chmodSync(configDir, 0o700);
+      const configFile = path.join(configDir, "openclaw.json");
+      const hashFile = path.join(configDir, ".config-hash");
+      const baselineFile = path.join(configDir, "openclaw.json.nemoclaw-baseline");
+      fs.writeFileSync(configFile, "{}\n");
+      fs.chmodSync(configFile, 0o600);
+      fs.writeFileSync(hashFile, "hash\n");
+      fs.chmodSync(hashFile, 0o600);
+      fs.writeFileSync(baselineFile, "{}\n");
+      fs.chmodSync(baselineFile, 0o440);
+      const beforeBaselineUid = fs.statSync(baselineFile).uid;
+      const beforeBaselineGid = fs.statSync(baselineFile).gid;
+
+      const normalizeFunction = replaceRequired(
+        extractShellFunction("normalize_mutable_config_perms"),
+        'local config_dir="/sandbox/.openclaw"',
+        `local config_dir=${JSON.stringify(configDir)}`,
+      );
+      const patchedReclaimFunction = replaceRequired(
+        replaceRequired(reclaimFunction, "id -u sandbox", `echo ${JSON.stringify(nobodyUid)}`),
+        "id -g sandbox",
+        `echo ${JSON.stringify(nobodyGid)}`,
+      );
+      const script = [
+        "set -euo pipefail",
+        resolveNormalizerFunction,
+        classifyFunction,
+        patchedReclaimFunction,
+        normalizeFunction,
+        "normalize_mutable_config_perms",
+      ].join("\n");
+
+      try {
+        const result = runBash(script);
+        expect(result.status).toBe(0);
+        expect(mode(configDir)).toBe(0o2770);
+        expect(mode(configFile)).toBe(0o660);
+        expect(mode(hashFile)).toBe(0o660);
+        expect(fs.statSync(configDir).uid.toString()).toBe(nobodyUid);
+        expect(fs.statSync(configDir).gid.toString()).toBe(nobodyGid);
+        expect(fs.statSync(configFile).uid.toString()).toBe(nobodyUid);
+        expect(fs.statSync(configFile).gid.toString()).toBe(nobodyGid);
+        expect(fs.statSync(hashFile).uid.toString()).toBe(nobodyUid);
+        expect(fs.statSync(hashFile).gid.toString()).toBe(nobodyGid);
+        expect(mode(baselineFile)).toBe(0o440);
+        expect(fs.statSync(baselineFile).uid).toBe(beforeBaselineUid);
+        expect(fs.statSync(baselineFile).gid).toBe(beforeBaselineGid);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

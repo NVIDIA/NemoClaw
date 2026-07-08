@@ -30,12 +30,14 @@ import {
   getRebuildAgentDisplayName,
   type RebuildVersionCheck,
 } from "./rebuild-preflight-confirmation";
+import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   acquireRebuildOnboardLock,
   assertRebuildEntryUnchanged,
   checkRebuildGatewaySchemaPreflight,
   getRebuildSandboxEntryOrBail,
   isSingleAgentRebuildSupported,
+  runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
@@ -75,23 +77,33 @@ export async function runRebuildPreflightPhase(
   options: string[] | RebuildSandboxOptions = {},
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<RebuildPreflightPhaseResult | null> {
-  const { log, bail, requestedToolDisclosure, skipConfirm } = createRebuildCommandContext(
-    options,
-    opts,
-  );
+  const { log, bail, requestedToolDisclosure, requestedObservabilityEnabled, skipConfirm } =
+    createRebuildCommandContext(options, opts);
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
+  const allowLegacyManagedImageRecovery =
+    opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
   const recoveryManifest = validatePreparedRecoveryManifest(
     sandboxName,
     sandboxEntry,
     opts.recoveryManifest,
+    allowLegacyManagedImageRecovery,
     bail,
   );
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
 
   const rebuildAgent = sandboxEntry.agent || null;
+  if (requestedObservabilityEnabled !== undefined && !isDcodeRebuildAgent(rebuildAgent)) {
+    printRebuildPreflightFailure(
+      "the observability override is supported only for managed LangChain Deep Agents Code sandboxes.",
+      "Remove --observability/--no-observability or select a managed Deep Agents Code sandbox.",
+      "Unsupported rebuild observability override",
+      bail,
+    );
+    return null;
+  }
   const agentName = getRebuildAgentDisplayName(sandboxName);
   const dcodePreflight = createDcodeRebuildOrchestrator({
     sandboxName,
@@ -113,19 +125,13 @@ export async function runRebuildPreflightPhase(
   let preparedImage: PreparedRebuildImage | null = null;
   let retainPreparedImage = false;
   try {
-    if (
-      !isDcodeRebuildAgent(rebuildAgent) &&
-      !checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)
-    ) {
-      return null;
-    }
-    const versionCheck = await confirmRebuildIntent(
-      sandboxName,
-      agentName,
-      skipConfirm,
-      activeSessionCount,
-      bail,
-    );
+    const versionCheck = await runRebuildGatewayIntentPreflight({
+      checkGatewaySchema: () =>
+        isDcodeRebuildAgent(rebuildAgent) ||
+        checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail),
+      confirmIntent: () =>
+        confirmRebuildIntent(sandboxName, agentName, skipConfirm, activeSessionCount, bail),
+    });
     if (!versionCheck) return null;
 
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
@@ -140,6 +146,13 @@ export async function runRebuildPreflightPhase(
         // succeeded, matching the previous `skipConfirm || confirmed` contract.
         autoYes: true,
         requestedToolDisclosure,
+        requestedObservabilityEnabled,
+        allowLegacyManagedImageRecovery,
+        // A validated prepared backup is the only path allowed to reconstruct
+        // a missing gateway provider and route during recreate. The exact
+        // endpoint, credential, image, and registry checks still run before
+        // deletion; ordinary rebuilds continue to require the live bindings.
+        preparedBackupRecovery: recoveryManifest !== null,
         log,
         bail,
       });

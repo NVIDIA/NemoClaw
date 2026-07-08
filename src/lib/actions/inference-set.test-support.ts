@@ -85,6 +85,8 @@ export function createDeps(options: {
   shieldsMutable?: boolean;
   prepareRunOpenshell?: () => void;
   rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
+  restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
+  withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
@@ -100,6 +102,8 @@ export function createDeps(options: {
     resolveContextWindowForModel: ReturnType<typeof vi.fn>;
     prepareRunOpenshell: ReturnType<typeof vi.fn>;
     rewriteConfigUrlsWithDnsPinning: ReturnType<typeof vi.fn>;
+    restartSandboxGateway: ReturnType<typeof vi.fn>;
+    withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
 } {
@@ -138,6 +142,20 @@ export function createDeps(options: {
     rewriteConfigUrlsWithDnsPinning: vi.fn(
       options.rewriteConfigUrlsWithDnsPinning ?? (async (value: ConfigValue) => value),
     ),
+    restartSandboxGateway: vi.fn(
+      options.restartSandboxGateway ??
+        ((): ReturnType<InferenceSetDeps["restartSandboxGateway"]> => ({
+          ok: true,
+          restarted: true,
+          healthPassed: true,
+          forwardRecovered: true,
+        })),
+    ),
+    withGatewayRouteMutationLock: vi.fn(
+      options.withGatewayRouteMutationLock ??
+        (async (_gatewayName: string, operation: () => Promise<unknown> | unknown) =>
+          await operation()),
+    ),
   };
   return {
     getDefaultSandbox: () => defaultSandbox,
@@ -162,6 +180,9 @@ export function createDeps(options: {
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
     isSandboxConfigMutable: () => options.shieldsMutable ?? true,
     rewriteConfigUrlsWithDnsPinning: calls.rewriteConfigUrlsWithDnsPinning,
+    withGatewayRouteMutationLock:
+      calls.withGatewayRouteMutationLock as InferenceSetDeps["withGatewayRouteMutationLock"],
+    restartSandboxGateway: calls.restartSandboxGateway,
     calls,
     getSession: () => session,
   };

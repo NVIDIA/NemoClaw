@@ -244,7 +244,7 @@ export function buildValidatedCurlCommandArgs(
   return [...args, url];
 }
 
-export type CurlProbeMode = "json" | "chat-stream" | "event-stream";
+export type CurlProbeMode = "json" | "chat-stream" | "event-stream" | "event-stream-with-status";
 
 export function buildCurlProbeSpawnArgs(
   args: string[],
@@ -254,7 +254,8 @@ export function buildCurlProbeSpawnArgs(
 ): string[] {
   const outputArgs =
     mode === "json" ? ["-o", bodyFile, "-w", "%{http_code}"] : ["-N", "-o", bodyFile];
-  const statusArgs = mode === "chat-stream" ? ["-w", "%{http_code}"] : [];
+  const statusArgs =
+    mode === "chat-stream" || mode === "event-stream-with-status" ? ["-w", "%{http_code}"] : [];
   // lgtm[js/file-access-to-http] URL/argv are validated; file-backed config paths must be explicitly trusted.
   return [...args, ...outputArgs, ...statusArgs, url];
 }

@@ -1,16 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
   backupSandboxState: vi.fn(),
-  detectOpenShellStateRpcPreflightIssue: vi.fn().mockReturnValue(null),
-  detectOpenShellStateRpcResultIssue: vi.fn().mockReturnValue(null),
-  printOpenShellStateRpcIssue: vi.fn(),
-  captureSandboxListWithGatewayRecovery: vi.fn(),
-  printSandboxListFailureWithRecoveryContext: vi.fn(),
+  captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
   parseReadySandboxNames: vi.fn(),
   dockerListImagesFormat: vi.fn().mockReturnValue(""),
   dockerRmi: vi.fn(),
@@ -24,14 +20,8 @@ vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
   BackupResult: {},
 }));
-vi.mock("../adapters/openshell/gateway-drift", () => ({
-  detectOpenShellStateRpcPreflightIssue: mocks.detectOpenShellStateRpcPreflightIssue,
-  detectOpenShellStateRpcResultIssue: mocks.detectOpenShellStateRpcResultIssue,
-  printOpenShellStateRpcIssue: mocks.printOpenShellStateRpcIssue,
-}));
 vi.mock("../openshell-sandbox-list", () => ({
-  captureSandboxListWithGatewayRecovery: mocks.captureSandboxListWithGatewayRecovery,
-  printSandboxListFailureWithRecoveryContext: mocks.printSandboxListFailureWithRecoveryContext,
+  captureSandboxListWithGatewayPreflightOrExit: mocks.captureSandboxListWithGatewayPreflightOrExit,
 }));
 vi.mock("../runtime-recovery", () => ({
   parseReadySandboxNames: mocks.parseReadySandboxNames,
@@ -49,20 +39,132 @@ vi.mock("../credentials/store", () => ({
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeGarbageCollectImagesOptions: (o: unknown) => o || {},
 }));
-vi.mock("../domain/maintenance/images", () => ({
-  findOrphanedSandboxImages: vi.fn().mockReturnValue([]),
-  parseSandboxImageRows: vi.fn().mockReturnValue([]),
-}));
+// ../domain/maintenance/images is left unmocked so the gc tests run the real
+// orphan-detection helpers and can assert on gc's actual output.
 
-import { backupAll, shouldSkipUnreachableSandboxBackup } from "./maintenance";
+import { backupAll, garbageCollectImages, shouldSkipUnreachableSandboxBackup } from "./maintenance";
 
 describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-good\nsb-bad\n" },
+    delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-good\nsb-bad\n",
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good", "sb-bad"]));
+  });
+
+  afterEach(() => {
+    delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
+    delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+    vi.restoreAllMocks();
+  });
+
+  it("returns before gateway preflight when no sandboxes are registered", async () => {
+    mocks.listSandboxes.mockReturnValue({ sandboxes: [], defaultSandbox: null });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
+    expect(mocks.backupSandboxState).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("No sandboxes registered");
+    logSpy.mockRestore();
+  });
+
+  it("passes the backup action context to gateway preflight", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledWith({
+      action: "backing up registered sandboxes",
+      command: "nemoclaw backup-all",
+    });
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    logSpy.mockRestore();
+  });
+
+  it("does not back up when gateway preflight exits", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }],
+      defaultSandbox: null,
+    });
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockRejectedValueOnce(
+      new Error("process.exit(1)"),
+    );
+
+    await expect(backupAll()).rejects.toThrow("process.exit(1)");
+
+    expect(mocks.backupSandboxState).not.toHaveBeenCalled();
+  });
+
+  it("backs up only sandboxes reported Ready by OpenShell", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(mocks.backupSandboxState).toHaveBeenCalledOnce();
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("Skipping 'sb-stopped' (not running)");
+    logSpy.mockRestore();
+  });
+
+  it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errorOutput = errorSpy.mock.calls.flat().join("\n");
+    expect(errorOutput).toContain("requires every registered sandbox to be backed up");
+    expect(errorOutput).toContain("Resolve each skipped sandbox using its reason above");
+    expect(errorOutput).not.toContain("prepare the upgrade manually");
   });
 
   it("continues backup loop when backupSandboxState throws for one sandbox", async () => {
@@ -101,8 +203,9 @@ describe("backupAll", () => {
       defaultSandbox: null,
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-bad\n" },
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
     });
 
     mocks.backupSandboxState.mockImplementation(() => {
@@ -121,6 +224,27 @@ describe("backupAll", () => {
     consoleSpy.mockRestore();
   });
 
+  it("fails installer-strict backup when an orphan manifest is skipped (#6114)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-orphan" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-orphan"]));
+    mocks.backupSandboxState.mockImplementation(() => {
+      throw new Error("Agent 'orphan' not found: /agents/orphan/manifest.yaml");
+    });
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("re-throws non-orphan-manifest errors so the installer aborts the upgrade", async () => {
     // Real failures (disk full, SSH timeout, permission denied, programming
     // bugs) must propagate. Counting them as 'skipped' and returning exit 0
@@ -131,8 +255,9 @@ describe("backupAll", () => {
       defaultSandbox: null,
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-bad\n" },
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
     });
 
     mocks.backupSandboxState.mockImplementation(() => {
@@ -153,8 +278,9 @@ describe("backupAll", () => {
       defaultSandbox: null,
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-bad\n" },
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
     });
 
     mocks.backupSandboxState.mockImplementation(() => {
@@ -176,8 +302,9 @@ describe("backupAll", () => {
       defaultSandbox: null,
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-bad\n" },
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
     });
 
     mocks.backupSandboxState.mockImplementation(() => {
@@ -230,14 +357,45 @@ describe("backupAll", () => {
     exitSpy.mockRestore();
   });
 
-  it("fails with actionable guidance when a running sandbox is unreachable and the skip flag is unset", async () => {
+  it("does not let the unreachable waiver bypass installer-strict backup (#6114)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-bad" }],
       defaultSandbox: null,
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
-      result: { status: 0, output: "sb-bad\n" },
+    mocks.backupSandboxState.mockReturnValue({
+      success: false,
+      unreachable: true,
+      backedUpDirs: [],
+      failedDirs: ["memories"],
+      backedUpFiles: [],
+      failedFiles: [],
+    });
+    process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP = "1";
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it.each([
+    ["standalone backup", "", true],
+    ["installer-strict backup", "1", false],
+  ])("emits mode-appropriate unreachable guidance for %s (#6114)", async (_mode, requireAll, expectSkipGuidance) => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-bad" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
     });
     mocks.backupSandboxState.mockImplementation(() => ({
       success: false,
@@ -249,6 +407,7 @@ describe("backupAll", () => {
     }));
 
     delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = requireAll;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
@@ -257,7 +416,11 @@ describe("backupAll", () => {
     await expect(backupAll()).rejects.toThrow("exit:1");
 
     const errorOutput = errorSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(errorOutput).toContain("NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1");
+    expect(errorOutput.includes("NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1")).toBe(
+      expectSkipGuidance,
+    );
+    expect(errorOutput.includes("Strict pre-upgrade backup cannot skip")).toBe(!expectSkipGuidance);
+    expect(errorOutput).not.toContain("prepare the upgrade manually");
 
     errorSpy.mockRestore();
     exitSpy.mockRestore();
@@ -276,5 +439,42 @@ describe("shouldSkipUnreachableSandboxBackup", () => {
       shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "true" }),
     ).toBe(false);
     expect(shouldSkipUnreachableSandboxBackup({})).toBe(false);
+  });
+});
+
+describe("garbageCollectImages", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("surfaces a local-repo orphan while preserving a registered local image (#6301)", async () => {
+    // Local repo holds an orphan (gc-test-orphan-111) plus a still-registered
+    // image (live-222); the gateway repo holds only an in-use image.
+    mocks.dockerListImagesFormat.mockImplementation((repo: string) =>
+      repo === "nemoclaw-sandbox-local"
+        ? "nemoclaw-sandbox-local:gc-test-orphan-111\t3GB\nnemoclaw-sandbox-local:live-222\t2GB"
+        : "openshell/sandbox-from:in-use\t1GB",
+    );
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [
+        { imageTag: "nemoclaw-sandbox-local:live-222" },
+        { imageTag: "openshell/sandbox-from:in-use" },
+      ],
+      defaultSandbox: null,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await garbageCollectImages({ dryRun: true });
+
+    const out = logSpy.mock.calls.flat().join("\n");
+    logSpy.mockRestore();
+
+    // The local orphan is reported, the still-registered local image is not,
+    // and both repos are scanned.
+    expect(out).toContain("nemoclaw-sandbox-local:gc-test-orphan-111");
+    expect(out).not.toContain("nemoclaw-sandbox-local:live-222");
+    const scannedRepos = mocks.dockerListImagesFormat.mock.calls.map((call) => call[0]);
+    expect(scannedRepos).toContain("openshell/sandbox-from");
+    expect(scannedRepos).toContain("nemoclaw-sandbox-local");
   });
 });

@@ -198,6 +198,8 @@ installed_copy_schema_error() {
     for item in \
       "validate-hermes-env-secret-boundary.py" \
       "seed-hermes-dashboard-config.py" \
+      "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py" \
+      "/opt/hermes/.venv/bin/python -I /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py --guard /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py" \
       "hermes-mcp-config-transaction.py" \
       "openshell-child-visible-credentials.v0.0.72.json" \
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix" \
@@ -205,6 +207,9 @@ installed_copy_schema_error() {
       "/sandbox/.hermes/dashboard-home"; do
       grep -Fq "$item" "$dockerfile" || missing+=("marker ${item}")
     done
+    if grep -q '^ARG HERMES_SEMVER=' "$dockerfile"; then
+      missing+=("final Dockerfile #5254 guard must derive Hermes version from installed hermes --version")
+    fi
   fi
 
   if ((${#missing[@]} == 0)); then

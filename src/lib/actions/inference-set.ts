@@ -4,16 +4,29 @@
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
+import { shellQuote } from "../core/shell-quote";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
+  resolveAgentInferenceApi,
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
+import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import {
+  matchesGatewayProviderBinding,
+  parseGatewayProviderMetadata,
+} from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
+import {
+  assertNoOpenShellGatewayEndpointOverride,
+  OpenShellGatewayEndpointOverrideError,
+} from "../openshell-gateway-endpoint-guard";
 import {
   type AgentConfigTarget,
   readSandboxConfig,
@@ -33,8 +46,29 @@ import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
 import { InferenceSetError, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER } from "./inference-set-error";
+import {
+  completeInferenceGatewayRestart,
+  defaultInferenceGatewayRestart,
+  finalizeInferenceMutation,
+  type InferenceGatewayRestartDeps,
+  type InferenceMutation,
+  readPreviousOpenClawInferenceApi,
+} from "./inference-set-gateway-restart";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
+import {
+  applyOpenClawAnthropicReplyBudget,
+  readOpenClawPrimaryReplyBudget,
+} from "./inference-set-reply-budget";
+import {
+  finalizeInferenceSetRoute,
+  prepareInferenceSetRoute,
+  type RegistryInferenceMetadata,
+} from "./inference-set-route-containment";
 
+export {
+  ENDPOINT_URL_NOT_ALLOWED_PREFIX,
+  normalizeCustomEndpointUrl,
+} from "./inference-set-route-containment";
 export { InferenceSetError };
 
 export interface InferenceSetOptions {
@@ -58,7 +92,7 @@ export interface InferenceSetResult {
   inSandboxConfigSynced: boolean;
 }
 
-export interface InferenceSetDeps {
+export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
@@ -84,14 +118,13 @@ export interface InferenceSetDeps {
       "ignoreError" | "includeStreams" | "maxBuffer" | "timeout"
     >,
   ) => CaptureOpenshellResult;
-  appendAuditEntry: typeof appendAuditEntry;
-  log: (message: string) => void;
   isLocalInferenceProvider: (provider: string) => boolean;
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
   isSandboxConfigMutable: (sandboxName: string) => boolean;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
+  withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
 }
 
 const SUPPORTED_PROVIDER_NAMES = [
@@ -107,6 +140,60 @@ const SUPPORTED_PROVIDER_NAMES = [
   "ollama-local",
   "vllm-local",
 ] as const;
+
+// #6321: `nemoclaw onboard` accepts installer-style provider keys
+// (`anthropicCompatible`, `build`, `openai`, …) while `inference set` only
+// accepted the OpenShell provider names (`compatible-anthropic-endpoint`,
+// `nvidia-prod`, `openai-api`, …). A user who onboarded with
+// `NEMOCLAW_PROVIDER=anthropicCompatible` could not switch the same sandbox
+// with `inference set --provider anthropicCompatible` — the two commands used
+// different vocabularies for the same provider. Normalize the installer alias
+// to its OpenShell provider name before validation so both commands accept the
+// same names. Keys are lowercased; values must each be a SUPPORTED_PROVIDER_NAMES
+// entry (asserted by the sync test in inference-set-provider-alias.test.ts).
+// This mirrors REMOTE_PROVIDER_CONFIG[key].providerName and
+// getEffectiveProviderName() in src/lib/onboard/providers.ts; kept as a small
+// local map rather than importing that @ts-nocheck onboard module into this
+// hot action path.
+const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
+  anthropiccompatible: "compatible-anthropic-endpoint",
+  build: "nvidia-prod",
+  cloud: "nvidia-prod",
+  openai: "openai-api",
+  anthropic: "anthropic-prod",
+  gemini: "gemini-api",
+  // Hermes Provider (Nous portal) is reachable under several onboard synonyms;
+  // accept the same set here so a sandbox onboarded with any of them can be
+  // switched under the same name. (`hermes-provider` is already an OpenShell
+  // provider name and passes through without an entry, but is listed for
+  // parity clarity.)
+  hermesprovider: "hermes-provider",
+  hermes: "hermes-provider",
+  nous: "hermes-provider",
+  "nous-portal": "hermes-provider",
+  custom: "compatible-endpoint",
+  ollama: "ollama-local",
+  vllm: "vllm-local",
+  nim: "nvidia-nim",
+  "nim-local": "nvidia-nim",
+  routed: "nvidia-router",
+};
+
+/**
+ * Map an installer-style provider key (the vocabulary `nemoclaw onboard`
+ * accepts) to its OpenShell provider name (the vocabulary `inference set`
+ * validates against). Inputs that are already OpenShell provider names — or
+ * any unrecognized value — pass through unchanged so validation still rejects
+ * genuinely unsupported providers. See #6321.
+ */
+export function normalizeInferenceSetProvider(provider: string): string {
+  const trimmed = provider.trim();
+  return INSTALLER_PROVIDER_ALIASES[trimmed.toLowerCase()] ?? trimmed;
+}
+
+/** Exposed for the alias-sync regression test. */
+export const INFERENCE_SET_SUPPORTED_PROVIDER_NAMES = SUPPORTED_PROVIDER_NAMES;
+export const INFERENCE_SET_INSTALLER_PROVIDER_ALIASES = INSTALLER_PROVIDER_ALIASES;
 
 function defaultDeps(): InferenceSetDeps {
   return {
@@ -133,6 +220,8 @@ function defaultDeps(): InferenceSetDeps {
     ensureLocalProviderReachable,
     resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning,
+    withGatewayRouteMutationLock,
+    restartSandboxGateway: defaultInferenceGatewayRestart,
     isSandboxConfigMutable: (sandboxName) => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
       return isShieldsDown(sandboxName, true);
@@ -159,6 +248,15 @@ function normalizeSandboxAgent(agentName: string | null | undefined): string {
   return (trimmed || "openclaw").toLowerCase();
 }
 
+function assertSandboxRouteReservationComplete(entry: SandboxEntry): void {
+  if (entry.pendingRouteReservation === true) {
+    throw new InferenceSetError(
+      `Sandbox '${entry.name}' is still being created by onboarding. Wait for onboarding to finish or remove the incomplete sandbox before changing inference.`,
+      2,
+    );
+  }
+}
+
 function resolveTargetSandbox(
   sandboxName: string | null | undefined,
   deps: Pick<
@@ -172,6 +270,7 @@ function resolveTargetSandbox(
     if (!entry) {
       throw new InferenceSetError(`Sandbox '${explicitName}' is not registered.`, 2);
     }
+    assertSandboxRouteReservationComplete(entry);
     return {
       sandboxName: explicitName,
       entry,
@@ -182,7 +281,10 @@ function resolveTargetSandbox(
   if (normalizeSandboxAgent(deps.getRequestedAgent()) === "hermes") {
     const hermesSandboxes = deps
       .listSandboxes()
-      .sandboxes.filter((entry) => normalizeSandboxAgent(entry.agent) === "hermes");
+      .sandboxes.filter(
+        (entry) =>
+          entry.pendingRouteReservation !== true && normalizeSandboxAgent(entry.agent) === "hermes",
+      );
     if (hermesSandboxes.length === 1) {
       const entry = hermesSandboxes[0];
       return { sandboxName: entry.name, entry, agentName: "hermes" };
@@ -213,6 +315,7 @@ function resolveTargetSandbox(
   if (!entry) {
     throw new InferenceSetError(`Sandbox '${targetName}' is not registered.`, 2);
   }
+  assertSandboxRouteReservationComplete(entry);
   return { sandboxName: targetName, entry, agentName: normalizeSandboxAgent(entry.agent) };
 }
 
@@ -249,6 +352,7 @@ function buildProviderConfig(
   model: string,
   route: SandboxInferenceConfig,
   contextWindow?: number,
+  inheritedMaxTokens?: number,
 ): ConfigObject {
   const firstExistingModel = Array.isArray(existing.models)
     ? cloneConfigObject(existing.models[0])
@@ -260,6 +364,9 @@ function buildProviderConfig(
   // Omitted (undefined) → keep whatever the existing entry had.
   if (typeof contextWindow === "number") {
     firstExistingModel.contextWindow = contextWindow;
+  }
+  if (route.inferenceApi === "anthropic-messages") {
+    applyOpenClawAnthropicReplyBudget(firstExistingModel, inheritedMaxTokens);
   }
   if (route.inferenceCompat) {
     firstExistingModel.compat = asConfigObject(route.inferenceCompat);
@@ -283,6 +390,7 @@ export function patchOpenClawInferenceConfig(
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  const inheritedMaxTokens = readOpenClawPrimaryReplyBudget(config);
 
   updateAgentPrimary(config, route.primaryModelRef);
 
@@ -290,7 +398,13 @@ export function patchOpenClawInferenceConfig(
   models.mode = "merge";
   const providers = ensureObject(models, "providers");
   const existingProvider = cloneConfigObject(providers[route.providerKey]);
-  providers[route.providerKey] = buildProviderConfig(existingProvider, model, route, contextWindow);
+  providers[route.providerKey] = buildProviderConfig(
+    existingProvider,
+    model,
+    route,
+    contextWindow,
+    inheritedMaxTokens,
+  );
 
   return { changed: before !== JSON.stringify(config), route };
 }
@@ -351,6 +465,7 @@ function updateMatchingOnboardSession(
 }
 
 function openshellInferenceSetArgs(options: {
+  gatewayName: string;
   provider: string;
   model: string;
   noVerify?: boolean;
@@ -359,7 +474,7 @@ function openshellInferenceSetArgs(options: {
     "inference",
     "set",
     "-g",
-    "nemoclaw",
+    options.gatewayName,
     "--provider",
     options.provider,
     "--model",
@@ -379,222 +494,56 @@ function getPreferredInferenceApi(config: ConfigObject): string | null {
   return typeof inferenceProvider.api === "string" ? inferenceProvider.api : null;
 }
 
-type RegistryInferenceMetadata = Pick<
-  SandboxEntry,
-  "endpointUrl" | "credentialEnv" | "preferredInferenceApi" | "nimContainer"
->;
-
-const CUSTOM_COMPATIBLE_CREDENTIAL_ENV: Record<string, string> = {
-  "compatible-endpoint": "COMPATIBLE_API_KEY",
-  "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY",
-};
-
-const INFERENCE_SET_APIS = new Set([
-  "openai-completions",
-  "anthropic-messages",
-  "openai-responses",
-]);
-
-function isCustomCompatibleProvider(provider: string): boolean {
-  return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
-}
-
-function hasExplicitCustomMetadata(options: InferenceSetOptions): boolean {
-  return Boolean(options.endpointUrl || options.credentialEnv || options.inferenceApi);
-}
-
-// TRUST BOUNDARY: host.openshell.internal is the single sandbox-to-host bridge
-// hostname provisioned by OpenShell. It resolves to the Docker host gateway
-// only inside the sandbox network namespace. This exemption is intentionally
-// limited below to HTTP, an explicit unprivileged port, and the exact hostname;
-// do not extend it to HTTPS, wildcard subdomains, localhost, RFC1918 literals,
-// or other internal DNS names.
-const ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS = new Set(["host.openshell.internal"]);
-
-function normalizeEndpointUrlShape(value: string): { url: URL; normalized: string } {
-  const url = new URL(value);
-  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
-    throw new Error("unsupported URL shape");
-  }
-  url.search = "";
-  url.hash = "";
-  const pathname = url.pathname.replace(/\/+$/, "");
-  url.pathname = pathname || "/";
-  return {
-    url,
-    normalized: url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`,
-  };
-}
-
-export async function normalizeCustomEndpointUrl(
-  value: string | null | undefined,
-  rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
-): Promise<string> {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw)
-    throw new InferenceSetError("endpoint-url is required for custom-compatible metadata.", 2);
-  let shaped: { url: URL; normalized: string };
-  try {
-    shaped = normalizeEndpointUrlShape(raw);
-  } catch {
-    throw new InferenceSetError(
-      "endpoint-url must be a valid http(s) URL without embedded credentials.",
-      2,
-    );
-  }
-
-  const hostname = shaped.url.hostname.replace(/\.$/, "").toLowerCase();
-  const port = Number(shaped.url.port);
+function assertHermesCompatibleAnthropicOpenAiProvider(
+  sandboxName: string,
+  agentName: string,
+  gatewayName: string,
+  provider: string,
+  endpointUrl: string | null,
+  deps: InferenceSetDeps,
+): void {
   if (
-    ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS.has(hostname) &&
-    shaped.url.protocol === "http:" &&
-    Number.isInteger(port) &&
-    port >= 1024
+    agentName !== "hermes" ||
+    provider !== "compatible-anthropic-endpoint" ||
+    isBedrockRuntimeEndpoint(endpointUrl)
   ) {
-    // This is the single sandbox-to-host bridge name that NemoClaw itself
-    // provisions for local inference. Its supported routes are explicit
-    // unprivileged HTTP listeners; do not generalize this exemption to HTTPS,
-    // default/privileged ports, localhost, RFC1918 addresses, or arbitrary
-    // internal DNS names.
-    return shaped.normalized;
+    return;
   }
 
-  try {
-    const validated = await rewriteUrlWithDnsPinning(shaped.normalized);
-    if (typeof validated !== "string") throw new Error("URL validator returned a non-string value");
-    return normalizeEndpointUrlShape(validated).normalized;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new InferenceSetError(`endpoint-url is not allowed: ${message}`, 2);
-  }
-}
-
-function normalizeExplicitCredentialEnv(
-  provider: string,
-  value: string | null | undefined,
-): string {
-  const expected = CUSTOM_COMPATIBLE_CREDENTIAL_ENV[provider];
-  const normalized = typeof value === "string" && value.trim() ? value.trim() : expected;
-  if (normalized !== expected) {
-    throw new InferenceSetError(
-      `credential-env for '${provider}' must be '${expected}' so rebuild can safely reuse it.`,
-      2,
-    );
-  }
-  return normalized;
-}
-
-function allowedExplicitInferenceApis(provider: string): string[] {
-  return provider === "compatible-endpoint"
-    ? ["openai-completions", "openai-responses"]
-    : Array.from(INFERENCE_SET_APIS);
-}
-
-function normalizeExplicitInferenceApi(
-  provider: string,
-  value: string | null | undefined,
-): string | null {
-  const normalized = typeof value === "string" ? value.trim() : "";
-  if (!normalized) return null;
-  const allowed = allowedExplicitInferenceApis(provider);
-  if (!allowed.includes(normalized)) {
-    throw new InferenceSetError(
-      `inference-api for '${provider}' must be one of: ${allowed.join(", ")}.`,
-      2,
-    );
-  }
-  return normalized;
-}
-
-async function explicitCustomProviderMetadata(
-  provider: string,
-  options: InferenceSetOptions,
-  rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
-): Promise<RegistryInferenceMetadata | null> {
-  if (!hasExplicitCustomMetadata(options)) return null;
-  if (!isCustomCompatibleProvider(provider)) {
-    throw new InferenceSetError(
-      "endpoint-url, credential-env, and inference-api are only supported for compatible-endpoint and compatible-anthropic-endpoint.",
-      2,
-    );
-  }
-
-  // Source boundary: custom-compatible endpoint URLs are operator-supplied and
-  // not discoverable from the gateway provider registry with a sandbox-scoped
-  // trust guarantee. Treat these explicit flags as the durable metadata source
-  // for this switch, after URL and credential-env validation, instead of
-  // borrowing from an unrelated onboard session or global OpenShell provider.
-  return {
-    endpointUrl: await normalizeCustomEndpointUrl(options.endpointUrl, rewriteUrlWithDnsPinning),
-    credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
-    preferredInferenceApi: normalizeExplicitInferenceApi(provider, options.inferenceApi),
-    nimContainer: null,
-  };
-}
-
-function matchingSessionMetadata(options: {
-  session: onboardSession.Session | null;
-  sandboxName: string;
-  provider: string;
-  model: string;
-}): RegistryInferenceMetadata | null {
-  const { session, sandboxName, provider, model } = options;
+  const result = deps.captureOpenshell(["provider", "get", "-g", gatewayName, provider], {
+    ignoreError: true,
+    includeStreams: true,
+    maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+  });
+  const output = result.output || `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const metadata = result.status === 0 ? parseGatewayProviderMetadata(output) : null;
   if (
-    session?.sandboxName !== sandboxName ||
-    session.provider !== provider ||
-    session.model !== model ||
-    !session.endpointUrl
+    matchesGatewayProviderBinding(metadata, {
+      name: provider,
+      type: "openai",
+      credentialKey: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "OPENAI_BASE_URL",
+    })
   ) {
-    return null;
+    return;
   }
-  return {
-    endpointUrl: session.endpointUrl,
-    credentialEnv: session.credentialEnv ?? null,
-    preferredInferenceApi: session.preferredInferenceApi ?? null,
-    nimContainer: session.nimContainer ?? null,
-  };
-}
 
-function registryMetadataForProviderSwitch(options: {
-  entry: SandboxEntry;
-  provider: string;
-  model: string;
-  sandboxName: string;
-  session: onboardSession.Session | null;
-  explicitMetadata: RegistryInferenceMetadata | null;
-}): RegistryInferenceMetadata {
-  const { entry, provider, model, sandboxName, session, explicitMetadata } = options;
-  if (explicitMetadata) return explicitMetadata;
-  if (entry.provider === provider) {
-    return {
-      endpointUrl: entry.endpointUrl ?? null,
-      credentialEnv: entry.credentialEnv ?? null,
-      preferredInferenceApi: entry.preferredInferenceApi ?? null,
-      nimContainer: entry.nimContainer ?? null,
-    };
-  }
-  const sessionMetadata = matchingSessionMetadata({ session, sandboxName, provider, model });
-  if (sessionMetadata) return sessionMetadata;
-  if (isCustomCompatibleProvider(provider)) {
-    throw new InferenceSetError(
-      `Cannot switch sandbox '${sandboxName}' to '${provider}' without trusted durable endpoint metadata. ` +
-        `Re-run onboarding for this custom endpoint or restore a matching onboard session before using inference set.`,
-      2,
-    );
-  }
-  return {
-    endpointUrl: null,
-    credentialEnv: null,
-    preferredInferenceApi: null,
-    nimContainer: null,
-  };
+  throw new InferenceSetError(
+    `Hermes requires provider '${provider}' to be registered on its verified OpenAI-compatible surface. ` +
+      `Run '${CLI_NAME} ${sandboxName} rebuild' to migrate this sandbox, or re-run onboarding for the endpoint before using inference set.`,
+    2,
+  );
 }
 
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
-  deps: InferenceSetDeps = defaultDeps(),
-): Promise<InferenceSetResult> {
-  const provider = trimRequired(options.provider, "provider");
+  deps: InferenceSetDeps,
+  expectedGatewayName: string,
+): Promise<InferenceMutation<InferenceSetResult>> {
+  // #6321: accept the installer-style provider name onboard uses (e.g.
+  // `anthropicCompatible`) as well as the OpenShell provider name, by
+  // normalizing to the OpenShell name before validation and all downstream use.
+  const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
   assertSupportedProvider(provider, model);
   if (!isSafeModelId(model)) {
@@ -606,11 +555,93 @@ async function runInferenceSetWithoutHostLock(
 
   const { sandboxName, entry, agentName } = resolveTargetSandbox(options.sandboxName, deps);
   if (agentName !== "openclaw" && agentName !== "hermes") {
+    // #6321: Deep Agents Code (langchain-deepagents-code) bakes its model into
+    // the sandbox image at build time (agents/langchain-deepagents-code/Dockerfile
+    // ARG NEMOCLAW_MODEL → ~/.deepagents/config.toml), so — unlike OpenClaw and
+    // Hermes — it has no runtime inference-set config-mutation path. The blunt
+    // "supports OpenClaw and Hermes" message left dcode users with no next step;
+    // point them at the only way to change a Deep Agents model: re-onboard with
+    // a new selection.
+    const dcodeHint =
+      agentName === "langchain-deepagents-code"
+        ? ` Deep Agents Code bakes its model into the sandbox image at build time, so it has no runtime inference-set path. To change the model, re-onboard with the new selection: \`${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh\` (set NEMOCLAW_PROVIDER / NEMOCLAW_MODEL for the target model).`
+        : "";
     throw new InferenceSetError(
-      `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.`,
+      `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.${dcodeHint}`,
       2,
     );
   }
+  const session = deps.loadSession();
+  const explicitInferenceApi =
+    typeof options.inferenceApi === "string" && options.inferenceApi.trim()
+      ? options.inferenceApi.trim()
+      : null;
+  const explicitOrRecordedInferenceApi =
+    explicitInferenceApi ??
+    (entry.provider === provider ? (entry.preferredInferenceApi ?? null) : null);
+  if (
+    agentName === "hermes" &&
+    provider === "compatible-anthropic-endpoint" &&
+    explicitInferenceApi !== null &&
+    explicitInferenceApi !== "openai-completions"
+  ) {
+    throw new InferenceSetError(
+      "Hermes custom Anthropic endpoints require the managed openai-completions frontend. " +
+        "Set --inference-api openai-completions or omit --inference-api so NemoClaw selects it.",
+      2,
+    );
+  }
+  const hasExplicitCustomRoute = Boolean(
+    options.endpointUrl || options.credentialEnv || options.inferenceApi,
+  );
+  const customRoute = hasExplicitCustomRoute
+    ? {
+        ...options,
+        // A same-provider request may omit --inference-api because the durable
+        // registry row already identifies the route family. New provider
+        // routes still require the operator to supply a complete identity.
+        inferenceApi: resolveAgentInferenceApi(agentName, provider, explicitOrRecordedInferenceApi),
+      }
+    : options;
+  const routeEntry = {
+    ...entry,
+    preferredInferenceApi: resolveAgentInferenceApi(
+      agentName,
+      provider,
+      entry.preferredInferenceApi ?? null,
+    ),
+  };
+  const routeSession = session
+    ? {
+        ...session,
+        preferredInferenceApi: resolveAgentInferenceApi(
+          agentName,
+          provider,
+          session.preferredInferenceApi ?? null,
+        ),
+      }
+    : null;
+  // Registered peers are compared exactly as recorded. In particular, a
+  // stopped legacy Hermes row that still records the Anthropic frontend will
+  // depend on that route when restarted and must not be normalized away.
+  const routeSandboxes = deps.listSandboxes().sandboxes;
+  const preparedRoute = prepareInferenceSetRoute({
+    entry: routeEntry,
+    sandboxName,
+    provider,
+    model,
+    customRoute,
+    session: routeSession,
+    sandboxes: routeSandboxes,
+  });
+  if (preparedRoute.gatewayName !== expectedGatewayName) {
+    throw new InferenceSetError(
+      `Sandbox '${sandboxName}' moved from OpenShell gateway '${expectedGatewayName}' to ` +
+        `'${preparedRoute.gatewayName}' while waiting for the route mutation lock. Retry the command.`,
+      2,
+    );
+  }
+
   const target = deps.resolveAgentConfig(sandboxName);
   const targetAgent = normalizeSandboxAgent(target.agentName);
   if (targetAgent !== agentName) {
@@ -625,20 +656,19 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  const session = deps.loadSession();
-  const explicitMetadata = await explicitCustomProviderMetadata(
-    provider,
-    options,
-    deps.rewriteConfigUrlsWithDnsPinning,
-  );
-  const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
-  const registryMetadata = registryMetadataForProviderSwitch({
-    entry,
+  const { registryMetadata, explicitPreferredInferenceApi } = await finalizeInferenceSetRoute({
+    prepared: preparedRoute,
+    sandboxName,
     provider,
     model,
-    sandboxName,
-    session,
-    explicitMetadata,
+    canReuseRecordedRoute:
+      entry.provider === provider &&
+      typeof entry.endpointUrl === "string" &&
+      entry.endpointUrl.trim().length > 0 &&
+      typeof entry.preferredInferenceApi === "string" &&
+      entry.preferredInferenceApi.trim().length > 0,
+    getSandboxes: () => deps.listSandboxes().sandboxes,
+    rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
   });
 
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing
@@ -670,9 +700,26 @@ async function runInferenceSetWithoutHostLock(
     }
   }
 
+  // `inference set` changes the selected route but cannot change a gateway
+  // provider's protocol type. Fail before mutation when a legacy Anthropic
+  // registration would make the required Hermes OpenAI frontend unroutable.
+  assertHermesCompatibleAnthropicOpenAiProvider(
+    sandboxName,
+    agentName,
+    preparedRoute.gatewayName,
+    provider,
+    registryMetadata.endpointUrl ?? null,
+    deps,
+  );
+
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
   const setResult = deps.captureOpenshell(
-    openshellInferenceSetArgs({ provider, model, noVerify: effectiveNoVerify }),
+    openshellInferenceSetArgs({
+      gatewayName: preparedRoute.gatewayName,
+      provider,
+      model,
+      noVerify: effectiveNoVerify,
+    }),
     {
       ignoreError: true,
       includeStreams: true,
@@ -696,12 +743,22 @@ async function runInferenceSetWithoutHostLock(
       nimContainer: registryMetadata.nimContainer ?? null,
     });
   if (
-    !deps.updateSandbox(sandboxName, registryFields(registryMetadata.preferredInferenceApi ?? null))
+    !deps.updateSandbox(
+      sandboxName,
+      registryFields(
+        resolveAgentInferenceApi(
+          agentName,
+          provider,
+          registryMetadata.preferredInferenceApi ?? null,
+        ),
+      ),
+    )
   ) {
     throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
   }
 
   const config = deps.readSandboxConfig(sandboxName, target);
+  const previousOpenClawInferenceApi = readPreviousOpenClawInferenceApi(agentName, config);
   const preferredInferenceApi =
     explicitPreferredInferenceApi ??
     resolveRuntimeInferenceApi({
@@ -792,41 +849,39 @@ async function runInferenceSetWithoutHostLock(
     deps,
   );
 
-  deps.appendAuditEntry({
-    action: "inference_set",
-    sandbox: sandboxName,
-    timestamp: new Date().toISOString(),
-    reason: `inference set ${agentName}:${provider}:${model}${
-      inSandboxConfigSynced ? "" : " (in-sandbox sync incomplete)"
-    }`,
-  });
-
-  // Only claim "synced" when the in-sandbox layer actually synced; otherwise the
-  // warning above already described the degraded state.
-  if (inSandboxConfigSynced) {
-    deps.log(
-      agentName === "hermes"
-        ? `  Inference route synced for '${sandboxName}': ${model}`
-        : `  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`,
-    );
-  }
-
-  return {
-    sandboxName,
-    provider,
-    model,
-    primaryModelRef: patched.route.primaryModelRef,
-    providerKey: patched.route.providerKey,
-    configChanged: patched.changed,
-    sessionUpdated,
-    inSandboxConfigSynced,
-  };
+  return finalizeInferenceMutation(
+    {
+      agentName,
+      configChanged: patched.changed,
+      nextApi: patched.route.inferenceApi,
+      previousApi: previousOpenClawInferenceApi,
+      result: {
+        sandboxName,
+        provider,
+        model,
+        primaryModelRef: patched.route.primaryModelRef,
+        providerKey: patched.route.providerKey,
+        configChanged: patched.changed,
+        sessionUpdated,
+        inSandboxConfigSynced,
+      },
+    },
+    deps,
+  );
 }
 
 export async function runInferenceSet(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
 ): Promise<InferenceSetResult> {
+  try {
+    assertNoOpenShellGatewayEndpointOverride();
+  } catch (error) {
+    if (error instanceof OpenShellGatewayEndpointOverrideError) {
+      throw new InferenceSetError(error.message, 2);
+    }
+    throw error;
+  }
   // Resolve once before acquiring so a default-sandbox change cannot make the
   // protected callback mutate a different sandbox from the one whose lock we
   // hold. Prime the default OpenShell runner before acquiring too: its legacy
@@ -834,9 +889,22 @@ export async function runInferenceSet(
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
   deps.prepareRunOpenshell();
-  return withSandboxMutationLock(selected.sandboxName, () =>
-    withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>
-      runInferenceSetWithoutHostLock({ ...options, sandboxName: selected.sandboxName }, deps),
-    ),
-  );
+  return withSandboxMutationLock(selected.sandboxName, async () => {
+    const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
+    const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
+    const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
+      withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>
+        runInferenceSetWithoutHostLock(
+          { ...options, sandboxName: selected.sandboxName },
+          deps,
+          gatewayName,
+        ),
+      ),
+    );
+    // Release the config transition lock before the managed restart reacquires
+    // it, but retain the outer sandbox lifecycle lock so another process cannot
+    // destroy/recreate this name between the committed write and restart.
+    completeInferenceGatewayRestart(mutation, deps);
+    return mutation.result;
+  });
 }

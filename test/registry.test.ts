@@ -94,15 +94,22 @@ describe("registry", () => {
       name: "alpha",
       webSearchEnabled: true,
       toolDisclosure: "direct",
+      observabilityEnabled: true,
       fromDockerfile: "/tmp/Dockerfile.custom",
       hermesAuthMethod: "oauth",
     });
     expect(registry.getSandbox("alpha")).toMatchObject({
       webSearchEnabled: true,
       toolDisclosure: "direct",
+      observabilityEnabled: true,
       fromDockerfile: "/tmp/Dockerfile.custom",
       hermesAuthMethod: "oauth",
     });
+  });
+
+  it("does not invent observability intent for legacy registry rows", () => {
+    registry.registerSandbox({ name: "legacy" });
+    expect(registry.getSandbox("legacy").observabilityEnabled).toBeUndefined();
   });
 
   it("preserves missing tool-disclosure state on reconstructed legacy rows", () => {
@@ -201,6 +208,25 @@ describe("registry", () => {
     expect(entry.token).toBeUndefined();
     expect(entry.command).toBeUndefined();
     expect(entry.port).toBeUndefined();
+    expect(raw.sandboxes.alpha.mcp.managedServerNames).toEqual(["github"]);
+  });
+
+  it("retains sanitized managed MCP names after the active bridge map is emptied", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "hermes",
+      mcp: {
+        bridges: {},
+        managedServerNames: ["retired", "../invalid", "retired", "still_active"],
+      },
+    });
+
+    const stored = registry.getSandbox("alpha").mcp;
+    expect(stored).toEqual({
+      bridges: {},
+      managedServerNames: ["retired", "still_active"],
+    });
+    expect(JSON.parse(fs.readFileSync(regFile, "utf-8")).sandboxes.alpha.mcp).toEqual(stored);
   });
 
   it("normalizes MCP bridge maps by the recovered server name", () => {

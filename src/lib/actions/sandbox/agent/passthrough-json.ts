@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
 
 import { openClawAgentJsonProvenanceLines } from "../../../openclaw/agent-json-provenance";
-import { buildOpenshellExecArgs, computeExitCode } from "../exec";
+import { buildOpenshellExecArgs, computeExitCode, wrapExecCommandWithRuntimeEnv } from "../exec";
 
 const AGENT_JSON_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
@@ -57,7 +57,7 @@ export function runAgentJsonPassthrough(
   const spawnSyncImpl = deps.spawnSync ?? spawnSync;
   const result = spawnSyncImpl(
     binary,
-    buildOpenshellExecArgs(sandboxName, command, { tty: false }),
+    buildOpenshellExecArgs(sandboxName, wrapExecCommandWithRuntimeEnv(command), { tty: false }),
     {
       encoding: "utf-8",
       maxBuffer: AGENT_JSON_MAX_BUFFER_BYTES,
