@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { managedDcodeConfigRestorePolicy } from "../state/dcode-config-restore-input";
 import type { RestoreOptions, RestoreResult } from "../state/sandbox";
 import type { SelectionDrift } from "./selection-drift";
 
@@ -44,13 +43,9 @@ export function finalizeCreatedSandbox(
         ? "  Restoring workspace state from pre-upgrade backup..."
         : "  Restoring workspace state from pre-recreate backup...",
     );
-    const restore = deps.restoreSandboxState(
-      options.sandboxName,
-      options.restoreBackupPath,
-      options.validateManagedDcode
-        ? { stateFileRestorePolicy: managedDcodeConfigRestorePolicy }
-        : undefined,
-    );
+    const restore = deps.restoreSandboxState(options.sandboxName, options.restoreBackupPath, {
+      applyManagedStateFileRestore: options.validateManagedDcode,
+    });
     if (restore.success) {
       deps.note(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,

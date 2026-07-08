@@ -8,7 +8,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { managedDcodeConfigRestorePolicy } from "../state/dcode-config-restore-input";
 import * as sandboxState from "../state/sandbox";
 import { finalizeCreatedSandbox } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
@@ -224,7 +223,7 @@ describe("created DCode sandbox finalization", () => {
         {
           restoreSandboxState: (name, backup, options) => {
             order.push("restore");
-            expect(options?.stateFileRestorePolicy).toBe(managedDcodeConfigRestorePolicy);
+            expect(options?.applyManagedStateFileRestore).toBe(true);
             return sandboxState.restoreSandboxState(name, backup, options);
           },
           getDcodeSelectionDrift: (name, provider, model, api) => {
@@ -377,10 +376,8 @@ describe("created DCode sandbox finalization", () => {
       },
     );
 
-    expect(restoreSandboxState).toHaveBeenCalledWith(
-      "custom-dcode",
-      "/tmp/custom-backup",
-      undefined,
-    );
+    expect(restoreSandboxState).toHaveBeenCalledWith("custom-dcode", "/tmp/custom-backup", {
+      applyManagedStateFileRestore: false,
+    });
   });
 });

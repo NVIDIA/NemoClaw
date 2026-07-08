@@ -68,6 +68,8 @@ state_dirs:
 # credentials.
 state_files:
   - path: openclaw.json
+    restore:
+      merge: openclaw-config
 user_managed_files:
   - .env
   - .mcp.json
