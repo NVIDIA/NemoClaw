@@ -40,6 +40,36 @@ function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeR
 }
 
 describe("P0-E cloud-experimental parity guardrails", () => {
+  it("skips the destructive fresh re-onboard check outside a Deep Agents sandbox", () => {
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
+    try {
+      fs.writeFileSync(path.join(binDir, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const result = spawnSync(
+        "bash",
+        [
+          path.join(
+            process.cwd(),
+            "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+          ),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+            SANDBOX_NAME: "openclaw-sandbox",
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        "04-deepagents-code-fresh-reonboard: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+    } finally {
+      fs.rmSync(binDir, { force: true, recursive: true });
+    }
+  });
+
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
     await SandboxExecCommand.run(
       [
@@ -269,6 +299,15 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
+  it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
+    const scriptPath = path.join(
+      process.cwd(),
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+    );
+    const result = spawnSync("bash", ["-n", scriptPath], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("registers executable Deep Agents cloud-experimental checks in execution order", () => {
     expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
@@ -280,6 +319,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
     ]);
 
     for (const scriptPath of DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS) {
@@ -304,6 +344,11 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
       ),
     ).toBe(8 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      ),
+    ).toBe(35 * 60_000);
   });
 
   it("documents Deep Agents check scripts in generated launch/QA evidence", () => {

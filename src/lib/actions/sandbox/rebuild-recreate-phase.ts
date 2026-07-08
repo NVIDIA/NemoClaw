@@ -235,6 +235,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         enabled: recreateOptions.observabilityEnabled,
         requestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
       },
+      {
+        mode: recreateOptions.dcodeAutoApprovalMode,
+        requestedExplicitly: recreateOptions.dcodeAutoApprovalRequestedExplicitly,
+      },
     );
     if (backupManifest) {
       console.error("    3. Then restore your workspace state:");

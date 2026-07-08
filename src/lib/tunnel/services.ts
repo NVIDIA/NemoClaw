@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawn } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -15,18 +15,18 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { dockerSpawnSync } from "../adapters/docker";
-import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildSubprocessEnv } from "../subprocess-env";
+import * as agentForwardStop from "./agent-forward-stop";
 import { registerTunnelOrigin } from "./allowed-origins";
 import * as gatewayStop from "./gateway-stop";
-import { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
+import * as sandboxGatewayStop from "./sandbox-gateway-stop";
 
 export { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
+export { stopSandboxChannels } from "./sandbox-gateway-stop";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -445,125 +445,8 @@ export function showStatus(opts: ServiceOptions = {}): void {
   }
 }
 
-/**
- * Stop the OpenClaw gateway (and its messaging channels) inside the sandbox.
- *
- * Uses the OpenShell gateway container's kubectl as the privileged path so it
- * can signal the gateway process even when the sandbox SSH/exec user is
- * `sandbox` and the gateway process runs as the separate `gateway` user.  The
- * fallback `openshell sandbox exec` path uses the same verified script for
- * older/non-root deployments where the exec user can signal the gateway.
- *
- * The in-sandbox script intentionally does not rely on a bare `pkill -f`
- * result: `pkill -f openclaw[- ]gateway` can match the transient shell/pkill
- * command line and report success while the real gateway process survives.
- * Instead, it gathers concrete PIDs from `ps`, excludes its own process tree,
- * sends TERM/KILL as needed, and only reports success after a post-stop process
- * scan is empty.
- *
- * The matcher must also recognize the bare `openclaw` process name that
- * OpenClaw reports after rewriting `process.title`, but that broad argv form is
- * accepted only when it matches the recorded gateway PID plus local gateway
- * marker. This keeps `tunnel stop` from killing unrelated bare OpenClaw
- * processes while still finding the rewritten gateway (#4951).
- */
-export function stopSandboxChannels(sandboxName: string): void {
-  const validatedSandboxName = validateSandboxName(sandboxName);
-  info(`Stopping in-sandbox OpenClaw gateway (sandbox: ${validatedSandboxName})...`);
-
-  const privilegedResult = stopSandboxChannelsViaKubectl(validatedSandboxName);
-  if (reportStopResult(privilegedResult)) return;
-
-  const openshell = resolveOpenshell();
-  if (!openshell) {
-    warn("openshell not found — cannot stop in-sandbox messaging channels.");
-    return;
-  }
-
-  const fallbackResult = spawnSync(
-    openshell,
-    ["sandbox", "exec", "--name", validatedSandboxName, "--", "sh", "-lc", GATEWAY_STOP_SCRIPT],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },
-  );
-  reportStopResult(fallbackResult);
-}
-
-const GATEWAY_CLUSTER_CONTAINER = "openshell-cluster-nemoclaw";
-
-type StopAttemptResult = ReturnType<typeof spawnSync>;
-
-function isSandboxPodName(line: string, sandboxName: string): boolean {
-  if (!line.startsWith("pod/")) return false;
-  const podName = line.slice("pod/".length);
-  if (podName === sandboxName) return true;
-  const prefix = `${sandboxName}-`;
-  if (!podName.startsWith(prefix)) return false;
-  const generatedSuffix = podName.slice(prefix.length);
-  return /^[a-z0-9]+$/.test(generatedSuffix);
-}
-
-function stopSandboxChannelsViaKubectl(sandboxName: string): StopAttemptResult | null {
-  const podsResult = dockerSpawnSync(
-    ["exec", GATEWAY_CLUSTER_CONTAINER, "kubectl", "get", "pods", "-n", "openshell", "-o", "name"],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 },
-  );
-  if (podsResult.status !== 0 || !podsResult.stdout) return null;
-
-  const podOutput =
-    typeof podsResult.stdout === "string" ? podsResult.stdout : podsResult.stdout.toString();
-  const pod = podOutput
-    .split(/\r?\n/)
-    .map((line: string) => line.trim())
-    .find((line: string) => isSandboxPodName(line, sandboxName));
-  if (!pod) return null;
-
-  return dockerSpawnSync(
-    [
-      "exec",
-      GATEWAY_CLUSTER_CONTAINER,
-      "kubectl",
-      "exec",
-      "-n",
-      "openshell",
-      "-c",
-      "agent",
-      pod,
-      "--",
-      "sh",
-      "-lc",
-      GATEWAY_STOP_SCRIPT,
-    ],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },
-  );
-}
-
-function reportStopResult(result: StopAttemptResult | null): boolean {
-  if (!result) return false;
-
-  if (result.status === 0) {
-    info("OpenClaw gateway stopped inside sandbox.");
-    return true;
-  }
-  if (result.status === 1) {
-    info("OpenClaw gateway was not running inside sandbox.");
-    return true;
-  }
-
-  const details = [result.stderr, result.stdout]
-    .map((text) => (typeof text === "string" ? text : text?.toString()))
-    .filter((text): text is string => Boolean(text?.trim()))
-    .map((text) => text.trim())
-    .join(" ");
-  warn(
-    `Could not stop in-sandbox gateway (exit ${String(result.status ?? "unknown")}).` +
-      " The sandbox may be unreachable or the gateway may still be running." +
-      (details ? ` Details: ${details}` : ""),
-  );
-  return true;
-}
-
 export function stopAll(opts: ServiceOptions = {}): void {
-  // Stop the in-sandbox OpenClaw gateway (and its messaging channels).
+  // Resolve the target sandbox once and reuse it for in-sandbox and host-side cleanup.
   const rawSandboxName =
     opts.sandboxName ??
     process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -577,11 +460,15 @@ export function stopAll(opts: ServiceOptions = {}): void {
   // Resolve host-side service state from the same effective sandbox selected
   // for in-sandbox shutdown, so pid cleanup cannot drift to a lower-priority
   // env var or the default sandbox.
-  const pidDir = resolvePidDir(sandboxName ? { ...opts, sandboxName } : opts);
-  ensurePidDir(pidDir);
+  const pidDir =
+    opts.pidDir ??
+    (rawSandboxName && !sandboxName
+      ? undefined
+      : resolvePidDir({ ...opts, sandboxName: sandboxName ?? "default" }));
+  if (pidDir) ensurePidDir(pidDir);
 
   if (sandboxName) {
-    stopSandboxChannels(sandboxName);
+    sandboxGatewayStop.stopSandboxChannels(sandboxName, { info, warn });
   } else if (rawSandboxName) {
     warn(`Invalid sandbox name: ${JSON.stringify(rawSandboxName)} — skipping in-sandbox stop.`);
   } else {
@@ -596,10 +483,17 @@ export function stopAll(opts: ServiceOptions = {}): void {
     /* best-effort */
   }
 
-  // Stop host-side services.
-  stopService(pidDir, "cloudflared");
+  // Stop host-side services only when their state directory is explicit or
+  // derived from a trusted sandbox name. An invalid requested sandbox must not
+  // fall through to the default sandbox's PID directory.
+  if (pidDir) {
+    stopService(pidDir, "cloudflared");
+  } else {
+    warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
+  }
 
-  if (opts.releaseGatewayPort) {
+  if (opts.releaseGatewayPort && sandboxName) {
+    agentForwardStop.stopAgentForwardPortsForStop(sandboxName, { info, warn });
     gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
   }
 
