@@ -74,13 +74,20 @@ RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
 
 # The launcher and startup script read these root-owned files instead of
 # trusting process-level environment overrides for inference routing. Invoking
-# each launcher validates the build args before the image can complete.
+# each launcher validates the build args before the image can complete. The
+# empty-prompt probe also exercises the installed launcher -> wrapper chain so a
+# stale or misassembled image cannot silently lose the public exit-code contract.
 RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_PROXY_HOST" > /usr/local/share/nemoclaw/dcode-proxy-host \
     && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
     && printf '%s\n' "$NEMOCLAW_INFERENCE_BASE_URL" > /usr/local/share/nemoclaw/dcode-inference-base-url \
     && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url \
     && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url \
+    && empty_prompt_log="$(mktemp)" \
+    && if timeout 10 /usr/local/bin/dcode -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
+    && test "$empty_prompt_status" -eq 2 \
+    && test "$(cat "$empty_prompt_log")" = "NemoClaw: empty non-interactive prompt for -n; provide prompt text." \
+    && rm -f "$empty_prompt_log" \
     && /usr/local/bin/dcode --version \
     && /usr/local/bin/dcode.real --version \
     && /usr/local/bin/deepagents-code --version

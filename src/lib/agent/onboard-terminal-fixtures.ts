@@ -24,6 +24,9 @@ function recordDeepAgentsRuntimeCall(
   if (command.includes("dcode --version")) {
     return `dcode ${smokeVersion}\nNEMOCLAW_AGENT_SMOKE_EXIT:0`;
   }
+  if (command.includes("NEMOCLAW_DCODE_EMPTY_PROMPT_OK")) {
+    return "NEMOCLAW_DCODE_EMPTY_PROMPT_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
+  }
   if (command.includes("/sandbox/.deepagents/config.toml")) {
     return "NEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
   }
