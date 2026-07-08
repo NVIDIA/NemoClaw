@@ -348,6 +348,23 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      # invalidState: a profile plugin installed with --no-deps can import even
+      # when an incomplete base image omitted its required upstream packages.
+      # sourceBoundary: this trusted workflow scopes the repo-owned stripped-base
+      # build to the exact DCode target; the production Dockerfile must reject it
+      # at the isolated import gate before its later dependency-consistency check.
+      # whyNotSourceFix: dependency completeness belongs to the hash-locked base;
+      # resolving dependencies during local plugin install would duplicate that
+      # trust boundary, so the regression constructs the invalid input instead.
+      # regressionTest: workflow-boundary tests pin the target, script, and
+      # ordering; build-gate tests pin the base build and failure contract.
+      # removalCondition: remove only if package installation no longer uses
+      # --no-deps or an equivalent earlier build gate proves both imports.
+      - name: Verify DCode profile import gate rejects missing base dependencies
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        shell: bash
+        run: bash scripts/check-dcode-profile-import-gate.sh
+
       - name: Run live E2E tests
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
