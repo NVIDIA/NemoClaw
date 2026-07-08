@@ -137,6 +137,10 @@ async function rebuildSandboxUnlocked(
       staleSandboxWasLocked,
       relock: relockShieldsIfNeeded,
     } = shieldsPhase;
+    const originalShieldsLocked =
+      recoveredTransaction?.status === "active"
+        ? recoveredTransaction.intent.source.shieldsLocked
+        : staleSandboxWasLocked || rebuildShieldsWindow.wasLocked;
     let sandboxStillExists = true;
 
     try {
@@ -205,6 +209,7 @@ async function rebuildSandboxUnlocked(
           nemoclawVersion: sandboxEntry.nemoclawVersion ?? null,
         },
         legacyManagedImageRecoveryAuthorized: allowLegacyManagedImageRecovery,
+        shieldsLocked: originalShieldsLocked,
         oldSandboxPresent: !staleRecovery,
       });
       await transaction.reconcileObservedDeletion(staleRecovery);
@@ -336,7 +341,7 @@ async function rebuildSandboxUnlocked(
         staleRecovery,
         recoveryRecreate,
         preparedBackupRecovery,
-        staleSandboxWasLocked,
+        staleSandboxWasLocked: originalShieldsLocked,
         versionCheck,
         relockShieldsIfNeeded,
         log,

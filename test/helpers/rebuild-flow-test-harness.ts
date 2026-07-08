@@ -73,7 +73,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const transactionStore = new RebuildTransactionStore({ stateDir: transactionStateDir });
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
-  const rebuildShieldsWindow = { relocked: false, wasLocked: false };
+  const rebuildShieldsWindow = {
+    relocked: false,
+    wasLocked: overrides.shieldsWasLocked ?? false,
+  };
   const agentDef = {
     name:
       typeof overrides.sandboxEntry?.agent === "string" ? overrides.sandboxEntry.agent : "openclaw",
@@ -392,7 +395,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
-  vi.spyOn(shields, "isShieldsDown").mockReturnValue(true);
+  vi.spyOn(shields, "isShieldsDown").mockReturnValue(overrides.shieldsDown ?? true);
   vi.spyOn(shields, "clearShieldsState").mockImplementation(
     overrides.clearShieldsState ?? (() => undefined),
   );

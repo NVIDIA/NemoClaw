@@ -253,6 +253,35 @@ describe("rebuild transaction boundary", () => {
     });
   });
 
+  it("preserves original locked-shields guidance across a fresh resume", async () => {
+    const interrupted = createRebuildFlowHarness({
+      shieldsWasLocked: true,
+      shieldsDown: false,
+      onboard: () => {
+        throw new Error("simulated process interruption");
+      },
+    });
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Recreate failed");
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      intent: { source: { shieldsLocked: true } },
+    });
+
+    const resumed = createRebuildFlowHarness({ staleRecovery: true });
+    resumed.logSpy.mockClear();
+    await resumed.rebuildSandbox("alpha", ["--yes"], {
+      throwOnError: true,
+      transactionStore: interrupted.transactionStore,
+    });
+    expect(resumed.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Shields were previously enabled",
+    );
+  });
+
   it("reconciles prepared state when a fresh coordinator observes deletion", async () => {
     const manifest = makePreparedRecoveryManifest();
     const interrupted = createRebuildFlowHarness({

@@ -87,6 +87,8 @@ export type RebuildFlowOverrides = {
   defaultSelectionRevision?: number;
   preDeleteDefaultSelectionRevision?: number;
   clearShieldsState?: () => void;
+  shieldsWasLocked?: boolean;
+  shieldsDown?: boolean;
 };
 export type RebuildFlowHarness = {
   rebuildSandbox: RebuildSandbox;

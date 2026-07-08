@@ -74,6 +74,7 @@ async function prepareRebuildTransaction(args: {
   backupManifest: RebuildBackupManifest;
   imageIdentity: unknown;
   legacyManagedImageRecoveryAuthorized: boolean;
+  shieldsLocked: boolean;
   oldSandboxPresent: boolean;
 }): Promise<RebuildTransactionRecordV1 | null> {
   if (!args.backupManifest) return null;
@@ -84,6 +85,7 @@ async function prepareRebuildTransaction(args: {
       agent: args.sandboxEntry.agent ?? null,
       registryFingerprint: fingerprintRebuildValue(args.sandboxEntry),
       legacyManagedImageRecoveryAuthorized: args.legacyManagedImageRecoveryAuthorized,
+      shieldsLocked: args.shieldsLocked,
     },
     target: {
       agent: resumeConfig.agent,
