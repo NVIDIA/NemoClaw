@@ -95,7 +95,11 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
+# Host recovery restores these guards from this immutable image path before it
+# relaunches a stopped gateway. Keep the contract aligned with the OpenClaw image.
+COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
+    && find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +
 
 # Wrap the hermes CLI so the runtime env secret boundary is enforced for
 # `hermes gateway` no matter how it is invoked. The entrypoint guard alone left

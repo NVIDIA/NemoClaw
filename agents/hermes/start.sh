@@ -759,17 +759,18 @@ fi
 # the whole function), every fallible command sits inside an `if`, all vars are
 # `${x:-}`-safe, and a guard is only added to NODE_OPTIONS once its /tmp copy exists
 # and is non-empty. Worst case it logs a warning and the gateway still starts.
-# NEMOCLAW_GUARD_DIRS overrides the search path (used by tests).
+# The optional positional argument is a test seam. Production always reads the
+# image-owned recovery directory populated by agents/hermes/Dockerfile.
 install_nemoclaw_node_guards() {
   _SANDBOX_SAFETY_NET=""
   _CIAO_GUARD_SCRIPT=""
   _nemoclaw_guard_dir=""
-  # Default search list is image-owned (root, read-only) dirs ONLY — never a
-  # sandbox-writable path, or the in-container agent could plant a malicious
-  # preload that the entrypoint would --require into the gateway. Sandbox/dev
-  # paths must be opted in explicitly via NEMOCLAW_GUARD_DIRS.
+  local _nemoclaw_guard_dirs="${1:-/usr/local/lib/nemoclaw/preloads}"
+  # Production uses an image-owned, root-read-only directory only. Never accept
+  # an environment-selected path here: the sandbox user could plant a malicious
+  # preload that the entrypoint would --require into the gateway.
   # shellcheck disable=SC2086  # intentional word-split over the candidate dir list
-  for _gd in ${NEMOCLAW_GUARD_DIRS:-/opt/nemoclaw-blueprint/scripts /usr/local/lib/nemoclaw/preloads}; do
+  for _gd in $_nemoclaw_guard_dirs; do
     if [ -f "$_gd/sandbox-safety-net.js" ] && [ -f "$_gd/ciao-network-guard.js" ]; then
       _nemoclaw_guard_dir="$_gd"
       break
