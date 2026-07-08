@@ -65,6 +65,16 @@ network_policies:
       - host: api.github.com
         port: 443
         access: full
+      # GitHub's API and HTML pages link repository file bodies through this
+      # separate host. Keep the default coding-agent capability read-only even
+      # though the broader GitHub/API endpoints above support normal git work.
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
     binaries:
       - { path: /usr/bin/git }
       - { path: /usr/local/bin/dcode }

@@ -27,6 +27,7 @@ export const PROXY_URL_ENV_NAMES = [
   "https_proxy",
 ] as const;
 export const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
+export const TRUSTED_FETCH_PROXY_ENV_NAME = "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" as const;
 const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
 export const TRACING_ENABLE_ENV_NAMES = [
   "DEEPAGENTS_CODE_LANGSMITH_TRACING",
@@ -135,6 +136,7 @@ export function runStartScriptProxyProbe(
   const probe = [
     ...[
       ...PROXY_URL_ENV_NAMES,
+      TRUSTED_FETCH_PROXY_ENV_NAME,
       ...NO_PROXY_ENV_NAMES,
       ...CLEARED_PROXY_ENV_NAMES,
       ...TRACING_ENABLE_ENV_NAMES,
@@ -146,6 +148,7 @@ export function runStartScriptProxyProbe(
     '. "$NEMOCLAW_TEST_PROXY_ENV"',
     ...[
       ...PROXY_URL_ENV_NAMES,
+      TRUSTED_FETCH_PROXY_ENV_NAME,
       ...NO_PROXY_ENV_NAMES,
       ...CLEARED_PROXY_ENV_NAMES,
       ...TRACING_ENABLE_ENV_NAMES,

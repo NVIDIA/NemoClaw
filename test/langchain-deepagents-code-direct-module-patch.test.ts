@@ -41,6 +41,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "app.py",
       "auth_store.py",
       "config.py",
+      "tools.py",
       "model_config.py",
       "agent.py",
       "update_check.py",
@@ -84,6 +85,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
   it.each([
     ["entrypoint", "__main__.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["main", "main.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
+    ["tools", "tools.py", "_nemoclaw_original_fetch_with_redirects = _fetch_with_redirects"],
     [
       "agent",
       "agent.py",
@@ -226,6 +228,218 @@ else:
       expect(result.status, `${args.join(" ")} failed: ${result.stderr}`).toBe(0);
       expect(result.stdout).toContain("managed-posture-ok");
     }
+  });
+
+  it("routes fetch_url through only the explicit managed proxy without direct DNS", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const proxyUrl = "http://managed-proxy.internal:3128";
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import os
+import sys
+import types
+
+calls = []
+responses = []
+
+class Response:
+    def __init__(self, status_code=200, location=None):
+        self.status_code = status_code
+        self.headers = {} if location is None else {"Location": location}
+
+    def raise_for_status(self):
+        return None
+
+class Session:
+    def __init__(self):
+        self.trust_env = True
+
+    def get(self, url, **kwargs):
+        calls.append((self.trust_env, url, kwargs))
+        return responses.pop(0) if responses else Response()
+
+requests = types.ModuleType("requests")
+requests.Session = Session
+requests.exceptions = types.SimpleNamespace(TooManyRedirects=RuntimeError)
+sys.modules["requests"] = requests
+
+from deepagents_code import tools
+from deepagents_code._nemoclaw_managed import managed_fetch_proxy_url
+
+def forbidden_direct_dns(*_args, **_kwargs):
+    raise AssertionError("managed fetch attempted direct DNS validation")
+
+tools._validate_url = forbidden_direct_dns
+response = tools._fetch_with_redirects("https://raw.githubusercontent.com/example/repo/main/README.md", timeout=8)
+assert response.status_code == 200
+assert calls == [(
+    False,
+    "https://raw.githubusercontent.com/example/repo/main/README.md",
+    {
+        "timeout": 8,
+        "headers": {"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
+        "allow_redirects": False,
+        "proxies": {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}},
+    },
+)]
+
+calls.clear()
+responses.extend([
+    Response(302, "../main/README.md"),
+    Response(),
+])
+response = tools._fetch_with_redirects(
+    "https://raw.githubusercontent.com/example/repo/start",
+    timeout=8,
+)
+assert response.status_code == 200
+assert [url for _, url, _ in calls] == [
+    "https://raw.githubusercontent.com/example/repo/start",
+    "https://raw.githubusercontent.com/example/main/README.md",
+]
+assert all(
+    kwargs["proxies"]
+    == {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}}
+    for _, _, kwargs in calls
+)
+
+calls.clear()
+responses.append(Response(302))
+try:
+    tools._fetch_with_redirects("https://raw.githubusercontent.com/missing-location", timeout=8)
+except tools._UrlValidationError as exc:
+    assert "missing a Location header" in str(exc)
+else:
+    raise AssertionError("redirect without Location escaped validation")
+
+calls.clear()
+responses.append(Response(302, "https://user:redirect-secret@raw.githubusercontent.com/private"))
+try:
+    tools._fetch_with_redirects("https://raw.githubusercontent.com/credential-redirect", timeout=8)
+except tools._UrlValidationError as exc:
+    assert str(exc) == "URL credentials are not allowed"
+    assert "redirect-secret" not in str(exc)
+else:
+    raise AssertionError("credentialed redirect escaped validation")
+assert len(calls) == 1
+
+calls.clear()
+responses.append(Response(302, "https://raw.githubusercontent.com/next"))
+tools._MAX_FETCH_REDIRECTS = 0
+try:
+    tools._fetch_with_redirects("https://raw.githubusercontent.com/start", timeout=8)
+except RuntimeError as exc:
+    assert "Exceeded 0 redirects" in str(exc)
+else:
+    raise AssertionError("managed fetch ignored the reviewed upstream redirect cap")
+assert len(calls) == 1
+
+tools._MAX_FETCH_REDIRECTS = 5
+for malformed in ("https://[broken", "https://example.com:not-a-port"):
+    try:
+        tools._fetch_with_redirects(malformed, timeout=8)
+    except tools._UrlValidationError as exc:
+        assert str(exc) == "URL is malformed"
+    else:
+        raise AssertionError(f"malformed URL escaped validation: {malformed}")
+
+os.environ["HTTP_PROXY"] = "http://attacker.internal:4444"
+try:
+    tools._fetch_with_redirects("https://raw.githubusercontent.com/example", timeout=8)
+except tools._UrlValidationError as exc:
+    assert str(exc) == "managed fetch URL proxy does not match runtime proxy"
+    assert "attacker.internal" not in str(exc)
+else:
+    raise AssertionError("proxy-integrity error escaped fetch_url validation")
+
+for invalid_proxy in (
+    "http://user:proxy-secret@proxy.internal:3128",
+    "http://proxy.internal",
+    "http://proxy.internal:0",
+    "http://proxy.internal:70000",
+    "http://proxy.internal:3128/unexpected",
+    "http://proxy.internal:3128?route=unsafe",
+    "http://proxy.internal:3128#fragment",
+    " http://proxy.internal:3128",
+    "http://proxy.internal:3128\\n",
+):
+    os.environ["DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"] = invalid_proxy
+    for proxy_name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ[proxy_name] = invalid_proxy
+    try:
+        managed_fetch_proxy_url()
+    except RuntimeError as exc:
+        assert str(exc) == "managed fetch URL proxy is invalid"
+        assert "proxy-secret" not in str(exc)
+    else:
+        raise AssertionError(f"invalid managed proxy was accepted: {invalid_proxy!r}")
+print("managed-fetch-proxy-ok")
+`,
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL: proxyUrl,
+          HTTP_PROXY: proxyUrl,
+          HTTPS_PROXY: proxyUrl,
+          http_proxy: proxyUrl,
+          https_proxy: proxyUrl,
+          NO_PROXY: "raw.githubusercontent.com",
+          no_proxy: "raw.githubusercontent.com",
+        },
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("managed-fetch-proxy-ok");
+
+    const withoutDelegation = spawnSync(
+      "python3",
+      [
+        "-c",
+        [
+          "from deepagents_code import tools",
+          'result = tools._fetch_with_redirects("https://example.com", timeout=3)',
+          'assert result == {"transport": "direct", "url": "https://example.com", "timeout": 3}',
+        ].join("; "),
+      ],
+      {
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+        encoding: "utf8",
+      },
+    );
+    expect(withoutDelegation.status, withoutDelegation.stderr).toBe(0);
+
+    const mismatchedProxy = spawnSync(
+      "python3",
+      [
+        "-c",
+        "from deepagents_code._nemoclaw_managed import managed_fetch_proxy_url; managed_fetch_proxy_url()",
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL: proxyUrl,
+          HTTP_PROXY: "http://attacker.internal:4444",
+          HTTPS_PROXY: proxyUrl,
+          http_proxy: proxyUrl,
+          https_proxy: proxyUrl,
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(mismatchedProxy.status).not.toBe(0);
+    expect(mismatchedProxy.stderr).toContain(
+      "managed fetch URL proxy does not match runtime proxy",
+    );
+    expect(mismatchedProxy.stderr).not.toContain("attacker.internal");
   });
 
   it("rejects direct-module runtime credentials before settings bootstrap", () => {
@@ -969,11 +1183,18 @@ async def validate():
 
     project = Path(${JSON.stringify(tempDir)}) / "project"
     project.mkdir()
-    (project / ".env").write_text("PROJECT_API_KEY=should-not-load\\n", encoding="utf-8")
+    (project / ".env").write_text(
+        "PROJECT_API_KEY=should-not-load\\n"
+        "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL=http://attacker.internal:4444\\n",
+        encoding="utf-8",
+    )
     os.chdir(project)
     assert config._load_dotenv() is False
     assert "PROJECT_API_KEY" not in os.environ
+    assert "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" not in os.environ
     assert "PROJECT_API_KEY" not in config._preview_dotenv_environ()
+    assert "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" not in config._preview_dotenv_environ()
+    assert _nemoclaw_managed.managed_fetch_proxy_url() is None
     for name in (
         "LANGSMITH_TRACING",
         "LANGSMITH_TRACING_V2",
@@ -1042,5 +1263,21 @@ print("managed-boundaries-ok")
     });
     expect(shapeResult.status).not.toBe(0);
     expect(shapeResult.stderr).toContain("_prompt_launch_tavily");
+
+    const missingFetch = createPackageFixture();
+    const toolsPath = path.join(missingFetch, "deepagents_code", "tools.py");
+    fs.writeFileSync(
+      toolsPath,
+      fs
+        .readFileSync(toolsPath, "utf8")
+        .replace("def _fetch_with_redirects(", "def _renamed_fetch_with_redirects("),
+      "utf8",
+    );
+    const fetchShapeResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingFetch },
+      encoding: "utf8",
+    });
+    expect(fetchShapeResult.status).not.toBe(0);
+    expect(fetchShapeResult.stderr).toContain("_fetch_with_redirects");
   });
 });

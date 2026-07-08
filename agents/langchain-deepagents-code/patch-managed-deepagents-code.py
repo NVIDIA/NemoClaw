@@ -419,6 +419,32 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     }
 '''
 
+# Source-of-truth boundary: upstream Deep Agents Code 0.1.34 resolves and pins
+# destination DNS locally, then disables environment proxies. That is a sound
+# standalone SSRF defense but cannot operate in OpenShell's proxy-only network
+# namespace, where direct DNS and direct target connections are rejected. The
+# managed launcher supplies an explicit, root-owned proxy URL; this patch keeps
+# requests' ambient proxy discovery disabled and delegates every redirect hop to
+# that exact proxy, whose network policy and SSRF checks remain authoritative.
+TOOLS_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+_nemoclaw_original_fetch_with_redirects = _fetch_with_redirects
+
+
+def _fetch_with_redirects(url: str, *, timeout: int):
+    """Use only the launcher-delegated OpenShell proxy when configured."""
+    from deepagents_code._nemoclaw_managed import managed_fetch_with_redirects
+
+    return managed_fetch_with_redirects(
+        url,
+        timeout=timeout,
+        max_redirects=_MAX_FETCH_REDIRECTS,
+        original_fetch=_nemoclaw_original_fetch_with_redirects,
+        validation_error=_UrlValidationError,
+    )
+'''
+
 MODEL_CONFIG_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
@@ -1126,6 +1152,7 @@ def main() -> None:
         "app": root / "app.py",
         "auth_store": root / "auth_store.py",
         "config": root / "config.py",
+        "tools": root / "tools.py",
         "model_config": root / "model_config.py",
         "agent": root / "agent.py",
         "update_check": root / "update_check.py",
@@ -1189,6 +1216,7 @@ def main() -> None:
         for name, patch in (
             ("entrypoint", ENTRYPOINT_PATCH),
             ("main", MAIN_PATCH),
+            ("tools", TOOLS_PATCH),
             ("agent", AGENT_PATCH),
             ("status", STATUS_PATCH),
             ("welcome", WELCOME_PATCH),
@@ -1258,6 +1286,9 @@ def main() -> None:
             "_preview_dotenv_environ",
             "_tracing_enabled",
         },
+    )
+    _require_functions(
+        paths["tools"], texts["tools"], {"_fetch_with_redirects"}
     )
     _require_methods(
         paths["model_config"],
@@ -1378,6 +1409,7 @@ def main() -> None:
         paths["auth_store"], texts["auth_store"], AUTH_STORE_PATCH
     )
     transformed["config"] = _append_patch(paths["config"], texts["config"], CONFIG_PATCH)
+    transformed["tools"] = _append_patch(paths["tools"], texts["tools"], TOOLS_PATCH)
     transformed["model_config"] = _append_patch(
         paths["model_config"], texts["model_config"], MODEL_CONFIG_PATCH
     )

@@ -13,8 +13,10 @@ import json
 import os
 import re
 import stat
+from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import urlparse, urlsplit
+from typing import Any
+from urllib.parse import urljoin, urlparse, urlsplit
 
 _MANAGED_STATE_DIR = Path("/sandbox/.deepagents/.state")
 _AUTH_FILE = _MANAGED_STATE_DIR / "auth.json"
@@ -38,11 +40,15 @@ _CREDENTIAL_ENV_NAMES = {
 }
 _OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 _UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
+_FETCH_URL_TRUSTED_PROXY_ENV = (
+    "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"
+)
 _MANAGED_ADAPTER_PROVIDER = "openai"
 _NVIDIA_DISPLAY_PROVIDER_ALIASES = frozenset(
     {"nvidia", "nvidia-prod", "nvidia-nim", "nvidia-router"}
 )
 _DISPLAY_PROVIDER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+_MANAGED_PROXY_HOST = re.compile(r"[A-Za-z0-9._-]+")
 _MCP_SERVER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 _MCP_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 _MCP_DNS_NAME = re.compile(
@@ -864,6 +870,129 @@ def managed_inference_base_url() -> str:
     return value
 
 
+def managed_fetch_proxy_url() -> str | None:
+    """Return the explicit OpenShell proxy delegated to managed ``fetch_url``.
+
+    The variable is absent when this helper is imported outside the managed
+    launcher, in which case the upstream direct DNS-pinning transport remains
+    authoritative. When present, every conventional HTTP(S) proxy variable
+    must carry the same launcher-derived value. This prevents a mutable ambient
+    proxy or ``NO_PROXY`` rule from silently replacing the root-owned route.
+    """
+    value = os.environ.get(_FETCH_URL_TRUSTED_PROXY_ENV)
+    if value is None:
+        return None
+    if (
+        not value
+        or len(value) > 2048
+        or value != value.strip()
+        or any(ord(character) < 32 for character in value)
+    ):
+        raise RuntimeError("managed fetch URL proxy is invalid")
+    try:
+        parsed = urlparse(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("managed fetch URL proxy is invalid") from exc
+    if (
+        parsed.scheme != "http"
+        or not parsed.hostname
+        or port is None
+        or port < 1
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or _MANAGED_PROXY_HOST.fullmatch(parsed.hostname) is None
+    ):
+        raise RuntimeError("managed fetch URL proxy is invalid")
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        if os.environ.get(name) != value:
+            raise RuntimeError("managed fetch URL proxy does not match runtime proxy")
+    return value
+
+
+def managed_fetch_with_redirects(
+    url: str,
+    *,
+    timeout: int,
+    max_redirects: int,
+    original_fetch: Callable[..., Any],
+    validation_error: type[ValueError],
+) -> Any:
+    """Fetch through only the launcher-delegated OpenShell proxy.
+
+    Outside the managed launcher, preserve the pinned upstream transport. In
+    the managed image, avoid forbidden direct DNS while keeping requests'
+    ambient proxy discovery and ``NO_PROXY`` disabled. OpenShell's proxy then
+    remains the authoritative network-policy and SSRF boundary for every hop.
+    """
+    try:
+        proxy_url = managed_fetch_proxy_url()
+    except RuntimeError as exc:
+        # Keep runtime-integrity failures inside fetch_url's structured
+        # validation result instead of surfacing an opaque tool exception.
+        raise validation_error(str(exc)) from exc
+    if proxy_url is None:
+        return original_fetch(url, timeout=timeout)
+
+    import requests
+
+    def validate_url(candidate: str) -> None:
+        try:
+            parsed = urlparse(candidate)
+            hostname = parsed.hostname
+            # Force malformed ports through the same structured validation path
+            # even though requests, rather than this helper, uses the value.
+            _ = parsed.port
+        except ValueError as exc:
+            raise validation_error("URL is malformed") from exc
+        if parsed.scheme not in {"http", "https"}:
+            raise validation_error(
+                f"URL scheme not allowed: {parsed.scheme!r} (must be http or https)"
+            )
+        if not hostname:
+            raise validation_error("URL is missing a hostname")
+        if parsed.username is not None or parsed.password is not None:
+            raise validation_error("URL credentials are not allowed")
+        try:
+            hostname.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise validation_error(
+                f"Could not encode hostname {hostname!r} as IDNA: {exc}"
+            ) from exc
+
+    current_url = url
+    session = requests.Session()
+    session.trust_env = False
+    proxies = {"http": proxy_url, "https": proxy_url}
+    for _hop in range(max_redirects + 1):
+        validate_url(current_url)
+        response = session.get(
+            current_url,
+            timeout=timeout,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
+            allow_redirects=False,
+            proxies=proxies,
+        )
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("Location")
+            if not location:
+                raise validation_error(
+                    f"Redirect response (status {response.status_code}) is missing a Location header"
+                )
+            current_url = urljoin(current_url, location)
+            continue
+        response.raise_for_status()
+        return response
+
+    raise requests.exceptions.TooManyRedirects(
+        f"Exceeded {max_redirects} redirects"
+    )
+
+
 def managed_display_provider(adapter_provider: object) -> str:
     """Return the provider label to show for the managed inference adapter.
 
@@ -890,6 +1019,7 @@ def assert_safe_runtime() -> None:
     """Reject unmanaged runtime credentials before dcode bootstraps settings."""
     _assert_safe_environment()
     _assert_safe_auth_state()
+    managed_fetch_proxy_url()
     base_url = managed_inference_base_url()
     os.environ["OPENAI_BASE_URL"] = base_url
     os.environ["NEMOCLAW_INFERENCE_BASE_URL"] = base_url

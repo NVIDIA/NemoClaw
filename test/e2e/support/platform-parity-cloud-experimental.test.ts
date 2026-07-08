@@ -225,6 +225,28 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout.trim()).toBe("NO_NEWLINE_IN_COMMAND");
   });
 
+  it("keeps Deep Agents fetch_url probe command single-line for OpenShell exec", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "fetch-probe-command-shape",
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("NO_NEWLINE_IN_FETCH_COMMAND");
+  });
+
   it("keeps Deep Agents secret-boundary probe command single-line for OpenShell exec", () => {
     const result = spawnSync(
       "bash",
