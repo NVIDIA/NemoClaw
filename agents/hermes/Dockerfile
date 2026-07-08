@@ -126,6 +126,7 @@ COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
+COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py
 COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
 COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py
@@ -138,7 +139,7 @@ COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
@@ -174,6 +175,27 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
 RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     || { echo "ERROR: validate-hermes-env-secret-boundary.py missing or not executable" >&2; exit 1; }
 
+# Hermes v0.17.0 computes `sessions list` preview from the first user message,
+# while #5254's user-facing expectation is that the existing row reflects the
+# latest resumed/continued one-shot turn. Patch only the pinned query shape and
+# prove the SessionDB list contract at build time so a Hermes update cannot
+# silently drift.
+RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
+    && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
+    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python - <<'PY'
+from hermes_state import SessionDB
+
+db = SessionDB()
+session_id = "nemoclaw-preview-smoke"
+db.create_session(session_id, "cli")
+db.append_message(session_id, "user", "NEMOCLAW_PREVIEW_FIRST")
+db.append_message(session_id, "assistant", "ack")
+db.append_message(session_id, "user", "NEMOCLAW_PREVIEW_LATEST")
+rows = db.list_sessions_rich(limit=1)
+assert rows and rows[0]["id"] == session_id, rows
+assert rows[0]["preview"] == "NEMOCLAW_PREVIEW_LATEST", rows
+PY
+
 # Cryptographic integrity gate for the two security-critical Python entrypoints
 # — the wrapper that enforces the runtime env secret boundary and the validator
 # it delegates to. Any content change to either file MUST be accompanied by an
@@ -181,7 +203,7 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # chain tampering of the build context (an attacker rewriting the file has to
 # also rewrite the Dockerfile-committed hash, which reviewers gate). Regenerate
 # with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py}`.
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=03e0afbe00e352d0dfcf14b99ea1821f9fd29f87dad49ce19add2ec96d1941cc
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=34ef50ea993c776f28312bcf659e908eeae3c07e4094a49e513cb320eee6538f
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=970d7ff03bc409ff1d5ca46bfdbd2a42ac28a32a810ccc147a508301bff38496
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -203,6 +225,22 @@ RUN printf '%s  %s\n' \
 COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
+# hadolint ignore=DL4006
+RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
+    && hermes_semver="$(printf '%s\n' "$hermes_version_output" | sed -n 's/.*v\([0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*\).*/\1/p; s/^\([0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*\)$/\1/p' | head -1)" \
+    && if [ -z "$hermes_semver" ]; then \
+        echo "ERROR: could not parse Hermes semver from: $hermes_version_output" >&2; \
+        exit 1; \
+    fi \
+    && if [ "$hermes_semver" != "0.17.0" ] \
+        && { grep -q '_translate_resumed_oneshot' /usr/local/lib/nemoclaw/hermes-wrapper.py \
+          || grep -q 'EXPECTED_OCCURRENCES' /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py; }; then \
+        echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.17.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
+        exit 1; \
+    fi
+# This runs before `/usr/local/bin/hermes` is moved to `hermes.real`, so the
+# help probe checks the pinned Hermes binary, not the wrapper installed below.
+RUN /usr/bin/python3 -I -c 'import ast, pathlib, subprocess, sys; source = pathlib.Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(); tree = ast.parse(source); constants = {node.targets[0].id: ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in {"_VALUE_FLAGS", "_BOOLEAN_FLAGS"}}; missing_constants = sorted({"_VALUE_FLAGS", "_BOOLEAN_FLAGS"} - set(constants)); missing_constants and sys.exit("ERROR: Hermes wrapper flag constants not found in AST: " + ", ".join(missing_constants)); not constants["_VALUE_FLAGS"] and sys.exit("ERROR: Hermes wrapper _VALUE_FLAGS is empty"); not constants["_BOOLEAN_FLAGS"] and sys.exit("ERROR: Hermes wrapper _BOOLEAN_FLAGS is empty"); top_expected = set(constants["_VALUE_FLAGS"]) | set(constants["_VALUE_FLAGS"].values()) | set(constants["_BOOLEAN_FLAGS"]) | {"-z", "--oneshot", "-c", "--continue"}; top_help = subprocess.check_output(["/usr/local/bin/hermes", "--help"], text=True, timeout=30); top_missing = sorted(flag for flag in top_expected if flag not in top_help); top_missing and sys.exit("ERROR: Hermes wrapper flag allowlist drifted from pinned hermes --help: " + ", ".join(top_missing)); chat_expected = set(constants["_VALUE_FLAGS"].values()) | set(constants["_BOOLEAN_FLAGS"]) | {"--query", "--quiet", "--resume", "-r", "--continue", "-c"}; chat_help = subprocess.check_output(["/usr/local/bin/hermes", "chat", "--help"], text=True, timeout=30); chat_missing = sorted(flag for flag in chat_expected if flag not in chat_help); chat_missing and sys.exit("ERROR: Hermes wrapper forwarded flags drifted from pinned hermes chat --help: " + ", ".join(chat_missing))'
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \

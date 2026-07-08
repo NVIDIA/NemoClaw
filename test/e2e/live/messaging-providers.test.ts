@@ -13,7 +13,6 @@ import fs from "node:fs";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   accountBool,
   accountString,
@@ -55,9 +54,7 @@ import {
 import { runInstalledSlackRuntimeProof } from "./messaging-providers-slack-runtime-proof.ts";
 import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram-runtime-proof.ts";
 
-const runLiveTest = shouldRunLiveE2E() ? test : test.skip;
-
-runLiveTest(
+test(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
   testTimeoutOptions(LIVE_TIMEOUT_MS),
   async ({ artifacts, cleanup, host, sandbox, skip }) => {

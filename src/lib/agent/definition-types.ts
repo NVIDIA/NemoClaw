@@ -43,6 +43,7 @@ export interface AgentDashboard {
 export interface AgentInference {
   provider_type?: string;
   provider_options?: string[];
+  default_model?: string;
 }
 
 export type AgentMcpSupport = "bridge" | "disabled";

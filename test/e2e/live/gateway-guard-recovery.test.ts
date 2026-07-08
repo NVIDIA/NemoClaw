@@ -72,9 +72,8 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
 }) => {
   secrets.required("NVIDIA_INFERENCE_API_KEY");
 
-  await artifacts.writeJson("target.json", {
+  await artifacts.target.declare({
     id: "gateway-guard-recovery",
-    runner: "vitest",
     boundary: "sandbox-lifecycle",
     issues: ["#2701", "#2478"],
     acceptanceCoverage: {

@@ -715,6 +715,18 @@ describe("E2E fixture clients", () => {
     );
   });
 
+  it("assertExitZero accepts lightweight command results and retains both output streams", () => {
+    const result = {
+      exitCode: 2,
+      stdout: "standard output",
+      stderr: "standard error",
+    };
+
+    expect(() => assertExitZero(result, "lightweight command")).toThrow(
+      "lightweight command failed: standard output\nstandard error",
+    );
+  });
+
   it("exports the shared shell quoting helper", () => {
     expect(shellQuote("can't run; rm -rf /")).toBe("'can'\\''t run; rm -rf /'");
   });

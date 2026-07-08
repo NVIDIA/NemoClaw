@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  spawnSync,
   type SpawnSyncOptionsWithStringEncoding,
   type SpawnSyncReturns,
+  spawnSync,
 } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -147,5 +147,31 @@ export class DockerProbe {
       throw new Error(resultText(result));
     }
     return result;
+  }
+}
+
+export class DockerPrerequisite {
+  constructor(
+    private readonly probe: DockerProbe,
+    private readonly skip: (reason: string) => never,
+    private readonly isCi = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true",
+  ) {}
+
+  probeDocker(): Promise<DockerCommandResult> {
+    return this.probe.run(["info"], { artifactName: "docker-info" });
+  }
+
+  async requireDocker(): Promise<DockerCommandResult> {
+    const result = await this.probeDocker();
+    if (result.exitCode === 0) return result;
+    const message = `Docker is required for this live E2E target:\n${resultText(result)}`;
+    if (this.isCi) throw new Error(message);
+    return this.skip(message);
+  }
+
+  async expectMissingDocker(): Promise<DockerCommandResult> {
+    const result = await this.probeDocker();
+    if (result.exitCode !== 0) return result;
+    throw new Error("Docker was expected to be unavailable for this E2E target");
   }
 }

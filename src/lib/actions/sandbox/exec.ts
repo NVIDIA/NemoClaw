@@ -9,11 +9,17 @@ import type {
 } from "../../shields/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
 import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
+import { buildSandboxExecStdio } from "./exec-stdio";
+import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
+
+export { buildSandboxExecStdio, shouldInheritSandboxExecStdin } from "./exec-stdio";
+export { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 export type SandboxExecOptions = {
   workdir?: string;
   tty?: boolean | null;
   timeoutSeconds?: number;
+  stdin?: boolean;
 };
 
 type SpawnLikeResult = {
@@ -41,7 +47,11 @@ export type SandboxExecChild = {
   };
 };
 
-export type SandboxExecSpawner = (binary: string, args: readonly string[]) => SandboxExecChild;
+export type SandboxExecSpawner = (
+  binary: string,
+  args: readonly string[],
+  options: SandboxExecOptions,
+) => SandboxExecChild;
 
 export type SandboxExecSignalSource = {
   add: (signal: "SIGTERM" | "SIGINT", listener: () => void) => void;
@@ -108,8 +118,8 @@ export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): str
 //     the `execSandbox multi-line guard (#5980)` suite in exec.test.ts.
 //   - Removal condition: if a future OpenShell release accepts multi-line argv
 //     elements (tracked upstream in NVIDIA/OpenShell#2110), this guard and the
-//     matching docs notice in docs/reference/commands.mdx +
-//     commands-nemohermes.mdx become unnecessary and should be removed together.
+//     matching docs notice in docs/reference/commands.mdx becomes unnecessary
+//     and should be removed with its generated variants.
 //
 // The pattern is intentionally limited to \r and \n: OpenShell rejects only
 // "newline or carriage return characters", so Unicode line separators (U+2028
@@ -156,7 +166,7 @@ export function multilineExecMessage(
     `error: command argument ${position} (${describeMultilineArg(command[index])}) contains a newline or carriage return, which OpenShell exec does not accept.`,
     "Multi-line commands (for example heredocs) cannot be passed through exec argv. Instead:",
     `  - join statements with semicolons: ${cliName} ${sandboxName} exec -- bash -lc "cmd1; cmd2"`,
-    `  - pipe the script into the sandbox shell over stdin: printf 'cmd1\\ncmd2\\n' | ${cliName} ${sandboxName} exec -- bash`,
+    `  - pipe the script into the sandbox shell over stdin: printf 'cmd1\\ncmd2\\n' | ${cliName} ${sandboxName} exec --stdin -- bash`,
     `  - or write the script to a file in the sandbox and run it: ${cliName} ${sandboxName} exec -- bash <script-path>`,
   ].join("\n");
 }
@@ -261,8 +271,8 @@ export function cleanupOpenClawAfterExec(
   return null;
 }
 
-const defaultSandboxExecSpawner: SandboxExecSpawner = (binary, args) =>
-  spawn(binary, [...args], { stdio: "inherit" });
+const defaultSandboxExecSpawner: SandboxExecSpawner = (binary, args, options) =>
+  spawn(binary, [...args], { stdio: buildSandboxExecStdio(options) });
 
 const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
   add: (signal, listener) => process.on(signal, listener),
@@ -272,12 +282,13 @@ const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
 export async function runSandboxExecChild(
   binary: string,
   args: readonly string[],
+  options: SandboxExecOptions = {},
   spawnChild: SandboxExecSpawner = defaultSandboxExecSpawner,
   signalSource: SandboxExecSignalSource = defaultSandboxExecSignalSource,
 ): Promise<SpawnLikeResult> {
   let child: SandboxExecChild;
   try {
-    child = spawnChild(binary, args);
+    child = spawnChild(binary, args, options);
   } catch (error) {
     return { status: null, error: error instanceof Error ? error : new Error(String(error)) };
   }
@@ -392,7 +403,7 @@ export async function execSandbox(
   const { CLI_NAME } = require("../../cli/branding");
   if (command.length === 0) {
     console.error(
-      `  Usage: ${CLI_NAME} ${sandboxName} exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]`,
+      `  Usage: ${CLI_NAME} ${sandboxName} exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]`,
     );
     process.exit(2);
   }
@@ -409,9 +420,9 @@ export async function execSandbox(
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,
-    command,
+    wrapExecCommandWithRuntimeEnv(command),
     options,
-    deps.run ?? runSandboxExecChild,
+    deps.run ?? ((runBinary, runArgs) => runSandboxExecChild(runBinary, runArgs, options)),
     deps.cleanupDeps ?? {
       getSandbox: (name) =>
         (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(name),

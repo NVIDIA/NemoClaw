@@ -78,6 +78,14 @@ runner.runFile = (file, args = [], opts = {}) => {
 runner.runCapture = (command) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: null });
+  if (normalized.includes("sandbox exec -n " + sandboxName + " -- dcode identity")) {
+    return [
+      "Route:    inference",
+      "Provider: nvidia-prod",
+      "Model:    openai:gpt-5.4",
+      "Endpoint: https://inference.local/v1",
+    ].join("\n");
+  }
   if (normalized.includes("sandbox get " + sandboxName)) {
     return scenario === "reuse" ? sandboxName : "";
   }
@@ -93,6 +101,7 @@ registry.getSandbox = () =>
         gpuEnabled: false,
         agent: "langchain-deepagents-code",
         dashboardPort: 18789,
+        observabilityEnabled: false,
         toolDisclosure: "progressive",
       }
     : null;

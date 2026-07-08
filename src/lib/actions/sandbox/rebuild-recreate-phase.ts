@@ -27,6 +27,7 @@ import {
   printMcpRebuildRetryCommand,
   restoreMcpRegistryForRebuildRetry,
 } from "./rebuild-mcp-phase";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { printRebuildShieldsRecovery, type RebuildShieldsWindow } from "./rebuild-shields";
@@ -109,6 +110,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
+        observabilityEnabled: recreateOptions.observabilityEnabled,
+        observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
         wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
         migratedLegacyValueHashes: sessionMatchesSandbox
@@ -148,6 +151,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.compatibleEndpointReasoning = resumeConfig.compatibleEndpointReasoning;
     s.endpointUrl = resumeConfig.endpointUrl;
     s.toolDisclosure = rebuildDurableConfig.toolDisclosure;
+    s.observabilityEnabled = recreateOptions.observabilityEnabled;
+    s.observabilityRequestedExplicitly = recreateOptions.observabilityRequestedExplicitly;
     return s;
   });
   const sessionAfter = onboardSession.loadSession();
@@ -163,9 +168,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
 
   // Intercept process.exit so a failed inner onboard can preserve the backup
   // and durable retry state instead of terminating the outer transaction.
-  const { onboard } = require("../../onboard") as {
-    onboard: (options: RebuildRecreateOnboardOpts) => Promise<void>;
-  };
   let onboardFailed = false;
   let onboardExitCode = 1;
   const savedExit = process.exit;
@@ -180,10 +182,13 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
+  if (recreateOptions.policyTier) {
+    process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
+  }
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
   try {
-    await onboard(recreateOptions);
+    await rebuildOnboardDependencies.onboard(recreateOptions);
     log("onboard() returned successfully");
   } catch (error) {
     onboardFailed = true;
@@ -226,6 +231,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       sandboxName,
       rebuildMcpEntries,
       rebuildDurableConfig.toolDisclosure,
+      {
+        enabled: recreateOptions.observabilityEnabled,
+        requestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
+      },
     );
     if (backupManifest) {
       console.error("    3. Then restore your workspace state:");

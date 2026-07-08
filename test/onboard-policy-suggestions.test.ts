@@ -19,6 +19,7 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
         knownPresetNames: string[];
         provider?: string | null;
         agent?: string | null;
+        observabilityEnabled?: boolean | null;
         webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
         webSearchSupported?: boolean | null;
         hermesToolGateways?: string[] | null;
@@ -33,6 +34,7 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
       enabledChannels?: string[] | null;
       provider?: string | null;
       agent?: string | null;
+      observabilityEnabled?: boolean | null;
       env?: NodeJS.ProcessEnv;
       webSearchConfig?: { fetchEnabled?: boolean; provider?: "brave" | "tavily" } | null;
     }) => string[];
@@ -45,6 +47,7 @@ const { mergeRequiredSetupPolicyPresets, suppressedAgentRequiredPresets } =
         enabledChannels?: string[] | null;
         hermesToolGateways?: string[] | null;
         agent?: string | null;
+        observabilityEnabled?: boolean | null;
         knownPresetNames?: string[] | Set<string> | null;
         env?: NodeJS.ProcessEnv;
         tierName?: string | null;
@@ -269,6 +272,24 @@ describe("onboard policy preset suggestions", () => {
     }
   });
 
+  it("suggests local observability only for enabled Deep Agents Code", () => {
+    expect(
+      getSuggestedPolicyPresets({
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+      }),
+    ).toContain("observability-otlp-local");
+    expect(
+      getSuggestedPolicyPresets({
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: false,
+      }),
+    ).not.toContain("observability-otlp-local");
+    expect(
+      getSuggestedPolicyPresets({ agent: "openclaw", observabilityEnabled: true }),
+    ).not.toContain("observability-otlp-local");
+  });
+
   it("balanced OpenClaw with web search returns exactly brave brew huggingface npm openclaw-pricing pypi and excludes weather", () => {
     const knownWithPricing = [...known, "openclaw-pricing"];
     const suggestions = computeSetupPresetSuggestions("balanced", {
@@ -355,6 +376,34 @@ describe("onboard policy preset suggestions", () => {
       env: { NEMOCLAW_OPENCLAW_OTEL: "0" },
     });
     expect(disabledSuggestions).not.toContain("openclaw-diagnostics-otel-local");
+  });
+
+  it("adds the DCode observability preset only when enabled and non-restricted", () => {
+    const knownWithObservability = [...known, "observability-otlp-local"];
+    expect(
+      computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: knownWithObservability,
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+      }),
+    ).toContain("observability-otlp-local");
+    expect(
+      computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: knownWithObservability,
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: false,
+      }),
+    ).not.toContain("observability-otlp-local");
+    expect(
+      computeSetupPresetSuggestions("restricted", {
+        enabledChannels: [],
+        knownPresetNames: knownWithObservability,
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+      }),
+    ).not.toContain("observability-otlp-local");
   });
 
   it("returns balanced tier defaults without messaging presets when no channels enabled", () => {
@@ -477,6 +526,7 @@ describe("onboard policy preset suggestions", () => {
       { name: "weather" },
       { name: "openclaw-pricing" },
       { name: "openclaw-diagnostics-otel-local" },
+      { name: "observability-otlp-local" },
       { name: "nous-web" },
       { name: "nous-image" },
     ];
@@ -491,6 +541,9 @@ describe("onboard policy preset suggestions", () => {
       "openclaw-pricing",
       "openclaw-diagnostics-otel-local",
     ]);
+    expect(
+      filterSetupPolicyPresetsForAgent(allPresets, "langchain-deepagents-code").map((p) => p.name),
+    ).toEqual(["weather", "observability-otlp-local"]);
   });
 
   it("does not add explicitly requested Hermes Nous presets to OpenClaw suggestions", () => {
@@ -709,6 +762,34 @@ describe("onboard policy preset suggestions", () => {
   });
 
   describe("mergeRequiredSetupPolicyPresets tier plumbing", () => {
+    it("adds enabled DCode observability and removes it when disabled or restricted", () => {
+      const options = {
+        agent: "langchain-deepagents-code",
+        knownPresetNames: ["npm", "observability-otlp-local"],
+      };
+      expect(
+        mergeRequiredSetupPolicyPresets(["npm"], {
+          ...options,
+          observabilityEnabled: true,
+          tierName: "balanced",
+        }),
+      ).toEqual(["npm", "observability-otlp-local"]);
+      expect(
+        mergeRequiredSetupPolicyPresets(["npm", "observability-otlp-local"], {
+          ...options,
+          observabilityEnabled: false,
+          tierName: "balanced",
+        }),
+      ).toEqual(["npm"]);
+      expect(
+        mergeRequiredSetupPolicyPresets(["npm"], {
+          ...options,
+          observabilityEnabled: true,
+          tierName: "restricted",
+        }),
+      ).toEqual(["npm"]);
+    });
+
     it("suppresses openclaw-pricing only when tierName is restricted", () => {
       expect(
         mergeRequiredSetupPolicyPresets(["npm", "openclaw-pricing"], {

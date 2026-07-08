@@ -53,9 +53,8 @@ runDashboardRemoteBindTest(
     const dashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
     const remoteHost = remoteHostCandidate();
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "dashboard-remote-bind",
-      runner: "vitest",
       boundary: "remote-dashboard-forward",
       optIn: "NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1",
       sandboxName,

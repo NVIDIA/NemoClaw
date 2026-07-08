@@ -5,7 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import type { InferenceSelection } from "../inference/selection";
-import { inferenceSelectionRegistryFields } from "../inference/selection";
+import {
+  inferenceSelectionRegistryFields,
+  normalizeInferenceSelection,
+} from "../inference/selection";
 import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import {
@@ -79,6 +82,8 @@ export interface SandboxGpuProofResult {
 
 export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
+  /** Route-only placeholder created before sandbox creation; never eligible as the default. */
+  pendingRouteReservation?: true;
   createdAt?: string;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
@@ -100,6 +105,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchEnabled?: boolean;
   /** Selected disclosure preference; model compatibility safeguards may downgrade runtime behavior. */
   toolDisclosure?: ToolDisclosure;
+  /** Enables backend-neutral trace export to the fixed local OTLP collector boundary. */
+  observabilityEnabled?: boolean;
   /** Durable provider identity for enabled managed web search. */
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
@@ -449,10 +456,16 @@ export function getSandbox(name: string): SandboxEntry | null {
 
 export function getDefault(): string | null {
   const data = load();
-  if (data.defaultSandbox && data.sandboxes[data.defaultSandbox]) {
+  if (
+    data.defaultSandbox &&
+    data.sandboxes[data.defaultSandbox] &&
+    data.sandboxes[data.defaultSandbox].pendingRouteReservation !== true
+  ) {
     return data.defaultSandbox;
   }
-  const names = Object.keys(data.sandboxes);
+  const names = Object.values(data.sandboxes)
+    .filter((sandbox) => sandbox.pendingRouteReservation !== true)
+    .map((sandbox) => sandbox.name);
   return names.length > 0 ? names[0] || null : null;
 }
 
@@ -478,6 +491,8 @@ export function registerSandbox(entry: SandboxEntry): void {
       // Preserve absence on reconstructed legacy rows. Only a freshly built
       // sandbox registration may claim the new progressive default.
       toolDisclosure: normalizeToolDisclosure(entry.toolDisclosure) ?? undefined,
+      observabilityEnabled:
+        typeof entry.observabilityEnabled === "boolean" ? entry.observabilityEnabled : undefined,
       webSearchProvider:
         entry.webSearchEnabled === true &&
         (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")
@@ -512,6 +527,42 @@ export function registerSandbox(entry: SandboxEntry): void {
       gatewayPort: entry.gatewayPort ?? undefined,
     };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name));
+  });
+}
+
+type SandboxInferenceRouteReservation = Pick<
+  InferenceSelection,
+  "provider" | "model" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi"
+> & {
+  gatewayName: string;
+};
+
+/**
+ * Persist a route dependency before releasing the shared-gateway mutation
+ * lock. A newly reserved row deliberately does not claim the default sandbox;
+ * normal sandbox registration replaces it after creation completes.
+ */
+export function reserveSandboxInferenceRoute(
+  name: string,
+  route: SandboxInferenceRouteReservation,
+): boolean {
+  return withLock(() => {
+    const data = load();
+    const existing = data.sandboxes[name];
+    const normalized = normalizeInferenceSelection(route);
+    data.sandboxes[name] = {
+      ...(existing ?? { name, pendingRouteReservation: true as const }),
+      pendingRouteReservation: true,
+      provider: normalized.provider,
+      model: normalized.model,
+      endpointUrl: normalized.endpointUrl,
+      credentialEnv: normalized.credentialEnv,
+      preferredInferenceApi: normalized.preferredInferenceApi,
+      gatewayName: route.gatewayName,
+      gatewayPort: undefined,
+    };
+    save(data);
+    return true;
   });
 }
 
@@ -578,7 +629,9 @@ export function listSandboxes(): { sandboxes: SandboxEntry[]; defaultSandbox: st
 
 export function setDefault(name: string): boolean {
   return withLock(() => {
-    const registry = reversibleRemoval.setDefaultInRegistry(load(), name);
+    const current = load();
+    if (current.sandboxes[name]?.pendingRouteReservation === true) return false;
+    const registry = reversibleRemoval.setDefaultInRegistry(current, name);
     if (!registry) return false;
     save(registry);
     return true;

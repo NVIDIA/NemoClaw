@@ -50,7 +50,6 @@ function runWrapper(args: string[]): WrapperRun {
     const marker = path.join(dir, "launched.txt");
     const bin = path.join(dir, "bin");
     fs.mkdirSync(bin);
-    const wrapperCopy = path.join(dir, "dcode");
     const wrapperSource = fs.readFileSync(WRAPPER, "utf-8");
     const wrapperFixture = wrapperSource
       .replace(
@@ -59,14 +58,15 @@ function runWrapper(args: string[]): WrapperRun {
       )
       .replaceAll("/opt/venv/bin/python3 -I", "python3 -I");
     expect(wrapperFixture).not.toBe(wrapperSource);
-    fs.writeFileSync(wrapperCopy, wrapperFixture, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, "dcode"), wrapperFixture, { mode: 0o755 });
+
     fs.writeFileSync(
       path.join(bin, "python3"),
       `#!/usr/bin/env bash\nprintf '%s' "$*" > ${JSON.stringify(marker)}\nexit 0\n`,
       { mode: 0o755 },
     );
 
-    const result = spawnSync("bash", [wrapperCopy, ...args], {
+    const result = spawnSync("bash", [path.join(dir, "dcode"), ...args], {
       encoding: "utf-8",
       timeout: 10000,
       env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, HOME: dir },

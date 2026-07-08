@@ -47,20 +47,11 @@ type WrapperRun = {
   stderr: string;
   realInvoked: boolean;
   realArgs: string;
+  realArgv: string[];
 };
 
-type StubBehaviour = {
-  stdout?: string;
-  stderr?: string;
-  exitCode?: number;
-};
+type StubBehaviour = { stdout?: string; stderr?: string; exitCode?: number };
 
-// Run the wrapper against a temp install: a copy of the wrapper alongside the
-// real validator and a `hermes.real` stub. The wrapper's dev fallback resolves
-// both from its own directory because the /usr/local install paths are absent.
-// The stub records the args it was exec'd with so we can prove pass-through vs.
-// refusal. `env` fully replaces the process env so CI-injected secret-shaped
-// vars (e.g. GITHUB_TOKEN) cannot perturb the validator.
 function runWrapper(
   args: string[],
   env: Record<string, string>,
@@ -68,6 +59,7 @@ function runWrapper(
     shadowPython?: boolean;
     shadowHelpers?: Record<string, string>;
     stub?: StubBehaviour;
+    stubMode?: number;
     validatorScript?: string;
   } = {},
 ): WrapperRun {
@@ -75,11 +67,7 @@ function runWrapper(
   try {
     fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
     const validatorContent = opts.validatorScript ?? fs.readFileSync(VALIDATOR, "utf-8");
-    // Write with the source-layout filename so the wrapper's dev fallback
-    // (_resolve_guard() -> _self_dir()/validate-env-secret-boundary.py) picks
-    // it up; the installed-layout tests further down write to the
-    // /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py install
-    // path instead.
+    // Source-layout filename lets the wrapper's dev fallback pick it up.
     fs.writeFileSync(path.join(dir, "validate-env-secret-boundary.py"), validatorContent, {
       mode: 0o755,
     });
@@ -91,7 +79,7 @@ function runWrapper(
     const stubExit = opts.stub?.exitCode ?? 0;
     const stubScript = [
       "#!/usr/bin/env bash",
-      `printf '%s' "$*" > ${JSON.stringify(marker)}`,
+      `node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)))' ${JSON.stringify(marker)} "$@"`,
       stubStdout ? `cat <<'__NEMOCLAW_STUB_EOF__'\n${stubStdout}\n__NEMOCLAW_STUB_EOF__` : "",
       stubStderr
         ? `cat <<'__NEMOCLAW_STUB_ERR_EOF__' >&2\n${stubStderr}\n__NEMOCLAW_STUB_ERR_EOF__`
@@ -99,12 +87,9 @@ function runWrapper(
       `exit ${stubExit}`,
       "",
     ].join("\n");
-    fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: opts.stubMode ?? 0o755 });
 
-    // Optionally plant malicious helpers earlier on PATH that would subvert the
-    // wrapper. The wrapper must ignore them and resolve each helper from a
-    // trusted absolute path. `shadowPython` covers the python3 interpreter;
-    // `shadowHelpers` lets a test plant arbitrary scripts (e.g. mktemp / rm).
+    // Plant malicious helpers earlier on PATH; the wrapper must ignore them.
     const planted: Record<string, string> = {
       ...(opts.shadowHelpers ?? {}),
       ...(opts.shadowPython ? { python3: "#!/usr/bin/env bash\nexit 0\n" } : {}),
@@ -126,12 +111,14 @@ function runWrapper(
     });
 
     const realInvoked = fs.existsSync(marker);
+    const realArgv = realInvoked ? JSON.parse(fs.readFileSync(marker, "utf-8")) : [];
     return {
       status: result.status,
       stdout: result.stdout ?? "",
       stderr: result.stderr ?? "",
       realInvoked,
-      realArgs: realInvoked ? fs.readFileSync(marker, "utf-8") : "",
+      realArgs: realArgv.join(" "),
+      realArgv,
     };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -212,6 +199,272 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("dashboard");
+  });
+
+  it("routes resumed one-shot invocations through chat query so Hermes appends to the target session (#5254)", () => {
+    const run = runWrapper(
+      ["--resume", "20260612_050401_aa9d27", "-z", "What secret number did I give you?"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "What secret number did I give you?",
+      "--quiet",
+      "--resume",
+      "20260612_050401_aa9d27",
+    ]);
+  });
+
+  it("routes continued one-shot invocations through chat query while preserving provider/skill flags (#5254)", () => {
+    const run = runWrapper(
+      [
+        "-c",
+        "daily check",
+        "--oneshot=Summarize the latest turn",
+        "--provider=custom",
+        "--skills=memory,session_search",
+        "--ignore-rules",
+      ],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "Summarize the latest turn",
+      "--quiet",
+      "--continue",
+      "daily check",
+      "--provider",
+      "custom",
+      "--skills",
+      "memory,session_search",
+      "--ignore-rules",
+    ]);
+  });
+
+  it("preserves explicit approval flags without adding them to ordinary resumed one-shot invocations (#5254)", () => {
+    const run = runWrapper(
+      ["--resume", "20260612_050401_aa9d27", "-z", "Repeat it", "--yolo", "--accept-hooks"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "Repeat it",
+      "--quiet",
+      "--resume",
+      "20260612_050401_aa9d27",
+      "--yolo",
+      "--accept-hooks",
+    ]);
+  });
+
+  it("keeps translated resumed one-shot turns on the same fake session and reports exec failures (#5254)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-session-"));
+    try {
+      fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+      fs.chmodSync(path.join(dir, "hermes"), 0o755);
+      const statePath = path.join(dir, "sessions.json");
+      fs.writeFileSync(
+        path.join(dir, "hermes.real"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "-z" ]; then printf "seed:%s\\n" "$2" > "$NEMOCLAW_FAKE_SESSIONS"; exit 0; fi',
+          'if [ "$1" = "chat" ] && [ "$2" = "--query" ] && [ "$4" = "--quiet" ] && { [ "$5" = "--resume" ] || [ "$5" = "--continue" ]; } && [ "$6" = "seed" ]; then printf "seed:%s\\n" "$3" >> "$NEMOCLAW_FAKE_SESSIONS"; exit 0; fi',
+          "exit 3",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const invoke = (args: string[]) =>
+        spawnSync(path.join(dir, "hermes"), args, {
+          encoding: "utf-8",
+          env: { PATH: process.env.PATH ?? "", HOME: dir, NEMOCLAW_FAKE_SESSIONS: statePath },
+          timeout: 10_000,
+        });
+
+      expect(invoke(["-z", "seed prompt"]).status).toBe(0);
+      expect(invoke(["--resume", "seed", "-z", "resume prompt"]).status).toBe(0);
+      expect(invoke(["-c", "seed", "-z", "continue prompt"]).status).toBe(0);
+      expect(fs.readFileSync(statePath, "utf-8").trim().split("\n")).toEqual([
+        "seed:seed prompt",
+        "seed:resume prompt",
+        "seed:continue prompt",
+      ]);
+      fs.chmodSync(path.join(dir, "hermes.real"), 0o644);
+      const blocked = invoke(["--resume", "seed", "-z", "after chmod"]);
+      expect(blocked.status).toBe(126);
+      expect(blocked.stderr).toContain("[SECURITY] Refusing to run hermes: failed to exec Hermes");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves plain one-shot invocations on the upstream one-shot path (#5254)", () => {
+    const run = runWrapper(["-z", "Reply pong"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("-z Reply pong");
+  });
+
+  it("routes equals-style resumed one-shot invocations through chat query (#5254)", () => {
+    const run = runWrapper(["--resume=20260612_050401_aa9d27", "--oneshot=Repeat a=b"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("chat --query Repeat a=b --quiet --resume 20260612_050401_aa9d27");
+  });
+
+  it("passes positional subcommands through instead of translating nested one-shot flags (#5254)", () => {
+    const run = runWrapper(["chat", "--resume", "20260612_050401_aa9d27", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("chat --resume 20260612_050401_aa9d27 -z Repeat it");
+  });
+
+  it("passes unknown flags through instead of translating a partial allowlist match (#5254)", () => {
+    const run = runWrapper(
+      ["--resume", "20260612_050401_aa9d27", "--unknown", "-z", "Repeat it"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--resume 20260612_050401_aa9d27 --unknown -z Repeat it");
+  });
+
+  it("passes argv with -- marker through instead of translating after argument termination (#5254)", () => {
+    const run = runWrapper(["--resume", "20260612_050401_aa9d27", "--", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--resume 20260612_050401_aa9d27 -- -z Repeat it");
+  });
+
+  it("passes mixed resume selectors through instead of translating ambiguous targets (#5254)", () => {
+    const run = runWrapper(
+      [
+        "--continue",
+        "20260612_050401_aa9d27",
+        "--resume",
+        "20260612_050446_924bd8",
+        "-z",
+        "Repeat it",
+      ],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe(
+      "--continue 20260612_050401_aa9d27 --resume 20260612_050446_924bd8 -z Repeat it",
+    );
+  });
+
+  it("passes multiple one-shot prompts through instead of dropping an earlier prompt (#5254)", () => {
+    const run = runWrapper(
+      ["-z", "First prompt", "-z", "Second prompt", "--resume", "20260612_050401_aa9d27"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("-z First prompt -z Second prompt --resume 20260612_050401_aa9d27");
+  });
+
+  it("passes empty one-shot prompts through instead of translating an invalid query (#5254)", () => {
+    const run = runWrapper(["--oneshot=", "--resume", "20260612_050401_aa9d27"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--oneshot= --resume 20260612_050401_aa9d27");
+  });
+
+  it("passes --continue without a value through instead of translating a bare selector (#5254)", () => {
+    const run = runWrapper(["--continue", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--continue -z Repeat it");
+  });
+
+  it("passes empty --continue values through instead of translating an invalid selector (#5254)", () => {
+    const run = runWrapper(["--continue=", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--continue= -z Repeat it");
+  });
+
+  it("passes separated --continue with an empty value through instead of translating an invalid selector (#5254)", () => {
+    const run = runWrapper(["--continue", "", "-z", "Repeat it"], {});
+    expect(run.realArgs).toBe("--continue  -z Repeat it");
+  });
+  it("passes empty --resume values through instead of translating an invalid selector (#5254)", () => {
+    const run = runWrapper(["--resume=", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--resume= -z Repeat it");
+  });
+
+  it("passes space-form one-shot without a prompt through instead of treating a flag as the prompt (#5254)", () => {
+    const run = runWrapper(["-z", "--resume", "20260612_050401_aa9d27"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("-z --resume 20260612_050401_aa9d27");
+  });
+
+  it("passes separated --resume with an empty value through instead of translating an invalid selector (#5254)", () => {
+    const run = runWrapper(["--resume", "", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--resume  -z Repeat it");
+  });
+
+  it("passes separated --resume with a flag-like value through instead of translating an invalid selector (#5254)", () => {
+    const run = runWrapper(["--resume", "-z", "--oneshot=Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--resume -z --oneshot=Repeat it");
+  });
+
+  it("passes value flags without required arguments through instead of translating partial argv (#5254)", () => {
+    const run = runWrapper(
+      ["--model", "--resume", "20260612_050401_aa9d27", "-z", "Repeat it"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--model --resume 20260612_050401_aa9d27 -z Repeat it");
   });
 
   it("passes --version through (build assertion path) without invoking the guard", () => {
@@ -398,6 +651,14 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stdout).toContain("api_key: sk-****");
   });
 
+  it("fails closed without a traceback when config show cannot exec Hermes", () => {
+    const run = runWrapper(["config", "show"], {}, { stubMode: 0o644 });
+    expect(run.status).toBe(126);
+    expect(run.stderr).toContain("[SECURITY] Refusing hermes config show: failed to exec Hermes");
+    expect(run.stderr).not.toContain("Traceback");
+    expect(run.realInvoked).toBe(false);
+  });
+
   it("leaves non-`config show` output untouched even when api_key shapes appear", () => {
     const fixture = "providers:\n  nemoclaw-inference:\n    api_key: sk-OPENSHELL-PROXY-REWRITE";
     const run = runWrapper(["config", "list"], {}, { stub: { stdout: fixture, exitCode: 0 } });
@@ -561,22 +822,43 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stdout).toContain("passwords: sk-****");
   });
 
-  it("masks multi-digit and reversed-order YAML block-scalar headers (|2-, |-2, >5+)", () => {
+  it("masks YAML block-scalar headers with indentation and chomping indicators", () => {
     const fixture = [
+      "token: |2",
+      "    leaked-yaml-indent-12345",
       "api_key: |2-",
       "    leaked-yaml-indent-trail-12345",
       "access_token: |-2",
       "    leaked-yaml-trail-indent-12345",
+      "auth_token: >2",
+      "    leaked-yaml-folded-indent-12345",
       "client_secret: >5+",
       "     leaked-yaml-folded-12345",
     ].join("\n");
     const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
 
     expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("leaked-yaml-indent-12345");
     expect(run.stdout).not.toContain("leaked-yaml-indent-trail-12345");
     expect(run.stdout).not.toContain("leaked-yaml-trail-indent-12345");
+    expect(run.stdout).not.toContain("leaked-yaml-folded-indent-12345");
     expect(run.stdout).not.toContain("leaked-yaml-folded-12345");
     expect(run.stdout).toContain("sk-****");
+  });
+
+  it("fails closed when the config masker succeeds with oversized stderr", () => {
+    const validatorScript = [
+      "#!/usr/bin/env python3",
+      "import sys",
+      "sys.stderr.write('x' * (11 * 1024 * 1024))",
+      "raise SystemExit(0)",
+      "",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { validatorScript });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("output masker stderr exceeded");
+    expect(run.stderr).not.toContain("xxxxxxxxxxxxxxxx");
   });
 
   it("fails closed with a stable error when config show stdout exceeds the 4 MiB masker cap", () => {

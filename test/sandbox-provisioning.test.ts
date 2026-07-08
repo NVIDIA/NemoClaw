@@ -1212,6 +1212,7 @@ describe("Hermes sandbox provisioning", () => {
       gatewayControlPath,
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
+      path.join(localLib, "patch-hermes-session-list-preview.py"),
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
       buildMcpDigestPath,
@@ -1231,7 +1232,6 @@ describe("Hermes sandbox provisioning", () => {
       .replaceAll("/usr/local/lib/nemoclaw", localLib)
       .replaceAll("/etc/profile.d", profileDir)
       .replaceAll("/etc/bash.bashrc", bashrcPath);
-
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });

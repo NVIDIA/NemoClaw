@@ -2,14 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const require = createRequire(import.meta.url);
-const { buildStatusCommandDeps } =
-  require("./status-command-deps.js") as typeof import("./status-command-deps");
+import { buildStatusCommandDeps } from "./status-command-deps";
 
 function writeExecutable(target: string, body: string): void {
   fs.writeFileSync(target, body, { mode: 0o755 });

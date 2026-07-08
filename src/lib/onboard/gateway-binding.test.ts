@@ -19,6 +19,7 @@ import {
   BASE_GATEWAY_NAME,
   BASE_GATEWAY_STATE_DIR_NAME,
   createDynamicGatewayRuntimeHelpers,
+  resolveCoreOnboardGatewayBinding,
   resolveGatewayCompatContainerName,
   resolveGatewayName,
   resolveGatewayPortFromName,
@@ -235,6 +236,61 @@ describe("resolveSandboxGatewayName", () => {
     expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw-8080" })).toThrow(
       /Invalid persisted sandbox gateway binding/,
     );
+  });
+});
+
+describe("resolveCoreOnboardGatewayBinding", () => {
+  const currentGateway = { name: "nemoclaw", port: DEFAULT_GATEWAY_PORT };
+
+  it("prefers the authoritative rebuild handoff when the registry row is gone", () => {
+    expect(
+      resolveCoreOnboardGatewayBinding({
+        authoritativeGateway: { name: "nemoclaw-9090", port: 9090 },
+        currentGateway,
+        resume: true,
+        sandbox: null,
+      }),
+    ).toEqual({ name: "nemoclaw-9090", port: 9090 });
+  });
+
+  it("uses the registered sandbox binding for an ordinary resume", () => {
+    expect(
+      resolveCoreOnboardGatewayBinding({
+        currentGateway,
+        resume: true,
+        sandbox: { gatewayName: "nemoclaw-9090", gatewayPort: 9090 },
+      }),
+    ).toEqual({ name: "nemoclaw-9090", port: 9090 });
+  });
+
+  it("keeps the requested gateway for fresh or pre-registration flows", () => {
+    expect(
+      resolveCoreOnboardGatewayBinding({
+        currentGateway: { name: "nemoclaw-9191", port: 9191 },
+        resume: false,
+        sandbox: { gatewayPort: 9090 },
+      }),
+    ).toEqual({ name: "nemoclaw-9191", port: 9191 });
+    expect(
+      resolveCoreOnboardGatewayBinding({
+        currentGateway: { name: "nemoclaw-9191", port: 9191 },
+        resume: true,
+        sandbox: null,
+      }),
+    ).toEqual({ name: "nemoclaw-9191", port: 9191 });
+  });
+
+  it("uses the default for legacy rows and rejects invalid persisted bindings", () => {
+    expect(resolveCoreOnboardGatewayBinding({ currentGateway, resume: true, sandbox: {} })).toEqual(
+      { name: BASE_GATEWAY_NAME, port: DEFAULT_GATEWAY_PORT },
+    );
+    expect(() =>
+      resolveCoreOnboardGatewayBinding({
+        currentGateway,
+        resume: true,
+        sandbox: { gatewayName: "../other" },
+      }),
+    ).toThrow(/Invalid persisted sandbox gateway binding/);
   });
 });
 

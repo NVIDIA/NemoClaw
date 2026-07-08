@@ -100,6 +100,23 @@ export type RemoteProviderDeps = CommonDeps & {
   LOCAL_INFERENCE_TIMEOUT_SECS: number;
   redact: (input: string) => string;
   compactText: (input: string) => string;
+  // #6294 OpenAI-surface registration for openai_compatible agents onboarded
+  // on compatible-anthropic-endpoint. Optional: production falls back to the
+  // real implementations inside remote.ts; tests inject fakes.
+  probeOpenAiLikeEndpoint?: (
+    endpointUrl: string,
+    model: string,
+    apiKey: string,
+    options?: Record<string, unknown>,
+  ) => { ok: boolean; message?: string };
+  readGatewayProviderMetadata?: (
+    name: string,
+    runOpenshell: RunOpenshell,
+  ) => { name: string; type: string; credentialKeys: string[]; configKeys: string[] } | null;
+  deleteGatewayProvider?: (
+    name: string,
+    deps: { runOpenshell: RunOpenshell; allowedSandboxes?: readonly string[] },
+  ) => { ok: boolean; status?: number | null; stderr?: string; stdout?: string };
   bedrockRuntimeOnboard: {
     setupBedrockRuntimeInference(input: {
       sandboxName: string | null;

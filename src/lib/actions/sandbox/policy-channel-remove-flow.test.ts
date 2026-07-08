@@ -1,21 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const policyChannelModulePath = "./policy-channel.js";
-
-type PolicyChannelModule = typeof import("./policy-channel");
+import * as policies from "../../policy";
+import * as registry from "../../state/registry";
+import { removeSandboxChannel, startSandboxChannel, stopSandboxChannel } from "./policy-channel";
+import { policyChannelDependencies } from "./policy-channel-dependencies";
 
 describe("policy channel remove/enable flows", () => {
   let exitSpy: MockInstance;
   let logSpy: MockInstance;
 
   beforeEach(() => {
-    delete require.cache[requireDist.resolve(policyChannelModulePath)];
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as never);
@@ -25,24 +22,17 @@ describe("policy channel remove/enable flows", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete require.cache[requireDist.resolve(policyChannelModulePath)];
   });
 
   it("reports remove usage and exits before touching channel state when no channel is supplied", async () => {
-    const policyChannel = requireDist(policyChannelModulePath) as PolicyChannelModule;
-
-    await expect(policyChannel.removeSandboxChannel("alpha", {})).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(removeSandboxChannel("alpha", {})).rejects.toThrow("process.exit(1)");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("supports a remove dry run without gateway, registry, or rebuild side effects", async () => {
-    const policyChannel = requireDist(policyChannelModulePath) as PolicyChannelModule;
-
     await expect(
-      policyChannel.removeSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
+      removeSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
     ).resolves.toBeUndefined();
 
     expect(logSpy.mock.calls.flat().join("\n")).toContain(
@@ -52,14 +42,12 @@ describe("policy channel remove/enable flows", () => {
   });
 
   it("supports stop dry runs for configured channels", async () => {
-    const registry = requireDist("../../state/registry.js");
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
-    const policyChannel = requireDist(policyChannelModulePath) as PolicyChannelModule;
 
     await expect(
-      policyChannel.stopSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
+      stopSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
     ).resolves.toBeUndefined();
 
     expect(logSpy.mock.calls.flat().join("\n")).toContain(
@@ -69,19 +57,14 @@ describe("policy channel remove/enable flows", () => {
   });
 
   it("supports start dry runs without applying a preset or persisting the enabled plan", async () => {
-    const registry = requireDist("../../state/registry.js");
-    const policies = requireDist("../../policy/index.js");
-    const rebuild = requireDist("./rebuild.js");
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue(["telegram"]);
     const updateSandboxSpy = vi.spyOn(registry, "updateSandbox");
     const applyPresetSpy = vi.spyOn(policies, "applyPreset");
-    const rebuildSpy = vi.spyOn(rebuild, "rebuildSandbox");
-    const policyChannel = requireDist(policyChannelModulePath) as PolicyChannelModule;
-
+    const rebuildSpy = vi.spyOn(policyChannelDependencies, "rebuildSandbox");
     await expect(
-      policyChannel.startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
+      startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
     ).resolves.toBeUndefined();
 
     expect(logSpy.mock.calls.flat().join("\n")).toContain(

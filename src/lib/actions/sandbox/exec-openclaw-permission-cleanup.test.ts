@@ -243,7 +243,7 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
       "alpha",
       ["sleep", "30"],
       {},
-      (binary, args) => runSandboxExecChild(binary, args, () => child, signalSource),
+      (binary, args) => runSandboxExecChild(binary, args, {}, () => child, signalSource),
       cleanupDeps({ inspectMutableConfigPerms: inspect }),
     );
     signalEvents.emit(signal);
@@ -282,7 +282,7 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
       "alpha",
       ["sleep", "30"],
       {},
-      (binary, args) => runSandboxExecChild(binary, args, () => child, signalSource),
+      (binary, args) => runSandboxExecChild(binary, args, {}, () => child, signalSource),
       cleanupDeps({ inspectMutableConfigPerms: inspect }),
     );
     signalEvents.emit("SIGINT");

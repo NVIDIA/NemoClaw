@@ -9,6 +9,8 @@ keywords: ["nemoclaw troubleshooting", "nemoclaw debug sandbox issues"]
 content:
   type: "reference"
 ---
+import { AgentOnly } from "../_components/AgentGuide";
+
 {/* markdownlint-disable MD014 */}
 
 This page covers common installation, onboarding, and runtime issues, along with resolution steps.
@@ -208,6 +210,27 @@ docker run --rm busybox nslookup registry.npmjs.org
 
 When the lookup returns an answer, retry onboarding.
 
+### Direct DNS lookups fail in a Docker-driver GPU sandbox
+
+Egress covered by OpenShell network policies resolves destinations through the gateway.
+A direct DNS lookup inside the agent network namespace can fail on Docker-driver GPU hosts such as DGX Spark even when policy-covered inference, messaging, and search work normally.
+Direct in-sandbox DNS depends on Docker and the host resolver and is not a supported NemoClaw network-policy path, so NemoClaw does not use it as a sandbox health check.
+
+Run a manual lookup only when you are diagnosing a custom tool that performs its own DNS resolution:
+
+```bash
+openshell sandbox exec --name <sandbox-name> -- getent hosts host.openshell.internal
+openshell sandbox exec --name <sandbox-name> -- getent hosts example.com
+```
+
+If the host alias resolves but the external name does not, Docker's embedded resolver may be forwarding to an upstream DNS server that the sandbox bridge cannot use.
+Do not treat this result as evidence that a policy-covered feature is unhealthy.
+Test the affected inference, messaging, or search request through its normal policy path and inspect denied requests with `openshell term`.
+
+If a custom tool requires direct DNS, configure the Docker daemon to use a resolver that containers can reach.
+On hosts with VPN or split-DNS software, use an upstream resolver that remains reachable from the Docker bridge, then recreate or rebuild the sandbox.
+Keep bridge networking enabled so the sandbox retains its normal Docker network isolation.
+
 ### Host DNS resolution is blocked before provider validation
 
 NemoClaw also checks that the host process can resolve the provider host before it starts NVIDIA provider validation.
@@ -222,6 +245,8 @@ node -e 'require("node:dns").resolve4("integrate.api.nvidia.com", (err, addrs) =
 
 Fix the host firewall, VPN, or DNS policy so the host can resolve the provider endpoint, then rerun onboarding.
 If you intentionally use a non-NVIDIA provider and need to bypass only this preflight, set `NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT=1`.
+
+<AgentOnly variant="openclaw,hermes">
 
 ### Port already in use
 
@@ -280,6 +305,8 @@ Docker-driver gateways on OpenShell 0.0.72 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS
 
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and only when other hosts on the network should be able to reach the gateway.
 
+</AgentOnly>
+
 ### Older-glibc gateway compatibility container
 
 OpenShell 0.0.72 directly supports Linux hosts with glibc 2.28 or newer.
@@ -289,9 +316,11 @@ Leave it unset on supported hosts.
 The compatibility container uses host networking and mounts the host Docker socket read-only.
 A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host.
 The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon.
-See the [OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
+See the [OpenShell 0.0.72 compatibility review](/user-guide/openclaw/security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
 
 Refer to [Environment Variables](commands#environment-variables) for the full list of port overrides.
+
+<AgentOnly variant="openclaw,hermes">
 
 ### Running multiple sandboxes simultaneously
 
@@ -322,6 +351,48 @@ $$nemoclaw list
 ```
 
 `$$nemoclaw list` prints the recorded dashboard URL for each sandbox.
+
+OpenShell currently exposes one inference route per gateway.
+Sandboxes that share a gateway must record the same provider and model.
+Custom compatible routes must also record the same normalized endpoint and API family.
+An OpenClaw sandbox using the native Anthropic Messages frontend and a Hermes sandbox using the managed OpenAI frontend need separate gateway ports, even when they use the same custom endpoint and model.
+NemoClaw includes stopped sandboxes in this check because they use the gateway route when restarted.
+
+If onboarding, `inference set`, or connect-time route repair reports a shared-gateway conflict, choose one of these recovery paths:
+
+- Align every named sandbox to the same route.
+- Remove a conflicting sandbox with `$$nemoclaw <name> destroy` when you no longer need it.
+- Onboard the sandbox against another gateway port when it needs a different route.
+
+An aligned group cannot move to a wholly new route one sandbox at a time because the first change would conflict with the remaining registry rows.
+Back up each workspace, remove or migrate the peer sandboxes, switch the last sandbox on the original gateway, then re-onboard the peers with that same route or with separate gateway ports.
+
+If the error names incomplete legacy custom-route metadata, back up and remove the affected sandbox, then re-onboard it with an explicit custom endpoint and API family.
+For an OpenAI-compatible route, replace the example endpoint, model, and sandbox name in this recovery sequence:
+
+```bash
+$$nemoclaw legacy-sandbox destroy
+NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=https://endpoint.example/v1 \
+  NEMOCLAW_MODEL=your-model-id \
+  NEMOCLAW_PREFERRED_API=openai-completions \
+  $$nemoclaw onboard --name legacy-sandbox
+```
+
+If the error names an invalid gateway binding, restore the affected row's known-good `gatewayName` and `gatewayPort` metadata from a trusted backup; otherwise back up and remove the sandbox, then re-onboard it.
+Do not guess or copy a binding from another sandbox because lifecycle commands use it to select the gateway.
+
+For example, keep the first sandbox on the default gateway and assign a separate gateway to the second sandbox:
+
+```bash
+$$nemoclaw onboard --name first-sandbox
+NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard --name second-sandbox
+```
+
+NemoClaw derives a separate gateway name and state directory from the second port.
+Using a different dashboard port alone does not create a separate inference route.
+
+</AgentOnly>
 
 ## Onboarding
 
@@ -399,6 +470,8 @@ Upgrade NemoClaw to a version that supports your OpenShell release, or install a
 For fresh installs, NemoClaw passes the blueprint range to `install-openshell.sh` and resolves a compatible published OpenShell release before downloading.
 If GitHub release metadata is unavailable, the script uses its bundled fallback pin and the post-install gate still enforces the configured range.
 
+<AgentOnly variant="openclaw">
+
 ### Sandbox build fails during OpenClaw plugin install
 
 During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics.
@@ -419,6 +492,10 @@ If you want the feature, fix the network or policy path first, then resume onboa
 $$nemoclaw onboard --resume
 ```
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
 ### Web search verification reports a warning
 
 When web search is enabled, onboarding checks the selected agent configuration and sends a real search request through the sandbox egress path.
@@ -434,6 +511,7 @@ $$nemoclaw <name> policy-list
 Look for `<name>-brave-search` with the `brave` preset or `<name>-tavily-search` with the `tavily` preset.
 Do not replace an `openshell:resolve:env:<KEY>` value in the sandbox configuration with a raw API key.
 
+</AgentOnly>
 <AgentOnly variant="openclaw">
 
 Confirm that OpenClaw reports the provider selected during onboarding.
@@ -459,9 +537,13 @@ If it does not, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` and 
 
 </AgentOnly>
 
+<AgentOnly variant="openclaw,hermes">
+
 Rerunning onboarding with a different provider recreates the sandbox because the provider configuration and credential attachment are build-time inputs.
 NemoClaw validates the replacement key before it removes the existing sandbox, then backs up and restores the supported workspace state during recreation.
 If the configuration is correct but the egress probe fails, keep the matching preset applied and inspect the blocked request with `openshell term` before widening any policy rule.
+
+</AgentOnly>
 
 ### Sandbox containers cannot reach the gateway
 
@@ -482,6 +564,8 @@ sudo ufw allow from "$SUBNET" to any port 8080 proto tcp
 $$nemoclaw onboard
 ```
 
+<AgentOnly variant="openclaw,hermes">
+
 ### `connect` exits because the gateway is down
 
 `$$nemoclaw <name> connect` checks the OpenShell gateway before it tries dashboard forwarding, SSH, or inference repair.
@@ -496,6 +580,8 @@ $$nemoclaw <name> connect
 
 Run `$$nemoclaw status` for a broader gateway health report.
 
+</AgentOnly>
+
 <AgentOnly variant="hermes">
 If `nemohermes <name> recover` reports that the Hermes secret-boundary validator is missing, the sandbox image predates the recovery-side validator that re-checks `/sandbox/.hermes/.env`.
 Current NemoClaw releases fail closed in this state: recovery reports that the validator is missing, leaves an otherwise healthy gateway untouched, refuses to claim the secret boundary was checked, and instructs you to re-image the sandbox with a current Hermes build.
@@ -508,6 +594,8 @@ nemohermes <sandbox-name> recover
 ```
 
 </AgentOnly>
+
+<AgentOnly variant="openclaw">
 
 ### Sandbox container reports `(unhealthy)` while the agent gateway process is still alive
 
@@ -533,6 +621,8 @@ or rebuild the sandbox for changes that affect provisioning:
 ```bash
 $$nemoclaw <name> rebuild --yes
 ```
+
+</AgentOnly>
 
 ### Invalid sandbox name
 
@@ -594,6 +684,8 @@ On Docker Desktop, raise CPU and memory limits in *Settings → Resources*, then
 
 To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1` before running `$$nemoclaw onboard`.
 
+<AgentOnly variant="openclaw,hermes">
+
 ### Re-onboard fails because port 18789 is held by SSH
 
 After destroying a sandbox and gateway, the SSH port-forward process for the dashboard can be left running.
@@ -610,6 +702,10 @@ kill <PID>
 
 Then re-run `$$nemoclaw onboard`.
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
 ### Updated messaging token is not picked up
 
 Re-running `$$nemoclaw onboard --non-interactive` with a new `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, or `SLACK_BOT_TOKEN` previously reported success while the sandbox kept polling with the old credential.
@@ -621,6 +717,8 @@ If you suspect a sandbox is still using a stale token, re-run onboarding so the 
 ```bash
 $$nemoclaw onboard --non-interactive
 ```
+
+</AgentOnly>
 
 ### Sandbox creation killed by OOM (exit 137)
 
@@ -767,6 +865,8 @@ Follow these steps to reconnect.
    `connect` detects the resulting identity drift, prunes the stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
    You do not need to edit `known_hosts` by hand or re-run `$$nemoclaw onboard` in this case.
 
+<AgentOnly variant="openclaw,hermes">
+
 1. Start host auxiliary services (if needed).
 
    If you use the cloudflared tunnel started by `$$nemoclaw tunnel start`, start it again:
@@ -779,6 +879,8 @@ Follow these steps to reconnect.
    WeChat and WhatsApp are experimental.
    To pause a single bridge without destroying the sandbox, use `$$nemoclaw <name> channels stop <channel>`.
 
+</AgentOnly>
+
 <Warning title="If the sandbox does not recover">
 
 If the sandbox remains missing after restarting the gateway, run `$$nemoclaw <name> rebuild --yes` while the local registry entry still exists.
@@ -786,6 +888,8 @@ The rebuild path uses the recorded sandbox metadata and the snapshot flow to pre
 If the sandbox was intentionally deleted and you want a clean setup instead, run `$$nemoclaw <name> destroy` to remove the stale local entry, then run `$$nemoclaw onboard`.
 Create a snapshot first when the sandbox is reachable enough to back up state. For details, refer to [Back Up and Restore](../manage-sandboxes/backup-restore).
 </Warning>
+
+<AgentOnly variant="openclaw,hermes">
 
 ### `gateway restart` or `recover` reports `privileged control unavailable`
 
@@ -818,6 +922,10 @@ $$nemoclaw <name> rebuild --yes
 ```
 
 For a custom image, update its Dockerfile to preserve the current NemoClaw entrypoint, root-only gateway control helper, root-only managed controller, and shared supervisor library before rebuilding.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
 
 ### Hermes config or shields reports a mutation already in progress
 
@@ -862,6 +970,10 @@ This refusal means Hermes config files look shields-locked but `/sandbox` is not
 Do not change the parent ownership manually or accept the current bytes as a new seal.
 Restore a trusted pre-incident snapshot into a new sandbox, or recreate the sandbox from host-side onboarding configuration.
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
 ### OpenClaw startup reports `OPENCLAW_LOCKED_PARENT_UNPROTECTED`
 
 This refusal means the OpenClaw config directory is root-owned but `/sandbox` is not `root:sandbox 1775`, so the sandbox identity could rename the entire `.openclaw` lock root.
@@ -878,6 +990,8 @@ $$nemoclaw <name> snapshot restore <selector>
 
 Destroying the refused sandbox permanently discards state newer than the selected snapshot, so confirm that the host-side snapshot exists before destruction.
 Without a trusted pre-incident snapshot, recreate the sandbox from host-side onboarding configuration only if you accept losing the inaccessible in-sandbox state.
+
+</AgentOnly>
 
 ### Sandbox is running an outdated agent version
 
@@ -923,11 +1037,15 @@ Use the lightest recovery path first instead of rebuilding immediately.
    On Docker-driver hosts, status also attempts non-destructive recovery when OpenShell reports the sandbox as missing but Docker still has a stopped `openshell.ai/sandbox-name=<name>` container or the latest GPU-backup sibling.
    A successful recovery prints that the sandbox was recovered from Docker and then shows the refreshed OpenShell state.
 
+<AgentOnly variant="openclaw,hermes">
+
 1. If the sandbox is running but the agent gateway or dashboard forward is still down, recover the in-sandbox gateway and forwards:
 
    ```bash
    $$nemoclaw <name> recover
    ```
+
+</AgentOnly>
 
 1. Rebuild only if the sandbox cannot be restarted or status still cannot recover it while the local registry entry exists:
 
@@ -951,6 +1069,115 @@ When checking status inside an active sandbox, host-side sandbox state and infer
 The status command detects the sandbox context and reports "active (inside sandbox)" instead.
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
+
+<AgentOnly variant="deepagents">
+
+## Deep Agents
+
+### `dcode status` reports a stale inference route
+
+The managed `dcode` runtime reads provider and model settings from `/sandbox/.deepagents/config.toml`.
+NemoClaw generates that file during onboarding and rebuilds, and Deep Agents provider or model changes require fresh named recreation rather than `inference set`.
+
+Check the host-recorded route first:
+
+```bash
+nemo-deepagents <name> status
+```
+
+Then connect and compare the in-sandbox identity:
+
+```bash
+nemo-deepagents <name> connect
+dcode status
+```
+
+If the provider or model does not match the host route, rebuild the sandbox to regenerate `config.toml` from recorded metadata:
+
+```bash
+nemo-deepagents <name> rebuild
+```
+
+To intentionally switch provider or model, recreate the named sandbox with fresh onboarding:
+
+```bash
+nemo-deepagents onboard --fresh --name <name> --recreate-sandbox
+```
+
+### `dcode` refuses to start because upstream auth state exists
+
+The managed launchers refuse upstream credential state inside `/sandbox/.deepagents/.state/auth.json` and `/sandbox/.deepagents/.state/chatgpt-auth.json`.
+Those files can contain provider credentials or OAuth state that bypasses NemoClaw's host-owned credential boundary.
+
+Remove the upstream auth state from the sandbox, then start `dcode` again:
+
+```bash
+rm -f /sandbox/.deepagents/.state/auth.json /sandbox/.deepagents/.state/chatgpt-auth.json
+dcode status
+```
+
+Do not put provider credentials in `/sandbox/.deepagents/.env`, project `.env` files, or Deep Agents config files.
+Register credentials with NemoClaw or OpenShell on the host so the gateway can inject them at egress.
+
+### Managed MCP commands report an older Deep Agents runtime
+
+Deep Agents sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`.
+The rebuild installs the current managed MCP projection path and reconstructs `/sandbox/.deepagents/.nemoclaw-mcp.json` from the host registry.
+
+```bash
+nemo-deepagents <name> rebuild
+nemo-deepagents <name> mcp add <server-name> <url>
+```
+
+NemoClaw does not auto-load user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into the managed configuration.
+Use `nemo-deepagents <name> mcp ...` commands for managed MCP servers that need OpenShell credential replacement and egress policy.
+
+### Tavily remains blocked after opt-in
+
+Deep Agents does not have a NemoClaw-managed web-search feature.
+The Tavily flow only opens Python egress for project code or manually configured tools that call Tavily.
+
+Confirm that the target sandbox has the `tavily` preset applied:
+
+```bash
+nemo-deepagents <name> policy-list
+```
+
+If it is missing, apply the preset, register the host-side credential, and rebuild so the provider attaches:
+
+```bash
+nemo-deepagents <name> policy-add tavily --yes
+export TAVILY_API_KEY=tvly-...
+nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+unset TAVILY_API_KEY
+nemo-deepagents <name> rebuild
+```
+
+If Tavily is still blocked after rebuild, inspect recent policy denials:
+
+```bash
+nemo-deepagents <name> logs --tail 50
+```
+
+The `tavily` preset is a managed-Python opt-in.
+It is process-wide for sandbox Python and is not a `dcode`-only boundary.
+
+### Deep Agents read-only path checks fail
+
+The Deep Agents image keeps the managed Python environment under `/opt/venv` read-only and leaves `/sandbox` writable for project and agent state.
+Writes under `/usr`, `/etc`, or `/opt/venv` should fail, while writes under `/sandbox` and `/tmp` should work.
+
+If a read-only path probe reports that protected paths are writable, rebuild with the current NemoClaw image:
+
+```bash
+nemo-deepagents <name> rebuild
+```
+
+If startup reports that Landlock enforcement is unavailable, the Deep Agents sandbox fails closed instead of running with reduced filesystem enforcement.
+Deep Agents uses `compatibility: strict` for its managed filesystem policy, so kernels older than 5.13 or VM-backed Docker runtimes without Landlock support can block sandbox creation.
+Move the sandbox to a Linux kernel and container runtime that support Landlock, then rerun onboarding or rebuild the sandbox.
+
+</AgentOnly>
 
 ### Git clone fails with a certificate verification error
 
@@ -1020,11 +1247,24 @@ To see which rule denied the request, read the merged logs from the host:
 $$nemoclaw <name> logs --tail 50
 ```
 
+<AgentOnly variant="openclaw,hermes">
 If the host should be reachable, allow it with a preset or a [custom preset](../network-policy/customize-network-policy#custom-preset-files):
+</AgentOnly>
+<AgentOnly variant="deepagents">
+If the host should be reachable, allow it with a built-in preset or apply a reviewed custom preset file from the host:
+</AgentOnly>
 
 ```bash
 $$nemoclaw <name> policy-add <preset>
 ```
+
+<AgentOnly variant="deepagents">
+
+```bash
+nemo-deepagents <name> policy-add --from-file ./my-preset.yaml --yes
+```
+
+</AgentOnly>
 
 Replace `<preset>` with a real preset name such as `github`, `pypi`, or `npm`. Run `$$nemoclaw <name> policy-add` with no preset to list the available presets.
 
@@ -1038,6 +1278,8 @@ openshell gateway remove nemoclaw
 $$nemoclaw onboard --resume
 ```
 
+<AgentOnly variant="openclaw">
+
 ### `openclaw update` hangs or times out inside the sandbox
 
 This is expected for the current NemoClaw deployment model.
@@ -1049,6 +1291,8 @@ Instead:
 1. Upgrade to a NemoClaw release that includes the newer `openclaw` version.
 2. If you build NemoClaw from source, bump the pinned `openclaw` version in `Dockerfile.base` and rebuild the sandbox base image.
 3. Run `$$nemoclaw <name> rebuild` to recreate the sandbox with the updated image. The rebuild command automatically backs up workspace state before destroying the old sandbox and restores it afterward.
+
+</AgentOnly>
 
 <AgentOnly variant="openclaw">
 
@@ -1167,7 +1411,8 @@ Onboarding ends with:
   Sandbox 'my-assistant' entered Error phase before it became ready (waited up to 180s).
 ```
 
-On a fresh onboard the OpenShell gateway can (re)start its supervisor session and re-register the just-created sandbox. During that window `openshell sandbox list` briefly reports the sandbox in the transient `Error` phase before it flips to `Ready` — seen on DGX Spark, where the dashboard port fallback and supervisor restart race the sandbox bootstrap.
+On a fresh onboard the OpenShell gateway can (re)start its supervisor session and re-register the just-created sandbox.
+During that window `openshell sandbox list` briefly reports the sandbox in the transient `Error` phase before it flips to `Ready`, as seen on DGX Spark when supervisor restart races the sandbox bootstrap.
 
 NemoClaw tolerates a bounded run of consecutive `Error` polls (default 30 polls / ~60s) so this transient recovers on its own; only `Error` that persists past the debounce window is treated as terminal. `Failed` and `CrashLoopBackOff` are always terminal and fail immediately.
 
@@ -1184,6 +1429,8 @@ If the failure persists after the debounce, the sandbox is genuinely stuck — i
 openshell sandbox list
 $$nemoclaw <name> status
 ```
+
+<AgentOnly variant="openclaw,hermes">
 
 ### Agent fails at runtime after onboarding succeeds with a compatible endpoint
 
@@ -1212,6 +1459,34 @@ Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone.
 It patches the config at container startup but does not update the Dockerfile ARG baked into the image.
 A fresh `$$nemoclaw onboard` is the reliable fix.
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+### Onboarding fails with duplicate Anthropic message_start events
+
+Validation for an OpenClaw **Other Anthropic-compatible endpoint** selection ends with an error like:
+
+```text
+Anthropic Messages API (streaming): duplicate message_start
+```
+
+For OpenClaw custom Anthropic routes, NemoClaw sends a `stream: true` request to `/v1/messages` and validates the SSE event sequence (exactly one `message_start`, at least one `content_block_delta`, and a `message_stop`).
+This error means the streaming layer on the endpoint or gateway is malformed even though its non-streaming responses are valid.
+A working non-streaming response does not imply that streaming works.
+Some inference gateways proxy plain requests correctly but corrupt the SSE stream, for example by emitting `message_start` twice for one request.
+OpenClaw uses the streaming path, so without this check the defect would first surface inside the sandbox as a runtime failure.
+
+Hermes and OpenAI-compatible-only agents use the endpoint's `/v1/chat/completions` surface for custom Anthropic selections instead.
+Current onboarding validates that surface and does not reject those agents because of a malformed native `/v1/messages` stream they will not use.
+An older Hermes sandbox that still uses native Anthropic Messages can report that no final response was produced; re-run onboarding to select and validate the managed Chat Completions route.
+
+Fix the streaming layer on the endpoint or gateway, or onboard with a different Anthropic-compatible endpoint.
+The official Anthropic provider does not run this check and is not affected.
+If an OpenClaw sandbox created by an older release fails at runtime with an empty final response on an Anthropic-compatible endpoint, re-run `$$nemoclaw onboard` so the streaming check can diagnose the endpoint.
+If the endpoint serves a reasoning-only model, set `NEMOCLAW_REASONING=true` to skip the streaming check.
+Streaming defects then surface at runtime instead of during onboarding.
+
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
 This is expected behavior.
@@ -1235,6 +1510,10 @@ If the sandbox still cannot start or reports that no baseline is available, rebu
 ```bash
 $$nemoclaw <name> rebuild
 ```
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
 
@@ -1263,6 +1542,10 @@ You scan the iLink QR from WeChat on your phone and NemoClaw registers the captu
 WhatsApp pairs entirely inside the sandbox.
 NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.
 Run `openclaw channels login --channel whatsapp` inside OpenClaw sandboxes, or run `hermes whatsapp` inside Hermes sandboxes.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
 
 ### `scripts/rcf_patch.py` is missing from the blueprint
 
@@ -1342,6 +1625,8 @@ $$nemoclaw <sandbox> doctor --fix
 
 `$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
 Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step.
+For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that exact posture under the expected sandbox-owned parent.
+Other root-owned layouts, links, mounts, and ambiguous metadata fail closed so startup cannot mistake a shields-locked or unsafe tree for mutable drift.
 If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
 Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
 
@@ -1471,6 +1756,10 @@ A repeating line like the following confirms the conflict:
 
 To fix, run `$$nemoclaw <other-sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding on it with the channel disabled. Current NemoClaw warns at `$$nemoclaw onboard` time when another sandbox already has the same channel enabled, but sandboxes created before that check was added may still be in a conflict loop.
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
 ### Landlock filesystem restrictions silently degraded
 
 After sandbox creation, NemoClaw checks whether the host kernel supports Landlock (Linux 5.13+).
@@ -1485,6 +1774,23 @@ This warning is informational and does not block sandbox creation.
 The sandbox runs without kernel-level filesystem restrictions, relying on container mount configuration instead.
 For full filesystem enforcement, run on a Linux kernel 5.13 or later (Ubuntu 22.04 LTS and later include Landlock support).
 
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+### Landlock filesystem policy blocks sandbox startup
+
+Deep Agents uses strict Landlock compatibility.
+If the host kernel, Docker VM, or sandbox filesystem mount cannot enforce the managed read-only policy, OpenShell refuses to start the sandbox instead of silently degrading.
+
+Run Deep Agents on a Linux kernel 5.13 or later with a container runtime that exposes Landlock to the sandbox.
+After moving to a compatible host or runtime, rerun onboarding or rebuild the sandbox:
+
+```bash
+nemo-deepagents <name> rebuild
+```
+
+</AgentOnly>
+
 ### Sandbox lost after gateway restart
 
 Sandboxes created with OpenShell versions older than 0.0.24 can become unreachable after a gateway restart because SSH secrets were not persisted.
@@ -1494,7 +1800,10 @@ After the upgrade, recreate the sandbox with `$$nemoclaw onboard`.
 ### DNS-backed HTTPS endpoint is not supported
 
 NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hostname but cannot pin the same peer address across the downstream OpenShell runtime boundary while preserving TLS SNI and host validation.
-This can appear during a direct blueprint run, Hermes Provider custom-endpoint setup, `$$nemoclaw inference set`, or a host-side `config set` write.
+This can appear during a direct blueprint run, custom-endpoint onboarding, or a host-side `config set` write.
+<AgentOnly variant="openclaw,hermes">
+It can also appear during a runtime `$$nemoclaw inference set` switch.
+</AgentOnly>
 
 Use an HTTPS IP-literal endpoint whose certificate is valid for that address.
 If your deployment permits non-TLS provider traffic, you can instead use a public HTTP endpoint that NemoClaw can rewrite to a DNS-pinned address.
@@ -1595,7 +1904,14 @@ openshell term
 ```
 
 To permanently allow an endpoint, add it to the network policy.
+<AgentOnly variant="openclaw,hermes">
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for details.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+For Deep Agents, use `nemo-deepagents <name> policy-add <preset>` for built-in presets or `nemo-deepagents <name> policy-add --from-file <preset.yaml>` for reviewed custom presets.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 ### Dashboard not reachable after setting a custom port
 
@@ -1612,12 +1928,18 @@ CHAT_UI_URL=http://127.0.0.1:19000 $$nemoclaw onboard
 
 If you need to run multiple sandboxes at different ports at the same time, refer to [Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
 ### Control UI config endpoint returns 404 or non-JSON
 
 The Control UI loads its runtime configuration from a gateway endpoint, not from a static
 `controlui.bootstrap.config.json` file. No `controlui.bootstrap.config.json` path is served,
 so requesting it returns `HTTP 404 Not Found` with a short plain-text body, and piping that
 response to `jq` fails with a parse error such as `Invalid numeric literal`.
+
+</AgentOnly>
 
 <AgentOnly variant="openclaw">
 
@@ -1994,11 +2316,11 @@ Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
 
+<AgentOnly variant="openclaw">
+
 ## Brev
 
-<AgentOnly variant="openclaw">
 For Brev setup instructions, refer to [Brev Web UI](../deployment/brev-web-ui).
-</AgentOnly>
 
 ### Most OpenClaw skills show as blocked
 
@@ -2078,6 +2400,10 @@ $$nemoclaw <name> rebuild
 ```
 
 After the rebuild completes, return to the Skills page to confirm the skill is ready.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
 
 ## Hermes
 
@@ -2247,3 +2573,5 @@ export DISCORD_BOT_TOKEN=...
 export SLACK_BOT_TOKEN=...
 nemohermes onboard --resume --non-interactive
 ```
+
+</AgentOnly>

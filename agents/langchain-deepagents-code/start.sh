@@ -176,7 +176,21 @@ prepare_runtime_env() {
   mv -f "$tmp" "$target"
 }
 
+prepare_observability_marker() {
+  local target=/tmp/nemoclaw-observability-enabled
+  local tmp
+  if [ "${NEMOCLAW_OBSERVABILITY:-}" != "1" ]; then
+    rm -f "$target"
+    return 0
+  fi
+  tmp="$(mktemp /tmp/nemoclaw-observability-enabled.XXXXXX)"
+  printf '%s\n' '1' >"$tmp"
+  chmod 444 "$tmp"
+  mv -f "$tmp" "$target"
+}
+
 prepare_runtime_env
+prepare_observability_marker
 
 # With no command, this invocation IS the sandbox's long-running entrypoint.
 # Deep Agents Code is a terminal-runtime agent invoked on demand via
