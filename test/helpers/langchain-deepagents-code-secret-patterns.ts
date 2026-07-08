@@ -183,6 +183,36 @@ export const CANONICAL_SECRET_POSITIVE_VECTORS: readonly CanonicalSecretPositive
     patternIndex: 1,
   },
   {
+    label: "hyphenated_api_key_context",
+    value: "api-key=opaqueCredentialPayloadZ1234567890",
+    patternGroup: "context",
+    patternIndex: 1,
+  },
+  {
+    label: "mixed_case_x_api_key_context",
+    value: "X-Api-Key=opaqueCredentialPayloadZ1234567890",
+    patternGroup: "context",
+    patternIndex: 1,
+  },
+  {
+    label: "python_extra_next_line_context",
+    value: "API_KEY=12345\u00856789012345",
+    patternGroup: "context",
+    patternIndex: 1,
+  },
+  {
+    label: "python_extra_file_separator_context",
+    value: "API_KEY=12345\u001c6789012345",
+    patternGroup: "context",
+    patternIndex: 1,
+  },
+  {
+    label: "uppercase_key_context",
+    value: "KEY=opaqueCredentialPayloadZ1234567890",
+    patternGroup: "context",
+    patternIndex: 3,
+  },
+  {
     label: "pass_context",
     value: "CUSTOM_PASS=opaqueCredentialPayloadZ1234567890",
     patternGroup: "context",
@@ -227,6 +257,24 @@ export const CANONICAL_SECRET_POSITIVE_VECTORS: readonly CanonicalSecretPositive
   {
     label: "client_secret_context",
     value: "clientSecret=opaqueCredentialPayloadZ1234567890",
+    patternGroup: "context",
+    patternIndex: 2,
+  },
+  {
+    label: "github_token_context",
+    value: "githubToken=opaqueCredentialPayloadZ1234567890",
+    patternGroup: "context",
+    patternIndex: 2,
+  },
+  {
+    label: "webhook_secret_context",
+    value: "webhookSecret=opaqueCredentialPayloadZ1234567890",
+    patternGroup: "context",
+    patternIndex: 2,
+  },
+  {
+    label: "database_credential_context",
+    value: "databaseCredential=opaqueCredentialPayloadZ1234567890",
     patternGroup: "context",
     patternIndex: 2,
   },

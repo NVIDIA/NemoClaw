@@ -41,6 +41,12 @@ _CREDENTIAL_ENV_NAMES = {
     "OTEL_EXPORTER_OTLP_HEADERS",
     "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
 }
+# Python's \s also includes control separators that ECMAScript excludes, so
+# spell out the canonical whitespace set for cross-runtime parity.
+_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
+    r"[^\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029"
+    r"\u202f\u205f\u3000\ufeff'\"]"
+)
 _OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 _UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
 _MANAGED_ADAPTER_PROVIDER = "openai"
@@ -137,12 +143,17 @@ _SECRET_PATTERNS = tuple(
         ),
         (
             None,
-            r"(?:^|[^A-Za-z0-9])(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?[^\s'\"]{10,}",
+            rf"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{{1,128}}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)['\"]?(?:[ \t]{{0,32}}[=:][ \t]{{0,32}}|[ \t]{{1,32}})['\"]?{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
             re.IGNORECASE,
         ),
         (
             None,
-            r"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential|Password|Passwd|Pass)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key)['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?[^\s'\"]{10,}",
+            rf"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{{1,128}}(?:Token|Secret|Credential)|[A-Za-z0-9]{{0,128}}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{{1,128}}(?:Password|Passwd|Pass))['\"]?(?:[ \t]{{0,32}}[=:][ \t]{{0,32}}|[ \t]{{1,32}})['\"]?{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
+            0,
+        ),
+        (
+            None,
+            rf"(?:^|[^A-Za-z0-9])KEY['\"]?(?:[ \t]{{0,32}}[=:][ \t]{{0,32}}|[ \t]{{1,32}})['\"]?{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
             0,
         ),
         (None, r"lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*", 0),

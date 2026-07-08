@@ -1068,6 +1068,9 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
             "passRate": 0.9,
             "passThrough": "allowed",
             "privateKey": SECRET,
+            "replyToken": "reply-correlation-token-123",
+            "ReplyToken": SECRET,
+            "reply_token": SECRET,
             "token": SECRET,
         },
     )

@@ -181,11 +181,15 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
     "<REDACTED>",
   ]),
   [
-    /((?:^|[^A-Za-z0-9])(?:api[_-]?key|key|token|secret|credential|password|passwd|pass)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/gi,
+    /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:key|token|secret|credential|password|passwd|pass)|(?:x[-_])?api[-_]key|token|secret|credential|password|passwd|pass)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/gi,
     "$1<REDACTED>$2",
   ],
   [
-    /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential|Password|Passwd|Pass)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/g,
+    /((?:^|[^A-Za-z0-9])(?!replyToken["']?(?:[ \t]{0,32}[=:]|[ \t]{1,32}))(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/g,
+    "$1<REDACTED>$2",
+  ],
+  [
+    /((?:^|[^A-Za-z0-9])KEY["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/g,
     "$1<REDACTED>$2",
   ],
   ...TOKEN_PREFIX_PATTERNS.map((p): [RegExp, string] => [
@@ -251,6 +255,7 @@ export function redactUrl(value: unknown): string | null {
 }
 
 function isSensitiveKey(key: string): boolean {
+  if (key === "replyToken") return false;
   return (
     /(?:api[_-]?key|token|secret|password|credential|authorization|bearer)/i.test(key) ||
     hasPassCredentialSegment(key)

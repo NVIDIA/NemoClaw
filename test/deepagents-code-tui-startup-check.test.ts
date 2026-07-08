@@ -550,6 +550,14 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         },
       ],
       [
+        fingerprint(CONTEXT_PATTERNS[3]),
+        {
+          name: "uppercase_key_context",
+          sample: "KEY=opaqueCredentialPayloadZ1234567890",
+          rawSecret: "opaqueCredentialPayloadZ1234567890",
+        },
+      ],
+      [
         fingerprint(SECRET_BLOCK_PATTERNS[0]),
         {
           name: "private_key_block",
@@ -616,6 +624,21 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         sample: "API_KEY=,OpaqueCredentialPayloadZ1234567890",
         rawSecret: ",OpaqueCredentialPayloadZ1234567890",
       },
+      {
+        name: "hyphenated_api_key_context",
+        sample: "X-Api-Key=opaqueCredentialPayloadZ1234567890",
+        rawSecret: "opaqueCredentialPayloadZ1234567890",
+      },
+      {
+        name: "python_extra_next_line_context",
+        sample: "API_KEY=12345\u00856789012345",
+        rawSecret: "12345\u00856789012345",
+      },
+      {
+        name: "python_extra_file_separator_context",
+        sample: "API_KEY=12345\u001c6789012345",
+        rawSecret: "12345\u001c6789012345",
+      },
     ];
 
     const canonicalFingerprints = [
@@ -643,6 +666,10 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       "SUBTOKEN=opaqueNonSecretPayload123",
       "publicKey=opaqueVerificationMaterial123",
       "customKey=opaqueNonSecretPayload123",
+      "public-key=opaqueVerificationMaterial123",
+      "custom-key=opaqueNonSecretPayload123",
+      '{"key":"agent:main:main"}',
+      '{"replyToken":"reply-correlation-token-123"}',
     ]) {
       expect(detectsSecret(benign), benign).toBe("clean");
       expect(redactsSecret(benign), benign).toBe(benign);

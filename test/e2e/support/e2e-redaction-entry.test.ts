@@ -135,6 +135,55 @@ describe("fixture redaction entry point", () => {
     expect(redactString("nothing sensitive here", [])).toBe("nothing sensitive here");
   });
 
+  it("preserves managed credential references and non-credential JSON identifiers", () => {
+    const discordReference = "openshell:resolve:env:DISCORD_BOT_TOKEN";
+    const versionedReference = "openshell:resolve:env:v2237303833964223913_WECHAT_BOT_TOKEN";
+    const slackReference = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+    const discordAssignment = `DISCORD_BOT_TOKEN=${discordReference}`;
+    const text = JSON.stringify({
+      key: "agent:main:main",
+      replyToken: "reply-correlation-token-123",
+      token: discordReference,
+      versionedToken: versionedReference,
+      botToken: slackReference,
+    });
+
+    expect(redactString(text)).toBe(text);
+    expect(redactString(discordAssignment)).toBe(discordAssignment);
+    const collision = `\uE000 NEMOCLAW_SAFE_CREDENTIAL_REFERENCE_0 \uE001 ${text}`;
+    expect(redactString(collision)).toBe(collision);
+    expect(redactString(text, [discordReference])).not.toContain(discordReference);
+
+    const privateKey = [
+      ["-----BEGIN", "PRIVATE KEY-----"].join(" "),
+      `opaquePrivateMaterial123 ${discordReference} morePrivateMaterial456`,
+      ["-----END", "PRIVATE KEY-----"].join(" "),
+    ].join("\n");
+    expect(redactString(privateKey)).toBe("<REDACTED>");
+  });
+
+  it.each([
+    ["attached suffix", "TOKEN=openshell:resolve:env:FOO-opaqueCredentialPayloadZ1234567890"],
+    ["dot suffix", "TOKEN=openshell:resolve:env:FOO.opaqueCredentialPayloadZ1234567890"],
+    ["slash suffix", "TOKEN=openshell:resolve:env:FOO/opaqueCredentialPayloadZ1234567890"],
+    ["colon suffix", "TOKEN=openshell:resolve:env:FOO:opaqueCredentialPayloadZ1234567890"],
+    ["semicolon suffix", "TOKEN=openshell:resolve:env:FOO;opaqueCredentialPayloadZ1234567890"],
+    ["hash suffix", "TOKEN=openshell:resolve:env:FOO#opaqueCredentialPayloadZ1234567890"],
+    ["comma suffix", "TOKEN=openshell:resolve:env:FOO,opaqueCredentialPayloadZ1234567890"],
+    ["brace suffix", "TOKEN=openshell:resolve:env:FOO}opaqueCredentialPayloadZ1234567890"],
+    ["bracket suffix", "TOKEN=openshell:resolve:env:FOO]opaqueCredentialPayloadZ1234567890"],
+    ["nested assignment", "TOKEN=foo=openshell:resolve:env:FOO"],
+    ["short prefix", "TOKEN=short:openshell:resolve:env:FOO"],
+    ["oversized revision", `TOKEN=openshell:resolve:env:v${"1".repeat(21)}_FOO`],
+    ["oversized identifier", `TOKEN=openshell:resolve:env:${"A".repeat(129)}`],
+    ["mixed case", "TOKEN=OpenShell:Resolve:Env:FOO"],
+    ["lowercase Slack", "TOKEN=xoxb-openshell-resolve-env-SLACK_BOT_TOKEN"],
+  ])("redacts a managed-reference lookalike with $label", (_label, value) => {
+    const out = redactString(value);
+    expect(out).toContain("<REDACTED>");
+    expect(out).not.toContain(value.slice("TOKEN=".length));
+  });
+
   it("returns empty input verbatim", () => {
     expect(redactString("")).toBe("");
     expect(redactString("", ["anything"])).toBe("");

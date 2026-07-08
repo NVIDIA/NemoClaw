@@ -29,10 +29,22 @@
  *     - child-env allowlist filtering for fixture probes
  */
 
+import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 
 const REDACTED = "<REDACTED>";
 const EXPLICIT_REDACTED = "[REDACTED]";
+const MANAGED_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127}|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127})`;
+const SAFE_QUOTED_CREDENTIAL_REFERENCE_PATTERN = new RegExp(
+  `(["'])${MANAGED_CREDENTIAL_REFERENCE_SOURCE}\\1`,
+  "g",
+);
+const SAFE_STANDALONE_CREDENTIAL_REFERENCE_PATTERN = new RegExp(
+  `(^|[ \\t\\r\\n])${MANAGED_CREDENTIAL_REFERENCE_SOURCE}(?=$|[ \\t\\r\\n])`,
+  "g",
+);
+const SAFE_ENV_ASSIGNMENT_PATTERN =
+  /^[ \t]*(?:export[ \t]+)?([A-Z][A-Z0-9_]{0,127})[ \t]*=[ \t]*(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]{1,20}_)?\1|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?\1)[ \t]*$/gm;
 
 // Fixture-local mirror of src/lib/security/secret-patterns.ts. The
 // fixture layer deliberately does not import from src/lib/security/ so it
@@ -73,8 +85,9 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
 
 export const CONTEXT_PATTERNS: RegExp[] = [
   /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/gi,
-  /(?<=(?:^|[^A-Za-z0-9])(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/gi,
-  /(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential|Password|Passwd|Pass)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/g,
+  /(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/gi,
+  /(?<=(?:^|[^A-Za-z0-9])(?!replyToken["']?(?:[ \t]{0,32}[=:]|[ \t]{1,32}))(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/g,
+  /(?<=(?:^|[^A-Za-z0-9])KEY["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/g,
 ];
 
 export const SECRET_BLOCK_PATTERNS: RegExp[] = [
@@ -97,18 +110,8 @@ export const SECRET_BLOCK_PATTERNS: RegExp[] = [
  * env allowlist (buildChildEnv); pattern redaction catches what slips
  * through (e.g. error messages that echo a secret value).
  */
-export function redactString(text: string, explicitValues?: Iterable<string>): string {
-  if (!text) return text;
+function redactCanonicalShapes(text: string): string {
   let out = text;
-  if (explicitValues) {
-    const values = [
-      ...new Set(Array.from(explicitValues).filter((value) => value && value.length > 0)),
-    ];
-    values.sort((a, b) => b.length - a.length);
-    for (const value of values) {
-      out = out.split(value).join(EXPLICIT_REDACTED);
-    }
-  }
   for (const p of TOKEN_PREFIX_PATTERNS) {
     p.lastIndex = 0;
     out = out.replace(p, REDACTED);
@@ -122,6 +125,50 @@ export function redactString(text: string, explicitValues?: Iterable<string>): s
     out = out.replace(p, REDACTED);
   }
   return out;
+}
+
+function protectManagedCredentialReferences(text: string): {
+  protectedText: string;
+  references: Array<{ marker: string; value: string }>;
+} {
+  let protectedText = text;
+  const references: Array<{ marker: string; value: string }> = [];
+  let markerPrefix: string;
+  do {
+    markerPrefix = `\uE000 ${randomUUID()} `;
+  } while (text.includes(markerPrefix));
+  const protect = (pattern: RegExp): void => {
+    pattern.lastIndex = 0;
+    protectedText = protectedText.replace(pattern, (value) => {
+      const marker = `${markerPrefix}${references.length} \uE001`;
+      references.push({ marker, value });
+      return marker;
+    });
+  };
+  protect(SAFE_ENV_ASSIGNMENT_PATTERN);
+  protect(SAFE_QUOTED_CREDENTIAL_REFERENCE_PATTERN);
+  protect(SAFE_STANDALONE_CREDENTIAL_REFERENCE_PATTERN);
+  return { protectedText, references };
+}
+
+export function redactString(text: string, explicitValues?: Iterable<string>): string {
+  if (!text) return text;
+  let out = text;
+  if (explicitValues) {
+    const values = [
+      ...new Set(Array.from(explicitValues).filter((value) => value && value.length > 0)),
+    ];
+    values.sort((a, b) => b.length - a.length);
+    for (const value of values) {
+      out = out.split(value).join(EXPLICIT_REDACTED);
+    }
+  }
+  const { protectedText, references } = protectManagedCredentialReferences(out);
+  let redacted = redactCanonicalShapes(protectedText);
+  for (const { marker, value } of references) {
+    redacted = redacted.replace(marker, value);
+  }
+  return redacted;
 }
 
 // Env keys the fixture layer guarantees children may always see. Anything

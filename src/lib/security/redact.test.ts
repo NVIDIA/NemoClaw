@@ -126,7 +126,12 @@ describe("redactForLog", () => {
       [`PASS: ${payload}`, "PASS: <REDACTED>"],
       [`PASS = ${payload}`, "PASS = <REDACTED>"],
       [`{"PASS":"${payload}"}`, '{"PASS":"<REDACTED>"}'],
+      [`api-key=${payload}`, "api-key=<REDACTED>"],
+      [`X-Api-Key=${payload}`, "X-Api-Key=<REDACTED>"],
       [`clientSecret=${payload}`, "clientSecret=<REDACTED>"],
+      [`githubToken=${payload}`, "githubToken=<REDACTED>"],
+      [`webhookSecret=${payload}`, "webhookSecret=<REDACTED>"],
+      [`databaseCredential=${payload}`, "databaseCredential=<REDACTED>"],
       [`customPass=${payload}`, "customPass=<REDACTED>"],
       [`DBPass=${payload}`, "DBPass=<REDACTED>"],
     ]) {
@@ -145,14 +150,23 @@ describe("redactForLog", () => {
       passRate: 0.9,
       passCount: 4,
       passThrough: "enabled",
+      replyToken: "reply-correlation-token-123",
     };
 
     expect(redactForLog(benign)).toEqual(benign);
-    const text =
-      "COMPASS=opaqueNonSecretPayload123 BYPASS=allowedValue123 TOPSECRET=opaqueNonSecretPayload123 SUBTOKEN=opaqueNonSecretPayload123 publicKey=opaqueVerificationMaterial123 customKey=opaqueNonSecretPayload123 passRate=opaqueNonSecretPayload123";
-    expect(redactSensitiveText(text)).toBe(text);
-    expect(redactFull(text)).toBe(text);
-    expect(redactForLog(text)).toBe(text);
+    for (const text of [
+      "COMPASS=opaqueNonSecretPayload123 BYPASS=allowedValue123",
+      "TOPSECRET=opaqueNonSecretPayload123 SUBTOKEN=opaqueNonSecretPayload123",
+      "publicKey=opaqueVerificationMaterial123 customKey=opaqueNonSecretPayload123",
+      "public-key=opaqueVerificationMaterial123 custom-key=opaqueNonSecretPayload123",
+      "passRate=opaqueNonSecretPayload123",
+      '{"key":"agent:main:main"}',
+      '{"replyToken":"reply-correlation-token-123"}',
+    ]) {
+      expect(redactSensitiveText(text), text).toBe(text);
+      expect(redactFull(text), text).toBe(text);
+      expect(redactForLog(text), text).toBe(text);
+    }
   });
 
   it("redacts sensitive object keys recursively while preserving safe fields", () => {

@@ -75,8 +75,9 @@ describe("Deep Agents Code secret-pattern parity", () => {
       ],
       context: [
         "(?<=Bearer\\s+)[A-Za-z0-9_.+/=-]{10,}::gi",
-        "(?<=(?:^|[^A-Za-z0-9])(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::gi",
-        "(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential|Password|Passwd|Pass)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key)[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::g",
+        "(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::gi",
+        "(?<=(?:^|[^A-Za-z0-9])(?!replyToken[\"']?(?:[ \\t]{0,32}[=:]|[ \\t]{1,32}))(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::g",
+        "(?<=(?:^|[^A-Za-z0-9])KEY[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::g",
       ],
       block: [
         "-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\\s\\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----::g",
@@ -112,6 +113,9 @@ describe("Deep Agents Code secret-pattern parity", () => {
       "BYPASS=allowedValue123",
       "TOPSECRET=opaqueNonSecretPayload123",
       "SUBTOKEN=opaqueNonSecretPayload123",
+      "public-key=opaqueVerificationMaterial123",
+      "custom-key=opaqueNonSecretPayload123",
+      '{"key":"agent:main:main"}',
       `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
       `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
     ]) {
@@ -130,6 +134,7 @@ describe("Deep Agents Code secret-pattern parity", () => {
       "passThrough=opaqueNonSecretPayload123",
       "publicKey=opaqueVerificationMaterial123",
       "customKey=opaqueNonSecretPayload123",
+      '{"replyToken":"reply-correlation-token-123"}',
       `${"a".repeat(129)}Secret=opaqueCredentialPayloadZ1234567890`,
     ]) {
       expect(matches(camelPattern, value), value.slice(0, 80)).toBe(false);
@@ -245,6 +250,8 @@ json.dump([observability._scrub_secret_values(value) for value in values], sys.s
       "SUBTOKEN=opaqueNonSecretPayload123",
       "publicKey=opaqueVerificationMaterial123",
       "customKey=opaqueNonSecretPayload123",
+      '{"key":"agent:main:main"}',
+      '{"replyToken":"reply-correlation-token-123"}',
       "-----BEGIN PUBLIC KEY-----\\nnot-private\\n-----END PUBLIC KEY-----",
     ];
     const output = execFileSync("python3", ["-I", "-c", probe, observabilityPath], {
