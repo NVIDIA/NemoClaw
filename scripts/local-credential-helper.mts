@@ -339,7 +339,7 @@ function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
       total += bytes.length;
       if (total > MAX_BODY_BYTES) {
         settled = true;
-        scrubBuffers(chunks);
+        wipeBuffers(chunks);
         bytes.fill(0);
         request.resume();
         reject(new RequestError(413, "Request body is too large"));
@@ -351,25 +351,25 @@ function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
       if (settled) return;
       settled = true;
       const body = Buffer.concat(chunks, total);
-      scrubBuffers(chunks);
+      wipeBuffers(chunks);
       resolve(body);
     });
     request.on("error", (error) => {
       if (settled) return;
       settled = true;
-      scrubBuffers(chunks);
+      wipeBuffers(chunks);
       reject(error);
     });
     request.on("aborted", () => {
       if (settled) return;
       settled = true;
-      scrubBuffers(chunks);
+      wipeBuffers(chunks);
       reject(new RequestError(400, "Request body was aborted"));
     });
   });
 }
 
-function scrubBuffers(buffers: Buffer[]): void {
+function wipeBuffers(buffers: Buffer[]): void {
   for (const buffer of buffers) buffer.fill(0);
   buffers.length = 0;
 }
@@ -467,7 +467,12 @@ function destroySockets(sockets: ReadonlySet<Socket>, except?: Socket): void {
   }
 }
 
-function scrubValues(values: Record<string, string>, fields: readonly CredentialField[]): void {
+// JavaScript strings and a spawned child's copied environment cannot be reliably
+// zeroed. Drop helper-owned references promptly; only mutable buffers are wiped.
+function clearCredentialReferences(
+  values: Record<string, string>,
+  fields: readonly CredentialField[],
+): void {
   for (const field of fields) {
     if (Object.hasOwn(values, field.name)) values[field.name] = "";
     delete values[field.name];
@@ -561,16 +566,16 @@ export async function startLocalCredentialHelper(options: {
         stdio: "inherit",
       });
     } catch (error) {
-      scrubValues(childEnv as Record<string, string>, fields);
-      scrubValues(values, fields);
+      clearCredentialReferences(childEnv as Record<string, string>, fields);
+      clearCredentialReferences(values, fields);
       console.error(
         `Local credential helper could not start the approved command: ${error instanceof Error ? error.message : String(error)}`,
       );
       resolveCompletion(1);
       return;
     }
-    scrubValues(childEnv as Record<string, string>, fields);
-    scrubValues(values, fields);
+    clearCredentialReferences(childEnv as Record<string, string>, fields);
+    clearCredentialReferences(values, fields);
     console.error("Approved command started.");
     child.once("error", (error) => {
       console.error(`Approved command failed to start: ${error.message}`);
@@ -647,7 +652,7 @@ export async function startLocalCredentialHelper(options: {
     // synchronously, so exactly one concurrent valid request can transition the
     // session and launch the approved command.
     if (state !== "pending") {
-      scrubValues(values, fields);
+      clearCredentialReferences(values, fields);
       throw new RequestError(409, "Credential session was already claimed");
     }
     state = "claimed";

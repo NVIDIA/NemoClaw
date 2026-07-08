@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
@@ -28,7 +28,7 @@ const localCredentialFormSource = path.join(
 const localCredentialHelperUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/a5d8d8beb09150e67cc481940f3d461b6a2d092f/scripts/local-credential-helper.mts";
 const localCredentialHelperSha256 =
-  "827d47d99bc3b28864f2d29ca2b8480899f9fee21f536e94c0bc1f50e482237d"; // gitleaks:allow -- checked-in SHA-256 fixture
+  "54335bf6e1ace853402f74f0e656999ff6fb65cc23fc81c685bc13983b7c40f1"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/a5d8d8beb09150e67cc481940f3d461b6a2d092f/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 =
@@ -355,6 +355,7 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("--field NAME:type");
     expect(promptSource).toContain("Confirm and Run Approved Command");
     expect(promptSource).toContain("do not retry or resubmit");
+    expect(promptSource).toContain("exposure minimization, not guaranteed erasure");
     expect(promptSource).toContain("unsets the exported credential before starting \\`curl\\`");
     expect(formSource).toContain("<title>NemoClaw Local Credential Form</title>");
     expect(formSource).toContain("Content-Security-Policy");
@@ -424,6 +425,9 @@ describe("starter prompt docs CTA", () => {
       "http://127.0.0.1:4123/local-credential-form.html?fields=NODE_OPTIONS:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=NPM_CONFIG_USERCONFIG:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=LD_PRELOAD:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=DYLD_INSERT_LIBRARIES:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_CONFIG:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_CONFIG_COUNT:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=PUBLIC_ID:text&submit=/capture",
     ]) {
       const malformed = runCredentialForm(withCredentialCapability(malformedUrl));

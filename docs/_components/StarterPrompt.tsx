@@ -93,7 +93,7 @@ When you need an API key, bot token, app token, or other secret, prefer the chec
 
 - Before starting credential collection, determine the exact environment-variable names and exact command argv that will receive them. Explain the command in plain language, say that the form's final confirmation runs that already-approved command immediately, and ask my permission.
 - Do not generate, rewrite, or redesign the helper or form. Use this reviewed pair exactly:
-  - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/a5d8d8beb09150e67cc481940f3d461b6a2d092f/scripts/local-credential-helper.mts (SHA-256 \`827d47d99bc3b28864f2d29ca2b8480899f9fee21f536e94c0bc1f50e482237d\`)
+  - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/a5d8d8beb09150e67cc481940f3d461b6a2d092f/scripts/local-credential-helper.mts (SHA-256 \`54335bf6e1ace853402f74f0e656999ff6fb65cc23fc81c685bc13983b7c40f1\`)
   - Form: https://raw.githubusercontent.com/NVIDIA/NemoClaw/a5d8d8beb09150e67cc481940f3d461b6a2d092f/docs/resources/local-credential-form.html (SHA-256 \`b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68\`)
 - Fetch both files, or use local repository copies when available, and verify both SHA-256 digests before use. Put fetched copies in a private temporary directory with access restricted to the current user.
 - Treat the two immutable URL and digest pairs as one reviewed trust boundary. Stop if either verification fails; do not substitute another URL, helper, form, or digest.
@@ -111,6 +111,7 @@ node --experimental-strip-types <private-dir>/local-credential-helper.mts --form
 - Choose **Confirm and Run Approved Command** only after the redacted summary matches the command I already approved. That click makes the form's sole credential-bearing request; the helper accepts at most one valid submission, closes its listener, and starts the exact approved argv.
 - If the form says the outcome is unknown, do not retry or resubmit. Inspect the coding-agent terminal to determine whether the command ran, then start a fresh helper session only if needed.
 - Keep submitted secrets only in memory long enough to start the approved command. Do not print them, write them to logs, commit them, or paste them into chat.
+- Treat in-memory handling as exposure minimization, not guaranteed erasure. The helper wipes mutable request buffers and promptly drops its JavaScript references, but Node.js strings and the approved child process environment cannot be reliably zeroed.
 - After the command finishes, delete any fetched helper and form copies and their private temporary directory.
 
 Use this provider mapping for non-interactive setup:

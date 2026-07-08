@@ -312,6 +312,9 @@ describe("local credential helper", () => {
     { fields: ["PATH:text"], label: "process search path field" },
     { fields: ["NODE_OPTIONS:secret"], label: "Node process-control field" },
     { fields: ["LD_PRELOAD:secret"], label: "dynamic-loader field prefix" },
+    { fields: ["DYLD_INSERT_LIBRARIES:secret"], label: "macOS dynamic-loader field prefix" },
+    { fields: ["GIT_CONFIG:secret"], label: "exact Git config process-control field" },
+    { fields: ["GIT_CONFIG_COUNT:secret"], label: "Git config process-control field prefix" },
     {
       fields: ["PUBLIC_ID:text", "PUBLIC_ID:text"],
       label: "duplicate field",
@@ -321,7 +324,7 @@ describe("local credential helper", () => {
       label: "field count above the session limit",
     },
     { fields: ["bad-name:secret"], label: "malformed field name" },
-  ])("rejects $label before listening", async ({ fields }) => {
+  ])("rejects $label before listening (#5048)", async ({ fields }) => {
     const captured = captureChild(helperArgs(fields, [process.execPath, "-e", "process.exit(0)"]));
 
     const result = await withTimeout(captured.closed, PROCESS_TIMEOUT_MS, "invalid helper CLI");
@@ -330,7 +333,7 @@ describe("local credential helper", () => {
     expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
   });
 
-  it("rejects a modified credential form before listening", async () => {
+  it("rejects a modified credential form before listening (#5048)", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-form-test-"));
     tempDirs.add(dir);
     const modifiedFormPath = path.join(dir, "local-credential-form.html");
@@ -351,7 +354,7 @@ describe("local credential helper", () => {
     expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
   });
 
-  it("serves only the exact form bytes with hardened non-CORS headers", async () => {
+  it("serves only the exact form bytes with hardened non-CORS headers (#5048)", async () => {
     const fixture = createCommandFixture();
     const helper = await startHelper(fixture.command);
     const result = await request(helper.formUrl);
@@ -384,7 +387,7 @@ describe("local credential helper", () => {
     expect(commandRunCount(fixture.markerPath)).toBe(0);
   });
 
-  it("rejects Host, Origin, capability, and CORS probes without consuming the session", async () => {
+  it("rejects Host, Origin, capability, and CORS probes without consuming the session (#5048)", async () => {
     const fixture = createCommandFixture();
     const helper = await startHelper(fixture.command);
     const body = validBody();
@@ -446,7 +449,7 @@ describe("local credential helper", () => {
     await expectSuccessfulCompletion(helper, fixture.markerPath);
   });
 
-  it("rejects media, encoding, body, and exact-schema violations without consuming the session", async () => {
+  it("rejects media, encoding, body, and exact-schema violations without consuming the session (#5048)", async () => {
     const fixture = createCommandFixture();
     const helper = await startHelper(fixture.command);
     const authHeaders = validHeaders(helper);
@@ -536,7 +539,7 @@ describe("local credential helper", () => {
     await expectSuccessfulCompletion(helper, fixture.markerPath);
   });
 
-  it("claims one racing submission, runs the command once, and closes the listener", async () => {
+  it("claims one racing submission, runs the command once, and closes the listener (#5048)", async () => {
     const fixture = createCommandFixture();
     const helper = await startHelper(fixture.command);
     const submission = () =>
@@ -570,7 +573,7 @@ describe("local credential helper", () => {
     await expect(request(helper.formUrl)).rejects.toBeInstanceOf(Error);
   });
 
-  it("executes once when the client sends a valid request and abandons the response", async () => {
+  it("executes once when the client sends a valid request and abandons the response (#5048)", async () => {
     const fixture = createCommandFixture();
     const helper = await startHelper(fixture.command);
     const body = validBody();
