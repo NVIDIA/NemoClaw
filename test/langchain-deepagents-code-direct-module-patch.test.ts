@@ -269,7 +269,14 @@ class Session:
     def __init__(self):
         self.trust_env = True
         self.calls = []
+        self.closed = False
         sessions.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.closed = True
 
     def get(self, url, **kwargs):
         call = (self.trust_env, url, kwargs)
@@ -279,10 +286,7 @@ class Session:
 
 requests = types.ModuleType("requests")
 requests.Session = Session
-requests.exceptions = types.SimpleNamespace(
-    HTTPError=ProxyPolicyDenied,
-    TooManyRedirects=RuntimeError,
-)
+requests.exceptions = types.SimpleNamespace(HTTPError=ProxyPolicyDenied, TooManyRedirects=RuntimeError)
 sys.modules["requests"] = requests
 
 from deepagents_code import _nemoclaw_managed, tools
@@ -313,10 +317,7 @@ def forbidden_direct_dns(*_args, **_kwargs):
     raise AssertionError("managed fetch attempted direct DNS validation")
 
 tools._validate_url = forbidden_direct_dns
-expected_proxies = {
-    "http": ${JSON.stringify(proxyUrl)},
-    "https": ${JSON.stringify(proxyUrl)},
-}
+expected_proxies = {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}}
 
 def assert_managed_hops(expected_urls):
     assert [url for _, url, _ in calls] == expected_urls
@@ -324,20 +325,22 @@ def assert_managed_hops(expected_urls):
     assert all(kwargs["proxies"] == expected_proxies for _, _, kwargs in calls)
     assert all(kwargs["verify"] == str(managed_ca_file) for _, _, kwargs in calls)
 
-def expect_redirect_policy_denial(initial_url, redirect_url):
+def expect_redirect_policy_denial(initial_url, redirect_url, label):
     calls.clear()
-    denial = ProxyPolicyDenied("403 policy_denied")
+    denial = ProxyPolicyDenied(f"network policy denied {label}")
     responses.extend([Response(302, redirect_url), Response(403, error=denial)])
     try:
         tools._fetch_with_redirects(initial_url, timeout=8)
     except ProxyPolicyDenied as exc:
         assert exc is denial
+        assert str(exc) == f"network policy denied {label}"
     else:
-        raise AssertionError("redirect escaped proxy policy denial")
+        raise AssertionError(f"{label} redirect escaped proxy policy denial")
     assert_managed_hops([initial_url, redirect_url])
 
 response = tools._fetch_with_redirects("https://raw.githubusercontent.com/example/repo/main/README.md", timeout=8)
 assert response.status_code == 200
+assert len(sessions) == 1 and sessions[0].closed
 assert calls == [(
     False,
     "https://raw.githubusercontent.com/example/repo/main/README.md",
@@ -391,12 +394,13 @@ metadata_url = "https://169.254.169.254/latest/meta-data/"
 expect_redirect_policy_denial(
     "https://raw.githubusercontent.com/example/redirect-to-imds",
     metadata_url,
+    "cross-host metadata",
 )
 
 # DNS and resolved-IP policy belong to OpenShell. A rebinding candidate must be
 # passed by hostname through the explicit proxy without local DNS, and the
 # proxy's denial must propagate rather than triggering a direct retry.
-rebind_url = "https://rebind.attacker.invalid/private"
+rebind_url = "https://rebind.internal/private"
 original_getaddrinfo = socket.getaddrinfo
 def forbidden_local_dns(*_args, **_kwargs):
     raise AssertionError("managed redirect attempted local DNS")
@@ -405,6 +409,7 @@ try:
     expect_redirect_policy_denial(
         "https://raw.githubusercontent.com/example/redirect-to-rebind",
         rebind_url,
+        "DNS-rebinding hostname",
     )
 finally:
     socket.getaddrinfo = original_getaddrinfo
@@ -568,6 +573,9 @@ assert all(
 assert len({id(session.calls[0][2]["proxies"]) for session in concurrent_sessions}) == len(
     concurrent_sessions
 )
+assert all(session.closed for session in concurrent_sessions)
+assert sessions and all(session.closed for session in sessions)
+assert len({id(session) for session in sessions}) == len(sessions)
 print("managed-fetch-proxy-ok")
 `,
       ],
@@ -1445,5 +1453,41 @@ print("managed-boundaries-ok")
     });
     expect(fetchShapeResult.status).not.toBe(0);
     expect(fetchShapeResult.stderr).toContain("_fetch_with_redirects");
+
+    const missingRedirectLimit = createPackageFixture();
+    const missingRedirectLimitPath = path.join(missingRedirectLimit, "deepagents_code", "tools.py");
+    fs.writeFileSync(
+      missingRedirectLimitPath,
+      fs
+        .readFileSync(missingRedirectLimitPath, "utf8")
+        .replace("_MAX_FETCH_REDIRECTS = 5", "_RENAMED_MAX_FETCH_REDIRECTS = 5"),
+      "utf8",
+    );
+    const redirectLimitResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingRedirectLimit },
+      encoding: "utf8",
+    });
+    expect(redirectLimitResult.status).not.toBe(0);
+    expect(redirectLimitResult.stderr).toContain("_MAX_FETCH_REDIRECTS");
+
+    const missingValidationError = createPackageFixture();
+    const missingValidationErrorPath = path.join(
+      missingValidationError,
+      "deepagents_code",
+      "tools.py",
+    );
+    fs.writeFileSync(
+      missingValidationErrorPath,
+      fs
+        .readFileSync(missingValidationErrorPath, "utf8")
+        .replace("class _UrlValidationError", "class _RenamedUrlValidationError"),
+      "utf8",
+    );
+    const validationErrorResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingValidationError },
+      encoding: "utf8",
+    });
+    expect(validationErrorResult.status).not.toBe(0);
+    expect(validationErrorResult.stderr).toContain("_UrlValidationError");
   });
 });

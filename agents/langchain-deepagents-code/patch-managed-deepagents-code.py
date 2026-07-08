@@ -1051,6 +1051,20 @@ def _top_level_functions(tree: ast.Module) -> set[str]:
     }
 
 
+def _top_level_symbols(tree: ast.Module) -> set[str]:
+    symbols = _top_level_functions(tree)
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            symbols.add(node.name)
+        elif isinstance(node, ast.Assign):
+            symbols.update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            symbols.add(node.target.id)
+    return symbols
+
+
 def _class_methods(tree: ast.Module, class_name: str) -> set[str]:
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == class_name:
@@ -1068,6 +1082,12 @@ def _require_functions(path: Path, text: str, names: set[str]) -> ast.Module:
     if missing:
         raise RuntimeError(f"Required upstream functions missing in {path}: {sorted(missing)}")
     return tree
+
+
+def _require_symbols(path: Path, tree: ast.Module, names: set[str]) -> None:
+    missing = names - _top_level_symbols(tree)
+    if missing:
+        raise RuntimeError(f"Required upstream symbols missing in {path}: {sorted(missing)}")
 
 
 def _require_methods(
@@ -1289,8 +1309,11 @@ def main() -> None:
             "_tracing_enabled",
         },
     )
-    _require_functions(
+    tools_tree = _require_functions(
         paths["tools"], texts["tools"], {"_fetch_with_redirects"}
+    )
+    _require_symbols(
+        paths["tools"], tools_tree, {"_MAX_FETCH_REDIRECTS", "_UrlValidationError"}
     )
     _require_methods(
         paths["model_config"],

@@ -1070,34 +1070,34 @@ def managed_fetch_with_redirects(
             ) from exc
 
     current_url = url
-    session = requests.Session()
-    # Disable every requests environment-derived session setting, including
-    # proxy/NO_PROXY, netrc, and CA-bundle discovery. Each request receives the
-    # sole root-verified proxy mapping explicitly below. The separately
-    # selected CA bundle establishes TLS transport trust only; it cannot choose
-    # a proxy or authorize a destination under OpenShell policy.
-    session.trust_env = False
     proxies = {"http": proxy_url, "https": proxy_url}
-    for _hop in range(max_redirects + 1):
-        validate_url(current_url)
-        response = session.get(
-            current_url,
-            timeout=timeout,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
-            allow_redirects=False,
-            proxies=proxies,
-            verify=ca_bundle,
-        )
-        if 300 <= response.status_code < 400:
-            location = response.headers.get("Location")
-            if not location:
-                raise validation_error(
-                    f"Redirect response (status {response.status_code}) is missing a Location header"
-                )
-            current_url = urljoin(current_url, location)
-            continue
-        response.raise_for_status()
-        return response
+    with requests.Session() as session:
+        # Disable every requests environment-derived session setting, including
+        # proxy/NO_PROXY, netrc, and CA-bundle discovery. Each request receives
+        # the sole root-verified proxy mapping explicitly below. The separately
+        # selected CA bundle establishes TLS transport trust only; it cannot
+        # choose a proxy or authorize a destination under OpenShell policy.
+        session.trust_env = False
+        for _hop in range(max_redirects + 1):
+            validate_url(current_url)
+            response = session.get(
+                current_url,
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
+                allow_redirects=False,
+                proxies=proxies,
+                verify=ca_bundle,
+            )
+            if 300 <= response.status_code < 400:
+                location = response.headers.get("Location")
+                if not location:
+                    raise validation_error(
+                        f"Redirect response (status {response.status_code}) is missing a Location header"
+                    )
+                current_url = urljoin(current_url, location)
+                continue
+            response.raise_for_status()
+            return response
 
     raise requests.exceptions.TooManyRedirects(
         f"Exceeded {max_redirects} redirects"
