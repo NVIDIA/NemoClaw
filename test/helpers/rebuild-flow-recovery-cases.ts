@@ -343,9 +343,14 @@ export function registerRebuildFlowRecoveryTests(): void {
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).rejects.toThrow("Recreate failed");
 
-      expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
-        [expect.objectContaining({ name: "alpha" })],
-      ]);
+      expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
+      expect(harness.restorePreservedSandboxEntryIfMissingSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "alpha" }),
+      );
+      expect(harness.getDefaultSelectionState()).toEqual({
+        defaultSandbox: "alpha",
+        defaultSelectionRevision: 10,
+      });
     });
 
     it("starts the active Teams host forward after a successful rebuild", async () => {
