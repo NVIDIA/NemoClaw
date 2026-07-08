@@ -82,6 +82,24 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     expect(() =>
       validateLegacyGatewayUpgradeFixture({
         ...fixture,
+        nemoclawRef: "v0.0.55; echo injected",
+      }),
+    ).toThrow(/NEMOCLAW_OLD_NEMOCLAW_REF/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        nemoclawCommit: fixture.nemoclawCommit.toUpperCase(),
+      }),
+    ).toThrow(/NEMOCLAW_OLD_NEMOCLAW_COMMIT/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        installerSha256: fixture.installerSha256.toUpperCase(),
+      }),
+    ).toThrow(/NEMOCLAW_OLD_INSTALLER_SHA256/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
         openclawVersion: '2026.5.22" && echo injected #',
       }),
     ).toThrow(/NEMOCLAW_OLD_OPENCLAW_VERSION/);
