@@ -245,7 +245,7 @@ describe("RebuildTransactionStore", () => {
     });
 
     await expect(store.create(intent(), preparedReceipts())).rejects.toThrow(
-      "state directory changed filesystem",
+      "atomic-publication invariant failed",
     );
     expect(store.load(SANDBOX)).toBeNull();
     const transactionDir = path.join(stateDir, REBUILD_TRANSACTION_DIRNAME);
@@ -424,8 +424,8 @@ describe("RebuildTransactionStore", () => {
     const { stateDir, store } = makeStore();
     await store.create(intent(), preparedReceipts());
     const filePath = getRebuildTransactionPath(SANDBOX, stateDir);
-    fs.chmodSync(path.dirname(filePath), 0o755);
-    fs.chmodSync(filePath, 0o644);
+    fs.chmodSync(path.dirname(filePath), 0o777);
+    fs.chmodSync(filePath, 0o666);
 
     expect(store.load(SANDBOX)).not.toBeNull();
     expect(fs.statSync(path.dirname(filePath)).mode & 0o777).toBe(0o700);
