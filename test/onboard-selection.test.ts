@@ -2314,7 +2314,6 @@ const answers = ["7", "1", "y"];
 const messages = [];
 const pullLog = ${JSON.stringify(pullLog)};
 let listAttempts = 0;
-
 credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
@@ -2323,7 +2322,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) && ++listAttempts >= 3 ? "qwen3.5:9b" : "";
+  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) && ++listAttempts >= 7 ? "qwen3.5:9b" : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
@@ -2358,6 +2357,7 @@ const { setupNim } = require(${onboardPath});
       env: {
         ...process.env,
         HOME: tmpDir,
+        NEMOCLAW_TEST_NO_SLEEP: "1",
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
       },
     });
@@ -2366,9 +2366,9 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.model, "qwen3.5:9b");
-    assert.equal(payload.listAttempts, 3);
+    assert.equal(payload.listAttempts, 7);
     assert.ok(payload.lines.some((line: string) => line.includes("Ollama starter models:")));
-    assert.ok(payload.lines.some((line: string) => line.includes("Waiting for Ollama")));
+    assert.match(payload.lines.join("\n"), /Waiting for Ollama to register model: qwen3\.5:9b/);
     assert.ok(
       payload.lines.some((line: string) => line.includes("Pulling Ollama model: qwen3.5:9b")),
     );

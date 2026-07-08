@@ -196,11 +196,13 @@ describe("promptOllamaModel installed-model fit filter", () => {
 describe("prepareOllamaModel post-pull discovery", () => {
   let active: { restore: () => void } | null = null;
   afterEach(() => {
+    vi.unstubAllEnvs();
     active?.restore();
     active = null;
   });
 
   it("warms and validates after a pulled model appears in discovery (#6038)", async () => {
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
     const setup = loadProxyWithMocks({
       installed: [],
       promptValues: [],

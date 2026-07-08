@@ -25,6 +25,7 @@ describe("waitForPulledOllamaModel", () => {
     ["registry.example:5000/acme/model", "registry.example:5000/acme/model:latest"],
     ["acme/model:7b", "acme/model:7b"],
     ["acme/model@sha256:abc", "acme/model@sha256:abc"],
+    ["registry.example:5000/acme/model:tag:extra", "registry.example:5000/acme/model:tag:extra"],
   ])("matches pulled model reference %s to listed reference %s", (requested, listed) => {
     expect(
       waitForPulledOllamaModel(requested, {
@@ -39,6 +40,16 @@ describe("waitForPulledOllamaModel", () => {
     expect(
       waitForPulledOllamaModel("acme/model:7b", {
         getModelOptions: () => ["acme/model:8b"],
+        now: () => 0,
+        sleep: () => {},
+      }),
+    ).toBe(false);
+  });
+
+  it("compares malformed registry references literally without collapsing them", () => {
+    expect(
+      waitForPulledOllamaModel("registry.example:5000/acme/model:tag:extra", {
+        getModelOptions: () => ["registry.example:5000/acme/model:tag:other"],
         now: () => 0,
         sleep: () => {},
       }),
@@ -87,5 +98,24 @@ describe("waitForPulledOllamaModel", () => {
     expect(discovered).toBe(false);
     expect(attempts).toBe(8);
     expect(sleeps).toEqual([250, 500, 1_000, 2_000, 2_000, 2_000, 2_000]);
+  });
+
+  it("stops when the deadline elapses before the attempt cap", () => {
+    let nowMs = 0;
+    let attempts = 0;
+
+    const discovered = waitForPulledOllamaModel("qwen3.5:9b", {
+      getModelOptions: () => {
+        attempts += 1;
+        return [];
+      },
+      now: () => nowMs,
+      sleep: () => {
+        nowMs = 10_000;
+      },
+    });
+
+    expect(discovered).toBe(false);
+    expect(attempts).toBe(1);
   });
 });
