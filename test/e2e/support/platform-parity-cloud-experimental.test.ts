@@ -299,7 +299,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
-  it("restores Tavily denial after the opt-in proof for later ordered checks", () => {
+  it("restores Tavily denial and the prior runtime marker for later ordered checks", () => {
     const script = fs.readFileSync(
       path.join(
         process.cwd(),
@@ -312,6 +312,17 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain(
       "managed Deep Agents Code python is blocked again after policy-remove",
     );
+    expect(script).toContain("/usr/bin/env NEMOCLAW_OBSERVABILITY=1");
+    expect(script).toContain("/usr/local/bin/nemoclaw-start /usr/bin/true");
+
+    const markerSnapshot = script.indexOf("OBSERVABILITY_MARKER_BEFORE=");
+    const policyRemove = script.indexOf("policy-remove tavily --yes");
+    const denialProof = script.indexOf("REMOVED_PROBE_OUTPUT=");
+    const markerRestore = script.indexOf("/usr/bin/env NEMOCLAW_OBSERVABILITY=1");
+    expect(markerSnapshot).toBeGreaterThanOrEqual(0);
+    expect(markerSnapshot).toBeLessThan(policyRemove);
+    expect(policyRemove).toBeLessThan(denialProof);
+    expect(denialProof).toBeLessThan(markerRestore);
   });
 
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
