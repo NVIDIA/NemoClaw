@@ -348,29 +348,34 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   });
 
   it("restores Tavily denial and the prior runtime marker for later ordered checks", () => {
-    const script = fs.readFileSync(
-      path.join(
-        process.cwd(),
-        "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-      ),
-      "utf8",
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_TAVILY_SELF_TEST: "policy-cleanup-order",
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+      },
     );
 
-    expect(script).toContain("policy-remove tavily --yes");
-    expect(script).toContain(
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
       "managed Deep Agents Code python is blocked again after policy-remove",
     );
-    expect(script).toContain("/usr/bin/env NEMOCLAW_OBSERVABILITY=1");
-    expect(script).toContain("/usr/local/bin/nemoclaw-start /usr/bin/true");
-
-    const markerSnapshot = script.indexOf("OBSERVABILITY_MARKER_BEFORE=");
-    const policyRemove = script.indexOf("policy-remove tavily --yes");
-    const denialProof = script.indexOf("REMOVED_PROBE_OUTPUT=");
-    const markerRestore = script.indexOf("/usr/bin/env NEMOCLAW_OBSERVABILITY=1");
-    expect(markerSnapshot).toBeGreaterThanOrEqual(0);
-    expect(markerSnapshot).toBeLessThan(policyRemove);
-    expect(policyRemove).toBeLessThan(denialProof);
-    expect(denialProof).toBeLessThan(markerRestore);
+    expect(result.stdout).toContain("managed observability state restores after policy-remove");
+    expect(result.stdout.split("\n").filter((line) => line.startsWith("TRACE:"))).toEqual([
+      "TRACE:opt-in-proof",
+      "TRACE:policy-remove",
+      "TRACE:post-remove-blocked",
+      "TRACE:observability-restore",
+    ]);
   });
 
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {

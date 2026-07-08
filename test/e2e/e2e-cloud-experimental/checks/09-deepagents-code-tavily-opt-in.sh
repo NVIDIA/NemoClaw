@@ -30,7 +30,7 @@ sandbox_exec() {
 
 observability_marker_value() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    sh -c 'if test -f /tmp/nemoclaw-observability-enabled; then cat /tmp/nemoclaw-observability-enabled; else printf "absent"; fi' \
+    sh -c 'marker=/tmp/nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
     2>/dev/null
 }
 
@@ -137,6 +137,82 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "probe-command-shape" ]; then
   }
   python_probe "https://api.tavily.com/search"
   exit 0
+fi
+
+POLICY_CLEANUP_TRACE=""
+POLICY_CLEANUP_FIXTURE_DIR=""
+if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "policy-cleanup-order" ]; then
+  POLICY_CLEANUP_FIXTURE_DIR="$(mktemp -d)"
+  POLICY_CLEANUP_TRACE="${POLICY_CLEANUP_FIXTURE_DIR}/trace"
+  POLICY_CLEANUP_STATE="${POLICY_CLEANUP_FIXTURE_DIR}/policy-state"
+  POLICY_CLEANUP_MARKER="${POLICY_CLEANUP_FIXTURE_DIR}/observability-marker"
+  printf '%s\n' "baseline" >"$POLICY_CLEANUP_STATE"
+  printf '%s\n' "1" >"$POLICY_CLEANUP_MARKER"
+  trap 'rm -rf "$POLICY_CLEANUP_FIXTURE_DIR"' EXIT
+
+  sandbox_exec() {
+    case "$1" in
+      *"test -d /sandbox/.deepagents"*) return 0 ;;
+      *'readlink -f "$(command -v python3)"'*) printf '%s\n' "/opt/venv/bin/python3" ;;
+      *"/sandbox/.nemoclaw-e2e-project-venv"*) printf '%s\n' "$PROJECT_PYTHON" ;;
+      *)
+        printf '%s\n' "unexpected sandbox command in Tavily cleanup self-test" >&2
+        return 91
+        ;;
+    esac
+  }
+  observability_marker_value() {
+    cat "$POLICY_CLEANUP_MARKER"
+  }
+  nemoclaw_cli() {
+    local action="${2:-}:${3:-}:${4:-}"
+    case "$action" in
+      policy-add:tavily:--dry-run) printf '%s\n' "api.tavily.com" ;;
+      policy-add:tavily:--yes)
+        printf '%s\n' "added" >"$POLICY_CLEANUP_STATE"
+        printf '%s\n' "TRACE:opt-in-proof" >>"$POLICY_CLEANUP_TRACE"
+        ;;
+      policy-remove:tavily:--yes)
+        printf '%s\n' "removed" >"$POLICY_CLEANUP_STATE"
+        printf '%s\n' "absent" >"$POLICY_CLEANUP_MARKER"
+        printf '%s\n' "TRACE:policy-remove" >>"$POLICY_CLEANUP_TRACE"
+        ;;
+      *)
+        printf '%s\n' "unexpected CLI action in Tavily cleanup self-test: $action" >&2
+        return 92
+        ;;
+    esac
+  }
+  python_probe() {
+    local python_bin="${2:-python3}"
+    local state
+    state="$(cat "$POLICY_CLEANUP_STATE")"
+    if [ "$python_bin" != "python3" ]; then
+      printf '%s\n' "BLOCKED:fixture non-managed Python"
+    elif [ "$state" = "added" ]; then
+      printf '%s\n' "REACHED:403"
+    elif [ "$state" = "removed" ]; then
+      printf '%s\n' "TRACE:post-remove-blocked" >>"$POLICY_CLEANUP_TRACE"
+      printf '%s\n' "BLOCKED:fixture restored denial"
+    else
+      printf '%s\n' "ERROR:unexpected fixture policy state"
+    fi
+  }
+  openshell() {
+    case "$*" in
+      *"NEMOCLAW_OBSERVABILITY=1"*"/usr/local/bin/nemoclaw-start /usr/bin/true"*)
+        printf '%s\n' "1" >"$POLICY_CLEANUP_MARKER"
+        printf '%s\n' "TRACE:observability-restore" >>"$POLICY_CLEANUP_TRACE"
+        ;;
+      *)
+        printf '%s\n' "unexpected OpenShell action in Tavily cleanup self-test" >&2
+        return 93
+        ;;
+    esac
+  }
+  sleep() {
+    :
+  }
 fi
 
 if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
@@ -252,5 +328,8 @@ if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ]; then
   fi
 fi
 
+if [ -n "$POLICY_CLEANUP_TRACE" ]; then
+  cat "$POLICY_CLEANUP_TRACE"
+fi
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ] || exit 1
