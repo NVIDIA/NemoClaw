@@ -308,8 +308,8 @@ function killStaleAdapter(): void {
 }
 
 function getAdapterScriptPath(): string {
-  const scriptsDir = typeof SCRIPTS === "string" ? SCRIPTS : path.join(process.cwd(), "scripts");
-  return path.join(scriptsDir, "openrouter-runtime-adapter.js");
+  const rootDir = typeof SCRIPTS === "string" ? path.resolve(SCRIPTS, "..") : process.cwd();
+  return path.join(rootDir, "dist", "lib", "inference", "openrouter-runtime-adapter.js");
 }
 
 function probeAdapterHealth(
@@ -411,6 +411,19 @@ export async function ensureOpenRouterRuntimeAdapter(): Promise<{
     localBaseUrl: OPENROUTER_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
     logPath: LOG_PATH,
   };
+}
+
+function startOpenRouterRuntimeAdapterCli(): void {
+  try {
+    startOpenRouterRuntimeAdapterFromEnv();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
+  startOpenRouterRuntimeAdapterCli();
 }
 
 export const __test = {
