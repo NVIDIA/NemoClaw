@@ -119,7 +119,12 @@ describe("validateCorporateCaFile", () => {
 
   it("rejects a world-writable file", () => {
     const p = writeCa(tmpDir(), PEM, 0o666);
-    expect(() => validateCorporateCaFile(p)).toThrow(/world-writable/);
+    expect(() => validateCorporateCaFile(p)).toThrow(/group- or world-writable/);
+  });
+
+  it("rejects a group-writable file", () => {
+    const p = writeCa(tmpDir(), PEM, 0o664);
+    expect(() => validateCorporateCaFile(p)).toThrow(/group- or world-writable/);
   });
 
   it("rejects a file without a PEM certificate block", () => {
@@ -306,6 +311,23 @@ describe("resolveCorporateCaFromHostAnchors host trust-store path (#6210)", () =
     fs.mkdirSync(sub);
     writeAnchor(sub, "root.crt");
     expect(resolveCorporateCaFromHostAnchors([anchorDir])?.pem).toContain("BEGIN CERTIFICATE");
+  });
+
+  it("skips symlinked anchor entries", () => {
+    // A symlinked cert could point outside the anchor tree; the walk imports
+    // only real regular files.
+    const realCert = writeCa(tmpDir());
+    const anchorDir = tmpDir();
+    fs.symlinkSync(realCert, path.join(anchorDir, "linked.crt"));
+    expect(resolveCorporateCaFromHostAnchors([anchorDir])).toBeNull();
+  });
+
+  it("skips an unreadable anchor directory without throwing", () => {
+    const anchorDir = tmpDir();
+    fs.chmodSync(anchorDir, 0o000);
+    expect(() => resolveCorporateCaFromHostAnchors([anchorDir])).not.toThrow();
+    expect(resolveCorporateCaFromHostAnchors([anchorDir])).toBeNull();
+    fs.chmodSync(anchorDir, 0o700); // restore so cleanup can remove it
   });
 });
 

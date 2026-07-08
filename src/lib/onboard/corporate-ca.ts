@@ -172,7 +172,7 @@ function normalizeCertificateBlocks(blocks: readonly string[]): string {
  * Opens the file once with `O_NOFOLLOW` and validates the *opened* descriptor
  * (via `fstat`, then reads from the same fd) so a symlink/file swap between
  * check and use cannot slip a different file past validation. Rejects
- * symlinks, non-regular files, empty/oversized files, world-writable sources,
+ * symlinks, non-regular files, empty/oversized files, group/world-writable sources,
  * bundles with no or too many PEM CERTIFICATE blocks, and any block that is not
  * a parseable X.509 certificate.
  *
@@ -211,10 +211,13 @@ export function validateCorporateCaFile(filePath: string): string {
         `corporate CA bundle exceeds ${MAX_CORPORATE_CA_BYTES} bytes: ${filePath}`,
       );
     }
-    // Refuse a source any other local user could tamper with before the build.
-    if ((stat.mode & 0o002) !== 0) {
+    // Refuse a source another local user could tamper with before the build.
+    // A trust anchor must not be group- or world-writable: any member of the
+    // owning group (or any user) could otherwise swap in a malicious root CA
+    // that then gets baked into the sandbox trust store.
+    if ((stat.mode & 0o022) !== 0) {
       throw new CorporateCaValidationError(
-        `corporate CA bundle must not be world-writable: ${filePath}`,
+        `corporate CA bundle must not be group- or world-writable: ${filePath}`,
       );
     }
     const content = fs.readFileSync(fd, "utf8");
