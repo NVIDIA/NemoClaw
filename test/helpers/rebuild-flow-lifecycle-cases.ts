@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -97,6 +98,7 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
         "alpha",
         "/tmp/nemoclaw-rebuild-backup",
+        { targetAgentType: "openclaw" },
       );
       expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
       expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
@@ -121,6 +123,75 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
         "rebuilt successfully",
       );
+    });
+
+    it("accepts the agent version cached by the confirmation probe before lock acquisition", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { agentVersion: null },
+        entryUpdatesAfterVersionCheck: { agentVersion: "0.2.0" },
+        versionCheck: {
+          sandboxVersion: "0.2.0",
+          expectedVersion: "0.2.0",
+          isStale: false,
+          verificationFailed: false,
+          detectionMethod: "ssh-exec",
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    });
+
+    it("rejects an agent version cache value that differs from the probe result", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { agentVersion: null },
+        entryUpdatesAfterVersionCheck: { agentVersion: "unexpected-version" },
+        versionCheck: {
+          sandboxVersion: "0.2.0",
+          expectedVersion: "0.2.0",
+          isStale: false,
+          verificationFailed: false,
+          detectionMethod: "ssh-exec",
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Sandbox configuration changed before rebuild lock acquisition");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects real registry drift alongside the confirmation probe cache write", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { agentVersion: null },
+        entryUpdatesAfterVersionCheck: {
+          agentVersion: "0.2.0",
+          model: "changed-during-confirmation",
+        },
+        versionCheck: {
+          sandboxVersion: "0.2.0",
+          expectedVersion: "0.2.0",
+          isStale: false,
+          verificationFailed: false,
+          detectionMethod: "ssh-exec",
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Sandbox configuration changed before rebuild lock acquisition");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
     it("changes tool disclosure through the MCP-preserving rebuild transaction", async () => {

@@ -37,7 +37,6 @@ function fakePrivateKeyBlock(type = "", newline = "\\n"): string {
   const label = type ? `${type} PRIVATE KEY-----` : "PRIVATE KEY-----";
   return `-----BEGIN ${label} ${newline}opaque-test-body${newline}-----END ${label}`;
 }
-
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const tuiStartupCheckPath = path.join(

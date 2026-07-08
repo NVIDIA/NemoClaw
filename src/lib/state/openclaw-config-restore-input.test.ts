@@ -74,4 +74,52 @@ describe("buildOpenClawConfigRestoreInput", () => {
       expect(result.error).toContain("refusing unsafe wholesale backup restore");
     }
   });
+
+  it("reconciles complete plugin provenance without persisting transient installs", () => {
+    const result = buildOpenClawConfigRestoreInput(
+      bufferJson({
+        plugins: {
+          entries: { weather: { enabled: true } },
+          installs: { weather: { installPath: "/sandbox/.openclaw/extensions/weather" } },
+        },
+      }),
+      bufferJson({ plugins: { entries: {} } }),
+      {
+        freshImagePluginInstalls: [],
+        previousImagePluginInstalls: [
+          {
+            id: "weather",
+            installPath: "/sandbox/.openclaw/extensions/weather",
+            loadPaths: [],
+          },
+        ],
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.ok ? JSON.parse(result.input.toString("utf8")) : null).toEqual({
+      plugins: { entries: {} },
+    });
+  });
+
+  it("fails closed on incomplete plugin provenance", () => {
+    const result = buildOpenClawConfigRestoreInput(
+      bufferJson({ plugins: { entries: {} } }),
+      bufferJson({ plugins: { entries: {} } }),
+      {
+        freshImagePluginInstalls: [],
+        previousImagePluginInstalls: [
+          {
+            id: "weather",
+            installPath: "/sandbox/.openclaw/extensions/weather",
+          },
+        ],
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("missing explicit load paths"),
+    });
+  });
 });

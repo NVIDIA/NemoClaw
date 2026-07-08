@@ -575,6 +575,7 @@ The poll count is clamped to a minimum of `1` so the probe always runs at least 
 #### `--from <Dockerfile>`
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
+The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
 If that directory contains a `.dockerignore`, onboarding applies those rules while calculating the context size and staging files for Docker.
 NemoClaw also applies additional secret-safety exclusions that override `.dockerignore` negation rules: credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key` are still skipped even if `.dockerignore` tries to include them.
@@ -596,6 +597,14 @@ $$nemoclaw onboard --from path/to/Dockerfile
 
 The Dockerfile path must exist.
 Missing paths fail during command parsing before preflight, gateway setup, inference setup, or sandbox creation starts.
+
+<AgentOnly variant="openclaw">
+
+If deployment verification cannot reach the gateway for a custom OpenClaw image, NemoClaw checks for `/tmp/gateway.log`, `/usr/local/bin/nemoclaw-start`, and `/sandbox/.openclaw/openclaw.json`.
+When all three paths are absent, onboarding reports that the custom image lacks the managed runtime instead of treating repeated port-forward retries as the recovery path.
+For the version-matched full-runtime plugin workflow, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins).
+
+</AgentOnly>
 
 The file can have any name; if it is not already named `Dockerfile`, onboard copies it to `Dockerfile` inside the staged build context automatically.
 To create an isolated build context, create a dedicated directory that contains only the Dockerfile and the files it needs:
@@ -2393,7 +2402,8 @@ Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <n
 If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.
 During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup.
 That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry.
-Recorded custom-image evidence remains blocked from automatic recreation.
+The legacy confirmation never overrides recorded custom-image evidence.
+A custom OpenClaw sandbox is recoverable only when the selected backup independently carries complete authoritative image-plugin provenance.
 
 ### `$$nemoclaw backup-all`
 
@@ -3249,6 +3259,13 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_AUTO_FIX_FIREWALL` | `1` to enable | Opts in to automatic UFW remediation when Linux Docker-driver sandbox containers cannot reach the host gateway after a proven TCP failure. NemoClaw runs `sudo -n` only, validates the narrow Docker bridge subnet → gateway IP:port rule before invoking UFW, re-probes after applying it, and otherwise falls back to the printed manual command. |
 <AgentOnly variant="openclaw,hermes">
 | `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences the `[wechat]` diagnostic lines printed during the host-side WeChat QR login (poll status, IDC redirects, swallowed gateway errors), which are visible by default while the experimental WeChat path stabilizes; set `1` once the flow is reliable in your environment. |
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+Set `NEMOCLAW_SANDBOX_BASE_IMAGE_REF` to an OpenClaw sandbox-base tag or digest to override base-image resolution during onboarding.
+Use a release-matched tag or immutable digest for a source-based custom image; NemoClaw resolves the reference and pins a repository digest into a stock-style `ARG BASE_IMAGE` declaration when possible.
+
 </AgentOnly>
 
 ### Onboard Profiling Traces
