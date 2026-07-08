@@ -181,9 +181,12 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     expect(validateIndex).toBeGreaterThan(0);
     expect(validateIndex).toBeLessThan(prepareIndex);
     expect(validate?.if).toContain("inputs.checkout_sha != ''");
+    expect(validate?.env?.WORKFLOW_SHA).toBe("${{ github.sha }}");
     expect(validate?.run).toContain('[[ "$RISK_SHADOW" == "true" ]]');
     expect(validate?.run).toContain("exact-commit inputs require risk_shadow=true");
     expect(validate?.run).toContain("checkout_sha must be a lowercase 40-character SHA");
+    expect(validate?.run).toContain('[[ "$CHECKOUT_SHA" == "$WORKFLOW_SHA" ]]');
+    expect(validate?.run).toContain("checkout_sha must equal the current main workflow commit");
     expect(validate?.run).toContain('"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"');
     expect(validate?.run).toContain('git merge-base --is-ancestor "$CHECKOUT_SHA" origin/main');
     expect(validate?.run).toContain("forbid targets/fan-out");

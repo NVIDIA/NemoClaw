@@ -47,9 +47,12 @@ builds a new plan from the exact `github.event.before` and `github.event.after` 
 and dispatches at most three `automaticJobs` to `e2e.yaml` against the merged
 commit.
 
-The child workflow validates the exact checkout SHA, its reachability from
-`main`, selective-job inputs, plan hash, and correlation ID before E2E
-preparation or secret-bearing jobs can run. The shadow-only Vitest reporter
+The child workflow validates that the exact checkout SHA equals the workflow's
+own current `main` commit, verifies its reachability, and checks selective-job
+inputs, plan hash, and correlation ID before E2E preparation or secret-bearing
+jobs can run. If `main` advances before an older controller dispatches, that
+child fails closed and the controller reports failure rather than executing the
+older commit with current secrets. The shadow-only Vitest reporter
 records the observed checkout SHA and pass, failure, skip, pending, and
 unhandled-error counts for each job and matrix shard. The controller accepts
 only signals bound to the expected SHA, plan hash, correlation ID, job, and

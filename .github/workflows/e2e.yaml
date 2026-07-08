@@ -30,7 +30,7 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: Exact commit to test while keeping the workflow definition on the dispatched ref.
+        description: Current main commit selected by the trusted post-merge shadow controller.
         required: false
         default: ""
         type: string
@@ -89,11 +89,13 @@ jobs:
           TARGETS: ${{ inputs.targets }}
           WORKFLOW_EVENT: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::exact-commit runs require a workflow_dispatch from main"; exit 1; }
           [[ "$RISK_SHADOW" == "true" ]] || { echo "::error::exact-commit inputs require risk_shadow=true"; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA"; exit 1; }
+          [[ "$CHECKOUT_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::checkout_sha must equal the current main workflow commit"; exit 1; }
           [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out HEAD does not match checkout_sha"; exit 1; }
           git merge-base --is-ancestor "$CHECKOUT_SHA" origin/main || { echo "::error::checkout_sha must already be reachable from main"; exit 1; }
           [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::risk_plan_hash must be a lowercase SHA-256"; exit 1; }
