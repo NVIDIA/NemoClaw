@@ -33,7 +33,7 @@ observability_marker_value() {
   # Expansion is intentionally deferred to the sandbox shell.
   # shellcheck disable=SC2016
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    sh -c 'marker=/tmp/nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
+    sh -c 'marker=/sandbox/.nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
     2>/dev/null
 }
 

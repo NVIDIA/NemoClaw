@@ -24,7 +24,8 @@ export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sb
 # and policy-only reloads clear /tmp without re-running the entrypoint. Keep the
 # reconstructable bit in the sandbox workspace so those reloads retain it.
 # Regression: the proxy-launcher tests cover exact values and unsafe file types.
-# Removal condition: OpenShell propagates the bit to every exec/login process.
+# Removal condition: OpenShell propagates the bit to every exec/login process
+# and preserves it across policy reloads or re-runs the entrypoint afterward.
 # The marker is convenience state, not an authorization boundary; the
 # host-selected network policy controls whether local OTLP egress exists.
 unset NEMOCLAW_OBSERVABILITY
