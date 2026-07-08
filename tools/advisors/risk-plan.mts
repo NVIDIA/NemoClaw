@@ -64,6 +64,10 @@ const PRIVATE_NETWORK_BOUNDARY_FILES = new Set([
   "nemoclaw/src/blueprint/private-networks.ts",
 ]);
 const POLICY_SECURITY_FILE = /^src\/lib\/(?:policy|shields)\//;
+// Ordinary tests do not raise the runtime floor, but this live target is also the
+// executable definition of clean-host platform validation. Keep the allowlist
+// explicit so edits cannot silently remove the cloud-onboard requirement.
+const RISK_RELEVANT_TEST_FILES = new Set(["test/e2e/live/cloud-onboard.test.ts"]);
 
 export const RISK_RULES: readonly RiskRule[] = [
   {
@@ -175,7 +179,7 @@ export const RISK_RULES: readonly RiskRule[] = [
       file === "scripts/scorecard/analyze-trace-timing.ts" ||
       file === "scripts/e2e/sanitize-trace-timing.py" ||
       file === "ci/onboard-performance-budget.json" ||
-      file === "test/e2e/live/cloud-onboard.test.ts",
+      RISK_RELEVANT_TEST_FILES.has(file),
   },
   {
     id: "credentials-security",
@@ -202,6 +206,7 @@ function stableUnique(values: readonly string[]): string[] {
 }
 
 function isRuntimeRelevant(file: string): boolean {
+  if (RISK_RELEVANT_TEST_FILES.has(file)) return true;
   return !(
     file.startsWith("docs/") ||
     file.startsWith("fern/") ||

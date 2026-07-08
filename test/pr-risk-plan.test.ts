@@ -32,6 +32,16 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiresManualExpansion).toBe(false);
   });
 
+  it("keeps the canonical cloud-onboard live test in the platform floor", () => {
+    const canonical = plan("test/e2e/live/cloud-onboard.test.ts");
+    const ordinaryLiveTest = plan("test/e2e/live/full.test.ts");
+
+    expect(canonical.families.map((family) => family.id)).toContain("platform-install");
+    expect(riskPlanRequiredJobIds(canonical)).toContain("cloud-onboard");
+    expect(ordinaryLiveTest.families).toEqual([]);
+    expect(ordinaryLiveTest.requiredJobs).toEqual([]);
+  });
+
   it("does not infer security or inference risk from unrelated path substrings", () => {
     const result = plan("src/lib/actions/sandbox/mcp-bridge-provider.ts", "src/lib/secretary.ts");
 
