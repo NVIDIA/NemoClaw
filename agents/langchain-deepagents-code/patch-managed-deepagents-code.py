@@ -381,7 +381,7 @@ def _preview_dotenv_environ(*, start_path=None) -> dict[str, str]:
 
 
 def _load_dotenv(*, start_path=None, refresh_loaded=False) -> bool:
-    """Disable dotenv, including DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL."""
+    """Disable all dotenv loading so it cannot supply the trusted fetch proxy."""
     del start_path, refresh_loaded
     _dotenv_loaded_values.clear()
     return False
@@ -423,9 +423,11 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
 # destination DNS locally, then disables environment proxies. That is a sound
 # standalone SSRF defense but cannot operate in OpenShell's proxy-only network
 # namespace, where direct DNS and direct target connections are rejected. The
-# managed launcher supplies an explicit, root-owned proxy URL; this patch keeps
-# requests' ambient proxy discovery disabled and delegates every redirect hop to
-# that exact proxy, whose network policy and SSRF checks remain authoritative.
+# managed launcher supplies an explicit, root-owned proxy URL. `trust_env=False`
+# disables every Requests environment-derived session setting (proxy/NO_PROXY,
+# netrc, and CA discovery); each hop receives only the explicit proxy mapping
+# and separately validated fixed CA bundle. The proxy's network policy and SSRF
+# checks remain authoritative.
 TOOLS_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.

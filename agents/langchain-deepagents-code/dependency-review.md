@@ -34,6 +34,13 @@ TLS transport trust; that bundle cannot select a proxy or authorize a
 destination. Imports outside the managed launcher retain the upstream direct
 DNS-pinning behavior.
 
+Redirect validation rejects authority userinfo (`user:password@host`). It does
+not treat `@` or `:` in a path segment as credentials: RFC 3986 defines those
+characters as ordinary path data, and coding tasks can legitimately encounter
+them in repository refs or filenames. Focused redirect coverage pins that
+distinction, while validation errors avoid echoing candidate URLs and the
+policy proxy remains authoritative for every destination.
+
 Focused tests patch the released wheel, exercise managed and unmanaged paths,
 reject forged proxy environments and malformed redirects, and prove that
 credential-bearing URLs are not reflected. The live Deep Agents Code egress

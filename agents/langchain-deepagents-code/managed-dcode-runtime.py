@@ -57,8 +57,10 @@ _NVIDIA_DISPLAY_PROVIDER_ALIASES = frozenset(
     {"nvidia", "nvidia-prod", "nvidia-nim", "nvidia-router"}
 )
 _DISPLAY_PROVIDER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-# Match the launchers' image-baked proxy validator: underscores are accepted
-# intentionally for controlled internal/container aliases, not public DNS.
+# Match the launchers' root-owned, image-baked proxy validator. Its deliberate
+# RFC 1123 deviation permits underscores only for controlled internal/container
+# aliases such as `proxy_name`; the cross-boundary cases in
+# test/langchain-deepagents-code-proxy-launcher.test.ts prevent validator drift.
 _MANAGED_PROXY_HOST = re.compile(r"[A-Za-z0-9._-]+")
 _MCP_SERVER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 _MCP_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
@@ -1052,10 +1054,12 @@ def managed_fetch_with_redirects(
             )
         if not hostname:
             raise validation_error("URL is missing a hostname")
-        # username/password describe only authority userinfo. An `@` or `:` in
-        # parsed.path is ordinary path data and must not be misclassified as a
-        # credential. These validation errors never echo the candidate URL;
-        # the explicit OpenShell proxy remains the policy and SSRF authority.
+        # RFC 3986 credentials are authority userinfo, exposed by username and
+        # password. An `@` or `:` after the authority is ordinary path data
+        # (including valid repository refs/files), never authentication;
+        # rejecting that shape would create false positives. These validation
+        # errors never echo the candidate URL, and the explicit OpenShell proxy
+        # remains the destination-policy and SSRF authority for every hop.
         if parsed.username is not None or parsed.password is not None:
             raise validation_error("URL credentials are not allowed")
         try:

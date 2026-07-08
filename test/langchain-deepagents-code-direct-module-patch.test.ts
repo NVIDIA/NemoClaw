@@ -318,6 +318,19 @@ assert response.status_code == 200
 assert calls[0][1] == path_data_url
 
 calls.clear()
+redirect_path_data_url = "https://raw.githubusercontent.com/example/@user:pass/source.py"
+responses.extend([Response(302, redirect_path_data_url), Response(200)])
+response = tools._fetch_with_redirects(
+    "https://raw.githubusercontent.com/path-data-redirect",
+    timeout=8,
+)
+assert response.status_code == 200
+assert [url for _, url, _ in calls] == [
+    "https://raw.githubusercontent.com/path-data-redirect",
+    redirect_path_data_url,
+]
+
+calls.clear()
 responses.extend([
     Response(302, "../main/README.md"),
     Response(),
