@@ -20,9 +20,23 @@ const MANAGED_MCP_VALIDATOR_INVOCATION = [
   ')"',
 ].join("\n");
 
+const DEEPAGENTS_CODE_EXEC = "exec /opt/venv/bin/python3 -I -m deepagents_code";
+
 function stubManagedMcpValidator(source: string): string {
   expect(source).not.toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
   return source;
+}
+
+function mustReplaceOnce(
+  source: string,
+  replacements: readonly (readonly [search: string, replacement: string])[],
+): string {
+  return replacements.reduce((current, [search, replacement]) => {
+    if (current.split(search).length !== 2) {
+      throw new Error(`fixture drift: expected exactly one ${JSON.stringify(search)}`);
+    }
+    return current.replace(search, replacement);
+  }, source);
 }
 
 function materializeWrapperFixture(
@@ -31,10 +45,12 @@ function materializeWrapperFixture(
   transform: (source: string) => string,
 ): string {
   const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
-  const source = stubManagedMcpValidator(readAgentFile("dcode-wrapper.sh")).replace(
-    'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
-    `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
-  );
+  const source = mustReplaceOnce(stubManagedMcpValidator(readAgentFile("dcode-wrapper.sh")), [
+    [
+      'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
+      `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
+    ],
+  ]);
   fs.writeFileSync(envFile, "", "utf8");
   fs.writeFileSync(wrapperPath, transform(source), "utf8");
   fs.chmodSync(wrapperPath, 0o755);
@@ -56,20 +72,21 @@ export function makeWrapperFixture(
   const authFile = path.join(tempDir, "auth.json");
   const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
   const wrapperPath = materializeWrapperFixture(tempDir, envFile, (source) =>
-    source
-      .replace(
+    mustReplaceOnce(source, [
+      [
         'readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"',
         `readonly DEEPAGENTS_AUTH_FILE="${authFile}"`,
-      )
-      .replace(
+      ],
+      [
         'readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"',
         `readonly DEEPAGENTS_CODEX_AUTH_FILE="${codexAuthFile}"`,
-      )
-      .replace('/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"')
-      .replace(
-        "exec /opt/venv/bin/python3 -I -m deepagents_code",
-        `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
-      ),
+      ],
+      ['/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"'],
+      [
+        DEEPAGENTS_CODE_EXEC,
+        `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : ${DEEPAGENTS_CODE_EXEC}`,
+      ],
+    ]),
   );
   return { wrapperPath, ranMarker, envFile, authFile, codexAuthFile };
 }
@@ -82,10 +99,12 @@ export function makeNetworkSimulatingFixture(tempDir: string): {
   const networkLog = path.join(tempDir, "network.log");
   const envFile = path.join(tempDir, ".env");
   const wrapperPath = materializeWrapperFixture(tempDir, envFile, (source) =>
-    source.replace(
-      "exec /opt/venv/bin/python3 -I -m deepagents_code",
-      `printf 'NET:OPEN inference.local/v1/chat\\nNET:OPEN pypi.org/simple\\nNET:OPEN api.openai.com/v1\\n' > "${networkLog}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
-    ),
+    mustReplaceOnce(source, [
+      [
+        DEEPAGENTS_CODE_EXEC,
+        `printf 'NET:OPEN inference.local/v1/chat\\nNET:OPEN pypi.org/simple\\nNET:OPEN api.openai.com/v1\\n' > "${networkLog}"; exit 0; : ${DEEPAGENTS_CODE_EXEC}`,
+      ],
+    ]),
   );
   return { wrapperPath, networkLog, envFile };
 }
