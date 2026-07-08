@@ -913,6 +913,7 @@ def managed_auto_approval_mode() -> str:
         try:
             os.close(descriptor)
         except OSError:
+            # Cleanup cannot weaken the fail-closed capability result.
             pass
 
     return _AUTO_APPROVAL_CONTENTS.get(

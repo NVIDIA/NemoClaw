@@ -5,7 +5,7 @@ import { loadAgent } from "../../agent/defs";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import {
   type DcodeAutoApprovalMode,
-  dcodeAutoApprovalModeOrDefault,
+  normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import {
   resolveGatewayPortFromName,
@@ -177,7 +177,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
     toolDisclosure: toolDisclosureOrDefault(args.sb?.toolDisclosure),
-    dcodeAutoApprovalMode: dcodeAutoApprovalModeOrDefault(args.sb?.dcodeAutoApprovalMode),
+    dcodeAutoApprovalMode: normalizeDcodeAutoApprovalMode(args.sb?.dcodeAutoApprovalMode),
     dcodeAutoApprovalRequestedExplicitly: false,
     observabilityEnabled: args.sb?.observabilityEnabled === true,
     observabilityRequestedExplicitly: false,

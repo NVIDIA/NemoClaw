@@ -22,8 +22,8 @@ import {
 } from "../../inference/web-search";
 import {
   type DcodeAutoApprovalMode,
-  dcodeAutoApprovalModeOrDefault,
   invalidRecordedDcodeAutoApprovalMode,
+  normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import { hasInvalidSessionToolDisclosure, type Session } from "../../state/onboard-session";
@@ -214,7 +214,7 @@ export function resolveRebuildDurableConfig(
     ? "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in"
     : null;
   const dcodeAutoApprovalMode =
-    requestedDcodeAutoApprovalMode ?? dcodeAutoApprovalModeOrDefault(recordedDcodeAutoApprovalMode);
+    requestedDcodeAutoApprovalMode ?? normalizeDcodeAutoApprovalMode(recordedDcodeAutoApprovalMode);
   const recordedFromDockerfile: unknown =
     entry.fromDockerfile !== undefined
       ? entry.fromDockerfile

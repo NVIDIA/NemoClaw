@@ -1132,6 +1132,7 @@ print("managed-boundaries-ok")
     const validation = `
 import asyncio
 import importlib.util
+import sys
 
 spec = importlib.util.spec_from_file_location(
     "progressive_disclosure_harness",
@@ -1142,7 +1143,8 @@ progressive_disclosure_harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(progressive_disclosure_harness)
 progressive_disclosure_harness._install_stubs()
 
-from deepagents_code import _nemoclaw_managed, app
+from deepagents_code import _nemoclaw_managed, agent, app, main as dcode_main
+from deepagents_code.client import non_interactive
 from deepagents_code.tui.widgets.approval import ApprovalMenu
 
 WARNING = "Tool calls, including shell commands, may execute without further confirmation"
@@ -1157,9 +1159,44 @@ def assert_auto(instance, enabled):
     assert instance._status_bar.auto_approve is enabled
     assert instance._session_state.auto_approve is enabled
 
+def assert_reset(instance):
+    assert_auto(instance, False)
+    assert instance._session_state.approval_mode_key is None
+
 async def validate():
     assert _nemoclaw_managed.managed_auto_approval_mode() == "thread-opt-in"
     assert _nemoclaw_managed.managed_auto_approval_enabled() is True
+    original_argv = sys.argv
+    sys.argv = ["dcode"]
+    assert dcode_main.parse_args().auto_approve is False
+    sys.argv = ["dcode", "-n", "message", "--auto-approve"]
+    assert dcode_main.parse_args().auto_approve is True
+    sys.argv = original_argv
+    assert agent._resolve_ptc_option(
+        ["execute"], tools=[], acknowledge_unsafe=True, auto_approve=True
+    ) is None
+    headless_kwargs = await non_interactive.run_non_interactive(
+        "message",
+        "assistant",
+        startup_cmd="touch /tmp/unsafe",
+        model_params={"api_key": "secret"},
+        sandbox_type="modal",
+        mcp_config_path="mcp.json",
+        no_mcp=False,
+        trust_project_mcp=True,
+        enable_interpreter=True,
+        interpreter_ptc=["execute"],
+        rubric_model="anthropic:attacker",
+    )
+    assert headless_kwargs["startup_cmd"] is None
+    assert headless_kwargs["model_params"] is None
+    assert headless_kwargs["sandbox_type"] == "none"
+    assert headless_kwargs["mcp_config_path"] is None
+    assert headless_kwargs["no_mcp"] is True
+    assert headless_kwargs["trust_project_mcp"] is False
+    assert headless_kwargs["enable_interpreter"] is False
+    assert headless_kwargs["interpreter_ptc"] is None
+    assert headless_kwargs["rubric_model"] is None
     instance = app.DeepAgentsApp()
 
     set_auto(instance, False)
@@ -1186,13 +1223,13 @@ async def validate():
     previous_thread = instance._session_state.thread_id
     await instance._handle_command("/clear")
     assert instance._session_state.thread_id != previous_thread
-    assert_auto(instance, False)
+    assert_reset(instance)
 
     set_auto(instance, True)
     previous_thread = instance._session_state.thread_id
     await instance._handle_command("/force-clear")
     assert instance._session_state.thread_id != previous_thread
-    assert_auto(instance, False)
+    assert_reset(instance)
 
     set_auto(instance, True)
     previous_thread = instance._session_state.thread_id
@@ -1204,7 +1241,7 @@ async def validate():
     else:
         raise AssertionError("early clear failure was not raised")
     assert instance._session_state.thread_id == previous_thread
-    assert_auto(instance, True)
+    assert_reset(instance)
 
     instance.clear_should_fail_early = False
     instance.clear_should_fail_after_reset = True
@@ -1215,7 +1252,7 @@ async def validate():
     else:
         raise AssertionError("post-reset clear failure was not raised")
     assert instance._session_state.thread_id != previous_thread
-    assert_auto(instance, False)
+    assert_reset(instance)
     instance.clear_should_fail_after_reset = False
 
     set_auto(instance, True)
@@ -1223,7 +1260,7 @@ async def validate():
     instance.resume_should_fail = True
     await instance._resume_thread("thread-failed")
     assert instance._session_state.thread_id == previous_thread
-    assert_auto(instance, True)
+    assert_reset(instance)
 
     instance.resume_should_fail = False
     instance.resume_should_fail_after_reset = True
@@ -1233,29 +1270,39 @@ async def validate():
         pass
     else:
         raise AssertionError("post-reset resume failure was not raised")
-    assert instance._session_state.thread_id == "thread-reset-then-failed"
-    assert_auto(instance, False)
+    assert instance._session_state.thread_id == previous_thread
+    assert_reset(instance)
 
     set_auto(instance, True)
     instance._session_state.approval_mode_key = "approval/thread-reset-then-failed"
     instance.resume_should_fail_after_reset = False
     await instance._resume_thread("thread-2")
     assert instance._session_state.thread_id == "thread-2"
-    assert_auto(instance, False)
-    assert instance._session_state.approval_mode_key is None
+    assert_reset(instance)
 
     set_auto(instance, True)
     previous_thread = instance._session_state.thread_id
     instance.agent_swap_should_fail = True
     await instance._restart_server_for_agent_swap("agent-failed")
     assert instance._session_state.thread_id == previous_thread
-    assert_auto(instance, True)
+    assert_reset(instance)
+
+    set_auto(instance, True)
+    instance._session_state.thread_id = None
+    await instance._restart_server_for_agent_swap("agent-none")
+    assert instance._session_state.thread_id is None
+    assert_reset(instance)
 
     instance.agent_swap_should_fail = False
     instance.agent_swap_should_fail_after_reset = True
-    await instance._restart_server_for_agent_swap("agent-restart-failed")
-    assert instance._session_state.thread_id != previous_thread
-    assert_auto(instance, False)
+    try:
+        await instance._restart_server_for_agent_swap("agent-restart-failed")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("post-reset agent swap failure was not raised")
+    assert instance._session_state.thread_id is not None
+    assert_reset(instance)
 
     set_auto(instance, True)
     previous_thread = instance._session_state.thread_id
@@ -1264,7 +1311,7 @@ async def validate():
     await instance._restart_server_for_agent_swap("agent-2")
     assert instance._session_state.thread_id != previous_thread
     assert instance._assistant_id == "agent-2"
-    assert_auto(instance, False)
+    assert_reset(instance)
 
 asyncio.run(validate())
 print("managed-auto-approval-ok")

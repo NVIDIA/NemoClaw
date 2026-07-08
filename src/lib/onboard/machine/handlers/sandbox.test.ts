@@ -21,11 +21,7 @@ vi.mock("../../messaging-channel-setup", () => ({
 
 const detectMessagingChannelsFromEnvMock = vi.mocked(detectMessagingChannelsFromEnv);
 
-function dcodeRegistryEntry(
-  name: string,
-  observabilityEnabled?: boolean,
-  dcodeAutoApprovalMode?: "disabled" | "thread-opt-in",
-) {
+function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
   return {
     name,
     agent: "langchain-deepagents-code",
@@ -37,7 +33,6 @@ function dcodeRegistryEntry(
     gatewayName: "nemoclaw",
     toolDisclosure: "progressive" as const,
     ...(typeof observabilityEnabled === "boolean" ? { observabilityEnabled } : {}),
-    ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
   };
 }
 
@@ -121,31 +116,6 @@ describe("handleSandboxState", () => {
     expect(result.webSearchConfig).toBeNull();
   });
 
-  it("carries durable observability intent in the sandbox create intent", async () => {
-    const session = createSession({
-      observabilityEnabled: true,
-      observabilityRequestedExplicitly: true,
-    });
-    const { deps, calls } = createDeps({
-      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
-        return mutator(session) ?? session;
-      }),
-    });
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      agent: { name: "langchain-deepagents-code" },
-    });
-
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
-      recreate: false,
-      toolDisclosure: "progressive",
-      observabilityEnabled: true,
-      observabilityRequestedExplicitly: true,
-      dcodeAutoApprovalMode: "disabled",
-    });
-  });
-
   it("carries an authoritative rebuild tier in the sandbox create intent", async () => {
     const { deps, calls } = createDeps();
 
@@ -159,70 +129,6 @@ describe("handleSandboxState", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
       policyTier: "restricted",
     });
-  });
-
-  it("carries authoritative thread opt-in in the create intent (#6478)", async () => {
-    const session = createSession();
-    const { deps, calls } = createDeps();
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      agent: { name: "langchain-deepagents-code" },
-      requestedDcodeAutoApprovalMode: "thread-opt-in",
-    });
-
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
-      dcodeAutoApprovalMode: "thread-opt-in",
-    });
-  });
-
-  it("recreates a ready DCode sandbox when the image-baked mode changes (#6478)", async () => {
-    const session = createSession({
-      sandboxName: "saved",
-    });
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, false, "disabled"),
-      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
-        return mutator(session) ?? session;
-      }),
-    });
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      agent: { name: "langchain-deepagents-code" },
-      resume: true,
-      sandboxName: "saved",
-      requestedDcodeAutoApprovalMode: "thread-opt-in",
-    });
-
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
-      recreate: true,
-      dcodeAutoApprovalMode: "thread-opt-in",
-    });
-    expect(calls.note).toHaveBeenCalledWith(
-      "  [resume] DCode auto-approval capability changed; recreating sandbox.",
-    );
-  });
-
-  it("rejects malformed recorded DCode auto-approval state (#6478)", async () => {
-    const { deps, calls } = createDeps({
-      getSandboxRegistryEntry: (name: string) => ({
-        ...dcodeRegistryEntry(name),
-        dcodeAutoApprovalMode: "always" as never,
-      }),
-    });
-
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps),
-        agent: { name: "langchain-deepagents-code" },
-        sandboxName: "saved",
-      }),
-    ).rejects.toThrow("exit 1");
-    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("mode is invalid"));
-    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
   it("rejects observability for a selected non-DCode agent", async () => {

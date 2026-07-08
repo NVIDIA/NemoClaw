@@ -11,7 +11,7 @@ import type {
   CreateSandboxBuildContextResult,
   PreparedSandboxBuildContext,
 } from "./build-context-stage";
-import { type DcodeAutoApprovalMode, dcodeAutoApprovalModeOrDefault } from "./dcode-auto-approval";
+import { type DcodeAutoApprovalMode, normalizeDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import type {
   PrepareSandboxDockerfilePatchInput,
   SandboxDockerfilePatchResult,
@@ -145,7 +145,7 @@ export function createPreparedDcodeRebuildRuntime(
   if (
     preparedDcode &&
     preparedDcode.dcodeAutoApprovalMode !==
-      dcodeAutoApprovalModeOrDefault(options.dcodeAutoApprovalMode)
+      normalizeDcodeAutoApprovalMode(options.dcodeAutoApprovalMode)
   ) {
     throw new Error(
       "Prepared DCode rebuild auto-approval mode does not match the authoritative onboard request.",

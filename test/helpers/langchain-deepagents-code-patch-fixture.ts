@@ -189,8 +189,10 @@ class DeepAgentsApp:
     async def _resume_thread(self, thread_id):
         if self.resume_should_fail:
             return
+        previous_thread_id = self._session_state.thread_id
         self._session_state.thread_id = thread_id
         if self.resume_should_fail_after_reset:
+            self._session_state.thread_id = previous_thread_id
             raise RuntimeError("resume failed after reset")
 
     async def _restart_server_for_agent_swap(self, agent_name):
@@ -199,7 +201,7 @@ class DeepAgentsApp:
         self._session_state.thread_id = f"{self._session_state.thread_id}-swap"
         if self.agent_swap_should_fail_after_reset:
             self._agent = None
-            return
+            raise RuntimeError("agent swap failed after reset")
         self._assistant_id = agent_name
         self._agent = object()
 `,

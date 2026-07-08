@@ -225,6 +225,35 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(fs.existsSync(ranMarker)).toBe(true);
   });
 
+  it("keeps non-interactive argument scanning fail-closed around auto-approval (#6478)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-headless-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+    const enabled = spawnSync("bash", [wrapperPath, "-n", "hi", "--auto-approve"], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      encoding: "utf8",
+    });
+
+    expect(enabled.status, enabled.stderr).toBe(0);
+    expect(fs.existsSync(ranMarker)).toBe(true);
+
+    const disabledTempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-dcode-auto-headless-disabled-"),
+    );
+    const disabledFixture = makeWrapperFixture(disabledTempDir);
+    const disabled = spawnSync(
+      "bash",
+      [disabledFixture.wrapperPath, "-n", "hi", "--auto-approve"],
+      {
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        encoding: "utf8",
+      },
+    );
+
+    expect(disabled.status).not.toBe(0);
+    expect(disabled.stderr).toContain("tool approval");
+    expect(fs.existsSync(disabledFixture.ranMarker)).toBe(false);
+  });
+
   it("fails closed for ambient, malformed, symlinked, and writable auto-approval state (#6478)", () => {
     const cases = [
       { label: "ambient only", prepare: (_path: string) => undefined },

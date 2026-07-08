@@ -10,7 +10,6 @@ import {
   type WebSearchConfig as SharedWebSearchConfig,
   WEB_SEARCH_PROVIDER_ENV,
   webSearchConfigsEqual,
-  webSearchEnvFor,
   webSearchLabelFor,
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
@@ -22,8 +21,6 @@ import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
   type DcodeAutoApprovalMode,
   DEFAULT_DCODE_AUTO_APPROVAL_MODE,
-  hasDcodeAutoApprovalDrift,
-  resolveDcodeAutoApprovalRequest,
 } from "../../dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../gateway-binding";
 import {
@@ -45,6 +42,7 @@ import {
   applySandboxResumeDecision,
   decideSandboxResume,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
+  mcpRegistryRemovalBlockReason,
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
@@ -267,32 +265,6 @@ function effectiveHermesToolGatewaysForWebSearch(
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
 
-function mcpRegistryRemovalBlockReason(
-  decision: SandboxCreationDecision,
-  sandboxName: string | null,
-  webSearchConfig: SharedWebSearchConfig | null,
-  getSandboxRegistryEntry: (sandboxName: string) => SandboxEntry | null,
-): string | null {
-  if (decision.kind !== "recreate") return null;
-  if (!decision.removeRegistryEntry) return null;
-  if (!sandboxName) return null;
-  const mcpState = getSandboxRegistryEntry(sandboxName)?.mcp;
-  if (!mcpState) return null;
-
-  const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
-  if (selectedProvider) {
-    const credentialEnv = webSearchEnvFor(selectedProvider);
-    const collidingBridge = Object.values(mcpState.bridges).find((entry) =>
-      entry.env.includes(credentialEnv),
-    );
-    if (collidingBridge) {
-      return `  Cannot enable ${webSearchLabelFor(selectedProvider)}: MCP server '${collidingBridge.server}' already owns ${credentialEnv}. Use a distinct credential name.`;
-    }
-  }
-
-  return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
-}
-
 function observabilityRequestValidationError(
   issue: ManagedSandboxFeatureIssue | null,
 ): string | null {
@@ -430,6 +402,7 @@ class SandboxStateFlow<
       state,
       sandboxReuseState,
       registryEntry,
+      this.dcodeAutoApprovalMode,
       this.deps,
     );
     const decision = decideSandboxResume({
@@ -462,15 +435,6 @@ class SandboxStateFlow<
         hasRegistryEntry: registryEntry !== null,
         recordedObservabilityEnabled: registryEntry?.observabilityEnabled,
         requestedObservabilityEnabled: state.session?.observabilityEnabled,
-      }),
-      dcodeAutoApprovalChanged: hasDcodeAutoApprovalDrift({
-        liveExists: sandboxReuseState === "ready",
-        managedDcodeAgent:
-          !this.options.fromDockerfile &&
-          isDcodeAgent((this.options.agent as { name?: string } | null)?.name),
-        hasRegistryEntry: registryEntry !== null,
-        recordedDcodeAutoApprovalMode: registryEntry?.dcodeAutoApprovalMode,
-        requestedDcodeAutoApprovalMode: this.dcodeAutoApprovalMode,
       }),
       ...toolDisclosureSignals,
       ...dcodeResumeSignals,
@@ -516,28 +480,6 @@ class SandboxStateFlow<
       return current;
     });
     return { ...state, session };
-  }
-
-  private applyDcodeAutoApprovalRequest(
-    state: SandboxStepState<WebSearchConfig>,
-  ): SandboxStepState<WebSearchConfig> {
-    const registryEntry = state.sandboxName
-      ? this.deps.getSandboxRegistryEntry(state.sandboxName)
-      : null;
-    const selectedAgent = this.options.fromDockerfile
-      ? null
-      : (this.options.agent as { name?: string } | null)?.name;
-    const resolution = resolveDcodeAutoApprovalRequest({
-      agent: selectedAgent,
-      requestedMode: this.options.requestedDcodeAutoApprovalMode,
-      recordedMode: registryEntry?.dcodeAutoApprovalMode,
-    });
-    if (resolution.error) {
-      this.deps.error(resolution.error);
-      return this.deps.exitProcess(1);
-    }
-    this.dcodeAutoApprovalMode = resolution.mode;
-    return state;
   }
 
   private assertGatewayRouteCompatible(sandboxName: string | null): void {
@@ -851,9 +793,12 @@ class SandboxStateFlow<
   }
 
   async run(): Promise<SandboxStateResult<WebSearchConfig>> {
-    const initialState = this.applyDcodeAutoApprovalRequest(
-      this.applyObservabilityRequest(this.prepareWebSearchSupport()),
+    this.dcodeAutoApprovalMode = dcodeResume.resolveAutoApprovalMode(
+      this.options,
+      this.options.sandboxName,
+      this.deps,
     );
+    const initialState = this.applyObservabilityRequest(this.prepareWebSearchSupport());
     const decision = this.resolveResumeDecision(initialState);
     const completedState =
       decision.kind === "reuse"

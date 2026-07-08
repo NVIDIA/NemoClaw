@@ -16,7 +16,7 @@ import {
 } from "../../inference/health";
 import {
   type DcodeAutoApprovalMode,
-  dcodeAutoApprovalModeOrDefault,
+  normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
@@ -132,7 +132,7 @@ export function resolveSandboxStatusDcodeAutoApprovalMode(
   sandbox: registry.SandboxEntry | null,
 ): DcodeAutoApprovalMode | null {
   if (sandbox?.agent !== "langchain-deepagents-code") return null;
-  return dcodeAutoApprovalModeOrDefault(sandbox.dcodeAutoApprovalMode);
+  return normalizeDcodeAutoApprovalMode(sandbox.dcodeAutoApprovalMode);
 }
 
 export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatusAgentInfo {

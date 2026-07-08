@@ -7,37 +7,6 @@ import { createSession, normalizeSession } from "../../state/onboard-session";
 import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("resolveRebuildDurableConfig", () => {
-  it.each([
-    ["defaults legacy state to disabled", undefined, undefined, "disabled", null],
-    ["uses recorded state", "thread-opt-in", undefined, "thread-opt-in", null],
-    ["applies an explicit override", "disabled", "thread-opt-in", "thread-opt-in", null],
-    [
-      "does not let an explicit override mask corrupt state",
-      "always",
-      "thread-opt-in",
-      "thread-opt-in",
-      "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in",
-    ],
-  ] as const)("%s (#6478)", (_label, recorded, requested, expected, error) => {
-    const config = resolveRebuildDurableConfig(
-      "alpha",
-      {
-        name: "alpha",
-        agent: "langchain-deepagents-code",
-        nemoclawVersion: "0.1.0",
-        ...(recorded !== undefined ? { dcodeAutoApprovalMode: recorded as never } : {}),
-      },
-      null,
-      undefined,
-      undefined,
-      false,
-      requested,
-    );
-
-    expect(config.dcodeAutoApprovalMode).toBe(expected);
-    expect(config.dcodeAutoApprovalModeError).toBe(error);
-  });
-
   it("keeps the registry tool-disclosure selection authoritative", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",

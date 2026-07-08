@@ -201,15 +201,8 @@ _nemoclaw_original_absolutize_launch_relative_path = (
 
 
 async def _nemoclaw_run_thread_transition(self, operation, *args) -> None:
-    session_state = getattr(self, "_session_state", None)
-    previous_thread_id = getattr(session_state, "thread_id", None)
-    try:
-        await operation(self, *args)
-    finally:
-        session_state = getattr(self, "_session_state", None)
-        current_thread_id = getattr(session_state, "thread_id", None)
-        if current_thread_id is not None and current_thread_id != previous_thread_id:
-            _nemoclaw_reset_thread_auto_approval(self)
+    _nemoclaw_reset_thread_auto_approval(self)
+    await operation(self, *args)
 
 
 async def _nemoclaw_handle_command(self, command: str) -> None:

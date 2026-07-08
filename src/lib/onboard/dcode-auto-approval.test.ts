@@ -7,7 +7,6 @@ import {
   DCODE_AUTO_APPROVAL_BUILD_ARG,
   DCODE_AUTO_APPROVAL_FEATURE,
   DEFAULT_DCODE_AUTO_APPROVAL_MODE,
-  dcodeAutoApprovalModeOrDefault,
   hasDcodeAutoApprovalDrift,
   invalidRecordedDcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
@@ -20,7 +19,7 @@ describe("DCode auto-approval capability", () => {
     expect(DCODE_AUTO_APPROVAL_BUILD_ARG).toBe("NEMOCLAW_DCODE_AUTO_APPROVAL");
     expect(normalizeDcodeAutoApprovalMode(undefined)).toBe("disabled");
     expect(normalizeDcodeAutoApprovalMode("THREAD-OPT-IN")).toBe("disabled");
-    expect(dcodeAutoApprovalModeOrDefault("thread-opt-in")).toBe("thread-opt-in");
+    expect(normalizeDcodeAutoApprovalMode("thread-opt-in")).toBe("thread-opt-in");
     expect(invalidRecordedDcodeAutoApprovalMode(undefined)).toBe(false);
     expect(invalidRecordedDcodeAutoApprovalMode("always")).toBe(true);
   });

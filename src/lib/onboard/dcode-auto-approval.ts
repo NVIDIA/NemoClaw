@@ -28,10 +28,6 @@ export function invalidRecordedDcodeAutoApprovalMode(value: unknown): boolean {
   return value !== undefined && value !== null && !isDcodeAutoApprovalMode(value);
 }
 
-export function dcodeAutoApprovalModeOrDefault(value: unknown): DcodeAutoApprovalMode {
-  return normalizeDcodeAutoApprovalMode(value);
-}
-
 export const DCODE_AUTO_APPROVAL_FEATURE: ManagedSandboxFeature<DcodeAutoApprovalMode> = {
   id: "dcode-auto-approval",
   defaultValue: DEFAULT_DCODE_AUTO_APPROVAL_MODE,
@@ -82,8 +78,8 @@ export function hasDcodeAutoApprovalDrift(options: {
     agent: options.managedDcodeAgent ? DCODE_AGENT_NAME : null,
     // A legacy managed image has the same closed behavior as an explicit
     // disabled mode, so absence alone does not force a migration rebuild.
-    recordedValue: dcodeAutoApprovalModeOrDefault(options.recordedDcodeAutoApprovalMode),
-    desiredValue: dcodeAutoApprovalModeOrDefault(options.requestedDcodeAutoApprovalMode),
+    recordedValue: normalizeDcodeAutoApprovalMode(options.recordedDcodeAutoApprovalMode),
+    desiredValue: normalizeDcodeAutoApprovalMode(options.requestedDcodeAutoApprovalMode),
   });
 }
 
@@ -130,7 +126,7 @@ export function prepareDcodeAutoApprovalCreatePlan(
     );
     deps.exitProcess(1);
   }
-  const mode = dcodeAutoApprovalModeOrDefault(input.requestedMode);
+  const mode = normalizeDcodeAutoApprovalMode(input.requestedMode);
   return {
     mode,
     hasDrift: hasRegisteredDcodeAutoApprovalDrift(
