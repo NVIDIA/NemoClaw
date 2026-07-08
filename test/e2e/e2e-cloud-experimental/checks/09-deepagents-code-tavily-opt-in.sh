@@ -29,6 +29,8 @@ sandbox_exec() {
 }
 
 observability_marker_value() {
+  # Expansion is intentionally deferred to the sandbox shell.
+  # shellcheck disable=SC2016
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
     sh -c "marker=/tmp/nemoclaw-observability-enabled; if test -f \"\$marker\" && ! test -L \"\$marker\"; then cat \"\$marker\"; else printf \"absent\"; fi" \
     2>/dev/null
@@ -177,6 +179,8 @@ if [[ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" =~ ^policy-cleanup-(order|on-probe-fa
   trap cleanup_tavily_check EXIT
 
   sandbox_exec() {
+    # Match the literal command substitution sent to the sandbox.
+    # shellcheck disable=SC2016
     case "$1" in
       *"test -d /sandbox/.deepagents"*) return 0 ;;
       *"readlink -f \"\$(command -v python3)\""*) printf '%s\n' "/opt/venv/bin/python3" ;;
