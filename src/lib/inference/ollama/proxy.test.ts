@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const PROXY_DIST = require.resolve("./proxy");
@@ -142,6 +142,22 @@ describe("promptOllamaModel installed-model fit filter", () => {
 });
 
 describe("waitForPulledOllamaModel", () => {
+  it("returns immediately when Ollama already lists the pulled model", () => {
+    const proxy: typeof import("./proxy") = require(PROXY_DIST);
+    const getModelOptions = vi.fn(() => ["qwen3.5:9b"]);
+    const sleep = vi.fn();
+
+    expect(
+      proxy.waitForPulledOllamaModel("qwen3.5:9b", {
+        getModelOptions,
+        now: () => 0,
+        sleep,
+      }),
+    ).toBe(true);
+    expect(getModelOptions).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("retries model discovery with bounded backoff after a completed pull (#6038)", () => {
     const proxy: typeof import("./proxy") = require(PROXY_DIST);
     const sleeps: number[] = [];

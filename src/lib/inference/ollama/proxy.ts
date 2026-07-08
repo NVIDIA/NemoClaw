@@ -766,7 +766,19 @@ async function pullOllamaModel(model) {
 const PULLED_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 const PULLED_MODEL_DISCOVERY_ATTEMPTS = 8;
 
-/** Confirm that Ollama exposes a just-pulled model before onboarding continues. */
+/**
+ * Confirm that Ollama exposes a just-pulled model before onboarding continues.
+ *
+ * Invalid state: a successful `ollama pull` can return before the daemon lists
+ * the model, so immediate validation reports a false missing-model failure.
+ * Ollama owns pull completion and model registration; NemoClaw can only poll
+ * its public model list after the producer says the pull completed. Keep this
+ * bounded so a daemon that never registers the model cannot hang onboarding.
+ * The focused tests cover immediate, delayed, and exhausted discovery, while
+ * `onboard-selection.test.ts` exercises delayed registration through the real
+ * selection flow. Remove this compatibility wait when supported Ollama
+ * versions guarantee that successful pull completion implies list visibility.
+ */
 function waitForPulledOllamaModel(
   model: string,
   deps: {
@@ -903,6 +915,7 @@ async function prepareOllamaModel(
           "Check the model name and that Ollama can access the registry, then try another model.",
       };
     }
+    console.log(`  Waiting for Ollama to register model: ${model}`);
     if (!waitForPulledOllamaModel(model)) {
       return {
         ok: false,
