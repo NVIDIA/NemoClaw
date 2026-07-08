@@ -202,7 +202,7 @@ NODE
 [ "$registry_output" = "enabled" ] || fail "host registry does not record observability enabled"
 
 marker_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  sh -c 'test -f /tmp/nemoclaw-observability-enabled && cat /tmp/nemoclaw-observability-enabled' \
+  sh -c 'test -f /sandbox/.nemoclaw-observability-enabled && cat /sandbox/.nemoclaw-observability-enabled' \
   2>&1)" || fail "managed observability marker is absent"
 [ "$marker_output" = "1" ] || fail "managed observability marker has an unexpected value"
 pass "host registry, live policy, and sandbox marker agree on enabled observability"

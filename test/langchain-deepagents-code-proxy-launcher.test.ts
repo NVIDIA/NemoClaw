@@ -64,6 +64,7 @@ function makeLauncherProxyProbeFixture(
 ): string {
   const launcherPath = path.join(tempDir, "dcode-launcher.sh");
   const probePath = path.join(tempDir, "managed-dcode-probe.sh");
+  const markerFile = path.join(tempDir, "sandbox", ".nemoclaw-observability-enabled");
   const probe = [
     "#!/bin/bash -p",
     "for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy OPENAI_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT NEMOCLAW_OBSERVABILITY; do",
@@ -78,11 +79,12 @@ function makeLauncherProxyProbeFixture(
         `readonly MANAGED_DCODE_WRAPPER="${probePath}"`,
       )
       .replace(
-        'readonly MANAGED_OBSERVABILITY_MARKER="/tmp/nemoclaw-observability-enabled"',
-        `readonly MANAGED_OBSERVABILITY_MARKER="${path.join(tempDir, "observability-enabled")}"`,
+        'readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.nemoclaw-observability-enabled"',
+        `readonly MANAGED_OBSERVABILITY_MARKER="${markerFile}"`,
       ),
     tempDir,
   );
+  fs.mkdirSync(path.dirname(markerFile), { recursive: true });
   fs.writeFileSync(probePath, probe, "utf8");
   fs.writeFileSync(launcherPath, fixture, "utf8");
   writeManagedProxyFiles(tempDir, managedProxy);
@@ -96,7 +98,7 @@ function makeStartProxyProbeFixture(
   managedProxy: { host: string; port: string } = DEFAULT_MANAGED_PROXY,
 ): { envFile: string; markerFile: string; scriptPath: string } {
   const envFile = path.join(tempDir, "proxy-env.sh");
-  const markerFile = path.join(tempDir, "observability-enabled");
+  const markerFile = path.join(tempDir, "sandbox", ".nemoclaw-observability-enabled");
   const scriptPath = path.join(tempDir, "start.sh");
   const fixture = replaceManagedProxyFileConstants(readAgentFile("start.sh"), tempDir)
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
@@ -104,11 +106,15 @@ function makeStartProxyProbeFixture(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
       `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
     )
-    .replace("local target=/tmp/nemoclaw-observability-enabled", `local target="${markerFile}"`)
     .replace(
-      'tmp="$(mktemp /tmp/nemoclaw-observability-enabled.XXXXXX)"',
+      "local target=/sandbox/.nemoclaw-observability-enabled",
+      `local target="${markerFile}"`,
+    )
+    .replace(
+      'tmp="$(mktemp /sandbox/.nemoclaw-observability-enabled.XXXXXX)"',
       `tmp="$(mktemp "${tempDir}/nemoclaw-observability-enabled.XXXXXX")"`,
     );
+  fs.mkdirSync(path.dirname(markerFile), { recursive: true });
   fs.writeFileSync(scriptPath, fixture, "utf8");
   writeManagedProxyFiles(tempDir, managedProxy);
   fs.chmodSync(scriptPath, 0o755);
@@ -237,10 +243,13 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(output).not.toContain("all-password");
   });
 
-  it("recovers only the exact entrypoint observability bit for raw dcode exec", () => {
+  it("recovers only the exact entrypoint observability bit across policy-only reloads", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-observability-"));
     const launcherPath = makeLauncherProxyProbeFixture(tempDir);
     const { markerFile, scriptPath } = makeStartProxyProbeFixture(tempDir);
+    const volatileDir = path.join(tempDir, "tmp");
+    fs.mkdirSync(volatileDir);
+    fs.writeFileSync(path.join(volatileDir, "nemoclaw-observability-enabled"), "1\n");
 
     const noncanonicalStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
       env: {
@@ -264,18 +273,29 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       },
       encoding: "utf8",
     });
+    fs.rmSync(volatileDir, { recursive: true });
     const enabledLaunch = runLauncher(launcherPath, [], {});
     expect(enabledStart.status, enabledStart.stderr).toBe(0);
     expect(fs.readFileSync(markerFile, "utf8")).toBe("1\n");
     expect(fs.statSync(markerFile).mode & 0o777).toBe(0o444);
     expect(enabledLaunch.status, enabledLaunch.stderr).toBe(0);
     expect(enabledLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=1");
+
+    const disabledStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      encoding: "utf8",
+    });
+    const disabledLaunch = runLauncher(launcherPath, [], { NEMOCLAW_OBSERVABILITY: "1" });
+    expect(disabledStart.status, disabledStart.stderr).toBe(0);
+    expect(fs.existsSync(markerFile)).toBe(false);
+    expect(disabledLaunch.status, disabledLaunch.stderr).toBe(0);
+    expect(disabledLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=__unset__");
   });
 
   it("ignores tampered and non-regular observability markers", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-observability-"));
     const launcherPath = makeLauncherProxyProbeFixture(tempDir);
-    const markerFile = path.join(tempDir, "observability-enabled");
+    const markerFile = path.join(tempDir, "sandbox", ".nemoclaw-observability-enabled");
 
     fs.writeFileSync(markerFile, "true\n", { encoding: "utf8", mode: 0o644 });
     const tamperedLaunch = runLauncher(launcherPath, [], {

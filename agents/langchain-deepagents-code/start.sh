@@ -183,13 +183,13 @@ prepare_runtime_env() {
 }
 
 prepare_observability_marker() {
-  local target=/tmp/nemoclaw-observability-enabled
+  local target=/sandbox/.nemoclaw-observability-enabled
   local tmp
   if [ "${NEMOCLAW_OBSERVABILITY:-}" != "1" ]; then
     rm -f "$target"
     return 0
   fi
-  tmp="$(mktemp /tmp/nemoclaw-observability-enabled.XXXXXX)"
+  tmp="$(mktemp /sandbox/.nemoclaw-observability-enabled.XXXXXX)"
   printf '%s\n' '1' >"$tmp"
   chmod 444 "$tmp"
   mv -f "$tmp" "$target"

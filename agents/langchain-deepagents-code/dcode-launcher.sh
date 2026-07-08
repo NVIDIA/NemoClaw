@@ -12,7 +12,7 @@ done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
 unset _nemoclaw_auto_approval_env
 
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
-readonly MANAGED_OBSERVABILITY_MARKER="/tmp/nemoclaw-observability-enabled"
+readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.nemoclaw-observability-enabled"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -20,7 +20,9 @@ export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sb
 # entrypoint's environment, so an opted-in direct dcode exec can lose tracing.
 # Source boundary: start.sh materializes only the credential-free enable bit;
 # this launcher recovers it only from a regular, non-symlink marker.
-# Source-fix constraint: NemoClaw cannot make OpenShell preserve entrypoint env.
+# Source-fix constraint: NemoClaw cannot make OpenShell preserve entrypoint env,
+# and policy-only reloads clear /tmp without re-running the entrypoint. Keep the
+# reconstructable bit in the sandbox workspace so those reloads retain it.
 # Regression: the proxy-launcher tests cover exact values and unsafe file types.
 # Removal condition: OpenShell propagates the bit to every exec/login process.
 # The marker is convenience state, not an authorization boundary; the
