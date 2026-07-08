@@ -22,24 +22,29 @@ function extractShellFunction(source: string, name: string): string {
 function extractGatewayLogAppendFunction(
   source: string,
   gatewayLog: string,
-  { replaceAfterLstat = false }: { replaceAfterLstat?: boolean } = {},
+  { replaceAfterLstat }: { replaceAfterLstat?: "regular" | "fifo" } = {},
 ): string {
-  const functionSource = extractShellFunction(source, "append_openclaw_gateway_log_line").replace(
-    '  local log_file="/tmp/gateway.log"',
+  const functionSource = extractShellFunction(source, "append_openclaw_gateway_log_line");
+  const marker = '  local log_file="/tmp/gateway.log"';
+  expect(functionSource).toContain(marker);
+  const rewrittenSource = functionSource.replace(
+    marker,
     `  local log_file=${JSON.stringify(gatewayLog)}`,
   );
-  return replaceAfterLstat
-    ? functionSource.replace(
-        "    fd = os.open(path, flags)",
-        [
+  if (!replaceAfterLstat) return rewrittenSource;
+  const replacement =
+    replaceAfterLstat === "fifo"
+      ? ["    os.unlink(path)", "    os.mkfifo(path)"]
+      : [
           '    replacement = f"{path}.replacement"',
           '    with open(replacement, "w", encoding="utf-8") as handle:',
           '        handle.write("replacement\\n")',
           "    os.replace(replacement, path)",
-          "    fd = os.open(path, flags)",
-        ].join("\n"),
-      )
-    : functionSource;
+        ];
+  return rewrittenSource.replace(
+    "    fd = os.open(path, flags)",
+    [...replacement, "    fd = os.open(path, flags)"].join("\n"),
+  );
 }
 
 type Harness = {
@@ -266,7 +271,7 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
       const script = [
         "set -uo pipefail",
         `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
-        extractGatewayLogAppendFunction(source, gatewayLog, { replaceAfterLstat: true }),
+        extractGatewayLogAppendFunction(source, gatewayLog, { replaceAfterLstat: "regular" }),
         "rc=0; append_openclaw_gateway_log_line 'safe-line' || rc=$?",
         'printf "rc:%s\\n" "$rc"',
       ].join("\n");
@@ -280,6 +285,33 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
       expect(result.stdout).toBe("rc:1\n");
       expect(result.stderr).toContain("refusing replaced gateway log path");
       expect(fs.readFileSync(gatewayLog, "utf8")).toBe("replacement\n");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not block when the gateway log is replaced with a FIFO before open", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-fifo-swap-"));
+    const gatewayLog = path.join(tmpDir, "gateway.log");
+    try {
+      fs.writeFileSync(gatewayLog, "original\n", { mode: 0o644 });
+      const script = [
+        "set -uo pipefail",
+        extractGatewayLogAppendFunction(source, gatewayLog, { replaceAfterLstat: "fifo" }),
+        "rc=0; append_openclaw_gateway_log_line 'safe-line' || rc=$?",
+        'printf "rc:%s\\n" "$rc"',
+      ].join("\n");
+
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+        encoding: "utf8",
+        timeout: 5000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("rc:1\n");
+      expect(result.stderr).toContain("refusing unsafe gateway log path");
+      expect(fs.lstatSync(gatewayLog).isFIFO()).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

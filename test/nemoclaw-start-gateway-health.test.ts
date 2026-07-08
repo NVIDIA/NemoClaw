@@ -48,10 +48,10 @@ function extractShellFunction(src: string, name: string): string {
 }
 
 function extractGatewayLogAppendFunction(src: string, gatewayLog: string): string {
-  return extractShellFunction(src, "append_openclaw_gateway_log_line").replace(
-    '  local log_file="/tmp/gateway.log"',
-    `  local log_file=${JSON.stringify(gatewayLog)}`,
-  );
+  const functionSource = extractShellFunction(src, "append_openclaw_gateway_log_line");
+  const marker = '  local log_file="/tmp/gateway.log"';
+  expect(functionSource).toContain(marker);
+  return functionSource.replace(marker, `  local log_file=${JSON.stringify(gatewayLog)}`);
 }
 
 function safeTmpHelpers(src: string): string {

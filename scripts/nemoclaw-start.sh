@@ -4480,7 +4480,13 @@ import sys
 # before writing recovery breadcrumbs.
 path = sys.argv[1]
 line = sys.argv[2].replace("\r", " ").replace("\n", " ")
-flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+flags = (
+    os.O_WRONLY
+    | os.O_APPEND
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+)
 try:
     before = os.lstat(path)
     if not stat.S_ISREG(before.st_mode):
