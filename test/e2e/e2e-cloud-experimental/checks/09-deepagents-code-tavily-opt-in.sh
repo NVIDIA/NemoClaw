@@ -175,7 +175,7 @@ if [[ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" =~ ^policy-cleanup-(order|on-probe-fa
     POLICY_CLEANUP_EMIT_TRACE_ON_EXIT=1
   fi
   printf '%s\n' "baseline" >"$POLICY_CLEANUP_STATE"
-  printf '%s\n' "1" >"$POLICY_CLEANUP_MARKER"
+  printf '%s\n' "absent" >"$POLICY_CLEANUP_MARKER"
   trap cleanup_tavily_check EXIT
 
   sandbox_exec() {
@@ -200,6 +200,7 @@ if [[ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" =~ ^policy-cleanup-(order|on-probe-fa
       policy-add:tavily:--dry-run) printf '%s\n' "api.tavily.com" ;;
       policy-add:tavily:--yes)
         printf '%s\n' "added" >"$POLICY_CLEANUP_STATE"
+        printf '%s\n' "1" >"$POLICY_CLEANUP_MARKER"
         printf '%s\n' "TRACE:opt-in-proof" >>"$POLICY_CLEANUP_TRACE"
         ;;
       policy-remove:tavily:--yes)
@@ -253,8 +254,6 @@ if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2
   info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
   exit 0
 fi
-
-OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
 
 info "Running Deep Agents Code Tavily opt-in check in sandbox: $SANDBOX_NAME"
 
@@ -320,6 +319,10 @@ else
   fail_test "project venv under /sandbox did not expose a usable python3 executable: $PROJECT_OUT"
 fi
 
+# The Tavily policy-add rebuild materializes the configured observability
+# marker, so preserve the state immediately before removing that policy.
+OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
+
 # Restore the deny-by-default posture for later checks in this ordered live
 # suite. Rebuild validation intentionally preserves active policy presets, so
 # leaving Tavily enabled here would make a later baseline egress check claim
@@ -347,7 +350,7 @@ fi
 
 # The temporary Tavily policy belongs only to this check. OpenShell can clear
 # /tmp while applying the narrower replacement policy, so restore an
-# observability marker that existed before the check through the canonical
+# observability marker that existed before policy removal through the canonical
 # startup helper instead of manufacturing the marker in the test.
 if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ]; then
   OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
