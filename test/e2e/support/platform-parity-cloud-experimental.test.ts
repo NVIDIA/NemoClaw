@@ -23,6 +23,11 @@ import {
   cloudExperimentalCheckTimeoutMs,
 } from "../live/cloud-experimental-checks.ts";
 
+const dcodeTavilyCheck = path.join(
+  process.cwd(),
+  "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+);
+
 function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
   return {
     command: [],
@@ -233,7 +238,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
   });
 
-  it("keeps Deep Agents Python egress probe command single-line for OpenShell exec", () => {
+  it("keeps Deep Agents Python egress probe commands single-line for OpenShell exec", () => {
     const result = spawnSync(
       "bash",
       [
@@ -252,7 +257,12 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("NO_NEWLINE_IN_COMMAND");
+    const commands = result.stdout.trim().split("\n");
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toMatch(/^SINGLE_LINE_COMMAND:python3 -c /);
+    expect(commands[1]).toMatch(
+      /^SINGLE_LINE_COMMAND:\/usr\/local\/lib\/nemoclaw\/dcode-managed-exec \/opt\/venv\/bin\/python3 -c /,
+    );
   });
 
   it("keeps Deep Agents secret-boundary probe command single-line for OpenShell exec", () => {
@@ -297,6 +307,27 @@ describe("P0-E cloud-experimental parity guardrails", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
+  });
+
+  it.each([
+    ["BLOCKED:policy denied", "ok", 0, /returns to the default Tavily denial/],
+    ["REACHED:403", "ok", 1, /did not restore the default Tavily denial/],
+    ["BLOCKED:policy denied", "fail", 1, /policy-remove tavily failed/],
+  ])("restores Tavily denial after opt-in (%s/%s)", (fixture, removeFixture, status, expected) => {
+    const result = spawnSync("bash", [dcodeTavilyCheck], {
+      encoding: "utf8",
+      env: {
+        NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
+        NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        SANDBOX_NAME: "deepagents-sandbox",
+      },
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
+    expect(result.stdout).toContain("managed observability state restores after policy-remove");
   });
 
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {

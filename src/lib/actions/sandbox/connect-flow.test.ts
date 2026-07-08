@@ -280,7 +280,7 @@ describe("connectSandbox flow", () => {
         "--name",
         "alpha",
         "--",
-        "/usr/local/bin/nemoclaw-start",
+        "/usr/local/lib/nemoclaw/dcode-managed-exec",
         "/bin/sh",
         "-c",
         expect.stringContaining("/usr/bin/curl"),
