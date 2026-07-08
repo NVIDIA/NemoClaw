@@ -23,9 +23,11 @@ const OUTPUT_ATTRIBUTE_KEYS = ["output.value", "llm.output_messages"] as const;
 const TOOL_INPUT_ATTRIBUTE_KEYS = ["tool.parameters", "input.value"] as const;
 const CONFIRMED_EXEC_HINT =
   /^[a-z][a-z0-9-]*: recent network policy denial detected(?: for [^\r\n]+)? inside sandbox '[a-zA-Z0-9][a-zA-Z0-9_-]*'\.$/mu;
+const EMBEDDED_STRUCTURED_PROXY_JSON_RE = /\{[^{}\r\n]{1,4094}\}/gu;
 export type LlmTraceExpectation = {
   label: string;
   promptMarker: string;
+  redactionMarker?: string;
   responseMarker: string;
 };
 
@@ -38,6 +40,10 @@ export type ToolTraceExpectation = {
 export type DeepAgentsTraceExpectations = {
   ambientCanary: string;
   llmExchanges: readonly LlmTraceExpectation[];
+  redaction: {
+    marker: string;
+    rawCredential: string;
+  };
   serviceName: string;
   tool: ToolTraceExpectation;
 };
@@ -78,6 +84,8 @@ function assertLlmExchange(
       hasManagedService(span, serviceName) &&
       spanKind(span) === "LLM" &&
       markerInAttributes(span, INPUT_ATTRIBUTE_KEYS, expectation.promptMarker) &&
+      (expectation.redactionMarker === undefined ||
+        markerInAttributes(span, INPUT_ATTRIBUTE_KEYS, expectation.redactionMarker)) &&
       markerInAttributes(span, OUTPUT_ATTRIBUTE_KEYS, expectation.responseMarker),
   );
   if (!match) {
@@ -113,10 +121,18 @@ export function assertDeepAgentsTraceContract(
 ): { requestCount: number; spanCount: number } {
   if (bodies.length === 0) throw new Error("no managed OTLP trace requests were captured");
   const canary = Buffer.from(expectations.ambientCanary);
+  const rawCredential = Buffer.from(expectations.redaction.rawCredential);
+  const redactionMarker = Buffer.from(expectations.redaction.marker);
+  let redactionMarkerObserved = false;
   const spans = bodies.flatMap((body, index) => {
-    if (Buffer.from(body).includes(canary)) {
+    const encoded = Buffer.from(body);
+    if (encoded.includes(canary)) {
       throw new Error("ambient exporter configuration reached OTLP");
     }
+    if (encoded.includes(rawCredential)) {
+      throw new Error("credential-shaped prompt content reached OTLP");
+    }
+    redactionMarkerObserved ||= encoded.includes(redactionMarker);
     try {
       return decodeExportTraceServiceRequest(body);
     } catch (error) {
@@ -125,6 +141,9 @@ export function assertDeepAgentsTraceContract(
       );
     }
   });
+  if (!redactionMarkerObserved) {
+    throw new Error("credential-shaped OTLP content lacks the redaction marker");
+  }
 
   for (const expectation of expectations.llmExchanges) {
     assertLlmExchange(spans, expectations.serviceName, expectation);
@@ -134,7 +153,14 @@ export function assertDeepAgentsTraceContract(
 }
 
 export function hasConfirmedOpenShellPolicyDenial(output: string): boolean {
-  return output.split(/\r?\n/u).some(isPolicyDenialLine) || CONFIRMED_EXEC_HINT.test(output);
+  if (output.split(/\r?\n/u).some(isPolicyDenialLine) || CONFIRMED_EXEC_HINT.test(output)) {
+    return true;
+  }
+  // curl writes the response body to stdout and its error to stderr. Once the
+  // E2E harness merges those descriptors, the exact OpenShell JSON object can
+  // land between two curl error fragments. Keep this fallback bounded to one
+  // flat object and delegate the payload validation to the production parser.
+  return (output.match(EMBEDDED_STRUCTURED_PROXY_JSON_RE) ?? []).some(isPolicyDenialLine);
 }
 
 export function observabilityPresetState(output: string): string {
@@ -221,11 +247,16 @@ async function main(): Promise<void> {
       requiredEnvironment("ALLOWED_PROBE"),
       {
         ambientCanary: requiredEnvironment("AMBIENT_CANARY"),
+        redaction: {
+          marker: requiredEnvironment("REDACTION_MARKER"),
+          rawCredential: requiredEnvironment("REDACTION_PROBE"),
+        },
         serviceName: requiredEnvironment("SERVICE_NAME"),
         llmExchanges: [
           {
             label: "direct-exec",
             promptMarker: requiredEnvironment("DIRECT_PROMPT"),
+            redactionMarker: requiredEnvironment("REDACTION_MARKER"),
             responseMarker: requiredEnvironment("DIRECT_RESPONSE"),
           },
           {

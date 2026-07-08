@@ -79,7 +79,11 @@ beforeEach(() => {
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
-function writeAgentRegistry(sandboxName: string, agent: string | null): void {
+function writeAgentRegistry(
+  sandboxName: string,
+  agent: string | null,
+  overrides: Record<string, unknown> = {},
+): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
     path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
@@ -93,14 +97,15 @@ function writeAgentRegistry(sandboxName: string, agent: string | null): void {
           gpuEnabled: false,
           policies: [],
           agent,
+          ...overrides,
         },
       },
     }),
   );
 }
 
-function writeOpenClawRegistry(sandboxName: string): void {
-  writeAgentRegistry(sandboxName, null);
+function writeOpenClawRegistry(sandboxName: string, overrides: Record<string, unknown> = {}): void {
+  writeAgentRegistry(sandboxName, null, overrides);
 }
 function writeFakeOpenshell(binDir: string): string {
   const openshell = path.join(binDir, "openshell");
@@ -435,6 +440,19 @@ describe("parseRestoreArgs", () => {
 });
 
 describe("sandbox directory backup semantics", () => {
+  it("rejects a custom OpenClaw backup with missing image-plugin provenance (#6108)", () => {
+    writeOpenClawRegistry("custom-openclaw", {
+      fromDockerfile: "/tmp/Dockerfile.custom",
+    });
+
+    const backup = sandboxState.backupSandboxState("custom-openclaw");
+
+    expect(backup.success).toBe(false);
+    expect(backup.manifest).toBeUndefined();
+    expect(backup.error).toBe("registered OpenClaw image plugin provenance is missing or invalid");
+    expect(fs.existsSync(path.join(BACKUPS_ROOT, "custom-openclaw"))).toBe(false);
+  });
+
   it("treats empty state directories as backed up when tar exits cleanly", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-empty-dirs-"));
     const oldPath = process.env.PATH;
@@ -479,7 +497,10 @@ process.exit(0);
 `,
       );
 
-      writeOpenClawRegistry("alpha");
+      writeOpenClawRegistry("alpha", {
+        fromDockerfile: "/tmp/Dockerfile.custom",
+        openclawImagePluginInstalls: [],
+      });
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
 
@@ -488,6 +509,8 @@ process.exit(0);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
+      expect(backup.manifest?.reconcileOpenClawImagePluginProvenance).toBe(true);
+      expect(backup.manifest?.openclawImagePluginInstalls).toEqual([]);
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -599,128 +622,7 @@ process.exit(0);
     }
   });
 
-  it("preserves fresh image-managed OpenClaw extensions while restoring user extensions", () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-extension-restore-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
-      const sshLog = path.join(fixture, "ssh-log.jsonl");
-      const extensionsDir = path.join(openclawDir, "extensions");
-      const managedExtensions =
-        "nemoclaw,diagnostics-otel,brave,discord,openclaw-weixin,slack,whatsapp,msteams".split(",");
-      fs.mkdirSync(binDir, { recursive: true });
-      for (const extensionName of managedExtensions) {
-        const extensionDir = path.join(extensionsDir, extensionName);
-        fs.mkdirSync(extensionDir, { recursive: true });
-        fs.writeFileSync(path.join(extensionDir, "marker.txt"), `fresh-${extensionName}\n`);
-      }
-      fs.mkdirSync(path.join(extensionsDir, "stale-user-extension"), { recursive: true });
-      fs.writeFileSync(path.join(extensionsDir, "stale-user-extension", "marker.txt"), "stale\n");
-
-      const manifest = writeBackup("alpha", "2026-05-19T12-00-00-000Z", {
-        stateDirs: ["extensions"],
-        backedUpDirs: ["extensions"],
-      });
-      const backupExtensionsDir = path.join(String(manifest.backupPath), "extensions");
-      for (const extensionName of managedExtensions) {
-        const extensionDir = path.join(backupExtensionsDir, extensionName);
-        fs.mkdirSync(extensionDir, { recursive: true });
-        fs.writeFileSync(path.join(extensionDir, "marker.txt"), `old-${extensionName}\n`);
-      }
-      fs.mkdirSync(path.join(backupExtensionsDir, "user-extension"), { recursive: true });
-      fs.writeFileSync(
-        path.join(backupExtensionsDir, "user-extension", "marker.txt"),
-        "restored\n",
-      );
-
-      const openshell = writeFakeOpenshell(binDir);
-      writeExecutable(
-        path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
-const { spawnSync } = require("node:child_process");
-const cmd = process.argv[process.argv.length - 1] || "";
-fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify({ cmd }) + "\\n");
-function readStdin() {
-  const chunks = [];
-  for (;;) {
-    const buf = Buffer.alloc(65536);
-    const n = fs.readSync(0, buf, 0, buf.length, null);
-    if (n === 0) break;
-    chunks.push(buf.subarray(0, n));
-  }
-  return Buffer.concat(chunks);
-}
-if (cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf")) {
-  const extensionsDir = ${JSON.stringify(extensionsDir)};
-  const managedExtensions = new Set(${JSON.stringify(managedExtensions)});
-  fs.mkdirSync(extensionsDir, { recursive: true });
-  for (const entry of fs.readdirSync(extensionsDir)) {
-    if (managedExtensions.has(entry)) continue;
-    fs.rmSync(path.join(extensionsDir, entry), { recursive: true, force: true });
-  }
-  process.exit(0);
-}
-if (cmd.includes("tar --no-same-owner -xf -")) {
-  const r = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", ${JSON.stringify(openclawDir)}], {
-    input: readStdin(),
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  if (r.stdout) fs.writeSync(1, r.stdout);
-  if (r.stderr) fs.writeSync(2, r.stderr);
-  process.exit(r.status || 0);
-}
-if (cmd.includes("chown") || cmd.includes("[ -d ")) {
-  process.exit(0);
-}
-process.exit(0);
-`,
-      );
-
-      writeOpenClawRegistry("alpha");
-      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
-
-      const restore = sandboxState.restoreSandboxState("alpha", String(manifest.backupPath));
-      expect(restore.success).toBe(true);
-      expect(restore.restoredDirs).toEqual(["extensions"]);
-      for (const extensionName of managedExtensions) {
-        expect(
-          fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
-        ).toBe(`fresh-${extensionName}\n`);
-      }
-      expect(fs.existsSync(path.join(extensionsDir, "stale-user-extension"))).toBe(false);
-      expect(
-        fs.readFileSync(path.join(extensionsDir, "user-extension", "marker.txt"), "utf-8"),
-      ).toBe("restored\n");
-
-      const loggedCommands = fs
-        .readFileSync(sshLog, "utf-8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line).cmd as string);
-      const cleanupCommand = loggedCommands.find((cmd) =>
-        cmd.includes("/sandbox/.openclaw/extensions"),
-      );
-      expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
-      for (const extensionName of managedExtensions) {
-        expect(cleanupCommand).toContain(`! -name '${extensionName}'`);
-      }
-    } finally {
-      if (oldOpenshell === undefined) {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
-      } else {
-        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
-      }
-      process.env.PATH = oldPath;
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
-
-  it("accepts whitelisted npm symlinks under extensions/ during pre-backup audit", () => {
+  it("accepts built-in and custom OpenClaw peer links during the pre-backup audit", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -735,6 +637,7 @@ process.exit(0);
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal\t../qrcode-terminal/bin/qrcode-terminal.js",
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
         "l\t/sandbox/.openclaw/extensions/slack/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
+        "l\t/sandbox/.openclaw/extensions/weather/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
       ].join("\n");
 
       const openshell = writeFakeOpenshell(binDir);
@@ -951,11 +854,12 @@ process.exit(0);
     }
   });
 
-  it("rejects whitelisted-path symlinks with a tampered target", () => {
-    // Source path matches the whitelist, but linkTarget points to /etc/passwd
-    // instead of the expected /usr/local/lib/node_modules/openclaw. The audit
-    // must compare both fields and reject — source-only matching would let a
-    // compromised agent repoint these symlinks at arbitrary host paths.
+  it.each([
+    "weather",
+    "slack",
+  ])("rejects a generic %s OpenClaw peer link with a tampered target", (extensionName) => {
+    // The generic peer path is valid, but its target must remain the exact
+    // global OpenClaw install rather than an arbitrary absolute path.
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -967,7 +871,7 @@ process.exit(0);
       for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
       const auditLines = [
-        "l\t/sandbox/.openclaw/extensions/slack/node_modules/openclaw\t/etc/passwd",
+        `l\t/sandbox/.openclaw/extensions/${extensionName}/node_modules/openclaw\t/etc/passwd`,
       ].join("\n");
 
       const openshell = writeFakeOpenshell(binDir);
@@ -994,7 +898,7 @@ process.exit(0);
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
-      expect(backup.error).toMatch(/extensions\/slack/);
+      expect(backup.error).toContain(`extensions/${extensionName}`);
       expect(backup.error).toMatch(/\/etc\/passwd/);
     } finally {
       if (oldOpenshell === undefined) {

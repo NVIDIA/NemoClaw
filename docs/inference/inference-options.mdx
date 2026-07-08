@@ -51,7 +51,7 @@ The managed `dcode` runtime uses Chat Completions through OpenShell even when a 
 |----------|--------|---------------|-------|
 | NVIDIA Endpoints | Tested | OpenAI-compatible | Hosted models on integrate.api.nvidia.com |
 | OpenAI | Tested | Native OpenAI-compatible | Uses OpenAI model IDs |
-| Other OpenAI-compatible endpoint | Tested with limitations | Custom OpenAI-compatible | Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:120`); the onboarding prompt that surfaces OpenRouter as the worked example is in `handleRemoteProviderSelection` in `src/lib/onboard.ts`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints. |
+| Other OpenAI-compatible endpoint | Tested with limitations | Custom OpenAI-compatible | Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:208`); the onboarding prompt that surfaces OpenRouter as the worked example is in `handleRemoteProviderSelection` in `src/lib/onboard.ts`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints. |
 | Anthropic | Tested | Native Anthropic | Uses anthropic-messages |
 | Other Anthropic-compatible endpoint | Tested with limitations | Custom Anthropic-compatible | Adapter path validated with AWS Bedrock (`src/lib/onboard/bedrock-runtime.ts`). Behavior on other Anthropic-compatible proxies and gateways may vary; this row claims the adapter, not the universe of compatible endpoints. |
 | Google Gemini | Tested | OpenAI-compatible | Uses Google's OpenAI-compatible endpoint |
@@ -81,7 +81,7 @@ NemoClaw neither displays nor accepts an unsafe `NEMOCLAW_MODEL` value as the ma
 
 | Option | Description | Curated models |
 |--------|-------------|----------------|
-| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_INFERENCE_API_KEY`. | Nemotron 3 Ultra 550B, Nemotron 3 Super 120B, Kimi K2.6, Minimax M3 |
+| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_INFERENCE_API_KEY`. | Nemotron 3 Ultra 550B, Nemotron 3 Super 120B, Minimax M3 |
 | OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
 | Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. NemoClaw uses `/v1/chat/completions` at runtime by default; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` for proxies that implement it, such as some llama.cpp builds. The wizard prompts for a base URL and model name. The adapter is validated against OpenRouter (refer to the status table above); behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations such as LocalAI or llama.cpp may vary. When you enable Telegram messaging, onboarding also runs a bounded sandbox-side smoke check through `https://inference.local/v1/chat/completions`. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
@@ -110,7 +110,8 @@ Use [Switch Inference Providers](switch-inference-providers) to move an existing
 ## Model Task-Fit Guide
 
 Use this table as starter guidance when selecting a curated cloud model during onboarding.
-The provider catalog remains authoritative for exact context-window limits, availability, and current pricing.
+The provider catalog remains authoritative for exact context-window limits and current pricing.
+Successful runtime route validation determines current availability because catalog entries can outlive their backing endpoints.
 For NVIDIA Endpoints, the table covers the bundled fallback choices.
 The live featured model catalog can include additional models.
 The relative labels below are qualitative and compare models within the curated onboarding choices, not across every model a provider offers.
@@ -119,7 +120,6 @@ The relative labels below are qualitative and compare models within the curated 
 |---|---|---|---|---|---|
 | `nvidia/nemotron-3-ultra-550b-a55b` | Quality-sensitive reasoning, careful synthesis, and complex reviews | Higher | Strong for complex tool plans | Large agent context | Higher |
 | `nvidia/nemotron-3-super-120b-a12b` | Default hosted agent work, multi-step planning, and tool-heavy shell workflows | Medium | Strong default for OpenClaw tool loops | Large agent context | Medium |
-| `moonshotai/kimi-k2.6` | Coding tasks and shell-heavy agent trajectories | Medium | Strong with NemoClaw's Kimi tool-call compatibility path | Large-context friendly | Medium |
 | `minimaxai/minimax-m3` | Long-form writing, multi-turn assistant work, and broad instruction following | Medium | Good for structured assistant turns | Large agent context | Medium |
 | `gpt-5.4` | Default OpenAI-backed agent work and general high-quality reasoning | Medium | Strong | Large agent context | Medium-to-high |
 | `gpt-5.4-mini` | Latency-sensitive routine automation and repeated helper calls | Low | Good | Medium-to-large context | Low |

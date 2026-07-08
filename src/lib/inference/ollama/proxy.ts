@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -6,12 +5,15 @@
 // proxy start/stop, model pull and validation.
 
 import type { GpuInfo } from "../local";
+import type { PulledModelDiscoveryDeps } from "./model-discovery";
 
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
 const { waitForPort } = require("../../core/wait");
+const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
+  require("./model-discovery");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -49,7 +51,7 @@ const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 
 let ollamaProxyToken: string | null = null;
 
-function sleep(seconds) {
+function sleep(seconds: number): void {
   spawnSync("sleep", [String(seconds)]);
 }
 
@@ -504,7 +506,7 @@ async function promptOllamaModel(
     (tag: string) => modelFitsAvailableMemory(tag, gpu) && !isExcluded(tag),
   );
   const usingInstalled = installedFitting.length > 0;
-  const bootstrap = getBootstrapOllamaModelOptions(gpu).filter((tag) => !isExcluded(tag));
+  const bootstrap = getBootstrapOllamaModelOptions(gpu).filter((tag: string) => !isExcluded(tag));
   const options = usingInstalled ? installedFitting : bootstrap;
   const defaultModelCandidate = getDefaultOllamaModel(gpu);
   const defaultModel = isExcluded(defaultModelCandidate)
@@ -514,7 +516,7 @@ async function promptOllamaModel(
 
   console.log("");
   console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");
-  options.forEach((option, index) => {
+  options.forEach((option: string, index: number) => {
     console.log(`    ${index + 1}) ${option}`);
   });
   console.log(`    ${options.length + 1}) Other...`);
@@ -572,7 +574,7 @@ function pullTimeoutErrorHint(timeoutMs: number): string {
   ].join("\n");
 }
 
-function normalizeOllamaPullModel(model): string {
+function normalizeOllamaPullModel(model: string): string {
   const value = String(model || "").trim();
   if (!value || /[\0\r\n]/.test(value)) {
     throw new Error("Invalid Ollama model id for pull request");
@@ -592,7 +594,7 @@ function buildLocalOllamaPullUrl(): string {
   return url.toString();
 }
 
-function pullOllamaModelViaCli(model) {
+function pullOllamaModelViaCli(model: string): boolean {
   const timeoutMs = getOllamaPullTimeoutMs();
   const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
     cwd: ROOT,
@@ -612,8 +614,8 @@ function pullOllamaModelViaCli(model) {
 // Used only when the resolved host is the Windows host (host.docker.internal),
 // where there is no `ollama` binary in WSL to shell out to. Native Linux/macOS
 // keeps the CLI path so existing behavior is unchanged.
-function pullOllamaModelViaHttp(model) {
-  return new Promise((resolve) => {
+function pullOllamaModelViaHttp(model: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
     const url = buildLocalOllamaPullUrl();
     const body = JSON.stringify({ model: normalizeOllamaPullModel(model), stream: true });
     const TIMEOUT_MS = getOllamaPullTimeoutMs();
@@ -655,14 +657,14 @@ function pullOllamaModelViaHttp(model) {
     let sawSuccess = false;
     let sawError = false;
 
-    const formatSize = (bytes) => {
+    const formatSize = (bytes: number): string => {
       if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
       if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
       if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(0)} KB`;
       return `${bytes} B`;
     };
 
-    const renderBar = (pct) => {
+    const renderBar = (pct: number): string => {
       const filled = Math.floor((pct / 100) * BAR_WIDTH);
       return `${"█".repeat(filled)}${" ".repeat(BAR_WIDTH - filled)}`;
     };
@@ -674,7 +676,7 @@ function pullOllamaModelViaHttp(model) {
       }
     };
 
-    rl.on("line", (line) => {
+    rl.on("line", (line: string) => {
       let evt;
       try {
         evt = JSON.parse(line);
@@ -724,7 +726,7 @@ function pullOllamaModelViaHttp(model) {
       }
     });
 
-    proc.on("error", (err) => {
+    proc.on("error", (err: Error) => {
       finishLine();
       console.error(`  Pull failed to start: ${err.message}`);
       resolve(false);
@@ -733,7 +735,7 @@ function pullOllamaModelViaHttp(model) {
     // Use 'close' rather than 'exit' so the promise resolves only after the
     // child's stdio streams are fully drained, ensuring readline has emitted
     // the final 'line' event for the trailing `success` JSON.
-    proc.on("close", (code) => {
+    proc.on("close", (code: number | null) => {
       finishLine();
       if (sawError) {
         resolve(false);
@@ -756,7 +758,7 @@ function pullOllamaModelViaHttp(model) {
 }
 
 // Dispatch to HTTP pull when Ollama was resolved on the Windows host.
-async function pullOllamaModel(model) {
+async function pullOllamaModel(model: string): Promise<boolean> {
   if (getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL) {
     return pullOllamaModelViaHttp(model);
   }
@@ -858,27 +860,22 @@ async function checkOllamaModelToolSupport(
 }
 
 async function prepareOllamaModel(
-  model,
+  model: string,
   installedModels: string[] = [],
   interaction: OllamaToolCapabilityInteraction = defaultOllamaToolCapabilityInteraction,
+  discoveryDeps: PulledModelDiscoveryDeps = {},
 ): Promise<{
   ok: boolean;
   message?: string;
   allowToolsIncompatible?: boolean;
   daemonFailure?: boolean;
 }> {
-  const alreadyInstalled = installedModels.includes(model);
-  if (!alreadyInstalled) {
-    console.log(`  Pulling Ollama model: ${model}`);
-    if (!(await pullOllamaModel(model))) {
-      return {
-        ok: false,
-        message:
-          `Failed to pull Ollama model '${model}'. ` +
-          "Check the model name and that Ollama can access the registry, then try another model.",
-      };
-    }
-  }
+  const testSleep = process.env.NEMOCLAW_TEST_NO_SLEEP === "1" ? () => {} : undefined;
+  const discovery = await ensurePulledOllamaModel(model, installedModels, pullOllamaModel, {
+    ...discoveryDeps,
+    sleep: discoveryDeps.sleep ?? testSleep,
+  });
+  if (!discovery.ok) return discovery;
 
   const capCheck = await checkOllamaModelToolSupport(model, interaction);
   if (!capCheck.ok) {

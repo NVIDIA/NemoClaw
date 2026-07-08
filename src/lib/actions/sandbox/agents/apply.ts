@@ -230,6 +230,48 @@ function defaultGetSandboxAgent(sandboxName: string): string | null {
   return entry?.agent ?? null;
 }
 
+function parseJsonFromOutput(output: string): unknown {
+  const text = output.trim();
+  const starts: number[] = [];
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (char === "[" || char === "{") {
+      starts.push(index);
+    }
+  }
+  for (const start of starts) {
+    try {
+      return JSON.parse(text.slice(start));
+    } catch {
+      // Keep scanning; warning prefixes can contain bracketed labels.
+    }
+  }
+  return JSON.parse(text || "[]");
+}
+
+export function parseOpenClawAgentsList(output: string): OpenClawAgentEntry[] {
+  const parsed = parseJsonFromOutput(output || "[]");
+  let entries: unknown[] | null = null;
+  if (Array.isArray(parsed)) {
+    entries = parsed;
+  } else if (parsed !== null && typeof parsed === "object") {
+    const agents = (parsed as { agents?: unknown }).agents;
+    if (Array.isArray(agents)) {
+      entries = agents;
+    }
+  }
+  if (!entries) {
+    throw new Error("openclaw agents list --json did not return a JSON array");
+  }
+  return entries.filter((entry): entry is OpenClawAgentEntry => {
+    return (
+      entry !== null &&
+      typeof entry === "object" &&
+      typeof (entry as { id?: unknown }).id === "string"
+    );
+  });
+}
+
 function defaultListAgents(sandboxName: string): OpenClawAgentEntry[] {
   const { getOpenshellBinary } =
     require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime");
@@ -244,17 +286,7 @@ function defaultListAgents(sandboxName: string): OpenClawAgentEntry[] {
       `openclaw agents list --json failed (exit ${result.status ?? "?"})${stderr ? `: ${stderr}` : ""}`,
     );
   }
-  const parsed = JSON.parse(String(result.stdout || "[]"));
-  if (!Array.isArray(parsed)) {
-    throw new Error("openclaw agents list --json did not return a JSON array");
-  }
-  return parsed.filter((entry): entry is OpenClawAgentEntry => {
-    return (
-      entry !== null &&
-      typeof entry === "object" &&
-      typeof (entry as { id?: unknown }).id === "string"
-    );
-  });
+  return parseOpenClawAgentsList(String(result.stdout || "[]"));
 }
 
 // OpenClaw flag contract differs by agents verb:

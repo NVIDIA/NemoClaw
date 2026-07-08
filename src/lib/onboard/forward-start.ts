@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn as spawnChild } from "node:child_process";
+import { spawn as spawnChild, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -34,7 +34,7 @@ export interface DetachedForwardStartOutcome {
   ok: boolean;
   diagnostic: string;
   pid?: number;
-  reason: "ok" | "spawn-error" | "timeout" | "spawn-conflict";
+  reason: "ok" | "ok-port-live" | "spawn-error" | "timeout" | "spawn-conflict";
 }
 
 export interface DetachedForwardStartOptions {
@@ -49,6 +49,12 @@ export interface DetachedForwardStartOptions {
   // Number of EADDRINUSE-style retries after the initial attempt. Honoured
   // only by `runDetachedForwardStartWithPortReleaseRetries`. Defaults to 3.
   maxRetries?: number;
+  // Loopback port-liveness probe. Defaults to `probeLocalPortListening` (a
+  // synchronous Node TCP connect to 127.0.0.1:port). Consulted only as a
+  // fallback when openshell reports it could not track the backgrounded
+  // forward (see the poll loop). Injectable so unit tests need not open real
+  // sockets or spawn probe subprocesses.
+  isPortListening?: (port: number) => boolean;
 }
 
 function readDiagnosticFile(filePath: string): string {
@@ -64,6 +70,45 @@ function readDiagnosticFile(filePath: string): string {
 
 export function looksLikeForwardPortConflict(diagnostic: string): boolean {
   return /eaddrinuse|address already in use|port .* in use|bind: .*in use/i.test(diagnostic);
+}
+
+/**
+ * True when openshell's `forward start --background` reported that it
+ * established the tunnel but could not discover/track the backgrounded
+ * process — so the forward is running yet never appears in `openshell forward
+ * list`. Observed on macOS hosts backed by Colima, where the remote bind
+ * completes *after* openshell's one-shot discovery probe. See GitHub #6099.
+ */
+export function looksLikeUntrackedForward(diagnostic: string): boolean {
+  return /could not discover backgrounded ssh process|forward may be running but is not tracked/i.test(
+    diagnostic,
+  );
+}
+
+/**
+ * Synchronous, dependency-free loopback port-liveness probe. forward-start
+ * runs in a synchronous code path (see `blockingSleepMs`), so we spawn a
+ * short-lived Node child that attempts a 127.0.0.1 TCP connect and reports the
+ * result via its exit code. Portable across macOS / Linux / WSL2 / Windows with
+ * no `lsof` / `ss` / `netstat` dependency. A refused connection returns
+ * immediately; the timeout only bounds a genuinely hung connect.
+ */
+function probeLocalPortListening(port: number): boolean {
+  const probeTimeoutMs = 1_500;
+  const script =
+    'const net=require("net");' +
+    'const s=net.connect(Number(process.argv[1]),"127.0.0.1");' +
+    "let settled=false;" +
+    "const finish=(code)=>{if(settled)return;settled=true;try{s.destroy();}catch{}process.exit(code);};" +
+    `s.setTimeout(${probeTimeoutMs});` +
+    's.once("connect",()=>finish(0));' +
+    's.once("timeout",()=>finish(1));' +
+    's.once("error",()=>finish(1));';
+  const res = spawnSync(process.execPath, ["-e", script, String(Number(port))], {
+    stdio: "ignore",
+    timeout: probeTimeoutMs + 2_000,
+  });
+  return res.status === 0;
 }
 
 function blockingSleepMs(ms: number): void {
@@ -197,6 +242,7 @@ export function runDetachedForwardStartWithDiagnostics(
   const sleepImpl = options.sleepMs ?? blockingSleepMs;
   const onProgress = options.onProgress;
   const progressIntervalMs = options.progressIntervalMs ?? 30_000;
+  const isPortListening = options.isPortListening ?? probeLocalPortListening;
   let nextProgressAt = Date.now() + progressIntervalMs;
 
   const forwardDiagPath = secureTempFile("nemoclaw-forward-start", ".out");
@@ -244,6 +290,8 @@ export function runDetachedForwardStartWithDiagnostics(
 
     const start = Date.now();
     const deadline = start + overallTimeoutMs;
+    const portProbeIntervalMs = Math.max(pollIntervalMs, 5_000);
+    let nextPortProbeAt = start;
     let lastListSnapshot = "";
     while (Date.now() < deadline) {
       let list = "";
@@ -264,6 +312,20 @@ export function runDetachedForwardStartWithDiagnostics(
       if (looksLikeForwardPortConflict(diagSoFar)) {
         terminateDetachedForwardChild(pid);
         return { ok: false, diagnostic: diagSoFar, pid, reason: "spawn-conflict" };
+      }
+      // Fallback for the "untracked forward" failure (GitHub #6099): openshell
+      // established the SSH tunnel but could not register/track it, so it never
+      // appears in `openshell forward list` even though the local port is
+      // already accepting connections and the dashboard is serving. When
+      // openshell says so AND the local forward port is live, treat the forward
+      // as confirmed instead of letting onboard time out and roll back a
+      // healthy sandbox. The EADDRINUSE conflict check above runs first, so a
+      // port held by a *different* process is never mistaken for our forward.
+      if (looksLikeUntrackedForward(diagSoFar) && Date.now() >= nextPortProbeAt) {
+        nextPortProbeAt = Date.now() + portProbeIntervalMs;
+        if (isPortListening(expect.port)) {
+          return { ok: true, diagnostic: readDiag(), pid, reason: "ok-port-live" };
+        }
       }
       if (onProgress && Date.now() >= nextProgressAt) {
         onProgress({ elapsedMs: Date.now() - start, listSnapshot: list });

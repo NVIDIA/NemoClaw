@@ -272,6 +272,12 @@ ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
+# Total model context window (input + output tokens). Empty by default so
+# Hermes auto-detects from the endpoint's /v1/models max_model_len; onboard
+# rewrites this ARG (via dockerfile-patch) when it probes a runtime value or
+# the user sets NEMOCLAW_CONTEXT_WINDOW, so Hermes' NemotronH metadata default
+# cannot override the real window (#6177).
+ARG NEMOCLAW_CONTEXT_WINDOW=
 
 # Promote build-args to env vars for the config generation script.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
@@ -279,6 +285,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
+    NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
     NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64} \

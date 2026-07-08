@@ -59,6 +59,7 @@ export interface SandboxCreateIntent {
   readonly observabilityEnabled: boolean;
   /** Present only when the operator explicitly selected observability on or off. */
   readonly observabilityRequestedExplicitly?: true;
+  readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
   /** Internal authoritative rebuild tier used before replacement registration completes. */
   readonly policyTier?: string | null;
 }
@@ -93,6 +94,7 @@ export type OnboardOptions = {
   observabilityEnabled?: boolean | null;
   /** Internal provenance for an authoritative observability value. */
   observabilityRequestedExplicitly?: boolean;
+  dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode | null;
   /** Internal authoritative rebuild tier; never exposed as an onboard CLI option. */
   policyTier?: string | null;
   controlUiPort?: number | null;

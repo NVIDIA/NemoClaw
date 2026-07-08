@@ -14,6 +14,12 @@ export interface CleanupResult {
 type CleanupFn = () => Promise<void> | void;
 type RedactFn = (text: string) => string;
 
+export interface CleanupHost {
+  cleanupSandbox(name: string): Promise<void>;
+  cleanupGatewayRegistration(name: string): Promise<void>;
+  cleanupForward(port: number): Promise<void>;
+}
+
 interface CleanupEntry {
   name: string;
   run: CleanupFn;
@@ -32,6 +38,22 @@ export class CleanupRegistry {
       throw new Error("cleanup name is required");
     }
     this.entries.push({ name, run });
+  }
+
+  trackSandbox(host: CleanupHost, name: string): void {
+    this.add(`destroy sandbox ${name}`, () => host.cleanupSandbox(name));
+  }
+
+  trackGateway(host: CleanupHost, name: string): void {
+    this.add(`remove gateway ${name}`, () => host.cleanupGatewayRegistration(name));
+  }
+
+  trackForward(host: CleanupHost, port: number): void {
+    this.add(`stop forward ${port}`, () => host.cleanupForward(port));
+  }
+
+  trackDisposable(name: string, dispose: CleanupFn): void {
+    this.add(name, dispose);
   }
 
   async runAll(): Promise<CleanupResult> {
