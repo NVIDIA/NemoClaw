@@ -23,20 +23,34 @@ RUN set -eu; \
 COPY agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/generate-config.ts
 COPY agents/langchain-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py
 COPY agents/langchain-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py
+COPY agents/langchain-deepagents-code/patch-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/patch-nemotron-ultra-profile.py
+COPY agents/langchain-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py
 COPY agents/langchain-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py
+COPY agents/langchain-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py
 COPY agents/langchain-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py
+COPY agents/langchain-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-observability.py
 COPY agents/langchain-deepagents-code/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-wrapper.sh
 COPY agents/langchain-deepagents-code/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-launcher.sh
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
-RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \
+# The Nemotron bridge registers managed aliases for the released SDK profile; the
+# managed-runtime patch independently hardens Deep Agents Code entrypoints and
+# installs the reviewed Relay observability boundary.
+# Both are exact-version, fail-closed build steps validated in one layer so no
+# reusable image layer can contain only one of the required managed patches.
+RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh \
     && chmod -R a+rX /opt/nemoclaw-blueprint \
+    && python3 /opt/nemoclaw-deepagents-code/patch-nemotron-ultra-profile.py \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
     && install -d -m 0700 /tmp/nemoclaw-progressive-validation \
     && TMPDIR=/tmp/nemoclaw-progressive-validation python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \
+    && TMPDIR=/tmp/nemoclaw-progressive-validation python3 /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py \
     && rm -rf /tmp/nemoclaw-progressive-validation \
+    && /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-observability.py \
     && rm -f /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \
+    && rm -f /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py \
+    && rm -f /opt/nemoclaw-deepagents-code/validate-observability.py \
     && rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code /opt/venv/bin/dcode /opt/venv/bin/deepagents-code \
     && install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/dcode \
     && install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/dcode.real \

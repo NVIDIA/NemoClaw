@@ -30,6 +30,7 @@ import {
   getRebuildAgentDisplayName,
   type RebuildVersionCheck,
 } from "./rebuild-preflight-confirmation";
+import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   acquireRebuildOnboardLock,
   assertRebuildEntryUnchanged,
@@ -76,10 +77,8 @@ export async function runRebuildPreflightPhase(
   options: string[] | RebuildSandboxOptions = {},
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<RebuildPreflightPhaseResult | null> {
-  const { log, bail, requestedToolDisclosure, skipConfirm } = createRebuildCommandContext(
-    options,
-    opts,
-  );
+  const { log, bail, requestedToolDisclosure, requestedObservabilityEnabled, skipConfirm } =
+    createRebuildCommandContext(options, opts);
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
@@ -96,6 +95,15 @@ export async function runRebuildPreflightPhase(
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
 
   const rebuildAgent = sandboxEntry.agent || null;
+  if (requestedObservabilityEnabled !== undefined && !isDcodeRebuildAgent(rebuildAgent)) {
+    printRebuildPreflightFailure(
+      "the observability override is supported only for managed LangChain Deep Agents Code sandboxes.",
+      "Remove --observability/--no-observability or select a managed Deep Agents Code sandbox.",
+      "Unsupported rebuild observability override",
+      bail,
+    );
+    return null;
+  }
   const agentName = getRebuildAgentDisplayName(sandboxName);
   const dcodePreflight = createDcodeRebuildOrchestrator({
     sandboxName,
@@ -138,6 +146,7 @@ export async function runRebuildPreflightPhase(
         // succeeded, matching the previous `skipConfirm || confirmed` contract.
         autoYes: true,
         requestedToolDisclosure,
+        requestedObservabilityEnabled,
         allowLegacyManagedImageRecovery,
         // A validated prepared backup is the only path allowed to reconstruct
         // a missing gateway provider and route during recreate. The exact

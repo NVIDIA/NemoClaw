@@ -9,7 +9,7 @@
 # and integrity-bound MCP boundaries.
 # sourceBoundary: deepagents-code owns those Python entrypoints; NemoClaw owns the
 # sandbox image posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.30 has no single managed-runtime hook that can
+# whyNotSourceFix: upstream 0.1.34 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
 # build on drift, and direct-module tests execute the patched start/restart paths.
@@ -23,10 +23,12 @@ import importlib.metadata
 import importlib.util
 from pathlib import Path
 
-EXPECTED_DCODE_VERSION = "0.1.30"
+EXPECTED_DCODE_VERSION = "0.1.34"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
 TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
+OBSERVABILITY_PATCH_MARKER = "NemoClaw-managed backend-neutral observability."
 MIDDLEWARE_MODULE = "progressive_tool_disclosure.py"
+OBSERVABILITY_MODULE = "nemoclaw_observability.py"
 MANAGED_RUNTIME_SOURCE_PATH = Path(__file__).with_name("managed-dcode-runtime.py")
 
 MAIN_MARKER = "    args = parser.parse_args()\n"
@@ -424,17 +426,21 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.30 has no
-# supported managed progressive-disclosure middleware hook in its agent factory
-# API, and this repository cannot change that third-party package source.
-# Patcher/unit guards plus validate-progressive-tool-disclosure.py cover this
-# fail-closed integration. Remove it once upstream provides a supported hook
-# preserving managed MCP, credentials, approvals, executor, sandbox, and private
-# checkpoint-state boundaries.
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.34 cannot inject
+# managed progressive-disclosure or Relay middleware into both main and subagent
+# graphs, nor attach a metadata-only callback to the compiled graph. Without this
+# root-owned image patch, those graphs omit NemoClaw's runtime controls; this repo
+# cannot change the third-party package source. Patcher shape guards, direct-patch
+# tests, progressive-disclosure tests, and observability conformance tests fail
+# closed on upstream drift. Remove each injection once an upstream agent-factory
+# API can preserve the managed MCP, credential, approval, executor, sandbox,
+# private checkpoint-state, bounded model/tool content, and metadata-only graph
+# trace boundaries end to end.
 AGENT_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
 # NemoClaw-managed progressive tool disclosure.
+# NemoClaw-managed backend-neutral observability.
 from contextvars import ContextVar as _NemoClawContextVar
 
 _nemoclaw_original_create_cli_agent = create_cli_agent
@@ -442,20 +448,31 @@ _nemoclaw_original_create_deep_agent = globals().get("create_deep_agent")
 _nemoclaw_progressive_disclosure_active = _NemoClawContextVar(
     "nemoclaw_progressive_disclosure_active", default=False
 )
+_nemoclaw_observability_active = _NemoClawContextVar(
+    "nemoclaw_observability_active", default=False
+)
 
 
 def _nemoclaw_create_deep_agent(*args, **kwargs):
-    """Install distinct disclosure middleware in the main and local subagent graphs."""
+    """Install managed middleware in the main and local subagent graphs."""
     if _nemoclaw_original_create_deep_agent is None:
         raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
-    if not _nemoclaw_progressive_disclosure_active.get():
+    progressive_active = _nemoclaw_progressive_disclosure_active.get()
+    observability_active = _nemoclaw_observability_active.get()
+    if not progressive_active and not observability_active:
         return _nemoclaw_original_create_deep_agent(*args, **kwargs)
-    from deepagents_code.progressive_tool_disclosure import (
-        ProgressiveToolDisclosureMiddleware,
-    )
 
     middleware = list(kwargs.get("middleware") or ())
-    middleware.append(ProgressiveToolDisclosureMiddleware())
+    if progressive_active:
+        from deepagents_code.progressive_tool_disclosure import (
+            ProgressiveToolDisclosureMiddleware,
+        )
+
+        middleware.append(ProgressiveToolDisclosureMiddleware())
+    if observability_active:
+        from deepagents_code.nemoclaw_observability import new_relay_middleware
+
+        middleware.append(new_relay_middleware())
     kwargs["middleware"] = middleware
 
     subagents = kwargs.get("subagents")
@@ -464,7 +481,10 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
         for subagent in subagents:
             if isinstance(subagent, dict):
                 subagent_middleware = list(subagent.get("middleware") or ())
-                subagent_middleware.append(ProgressiveToolDisclosureMiddleware())
+                if progressive_active:
+                    subagent_middleware.append(ProgressiveToolDisclosureMiddleware())
+                if observability_active:
+                    subagent_middleware.append(new_relay_middleware())
                 subagent = {**subagent, "middleware": subagent_middleware}
             patched_subagents.append(subagent)
         kwargs["subagents"] = patched_subagents
@@ -477,7 +497,7 @@ if _nemoclaw_original_create_deep_agent is not None:
 
 
 def create_cli_agent(model, assistant_id, *args, **kwargs):
-    """Keep managed graph posture and progressively disclose loaded MCP tools."""
+    """Keep managed graph posture, disclosure, and observability boundaries."""
     kwargs["rubric_model"] = None
     kwargs["async_subagents"] = None
     from deepagents_code.progressive_tool_disclosure import (
@@ -500,13 +520,38 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
         progressive_active = False
     if progressive_active and _nemoclaw_original_create_deep_agent is None:
         raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
-    token = _nemoclaw_progressive_disclosure_active.set(progressive_active)
+    from deepagents_code.nemoclaw_observability import (
+        initialize_observability,
+        new_metadata_only_callback_manager,
+    )
+
+    observability_active = initialize_observability()
+    if observability_active and _nemoclaw_original_create_deep_agent is None:
+        raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
+    progressive_token = _nemoclaw_progressive_disclosure_active.set(
+        progressive_active
+    )
+    observability_token = _nemoclaw_observability_active.set(observability_active)
     try:
-        return _nemoclaw_original_create_cli_agent(
+        result = _nemoclaw_original_create_cli_agent(
             model, assistant_id, *args, **kwargs
         )
     finally:
-        _nemoclaw_progressive_disclosure_active.reset(token)
+        _nemoclaw_observability_active.reset(observability_token)
+        _nemoclaw_progressive_disclosure_active.reset(progressive_token)
+    if not observability_active:
+        return result
+    agent, backend = result
+    # Copy the graph, then replace callbacks directly. with_config would merge a
+    # pre-bound manager first and retain its handlers. Invocation safety then
+    # relies on pinned LangGraph 1.2.6 calling ensure_config(self.config,
+    # input_config); validate-observability.py locks that merge path.
+    agent = agent.with_config({})
+    agent.config = {
+        **agent.config,
+        "callbacks": new_metadata_only_callback_manager(),
+    }
+    return agent, backend
 
 
 def _resolve_ptc_option(*args, **kwargs):
@@ -664,7 +709,7 @@ MCP_CONFIG_LOAD_MARKER = '''    path = Path(config_path)
 
     try:
         with path.open(encoding="utf-8") as file_obj:
-            config = json.load(file_obj)
+            return json.load(file_obj)
 '''
 
 MCP_CONFIG_LOAD_PATCH = '''    from deepagents_code._nemoclaw_managed import (
@@ -675,13 +720,12 @@ MCP_CONFIG_LOAD_PATCH = '''    from deepagents_code._nemoclaw_managed import (
     try:
         managed_payload = managed_mcp_config_bytes(config_path)
         if managed_payload is not None:
-            config = json.loads(managed_payload)
-        else:
-            if not path.exists():
-                error_msg = f"MCP config file not found: {config_path}"
-                raise FileNotFoundError(error_msg)
-            with path.open(encoding="utf-8") as file_obj:
-                config = json.load(file_obj)
+            return json.loads(managed_payload)
+        if not path.exists():
+            error_msg = f"MCP config file not found: {config_path}"
+            raise FileNotFoundError(error_msg)
+        with path.open(encoding="utf-8") as file_obj:
+            return json.load(file_obj)
 '''
 
 MCP_EXPLICIT_CONFIG_MARKER = '''    if explicit_config_path:
@@ -945,6 +989,33 @@ def _package_root() -> Path:
     return Path(roots[0])
 
 
+def _load_managed_module(
+    root: Path,
+    module_name: str,
+    source_boundary_name: str,
+    installed_boundary_name: str | None = None,
+) -> tuple[Path, str]:
+    source_path = Path(__file__).with_name(module_name)
+    destination_path = root / module_name
+    if not source_path.is_file():
+        raise RuntimeError(
+            f"NemoClaw {source_boundary_name} source not found at {source_path}"
+        )
+    source = source_path.read_text(encoding="utf-8")
+    compile(source, str(destination_path), "exec")
+    if destination_path.exists() or destination_path.is_symlink():
+        if (
+            not destination_path.is_file()
+            or destination_path.is_symlink()
+            or destination_path.read_text(encoding="utf-8") != source
+        ):
+            raise RuntimeError(
+                "Refusing to overwrite unexpected "
+                f"{installed_boundary_name or source_boundary_name} at {destination_path}"
+            )
+    return destination_path, source
+
+
 def main() -> None:
     actual_version = importlib.metadata.version("deepagents-code")
     if actual_version != EXPECTED_DCODE_VERSION:
@@ -976,36 +1047,25 @@ def main() -> None:
         "agent": root / "agent.py",
         "update_check": root / "update_check.py",
         "openai_codex": root / "integrations" / "openai_codex.py",
-        "auth_ui": root / "widgets" / "auth.py",
-        "codex_ui": root / "widgets" / "codex_auth.py",
-        "model_selector": root / "widgets" / "model_selector.py",
-        "approval": root / "widgets" / "approval.py",
-        "server": root / "server.py",
+        "auth_ui": root / "tui" / "widgets" / "auth.py",
+        "codex_ui": root / "tui" / "widgets" / "codex_auth.py",
+        "model_selector": root / "tui" / "widgets" / "model_selector.py",
+        "approval": root / "tui" / "widgets" / "approval.py",
+        "server": root / "client" / "launch" / "server.py",
         "server_config": root / "_server_config.py",
         "mcp_tools": root / "mcp_tools.py",
         "subagents": root / "subagents.py",
         "hooks": root / "hooks.py",
-        "non_interactive": root / "non_interactive.py",
+        "non_interactive": root / "client" / "non_interactive.py",
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
 
-    module_source_path = Path(__file__).with_name(MIDDLEWARE_MODULE)
-    module_destination_path = root / MIDDLEWARE_MODULE
-    if not module_source_path.is_file():
-        raise RuntimeError(
-            f"NemoClaw middleware source not found at {module_source_path}"
-        )
-    module_source = module_source_path.read_text(encoding="utf-8")
-    compile(module_source, str(module_destination_path), "exec")
-    if module_destination_path.exists() or module_destination_path.is_symlink():
-        if (
-            not module_destination_path.is_file()
-            or module_destination_path.is_symlink()
-            or module_destination_path.read_text(encoding="utf-8") != module_source
-        ):
-            raise RuntimeError(
-                f"Refusing to overwrite unexpected middleware at {module_destination_path}"
-            )
+    module_destination_path, module_source = _load_managed_module(
+        root, MIDDLEWARE_MODULE, "middleware"
+    )
+    observability_destination_path, observability_source = _load_managed_module(
+        root, OBSERVABILITY_MODULE, "observability", "observability module"
+    )
 
     marker_states = {PATCH_MARKER in text for text in texts.values()}
     helper_path = root / "_nemoclaw_managed.py"
@@ -1016,6 +1076,18 @@ def main() -> None:
             raise RuntimeError("Managed package patch is partial: helper is missing")
         if not module_destination_path.is_file():
             raise RuntimeError("Managed package patch is partial: middleware is missing")
+        if not observability_destination_path.is_file():
+            raise RuntimeError(
+                "Managed package patch is partial: observability module is missing"
+            )
+        for marker, boundary in (
+            (TOOL_DISCLOSURE_PATCH_MARKER, "progressive-disclosure"),
+            (OBSERVABILITY_PATCH_MARKER, "observability"),
+        ):
+            if texts["agent"].count(marker) != 1:
+                raise RuntimeError(
+                    f"Managed package {boundary} patch is partial in {paths['agent']}"
+                )
         if texts["agent"].count(AGENT_PATCH.lstrip()) != 1:
             raise RuntimeError(
                 f"Managed package progressive-disclosure patch is incomplete in {paths['agent']}"
@@ -1026,6 +1098,11 @@ def main() -> None:
     if TOOL_DISCLOSURE_PATCH_MARKER in texts["agent"]:
         raise RuntimeError(
             "Managed package progressive-disclosure patch is partial; "
+            "refusing mixed source state"
+        )
+    if OBSERVABILITY_PATCH_MARKER in texts["agent"]:
+        raise RuntimeError(
+            "Managed package observability patch is partial; "
             "refusing mixed source state"
         )
 
@@ -1255,6 +1332,11 @@ def main() -> None:
     helper_path.write_text(managed_runtime_source, encoding="utf-8")
     if not module_destination_path.exists():
         module_destination_path.write_text(module_source, encoding="utf-8")
+    if not observability_destination_path.exists():
+        observability_destination_path.write_text(
+            observability_source,
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":

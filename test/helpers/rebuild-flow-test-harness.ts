@@ -388,14 +388,26 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         overrides.ensureValidatedBraveSearchCredential ??
         (async () => "web-search-key"),
     );
+  const livePolicyPresets = new Set<string>();
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
     .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
       const normalizedPresetName = String(presetName);
-      if (overrides.applyPreset) return overrides.applyPreset(normalizedPresetName);
-      if (normalizedPresetName === "throw") throw new Error("preset boom");
-      return normalizedPresetName === "npm";
+      let applied: boolean;
+      if (overrides.applyPreset) {
+        applied = overrides.applyPreset(normalizedPresetName);
+      } else if (normalizedPresetName === "throw") {
+        throw new Error("preset boom");
+      } else {
+        applied = normalizedPresetName === "npm";
+      }
+      if (applied) livePolicyPresets.add(normalizedPresetName);
+      return applied;
     });
+  vi.spyOn(policies, "getGatewayPresets").mockImplementation(() => [...livePolicyPresets]);
+  vi.spyOn(policies, "removePreset").mockImplementation(
+    (_sandboxName: unknown, presetName: unknown) => livePolicyPresets.delete(String(presetName)),
+  );
   const executeSandboxCommandSpy = vi
     .spyOn(processRecovery, "executeSandboxCommand")
     .mockImplementation(

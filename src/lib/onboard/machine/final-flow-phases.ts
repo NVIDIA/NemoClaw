@@ -24,6 +24,7 @@ export interface FinalOnboardFlowPhaseOptions<
   VerificationResult = unknown,
 > {
   branchState: "agent_setup" | "openclaw";
+  authoritativePolicyTier?: string | null;
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
   finalization: {
@@ -70,6 +71,7 @@ export function createFinalOnboardFlowPhases<
     assertSandboxCreatedContext(context, "policies");
     const policiesResult = await handlePoliciesState({
       resume: context.resume,
+      authoritativePolicyTier: options.authoritativePolicyTier,
       sandboxName: context.sandboxName,
       provider: context.provider,
       model: context.model,

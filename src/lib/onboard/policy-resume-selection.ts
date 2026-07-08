@@ -12,6 +12,10 @@ import {
   pruneDisabledMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
+  isInactiveObservabilityPolicyPreset,
+  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+} from "./observability-policy-presets";
+import {
   isStaleBuiltinWebSearchPolicyPreset,
   mergeRequiredSetupPolicyPresets,
   type PreparedPolicyResumeSelection,
@@ -31,6 +35,8 @@ type PoliciesApi = {
   ): Preset[];
   listCustomPresets(sandboxName: string): Preset[];
   getAppliedPresets(sandboxName: string): string[];
+  customPresetOwnsNetworkPolicyKey?(sandboxName: string, policyKey: string): boolean;
+  removeBuiltinPresetAttribution?(sandboxName: string, presetName: string): void;
   clampSetupPolicyPresetNames(
     names: string[],
     selectablePresets: Preset[],
@@ -48,6 +54,7 @@ export function preparePolicyPresetResumeSelection(
     enabledChannels?: string[] | null;
     hermesToolGateways?: string[] | null;
     agent?: string | null;
+    observabilityEnabled?: boolean | null;
     webSearchConfig?: WebSearchConfig | null;
     webSearchConfigChanged?: boolean;
     webSearchSupported?: boolean | null;
@@ -56,7 +63,28 @@ export function preparePolicyPresetResumeSelection(
   },
 ): PreparedPolicyResumeSelection {
   const supportOptions = { webSearchSupported: options.webSearchSupported, agent: options.agent };
-  const appliedPolicyPresets = deps.policies.getAppliedPresets(sandboxName);
+  const customPolicyPresetNames = new Set(
+    deps.policies.listCustomPresets(sandboxName).map((preset) => preset.name),
+  );
+  const customOwnsObservability =
+    deps.policies.customPresetOwnsNetworkPolicyKey?.(
+      sandboxName,
+      OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+    ) === true;
+  if (customOwnsObservability) {
+    deps.policies.removeBuiltinPresetAttribution?.(
+      sandboxName,
+      OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+    );
+  }
+  const rawAppliedPolicyPresets = deps.policies.getAppliedPresets(sandboxName);
+  const appliedPolicyPresets = customOwnsObservability
+    ? [...new Set(rawAppliedPolicyPresets)].filter(
+        (name) =>
+          name !== OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET ||
+          customPolicyPresetNames.has(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET),
+      )
+    : rawAppliedPolicyPresets;
   const selectablePolicyPresets = [
     ...filterSetupPolicyPresetsForAgent(
       deps.policies.listSetupPolicyPresets(sandboxName, supportOptions),
@@ -66,9 +94,6 @@ export function preparePolicyPresetResumeSelection(
       name,
     })),
   ];
-  const customPolicyPresetNames = new Set(
-    deps.policies.listCustomPresets(sandboxName).map((preset) => preset.name),
-  );
   const clampedRecordedPolicyPresets = deps.policies.clampSetupPolicyPresetNames(
     options.recordedPolicyPresets || [],
     selectablePolicyPresets,
@@ -80,11 +105,20 @@ export function preparePolicyPresetResumeSelection(
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
     });
+  const isInactiveObservability = (name: string) =>
+    isInactiveObservabilityPolicyPreset(name, {
+      agent: options.agent,
+      observabilityEnabled: options.observabilityEnabled,
+      customPresetNames: customPolicyPresetNames,
+      customOwnsObservability,
+    });
   const recordedBuiltinWebSearchProviderChanged = clampedRecordedPolicyPresets.some(
     (name) => (name === "brave" || name === "tavily") && isStaleBuiltinWebSearch(name),
   );
   let policyPresets = pruneDisabledMessagingPolicyPresets(
-    clampedRecordedPolicyPresets.filter((name) => !isStaleBuiltinWebSearch(name)),
+    clampedRecordedPolicyPresets.filter(
+      (name) => !isStaleBuiltinWebSearch(name) && !isInactiveObservability(name),
+    ),
     options.disabledChannels,
   );
   const appliedPolicyPresetsForSupport = deps.policies
@@ -94,7 +128,7 @@ export function preparePolicyPresetResumeSelection(
       supportOptions,
       customPolicyPresetNames,
     )
-    .filter((name) => !isStaleBuiltinWebSearch(name));
+    .filter((name) => !isStaleBuiltinWebSearch(name) && !isInactiveObservability(name));
   const disabledMessagingPolicyPresetApplied = hasDisabledMessagingPolicyPreset(
     appliedPolicyPresetsForSupport,
     options.disabledChannels,
@@ -109,11 +143,13 @@ export function preparePolicyPresetResumeSelection(
       enabledChannels: options.enabledChannels,
       hermesToolGateways: options.hermesToolGateways,
       agent: options.agent,
+      observabilityEnabled: options.observabilityEnabled,
       knownPresetNames: selectablePolicyPresets.map((preset) => preset.name),
       env: options.env,
       tierName: options.tierName,
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
+      customOwnsObservability,
     });
 
     // Provider switches are build-time changes, but their matching egress

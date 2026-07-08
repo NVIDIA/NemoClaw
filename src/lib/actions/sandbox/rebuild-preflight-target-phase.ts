@@ -50,6 +50,7 @@ export async function prepareRebuildTargetPreflights(args: {
   rebuildAgent: string | null;
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
+  requestedObservabilityEnabled?: boolean;
   allowLegacyManagedImageRecovery?: boolean;
   preparedBackupRecovery?: boolean;
   log: RebuildLog;
@@ -61,6 +62,7 @@ export async function prepareRebuildTargetPreflights(args: {
     rebuildAgent,
     autoYes,
     requestedToolDisclosure,
+    requestedObservabilityEnabled,
     allowLegacyManagedImageRecovery,
     preparedBackupRecovery,
     log,
@@ -98,6 +100,9 @@ export async function prepareRebuildTargetPreflights(args: {
   // session. Use that authoritative value for both preflight and inner onboard,
   // never the raw registry fallback used while constructing generic options.
   recreateOptions.toolDisclosure = durableConfig.toolDisclosure;
+  recreateOptions.observabilityEnabled =
+    requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
+  recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,

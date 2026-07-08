@@ -46,6 +46,7 @@ type RecoveredSandboxMetadata = Partial<
     | "policies"
     | "nimContainer"
     | "agent"
+    | "observabilityEnabled"
     | "endpointUrl"
     | "credentialEnv"
     | "preferredInferenceApi"
@@ -85,6 +86,9 @@ function buildRecoveredSandboxEntry(
   // sandbox seed never set this field, so the existing entry must win.
   if (metadata.agent !== undefined && metadata.agent !== null) {
     entry.agent = metadata.agent;
+  }
+  if (typeof metadata.observabilityEnabled === "boolean") {
+    entry.observabilityEnabled = metadata.observabilityEnabled;
   }
   return entry;
 }
@@ -228,6 +232,9 @@ function seedRecoveryMetadata(
       endpointUrl: session.endpointUrl ?? null,
       credentialEnv: session.credentialEnv ?? null,
       preferredInferenceApi: session.preferredInferenceApi ?? null,
+      ...(typeof session.observabilityEnabled === "boolean"
+        ? { observabilityEnabled: session.observabilityEnabled }
+        : {}),
     }),
   );
   const sessionSandboxMissing = !current.sandboxes.some(

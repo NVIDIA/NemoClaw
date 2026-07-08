@@ -2626,7 +2626,7 @@ const registry = require(${registryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
-const commands = [];
+const commands = []; let registeredSandbox = null;
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -2644,7 +2644,7 @@ runner.runCapture = (command) => {
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
-registry.registerSandbox = () => true;
+registry.registerSandbox = (entry) => { registeredSandbox = entry; return true; };
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
@@ -2673,7 +2673,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
-  console.log(JSON.stringify({ sandboxName, commands }));
+  console.log(JSON.stringify({ sandboxName, commands, registeredSandbox }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -2689,6 +2689,7 @@ const { createSandbox } = require(${onboardPath});
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_POLICY_TIER: "restricted",
       },
     });
 
@@ -2701,17 +2702,16 @@ const { createSandbox } = require(${onboardPath});
       .find((line) => line.startsWith("{") && line.endsWith("}"));
     assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
     const payload = JSON.parse(payloadLine);
-
     assert.ok(
       payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox delete")),
       "should delete existing sandbox when --recreate-sandbox is set",
     );
     assert.ok(
-      payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox create")),
-      "should create a new sandbox when --recreate-sandbox is set",
+      payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox create")) &&
+        payload.registeredSandbox?.policyTier === "restricted",
+      "should create a sandbox and persist its tier before policy finalization",
     );
   });
-
   it("recreate-sandbox flag backs up and restores workspace state", {
     timeout: 60_000,
   }, async () => {

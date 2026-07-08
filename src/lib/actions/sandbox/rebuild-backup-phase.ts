@@ -4,8 +4,16 @@
 import { type WebSearchConfig, webSearchProviderForConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import {
+  isDcodeAgent,
+  isInactiveObservabilityPolicyPreset,
+  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+  requiredObservabilityPolicyPresets,
+} from "../../onboard/observability-policy-presets";
 import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
 import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-selection";
+import { filterSuppressedAgentRequiredPresets } from "../../onboard/policy-tier-suppression";
+import { parsePresetPolicyKeys } from "../../policy";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
@@ -64,6 +72,62 @@ export function normalizeRebuildWebSearchPolicyPresets(
   return [...new Set(normalized)];
 }
 
+/** Align built-in observability egress with the durable opt-in and policy tier. */
+export function normalizeRebuildObservabilityPolicyPresets(
+  presets: readonly string[],
+  sandboxEntry: RebuildSandboxEntry,
+): string[] {
+  const customPresetNames = new Set(
+    (sandboxEntry.customPolicies ?? []).map((policy) => policy.name.trim().toLowerCase()),
+  );
+  const customOwnsObservabilityPolicy = (sandboxEntry.customPolicies ?? []).some((policy) =>
+    parsePresetPolicyKeys(policy.content).includes(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET),
+  );
+  const customOwnsObservability =
+    customPresetNames.has(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET) || customOwnsObservabilityPolicy;
+  const activePresets = presets.filter((name) => {
+    const normalizedName = name.trim().toLowerCase();
+    if (normalizedName !== OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET) return true;
+    // Custom content is replayed separately from the captured manifest. Its
+    // registry name may differ from the network-policy key it owns, so neither
+    // form may be substituted with the built-in preset.
+    if (customOwnsObservability) return false;
+    return (
+      isDcodeAgent(sandboxEntry.agent) &&
+      !isInactiveObservabilityPolicyPreset(name, {
+        agent: sandboxEntry.agent,
+        observabilityEnabled: sandboxEntry.observabilityEnabled,
+        customPresetNames,
+      })
+    );
+  });
+  if (!customOwnsObservability) {
+    for (const requiredPreset of requiredObservabilityPolicyPresets(
+      sandboxEntry.agent,
+      sandboxEntry.observabilityEnabled,
+    )) {
+      if (!activePresets.includes(requiredPreset)) activePresets.push(requiredPreset);
+    }
+  }
+  return filterSuppressedAgentRequiredPresets(
+    [...new Set(activePresets)],
+    sandboxEntry.policyTier,
+    sandboxEntry.agent,
+  );
+}
+
+/** Normalize the complete replacement target, including fresh inner-onboard additions. */
+export function normalizeRebuildTargetPolicyPresets(
+  presets: readonly string[],
+  sandboxEntry: RebuildSandboxEntry,
+  webSearchConfig: WebSearchConfig | null,
+): string[] {
+  return normalizeRebuildObservabilityPolicyPresets(
+    normalizeRebuildWebSearchPolicyPresets([...new Set(presets)], sandboxEntry, webSearchConfig),
+    sandboxEntry,
+  );
+}
+
 export function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
 ): RebuildBackupPhaseResult | null {
@@ -94,7 +158,7 @@ export function runRebuildBackupPhase(
     enabledChannelIds,
     disabledChannels,
   );
-  const policyPresets = normalizeRebuildWebSearchPolicyPresets(
+  const policyPresets = normalizeRebuildTargetPolicyPresets(
     mergedPolicyPresets,
     input.sandboxEntry,
     input.webSearchConfig,

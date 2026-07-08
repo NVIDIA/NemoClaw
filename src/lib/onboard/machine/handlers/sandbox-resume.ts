@@ -15,6 +15,7 @@ export interface SandboxResumeSignals {
   readonly sandboxGpuConfigChanged: boolean;
   readonly messagingChannelConfigChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
+  readonly observabilityChanged?: boolean;
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
   readonly inferenceSelectionChanged: boolean;
@@ -105,6 +106,7 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.sandboxGpuConfigChanged &&
     !signals.messagingChannelConfigChanged &&
     !signals.hermesToolGatewayConfigChanged &&
+    !signals.observabilityChanged &&
     !signals.toolDisclosureMigrationNeeded &&
     !signals.toolDisclosureChanged &&
     signals.sandboxReuseState === "ready"
@@ -159,11 +161,9 @@ function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResu
   return null;
 }
 
-export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
-  if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
-  const compatibilityDecision = compatibilityResumeDecision(signals);
-  if (compatibilityDecision) return compatibilityDecision;
-  if (canReuseSandbox(signals)) return { kind: "reuse" };
+function runtimeConfigurationResumeDecision(
+  signals: SandboxResumeSignals,
+): SandboxResumeDecision | null {
   if (signals.webSearchConfigChanged) {
     return {
       kind: "recreate",
@@ -192,6 +192,24 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
       removeRegistryEntry: true,
     };
   }
+  if (signals.observabilityChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Observability configuration changed; recreating sandbox.",
+      // Preserve the row until createSandbox captures registry-only fidelity.
+      removeRegistryEntry: false,
+    };
+  }
+  return null;
+}
+
+export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
+  if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
+  const compatibilityDecision = compatibilityResumeDecision(signals);
+  if (compatibilityDecision) return compatibilityDecision;
+  if (canReuseSandbox(signals)) return { kind: "reuse" };
+  const configurationDecision = runtimeConfigurationResumeDecision(signals);
+  if (configurationDecision) return configurationDecision;
   const toolDisclosureDecision = toolDisclosureResumeDecision(signals);
   if (toolDisclosureDecision) return toolDisclosureDecision;
   if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };

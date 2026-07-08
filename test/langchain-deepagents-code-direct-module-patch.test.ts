@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { addDarwinFcntlSealConstants } from "./helpers/darwin-fcntl-seal-fixture";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const patcher = path.join(agentDir, "patch-managed-deepagents-code.py");
@@ -15,44 +16,13 @@ const progressiveDisclosureHarness = path.join(
   "fixtures",
   "deepagents-progressive-disclosure-harness.py",
 );
-const DARWIN_FCNTL_FIXTURE_MARKER = "# NemoClaw test-only Darwin fcntl seal constants.";
-
-function addDarwinFcntlSealConstants(
-  helper: string,
-  platform: NodeJS.Platform = process.platform,
-): string {
-  const shouldPatch = platform === "darwin" && !helper.includes(DARWIN_FCNTL_FIXTURE_MARKER);
-  const patched = helper.replace(
-    "import fcntl\n",
-    `import fcntl
-
-${DARWIN_FCNTL_FIXTURE_MARKER}
-for _name, _value in (
-    ("F_ADD_SEALS", 1033),
-    ("F_GET_SEALS", 1034),
-    ("F_SEAL_SEAL", 0x0001),
-    ("F_SEAL_SHRINK", 0x0002),
-    ("F_SEAL_GROW", 0x0004),
-    ("F_SEAL_WRITE", 0x0008),
-):
-    if not hasattr(fcntl, _name):
-        setattr(fcntl, _name, _value)
-`,
-  );
-  expect(
-    !shouldPatch || patched !== helper,
-    "Darwin fcntl seal shim injection point not found in helper module",
-  ).toBe(true);
-  return shouldPatch ? patched : helper;
-}
-
 function writeFixtureFile(root: string, relativePath: string, content: string): void {
   const target = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, `${content.trim()}\n`, "utf8");
 }
 
-function createPackageFixture(version = "0.1.30"): string {
+function createPackageFixture(version = "0.1.34"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
   const packageDir = path.join(tempDir, "deepagents_code");
   writeFixtureFile(packageDir, "__init__.py", '"""Test package."""');
@@ -287,7 +257,7 @@ def list_subagents(*args, **kwargs):
   );
   writeFixtureFile(
     packageDir,
-    "server.py",
+    "client/launch/server.py",
     fs.readFileSync(
       path.join(process.cwd(), "test", "fixtures", "langchain-deepagents-code", "server.py"),
       "utf8",
@@ -341,7 +311,7 @@ def _run_single_hook(command, event, payload_bytes):
   );
   writeFixtureFile(
     packageDir,
-    "non_interactive.py",
+    "client/non_interactive.py",
     `
 from __future__ import annotations
 
@@ -450,10 +420,13 @@ def build_chat_model(*args, **kwargs):
     return object()
 `,
   );
-  writeFixtureFile(packageDir, "widgets/__init__.py", '"""Test widgets."""');
+  writeFixtureFile(packageDir, "client/__init__.py", '"""Test client."""');
+  writeFixtureFile(packageDir, "client/launch/__init__.py", '"""Test launch client."""');
+  writeFixtureFile(packageDir, "tui/__init__.py", '"""Test TUI."""');
+  writeFixtureFile(packageDir, "tui/widgets/__init__.py", '"""Test widgets."""');
   writeFixtureFile(
     packageDir,
-    "widgets/auth.py",
+    "tui/widgets/auth.py",
     `
 from __future__ import annotations
 
@@ -501,7 +474,7 @@ class AuthManagerScreen(_BaseScreen):
   );
   writeFixtureFile(
     packageDir,
-    "widgets/codex_auth.py",
+    "tui/widgets/codex_auth.py",
     `
 from __future__ import annotations
 
@@ -536,7 +509,7 @@ class CodexAuthScreen:
   );
   writeFixtureFile(
     packageDir,
-    "widgets/model_selector.py",
+    "tui/widgets/model_selector.py",
     `
 from __future__ import annotations
 
@@ -559,7 +532,7 @@ class ModelSelectorScreen:
   );
   writeFixtureFile(
     packageDir,
-    "widgets/approval.py",
+    "tui/widgets/approval.py",
     `
 from __future__ import annotations
 
@@ -620,7 +593,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     );
   });
 
-  it("patches every 0.1.30 mutation and credential boundary idempotently", () => {
+  it("patches every 0.1.34 mutation and credential boundary idempotently", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     patchFixture(tempDir);
@@ -636,22 +609,21 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "agent.py",
       "update_check.py",
       "integrations/openai_codex.py",
-      "widgets/auth.py",
-      "widgets/codex_auth.py",
-      "widgets/model_selector.py",
-      "widgets/approval.py",
-      "server.py",
+      "tui/widgets/auth.py",
+      "tui/widgets/codex_auth.py",
+      "tui/widgets/model_selector.py",
+      "tui/widgets/approval.py",
+      "client/launch/server.py",
       "_server_config.py",
       "mcp_tools.py",
       "subagents.py",
       "hooks.py",
-      "non_interactive.py",
+      "client/non_interactive.py",
       "_nemoclaw_managed.py",
     ]) {
       const source = fs.readFileSync(path.join(packageDir, relativePath), "utf8");
       expect(source.match(/NemoClaw-managed Deep Agents Code hardening v2\./g)).toHaveLength(1);
     }
-
     const main = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
     for (const expected of [
       'args.sandbox = "none"',
@@ -669,6 +641,45 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ]) {
       expect(main).toContain(expected);
     }
+  });
+
+  it("preserves upstream MCP JSON diagnostics around the managed descriptor loader", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const invalidConfig = path.join(tempDir, "invalid-mcp.json");
+    fs.writeFileSync(invalidConfig, '{"mcpServers": }\n', "utf8");
+
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `import json
+from deepagents_code.mcp_tools import load_mcp_config
+
+try:
+    load_mcp_config(${JSON.stringify(invalidConfig)})
+except json.JSONDecodeError as exc:
+    print(str(exc))
+else:
+    raise AssertionError("invalid JSON unexpectedly loaded")
+`,
+      ],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Invalid JSON in MCP config file");
+    expect(result.stdout).toContain("Check the JSON syntax.");
+    expect(result.stdout).toContain("^");
+    const patchedLoader = fs.readFileSync(
+      path.join(tempDir, "deepagents_code", "mcp_tools.py"),
+      "utf8",
+    );
+    expect(patchedLoader).toContain("return json.loads(managed_payload)");
+    expect(patchedLoader).toContain("return json.load(file_obj)");
   });
 
   it.each([
@@ -989,7 +1000,7 @@ from pathlib import Path
 
 from deepagents_code import _nemoclaw_managed as managed
 from deepagents_code import _server_config, app, mcp_tools
-from deepagents_code.server import ServerProcess
+from deepagents_code.client.launch.server import ServerProcess
 
 real_memfd_create = os.memfd_create
 if sys.argv[2] == "anonymous-otmpfile":
@@ -1153,18 +1164,21 @@ progressive_disclosure_harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(progressive_disclosure_harness)
 progressive_disclosure_harness._install_stubs()
 
-from deepagents_code import agent, app, auth_store, config, hooks, main as dcode_main, model_config, non_interactive, server, subagents, update_check
-from deepagents_code import _nemoclaw_managed
+from deepagents_code import agent, app, auth_store, config, hooks, main as dcode_main, model_config, subagents, update_check
+from deepagents_code import _nemoclaw_managed, nemoclaw_observability
 from deepagents_code import config_manifest
+from deepagents_code.client import non_interactive
+from deepagents_code.client.launch import server
 from deepagents_code.integrations import openai_codex
-from deepagents_code.widgets.auth import AuthManagerScreen, AuthPromptScreen, AuthResult
-from deepagents_code.widgets.codex_auth import CodexAuthScreen
-from deepagents_code.widgets import model_selector
-from deepagents_code.widgets.approval import ApprovalMenu
+from deepagents_code.tui.widgets.auth import AuthManagerScreen, AuthPromptScreen, AuthResult
+from deepagents_code.tui.widgets.codex_auth import CodexAuthScreen
+from deepagents_code.tui.widgets import model_selector
+from deepagents_code.tui.widgets.approval import ApprovalMenu
 from types import SimpleNamespace
 
 
 async def validate():
+    assert nemoclaw_observability.initialize_observability() is False
     instance = app.DeepAgentsApp()
     for command in (
         "/update",
@@ -1460,7 +1474,7 @@ print("managed-boundaries-ok")
       encoding: "utf8",
     });
     expect(versionResult.status).not.toBe(0);
-    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.30");
+    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.34");
 
     const missingMethod = createPackageFixture();
     const appPath = path.join(missingMethod, "deepagents_code", "app.py");

@@ -29,6 +29,56 @@ describe("SandboxExecCommand oclif parse path", () => {
     );
   });
 
+  it("preserves repeated flag/value pairs after -- in their original order", async () => {
+    await SandboxExecCommand.run(
+      [
+        "alpha",
+        "--",
+        "env",
+        "-u",
+        "ALL_PROXY",
+        "-u",
+        "HTTPS_PROXY",
+        "-u",
+        "HTTP_PROXY",
+        "-u",
+        "all_proxy",
+        "-u",
+        "https_proxy",
+        "-u",
+        "http_proxy",
+        "/opt/venv/bin/python3",
+        "-I",
+        "-c",
+        "pass",
+      ],
+      rootDir,
+    );
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      [
+        "env",
+        "-u",
+        "ALL_PROXY",
+        "-u",
+        "HTTPS_PROXY",
+        "-u",
+        "HTTP_PROXY",
+        "-u",
+        "all_proxy",
+        "-u",
+        "https_proxy",
+        "-u",
+        "http_proxy",
+        "/opt/venv/bin/python3",
+        "-I",
+        "-c",
+        "pass",
+      ],
+      { workdir: undefined, tty: null, timeoutSeconds: undefined },
+    );
+  });
+
   it("parses --workdir before -- and keeps the inner command intact", async () => {
     await SandboxExecCommand.run(
       ["alpha", "--workdir", "/sandbox/workspace", "--", "ls", "-la"],
