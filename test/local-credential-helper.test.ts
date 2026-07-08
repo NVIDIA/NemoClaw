@@ -49,6 +49,8 @@ interface RequestOptions {
   path?: string;
 }
 
+type ReadinessState = { kind: "exited" } | { kind: "ready"; url: string } | { kind: "waiting" };
+
 const activeChildren = new Set<CapturedChild>();
 const tempDirs = new Set<string>();
 
@@ -86,18 +88,26 @@ function captureChild(args: string[]): CapturedChild {
   return captured;
 }
 
-async function terminate(captured: CapturedChild): Promise<void> {
-  if (captured.child.exitCode !== null || captured.child.signalCode !== null) {
-    await captured.closed.catch(() => undefined);
-    return;
-  }
+function childHasExited(captured: CapturedChild): boolean {
+  return captured.child.exitCode !== null || captured.child.signalCode !== null;
+}
+
+async function awaitClosed(captured: CapturedChild): Promise<void> {
+  await captured.closed.catch(() => undefined);
+}
+
+async function terminateRunning(captured: CapturedChild): Promise<void> {
   captured.child.kill("SIGTERM");
   try {
     await withTimeout(captured.closed, 1_000, "credential helper SIGTERM");
   } catch {
     captured.child.kill("SIGKILL");
-    await captured.closed.catch(() => undefined);
+    await awaitClosed(captured);
   }
+}
+
+async function terminate(captured: CapturedChild): Promise<void> {
+  await (childHasExited(captured) ? awaitClosed(captured) : terminateRunning(captured));
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -110,7 +120,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
       }),
     ]);
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
 
@@ -126,18 +136,31 @@ function helperArgs(fields: string[], command: string[]): string[] {
   ];
 }
 
+function readinessState(captured: CapturedChild): ReadinessState {
+  const url = captured.output().match(READINESS_URL_PATTERN)?.[0];
+  return url !== undefined
+    ? { kind: "ready", url }
+    : childHasExited(captured)
+      ? { kind: "exited" }
+      : { kind: "waiting" };
+}
+
 async function waitForReadiness(captured: CapturedChild): Promise<URL> {
   const deadline = Date.now() + PROCESS_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const match = captured.output().match(READINESS_URL_PATTERN);
-    if (match) return new URL(match[0]);
-    if (captured.child.exitCode !== null || captured.child.signalCode !== null) {
-      const result = await captured.closed;
-      throw new Error(
-        `credential helper exited before readiness (${result.code ?? result.signal}):\n${captured.output()}`,
-      );
+    const state = readinessState(captured);
+    switch (state.kind) {
+      case "ready":
+        return new URL(state.url);
+      case "exited": {
+        const result = await captured.closed;
+        throw new Error(
+          `credential helper exited before readiness (${result.code ?? result.signal}):\n${captured.output()}`,
+        );
+      }
+      case "waiting":
+        await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`credential helper did not report readiness:\n${captured.output()}`);
 }
@@ -192,13 +215,15 @@ function createCommandFixture(): {
 
 function request(url: URL, options: RequestOptions = {}): Promise<HttpResult> {
   const body = typeof options.body === "string" ? Buffer.from(options.body, "utf8") : options.body;
-  const headers = { ...(options.headers ?? {}) };
-  const hasContentLength = Object.keys(headers).some(
+  const suppliedHeaders = options.headers ?? {};
+  const hasContentLength = Object.keys(suppliedHeaders).some(
     (name) => name.toLowerCase() === "content-length",
   );
-  if (body !== undefined && !hasContentLength && !options.omitContentLength) {
-    headers["content-length"] = String(body.length);
-  }
+  const generatedHeaders =
+    body !== undefined && !hasContentLength && !options.omitContentLength
+      ? { "content-length": String(body.length) }
+      : {};
+  const headers = { ...suppliedHeaders, ...generatedHeaders };
 
   return new Promise((resolve, reject) => {
     const clientRequest = http.request(
@@ -226,8 +251,7 @@ function request(url: URL, options: RequestOptions = {}): Promise<HttpResult> {
       clientRequest.destroy(new Error("credential helper request timed out"));
     });
     clientRequest.on("error", reject);
-    if (body !== undefined) clientRequest.write(body);
-    clientRequest.end();
+    clientRequest.end(body);
   });
 }
 
