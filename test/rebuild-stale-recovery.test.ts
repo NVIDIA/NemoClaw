@@ -361,10 +361,10 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(output).not.toContain("Backing up sandbox state");
     expect(output).toContain("Creating new sandbox with current image");
     expect(output).toContain("Recovery recreate failed");
-    // The preserved entry must survive the failed recreate. Its obsolete image
-    // tag is intentionally cleared so a leftover image remains eligible for GC.
+    // The preserved entry must survive the failed recreate without a remove/
+    // restore round trip that rewrites unrelated fields.
     const registry = readRegistry(fixture);
     expect(registry.defaultSandbox).toBe(fixture.sandboxName);
-    expect(registry.sandboxes[fixture.sandboxName].imageTag).toBe(null);
+    expect(registry.sandboxes[fixture.sandboxName].imageTag).toBeUndefined();
   });
 });
