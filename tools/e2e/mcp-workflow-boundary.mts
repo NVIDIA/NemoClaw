@@ -11,6 +11,17 @@ const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
 const TERMINAL_JOBS = ["report-to-pr", "scorecard"] as const;
 const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before unverified dev tooling";
+const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
+const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
+const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
+const DEV_COMPATIBILITY_RUN = [
+  "set -euo pipefail",
+  'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
+  `npx tsx ${DEV_COMPATIBILITY_TOOL}`,
+  "",
+].join("\n");
+const DEV_FULL_LIFECYCLE_CONDITION =
+  "${{ steps.mcp_runtime_compatibility.outputs.mode == 'full-lifecycle' }}";
 const MCP_CLOUDFLARED_VERSION = "2026.6.1";
 const MCP_CLOUDFLARED_DEB_SHA256 =
   "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526";
@@ -66,6 +77,16 @@ function requireContains(
   message: string,
 ): void {
   if (!asString(actual).includes(expected)) errors.push(message);
+}
+
+function hasExactEntries(actual: UnknownRecord, expected: UnknownRecord): boolean {
+  const actualKeys = Object.keys(actual).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key, index) => key === expectedKeys[index]) &&
+    expectedKeys.every((key) => actual[key] === expected[key])
+  );
 }
 
 function validateJobIdentity(
@@ -220,6 +241,10 @@ function validateJobExecution(
   const tls = namedStep(job, "Generate MCP test TLS");
   const install = namedStep(job, "Install OpenShell CLI");
   const run = namedStep(job, "Run MCP OpenShell provider live test");
+  const compatibility = namedStep(job, DEV_COMPATIBILITY_STEP_NAME);
+  const compatibilitySteps = steps.filter((step) =>
+    asString(step.run).includes(DEV_COMPATIBILITY_TOOL),
+  );
   const scan = namedStep(job, "Scan MCP artifacts for fixture credentials");
   const uploads = steps.filter(isArtifactUploadStep);
   const upload = namedStep(job, "Upload MCP server artifacts");
@@ -295,6 +320,55 @@ function validateJobExecution(
     "bash scripts/install-openshell.sh",
     `${jobName} must use the repository OpenShell installer`,
   );
+  if (jobName === "mcp-bridge-dev") {
+    if (compatibilitySteps.length !== 1 || compatibilitySteps[0] !== compatibility) {
+      errors.push("mcp-bridge-dev must use exactly one canonical runtime compatibility classifier");
+    }
+    const expectedCompatibility = {
+      id: DEV_COMPATIBILITY_STEP_ID,
+      name: DEV_COMPATIBILITY_STEP_NAME,
+      run: DEV_COMPATIBILITY_RUN,
+    };
+    if (!hasExactEntries(compatibility, expectedCompatibility)) {
+      errors.push(
+        "mcp-bridge-dev must use the canonical unconditional runtime compatibility classifier",
+      );
+    }
+    requireEqual(
+      errors,
+      compatibility.id,
+      DEV_COMPATIBILITY_STEP_ID,
+      "mcp-bridge-dev runtime compatibility classifier must expose its canonical step id",
+    );
+    requireContains(
+      errors,
+      compatibility.run,
+      `npx tsx ${DEV_COMPATIBILITY_TOOL}`,
+      "mcp-bridge-dev runtime compatibility classifier must use the reviewed tool",
+    );
+    requireEqual(
+      errors,
+      run.if,
+      DEV_FULL_LIFECYCLE_CONDITION,
+      "mcp-bridge-dev must run the full MCP lifecycle only for an aligned runtime",
+    );
+    if (
+      steps.indexOf(install) < 0 ||
+      steps.indexOf(compatibility) <= steps.indexOf(install) ||
+      steps.indexOf(run) <= steps.indexOf(compatibility)
+    ) {
+      errors.push(
+        "mcp-bridge-dev must classify the installed runtime before the full MCP lifecycle",
+      );
+    }
+  } else {
+    if (compatibilitySteps.length > 0 || Object.keys(compatibility).length > 0) {
+      errors.push("mcp-bridge stable lane must not use dev runtime compatibility branching");
+    }
+    if (Object.hasOwn(run, "if")) {
+      errors.push("mcp-bridge stable lane must run its full MCP lifecycle unconditionally");
+    }
+  }
   for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
   }
@@ -346,6 +420,9 @@ function validateJobExecution(
   }
   if (steps.indexOf(scan) < 0 || steps.indexOf(upload) <= steps.indexOf(scan)) {
     errors.push(`${jobName} must scan artifacts before upload`);
+  }
+  if (steps.indexOf(run) < 0 || steps.indexOf(scan) <= steps.indexOf(run)) {
+    errors.push(`${jobName} must scan artifacts after its MCP compatibility execution`);
   }
 }
 

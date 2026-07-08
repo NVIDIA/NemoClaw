@@ -31,6 +31,7 @@ export interface RebuildPostRestorePhaseInput {
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
   restoreSucceeded: boolean;
+  backupWasForceSkipped: boolean;
   failedPresets: string[];
   finalBuiltinPresets: string[];
   failedPresetRemovals: string[];
@@ -43,6 +44,34 @@ export interface RebuildPostRestorePhaseInput {
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   log: RebuildLog;
   bail: RebuildBail;
+}
+
+interface SuccessfulRebuildSummaryInput {
+  sandboxName: string;
+  backupManifest: RebuildBackupManifest;
+  backupWasForceSkipped: boolean;
+  staleRecovery: boolean;
+  rebuiltAgentName: string;
+  expectedVersion: string | null;
+}
+
+export function printSuccessfulRebuildSummary(
+  input: SuccessfulRebuildSummaryInput,
+  writeLine: (message: string) => void = console.log,
+): void {
+  writeLine(`  ${G}\u2713${R} Sandbox '${input.sandboxName}' rebuilt successfully`);
+  if (input.backupWasForceSkipped) {
+    writeLine(
+      `    ${YW}\u26a0${R} Backup was skipped via --force after a total backup failure \u2014 prior workspace state was not preserved.`,
+    );
+  } else if (input.staleRecovery && !input.backupManifest) {
+    writeLine(
+      `    ${D}Recovered from a stale registry entry \u2014 no prior workspace state was available to restore.${R}`,
+    );
+  }
+  if (input.expectedVersion) {
+    writeLine(`    Now running: ${input.rebuiltAgentName} v${input.expectedVersion}`);
+  }
 }
 
 export function resolveRestoredPolicyRegistryState(
@@ -77,6 +106,7 @@ export async function runRebuildPostRestorePhase(
     backupManifest,
     mcpEntries,
     restoreSucceeded,
+    backupWasForceSkipped,
     failedPresets,
     finalBuiltinPresets,
     failedPresetRemovals,
@@ -190,15 +220,14 @@ export async function runRebuildPostRestorePhase(
     restoreSucceeded,
   });
   if (postRestoreComplete) {
-    console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
-    if (staleRecovery && !backupManifest) {
-      console.log(
-        `    ${D}Recovered from a stale registry entry \u2014 no prior workspace state was available to restore.${R}`,
-      );
-    }
-    if (versionCheck.expectedVersion) {
-      console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);
-    }
+    printSuccessfulRebuildSummary({
+      sandboxName,
+      backupManifest,
+      backupWasForceSkipped,
+      staleRecovery,
+      rebuiltAgentName,
+      expectedVersion: versionCheck.expectedVersion,
+    });
   } else {
     console.log(
       `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but some post-restore steps were incomplete`,

@@ -35,6 +35,7 @@ import {
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
+import { redact } from "../../security/redact";
 import {
   isSandboxReady,
   isTerminalSandboxPhase,
@@ -68,6 +69,7 @@ import {
 import {
   buildSandboxInferenceRouteProbeArgs,
   type InferenceRouteProbeAgent,
+  parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
@@ -378,11 +380,11 @@ function probeSandboxInferenceRoute(
       ignoreError: true,
       timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
     });
-    const detail = probe.output.trim();
+    const parsed = parseSandboxInferenceRouteProbeResult(probe);
     lastProbe = {
-      healthy: probe.status === 0 && /^OK\s+[0-9]{3}\b/.test(detail),
-      broken: /^BROKEN\s+[0-9]{3}\b/.test(detail),
-      detail: detail || `openshell sandbox exec exited with status ${String(probe.status)}`,
+      healthy: parsed.healthy,
+      broken: parsed.broken,
+      detail: parsed.detail,
     };
     if (lastProbe.healthy || attempt === boundedAttempts) return lastProbe;
     sleepSync(delayMs);
@@ -441,7 +443,7 @@ export function repairSandboxInferenceRouteWithDeps(
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
   }
   if (!initialProbe.broken) {
-    return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
+    return { healthy: false, repairAttempted: false, detail: initialProbe.detail };
   }
   if (!shouldUseLegacyDnsProxyRepair(sb)) {
     if (deps.shouldApplyVmDnsMonkeypatch(sb)) {
@@ -502,13 +504,6 @@ export function repairSandboxInferenceRouteWithDeps(
         detail: "missing sandbox provider or model",
       };
     }
-    if (!finalProbe.healthy && !finalProbe.broken) {
-      return {
-        healthy: true,
-        repairAttempted: true,
-        detail: finalProbe.detail,
-      };
-    }
     return {
       healthy: finalProbe.healthy,
       repairAttempted: true,
@@ -543,13 +538,6 @@ export function repairSandboxInferenceRouteWithDeps(
     } else if (repairedProbe.broken) {
       error("  Warning: inference.local is still unavailable after DNS proxy repair.");
     }
-  }
-  if (!repairedProbe.healthy && !repairedProbe.broken) {
-    return {
-      healthy: true,
-      repairAttempted: true,
-      detail: repairedProbe.detail,
-    };
   }
   return {
     healthy: repairedProbe.healthy,
@@ -627,14 +615,24 @@ function printUnrecoverableInferenceRoute(
   sandboxName: string,
   route: string,
   detail: string,
+  { repairAttempted = true }: { repairAttempted?: boolean } = {},
 ): void {
-  console.error(
-    `  Error: inference.local is still unavailable inside '${sandboxName}' after DNS and route repair.`,
-  );
+  const reason = repairAttempted
+    ? `inference.local is still unavailable inside '${sandboxName}' after DNS and route repair.`
+    : `the authoritative inference.local probe inside '${sandboxName}' did not return a trusted result.`;
+  const boundedDetail = sanitizeRouteValueForDisplay(redact(detail))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+  console.error(`  Error: ${reason}`);
   console.error(`  Route: ${route}`);
-  if (detail) console.error(`  Last probe: ${detail}`);
+  if (boundedDetail) console.error(`  Last probe: ${boundedDetail}`);
   console.error(`  Run:  ${CLI_NAME} ${sandboxName} doctor`);
-  console.error("  Connect is stopping because the sandbox inference route is known to be broken.");
+  console.error(
+    repairAttempted
+      ? "  Connect is stopping because the sandbox inference route is known to be broken."
+      : "  Connect is stopping because the sandbox inference route is not known healthy.",
+  );
 }
 
 export function resetManagedInferenceRouteWithDeps(
@@ -765,6 +763,21 @@ function ensureSandboxInferenceRouteUnlocked(
     const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, agent, gatewayName, {
       quiet,
     });
+    if (!repairResult.healthy && !repairResult.repairAttempted) {
+      // Unavailable or malformed probe output is a permanent fail-closed
+      // classification at the OpenShell exec/DNS/TLS/proxy boundary. There is
+      // no trustworthy failure state to repair, so stop without mutating the
+      // route and preserve the bounded probe evidence for doctor diagnostics.
+      if (!quiet) {
+        printUnrecoverableInferenceRoute(
+          sandboxName,
+          `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`,
+          repairResult.detail,
+          { repairAttempted: false },
+        );
+      }
+      return { sandbox: sb, routeHealthy: false };
+    }
     if (!repairResult.healthy && repairResult.repairAttempted) {
       const resetResult = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
         detail: repairResult.detail,
@@ -790,6 +803,7 @@ function ensureSandboxInferenceRouteUnlocked(
         sandboxName,
         `${sanitizeRouteValueForDisplay(inference.provider)}/${sanitizeRouteValueForDisplay(inference.model)}`,
         detail,
+        { repairAttempted: false },
       );
     }
     return { sandbox: sb, routeHealthy: false };

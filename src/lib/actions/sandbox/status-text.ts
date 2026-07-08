@@ -18,10 +18,12 @@ import {
 import type { SandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
 import { isSandboxGatewayRunningForStatus } from "./process-recovery";
-import type {
-  SandboxStatusAgentInfo,
-  SandboxStatusRouteDrift,
-  SandboxStatusSnapshot,
+import {
+  isInferenceHealthFailing,
+  resolveSandboxStatusDcodeAutoApprovalMode,
+  type SandboxStatusAgentInfo,
+  type SandboxStatusRouteDrift,
+  type SandboxStatusSnapshot,
 } from "./status-snapshot";
 
 export interface SandboxStatusTextContext
@@ -104,6 +106,10 @@ function printInferenceStatus(context: SandboxStatusTextContext): void {
   }
 }
 
+function inferenceHealthExitCode(inferenceHealth: ProviderHealthStatus | null): number | null {
+  return isInferenceHealthFailing(inferenceHealth) ? 1 : null;
+}
+
 function getSandboxGpuDisplay(sandbox: SandboxEntry): {
   enabled: boolean;
   hostGpu: string;
@@ -167,8 +173,12 @@ function printTerminalHarness(context: SandboxStatusTextContext): number | null 
 }
 
 function printAgentHarness(context: SandboxStatusTextContext): number | null {
-  const { statusAgent } = context;
+  const { sb, statusAgent } = context;
   console.log(`    Harness:  ${statusAgent.agentDisplayName} (${statusAgent.agentRuntime})`);
+  const dcodeAutoApprovalMode = resolveSandboxStatusDcodeAutoApprovalMode(sb);
+  if (dcodeAutoApprovalMode) {
+    console.log(`    DCode auto-approval capability: ${dcodeAutoApprovalMode}`);
+  }
   if (statusAgent.agentLoadError) {
     console.log(`    Agent load error: ${statusAgent.agentLoadError}`);
   }
@@ -274,16 +284,17 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   console.log(`    Provider: ${currentProvider}`);
   printInferenceRouteDrift(context.routeDrift, sb.name);
   printInferenceStatus(context);
+  const inferenceExitCode = inferenceHealthExitCode(context.inferenceHealth);
   printSandboxGpuStatus(sb);
   console.log(
     `    OpenShell: ${sb.openshellVersion || "unknown"} (${sb.openshellDriver || "unknown"})`,
   );
   console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
-  const exitCode = printAgentHarness(context);
+  const agentExitCode = printAgentHarness(context);
   printActiveSessions(sandboxName);
   printShieldsPosture(sandboxName);
   printAgentVersion(context, sb);
-  return { exitCode };
+  return { exitCode: inferenceExitCode ?? agentExitCode };
 }
 
 async function printGatewayProcessStatus(context: SandboxStatusTextContext): Promise<void> {

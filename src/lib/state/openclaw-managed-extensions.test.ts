@@ -63,7 +63,11 @@ describe("OpenClaw managed extension policy", () => {
   });
 
   it("excludes only image-managed extensions from the restore archive", () => {
-    const args = buildRestoreTarArgs("/tmp/rebuild backup", ["workspace", "extensions"], true);
+    const args = buildRestoreTarArgs(
+      "/tmp/rebuild backup",
+      ["workspace", "extensions"],
+      OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS,
+    );
 
     expect(args.slice(0, 4)).toEqual(["-cf", "-", "-C", "/tmp/rebuild backup"]);
     expect(args.flatMap((arg, index) => (arg === "--exclude" ? [args[index + 1]] : []))).toEqual(
@@ -73,8 +77,18 @@ describe("OpenClaw managed extension policy", () => {
     expect(args).not.toContain("extensions/telegram");
   });
 
+  it("also excludes dynamically discovered fresh plugin directories", () => {
+    const args = buildRestoreTarArgs(
+      "/tmp/backup",
+      ["extensions"],
+      [...OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS, "weather"],
+    );
+
+    expect(args).toContain("extensions/weather");
+  });
+
   it("leaves ordinary restore archives unfiltered", () => {
-    expect(buildRestoreTarArgs("/tmp/backup", ["workspace", "extensions"], false)).toEqual([
+    expect(buildRestoreTarArgs("/tmp/backup", ["workspace", "extensions"], [])).toEqual([
       "-cf",
       "-",
       "-C",
@@ -125,6 +139,9 @@ describe("OpenClaw managed extension symlink policy", () => {
         "../../../../openclaw.json",
       ),
     ).toBe(false);
+    expect(isAllowedStateSymlink("extensions/nemoclaw/node_modules/.bin/leak", "../..")).toBe(
+      false,
+    );
     expect(
       isAllowedStateSymlink("extensions/nemoclaw/node_modules/.bin/loop", "../.bin/other"),
     ).toBe(false);
@@ -158,7 +175,8 @@ describe("OpenClaw managed extension cleanup", () => {
     const command = buildRestoreCleanupCommand(
       "/sandbox/.openclaw",
       ["workspace", "extensions"],
-      true,
+      OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS,
+      new Set(),
     );
 
     expect(command).toContain("rm -rf -- '/sandbox/.openclaw/workspace'");
@@ -182,7 +200,12 @@ describe("OpenClaw managed extension cleanup", () => {
     fs.mkdirSync(managed, { recursive: true });
     fs.mkdirSync(userExtension);
     fs.symlinkSync(path.join(root, "missing-target"), dangling);
-    const command = buildRestoreCleanupCommand(root, ["extensions"], true);
+    const command = buildRestoreCleanupCommand(
+      root,
+      ["extensions"],
+      OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS,
+      new Set(),
+    );
 
     expect(() => execFileSync("bash", ["-c", command], { stdio: "pipe" })).toThrow();
     expect(fs.lstatSync(dangling).isSymbolicLink()).toBe(true);
@@ -194,13 +217,44 @@ describe("OpenClaw managed extension cleanup", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it("requires dynamically discovered fresh plugin directories to remain real directories", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-extension-"));
+    try {
+      const extensions = path.join(root, "extensions");
+      const weather = path.join(extensions, "weather");
+      const userExtension = path.join(extensions, "user-extension");
+      fs.mkdirSync(weather, { recursive: true });
+      fs.mkdirSync(userExtension);
+      const command = buildRestoreCleanupCommand(
+        root,
+        ["extensions"],
+        [...OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS, "weather"],
+        new Set(["weather"]),
+      );
+
+      execFileSync("bash", ["-c", command], { stdio: "pipe" });
+      expect(fs.statSync(weather).isDirectory()).toBe(true);
+      expect(fs.existsSync(userExtension)).toBe(false);
+
+      fs.rmSync(weather, { recursive: true, force: true });
+      expect(() => execFileSync("bash", ["-c", command], { stdio: "pipe" })).toThrow();
+
+      const target = path.join(root, "weather-target");
+      fs.mkdirSync(target);
+      fs.symlinkSync(target, weather);
+      expect(() => execFileSync("bash", ["-c", command], { stdio: "pipe" })).toThrow();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("removes complete state directories when managed preservation is disabled", () => {
     expect(
-      buildRestoreCleanupCommand("/sandbox/.openclaw", ["workspace", "extensions"], false),
+      buildRestoreCleanupCommand("/sandbox/.openclaw", ["workspace", "extensions"], [], new Set()),
     ).toBe("rm -rf -- '/sandbox/.openclaw/workspace' && rm -rf -- '/sandbox/.openclaw/extensions'");
   });
 
   it("returns a no-op when no restore directories require cleanup", () => {
-    expect(buildRestoreCleanupCommand("/sandbox/.openclaw", [], false)).toBe(":");
+    expect(buildRestoreCleanupCommand("/sandbox/.openclaw", [], [], new Set())).toBe(":");
   });
 });
