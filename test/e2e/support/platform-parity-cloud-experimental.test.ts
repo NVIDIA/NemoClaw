@@ -277,20 +277,30 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout.trim()).toBe("NO_NEWLINE_IN_FETCH_COMMAND");
   });
 
-  it("keeps sensitive fetch_url denials on HTTPS CONNECT classification", () => {
-    const script = fs.readFileSync(
-      path.join(
-        process.cwd(),
-        "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
-      ),
-      "utf8",
+  it.each([
+    ["accepts explicit denial evidence", "FETCH_BLOCKED:network policy denied", 0, "1 passed"],
+    ["rejects an unclassified fetch error", "FETCH_ERROR:opaque 403", 1, "lacked denial evidence"],
+  ] as const)("%s from the fetch_url probe", (_label, fixture, status, expected) => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "fetch-blocked-classification",
+          NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE: fixture,
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+      },
     );
 
-    expect(script).toContain(
-      'expect_fetch_blocked "instance metadata" "https://169.254.169.254/latest/meta-data/"',
-    );
-    expect(script).toContain('expect_fetch_blocked "sandbox loopback" "https://127.0.0.1/"');
-    expect(script).not.toContain("'403 client error: forbidden'");
+    expect(result.status).toBe(status);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(expected);
   });
 
   it("keeps Deep Agents secret-boundary probe command single-line for OpenShell exec", () => {

@@ -49,6 +49,8 @@ describe("LangChain Deep Agents Code managed fetch proxy", () => {
       const runtimeFile = path.join(tempDir, "managed-dcode-runtime.py");
       fs.writeFileSync(hostFile, "trusted-proxy.internal\n", { mode: 0o444 });
       fs.writeFileSync(portFile, "3129\n", { mode: 0o444 });
+      fs.chmodSync(hostFile, 0o444);
+      fs.chmodSync(portFile, 0o444);
       fs.writeFileSync(
         runtimeFile,
         addDarwinFcntlSealConstants(readAgentFile("managed-dcode-runtime.py")),
@@ -134,7 +136,7 @@ print("root-owned-proxy-verification-ok")
     });
   });
 
-  it("exercises actual fetch_url success and denied-host paths in cloud E2E", () => {
+  it("pins the cloud E2E wiring for fetch_url success and denied-host paths", () => {
     const check = fs.readFileSync(
       path.join(
         repoRoot,

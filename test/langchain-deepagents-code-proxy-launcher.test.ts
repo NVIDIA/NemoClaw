@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { isValidProxyHost, isValidProxyPort } from "../src/lib/onboard/dockerfile-patch.ts";
+import { TRUSTED_FETCH_PROXY_ENV_NAME } from "./helpers/langchain-deepagents-code-headless.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const headlessCheckPath = path.join(
@@ -21,7 +22,6 @@ const headlessCheckPath = path.join(
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
 const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
-const TRUSTED_FETCH_PROXY_ENV_NAME = "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL";
 const DEFAULT_MANAGED_PROXY = { host: "10.200.0.1", port: "3128" } as const;
 const TEST_OWNER_UID = process.getuid?.() ?? 0;
 

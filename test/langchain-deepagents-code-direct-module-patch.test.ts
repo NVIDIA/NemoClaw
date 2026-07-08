@@ -247,18 +247,33 @@ from pathlib import Path
 
 calls = []
 responses = []
+sessions = []
+
+class ProxyPolicyDenied(RuntimeError):
+    pass
 
 class Response:
-    def __init__(self, status_code=200, location=None):
+    def __init__(self, status_code=200, location=None, error=None):
         self.status_code = status_code
         self.headers = {} if location is None else {"Location": location}
+        self.error = error
 
     def raise_for_status(self):
+        if self.error is not None:
+            raise self.error
         return None
 
 class Session:
     def __init__(self):
         self.trust_env = True
+        self.closed = False
+        sessions.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.closed = True
 
     def get(self, url, **kwargs):
         calls.append((self.trust_env, url, kwargs))
@@ -299,6 +314,7 @@ def forbidden_direct_dns(*_args, **_kwargs):
 tools._validate_url = forbidden_direct_dns
 response = tools._fetch_with_redirects("https://raw.githubusercontent.com/example/repo/main/README.md", timeout=8)
 assert response.status_code == 200
+assert len(sessions) == 1 and sessions[0].closed
 assert calls == [(
     False,
     "https://raw.githubusercontent.com/example/repo/main/README.md",
@@ -370,6 +386,34 @@ except tools._UrlValidationError as exc:
 else:
     raise AssertionError("credentialed redirect escaped validation")
 assert len(calls) == 1
+
+for label, redirect_url in (
+    ("cross-host metadata", "http://169.254.169.254/latest/meta-data/"),
+    ("DNS-rebinding hostname", "https://rebind.internal/private"),
+):
+    calls.clear()
+    responses.extend([
+        Response(302, redirect_url),
+        Response(403, error=ProxyPolicyDenied(f"network policy denied {label}")),
+    ])
+    try:
+        tools._fetch_with_redirects(
+            "https://raw.githubusercontent.com/allowed/start",
+            timeout=8,
+        )
+    except ProxyPolicyDenied as exc:
+        assert str(exc) == f"network policy denied {label}"
+    else:
+        raise AssertionError(f"{label} redirect escaped proxy policy denial")
+    assert [url for _, url, _ in calls] == [
+        "https://raw.githubusercontent.com/allowed/start",
+        redirect_url,
+    ]
+    assert all(
+        kwargs["proxies"]
+        == {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}}
+        for _, _, kwargs in calls
+    )
 
 calls.clear()
 responses.append(Response(302, "https://raw.githubusercontent.com/next"))
@@ -478,6 +522,8 @@ except RuntimeError as exc:
 else:
     raise AssertionError("wrong-owner CA bundle was accepted")
 _nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
+assert sessions and all(session.closed for session in sessions)
+assert len({id(session) for session in sessions}) == len(sessions)
 print("managed-fetch-proxy-ok")
 `,
       ],
@@ -1355,5 +1401,41 @@ print("managed-boundaries-ok")
     });
     expect(fetchShapeResult.status).not.toBe(0);
     expect(fetchShapeResult.stderr).toContain("_fetch_with_redirects");
+
+    const missingRedirectLimit = createPackageFixture();
+    const missingRedirectLimitPath = path.join(missingRedirectLimit, "deepagents_code", "tools.py");
+    fs.writeFileSync(
+      missingRedirectLimitPath,
+      fs
+        .readFileSync(missingRedirectLimitPath, "utf8")
+        .replace("_MAX_FETCH_REDIRECTS = 5", "_RENAMED_MAX_FETCH_REDIRECTS = 5"),
+      "utf8",
+    );
+    const redirectLimitResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingRedirectLimit },
+      encoding: "utf8",
+    });
+    expect(redirectLimitResult.status).not.toBe(0);
+    expect(redirectLimitResult.stderr).toContain("_MAX_FETCH_REDIRECTS");
+
+    const missingValidationError = createPackageFixture();
+    const missingValidationErrorPath = path.join(
+      missingValidationError,
+      "deepagents_code",
+      "tools.py",
+    );
+    fs.writeFileSync(
+      missingValidationErrorPath,
+      fs
+        .readFileSync(missingValidationErrorPath, "utf8")
+        .replace("class _UrlValidationError", "class _RenamedUrlValidationError"),
+      "utf8",
+    );
+    const validationErrorResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingValidationError },
+      encoding: "utf8",
+    });
+    expect(validationErrorResult.status).not.toBe(0);
+    expect(validationErrorResult.stderr).toContain("_UrlValidationError");
   });
 });
