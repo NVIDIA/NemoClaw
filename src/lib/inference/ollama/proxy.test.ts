@@ -15,7 +15,6 @@ interface MockSetup {
   installed: string[] | (() => string[]);
   promptValues: string[];
   pullStatus?: number;
-  completeSuccess?: boolean;
 }
 
 function loadProxyWithMocks(setup: MockSetup): {
@@ -61,25 +60,23 @@ function loadProxyWithMocks(setup: MockSetup): {
     promptCallIndex += 1;
     return value ?? "";
   };
-  if (setup.completeSuccess) {
-    local.probeOllamaModelCapabilities = () => ({
-      source: "api",
-      capabilities: ["tools"],
-      supportsTools: true,
-    });
-    local.getOllamaWarmupCommand = (model: string) => {
-      warmupModels.push(model);
-      return ["warmup", model];
-    };
-    local.validateOllamaModel = (...args: unknown[]) => {
-      validateCalls.push(args);
-      return { ok: true };
-    };
-    runner.run = (command: readonly string[], options: unknown) => {
-      runCalls.push({ command, options });
-      return { status: 0 };
-    };
-  }
+  local.probeOllamaModelCapabilities = () => ({
+    source: "api",
+    capabilities: ["tools"],
+    supportsTools: true,
+  });
+  local.getOllamaWarmupCommand = (model: string) => {
+    warmupModels.push(model);
+    return ["warmup", model];
+  };
+  local.validateOllamaModel = (...args: unknown[]) => {
+    validateCalls.push(args);
+    return { ok: true };
+  };
+  runner.run = (command: readonly string[], options: unknown) => {
+    runCalls.push({ command, options });
+    return { status: 0 };
+  };
 
   delete require.cache[PROXY_DIST];
   const proxy = require(PROXY_DIST);
@@ -208,7 +205,6 @@ describe("prepareOllamaModel post-pull discovery", () => {
       installed: [],
       promptValues: [],
       pullStatus: 0,
-      completeSuccess: true,
     });
     active = setup;
     let attempts = 0;
