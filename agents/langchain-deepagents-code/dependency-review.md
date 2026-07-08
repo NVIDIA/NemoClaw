@@ -36,8 +36,12 @@ to its exact `deepagents==0.7.0a6` SDK pin. That risk is accepted because the
 consumer and SDK are hash locked, the dependency audit is clean, and all source,
 version, middleware, graph, and dispatch checks fail closed.
 
-The exact version and source-hash gates are also the lifecycle tracker for the
-alias bridge: any dependency change stops the image build and requires this
-review to be updated. No standalone removal issue is used for this bridge. When
-Deep Agents natively recognizes both managed keys, that mandatory dependency
-review removes the bridge instead of updating its hashes.
+The exact version and source-hash gates are also the executable lifecycle
+tracker for the alias bridge: any dependency change stops the image build with
+an explicit instruction to check for native managed-alias support, and requires
+this review to be updated. No standalone removal issue is used for this bridge,
+as covered by the admin-maintainer source-of-truth approval for this change
+([PR review](https://github.com/NVIDIA/NemoClaw/pull/6416#pullrequestreview-4649633900)).
+When Deep Agents natively recognizes both managed keys, that mandatory
+dependency review removes the bridge instead of updating its versions or
+hashes.

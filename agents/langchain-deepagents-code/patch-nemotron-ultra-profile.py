@@ -77,7 +77,11 @@ def require_version(distribution: str, expected: str) -> None:
     except importlib.metadata.PackageNotFoundError as exc:
         raise fail(f"required distribution {distribution!r} is not installed") from exc
     if actual != expected:
-        raise fail(f"expected {distribution}=={expected}, found {actual}")
+        raise fail(
+            f"expected {distribution}=={expected}, found {actual}; dependency drift "
+            "requires reviewing whether upstream now recognizes both managed aliases "
+            "and removing this bridge when it does"
+        )
 
 
 def deepagents_root() -> Path:

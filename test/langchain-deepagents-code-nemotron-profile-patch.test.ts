@@ -341,6 +341,9 @@ describe("LangChain Deep Agents Code Nemotron Ultra managed aliases", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(message);
+    expect(result.stderr).toContain(
+      "dependency drift requires reviewing whether upstream now recognizes both managed aliases",
+    );
     assertFixtureUnchanged(fixture, BUILTIN_SOURCE);
   });
 
