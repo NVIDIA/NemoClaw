@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isIP } from "node:net";
+
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import { assertExitZero } from "./clients/command.ts";
 import type { HostCliClient } from "./clients/host.ts";
@@ -22,9 +24,18 @@ export function parseHostAddressProbe(
   output: string,
 ): Pick<HostAddressResult, "address" | "source"> {
   const match = output.trim().match(/^(route|hostname|darwin-interface|darwin-ifconfig)\s+(\S+)/);
-  return match
-    ? { source: match[1] as HostAddressSource, address: match[2] }
-    : { source: "loopback", address: "127.0.0.1" };
+  if (!match) {
+    return { source: "loopback", address: "127.0.0.1" };
+  }
+
+  const address = match[2];
+  if (isIP(address) !== 4) {
+    throw new Error(
+      `host address discovery returned invalid IPv4 address from ${match[1]}: ${address}`,
+    );
+  }
+
+  return { source: match[1] as HostAddressSource, address };
 }
 
 export async function discoverHostAddress(

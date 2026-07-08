@@ -15,6 +15,12 @@ describe("host address discovery", () => {
     ["", { source: "loopback", address: "127.0.0.1" }],
   ])("parses %j", (output, expected) => expect(parseHostAddressProbe(output)).toEqual(expected));
 
+  it("rejects malformed known-source host address output", () => {
+    expect(() => parseHostAddressProbe("route not-an-ip\n")).toThrow(
+      /invalid IPv4 address from route: not-an-ip/,
+    );
+  });
+
   it("rejects failed host probes before parsing fallback output", async () => {
     const runner: CommandRunner = {
       run: async (command) => ({
