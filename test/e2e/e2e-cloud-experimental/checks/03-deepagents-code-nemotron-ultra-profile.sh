@@ -171,17 +171,10 @@ def middleware_names(profile):
     return [type(item).__name__ for item in middleware_items(profile)]
 
 
-canonical_profile = _HARNESS_PROFILES[
-    "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
-]
-assert middleware_names(canonical_profile) == EXPECTED_NATIVE_MIDDLEWARE
-
-
 managed_profiles = []
 for model_id in MANAGED_MODEL_IDS:
     profile = _harness_profile_for_model(make_model(model_id), None)
     managed_profiles.append(profile)
-    assert profile is not canonical_profile
     suffix = profile.system_prompt_suffix
     assert suffix is not None
     for marker in ("<approach>", "<grounding>", "<loop_control>", "<state_changes>"):
@@ -194,6 +187,11 @@ for model_id in MANAGED_MODEL_IDS:
         assert argument in read_file_description
     assert middleware_names(profile) == EXPECTED_MIDDLEWARE, model_id
 
+canonical_profile = _HARNESS_PROFILES[
+    "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
+]
+assert middleware_names(canonical_profile) == EXPECTED_NATIVE_MIDDLEWARE
+assert all(profile is not canonical_profile for profile in managed_profiles)
 assert managed_profiles[0] is managed_profiles[1]
 guard = next(
     item

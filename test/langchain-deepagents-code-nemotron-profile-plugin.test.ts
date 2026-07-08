@@ -733,6 +733,15 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     }
   });
 
+  it("resolves a managed model before the E2E probe inspects lazy profile state", () => {
+    const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
+    const managedResolution = e2eCheck.indexOf("for model_id in MANAGED_MODEL_IDS:");
+    const canonicalLookup = e2eCheck.indexOf("canonical_profile = _HARNESS_PROFILES[");
+
+    expect(managedResolution).toBeGreaterThan(-1);
+    expect(canonicalLookup).toBeGreaterThan(managedResolution);
+  });
+
   it.each([
     ["Deep Agents Code", { dcode: "0.1.35" }, "deepagents-code==0.1.34"],
     ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.0a6"],
