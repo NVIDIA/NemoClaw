@@ -12,6 +12,7 @@ const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
 const { waitForPort, waitUntil } = require("../../core/wait");
+const { ollamaModelRefsMatch }: typeof import("./model-ref") = require("./model-ref");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -766,15 +767,11 @@ async function pullOllamaModel(model) {
 const PULLED_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 const PULLED_MODEL_DISCOVERY_ATTEMPTS = 8;
 
-function normalizeOllamaModelRef(model: string): string {
-  const ref = String(model || "").trim();
-  const lastSegment = ref.slice(ref.lastIndexOf("/") + 1);
-  return ref && !lastSegment.includes(":") ? `${ref}:latest` : ref;
-}
-
-function ollamaModelRefsMatch(left: string, right: string): boolean {
-  return normalizeOllamaModelRef(left) === normalizeOllamaModelRef(right);
-}
+type PulledModelDiscoveryDeps = {
+  getModelOptions?: () => string[];
+  now?: () => number;
+  sleep?: (ms: number) => void;
+};
 
 /**
  * Confirm that Ollama exposes a just-pulled model before onboarding continues.
@@ -789,16 +786,10 @@ function ollamaModelRefsMatch(left: string, right: string): boolean {
  * selection flow. Remove this compatibility wait when supported Ollama
  * versions guarantee that successful pull completion implies list visibility.
  */
-function waitForPulledOllamaModel(
-  model: string,
-  deps: {
-    getModelOptions?: () => string[];
-    now?: () => number;
-    sleep?: (ms: number) => void;
-  } = {},
-): boolean {
+function waitForPulledOllamaModel(model: string, deps: PulledModelDiscoveryDeps = {}): boolean {
   const getModelOptions = deps.getModelOptions ?? getOllamaModelOptions;
   const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? (process.env.NEMOCLAW_TEST_NO_SLEEP === "1" ? () => {} : undefined);
   return waitUntil(() => getModelOptions().some((listed) => ollamaModelRefsMatch(listed, model)), {
     deadlineMs: now() + PULLED_MODEL_DISCOVERY_TIMEOUT_MS,
     initialIntervalMs: 250,
@@ -806,7 +797,7 @@ function waitForPulledOllamaModel(
     backoffFactor: 2,
     maxAttempts: PULLED_MODEL_DISCOVERY_ATTEMPTS,
     now,
-    sleep: deps.sleep,
+    sleep,
   });
 }
 
@@ -908,6 +899,7 @@ async function prepareOllamaModel(
   model,
   installedModels: string[] = [],
   interaction: OllamaToolCapabilityInteraction = defaultOllamaToolCapabilityInteraction,
+  discoveryDeps: PulledModelDiscoveryDeps = {},
 ): Promise<{
   ok: boolean;
   message?: string;
@@ -926,7 +918,7 @@ async function prepareOllamaModel(
       };
     }
     console.log(`  Waiting for Ollama to register model: ${model}`);
-    if (!waitForPulledOllamaModel(model)) {
+    if (!waitForPulledOllamaModel(model, discoveryDeps)) {
       return {
         ok: false,
         message:

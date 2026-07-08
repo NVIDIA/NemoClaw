@@ -209,6 +209,8 @@ const {
   OLLAMA_PROXY_PORT,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
+const { ollamaModelRefsMatch }: typeof import("./inference/ollama/model-ref") =
+  require("./inference/ollama/model-ref");
 const {
   resetOllamaHostCache,
   getLocalProviderBaseUrl,
@@ -230,6 +232,9 @@ const {
   getOllamaProxyToken,
   isProxyHealthy,
   persistAndProbeOllamaProxy,
+  prepareOllamaModel,
+  printOllamaExposureWarning,
+  promptOllamaModel,
   startOllamaAuthProxy,
 } = require("./inference/ollama/proxy");
 const {
@@ -1059,12 +1064,6 @@ const nousModels: typeof import("./inference/nous-models") = require("./inferenc
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
   buildContext;
 // classifySandboxCreateFailure — see validation import above
-
-const {
-  promptOllamaModel,
-  printOllamaExposureWarning,
-  prepareOllamaModel,
-}: typeof import("./inference/ollama/proxy") = require("./inference/ollama/proxy");
 
 const {
   handleWindowsHostOllamaSelection,
@@ -3118,7 +3117,7 @@ async function selectAndValidateOllamaModel(
     }
     const selectedModel = requireValue(model, "Expected an Ollama model selection");
     onModelSelected?.(selectedModel);
-    if (!installedModels.includes(selectedModel)) {
+    if (!installedModels.some((listedModel) => ollamaModelRefsMatch(listedModel, selectedModel))) {
       const lookup = ollamaModelSize.getOllamaModelSize(selectedModel);
       const sizeLabel = ollamaModelSize.formatModelSize(lookup);
       if (isAutoYes()) {

@@ -8,10 +8,12 @@ const require = createRequire(import.meta.url);
 const PROXY_DIST = require.resolve("./proxy");
 const LOCAL_DIST = require.resolve("../local");
 const CREDS_DIST = require.resolve("../../credentials/store");
+const CHILD_PROCESS_DIST = require.resolve("node:child_process");
 
 interface MockSetup {
-  installed: string[];
+  installed: string[] | (() => string[]);
   promptValues: string[];
+  pullStatus?: number;
 }
 
 function loadProxyWithMocks(setup: MockSetup): {
@@ -21,12 +23,25 @@ function loadProxyWithMocks(setup: MockSetup): {
 } {
   const local = require(LOCAL_DIST);
   const creds = require(CREDS_DIST);
+  const childProcess = require(CHILD_PROCESS_DIST) as typeof import("node:child_process");
   const originalGetOllamaModelOptions = local.getOllamaModelOptions;
   const originalPrompt = creds.prompt;
+  const spawnSync =
+    setup.pullStatus === undefined
+      ? null
+      : vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+          status: setup.pullStatus,
+          signal: null,
+          output: [],
+          pid: 1,
+          stdout: "",
+          stderr: "",
+        });
   const promptArgs: string[] = [];
   let promptCallIndex = 0;
 
-  local.getOllamaModelOptions = () => setup.installed;
+  local.getOllamaModelOptions = () =>
+    typeof setup.installed === "function" ? setup.installed() : setup.installed;
   creds.prompt = async (message: string) => {
     promptArgs.push(message);
     const value = setup.promptValues[promptCallIndex];
@@ -43,6 +58,7 @@ function loadProxyWithMocks(setup: MockSetup): {
       delete require.cache[PROXY_DIST];
       local.getOllamaModelOptions = originalGetOllamaModelOptions;
       creds.prompt = originalPrompt;
+      spawnSync?.mockRestore();
     },
   };
 }
@@ -219,5 +235,31 @@ describe("waitForPulledOllamaModel", () => {
     expect(discovered).toBe(false);
     expect(attempts).toBe(8);
     expect(sleeps).toEqual([250, 500, 1_000, 2_000, 2_000, 2_000, 2_000]);
+  });
+});
+
+describe("prepareOllamaModel post-pull discovery", () => {
+  let active: { restore: () => void } | null = null;
+  afterEach(() => {
+    active?.restore();
+    active = null;
+  });
+
+  it("rejects a zero-exit pull that never appears in discovery (#6038)", async () => {
+    const setup = loadProxyWithMocks({ installed: [], promptValues: [], pullStatus: 0 });
+    active = setup;
+
+    const result = await setup.proxy.prepareOllamaModel("qwen3.5:9b", [], undefined, {
+      getModelOptions: () => [],
+      now: () => 0,
+      sleep: () => {},
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "Ollama pull for 'qwen3.5:9b' completed, but Ollama did not list the model afterward. " +
+        "Wait for Ollama to finish registering the model, then choose it again.",
+    });
   });
 });
