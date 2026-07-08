@@ -105,6 +105,31 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toContain("http://127.0.0.1:");
   });
 
+  it("does not map an unrecognized proxy-port host to host loopback (#6039)", () => {
+    const runCaptureImpl = vi.fn((_command: readonly string[]) => JSON.stringify({ models: [] }));
+    const runCaptureExImpl = vi.fn((_command: string[]) => successfulWarmResult());
+
+    maybeWarmOllamaAfterDaemonRestart(
+      {
+        provider: "ollama-local",
+        model: "qwen3.6:35b",
+        endpointUrl: `http://example.com:${OLLAMA_PROXY_PORT}/v1`,
+      },
+      {
+        getOllamaHost: () => "host.docker.internal",
+        runCaptureImpl,
+        runCaptureExImpl,
+      },
+    );
+
+    expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toBe(
+      `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
+    );
+    expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
+      `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
+    );
+  });
+
   it("skips the warm-up when the selected model is already loaded", () => {
     const probeRuntimeModelStatus = vi.fn(() => ({
       probed: true,

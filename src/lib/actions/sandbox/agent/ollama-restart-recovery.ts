@@ -112,7 +112,11 @@ function resolveRawOllamaHost(
     ) {
       return OLLAMA_HOST_DOCKER_INTERNAL;
     }
-    if (endpoint.protocol === "http:" && port === OLLAMA_PROXY_PORT) {
+    if (
+      endpoint.protocol === "http:" &&
+      hostname === OPENSHELL_HOST_BRIDGE &&
+      port === OLLAMA_PROXY_PORT
+    ) {
       return OLLAMA_LOCALHOST;
     }
     if (
