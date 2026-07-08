@@ -241,8 +241,8 @@ if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ]; then
   if [ "$OBSERVABILITY_MARKER_AFTER" != "1" ]; then
     RESTORE_OUTPUT="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
       /usr/bin/env NEMOCLAW_OBSERVABILITY=1 \
-      /usr/local/bin/nemoclaw-start /usr/bin/true 2>&1)" || \
-      fail_test "could not restore managed observability after policy-remove: $RESTORE_OUTPUT"
+      /usr/local/bin/nemoclaw-start /usr/bin/true 2>&1)" \
+      || fail_test "could not restore managed observability after policy-remove: $RESTORE_OUTPUT"
   fi
   OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
   if [ "$OBSERVABILITY_MARKER_AFTER" = "1" ]; then
