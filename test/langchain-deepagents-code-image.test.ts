@@ -257,13 +257,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "DEEPAGENTS_CODE_RIPGREP_INSTALLER=system",
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/dcode.real",
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/deepagents-code",
-      "COPY agents/langchain-deepagents-code/profile-plugin /opt/nemoclaw-deepagents-profile-plugin",
       "/opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin",
       "/opt/venv/bin/pip3 check",
       "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
     ]) {
       expect(dockerfile).toContain(s);
     }
+    expect(
+      dockerfile
+        .split("\n")
+        .filter((line) => line.startsWith("COPY agents/langchain-deepagents-code/profile-plugin")),
+    ).toEqual([
+      "COPY agents/langchain-deepagents-code/profile-plugin/pyproject.toml /opt/nemoclaw-deepagents-profile-plugin/",
+      "COPY agents/langchain-deepagents-code/profile-plugin/src/nemoclaw_deepagents_profile/__init__.py /opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/",
+    ]);
     expect(dockerfile).toContain(
       "rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code /opt/venv/bin/dcode /opt/venv/bin/deepagents-code",
     );

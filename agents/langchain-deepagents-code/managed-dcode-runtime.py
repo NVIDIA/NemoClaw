@@ -216,6 +216,9 @@ def _assert_safe_environment() -> None:
             continue
         if _contains_secret_shape(value) or (
             len(value) >= 10
+            # Exact replyToken is correlation metadata; value-shape checks above
+            # still reject it when the value itself is credential-shaped.
+            and name != "replyToken"
             and (
                 _CREDENTIAL_NAME.search(name)
                 or _CREDENTIAL_CAMEL_NAME.search(name)
