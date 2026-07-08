@@ -40,7 +40,9 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 The workflow is advisory and must not be configured as a required status check. It uses the
 deterministic plan as review context but does not run its jobs. E2E Advisor emits the corresponding
 plan-backed recommendations separately and likewise does not dispatch E2E. Model availability must
-not become the authority for whether a pull request can merge.
+not become the authority for whether a pull request can merge. After a commit lands, a separate
+model-independent shadow controller rebuilds the plan from the exact `main` push range and runs its
+capped automatic subset. That post-merge check does not make PR Review Advisor a merge gate.
 
 Required-check status is point-in-time context, not a settled-CI gate. Earlier
 `PR_REVIEW_ADVISOR_WAIT_*` workflow variables were inert and have been removed; any future waiting

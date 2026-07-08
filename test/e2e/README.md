@@ -10,6 +10,9 @@ before those targets run; local runners must provide it themselves.
 
 - `.github/workflows/e2e.yaml` is the scheduled and manually
   dispatchable live target workflow.
+- `.github/workflows/post-merge-e2e-risk-gate-shadow.yaml` is the trusted post-merge
+  controller that selects and dispatches a bounded exact-commit subset after
+  pushes to `main`.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
 - Platform workflows such as macOS, WSL, Ollama proxy, sandbox image, and
@@ -52,6 +55,37 @@ Slack/GitHub scorecard comparison remains tied to the dedicated `cloud-onboard`
 artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
+
+## Post-merge risk shadow
+
+Every push to the `main` branch of `NVIDIA/NemoClaw` starts a model-independent
+shadow controller. It builds the deterministic risk plan from the exact
+`github.event.before` and `github.event.after` range after confirming that its checkout
+matches the pushed commit. If the plan matches runtime regression families,
+the controller dispatches at most three `automaticJobs` through `e2e.yaml`.
+The workflow definition stays on `main`, while every E2E checkout uses the
+exact merged commit supplied through `checkout_sha`.
+
+Before E2E preparation or selected jobs can use repository secrets,
+`e2e.yaml` verifies the requested SHA, confirms that checked-out `HEAD` matches
+it, proves that the commit is reachable from `main`, and accepts only selective
+job dispatch with valid plan and correlation metadata. The shadow-only Vitest
+reporter then writes a `risk-signal.json` for each selected job and matrix
+shard. Each signal binds the observed checkout SHA, expected SHA, plan hash,
+correlation ID, and pass, failure, skip, pending, and unhandled-error counts.
+The controller retains `post-merge-risk-plan-<sha>` for 14 days, while each
+signal travels in the selected job's existing E2E artifact.
+
+The controller reports `E2E / Post-merge Risk Gate (shadow)` on the merged
+commit. It reports success only when every expected shard produces a complete,
+unskipped pass and the three-job cap did not omit required jobs. Selected E2E
+workflow or exact-SHA test failures report failure. Missing, partial, skipped,
+ambiguous, or manual-expansion evidence reports neutral. A plan with no matched
+runtime risk reports success without dispatching live E2E. This shadow check runs
+after merge and is not a required PR check. It disables PR comments and the
+scheduled/manual scorecard, including scorecard Slack reporting.
+Controller or evidence-verification errors close an already-created check as
+neutral so incomplete evidence cannot appear successful.
 
 ## Onboard performance budget
 

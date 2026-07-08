@@ -185,6 +185,17 @@ These are the primary npm scripts for day-to-day development:
 | `npm run docs:preview:watch` | Publish branch-based Fern previews when docs files change |
 | `npm run docs:deps` | Print the pinned Fern CLI version used by docs commands |
 
+The `e2e-support` Vitest project is part of the aggregate checks for code-changing pull requests
+and code-changing pushes to `main`. Run it directly when you change E2E fixtures, support helpers,
+registries, or workflow boundary checks:
+
+```bash
+npx vitest run --project e2e-support
+```
+
+This project is fast and does not run live targets. Live E2E remains opt-in through
+`npm run test:live-e2e` or the applicable GitHub Actions workflow.
+
 ### Test Titles as Behavioral Documentation
 
 Write `describe` and `it` titles so the Vitest tree reads as behavioral documentation. Start test

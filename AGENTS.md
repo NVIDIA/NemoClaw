@@ -52,6 +52,7 @@ Package-specific guides:
 | Run fast source tests | `npm run test:fast` |
 | Run integration tests | `npm run test:integration` |
 | Run package contracts | `npm run test:package` |
+| Run E2E support tests | `npx vitest run --project e2e-support` |
 | Run live E2E targets | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
 | Run repo-wide pre-commit and coverage checks | `npm run check` |
@@ -81,7 +82,8 @@ Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 3. **`installer-integration`** — installer tests that spawn real `install.sh` processes
 4. **`package-contract`** — `test/package-contract/**/*.test.ts` — the only non-live lane that imports compiled CLI/plugin artifacts
 5. **`plugin`** — `nemoclaw/src/**/*.test.ts` — plugin unit tests co-located with source
-6. **`e2e-support`** — fast tests for the E2E fixture/support layer
+6. **`e2e-support`** — fast tests for the E2E fixture/support layer; this project runs in the
+   aggregate checks for code-changing PRs and code-changing pushes to `main`
 7. **`e2e-live`** — opt-in live targets that mutate real external state
 8. **`e2e-branch-validation`** — opt-in validation on an ephemeral Brev instance
 

@@ -37,6 +37,32 @@ the trusted timing signal.
   `.github/workflows/e2e.yaml`, but the advisor job does not
   trigger those commands automatically.
 
+## Post-merge shadow controller
+
+The model-independent `.github/workflows/post-merge-e2e-risk-gate-shadow.yaml` workflow
+uses the same checked-in risk-plan policy after a commit lands on `main`. It
+does not consume model output or the advisor artifact. Instead,
+`tools/e2e-advisor/post-merge-risk-gate.mts` confirms the trusted controller checkout,
+builds a new plan from the exact `github.event.before` and `github.event.after` range,
+and dispatches at most three `automaticJobs` to `e2e.yaml` against the merged
+commit.
+
+The child workflow validates the exact checkout SHA, its reachability from
+`main`, selective-job inputs, plan hash, and correlation ID before E2E
+preparation or secret-bearing jobs can run. The shadow-only Vitest reporter
+records the observed checkout SHA and pass, failure, skip, pending, and
+unhandled-error counts for each job and matrix shard. The controller accepts
+only signals bound to the expected SHA, plan hash, correlation ID, job, and
+shard.
+
+The controller writes a check on the merged commit without posting a PR
+comment or running the scheduled/manual scorecard. Complete unskipped evidence
+reports success, selected E2E workflow or exact-SHA test failures report
+failure, and incomplete, ambiguous, skipped, or cap-limited evidence that
+requires manual expansion reports neutral. If no runtime risk family matches,
+it reports success without dispatching E2E. This is post-merge shadow evidence,
+not a required pre-merge check.
+
 ## Required secret
 
 Configure this repository secret for E2E recommendations:
@@ -61,8 +87,9 @@ dispatch commands; it does not trigger E2E workflows automatically.
 
 - `e2e-advisor-prompt.md` — task prompt sent to the advisor. Diff, changed files, metadata, and schema are injected into the Pi session as deterministic synthetic tool results and captured in the session transcript.
 - `risk-plan.json` — stable exact-SHA risk families, invariants, required jobs, a capped
-  `automaticJobs` candidate subset, manual-expansion state, and the plan hash. Both E2E
-  advisor projections consume the required-job floor, but neither dispatches it.
+  `automaticJobs` subset, manual-expansion state, and the plan hash. Both E2E advisor
+  projections consume the required-job floor, while the separate post-merge controller
+  rebuilds the plan and dispatches the automatic subset.
 - `e2e-advisor-raw-output.txt` — raw advisor transcript and diagnostics.
 - `e2e-advisor-result.json` — parsed advisor response or execution metadata.
 - `e2e-advisor-session.html` — exported advisor session transcript.
@@ -94,5 +121,6 @@ secret. Run `npm install` first so the Pi SDK dependency is available.
 `tools/e2e-advisor/schema.json` defines the normalized coverage recommendation shape.
 `tools/e2e-advisor/targets-schema.json` defines the normalized target recommendation shape used by the `targets` and `jobs` dispatch commands.
 
-Future enforcement should be implemented as a single dynamic required check that verifies the
-recommended E2E jobs passed for the same PR head SHA.
+The post-merge shadow check does not establish pre-merge enforcement. Any future required check
+must verify complete E2E evidence for the same PR head SHA without making model availability part
+of the merge authority.

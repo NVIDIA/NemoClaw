@@ -99,9 +99,16 @@ test/e2e/
 ## CI Entry Points
 
 - `tools/advisors/risk-plan.mts` is the small deterministic selection policy
-  shared by PR Review Advisor and E2E Advisor. It maps changed runtime surfaces
-  to invariant families and canonical `e2e.yaml` jobs; it is not a second test
-  runner or migration-status ledger.
+  shared by PR Review Advisor, E2E Advisor, and the model-independent post-merge
+  shadow controller. It maps changed runtime surfaces to invariant families and
+  canonical `e2e.yaml` jobs; it is not a second test runner or migration-status
+  ledger.
+
+- `.github/workflows/post-merge-e2e-risk-gate-shadow.yaml` runs only for trusted pushes to
+  `main`. `tools/e2e-advisor/post-merge-risk-gate.mts` builds a plan from the exact
+  before/after SHAs, dispatches at most three automatic jobs, and validates
+  `risk-signal.json` evidence for every expected job and matrix shard. The
+  resulting check is post-merge shadow evidence, not a required PR gate.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -114,11 +121,17 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
+  Exact-commit shadow dispatches validate that the requested checkout is
+  reachable from `main` before preparation, attach
+  `test/e2e/risk-signal-reporter.ts` to live Vitest invocations, and suppress
+  PR reporting and scorecards.
 - `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
   `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and `regression-e2e.yaml` call
   focused E2E targets directly for their E2E coverage.
-- `vitest.config.ts` contains `e2e-support` for fast fixture/support
-  tests and `e2e-live` for opt-in live target execution.
+- `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and
+  `e2e-live` for opt-in live target execution. The PR and `main` aggregate
+  checks require `e2e-support` for code changes; the project never opts into
+  live targets.
 
 ## Migration Tracking
 
