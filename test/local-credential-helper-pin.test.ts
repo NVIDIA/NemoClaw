@@ -9,6 +9,7 @@ import {
   extractProcessControlRules,
   extractStarterPrompt,
   extractStringSet,
+  verifyFieldSafetySourceParity,
 } from "../scripts/checks/local-credential-helper-pin";
 
 const FUNCTION_NAME = "isBlocked";
@@ -21,6 +22,8 @@ const VALID_ATOMS = [
   'name === "GIT_CONFIG"',
   'name.startsWith("GIT_CONFIG_")',
   'name.startsWith("GIT_TRACE")',
+  'name.startsWith("NPM_CONFIG_")',
+  'name.startsWith("PIP_")',
 ];
 const EXPECTED_RULES = [
   "exact:GIT_CONFIG",
@@ -30,6 +33,8 @@ const EXPECTED_RULES = [
   "prefix:GIT_CONFIG_",
   "prefix:GIT_TRACE",
   "prefix:LD_",
+  "prefix:NPM_CONFIG_",
+  "prefix:PIP_",
 ];
 
 function predicateSource(expression: string): string {
@@ -40,7 +45,120 @@ function extractRules(source: string): string[] {
   return extractProcessControlRules(source, FUNCTION_NAME, SET_NAME, "fixture.ts");
 }
 
+const PARITY_PATTERN = "/credential/i";
+const PARITY_NAMES = ["NODE_OPTIONS", "PATH"];
+const PARITY_PREFIXES = [
+  "BASH_FUNC_",
+  "DYLD_",
+  "GIT_CONFIG_",
+  "GIT_TRACE",
+  "LD_",
+  "NPM_CONFIG_",
+  "PIP_",
+];
+
+function fieldSafetyScript(
+  pattern: string,
+  setName: string,
+  functionName: string,
+  names: readonly string[] = PARITY_NAMES,
+  prefixes: readonly string[] = PARITY_PREFIXES,
+): string {
+  const atoms = [
+    `${setName}.has(name)`,
+    ...prefixes.map((prefix) => `name.startsWith(${JSON.stringify(prefix)})`),
+    'name === "GIT_CONFIG"',
+  ];
+  return [
+    `const CREDENTIAL_SHAPED_NAME_PATTERN = ${pattern};`,
+    `const ${setName} = new Set(${JSON.stringify(names)});`,
+    `function ${functionName}(name) { return ${atoms.join(" || ")}; }`,
+  ].join("\n");
+}
+
+function fieldSafetySources(
+  options: {
+    canonicalNames?: readonly string[];
+    canonicalPattern?: string;
+    canonicalPrefixes?: readonly string[];
+    embeddedNames?: readonly string[];
+    embeddedPattern?: string;
+    embeddedPrefixes?: readonly string[];
+  } = {},
+) {
+  const canonicalPattern = options.canonicalPattern ?? PARITY_PATTERN;
+  const embeddedPattern = options.embeddedPattern ?? PARITY_PATTERN;
+  const canonicalProcessControl = fieldSafetyScript(
+    canonicalPattern,
+    "PROCESS_CONTROL_ENV_NAMES",
+    "isProcessControlEnvName",
+    options.canonicalNames,
+    options.canonicalPrefixes,
+  );
+  const helper = fieldSafetyScript(
+    embeddedPattern,
+    "FORBIDDEN_CHILD_ENV_NAMES",
+    "isForbiddenChildEnvName",
+    options.embeddedNames,
+    options.embeddedPrefixes,
+  );
+  const formScript = fieldSafetyScript(
+    embeddedPattern,
+    "PROCESS_CONTROL_FIELD_NAMES",
+    "isProcessControlFieldName",
+    options.embeddedNames,
+    options.embeddedPrefixes,
+  );
+  return {
+    canonicalCredential: `const CREDENTIAL_SHAPED_NAME_PATTERN = ${canonicalPattern};`,
+    canonicalProcessControl,
+    form: `<script>${formScript}</script>`,
+    helper,
+  };
+}
+
 describe("local credential helper pin predicate parity", () => {
+  it("accepts exact canonical helper and form field-safety parity (#5048)", () => {
+    expect(verifyFieldSafetySourceParity(fieldSafetySources())).toEqual([]);
+  });
+
+  it("detects coordinated helper and form credential-pattern drift (#5048)", () => {
+    const failures = verifyFieldSafetySourceParity(
+      fieldSafetySources({ embeddedPattern: "/drifted/i" }),
+    );
+
+    expect(failures).toContain(
+      "helper credential-shaped name pattern must match the canonical security policy",
+    );
+    expect(failures).toContain(
+      "form credential-shaped name pattern must match the canonical security policy",
+    );
+  });
+
+  it("detects coordinated helper and form process-control inventory drift (#5048)", () => {
+    const failures = verifyFieldSafetySourceParity(fieldSafetySources({ embeddedNames: ["PATH"] }));
+
+    expect(failures).toContain(
+      "helper process-control environment names must match the canonical security policy",
+    );
+    expect(failures).toContain(
+      "form process-control environment names must match the canonical security policy",
+    );
+  });
+
+  it("detects coordinated helper and form process-control predicate drift (#5048)", () => {
+    const failures = verifyFieldSafetySourceParity(
+      fieldSafetySources({ embeddedPrefixes: PARITY_PREFIXES.slice(1) }),
+    );
+
+    expect(failures).toContain(
+      "helper process-control predicate must match the canonical security policy",
+    );
+    expect(failures).toContain(
+      "form process-control predicate must match the canonical security policy",
+    );
+  });
+
   it("extracts every active process-control rule independent of OR order (#5048)", () => {
     expect(extractRules(predicateSource(VALID_ATOMS.join(" || ")))).toEqual(EXPECTED_RULES);
     expect(extractRules(predicateSource([...VALID_ATOMS].reverse().join(" || ")))).toEqual(
@@ -55,6 +173,8 @@ describe("local credential helper pin predicate parity", () => {
     { atom: VALID_ATOMS[4], label: "exact GIT_CONFIG name" },
     { atom: VALID_ATOMS[5], label: "GIT_CONFIG_ prefix" },
     { atom: VALID_ATOMS[6], label: "GIT_TRACE prefix" },
+    { atom: VALID_ATOMS[7], label: "NPM_CONFIG_ prefix" },
+    { atom: VALID_ATOMS[8], label: "PIP_ prefix" },
   ])("detects removal of the $label (#5048)", ({ atom }) => {
     const mutated = VALID_ATOMS.filter((candidate) => candidate !== atom).join(" || ");
 

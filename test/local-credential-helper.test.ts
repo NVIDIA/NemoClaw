@@ -12,6 +12,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  buildCredentialFormCsp,
   sanitizeInheritedChildEnvironment,
   startLocalCredentialHelper,
 } from "../scripts/local-credential-helper.mts";
@@ -23,9 +24,48 @@ const READINESS_URL_PATTERN = /http:\/\/127\.0\.0\.1:\d+\/\S*#cap=[A-Za-z0-9_-]{
 const PROCESS_TIMEOUT_MS = 5_000;
 const TEST_SECRET = "integration-secret-value";
 const TEST_PUBLIC_VALUE = "public-id";
+const NETWORK_TRUST_ENV_NAMES = [
+  "ALL_PROXY",
+  "AWS_CA_BUNDLE",
+  "CURL_CA_BUNDLE",
+  "DENO_CERT",
+  "FTP_PROXY",
+  "GIT_PROXY_SSL_CAINFO",
+  "GIT_SSL_CAINFO",
+  "GIT_SSL_CAPATH",
+  "GIT_SSL_NO_VERIFY",
+  "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH",
+  "GRPC_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
+  "NODE_USE_ENV_PROXY",
+  "NODE_USE_SYSTEM_CA",
+  "NO_PROXY",
+  "REQUESTS_CA_BUNDLE",
+  "SSLKEYLOGFILE",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+];
+const NETWORK_TRUST_ENV_OVERRIDES = {
+  ...Object.fromEntries(
+    NETWORK_TRUST_ENV_NAMES.map((name) => [name, `ambient-${name.toLowerCase()}`]),
+  ),
+  GIT_SSL_NO_VERIFY: "1",
+  NODE_EXTRA_CA_CERTS: "",
+  NODE_TLS_REJECT_UNAUTHORIZED: "0",
+  NO_PROXY: "*",
+} satisfies NodeJS.ProcessEnv;
+const PACKAGE_CONTROL_ENV_OVERRIDES = {
+  npm_config_registry: "https://ambient-registry.invalid",
+  Pip_Index_Url: "https://ambient-index.invalid/simple",
+} satisfies NodeJS.ProcessEnv;
 const BLOCKED_INHERITED_ENV_NAMES = [
+  ...NETWORK_TRUST_ENV_NAMES,
+  ...Object.keys(PACKAGE_CONTROL_ENV_OVERRIDES),
   "BASH_ENV",
-  "BASH_FUNC_curl%%",
+  "BASH_FUNC_echo%%",
   "DOTNET_STARTUP_HOOKS",
   "GIT_EXEC_PATH",
   "GIT_CONFIG",
@@ -335,10 +375,19 @@ async function expectSuccessfulCompletion(
 }
 
 describe("local credential helper", () => {
+  it("hashes inline form tags case-insensitively for CSP generation (#5048)", () => {
+    const csp = buildCredentialFormCsp(Buffer.from("<STYLE>body{}</STYLE><SCRIPT>0;</SCRIPT>"));
+
+    expect(csp).toContain("script-src 'sha256-");
+    expect(csp).toContain("style-src 'sha256-");
+  });
+
   it("sanitizes inherited names case-insensitively without mutating the source environment (#5048)", () => {
     const ambient = {
+      ...NETWORK_TRUST_ENV_OVERRIDES,
+      ...PACKAGE_CONTROL_ENV_OVERRIDES,
       BASH_ENV: "shell-hook",
-      "BASH_FUNC_curl%%": '() { printf "%s" "$OPENAI_API_KEY"; }',
+      "BASH_FUNC_echo%%": '() { printf "%s" "$OPENAI_API_KEY"; }',
       DOTNET_STARTUP_HOOKS: "startup-hook",
       DYLD_INSERT_LIBRARIES: "loader-hook",
       Gh_ToKeN: "credential",
@@ -372,7 +421,7 @@ describe("local credential helper", () => {
     },
     { fields: ["PATH:text"], label: "process search path field" },
     { fields: ["NODE_OPTIONS:secret"], label: "Node process-control field" },
-    { fields: ["BASH_FUNC_CURL:secret"], label: "exported Bash function field prefix" },
+    { fields: ["BASH_FUNC_ECHO:secret"], label: "exported Bash function field prefix" },
     { fields: ["DOTNET_STARTUP_HOOKS:secret"], label: ".NET startup hook field" },
     { fields: ["GIT_EXEC_PATH:secret"], label: "Git executable path field" },
     { fields: ["GIT_EXTERNAL_DIFF:secret"], label: "Git external diff field" },
@@ -383,6 +432,12 @@ describe("local credential helper", () => {
     { fields: ["DYLD_INSERT_LIBRARIES:secret"], label: "macOS dynamic-loader field prefix" },
     { fields: ["GIT_CONFIG:secret"], label: "exact Git config process-control field" },
     { fields: ["GIT_CONFIG_COUNT:secret"], label: "Git config process-control field prefix" },
+    ...NETWORK_TRUST_ENV_NAMES.map((name) => ({
+      fields: [`${name}:text`],
+      label: `${name} network or trust control field`,
+    })),
+    { fields: ["NPM_CONFIG_REGISTRY:text"], label: "npm configuration field prefix" },
+    { fields: ["PIP_INDEX_URL:text"], label: "pip configuration field prefix" },
     {
       fields: ["PUBLIC_ID:text", "PUBLIC_ID:text"],
       label: "duplicate field",
@@ -485,8 +540,10 @@ describe("local credential helper", () => {
   it("strips inherited credentials and process controls before launching the approved command (#5048)", async () => {
     const fixture = createCommandFixture();
     const helper = await startHelper(fixture.command, {
+      ...NETWORK_TRUST_ENV_OVERRIDES,
+      ...PACKAGE_CONTROL_ENV_OVERRIDES,
       BASH_ENV: "ambient-shell-hook",
-      "BASH_FUNC_curl%%": '() { printf "%s" "$OPENAI_API_KEY"; }',
+      "BASH_FUNC_echo%%": '() { printf "%s" "$OPENAI_API_KEY"; }',
       DOTNET_STARTUP_HOOKS: "ambient-startup-hook",
       GIT_EXEC_PATH: "/ambient/git-core",
       GIT_CONFIG: "ambient-git-config",
@@ -517,6 +574,39 @@ describe("local credential helper", () => {
     await expectSuccessfulCompletion(helper, fixture.markerPath);
   });
 
+  it("preserves explicit approved proxy and CA arguments byte-for-byte (#5048)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-argv-test-"));
+    tempDirs.add(dir);
+    const markerPath = path.join(dir, "command-argv.json");
+    const expectedArgv = [
+      "--proxy",
+      "http://trusted-proxy.internal:3128",
+      "--noproxy",
+      "127.0.0.1",
+      "--cacert",
+      "/trusted/ca.pem",
+    ];
+    const command = [
+      process.execPath,
+      "-e",
+      'require("node:fs").writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)))',
+      markerPath,
+      ...expectedArgv,
+    ];
+    const helper = await startHelper(command, NETWORK_TRUST_ENV_OVERRIDES);
+
+    const accepted = await request(helper.formUrl, {
+      body: validBody(),
+      headers: validHeaders(helper),
+      method: "POST",
+      path: "/submit",
+    });
+
+    expect(accepted.status).toBe(202);
+    await expectSuccessfulCompletion(helper, markerPath);
+    expect(JSON.parse(fs.readFileSync(markerPath, "utf8"))).toEqual(expectedArgv);
+  });
+
   it("blocks an inherited Bash function from intercepting the approved command (#5048)", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-bash-test-"));
     tempDirs.add(dir);
@@ -527,13 +617,13 @@ describe("local credential helper", () => {
       "--noprofile",
       "--norc",
       "-c",
-      'curl --version >/dev/null && test ! -e "$ATTACK_MARKER" && printf "ran\\n" > "$1"',
+      'echo safe >/dev/null && test ! -e "$ATTACK_MARKER" && printf "ran\\n" > "$1"',
       "bash",
       markerPath,
     ];
     const helper = await startHelper(command, {
       ATTACK_MARKER: attackMarkerPath,
-      "BASH_FUNC_curl%%": '() { printf "%s" "$OPENAI_API_KEY" > "$ATTACK_MARKER"; }',
+      "BASH_FUNC_echo%%": '() { printf "%s" "$OPENAI_API_KEY" > "$ATTACK_MARKER"; }',
       PATH: "/ambient/search/path",
     });
 

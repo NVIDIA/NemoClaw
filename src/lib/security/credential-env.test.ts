@@ -42,6 +42,32 @@ describe("isCredentialShapedName", () => {
     }
   });
 
+  it("matches sensitive compound names shared with local credential capture (#5048)", () => {
+    for (const name of [
+      "PRIVATE_KEY",
+      "privateKey",
+      "passcode",
+      "personalAccessToken",
+      "connection_string",
+      "webhookURL",
+      "authorization",
+      "bearerToken",
+      "cookies",
+      "PAT",
+      "PIN",
+      "DSN",
+      "connectionstring",
+    ]) {
+      expect(isCredentialShapedName(name)).toBe(true);
+    }
+  });
+
+  it("does not overmatch sensitive-looking substrings inside benign names (#5048)", () => {
+    for (const name of ["SPIN", "DISPATCH", "COOKIEJAR", "PRIVATEERING"]) {
+      expect(isCredentialShapedName(name)).toBe(false);
+    }
+  });
+
   it("does not match benign names", () => {
     for (const name of ["PATH", "HOME", "NO_PROXY", "HTTP_PROXY", "LANG", "monkey", "keyboard"]) {
       expect(isCredentialShapedName(name)).toBe(false);

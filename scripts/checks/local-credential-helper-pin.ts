@@ -22,6 +22,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const STARTER_PROMPT_PATH = "docs/_components/StarterPrompt.tsx";
 const HELPER_PATH = "scripts/local-credential-helper.mts";
 const FORM_PATH = "docs/resources/local-credential-form.html";
+const CREDENTIAL_ENV_PATH = "src/lib/security/credential-env.ts";
+const PROCESS_CONTROL_ENV_PATH = "src/lib/security/process-control-env.ts";
 
 type ReviewedArtifact = Readonly<{
   label: string;
@@ -304,33 +306,68 @@ export function extractProcessControlRules(
   return rules.sort();
 }
 
-function verifyFieldSafetyRules(): string[] {
-  const helperSource = fs.readFileSync(path.join(REPO_ROOT, HELPER_PATH), "utf8");
-  const formSource = fs.readFileSync(path.join(REPO_ROOT, FORM_PATH), "utf8");
+type FieldSafetySources = Readonly<{
+  canonicalCredential: string;
+  canonicalProcessControl: string;
+  form: string;
+  helper: string;
+}>;
+
+export function verifyFieldSafetySourceParity(sources: FieldSafetySources): string[] {
   const failures: string[] = [];
-  if (
-    extractCredentialPattern(helperSource, HELPER_PATH) !==
-    extractCredentialPattern(formSource, FORM_PATH)
-  ) {
+  const canonicalCredentialPattern = extractCredentialPattern(
+    sources.canonicalCredential,
+    CREDENTIAL_ENV_PATH,
+  );
+  const helperCredentialPattern = extractCredentialPattern(sources.helper, HELPER_PATH);
+  const formCredentialPattern = extractCredentialPattern(sources.form, FORM_PATH);
+  if (helperCredentialPattern !== formCredentialPattern) {
     failures.push("helper and form credential-shaped name patterns must match exactly");
   }
+  if (helperCredentialPattern !== canonicalCredentialPattern) {
+    failures.push("helper credential-shaped name pattern must match the canonical security policy");
+  }
+  if (formCredentialPattern !== canonicalCredentialPattern) {
+    failures.push("form credential-shaped name pattern must match the canonical security policy");
+  }
+  const canonicalControlNames = extractStringSet(
+    sources.canonicalProcessControl,
+    "PROCESS_CONTROL_ENV_NAMES",
+    PROCESS_CONTROL_ENV_PATH,
+  );
   const helperControlNames = extractStringSet(
-    helperSource,
+    sources.helper,
     "FORBIDDEN_CHILD_ENV_NAMES",
     HELPER_PATH,
   );
-  const formControlNames = extractStringSet(formSource, "PROCESS_CONTROL_FIELD_NAMES", FORM_PATH);
+  const formControlNames = extractStringSet(sources.form, "PROCESS_CONTROL_FIELD_NAMES", FORM_PATH);
   if (helperControlNames.join("\n") !== formControlNames.join("\n")) {
     failures.push("helper and form process-control environment name sets must match exactly");
   }
+  if (helperControlNames.join("\n") !== canonicalControlNames.join("\n")) {
+    failures.push(
+      "helper process-control environment names must match the canonical security policy",
+    );
+  }
+  if (formControlNames.join("\n") !== canonicalControlNames.join("\n")) {
+    failures.push(
+      "form process-control environment names must match the canonical security policy",
+    );
+  }
+  const canonicalControlRules = extractProcessControlRules(
+    sources.canonicalProcessControl,
+    "isProcessControlEnvName",
+    "PROCESS_CONTROL_ENV_NAMES",
+    PROCESS_CONTROL_ENV_PATH,
+  );
   const helperControlRules = extractProcessControlRules(
-    helperSource,
+    sources.helper,
     "isForbiddenChildEnvName",
     "FORBIDDEN_CHILD_ENV_NAMES",
     HELPER_PATH,
   );
   const formControlRules = extractProcessControlRules(
-    formSource,
+    sources.form,
     "isProcessControlFieldName",
     "PROCESS_CONTROL_FIELD_NAMES",
     FORM_PATH,
@@ -338,7 +375,25 @@ function verifyFieldSafetyRules(): string[] {
   if (helperControlRules.join("\n") !== formControlRules.join("\n")) {
     failures.push("helper and form process-control predicate rules must match exactly");
   }
+  if (helperControlRules.join("\n") !== canonicalControlRules.join("\n")) {
+    failures.push("helper process-control predicate must match the canonical security policy");
+  }
+  if (formControlRules.join("\n") !== canonicalControlRules.join("\n")) {
+    failures.push("form process-control predicate must match the canonical security policy");
+  }
   return failures;
+}
+
+function verifyFieldSafetyRules(): string[] {
+  return verifyFieldSafetySourceParity({
+    canonicalCredential: fs.readFileSync(path.join(REPO_ROOT, CREDENTIAL_ENV_PATH), "utf8"),
+    canonicalProcessControl: fs.readFileSync(
+      path.join(REPO_ROOT, PROCESS_CONTROL_ENV_PATH),
+      "utf8",
+    ),
+    form: fs.readFileSync(path.join(REPO_ROOT, FORM_PATH), "utf8"),
+    helper: fs.readFileSync(path.join(REPO_ROOT, HELPER_PATH), "utf8"),
+  });
 }
 
 function main(): void {

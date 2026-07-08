@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const EXPECTED_LOCAL_CREDENTIAL_FORM_SHA256 =
-  "8e135da4fae0bc75d4437a06d4a01dd486cfa03205b272207be28da3e9efc005"; // gitleaks:allow -- checked-in SHA-256 integrity pin
+  "47fba6db8b1203a1761fc7fd164196ad543aad9cdd9ba5a5a4657c67dbe266ea"; // gitleaks:allow -- checked-in SHA-256 integrity pin
 
 export const LOCAL_CREDENTIAL_HELPER_HOST = "127.0.0.1";
 export const LOCAL_CREDENTIAL_FORM_PATH = "/local-credential-form.html";
@@ -28,30 +28,43 @@ const FIELD_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,80}$/;
 const CAPABILITY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const FINAL_FORM_SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
-// Keep this shape aligned with src/lib/security/credential-env.ts. This helper
-// must remain standalone so a coding agent can run an integrity-checked copy
-// before NemoClaw is installed.
+// This helper must remain standalone so a coding agent can run an
+// integrity-checked copy before NemoClaw is installed. The repository pin check
+// enforces exact parity with src/lib/security/credential-env.ts.
 export const CREDENTIAL_SHAPED_NAME_PATTERN =
   /(?:^|[_-])(?:api[_-]?key|access[_-]?key|secret[_-]?key|auth[_-]?token|refresh[_-]?token|access[_-]?token|client[_-]?secret|private[_-]?key|pass[_-]?code|personal[_-]?access[_-]?token|connection[_-]?string|webhook(?:[_-]?url)?|key|secret|token|password|passwd|passcode|auth|authorization|credential|credentials|bearer|bearer[_-]?token|cookie|cookies|pat|private|privatekey|pin|webhookurl|dsn|connectionstring)(?:$|[_-])/i;
 
 const FORBIDDEN_CHILD_ENV_NAMES = new Set([
+  "ALL_PROXY",
+  "AWS_CA_BUNDLE",
   "BASHOPTS",
   "BASH_ENV",
   "CDPATH",
   "CLASSPATH",
   "COMSPEC",
+  "CURL_CA_BUNDLE",
+  "DENO_CERT",
   "DOTNET_STARTUP_HOOKS",
   "ENV",
+  "FTP_PROXY",
   "GIT_ASKPASS",
   "GIT_EDITOR",
   "GIT_EXEC_PATH",
   "GIT_EXTERNAL_DIFF",
   "GIT_PAGER",
   "GIT_PROXY_COMMAND",
+  "GIT_PROXY_SSL_CAINFO",
   "GIT_SEQUENCE_EDITOR",
   "GIT_SSH",
   "GIT_SSH_COMMAND",
+  "GIT_SSL_CAINFO",
+  "GIT_SSL_CAPATH",
+  "GIT_SSL_NO_VERIFY",
   "GLOBIGNORE",
+  "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH",
+  "GRPC_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
   "IFS",
   "JAVA_TOOL_OPTIONS",
   "JDK_JAVA_OPTIONS",
@@ -61,10 +74,10 @@ const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "NODE_EXTRA_CA_CERTS",
   "NODE_OPTIONS",
   "NODE_PATH",
-  "NPM_CONFIG_GLOBALCONFIG",
-  "NPM_CONFIG_NODE_OPTIONS",
-  "NPM_CONFIG_SCRIPT_SHELL",
-  "NPM_CONFIG_USERCONFIG",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
+  "NODE_USE_ENV_PROXY",
+  "NODE_USE_SYSTEM_CA",
+  "NO_PROXY",
   "PAGER",
   "PATH",
   "PATHEXT",
@@ -75,12 +88,14 @@ const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "PYTHONINSPECT",
   "PYTHONPATH",
   "PYTHONSTARTUP",
+  "REQUESTS_CA_BUNDLE",
   "RUBYLIB",
   "RUBYOPT",
   "SHELL",
   "SHELLOPTS",
   "SSH_ASKPASS",
   "SSH_ASKPASS_REQUIRE",
+  "SSLKEYLOGFILE",
   "SSL_CERT_DIR",
   "SSL_CERT_FILE",
   "_JAVA_OPTIONS",
@@ -140,7 +155,9 @@ export function isForbiddenChildEnvName(name: string): boolean {
     name.startsWith("DYLD_") ||
     name === "GIT_CONFIG" ||
     name.startsWith("GIT_CONFIG_") ||
-    name.startsWith("GIT_TRACE")
+    name.startsWith("GIT_TRACE") ||
+    name.startsWith("NPM_CONFIG_") ||
+    name.startsWith("PIP_")
   );
 }
 
@@ -474,7 +491,7 @@ export function buildCredentialFormCsp(formBytes: Buffer): string {
 }
 
 function extractSingleInlineTag(source: string, tagName: "script" | "style"): string {
-  const matches = [...source.matchAll(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "g"))];
+  const matches = [...source.matchAll(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "gi"))];
   if (matches.length !== 1 || matches[0][1] === undefined) {
     throw new Error(`Local credential form must contain exactly one inline <${tagName}> block`);
   }

@@ -28,16 +28,16 @@ const localCredentialFormSource = path.join(
 const localCredentialHelperUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/24837cf4939f5cfbbdd7c7aec705be76a9e22529/scripts/local-credential-helper.mts";
 const localCredentialHelperSha256 =
-  "b2fe93eaa4f4a74845570eb4f14319d7dcce0180a762315e02cf4f2076531a10"; // gitleaks:allow -- checked-in SHA-256 fixture
+  "eb8f14939fbea3feb56bb6b90181ce7e59549c434d528bf7d371c8432597bbcc"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/24837cf4939f5cfbbdd7c7aec705be76a9e22529/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 =
-  "8e135da4fae0bc75d4437a06d4a01dd486cfa03205b272207be28da3e9efc005"; // gitleaks:allow -- checked-in SHA-256 fixture
+  "47fba6db8b1203a1761fc7fd164196ad543aad9cdd9ba5a5a4657c67dbe266ea"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormScriptCspHash = [
-  "'sha256-SqI5spgA",
-  "FKftFmjM+eNmgnd",
-  "hXN96aYrBhOWbBwn",
-  "jFz4='",
+  "'sha256-+FpZq5OW",
+  "1xPb3W3TaGBnIC3M",
+  "nIL4tg1d+ZnMOwI6",
+  "Pko='",
 ].join("");
 const localCredentialFormStyleCspHash = [
   "'sha256-W4wSJyrm",
@@ -46,6 +46,30 @@ const localCredentialFormStyleCspHash = [
   "xipME='",
 ].join("");
 const localCredentialCapability = "A".repeat(43);
+const localCredentialNetworkControlNames = [
+  "ALL_PROXY",
+  "AWS_CA_BUNDLE",
+  "CURL_CA_BUNDLE",
+  "DENO_CERT",
+  "FTP_PROXY",
+  "GIT_PROXY_SSL_CAINFO",
+  "GIT_SSL_CAINFO",
+  "GIT_SSL_CAPATH",
+  "GIT_SSL_NO_VERIFY",
+  "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH",
+  "GRPC_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
+  "NODE_USE_ENV_PROXY",
+  "NODE_USE_SYSTEM_CA",
+  "NO_PROXY",
+  "REQUESTS_CA_BUNDLE",
+  "SSLKEYLOGFILE",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+];
 const starterPromptPages = [
   "docs/index.mdx",
   "docs/get-started/quickstart.mdx",
@@ -354,9 +378,10 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("exact environment-variable names and exact command argv");
     expect(promptSource).toContain("--field NAME:type");
     expect(promptSource).toContain("absolute native executable or interpreter path");
-    expect(promptSource).toContain(
-      "removes recognized ambient credential-shaped and process-control variables",
-    );
+    expect(promptSource).toContain("including proxy-routing and TLS-trust overrides");
+    expect(promptSource).toContain("ambient \\`NPM_CONFIG_*\\` and \\`PIP_*\\`");
+    expect(promptSource).toContain("package registry, or Python package index");
+    expect(promptSource).toContain("never put proxy credentials in argv");
     expect(promptSource).toContain("<absolute-bash-path> -c");
     expect(promptSource).toContain("Confirm and Run Approved Command");
     expect(promptSource).toContain("do not retry or resubmit");
@@ -428,7 +453,7 @@ describe("starter prompt docs CTA", () => {
       "http://127.0.0.1:4123/local-credential-form.html?fields=PRIVATE:text",
       "http://127.0.0.1:4123/local-credential-form.html?fields=PIN:text",
       "http://127.0.0.1:4123/local-credential-form.html?fields=NODE_OPTIONS:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=BASH_FUNC_CURL:secret",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=BASH_FUNC_ECHO:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=DOTNET_STARTUP_HOOKS:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_EXEC_PATH:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_EXTERNAL_DIFF:secret",
@@ -440,6 +465,11 @@ describe("starter prompt docs CTA", () => {
       "http://127.0.0.1:4123/local-credential-form.html?fields=DYLD_INSERT_LIBRARIES:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_CONFIG:secret",
       "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_CONFIG_COUNT:secret",
+      ...localCredentialNetworkControlNames.map(
+        (name) => `http://127.0.0.1:4123/local-credential-form.html?fields=${name}:text`,
+      ),
+      "http://127.0.0.1:4123/local-credential-form.html?fields=NPM_CONFIG_REGISTRY:text",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=PIP_INDEX_URL:text",
       "http://127.0.0.1:4123/local-credential-form.html?fields=PUBLIC_ID:text&submit=/capture",
     ]) {
       const malformed = runCredentialForm(withCredentialCapability(malformedUrl));
