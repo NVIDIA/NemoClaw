@@ -183,6 +183,7 @@ beta  127.0.0.1  18789  12345  running`;
       },
     );
     let healthProbeCalls = 0;
+    const spawnedCommands: string[] = [];
 
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "2";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "0";
@@ -190,7 +191,8 @@ beta  127.0.0.1  18789  12345  running`;
 
     try {
       vi.spyOn(childProcess, "spawnSync").mockImplementation(
-        (_command: unknown, rawArgs: unknown) => {
+        (command: unknown, rawArgs: unknown) => {
+          spawnedCommands.push(String(command));
           const isHealthProbe = getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl");
           healthProbeCalls += Number(isHealthProbe);
           return (
@@ -226,6 +228,7 @@ beta  127.0.0.1  18789  12345  running`;
         expectedActions.map((action) => ["beta", action]),
       );
       expect(healthProbeCalls).toBe(1);
+      expect(spawnedCommands).not.toContain("ssh");
     } finally {
       previousWaitSeconds === undefined
         ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS

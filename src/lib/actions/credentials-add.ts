@@ -180,6 +180,7 @@ export async function runCredentialsAddAction(
   }
 
   const result = runOpenshellProviderCommand(openshellArgs, {
+    env: Object.fromEntries(credentials.map((credential) => [credential, process.env[credential]])),
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,

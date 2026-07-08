@@ -28,9 +28,12 @@ import {
  * Recovery model: resuming an interrupted run does not transition out of a
  * terminal state. Instead a single, side-effect-free recovery pass
  * (`applySessionRecovery`) validates and re-seats the durable snapshot at a
- * legal non-terminal entry state before any flow handler runs, emitting one
- * explicit `state.repair.*` event. Terminal states therefore stay terminal
- * within the graph while recovery remains explicit and observable.
+ * legal non-terminal entry state before any flow handler runs and writes a
+ * deterministic recovery receipt. After `onboard.resumed`, the runtime makes a
+ * best-effort `state.repair.completed` dispatch attempt for that receipt. A
+ * restart before the next transition retries the same receipt ID. Terminal
+ * states therefore stay terminal within the graph while recovery remains
+ * explicit and observable.
  */
 export const ONBOARD_MACHINE_DIRECT_TRANSITIONS = [
   { from: "init", to: "preflight", kind: "advance" },

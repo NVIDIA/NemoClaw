@@ -63,7 +63,10 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 agentOnboard.createAgentSandbox = () => {
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-terminal-agent-"));
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.writeFileSync(stagedDockerfile, "FROM scratch\nCMD [\"/bin/sh\"]\n");
+  fs.writeFileSync(
+    stagedDockerfile,
+    "FROM scratch\nARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled\nCMD [\"/bin/sh\"]\n",
+  );
   return { buildCtx, stagedDockerfile };
 };
 
@@ -78,6 +81,14 @@ runner.runFile = (file, args = [], opts = {}) => {
 runner.runCapture = (command) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: null });
+  if (normalized.includes("sandbox exec -n " + sandboxName + " -- dcode identity")) {
+    return [
+      "Route:    inference",
+      "Provider: nvidia-prod",
+      "Model:    openai:gpt-5.4",
+      "Endpoint: https://inference.local/v1",
+    ].join("\n");
+  }
   if (normalized.includes("sandbox get " + sandboxName)) {
     return scenario === "reuse" ? sandboxName : "";
   }
@@ -88,7 +99,14 @@ runner.runCapture = (command) => {
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? { name: sandboxName, gpuEnabled: false, agent: "langchain-deepagents-code", dashboardPort: 18789 }
+    ? {
+        name: sandboxName,
+        gpuEnabled: false,
+        agent: "langchain-deepagents-code",
+        dashboardPort: 18789,
+        observabilityEnabled: false,
+        toolDisclosure: "progressive",
+      }
     : null;
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);

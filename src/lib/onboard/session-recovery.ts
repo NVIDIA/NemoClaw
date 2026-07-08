@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { MACHINE_SNAPSHOT_VERSION, type Session } from "../state/onboard-session";
+import {
+  createSessionRecoveryReceiptId,
+  MACHINE_SNAPSHOT_VERSION,
+  type Session,
+} from "../state/onboard-session";
 import { isTerminalOnboardMachineState } from "./machine/transitions";
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "./machine/types";
 import { resumeMachineState } from "./resume-machine-repair";
@@ -63,13 +67,22 @@ export function assertRecoverableEntry(entry: OnboardMachineState): OnboardNonTe
   return entry;
 }
 
+function assertCanonicalRecoveryTimestamp(value: string): string {
+  try {
+    if (new Date(value).toISOString() === value) return value;
+  } catch {
+    // Fall through to the stable caller-facing error below.
+  }
+  throw new TypeError("Session recovery requires a canonical ISO timestamp.");
+}
+
 /**
  * Classifies a resumed session and, when recovery is required, computes and
  * validates the single non-terminal entry state to resume from.
  *
  * Pure and side-effect-free: performs no sandbox/provider/policy effects and
  * does not mutate the session. Callers apply the plan with
- * {@link applySessionRecovery} and emit the recovery event separately.
+ * {@link applySessionRecovery}.
  */
 export function planSessionRecovery(session: Session): SessionRecoveryPlan {
   const decision = classifyResumeMachineRepair(session);
@@ -84,9 +97,12 @@ export function planSessionRecovery(session: Session): SessionRecoveryPlan {
  * Applies {@link planSessionRecovery} to the session in place.
  *
  * When the plan is `recover`, re-seats `session.machine` at the validated
- * non-terminal entry with a bumped revision. Returns the plan so the caller can
- * emit exactly one explicit `state.repair.*` recovery event. Performs no side
- * effects beyond the snapshot mutation and must run before any flow handler.
+ * non-terminal entry with a bumped revision and a deterministic durable
+ * receipt. The receipt lets the next process retry the same completion-event
+ * dispatch ID if this process stops after the repaired snapshot is persisted
+ * but before the next transition. Observer delivery remains best-effort.
+ * Performs no side effects beyond the snapshot mutation and must run before
+ * any flow handler.
  */
 export function applySessionRecovery(
   session: Session,
@@ -94,11 +110,21 @@ export function applySessionRecovery(
 ): SessionRecoveryPlan {
   const plan = planSessionRecovery(session);
   if (plan.action === "recover") {
+    const appliedAt = assertCanonicalRecoveryTimestamp(stateEnteredAt);
+    const revision = session.machine.revision + 1;
+    const id = createSessionRecoveryReceiptId(session.sessionId, revision, plan.reason, plan.entry);
     session.machine = {
       version: MACHINE_SNAPSHOT_VERSION,
       state: plan.entry,
-      stateEnteredAt,
-      revision: session.machine.revision + 1,
+      stateEnteredAt: appliedAt,
+      revision,
+      recoveryReceipt: {
+        id,
+        reason: plan.reason,
+        entry: plan.entry,
+        appliedAt,
+        revision,
+      },
     };
   }
   return plan;

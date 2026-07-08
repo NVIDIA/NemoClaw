@@ -177,8 +177,8 @@ jobs:
           if-no-files-found: ignore
 
   # ── OpenShell version-pin E2E ──────────────────────────────
-  # Coverage guard for #3474. If a host has sticky OpenShell 0.0.45 on PATH
-  # but this NemoClaw release supports only <=0.0.44, install-openshell.sh
+  # Coverage guard for #3474. If a host has sticky OpenShell above the pinned
+  # supported version on PATH, install-openshell.sh
   # must replace it with the pinned compatible release instead of hard-failing.
   openshell-version-pin-e2e:
     needs: select_regression_jobs
@@ -206,7 +206,6 @@ jobs:
             /tmp/nemoclaw-e2e-openshell-version-pin-install.log
             /tmp/nemoclaw-e2e-openshell-version-pin-downloads.log
           if-no-files-found: ignore
-
 
   # ── Gateway drift preflight E2E ─────────────────────────────
   # Coverage guard for #3399 / #3423. A stale OpenShell gateway image can
@@ -268,8 +267,8 @@ jobs:
             /tmp/nemoclaw-e2e-model-router-response.log
           if-no-files-found: ignore
 
-  # ── OpenClaw plugin runtime-deps EXDEV E2E ─────────────────────
-  # Coverage guard for #3513 / #3127. On Ubuntu/OpenShell sandbox layouts
+  # ── OpenClaw custom-plugin lifecycle and runtime-deps EXDEV E2E ─
+  # Coverage guard for #6108 / #3513 / #3127. On Ubuntu/OpenShell sandbox layouts
   # where /tmp and /sandbox can live on different filesystems, OpenClaw's
   # first CLI bootstrap must not fail plugin runtime dependency installation
   # with EXDEV cross-device rename errors.
@@ -281,7 +280,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 45
+    # Three bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
+    # Vitest buffer need 110 minutes; allow 20 more for setup and teardown.
+    timeout-minutes: 130
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -300,7 +301,7 @@ jobs:
       - name: Build CLI
         run: npm run build:cli
 
-      - name: Run OpenClaw plugin runtime-deps EXDEV Vitest test
+      - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV Vitest test
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
           NEMOCLAW_RUN_LIVE_E2E: "1"

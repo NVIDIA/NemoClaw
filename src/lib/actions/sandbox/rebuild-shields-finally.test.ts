@@ -1,109 +1,69 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+const phaseMocks = vi.hoisted(() => ({
+  runBackup: vi.fn(),
+  runPreflight: vi.fn(),
+  runShields: vi.fn(),
+}));
 
-type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
+vi.mock("./rebuild-backup-phase", () => ({
+  runRebuildBackupPhase: phaseMocks.runBackup,
+}));
 
-const requireDist = createRequire(import.meta.url);
-const rebuildModulePath = "./rebuild.js";
+vi.mock("./rebuild-preflight-phase", () => ({
+  runRebuildPreflightPhase: phaseMocks.runPreflight,
+}));
+
+vi.mock("./rebuild-shields-phase", () => ({
+  runRebuildShieldsPhase: phaseMocks.runShields,
+}));
+
+import { rebuildSandbox } from "./rebuild";
 
 describe("rebuild shields relock guard", () => {
-  let rebuildSandbox: RebuildSandbox;
-  let spies: MockInstance[];
-  let errorSpy: MockInstance;
-  let logSpy: MockInstance;
-  let relockSpy: MockInstance;
-  let sandboxListRecoverySpy: MockInstance;
   const rebuildWindow = { relocked: false, wasLocked: true };
+  const cleanupDcodePreflight = vi.fn();
+  const releaseOnboardLock = vi.fn();
+  const relockShields = vi.fn(() => {
+    rebuildWindow.relocked = true;
+    return true;
+  });
 
   beforeEach(() => {
-    spies = [];
+    vi.clearAllMocks();
     rebuildWindow.relocked = false;
-    delete require.cache[requireDist.resolve(rebuildModulePath)];
-
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
-    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
-    const sandboxList = requireDist("../../openshell-sandbox-list.js");
-    const resolve = requireDist("../../adapters/openshell/resolve.js");
-    const agentRuntime = requireDist("../../agent/runtime.js");
-    const onboardSession = requireDist("../../state/onboard-session.js");
-    const registry = requireDist("../../state/registry.js");
-    const sandboxState = requireDist("../../state/sandbox.js");
-    const sandboxSession = requireDist("../../state/sandbox-session.js");
-    const sandboxVersion = requireDist("../../sandbox/version.js");
-    const rebuildShields = requireDist("./rebuild-shields.js");
-
-    relockSpy = vi
-      .spyOn(rebuildShields, "relockRebuildShieldsWindow")
-      .mockImplementation((...args: unknown[]) => {
-        const window = args[1] as typeof rebuildWindow;
-        window.relocked = true;
-        return true;
-      });
-
-    sandboxListRecoverySpy = vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery");
-
-    spies.push(
-      vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null),
-      vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
-      vi
-        .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
-        .mockResolvedValue({ recovered: false }),
-      sandboxListRecoverySpy.mockResolvedValue({
-        result: { status: 0, output: "alpha Ready" },
-      }),
-      vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null),
-      vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null),
-      vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
-      vi.spyOn(onboardSession, "loadSession").mockReturnValue(null),
-      vi.spyOn(registry, "getSandbox").mockReturnValue({
-        name: "alpha",
-        provider: "ollama-local",
-        model: "nvidia/nemotron",
-        policies: [],
-        agent: null,
-        nimContainer: null,
-        gatewayName: "nemoclaw-8090",
-        gatewayPort: 8090,
-      } as never),
-      vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
-        detected: false,
-        sessions: [],
-      }),
-      vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
-        expectedVersion: "0.1.0",
-        sandboxVersion: "0.0.1",
-      } as never),
-      vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue(rebuildWindow),
-      relockSpy,
-      vi.spyOn(sandboxState, "backupSandboxState").mockImplementation(() => {
-        throw new Error("unexpected backup exception");
-      }),
-    );
-
-    ({ rebuildSandbox } = requireDist(rebuildModulePath));
+    phaseMocks.runPreflight.mockResolvedValue({
+      sandboxEntry: { name: "alpha", customPolicies: [] },
+      targetConfig: { durableConfig: { webSearchConfig: null } },
+      recreateOptions: { observabilityEnabled: false },
+      liveState: { staleRecovery: false, staleRegistrySnapshot: null },
+      recoveryManifest: null,
+      dcodePreflight: { cleanup: cleanupDcodePreflight },
+      preparedImage: null,
+      releaseOnboardLock,
+      log: vi.fn(),
+      bail: vi.fn(),
+    });
+    phaseMocks.runShields.mockReturnValue({
+      window: rebuildWindow,
+      staleSandboxWasLocked: false,
+      relock: relockShields,
+    });
+    phaseMocks.runBackup.mockImplementation(() => {
+      throw new Error("unexpected backup exception");
+    });
   });
 
-  afterEach(() => {
-    for (const spy of spies) spy.mockRestore();
-    errorSpy.mockRestore();
-    logSpy.mockRestore();
-    delete require.cache[requireDist.resolve(rebuildModulePath)];
-  });
-
-  it("relocks shields when an unexpected exception escapes after auto-unlock", async () => {
+  it("relocks shields when an unexpected rebuild phase exception escapes after auto-unlock (#6245)", async () => {
     await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
       "unexpected backup exception",
     );
 
-    expect(relockSpy).toHaveBeenCalledWith("alpha", rebuildWindow, true, expect.any(String));
-    expect(sandboxListRecoverySpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw-8090" });
+    expect(phaseMocks.runBackup).toHaveBeenCalledOnce();
+    expect(relockShields).toHaveBeenCalledWith(true);
     expect(rebuildWindow.relocked).toBe(true);
   });
 });

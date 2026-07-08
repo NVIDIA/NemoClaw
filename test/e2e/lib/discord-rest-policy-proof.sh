@@ -251,6 +251,16 @@ function resolveDiscordSendApiPath() {
     }
   };
 
+  add(
+    path.join(
+      process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw",
+      "extensions",
+      "discord",
+      "dist",
+      "runtime-api.send.js",
+    ),
+  );
+
   for (const base of [process.cwd(), "/sandbox", "/usr/local/lib/node_modules", "/tmp/npm-global/lib/node_modules"]) {
     try {
       add(path.join(path.dirname(require.resolve("@openclaw/discord/package.json", { paths: [base] })), "dist/runtime-api.send.js"));

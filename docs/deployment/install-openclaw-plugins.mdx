@@ -3,14 +3,22 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Install OpenClaw Plugins"
 sidebar-title: "Install OpenClaw Plugins"
-description: "How to install OpenClaw plugins in a NemoClaw-managed sandbox today."
-description-agent: "Explains the difference between OpenClaw plugins and agent skills, and shows the current Dockerfile-based workflow for baking a plugin into a NemoClaw sandbox, including `.dockerignore` handling for custom build contexts. Use when users ask how to install, build, or configure OpenClaw plugins under NemoClaw."
+description: "How to install an OpenClaw plugin from a version-matched full NemoClaw runtime source context."
+description-agent: "Explains the difference between OpenClaw plugins and agent skills, the complete-image contract of `nemoclaw onboard --from`, and the source-based workflow for adding a plugin without removing the managed runtime. Use when users ask how to install, build, or configure OpenClaw plugins under NemoClaw."
 keywords: ["nemoclaw plugins", "openclaw plugins", "install openclaw plugin", "nemoclaw onboard from dockerfile", "nemoclaw dockerignore"]
 content:
   type: "how_to"
 skill:
   priority: 20
 ---
+
+<Warning>
+This is a source-based workaround until the managed plugin lifecycle in [issue #5998](https://github.com/NVIDIA/NemoClaw/issues/5998) is available.
+It requires a source checkout and base image that exactly match your installed NemoClaw CLI.
+The example below targets NemoClaw `v0.0.71` and its pinned OpenClaw `2026.5.27` runtime.
+For another release, replace every `v0.0.71` occurrence and use the OpenClaw version pinned by that release wherever this example uses `2026.5.27`.
+</Warning>
+
 OpenClaw plugins extend the OpenClaw runtime with hooks, services, tools, or provider integrations.
 They are different from NemoClaw-managed agent skills:
 
@@ -18,83 +26,213 @@ They are different from NemoClaw-managed agent skills:
 - **Skills** are `SKILL.md` directories that teach an agent how to perform a task.
 - **Policy presets** are network-egress rules that control what sandboxed code can reach.
 
-To install supported OpenClaw plugins under NemoClaw, bake the plugin into a custom sandbox image and onboard from that Dockerfile.
+Until NemoClaw provides that managed lifecycle, bake the plugin into a version-matched full NemoClaw runtime image.
 
-## Prepare a Build Directory
+## Understand the Custom Image Contract
 
-Place the Dockerfile and everything it needs to `COPY` in one directory.
-`nemoclaw onboard --from <Dockerfile>` uses the Dockerfile's parent directory as the Docker build context.
-Add a `.dockerignore` next to the Dockerfile to exclude local caches, generated artifacts, model files, or other paths that are not needed by the image build.
-NemoClaw still applies its own secret-safety exclusions for credential-like paths such as `.env*`, `.ssh/`, `.aws/`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`, even if `.dockerignore` negates them.
+The `--from` option supplies the complete sandbox image definition.
+It does not add your Dockerfile as a layer on top of NemoClaw's normal managed runtime.
+
+<Warning>
+Do not start a custom OpenClaw image from `ghcr.io/nvidia/nemoclaw/sandbox-base` alone.
+That intermediate image contains Node.js, OpenClaw, and other runtime dependencies, but it does not contain `nemoclaw-start`, the generated `openclaw.json`, or the managed gateway health check.
+A sandbox created from the base image alone can report a successful create while the gateway and dashboard remain unavailable.
+</Warning>
+
+`nemoclaw onboard --from <Dockerfile>` uses the Dockerfile's parent directory as its Docker build context.
+The workaround therefore starts with the complete source context for the installed NemoClaw release.
+
+For a first-class `add`, `list`, `status`, and `remove` lifecycle that does not require a source checkout, follow [issue #5998](https://github.com/NVIDIA/NemoClaw/issues/5998).
+
+## Prepare a Version-Matched Build Context
+
+Use the same NemoClaw release for the installed CLI, source checkout, and `sandbox-base` image.
+The following commands reproduce the workflow for NemoClaw `v0.0.71`, which includes OpenClaw `2026.5.27`.
+
+```bash
+nemoclaw --version
+git clone --depth 1 --branch v0.0.71 https://github.com/NVIDIA/NemoClaw.git my-plugin-sandbox
+cp -R /path/to/my-plugin ./my-plugin-sandbox/my-plugin
+cd my-plugin-sandbox
+```
+
+For a different release, replace `v0.0.71` everywhere in this workflow and start from that release's stock Dockerfile.
+Do not reuse this patch across releases because the managed image contract can change.
+
+The plugin directory must contain the inputs used by its build, including its manifest and dependency lockfile.
+This example expects the following files:
 
 ```text
-my-plugin-sandbox/
-├── Dockerfile
-└── my-plugin/
-    ├── package-lock.json
-    ├── package.json
-    └── src/
+my-plugin/
+├── openclaw.plugin.json
+├── package-lock.json
+├── package.json
+├── src/
+└── tsconfig.json
 ```
 
 The example Dockerfile uses `npm ci`, so `my-plugin/` must include `package-lock.json`.
 If your plugin does not have a lockfile yet, create one in the plugin project with `npm install --package-lock-only`.
+OpenClaw `2026.5.27` also requires the plugin manifest to declare each registered tool in `contracts.tools`; for example, a weather plugin that registers `get_weather` must declare `"tools": ["get_weather"]`.
 
-## Example Dockerfile
+Declare OpenClaw as both a runtime peer and an exact, release-matched development dependency.
+The peer range expresses runtime compatibility, while the development dependency provides the plugin SDK during the build:
 
-Use the custom image to copy the plugin into the OpenClaw extensions directory.
-Then let OpenClaw refresh its config before NemoClaw starts the sandbox.
+```json
+{
+  "devDependencies": {
+    "openclaw": "2026.5.27"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  }
+}
+```
+
+With current npm versions, `npm ci` installs peer dependencies automatically.
+The build stage below therefore omits both development and peer dependencies after compilation so the staged plugin does not carry a private OpenClaw runtime.
+
+## Extend the Full Managed Dockerfile
+
+Make two changes to the stock `Dockerfile` from the `v0.0.71` checkout.
+First, pin the base image to the same release.
+
+```diff
+-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
++ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.71
+```
+
+Next, name the completed runtime stage so the plugin layer can extend it.
+
+```diff
+-FROM ${BASE_IMAGE}
++FROM ${BASE_IMAGE} AS nemoclaw-runtime
+```
+
+Append the following stages to the end of the stock Dockerfile.
+Replace `weather` with the plugin ID from `openclaw.plugin.json` in the stage name, staging directory, and OpenClaw plugin commands.
 
 ```dockerfile
-ARG SANDBOX_BASE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
-FROM ${SANDBOX_BASE}
-
-COPY my-plugin/ /opt/my-plugin/
+# Build the plugin from its lockfile.
+FROM builder AS weather-plugin-builder
 WORKDIR /opt/my-plugin
-RUN npm ci --no-audit --no-fund && npm run build
+COPY my-plugin/package.json my-plugin/package-lock.json my-plugin/tsconfig.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY my-plugin/openclaw.plugin.json ./
+COPY my-plugin/src/ ./src/
+RUN npm run build \
+    && npm prune --omit=dev --omit=peer --ignore-scripts --no-audit --no-fund \
+    && test ! -e node_modules/openclaw
 
-RUN mkdir -p /sandbox/.openclaw/extensions \
- && cp -a /opt/my-plugin /sandbox/.openclaw/extensions/my-plugin \
- && openclaw doctor --fix
+# Extend the completed managed runtime.
+FROM nemoclaw-runtime AS weather-runtime
+ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
+ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/my-plugin/package.json \
+    /opt/my-plugin/package-lock.json \
+    /opt/my-plugin/openclaw.plugin.json \
+    /opt/weather-plugin/
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/my-plugin/dist/ /opt/weather-plugin/dist/
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/my-plugin/node_modules/ /opt/weather-plugin/node_modules/
 
-WORKDIR /opt/nemoclaw
+USER sandbox
+RUN test ! -e /opt/weather-plugin/node_modules/openclaw \
+    && HOME=/sandbox openclaw plugins install /opt/weather-plugin \
+    && test -L /sandbox/.openclaw/extensions/weather/node_modules/openclaw \
+    && test "$(realpath /sandbox/.openclaw/extensions/weather/node_modules/openclaw)" = /usr/local/lib/node_modules/openclaw \
+    && HOME=/sandbox openclaw plugins enable weather \
+    && HOME=/sandbox openclaw plugins inspect weather --json > /dev/null
+
+# Enabling the plugin changes openclaw.json after the managed runtime hashes it.
+# hadolint ignore=DL3002
+USER root
+RUN chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
+    && chmod 660 /sandbox/.openclaw/openclaw.json \
+    && sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
+    && chown sandbox:sandbox /sandbox/.openclaw/.config-hash \
+    && chmod 660 /sandbox/.openclaw/.config-hash
 ```
 
-If the plugin needs configuration in `openclaw.json`, apply it after `openclaw doctor --fix` so the base config exists first.
+The final stage inherits the stock runtime entrypoint, command, gateway health check, generated configuration, and file permissions.
+It redeclares and promotes the tool-disclosure build argument because Docker build arguments are scoped to a stage and the appended plugin stage becomes the final image stage.
+The local install copies the staged plugin into OpenClaw's extensions tree, records the install, links it to the image's OpenClaw runtime, and leaves existing managed plugin load paths intact before the explicit enable and inspect steps.
+The pre-install `test` commands fail the image build if npm retained a private `node_modules/openclaw` directory that would prevent OpenClaw from creating its runtime link.
+The post-install checks then prove that OpenClaw created the link and that it resolves to the image's global runtime.
+The last `RUN` refreshes the managed config hash after `openclaw plugins enable` updates `openclaw.json`.
 
-## Create the Sandbox
+## Create and Verify the Sandbox
 
-Point `nemoclaw onboard --from` at the Dockerfile in the build directory.
+Pin NemoClaw's base-image resolver to the same release when you onboard.
 
 ```bash
-nemoclaw onboard --from ./my-plugin-sandbox/Dockerfile
+NEMOCLAW_SANDBOX_BASE_IMAGE_REF=ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.71 \
+  nemoclaw onboard \
+    --fresh \
+    --no-gpu \
+    --name weather-agent \
+    --from "$PWD/Dockerfile"
 ```
 
-To run a second sandbox alongside an existing one, use a dedicated build directory and rerun onboarding with the sandbox name and ports you intend to use.
+Verify the managed runtime and plugin after onboarding completes.
+
+```bash
+nemoclaw weather-agent status
+nemoclaw weather-agent exec -- test -s /tmp/gateway.log
+nemoclaw weather-agent exec -- env HOME=/sandbox openclaw plugins inspect weather --runtime --json
+nemoclaw weather-agent exec -- bash -lc \
+  '. /tmp/nemoclaw-proxy-env.sh && printf "header = \"Authorization: Bearer %s\"\n" "$OPENCLAW_GATEWAY_TOKEN" | curl --noproxy "*" --max-time 30 --silent --show-error --fail-with-body --config - -H "Content-Type: application/json" --data "{\"agentId\":\"main\",\"tool\":\"get_weather\",\"args\":{\"location\":\"Santa Clara\"}}" "http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}/tools/invoke"'
+```
+
+The plugin inspection must report the loaded `weather` plugin and list `get_weather` in `toolNames`.
+The authenticated HTTP invocation must return the deterministic `Santa Clara` weather result.
+The piped curl config keeps the managed gateway token out of process arguments.
+NemoClaw's live regression also verifies that the running gateway's tool catalog contains `get_weather`.
+
+Keep the source checkout and Dockerfile at the recorded path if you plan to run `nemoclaw weather-agent rebuild --yes`.
+This source-based workflow can reproduce the plugin during that rebuild, but it is not the durable managed-plugin lifecycle proposed in issue #5998.
+
+<Note>
+The provenance safeguards below start in NemoClaw `v0.0.76`.
+The `v0.0.71` worked example demonstrates custom-image construction but does not provide these lifecycle guards.
+To rely on them, use NemoClaw `v0.0.76` or later and match its CLI, source checkout, base image, and pinned OpenClaw version.
+</Note>
+
+Starting with `v0.0.76`, custom-image onboarding records validated plugin IDs and canonical install paths from OpenClaw's install index.
+It derives direct extension-directory ownership from those paths and records exact configured load paths owned by linked `path` installs.
+Use `openclaw plugins install` as shown above; manually copied, unregistered extension directories are outside this provenance contract.
+During rebuild or warm recreation, the new image remains authoritative for those image-owned plugins: updated plugins keep the fresh image copy, removed plugins stay removed, and renamed plugins do not restore their old IDs.
+NemoClaw continues to restore backup-only user plugins and their configuration.
+Before rebuild or the default state-preserving warm recreation path deletes an existing custom-image sandbox, NemoClaw requires complete, validated provenance from the registry or selected backup.
+If that previous provenance is missing or invalid, the operation stops with the existing sandbox and backup untouched.
+Setting `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` deliberately bypasses the warm-recreation backup and provenance guard; use it only after making an independent backup and accepting loss of the current sandbox state.
+After initial onboarding or replacement creation, NemoClaw validates the fresh image again before it restores state or publishes registry metadata.
+If fresh discovery or restore-time reconciliation fails, NemoClaw does not publish the fresh replacement metadata.
+Direct onboarding or recreation leaves the created sandbox unregistered; rebuild preserves the backup, restores retry metadata, and prints manual recovery commands.
+Preserve any reported backup, then inspect and remove an unregistered sandbox with OpenShell before you retry the original onboarding command.
+If the fresh image itself fails validation, correct its plugin install records or linked load paths before you retry onboarding.
+Custom-image sandboxes created before `v0.0.76` cannot enter the state-preserving path automatically when they lack recorded provenance.
+Keep the older sandbox intact, onboard the current release under a different name, and migrate its state manually.
+Rerun the plugin inspection and HTTP invocation after a gateway restart or sandbox rebuild to verify that the plugin remains available.
+
+If the plugin imports runtime packages, keep those packages in `dependencies` rather than `devDependencies` so the prune step preserves them.
+Keep `openclaw` in the release-matched peer and development dependency fields shown above; do not move it to `dependencies`.
+If the plugin needs configuration in `openclaw.json`, apply it before refreshing `.config-hash`.
+
+Never bake plugin credentials into the Dockerfile or `openclaw.json`.
+Use OpenShell credential providers for secrets.
 
 ## Build Performance
 
 Custom plugin images are normal Docker builds, so build time depends on the build context size and the Docker layer cache rather than on NemoClaw.
+NemoClaw sends user-supplied `--from` contexts to the OpenShell gateway builder and reserves its host-side local BuildKit prebuild for contexts that NemoClaw generates itself.
+On a local Docker-driver gateway, a `Local BuildKit build skipped` notice is expected and the custom image build continues through the gateway.
 
-Keep the build context small and dedicated.
-The Dockerfile's parent directory is staged as the build context before the Docker build starts, so a broad directory can make onboarding look stuck while Docker is only preparing context.
-A small build directory stages quickly:
-
-```text
-my-plugin-sandbox/        # fast: only what the image needs
-├── Dockerfile
-├── .dockerignore
-└── my-plugin/
-```
-
-A Dockerfile placed in a large tree stages slowly:
-
-```text
-~/                        # slow: stages the whole home directory
-├── Dockerfile
-├── Downloads/
-├── datasets/
-└── models/
-```
+Keep the Dockerfile at the release checkout root because the full managed image copies repository scripts, blueprint files, and the built-in NemoClaw plugin.
+Use the checkout's `.dockerignore`, and do not place unrelated datasets, model files, caches, or credentials under that directory.
+NemoClaw also applies secret-safety exclusions for credential-like paths such as `.env*`, `.ssh/`, `.aws/`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`.
 
 Distinguish cold builds from warm rebuilds.
 The first build on a fresh host is a cold build that downloads the base image and package indexes, so it is the slowest run.
@@ -126,7 +264,10 @@ For custom preset workflows, refer to [Customize Network Policy](../network-poli
 The following mistakes commonly mix plugin installation with other NemoClaw extension paths.
 
 - Do not use `nemoclaw <sandbox> skill install` for OpenClaw plugins. That command only installs `SKILL.md` agent skills.
-- Do not put a Dockerfile in a broad directory such as `/tmp` unless you intend to send that whole directory as the Docker build context.
+- Do not use `sandbox-base` as the final custom image. It is an intermediate dependency image.
+- Do not combine one NemoClaw release's Dockerfile with another release's base image.
+- Do not copy a plugin into `/sandbox/.openclaw/extensions/<id>` and then run `plugins install --link` on that same path. Stage it outside the managed extensions directory and use the local install shown above.
+- Do not move or delete the recorded source checkout before rebuilding the sandbox.
 - Do not rely on `.dockerignore` to include credential-like paths; NemoClaw excludes those from staged custom build contexts for safety.
 - Keep plugin dependencies in the build stage or plugin directory, and avoid copying unrelated host files into the sandbox image.
 
@@ -135,3 +276,4 @@ The following mistakes commonly mix plugin installation with other NemoClaw exte
 - Review [Sandbox Hardening](sandbox-hardening) before adding plugin code to a shared or long-lived sandbox.
 - Review [Network Policies](../reference/network-policies) to plan plugin egress rules.
 - Follow [Customize Network Policy](../network-policy/customize-network-policy) if the plugin needs a custom preset.
+- Follow [issue #5998](https://github.com/NVIDIA/NemoClaw/issues/5998) for the no-source-checkout managed plugin lifecycle.

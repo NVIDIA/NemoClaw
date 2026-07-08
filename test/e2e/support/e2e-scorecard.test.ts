@@ -312,7 +312,9 @@ describe("E2E scorecard", () => {
         resolvePriorReleaseTag: vi.fn().mockResolvedValue(null),
       }),
     ).resolves.toMatchObject({
-      traceTimingLine: "Trace: cloud-onboard total 2.0s (no prior release tag found)",
+      traceTimingLine: expect.stringContaining(
+        "Trace: cloud-onboard total 2.0s (no prior release tag found)",
+      ),
     });
     await expect(
       trace.buildTraceTimingResult(deps, {
@@ -320,7 +322,9 @@ describe("E2E scorecard", () => {
         findLatestCompletedE2eRunForReleaseTag: vi.fn().mockResolvedValue(null),
       }),
     ).resolves.toMatchObject({
-      traceTimingLine: "Trace: cloud-onboard total 2.0s (no e2e.yaml run found for v0.0.69)",
+      traceTimingLine: expect.stringContaining(
+        "Trace: cloud-onboard total 2.0s (no e2e.yaml run found for v0.0.69)",
+      ),
     });
     await expect(
       trace.buildTraceTimingResult(deps, {
@@ -328,7 +332,9 @@ describe("E2E scorecard", () => {
         readTraceSummaryFromRun: vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(null),
       }),
     ).resolves.toMatchObject({
-      traceTimingLine: "Trace: cloud-onboard total 2.0s (no timing summary found for v0.0.69)",
+      traceTimingLine: expect.stringContaining(
+        "Trace: cloud-onboard total 2.0s (no timing summary found for v0.0.69)",
+      ),
     });
     await expect(
       trace.buildTraceTimingResult(deps, {

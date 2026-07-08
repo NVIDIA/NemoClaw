@@ -17,8 +17,11 @@ endpoints:
   - host: api.tavily.com
     port: 443
     protocol: rest
-    access: read-write
     enforcement: enforce
+    request_body_credential_rewrite: true
+    rules:
+      - allow: { method: POST, path: "/search" }
+      - allow: { method: POST, path: "/extract" }
 binaries:
   # OpenShell attributes Deep Agents Code Tavily requests to this managed
   # Python venv, which its strict Landlock policy mounts read-only.

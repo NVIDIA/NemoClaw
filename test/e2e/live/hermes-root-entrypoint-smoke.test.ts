@@ -16,8 +16,6 @@ const HEALTH_POLL_MS = 2_000;
 const BUILD_TIMEOUT_MS = 10 * 60_000;
 const RUN_TIMEOUT_MS = 60_000;
 
-const liveTest = process.env.NEMOCLAW_RUN_LIVE_E2E === "1" ? test : test.skip;
-
 function safeTag(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
 }
@@ -406,73 +404,74 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   );
 }
 
-liveTest(
-  "hermes root-entrypoint smoke preserves runtime layout and legacy pid migration",
-  async ({ artifacts, cleanup, secrets, skip }) => {
-    const probe = new DockerProbe(artifacts, (text, extraValues) =>
-      secrets.redact(text, extraValues),
+test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migration", async ({
+  artifacts,
+  cleanup,
+  secrets,
+  skip,
+}) => {
+  const probe = new DockerProbe(artifacts, (text, extraValues) =>
+    secrets.redact(text, extraValues),
+  );
+  const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
+  const image =
+    process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? `nemoclaw-hermes-root-entrypoint-smoke:${runId}`;
+  const baseImage = `nemoclaw-hermes-sandbox-base-local:root-entrypoint-${runId}`;
+  const containers: string[] = [];
+
+  await artifacts.target.declare({
+    id: "hermes-root-entrypoint-smoke",
+    boundary: "docker-root-entrypoint",
+    image,
+    prebuiltImage: Boolean(process.env.NEMOCLAW_HERMES_TEST_IMAGE),
+    contract: [
+      "clean root-entrypoint startup reaches Hermes health or bearer-auth readiness",
+      "gateway process runs as gateway user",
+      "gateway log has no PID race or config load failure",
+      "Hermes v0.14 writable runtime directories are present",
+      "gateway.pid is migrated to a regular top-level file",
+      "gateway user cannot remove config.yaml from sticky config root",
+      "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
+      "dashboard-home is sandbox-owned 0700 with 0600 allowlisted config/env",
+      "legacy gateway.pid symlink/state shape is repaired and booted",
+    ],
+  });
+
+  cleanup.add("remove Hermes root-entrypoint smoke containers", async () => {
+    await Promise.all(
+      containers.map((container) =>
+        probe.run(["rm", "-f", container], {
+          artifactName: `cleanup-${container}`,
+          timeoutMs: 30_000,
+        }),
+      ),
     );
-    const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
-    const image =
-      process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? `nemoclaw-hermes-root-entrypoint-smoke:${runId}`;
-    const baseImage = `nemoclaw-hermes-sandbox-base-local:root-entrypoint-${runId}`;
-    const containers: string[] = [];
+  });
 
-    await artifacts.writeJson("target.json", {
-      id: "hermes-root-entrypoint-smoke",
-      runner: "vitest",
-      boundary: "docker-root-entrypoint",
-      image,
-      prebuiltImage: Boolean(process.env.NEMOCLAW_HERMES_TEST_IMAGE),
-      contract: [
-        "clean root-entrypoint startup reaches Hermes health or bearer-auth readiness",
-        "gateway process runs as gateway user",
-        "gateway log has no PID race or config load failure",
-        "Hermes v0.14 writable runtime directories are present",
-        "gateway.pid is migrated to a regular top-level file",
-        "gateway user cannot remove config.yaml from sticky config root",
-        "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
-        "dashboard-home is sandbox-owned 0700 with 0600 allowlisted config/env",
-        "legacy gateway.pid symlink/state shape is repaired and booted",
-      ],
-    });
+  await requireDocker(probe, skip);
 
-    cleanup.add("remove Hermes root-entrypoint smoke containers", async () => {
-      await Promise.all(
-        containers.map((container) =>
-          probe.run(["rm", "-f", container], {
-            artifactName: `cleanup-${container}`,
-            timeoutMs: 30_000,
-          }),
-        ),
-      );
-    });
-
-    await requireDocker(probe, skip);
-
-    try {
-      await buildImageIfNeeded(probe, image, baseImage);
-      await runCleanVariant(probe, image, runId, containers);
-      await runLegacyVariant(probe, image, runId, containers);
-    } catch (error) {
-      for (const container of containers) {
-        await dumpContainerDiagnostics(probe, container);
-      }
-      throw error;
+  try {
+    await buildImageIfNeeded(probe, image, baseImage);
+    await runCleanVariant(probe, image, runId, containers);
+    await runLegacyVariant(probe, image, runId, containers);
+  } catch (error) {
+    for (const container of containers) {
+      await dumpContainerDiagnostics(probe, container);
     }
+    throw error;
+  }
 
-    await artifacts.writeJson("target-result.json", {
-      id: "hermes-root-entrypoint-smoke",
-      image,
-      assertions: {
-        cleanStartupHealthy: true,
-        legacyStartupHealthy: true,
-        runtimeLayoutVerified: true,
-        gatewayPrivilegeSeparationVerified: true,
-        bearerAuthVerified: true,
-        dashboardHomeVerified: true,
-        legacyPidSymlinkMigrationVerified: true,
-      },
-    });
-  },
-);
+  await artifacts.target.complete({
+    id: "hermes-root-entrypoint-smoke",
+    image,
+    assertions: {
+      cleanStartupHealthy: true,
+      legacyStartupHealthy: true,
+      runtimeLayoutVerified: true,
+      gatewayPrivilegeSeparationVerified: true,
+      bearerAuthVerified: true,
+      dashboardHomeVerified: true,
+      legacyPidSymlinkMigrationVerified: true,
+    },
+  });
+});

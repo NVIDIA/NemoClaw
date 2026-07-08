@@ -274,26 +274,6 @@ describe("e2e workflow boundary", () => {
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
-          jobs: "runtime-overrides",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["runtime-overrides"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          targets: "runtime-overrides",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["runtime-overrides"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
           targets: "messaging-compatible-endpoint",
         }),
       ).toMatchObject({
@@ -356,26 +336,6 @@ describe("e2e workflow boundary", () => {
         valid: true,
         liveTargetsRun: false,
         selectedFreeStandingJobs: ["hermes-e2e"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          targets: "hermes-root-entrypoint-smoke",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          jobs: "hermes-root-entrypoint-smoke",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke"],
         registryTargets: [],
       });
       expect(
@@ -690,6 +650,7 @@ describe("e2e workflow boundary", () => {
     expect(inventory.allowedJobs).toContain("openshell-gateway-auth-contract");
     expect(inventory.allowedJobs).toContain("gateway-guard-recovery");
     expect(inventory.allowedJobs).toContain("upgrade-stale-sandbox");
+    expect(inventory.allowedJobs).toContain("openclaw-plugin-runtime-exdev");
     expect(inventory.targetToJob.get("openshell-gateway-auth-contract")).toBe(
       "openshell-gateway-auth-contract",
     );
@@ -698,6 +659,9 @@ describe("e2e workflow boundary", () => {
     expect(inventory.targetToJob.get("credential-migration")).toBe("credential-migration");
     expect(inventory.targetToJob.get("launchable-smoke")).toBe("launchable-smoke");
     expect(inventory.targetToJob.get("gateway-guard-recovery")).toBe("gateway-guard-recovery");
+    expect(inventory.targetToJob.get("openclaw-plugin-runtime-exdev")).toBe(
+      "openclaw-plugin-runtime-exdev",
+    );
     expect(
       inventory.allowedJobs.every((job) =>
         Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}).includes(job),
@@ -780,21 +744,51 @@ jobs:
   });
 
   it(
-    "keeps each free-standing target out of the registry matrix",
+    "keeps each free-standing selector out of the registry matrix",
     testTimeoutOptions(420_000),
     () => {
+      const hermesSelector = "hermes-e2e";
       const inventory = readFreeStandingJobsInventory();
+      const nonHermesJobs = inventory.allowedJobs.filter((job) => job !== hermesSelector);
+      const nonHermesTargets = [...inventory.targetToJob.keys()].filter(
+        (target) => target !== hermesSelector,
+      );
+
+      expect(nonHermesJobs).not.toHaveLength(0);
+      expect(nonHermesTargets).not.toHaveLength(0);
+      expect(inventory.allowedJobs).toContain(hermesSelector);
+      expect(inventory.targetToJob.get(hermesSelector)).toBe(hermesSelector);
+
+      expect(
+        generateMatrixForDispatch({ JOBS: nonHermesJobs.join(","), TARGETS: "" }),
+      ).toMatchObject({
+        hermes_selected: "false",
+        matrix: "[]",
+      });
+      expect(generateMatrixForDispatch({ JOBS: hermesSelector, TARGETS: "" })).toMatchObject({
+        hermes_selected: "true",
+        matrix: "[]",
+      });
+      expect(
+        generateMatrixForDispatch({ JOBS: "", TARGETS: nonHermesTargets.join(",") }),
+      ).toMatchObject({
+        hermes_selected: "false",
+        matrix: "[]",
+      });
+      expect(generateMatrixForDispatch({ JOBS: "", TARGETS: hermesSelector })).toMatchObject({
+        hermes_selected: "true",
+        matrix: "[]",
+      });
+
       for (const job of inventory.allowedJobs) {
-        expect(generateMatrixForDispatch({ JOBS: job, TARGETS: "" })).toMatchObject({
-          hermes_selected: job === "hermes-e2e" ? "true" : "false",
-          matrix: "[]",
+        expect(evaluateE2eWorkflowDispatchSelectors({ jobs: job })).toMatchObject({
+          valid: true,
+          liveTargetsRun: false,
+          selectedFreeStandingJobs: [job],
+          registryTargets: [],
         });
       }
       for (const [target, job] of inventory.targetToJob) {
-        expect(generateMatrixForDispatch({ JOBS: "", TARGETS: target })).toMatchObject({
-          hermes_selected: target === "hermes-e2e" ? "true" : "false",
-          matrix: "[]",
-        });
         expect(evaluateE2eWorkflowDispatchSelectors({ targets: target })).toMatchObject({
           valid: true,
           liveTargetsRun: false,
@@ -1170,35 +1164,6 @@ jobs:
     }
   });
 
-  it("requires runtime-overrides workflow and report coverage", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const renamedWorkflowPath = path.join(tmp, "renamed-workflow.yaml");
-    const missingReportNeedPath = path.join(tmp, "missing-report-need.yaml");
-    const workflow = fs.readFileSync(
-      path.join(process.cwd(), ".github/workflows/e2e.yaml"),
-      "utf8",
-    );
-    fs.writeFileSync(
-      renamedWorkflowPath,
-      workflow.replace(/^  runtime-overrides:$/m, "  runtime-overrides-missing:"),
-    );
-    fs.writeFileSync(
-      missingReportNeedPath,
-      removeJobNeed(workflow, "report-to-pr", "runtime-overrides"),
-    );
-
-    try {
-      expect(validateE2eWorkflowBoundary(renamedWorkflowPath)).toContain(
-        "workflow missing runtime-overrides job",
-      );
-      expect(validateE2eWorkflowBoundary(missingReportNeedPath)).toContain(
-        "report-to-pr job must wait for runtime-overrides",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("rejects channels stop/start workflow-boundary drift for secret and artifact handling", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -1347,31 +1312,6 @@ jobs:
     }
   });
 
-  it("rejects Docker Hub auth and inline secrets in runtime-overrides run steps", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = fs.readFileSync(
-      path.join(process.cwd(), ".github/workflows/e2e.yaml"),
-      "utf8",
-    );
-    fs.writeFileSync(
-      workflowPath,
-      workflow.replace(
-        "npx vitest run --project e2e-live \\\n            test/e2e/live/runtime-overrides.test.ts \\",
-        "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}\n          npx vitest run --project e2e-live \\\n            test/e2e/live/runtime-overrides.test.ts \\",
-      ),
-    );
-
-    try {
-      const errors = validateE2eWorkflowBoundary(workflowPath);
-      expect(errors).toContain(
-        "runtime-overrides step 'Run runtime overrides live test' run script must not use docker login or inline secret interpolation",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("rejects diagnostics workflow-boundary drift for secret and Docker auth handling", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -1427,41 +1367,6 @@ jobs:
           "step 'Run diagnostics live test' run script must not interpolate dispatch inputs directly",
           "diagnostics upload-e2e-artifacts invocation must not override its contract",
           "diagnostics upload-e2e-artifacts must use the action defaults",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects duplicate unguarded Docker Hub auth in Hermes root-entrypoint smoke", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
-    };
-    const steps = workflow.jobs["hermes-root-entrypoint-smoke"]?.steps;
-    expect(steps).toEqual(expect.any(Array));
-    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-    expect(prepareIndex).toBeGreaterThan(0);
-    steps.splice(prepareIndex, 0, {
-      name: "Authenticate to Docker Hub",
-      env: {
-        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
-        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
-      },
-      run: "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}",
-    });
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      const errors = validateE2eWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "hermes-root-entrypoint-smoke image-consuming job must have exactly one Docker Hub auth step",
-          "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
-          "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
-          "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
         ]),
       );
     } finally {

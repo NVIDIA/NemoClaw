@@ -5,6 +5,8 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFull } from "../../security/redact";
+import { hermesMcpReconciliationRemediationLines } from "./mcp-bridge-hermes-reconciliation";
+import { inspectHermesMcpReconciliationRefusal } from "./mcp-bridge-recovery";
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -18,6 +20,7 @@ export type GatewayRestartFailureLayer =
   | "secret-boundary refusal"
   | "unsafe config path"
   | "config hash mismatch"
+  | "MCP reconciliation refusal"
   | "launch failure"
   | "health timeout"
   | "forward recovery failure";
@@ -77,6 +80,7 @@ export type GatewayRestartDeps = {
     sandboxName: string,
     exec: (sandboxName: string, command: string) => GatewayRestartCommandResult | null,
   ) => boolean;
+  inspectHermesMcpReconciliationRefusal: typeof inspectHermesMcpReconciliationRefusal;
 };
 
 export type RestartSandboxGatewayOptions = {
@@ -152,6 +156,16 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     return { layer: "unsafe config path", detail: detail || "unsafe config path" };
   }
   if (
+    output.includes("mcp-integrity") ||
+    output.includes("mcp-reconcile-required") ||
+    output.includes("HERMES_MCP_CONFIG_DRIFT")
+  ) {
+    return {
+      layer: "MCP reconciliation refusal",
+      detail: detail || "Hermes MCP reconciliation refused",
+    };
+  }
+  if (
     output.includes(MARKERS.GATEWAY_CONFIG_HASH_MISMATCH) ||
     output.includes("HERMES_LOCKED_HASH_MISMATCH") ||
     output.includes("HERMES_CONFIG_HASH_MISMATCH")
@@ -181,6 +195,11 @@ export function printGatewayRestartFailure(
     .slice(-12);
   for (const line of lines) {
     console.error(`  ${line}`);
+  }
+  if (layer === "MCP reconciliation refusal") {
+    for (const line of hermesMcpReconciliationRemediationLines(sandboxName)) {
+      console.error(`  ${line}`);
+    }
   }
 }
 
@@ -289,6 +308,19 @@ export function restartSandboxGatewayWithDeps(
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
     deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };
+  }
+
+  if (agentName === "hermes") {
+    const refusal = deps.inspectHermesMcpReconciliationRefusal(sandboxName);
+    if (refusal) {
+      const { detail } = refusal;
+      printGatewayRestartFailure(sandboxName, "MCP reconciliation refusal", detail);
+      return {
+        ok: false,
+        failureLayer: "MCP reconciliation refusal",
+        detail,
+      };
+    }
   }
 
   const forwardRecovered = deps.ensureSandboxPortForward(sandboxName);

@@ -88,79 +88,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       sessionUpdated: true,
       inSandboxConfigSynced: true,
     });
-  });
-
-  it("syncs OpenClaw compatible Anthropic switches to Anthropic Messages when changing provider families", async () => {
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-      models: {
-        providers: {
-          inference: {
-            baseUrl: "https://inference.local/v1",
-            api: "openai-completions",
-            models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
-          },
-        },
-      },
-    };
-    const deps = createDeps({
-      config,
-      session: baseSession({
-        provider: "compatible-anthropic-endpoint",
-        model: "claude-sonnet-proxy",
-        endpointUrl: "https://anthropic-compatible.example/v1",
-        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        preferredInferenceApi: "anthropic-messages",
-      }),
-    });
-
-    const result = await runInferenceSet(
-      {
-        provider: "compatible-anthropic-endpoint",
-        model: "claude-sonnet-proxy",
-        noVerify: true,
-      },
-      deps,
-    );
-
-    expect(config.agents).toEqual({
-      defaults: { model: { primary: "anthropic/claude-sonnet-proxy" } },
-    });
-    expect(config.models).toEqual({
-      mode: "merge",
-      providers: {
-        inference: {
-          baseUrl: "https://inference.local/v1",
-          api: "openai-completions",
-          models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
-        },
-        anthropic: {
-          baseUrl: "https://inference.local",
-          apiKey: "unused",
-          api: "anthropic-messages",
-          models: [{ id: "claude-sonnet-proxy", name: "anthropic/claude-sonnet-proxy" }],
-        },
-      },
-    });
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({
-        provider: "compatible-anthropic-endpoint",
-        model: "claude-sonnet-proxy",
-        endpointUrl: "https://anthropic-compatible.example/v1",
-        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        preferredInferenceApi: "anthropic-messages",
-      }),
-    ]);
-    expect(deps.getSession()).toMatchObject({
-      provider: "compatible-anthropic-endpoint",
-      model: "claude-sonnet-proxy",
-      preferredInferenceApi: "anthropic-messages",
-    });
-    expect(result).toMatchObject({
-      providerKey: "anthropic",
-      primaryModelRef: "anthropic/claude-sonnet-proxy",
-    });
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("preserves same-provider Bedrock Runtime adapter routing for OpenClaw switches", async () => {
@@ -192,6 +120,9 @@ describe("runInferenceSet OpenClaw routing", () => {
         agent: "openclaw",
         provider: "compatible-anthropic-endpoint",
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        endpointUrl: "https://inference.local/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
       },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",

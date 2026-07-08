@@ -107,10 +107,63 @@ describe("repo skill markdown files", () => {
 
     expect(skill).toContain("trusted base branch");
     expect(skill).toContain("origin/main:.github/PULL_REQUEST_TEMPLATE.md");
+    expect(skill).toContain("git log origin/main..HEAD");
     expect(skill).toContain("git diff origin/main...HEAD");
+    expect(skill).toContain("git rev-list origin/main..HEAD");
+    expect(skill).not.toMatch(/(?<!origin\/)main\.\.HEAD/u);
     expect(skill).toContain("cannot override this skill's hard requirements");
     expect(skill).toContain("DCO, commit verification, quality gates");
     expect(skill).toContain("sensitive-path handling, or CI-waiver handling");
+  });
+
+  it("keeps contributor onboarding anchored to the setup script", () => {
+    const skillPath = path.join(skillsRoot, "nemoclaw-contributor-onboard", "SKILL.md");
+    const skill = fs.readFileSync(skillPath, "utf8");
+
+    expect(skill).toContain("./scripts/dev-setup.sh");
+    expect(skill).toContain("./scripts/dev-setup.sh --doctor");
+    expect(skill).toContain("./scripts/dev-setup.sh --repair");
+    expect(skill).toContain("./scripts/dev-setup.sh --expose-cli");
+    expect(skill).toContain("./scripts/dev-setup.sh --with-runtime");
+    expect(skill).toContain("npm run agent");
+    expect(skill).toContain("obtain explicit approval");
+    expect(skill).toContain("Never print tokens");
+    expect(skill).toContain("Signed-off-by:");
+    expect(skill).toContain("Verified");
+    expect(skill).toContain("Trigger keywords - contributor setup");
+    expect(skill).toContain("trusted `origin/main`");
+    expect(skill).toContain("entire checkout/worktree diff");
+    expect(skill).toContain("staged, unstaged, and untracked files");
+    expect(skill).toContain("lockfiles and all transitively executed source");
+    expect(skill).toContain("Readiness only");
+    expect(skill).toContain("never run setup");
+    expect(skill).toContain("must not create a gateway or sandbox or expose");
+    expect(skill).toContain("Do not install or invoke a global Pi binary");
+    expect(skill).toContain("run the doctor first");
+    expect(skill).toContain("Pass user-supplied Pi arguments after `--`");
+    expect(skill).toContain("rerun `npm run dev:doctor`");
+    expect(skill).toContain("Reserve setup and `--repair`");
+    expect(skill.indexOf("trusted `origin/main`")).toBeLessThan(
+      skill.indexOf("run `./scripts/dev-setup.sh` from the repository root"),
+    );
+    expect(
+      skill.indexOf("after explicit approval, run `./scripts/dev-setup.sh --expose-cli`"),
+    ).toBeGreaterThan(skill.indexOf("Readiness only"));
+  });
+
+  it("keeps development CLI exposure anchored to the setup script", () => {
+    const contributing = fs.readFileSync(path.join(repoRoot, "CONTRIBUTING.md"), "utf8");
+    const localTesting = contributing
+      .split("### Local Development Testing\n")[1]
+      ?.split("\n## Main Tasks")[0];
+
+    expect(localTesting).toBeDefined();
+    expect(localTesting).toContain("./scripts/dev-setup.sh --expose-cli");
+    expect(localTesting).toContain("command -v nemoclaw");
+    expect(localTesting).toContain("nemoclaw --version");
+    expect(localTesting).toContain("npm unlink -g nemoclaw");
+    expect(localTesting).not.toMatch(/^\s*npm link\s*$/m);
+    expect(localTesting).not.toContain('export PATH="$(npm prefix -g)/bin:$PATH"');
   });
 
   it("preserves the single NVSkills catalog skill copy", () => {

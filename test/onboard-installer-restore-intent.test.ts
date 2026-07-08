@@ -8,18 +8,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 
+import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
+
 const repoRoot = path.join(import.meta.dirname, "..");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
-
-function writeExecutable(target: string, contents: string) {
-  fs.writeFileSync(target, contents, { mode: 0o755 });
-}
-
-function writeOkOpenshell(fakeBin: string) {
-  writeExecutable(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
-}
 
 describe("createSandbox installer restore intent", () => {
   it("non-interactive not-ready sandbox with installer restore intent skips the fresh backup, restores the pre-upgrade backup, and stays exec-usable for a workspace marker (#6114)", {
@@ -66,14 +60,18 @@ runner.runCapture = (command) => {
   }
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  gpuEnabled: false,
+  toolDisclosure: "progressive",
+});
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -94,7 +92,7 @@ sandboxState.backupSandboxState = (name) => {
     manifest: { backupPath: "/tmp/fake-fresh-backup", timestamp: "2026-05-25T00:00:00Z" },
   };
 };
-sandboxState.restoreSandboxState = (name, backupPath) => {
+sandboxState.restoreRecreatedSandboxState = (name, backupPath) => {
   events.push({ kind: "restore", name, backupPath });
   return {
     success: true,
@@ -261,9 +259,18 @@ runner.run = (command) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
   if (_n(command).includes("sandbox list")) return "my-assistant NotReady";
+  // Keep dashboard allocation inside this restore-intent fixture; host port
+  // occupancy is unrelated to the not-ready decision under test.
+  if (_n(command).includes("forward list")) {
+    return "my-assistant 127.0.0.1 18789 12345 running";
+  }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  gpuEnabled: false,
+  toolDisclosure: "progressive",
+});
 sandboxState.getLatestBackup = () => {
   throw new Error("unexpected getLatestBackup without installer restore intent");
 };

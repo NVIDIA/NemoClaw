@@ -89,6 +89,92 @@ describe("registry", () => {
     expect(data.sandboxes.alpha.nimContainer).toBeNull();
   });
 
+  it("stores rebuild fidelity metadata at registration time", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      webSearchEnabled: true,
+      toolDisclosure: "direct",
+      observabilityEnabled: true,
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "oauth",
+    });
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      webSearchEnabled: true,
+      toolDisclosure: "direct",
+      observabilityEnabled: true,
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "oauth",
+    });
+  });
+
+  it("round-trips absent, known-empty, populated, and cloned image-plugin provenance", () => {
+    const weatherInstall = {
+      id: "weather",
+      installPath: "/sandbox/.openclaw/extensions/weather",
+      loadPaths: [],
+    };
+    registry.registerSandbox({ name: "legacy", agent: "openclaw" });
+    registry.registerSandbox({
+      name: "known-empty",
+      agent: "openclaw",
+      openclawImagePluginInstalls: [],
+    });
+    registry.registerSandbox({
+      name: "populated",
+      agent: "openclaw",
+      openclawImagePluginInstalls: [weatherInstall],
+    });
+    registry.registerSandbox({
+      ...registry.getSandbox("populated"),
+      name: "populated-clone",
+    });
+    registry.registerSandbox({
+      ...registry.getSandbox("known-empty"),
+      name: "known-empty-clone",
+    });
+
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8")).sandboxes;
+    expect(registry.getSandbox("legacy").openclawImagePluginInstalls).toBeUndefined();
+    expect(registry.getSandbox("known-empty").openclawImagePluginInstalls).toEqual([]);
+    expect(registry.getSandbox("known-empty-clone").openclawImagePluginInstalls).toEqual([]);
+    expect(registry.getSandbox("populated").openclawImagePluginInstalls).toEqual([weatherInstall]);
+    expect(registry.getSandbox("populated-clone").openclawImagePluginInstalls).toEqual([
+      weatherInstall,
+    ]);
+    expect(data.legacy.openclawImagePluginInstalls).toBeUndefined();
+    expect(data["known-empty"].openclawImagePluginInstalls).toEqual([]);
+    expect(data["known-empty-clone"].openclawImagePluginInstalls).toEqual([]);
+    expect(data.populated.openclawImagePluginInstalls).toEqual([weatherInstall]);
+    expect(data["populated-clone"].openclawImagePluginInstalls).toEqual([weatherInstall]);
+  });
+
+  it("does not invent observability intent for legacy registry rows", () => {
+    registry.registerSandbox({ name: "legacy" });
+    expect(registry.getSandbox("legacy").observabilityEnabled).toBeUndefined();
+  });
+
+  it("preserves missing tool-disclosure state on reconstructed legacy rows", () => {
+    registry.registerSandbox({ name: "legacy" });
+
+    const entry = registry.getSandbox("legacy");
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(entry.toolDisclosure).toBeUndefined();
+    expect(data.sandboxes.legacy.toolDisclosure).toBeUndefined();
+  });
+
+  it("stores normalized compatible-endpoint reasoning state", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      provider: "compatible-endpoint",
+      model: "reasoning-model",
+      endpointUrl: "https://example.test/v1",
+      compatibleEndpointReasoning: "true",
+    });
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.alpha.compatibleEndpointReasoning).toBe("true");
+    expect(registry.getSandbox("alpha").compatibleEndpointReasoning).toBe("true");
+  });
+
   it("persists distinct gateway bindings for two sandboxes on different ports (#4422)", () => {
     registry.registerSandbox({
       name: "first",
@@ -127,6 +213,86 @@ describe("registry", () => {
     expect(data.sandboxes.alpha.policies).toEqual(["npm"]);
     expect(data.sandboxes.alpha.recoveredFromGateway).toBeUndefined();
     expect(data.sandboxes.alpha.livePhase).toBeUndefined();
+  });
+
+  it("persists MCP server state without local proxy secrets", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      mcp: {
+        bridges: {
+          github: {
+            server: "github",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github",
+            providerId: "11111111-2222-4333-8444-555555555555",
+            policyName: "mcp-bridge-github",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    const entry = raw.sandboxes.alpha.mcp.bridges.github;
+
+    expect(entry).toMatchObject({
+      url: "https://api.githubcopilot.com/mcp/",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+    });
+    expect(entry.token).toBeUndefined();
+    expect(entry.command).toBeUndefined();
+    expect(entry.port).toBeUndefined();
+    expect(raw.sandboxes.alpha.mcp.managedServerNames).toEqual(["github"]);
+  });
+
+  it("retains sanitized managed MCP names after the active bridge map is emptied", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "hermes",
+      mcp: {
+        bridges: {},
+        managedServerNames: ["retired", "../invalid", "retired", "still_active"],
+      },
+    });
+
+    const stored = registry.getSandbox("alpha").mcp;
+    expect(stored).toEqual({
+      bridges: {},
+      managedServerNames: ["retired", "still_active"],
+    });
+    expect(JSON.parse(fs.readFileSync(regFile, "utf-8")).sandboxes.alpha.mcp).toEqual(stored);
+  });
+
+  it("normalizes MCP bridge maps by the recovered server name", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      mcp: {
+        bridges: {
+          stale_key: {
+            server: "github",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github",
+            policyName: "mcp-bridge-github",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(raw.sandboxes.alpha.mcp.bridges.github.server).toBe("github");
+    expect(raw.sandboxes.alpha.mcp.bridges.stale_key).toBeUndefined();
   });
 
   it("normalizes configured inference fields into a discriminated view", () => {
@@ -170,6 +336,124 @@ describe("registry", () => {
     const sb = registry.getSandbox("up");
     expect(sb.policies).toEqual(["pypi", "npm"]);
     expect(sb.model).toBe("new-model");
+  });
+
+  it("persists MCP env names without raw host env values", () => {
+    registry.registerSandbox({ name: "mcp-sb", agent: "openclaw" });
+    registry.updateSandbox("mcp-sb", {
+      mcp: {
+        bridges: {
+          github: {
+            server: "github",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "mcp-sb-mcp-github",
+            providerId: "11111111-2222-4333-8444-555555555555",
+            policyName: "mcp-bridge-github",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    const raw = fs.readFileSync(regFile, "utf-8");
+    const data = JSON.parse(raw);
+    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.env).toEqual(["GITHUB_TOKEN"]);
+    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.providerName).toBe("mcp-sb-mcp-github");
+    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.providerId).toBe(
+      "11111111-2222-4333-8444-555555555555",
+    );
+    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.token).toBeUndefined();
+    expect(raw).not.toContain("ghp_");
+    expect(raw).not.toContain("secret-value");
+  });
+
+  it("drops invalid persisted MCP bridge entries during registry serialization", () => {
+    registry.registerSandbox({ name: "mcp-safe", agent: "openclaw" });
+    registry.updateSandbox("mcp-safe", {
+      mcp: {
+        bridges: {
+          ok: {
+            server: "ok",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/#ignored",
+            env: ["GITHUB_TOKEN", "GITHUB_TOKEN"],
+            providerName: "mcp-safe-mcp-ok",
+            policyName: "mcp-bridge-ok",
+            addedAt: new Date(0).toISOString(),
+          },
+          credentialUrl: {
+            server: "credentialUrl",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://user:secret@example.test/mcp",
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-credential",
+            policyName: "mcp-bridge-credential",
+            addedAt: new Date(0).toISOString(),
+          },
+          privateIp: {
+            server: "privateIp",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "http://127.0.0.1:31337/mcp",
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-private",
+            policyName: "mcp-bridge-private",
+            addedAt: new Date(0).toISOString(),
+          },
+          invalidEnv: {
+            server: "invalidEnv",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["TOKEN=secret"],
+            providerName: "mcp-safe-mcp-invalid-env",
+            policyName: "mcp-bridge-invalid-env",
+            addedAt: new Date(0).toISOString(),
+          },
+          unknownAdapter: {
+            server: "unknownAdapter",
+            agent: "openclaw",
+            adapter: "unknown",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-unknown",
+            policyName: "mcp-bridge-unknown",
+            addedAt: new Date(0).toISOString(),
+          },
+          invalidProviderId: {
+            server: "invalidProviderId",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-invalid-provider-id",
+            providerId: "invalid provider id",
+            policyName: "mcp-bridge-invalid-provider-id",
+            addedAt: new Date(0).toISOString(),
+          },
+          oversizedUrl: {
+            server: "oversizedUrl",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: `https://api.githubcopilot.com/${"a".repeat(2_048)}`,
+            env: ["TOKEN"],
+            providerName: "mcp-safe-mcp-oversized",
+            policyName: "mcp-bridge-oversized",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    const bridges = registry.getSandbox("mcp-safe").mcp.bridges;
+    expect(Object.keys(bridges)).toEqual(["ok"]);
+    expect(bridges.ok.url).toBe("https://api.githubcopilot.com/mcp/");
+    expect(bridges.ok.env).toEqual(["GITHUB_TOKEN"]);
   });
 
   it("updateSandbox returns false for nonexistent sandbox", () => {
@@ -229,6 +513,207 @@ describe("registry", () => {
     expect(registry.removeSandbox("nope")).toBe(false);
   });
 
+  it("atomically returns the exact registry row it removes", () => {
+    registry.registerSandbox({ name: "receipt", model: "captured", imageTag: "old-image" });
+    const receipt = registry.removeSandboxWithReceipt("receipt");
+    expect(receipt?.entry).toMatchObject({
+      name: "receipt",
+      model: "captured",
+      imageTag: "old-image",
+    });
+    expect(receipt).toMatchObject({
+      wasDefault: true,
+      fallbackDefault: null,
+      postRemovalDefaultSelectionRevision: 2,
+    });
+    expect(registry.getSandbox("receipt")).toBeNull();
+    expect(registry.removeSandboxWithReceipt("receipt")).toBeNull();
+  });
+
+  it("restores a removed row after an intervening registry registration", () => {
+    registry.registerSandbox({ name: "alpha", model: "original", imageTag: "old-image" });
+    const receipt = registry.removeSandboxWithReceipt("alpha");
+    expect(receipt).not.toBeNull();
+
+    registry.registerSandbox({ name: "concurrent", model: "new" });
+    expect(registry.setDefault("concurrent")).toBe(true);
+
+    expect(registry.restoreSandboxEntryIfMissing(receipt!)).toBe(true);
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      name: "alpha",
+      model: "original",
+      imageTag: "old-image",
+    });
+    expect(registry.getSandbox("concurrent")).toMatchObject({
+      name: "concurrent",
+      model: "new",
+    });
+    expect(registry.getDefault()).toBe("concurrent");
+  });
+
+  it("serializes a spawned registration that starts during an atomic restore", () => {
+    const { spawnSync } = require("child_process");
+    registry.registerSandbox({ name: "alpha", model: "original", imageTag: "old-image" });
+    registry.registerSandbox({ name: "beta", model: "existing" });
+    registry.setDefault("alpha");
+    const receipt = registry.removeSandboxWithReceipt("alpha");
+    expect(receipt).not.toBeNull();
+    expect(registry.getDefault()).toBe("beta");
+
+    const registryPath = path.resolve(
+      path.join(import.meta.dirname, "..", "src", "lib", "state", "registry.ts"),
+    );
+    const homeDir = path.dirname(path.dirname(regFile));
+    const coordinationDir = fs.mkdtempSync(path.join(os.tmpdir(), "registry-restore-race-"));
+    const restoreEntered = path.join(coordinationDir, "restore-entered");
+    const writerBlocked = path.join(coordinationDir, "writer-blocked");
+    const releaseRestore = path.join(coordinationDir, "release-restore");
+    const pauseSource =
+      "const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);";
+    const restoreScript = `
+      process.env.HOME = ${JSON.stringify(homeDir)};
+      const fs = require("fs");
+      ${pauseSource}
+      const registry = require(${JSON.stringify(registryPath)});
+      const realReadFile = fs.readFileSync;
+      let pausedRegistryLoad = false;
+      fs.readFileSync = (target, options) => {
+        if (!pausedRegistryLoad && String(target) === registry.REGISTRY_FILE) {
+          pausedRegistryLoad = true;
+          fs.writeFileSync(${JSON.stringify(restoreEntered)}, "ready");
+          const deadline = Date.now() + 10_000;
+          while (!fs.existsSync(${JSON.stringify(releaseRestore)})) {
+            if (Date.now() >= deadline) throw new Error("timed out waiting to release restore");
+            pause(10);
+          }
+        }
+        return realReadFile(target, options);
+      };
+      const restored = registry.restoreSandboxEntryIfMissing(JSON.parse(process.argv[1]));
+      process.exit(restored ? 0 : 2);
+    `;
+    const writerScript = `
+      process.env.HOME = ${JSON.stringify(homeDir)};
+      const fs = require("fs");
+      const registry = require(${JSON.stringify(registryPath)});
+      const realMkdir = fs.mkdirSync;
+      fs.mkdirSync = (target, options) => {
+        try {
+          return realMkdir(target, options);
+        } catch (error) {
+          if (String(target) === registry.LOCK_DIR && error?.code === "EEXIST") {
+            fs.writeFileSync(
+              ${JSON.stringify(writerBlocked)},
+              fs.readFileSync(registry.LOCK_OWNER, "utf-8").trim(),
+            );
+          }
+          throw error;
+        }
+      };
+      registry.registerSandbox({ name: "concurrent", model: "new" });
+    `;
+    const orchestrator = `
+      const { spawn } = require("child_process");
+      const fs = require("fs");
+      ${pauseSource}
+      const waitForFile = (file) => {
+        const deadline = Date.now() + 10_000;
+        while (!fs.existsSync(file)) {
+          if (Date.now() >= deadline) throw new Error("timed out waiting for " + file);
+          pause(10);
+        }
+      };
+      const waitForExit = (child) => new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", (code, signal) => resolve({ code, signal }));
+      });
+      (async () => {
+        const restore = spawn(process.execPath, ["-e", ${JSON.stringify(restoreScript)}, ${JSON.stringify(JSON.stringify(receipt))}], { stdio: "inherit" });
+        const restoreExit = waitForExit(restore);
+        waitForFile(${JSON.stringify(restoreEntered)});
+        const writer = spawn(process.execPath, ["-e", ${JSON.stringify(writerScript)}], { stdio: "inherit" });
+        const writerExit = waitForExit(writer);
+        waitForFile(${JSON.stringify(writerBlocked)});
+        const lockOwnerPid = Number(fs.readFileSync(${JSON.stringify(writerBlocked)}, "utf-8"));
+        if (lockOwnerPid !== restore.pid) {
+          throw new Error(
+            "writer blocked on lock owner " + lockOwnerPid + ", expected restore pid " + restore.pid,
+          );
+        }
+        fs.writeFileSync(${JSON.stringify(releaseRestore)}, "go");
+        const [restoreResult, writerResult] = await Promise.all([
+          restoreExit,
+          writerExit,
+        ]);
+        if (restoreResult.code !== 0 || writerResult.code !== 0) {
+          console.error(JSON.stringify({ restoreResult, writerResult }));
+          process.exit(1);
+        }
+      })().catch((error) => {
+        console.error(error);
+        process.exit(1);
+      });
+    `;
+
+    try {
+      const result = spawnSync(process.execPath, ["-e", orchestrator], {
+        encoding: "utf-8",
+        timeout: 30_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(registry.getSandbox("alpha")).toMatchObject({ model: "original" });
+      expect(registry.getSandbox("beta")).toMatchObject({ model: "existing" });
+      expect(registry.getSandbox("concurrent")).toMatchObject({ model: "new" });
+      expect(registry.getDefault()).toBe("alpha");
+      const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+      expect(Object.keys(persisted.sandboxes).sort()).toEqual(["alpha", "beta", "concurrent"]);
+      expect(persisted.defaultSandbox).toBe("alpha");
+      expect(
+        fs.readdirSync(path.dirname(regFile)).filter((name) => name.includes(".tmp.")),
+      ).toEqual([]);
+    } finally {
+      fs.rmSync(coordinationDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a rebuild entry only while its name is unclaimed", () => {
+    registry.registerSandbox({ name: "alpha", model: "old", imageTag: "old-image" });
+    registry.registerSandbox({ name: "beta" });
+    registry.registerSandbox({ name: "gamma" });
+    registry.setDefault("alpha");
+    const original = registry.getSandbox("alpha");
+
+    const firstReceipt = registry.removeSandboxWithReceipt("alpha");
+    expect(firstReceipt).not.toBeNull();
+    expect(registry.getDefault()).toBe("beta");
+    expect(
+      registry.restoreSandboxEntryIfMissing({
+        ...firstReceipt!,
+        entry: { ...original, imageTag: null },
+      }),
+    ).toBe(true);
+    expect(registry.getDefault()).toBe("alpha");
+    expect(registry.getSandbox("alpha").imageTag).toBe(null);
+
+    registry.updateSandbox("alpha", {
+      model: "replacement",
+      imageTag: "replacement-image",
+    });
+    expect(registry.restoreSandboxEntryIfMissing(firstReceipt!)).toBe(false);
+    expect(registry.getSandbox("alpha").model).toBe("replacement");
+    expect(registry.getSandbox("alpha").imageTag).toBe("replacement-image");
+
+    const secondReceipt = registry.removeSandboxWithReceipt("alpha");
+    expect(secondReceipt).not.toBeNull();
+    registry.setDefault("gamma");
+    expect(registry.restoreSandboxEntryIfMissing(secondReceipt!)).toBe(true);
+    expect(registry.getDefault()).toBe("gamma");
+
+    registry.clearAll();
+    expect(registry.restoreSandboxEntryIfMissing(secondReceipt!)).toBe(true);
+    expect(registry.getDefault()).toBe("alpha");
+  });
+
   it("getSandbox returns null for nonexistent", () => {
     expect(registry.getSandbox("nope")).toBe(null);
   });
@@ -257,6 +742,7 @@ describe("registry", () => {
     expect(JSON.parse(fs.readFileSync(regFile, "utf-8"))).toEqual({
       sandboxes: {},
       defaultSandbox: null,
+      defaultSelectionRevision: 3,
     });
   });
 

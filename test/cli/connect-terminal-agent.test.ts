@@ -37,8 +37,9 @@ describe("CLI dispatch for terminal agents", () => {
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "-n" ] && [ "$4" = "alpha" ]; then',
         '  cmd="${10}"',
         '  case "$cmd" in',
-        '    *"dcode --version"*) echo "dcode 0.1.12"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"dcode --version"*) echo "dcode 0.1.34"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         '    *"config.toml"*) echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"NEMOCLAW_DCODE_EMPTY_PROMPT_OK"*) echo "NEMOCLAW_DCODE_EMPTY_PROMPT_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         "  esac",
         "fi",
         "exit 0",
@@ -60,6 +61,12 @@ describe("CLI dispatch for terminal agents", () => {
     expect(
       calls.some((call) =>
         call.includes("nemoclaw-agent-smoke test -s /sandbox/.deepagents/config.toml"),
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.includes("nemoclaw-agent-smoke") && call.includes("NEMOCLAW_DCODE_EMPTY_PROMPT_OK"),
       ),
     ).toBe(true);
     expect(calls.some((call) => call.includes("OPENCLAW="))).toBe(false);

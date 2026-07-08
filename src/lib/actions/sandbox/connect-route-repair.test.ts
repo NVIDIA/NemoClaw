@@ -55,14 +55,6 @@ const broken = (detail = "BROKEN 503"): SandboxInferenceRouteProbe => ({
   detail,
 });
 
-const inconclusive = (
-  detail = "openshell sandbox exec exited with status 7",
-): SandboxInferenceRouteProbe => ({
-  healthy: false,
-  broken: false,
-  detail,
-});
-
 function sandbox(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   return {
     name: "demo",
@@ -128,20 +120,18 @@ describe("sandbox connect route repair unit flow", () => {
     expect(calls.probeOptions).toEqual([]);
   });
 
-  it("does not repair healthy or inconclusive initial probes", () => {
-    for (const firstProbe of [healthy(), inconclusive()]) {
-      const { calls, deps } = makeRepairDeps([firstProbe]);
+  it("does not repair a healthy initial probe", () => {
+    const { calls, deps } = makeRepairDeps([healthy()]);
 
-      const result = repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
+    const result = repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
 
-      expect(result).toEqual({
-        healthy: true,
-        repairAttempted: false,
-        detail: firstProbe.detail,
-      });
-      expect(calls.legacyRepairs).toEqual([]);
-      expect(calls.reapplications).toEqual([]);
-    }
+    expect(result).toEqual({
+      healthy: true,
+      repairAttempted: false,
+      detail: "OK 200",
+    });
+    expect(calls.legacyRepairs).toEqual([]);
+    expect(calls.reapplications).toEqual([]);
   });
 
   it("repairs legacy kubernetes routes through the DNS proxy path", () => {
@@ -161,6 +151,10 @@ describe("sandbox connect route repair unit flow", () => {
     });
     expect(calls.legacyRepairs).toEqual([{ sandboxName: "legacy-box", quiet: false }]);
     expect(calls.reapplications).toEqual([]);
+    expect(calls.probeOptions).toEqual([undefined, { attempts: 3, delayMs: 2000 }]);
+    expect(calls.logs).toContain(
+      "  inference.local is unavailable inside 'legacy-box'. Repairing sandbox DNS proxy...",
+    );
     expect(calls.logs).toContain("  inference.local route repaired.");
   });
 
@@ -225,6 +219,13 @@ describe("sandbox connect route repair unit flow", () => {
     expect(calls.monkeypatches).toEqual(["vm-box"]);
     expect(calls.reapplications).toEqual([]);
     expect(calls.legacyRepairs).toEqual([]);
+    expect(calls.probeOptions).toEqual([undefined, { attempts: 3, delayMs: 2000 }]);
+    expect(calls.logs).toContain(
+      "  inference.local is unavailable inside 'vm-box'. Applying OpenShell VM DNS monkeypatch...",
+    );
+    expect(calls.logs).not.toContain(
+      "  inference.local is unavailable inside 'vm-box'. Reapplying OpenShell inference route...",
+    );
   });
 
   it("falls back to inference reapply when the VM monkeypatch leaves the route broken", () => {

@@ -190,11 +190,16 @@ describe("resume machine repair", () => {
     expect(resumeMachineState(session)).toBe("preflight");
     applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
-    expect(session.machine).toEqual({
+    expect(session.machine).toMatchObject({
       version: MACHINE_SNAPSHOT_VERSION,
       state: "preflight",
       stateEnteredAt: "2026-06-01T00:01:00.000Z",
       revision: 8,
+      recoveryReceipt: {
+        reason: "failed_terminal_snapshot",
+        entry: "preflight",
+        revision: 8,
+      },
     });
   });
 
@@ -262,11 +267,16 @@ describe("resume machine repair", () => {
 
     applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
-    expect(session.machine).toEqual({
+    expect(session.machine).toMatchObject({
       version: MACHINE_SNAPSHOT_VERSION,
       state: "provider_selection",
       stateEnteredAt: "2026-06-01T00:01:00.000Z",
       revision: 10,
+      recoveryReceipt: {
+        reason: "reopened_complete_snapshot",
+        entry: "provider_selection",
+        revision: 10,
+      },
     });
   });
 

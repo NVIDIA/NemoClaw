@@ -3,21 +3,16 @@
 
 /**
  *
- * Keep this close to the shell suite's high-value provider/config/redaction
- * contracts: fake tokens by default, _REAL secrets opt in to real sends,
- * provider placeholders must not leak into sandbox-visible surfaces, WhatsApp
- * stays QR-only, and optional live-network probes skip on transport
- * reachability rather than weakening the assertions. Legacy-only paths such as
- * Telegram inbound replies, Slack mention/reply feedback, revoked Slack token
- * pre-validation, and no-real-secret plugin-send fallbacks remain in the shell
- * suite until their own scoped migrations.
+ * Preserves the high-value provider/config/redaction contracts: fake tokens by
+ * default, _REAL secrets opt in to real sends, provider placeholders must not
+ * leak into sandbox-visible surfaces, and installed OpenClaw channel runtime
+ * exports must drive the hermetic Slack and Telegram send proofs.
  */
 
 import fs from "node:fs";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   accountBool,
   accountString,
@@ -56,10 +51,10 @@ import {
   stripAnsi,
   tokenValues,
 } from "./messaging-providers-helpers.ts";
+import { runInstalledSlackRuntimeProof } from "./messaging-providers-slack-runtime-proof.ts";
+import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram-runtime-proof.ts";
 
-const runLiveTest = shouldRunLiveE2E() ? test : test.skip;
-
-runLiveTest(
+test(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
   testTimeoutOptions(LIVE_TIMEOUT_MS),
   async ({ artifacts, cleanup, host, sandbox, skip }) => {
@@ -265,6 +260,19 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       },
     );
     expectExitZero(whatsappRebuild, "M-WA4: rebuild completed after WhatsApp channel add");
+    const whatsappRebuildText = stripAnsi(outputText(whatsappRebuild));
+    check(
+      whatsappRebuildText.includes(`Sandbox '${SANDBOX_NAME}' rebuilt successfully`),
+      "M-WA4a: rebuild reports complete post-restore success",
+    );
+    check(
+      !whatsappRebuildText.includes("CRITICAL:"),
+      "M-WA4b: rebuild emits no critical trusted-posture failure",
+    );
+    check(
+      !whatsappRebuildText.includes("post-restore steps were incomplete"),
+      "M-WA4c: rebuild leaves no incomplete post-restore work",
+    );
 
     const whatsappPolicyPost = await runHost(
       host,
@@ -539,39 +547,46 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M-W10: WeChat accounts index contains configured account",
     );
 
-    const runtimeChannels = await sandboxOutput(
+    const runtimeChannelsResult = await runSandboxShell(
       sandbox,
-      "timeout 45 openclaw channels list --all --json --no-color 2>/dev/null || true",
-      "openclaw-channels-list-messaging-providers",
-      redactionValues,
+      "timeout 45 openclaw channels list --all --json --no-color",
+      {
+        artifactName: "openclaw-channels-list-messaging-providers",
+        redactionValues,
+      },
     );
+    expectExitZero(runtimeChannelsResult, "OpenClaw channels list");
+    const runtimeChannels = runtimeChannelsResult.stdout.trim();
     if (!runtimeChannels) {
-      await skipNote(artifacts, skips, "M6e-M6h: OpenClaw channels list returned no output");
-    } else {
-      const parsedRuntime = JSON.parse(runtimeChannels) as {
-        chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
-      };
-      for (const [assertionId, channel, accountId] of [
-        ["M6e", "telegram", "default"],
-        ["M6f", "discord", "default"],
-        ["M6g", "slack", "default"],
-      ] as const) {
-        const entry = parsedRuntime.chat?.[channel];
-        check(
-          entry?.installed === true &&
-            entry.origin === "configured" &&
-            Array.isArray(entry.accounts) &&
-            entry.accounts.includes(accountId),
-          `${assertionId}: OpenClaw channels list reports ${channel} installed/configured`,
-        );
-      }
-      const whatsappRuntime = parsedRuntime.chat?.whatsapp;
-      check(
-        whatsappRuntime?.installed === true &&
-          (whatsappRuntime.origin === "available" || whatsappRuntime.origin === "configured"),
-        "M6h: OpenClaw channels list reports WhatsApp plugin installed",
+      throw new Error(
+        `OpenClaw channels list did not emit channel state:\n${
+          runtimeChannelsResult.stderr.trim() || "stderr was empty"
+        }`,
       );
     }
+    const parsedRuntime = JSON.parse(runtimeChannels) as {
+      chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
+    };
+    for (const [assertionId, channel, accountId] of [
+      ["M6e", "telegram", "default"],
+      ["M6f", "discord", "default"],
+      ["M6g", "slack", "default"],
+    ] as const) {
+      const entry = parsedRuntime.chat?.[channel];
+      check(
+        entry?.installed === true &&
+          entry.origin === "configured" &&
+          Array.isArray(entry.accounts) &&
+          entry.accounts.includes(accountId),
+        `${assertionId}: OpenClaw channels list reports ${channel} installed/configured`,
+      );
+    }
+    const whatsappRuntime = parsedRuntime.chat?.whatsapp;
+    check(
+      whatsappRuntime?.installed === true &&
+        (whatsappRuntime.origin === "available" || whatsappRuntime.origin === "configured"),
+      "M6h: OpenClaw channels list reports WhatsApp plugin installed",
+    );
 
     // Probe the allowed Telegram bot API path (/bot<token>/**). The bare root
     // path is blocked by the Telegram egress policy by design (asserted by M14),
@@ -871,6 +886,96 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       "M-S16a: fake Slack saw host-side app token in header/body",
     );
 
+    const allowedSlackUser = state.slackIds
+      .split(",")
+      .map((value) => value.trim())
+      .find(Boolean);
+    check(Boolean(allowedSlackUser), "M-S17: Slack allowlist has a user for the runtime proof");
+    const installedSlackProof = await runInstalledSlackRuntimeProof(
+      sandbox,
+      fakeSlack,
+      allowedSlackUser ?? "U0AR85ATALW",
+      redactionValues,
+    );
+    check(
+      installedSlackProof.allowedReplyTarget === "channel:C0E2ESLACK" &&
+        installedSlackProof.deniedPrepared === true,
+      "M-S17: installed Slack runtime accepts the configured user and denies another user",
+    );
+    check(
+      installedSlackProof.deniedFeedbackMethod === "chat.postEphemeral" &&
+        installedSlackProof.deniedFeedbackCount === 1,
+      "M-S17d: denied Slack mention emits exactly one bounded sender feedback action",
+    );
+    check(
+      installedSlackProof.proof === "openclaw-pipeline-runtime",
+      `M-S17c: OpenClaw 2026.6.10 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
+    );
+    const slackRuntimeCapture = lastJsonLine(
+      fakeSlack.captureFile,
+      (row) => row.event === "request" && row.path === "/api/chat.postMessage",
+    );
+    check(
+      slackRuntimeCapture?.tokenMatchesExpected === true &&
+        slackRuntimeCapture.bodyMatchesExpected === true &&
+        slackRuntimeCapture.tokenLooksPlaceholder !== true &&
+        slackRuntimeCapture.channel === "C0E2ESLACK" &&
+        slackRuntimeCapture.text === "NemoClaw Slack channel mention proof" &&
+        !Object.prototype.hasOwnProperty.call(slackRuntimeCapture, "authorization") &&
+        !Object.prototype.hasOwnProperty.call(slackRuntimeCapture, "body"),
+      "M-S17a/M-S17b: installed Slack send reached the fake API without placeholder leakage",
+    );
+
+    const fakeTelegram = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+      kind: "telegram",
+      imageScript: "fake-telegram-api.cjs",
+      containerPrefix: "nemoclaw-fake-telegram",
+      portEnv: "FAKE_TELEGRAM_API_PORT",
+      portFileEnv: "FAKE_TELEGRAM_API_PORT_FILE",
+      captureFileEnv: "FAKE_TELEGRAM_API_CAPTURE_FILE",
+      expectedEnv: {
+        FAKE_TELEGRAM_API_EXPECTED_TOKEN: state.tokens.telegram,
+      },
+      env: state.env,
+      redactionValues,
+    });
+    await applyRestRewritePolicy(host, fakeTelegram, state.env, redactionValues);
+    const telegramMockTarget = "42424242";
+    const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
+    const installedTelegramProof = await runInstalledTelegramRuntimeProof(
+      sandbox,
+      fakeTelegram,
+      telegramMockTarget,
+      telegramMockText,
+      redactionValues,
+    );
+    check(
+      installedTelegramProof.proof === "openclaw-telegram-runtime-send" &&
+        installedTelegramProof.chatId === telegramMockTarget,
+      "M19: installed Telegram runtime-api.js sendMessageTelegram completed",
+    );
+    const telegramRuntimeCapture = lastJsonLine(
+      fakeTelegram.captureFile,
+      (row) => row.event === "request" && row.endpoint === "sendMessage",
+    );
+    const telegramCaptureText = fs.readFileSync(fakeTelegram.captureFile, "utf8");
+    check(
+      telegramRuntimeCapture?.tokenMatchesExpected === true &&
+        telegramRuntimeCapture.tokenLooksPlaceholder !== true &&
+        telegramRuntimeCapture.tokenRedacted === true &&
+        String(telegramRuntimeCapture.chatId) === telegramMockTarget &&
+        telegramRuntimeCapture.text === telegramMockText &&
+        !Object.prototype.hasOwnProperty.call(telegramRuntimeCapture, "token") &&
+        !telegramCaptureText.includes(state.tokens.telegram) &&
+        !telegramCaptureText.includes("openshell:resolve:env:") &&
+        !telegramCaptureText.includes("OPENSHELL-RESOLVE-ENV-"),
+      "M18/M19: installed Telegram send reached the fake API without placeholder leakage",
+    );
+    await artifacts.writeJson("installed-messaging-runtime-proofs.json", {
+      slack: installedSlackProof,
+      telegram: installedTelegramProof,
+    });
+
     const fakeGateway = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
       kind: "discord-gateway",
       imageScript: "fake-discord-gateway.cjs",
@@ -978,7 +1083,7 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
 
     const telegramRealTarget = nonEmpty(process.env.TELEGRAM_CHAT_ID_E2E);
     if (nonEmpty(process.env.TELEGRAM_BOT_TOKEN_REAL) && telegramRealTarget) {
-      check(telegramStatus === "200", "M18: Telegram getMe returned 200 with real token");
+      check(telegramStatus === "200", "M18-real: Telegram getMe returned 200 with real token");
       const send = await runSandboxShell(
         sandbox,
         `OPENCLAW_NO_COLOR=1 openclaw message send --channel telegram --target ${shellQuote(telegramRealTarget)} --message "NemoClaw OpenClaw Telegram plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" --json`,
@@ -990,13 +1095,13 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
       );
       check(
         send.exitCode === 0,
-        `M19: Telegram openclaw message send succeeded (${outputText(send).slice(0, 200)})`,
+        `M19-real: Telegram openclaw message send succeeded (${outputText(send).slice(0, 200)})`,
       );
     } else {
       await skipNote(
         artifacts,
         skips,
-        "M18/M19: complete real Telegram credentials not available; fake-token L7 proof covered provider rewrite",
+        "M18-real/M19-real: complete real Telegram credentials not available; installed runtime fake send covered M19",
       );
     }
 

@@ -74,6 +74,53 @@ export function withLegacyMessagingPlanEnv(
   };
 }
 
+/** Build a legacy messaging plan in-process for tests that do not need a process boundary. */
+export async function withLegacyMessagingPlanEnvDirect(
+  env: Record<string, string>,
+  agent: MessagingPlanAgent,
+): Promise<Record<string, string>> {
+  if (env.NEMOCLAW_MESSAGING_PLAN_B64) return env;
+  const channels = decodeJsonEnv<string[]>(env, "NEMOCLAW_MESSAGING_CHANNELS_B64", []);
+  if (!Array.isArray(channels) || channels.length === 0) return env;
+
+  const normalizedEnv = {
+    ...env,
+    ...legacyMessagingConfigEnv(env),
+  };
+  const {
+    createBuiltInChannelManifestRegistry,
+    createBuiltInMessagingHookRegistry,
+    createBuiltInRenderTemplateResolver,
+    MessagingSetupApplier,
+    MessagingWorkflowPlanner,
+  } = await import("../src/lib/messaging/index.ts");
+  const plan = await withProcessEnv(normalizedEnv, () =>
+    new MessagingWorkflowPlanner(
+      createBuiltInChannelManifestRegistry(),
+      createBuiltInMessagingHookRegistry({
+        wechat: {
+          seedOpenClawAccount: {
+            now: () => "2026-01-01T00:00:00.000Z",
+          },
+        },
+      }),
+      createBuiltInRenderTemplateResolver(),
+    ).buildPlan({
+      sandboxName: "test-sandbox",
+      agent,
+      workflow: "rebuild",
+      isInteractive: false,
+      configuredChannels: [...new Set(channels)],
+      credentialAvailability: credentialAvailability(),
+    }),
+  );
+
+  return {
+    ...env,
+    NEMOCLAW_MESSAGING_PLAN_B64: MessagingSetupApplier.encodePlan(plan),
+  };
+}
+
 export function buildMessagingPlanB64(
   env: Record<string, string>,
   agent: MessagingPlanAgent,
@@ -225,6 +272,18 @@ function decodeJsonEnv<T>(env: Record<string, string>, name: string, fallback: T
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function withProcessEnv<T>(env: Record<string, string>, run: () => Promise<T>): Promise<T> {
+  const originalEnv = { ...process.env };
+  try {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, env);
+    return await run();
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, originalEnv);
+  }
 }
 
 function credentialAvailability(): Record<string, boolean> {

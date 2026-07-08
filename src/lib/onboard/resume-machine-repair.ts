@@ -35,7 +35,7 @@ function activeStepMachineState(session: Session): OnboardMachineState | null {
  * is one of the building blocks for the single recovery pass in
  * `session-recovery.ts` (`planSessionRecovery` / `applySessionRecovery`), which
  * classifies, validates, and applies the recovery. Remove this bridge once step
- * fields stop being used to derive resume state.
+ * fields stop being used to derive resume state (#6227).
  */
 export function resumeMachineState(session: Session): OnboardMachineState {
   return (

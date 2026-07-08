@@ -5,40 +5,65 @@
 // non-default agent (e.g. Hermes) is selected via --agent flag or
 // NEMOCLAW_AGENT env var. The OpenClaw path never touches this module.
 
-import fs from "fs";
-import os from "os";
-import path from "path";
-
-import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
-import { ROOT, redact, run } from "../runner";
-import {
-  buildLocalBaseTag,
-  resolveSandboxBaseImage,
-  SANDBOX_BASE_TAG,
-} from "../sandbox-base-image";
+import { isValidForwardPort } from "../onboard/dashboard-runtime";
+import { redact, run } from "../runner";
+import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
 import { runAgentSmokeCommands } from "./terminal-smoke";
+import { enforceTerminalAgentVersion } from "./terminal-version-enforcement";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
 
 export { verifyAgentBinaryAvailable } from "./binary-availability";
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
-  runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
+  runCaptureOpenshell: (
+    args: string[],
+    opts?: { ignoreError?: boolean; timeout?: number },
+  ) => string | null;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
   startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
+}
+
+// Keep these compatibility exports as ordinary writable functions. Focused
+// onboarding and rebuild harnesses replace them at the facade boundary, while
+// the implementation stays isolated in base-image.ts.
+export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
+  return baseImage.getAgentSandboxBaseImageEnvVar(agentName);
+}
+
+export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string): string {
+  return baseImage.pinAgentSandboxBaseImageRef(agentName, imageRef);
+}
+
+export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
+  return baseImage.hermesBaseImageSupportsMcp(imageRef);
+}
+
+export function ensureAgentBaseImage(
+  agent: AgentDefinition,
+  options: baseImage.EnsureAgentBaseImageOptions = {},
+): baseImage.EnsureAgentBaseImageResult {
+  return baseImage.ensureAgentBaseImage(agent, options);
+}
+
+export function createAgentSandbox(
+  agent: AgentDefinition,
+  options: baseImage.EnsureAgentBaseImageOptions = {},
+): baseImage.CreateAgentSandboxResult {
+  return baseImage.createAgentSandbox(agent, options);
 }
 
 /**
@@ -55,125 +80,6 @@ export function resolveAgent({
   const name = resolveAgentName({ agentFlag, session });
   if (name === "openclaw") return null;
   return loadAgent(name);
-}
-
-/**
- * Ensure the agent-specific sandbox base image exists locally.
- * Rebuild callers can force this so local Dockerfile.base edits are applied.
- */
-export function ensureAgentBaseImage(
-  agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): {
-  imageTag: string | null;
-  built: boolean;
-} {
-  const baseDockerfile = agent.dockerfileBasePath;
-
-  if (!baseDockerfile) {
-    return { imageTag: null, built: false };
-  }
-
-  const baseImageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
-  const baseImageTag = `${baseImageName}:${SANDBOX_BASE_TAG}`;
-  const forceBaseImageRebuild = opts.forceBaseImageRebuild === true;
-  if (forceBaseImageRebuild) {
-    console.log(`  Rebuilding ${agent.displayName} base image...`);
-    const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
-      ignoreError: true,
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    if (buildResult.error || buildResult.status !== 0) {
-      const detail = buildResult.error
-        ? `: ${buildResult.error.message}`
-        : ` (exit ${buildResult.status ?? "unknown"})`;
-      throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
-    }
-    console.log(`  \u2713 Base image built: ${baseImageTag}`);
-    return { imageTag: baseImageTag, built: true };
-  }
-
-  const resolved = resolveSandboxBaseImage({
-    imageName: baseImageName,
-    dockerfilePath: baseDockerfile,
-    localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
-    envVar: `NEMOCLAW_${agent.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`,
-    label: `${agent.displayName} sandbox base image`,
-    requireOpenshellSandboxAbi: process.platform === "linux",
-    rootDir: ROOT,
-  });
-  if (resolved && !forceBaseImageRebuild) {
-    console.log(`  Using ${agent.displayName} base image: ${resolved.ref}`);
-    return { imageTag: resolved.ref, built: false };
-  }
-  if (!resolved && process.platform === "linux" && !forceBaseImageRebuild) {
-    throw new Error(
-      `No compatible ${agent.displayName} sandbox base image found for ${baseImageName}`,
-    );
-  }
-  const inspectResult = dockerImageInspect(baseImageTag, {
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  if (inspectResult?.status !== 0) {
-    console.log(`  Building ${agent.displayName} base image (first time only)...`);
-    const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
-      ignoreError: true,
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    if (buildResult.error || buildResult.status !== 0) {
-      const detail = buildResult.error
-        ? `: ${buildResult.error.message}`
-        : ` (exit ${buildResult.status ?? "unknown"})`;
-      throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
-    }
-    console.log(`  \u2713 Base image built: ${baseImageTag}`);
-    return { imageTag: baseImageTag, built: true };
-  }
-
-  console.log(`  Base image exists: ${baseImageTag}`);
-  return { imageTag: baseImageTag, built: false };
-}
-
-/**
- * Stage build context for an agent-specific sandbox image.
- * Builds the base image if the agent defines one and it's not cached locally.
- */
-export function createAgentSandbox(
-  agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): {
-  buildCtx: string;
-  stagedDockerfile: string;
-} {
-  const agentDockerfile = agent.dockerfilePath;
-
-  if (!agentDockerfile) {
-    throw new Error(`${agent.displayName} is missing a sandbox Dockerfile`);
-  }
-
-  const { imageTag: baseImageRef } = ensureAgentBaseImage(agent, opts);
-
-  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-  fs.cpSync(ROOT, buildCtx, {
-    recursive: true,
-    filter: (src) => {
-      const base = path.basename(src);
-      return !["node_modules", ".git", ".venv", "__pycache__", ".claude"].includes(base);
-    },
-  });
-  const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.copyFileSync(agentDockerfile, stagedDockerfile);
-  if (baseImageRef) {
-    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
-    fs.writeFileSync(
-      stagedDockerfile,
-      dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`),
-    );
-  }
-  console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
-
-  return { buildCtx, stagedDockerfile };
 }
 
 /**
@@ -348,6 +254,10 @@ export async function handleAgentSetup(
         syncNemoClawConfig();
         const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
         if (smokeResult.ok) {
+          await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
+            beforeFailure: () => startRecordedStep("agent_setup", { sandboxName, provider, model }),
+            onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+          });
           skippedStepMessage("agent_setup", sandboxName);
           await recordStepComplete("agent_setup", { sandboxName, provider, model });
           return;
@@ -408,6 +318,9 @@ export async function handleAgentSetup(
         smokeResult.output ? [String(redact(smokeResult.output)).slice(0, 500)] : [],
       );
     }
+    await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
+      onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+    });
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
     await recordStepComplete("agent_setup", { sandboxName, provider, model });
     return;
@@ -496,11 +409,15 @@ export function printDashboardUi(
   deps: {
     note: (msg: string) => void;
     buildControlUiUrls: (token: string | null, port: number) => string[];
+    effectiveDashboardPort?: number;
   },
 ): void {
   const info = getAgentDashboardInfo(agent);
   const { auth, kind, label, path } = agent.dashboard;
   const cliName = getAgentBranding(agent.name).cli;
+  const effectiveDashboardPort = isValidForwardPort(deps.effectiveDashboardPort)
+    ? deps.effectiveDashboardPort
+    : info.port;
 
   if (kind === "api") {
     console.log(`  ${info.displayName} ${label}`);
@@ -521,20 +438,24 @@ export function printDashboardUi(
 
   if (auth !== "url_token") {
     console.log(`  ${info.displayName} ${label}`);
-    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
-    for (const url of deps.buildControlUiUrls(null, info.port)) {
+    console.log(`  Port ${effectiveDashboardPort} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(null, effectiveDashboardPort)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
     printBearerTokenApiAccess(sandboxName, agent, cliName);
-    printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
-    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
+    printOptionalDashboardUi(agent, {
+      ...deps,
+      effectiveDashboardPort,
+      redactUrl: dashboardUrlForDisplay,
+    });
+    printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
     return;
   }
 
   if (token) {
     console.log(`  ${info.displayName} ${label} (auth token redacted from displayed URLs)`);
-    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
-    for (const url of deps.buildControlUiUrls(token, info.port)) {
+    console.log(`  Port ${effectiveDashboardPort} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(token, effectiveDashboardPort)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
     console.log(`  Token: ${cliName} ${sandboxName} gateway-token --quiet`);
@@ -542,13 +463,17 @@ export function printDashboardUi(
   } else {
     deps.note("  Could not read gateway token from the sandbox (download failed).");
     console.log(`  ${info.displayName} ${label}`);
-    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
-    for (const url of deps.buildControlUiUrls(null, info.port)) {
+    console.log(`  Port ${effectiveDashboardPort} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(null, effectiveDashboardPort)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
   }
-  printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
-  printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
+  printOptionalDashboardUi(agent, {
+    ...deps,
+    effectiveDashboardPort,
+    redactUrl: dashboardUrlForDisplay,
+  });
+  printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
 }
 
 /**
@@ -581,7 +506,7 @@ function printAdditionalForwardPorts(
   const apiPort = agent.healthProbe?.port;
   for (const port of declared) {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) continue;
-    if (port === primaryPort) continue;
+    if (port === primaryPort || port === agent.forwardPort) continue;
     const isApi = port === apiPort;
     const sectionLabel = isApi ? "OpenAI-compatible API" : "additional port";
     console.log("");

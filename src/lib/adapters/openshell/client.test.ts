@@ -3,7 +3,7 @@
 
 import type { SpawnSyncReturns } from "node:child_process";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   captureOpenshellCommand,
@@ -50,6 +50,10 @@ function exitWithCode(code: number): never {
 }
 
 describe("openshell helpers", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("strips ANSI sequences", () => {
     expect(stripAnsi("\u001b[32mConnected\u001b[0m")).toBe("Connected");
   });
@@ -58,6 +62,19 @@ describe("openshell helpers", () => {
     expect(parseVersionFromText("openshell 0.0.9")).toBe("0.0.9");
     expect(parseVersionFromText("v1.2.3\n")).toBe("1.2.3");
     expect(parseVersionFromText("Hermes Agent v0.17.0 (2026.6.19)")).toBe("0.17.0");
+    expect(parseVersionFromText("built on 2026.7.1, dcode 0.1.12", "dcode --version")).toBe(
+      "0.1.12",
+    );
+    expect(
+      parseVersionFromText("Python 3.12.0\ndcode command failed", "dcode --version"),
+    ).toBeNull();
+    expect(parseVersionFromText("LangChain Deep Agents Code v0.1.12", "dcode --version")).toBe(
+      "0.1.12",
+    );
+    expect(
+      parseVersionFromText("built on 2026.7.1, dcode 0.1.12, dcode 0.2.0", "dcode --version"),
+    ).toBe("0.1.12");
+    expect(parseVersionFromText("dcode 0.1.12", "/opt/venv/bin/dcode --version")).toBe("0.1.12");
     expect(parseVersionFromText("no version here")).toBeNull();
   });
 
@@ -117,6 +134,35 @@ describe("openshell helpers", () => {
       }),
     });
     expect(result.status).toBe(0);
+  });
+
+  it("can replace the parent environment for credential-bearing OpenShell commands", () => {
+    vi.stubEnv("NEMOCLAW_TEST_UNRELATED_SECRET", "must-not-leak");
+    let observedEnv: NodeJS.ProcessEnv | undefined;
+    runOpenshellCommand("openshell", ["provider", "create"], {
+      replaceEnv: true,
+      env: { PATH: "/safe/bin", MCP_TOKEN: "selected-secret" },
+      spawnSyncImpl: (_command, _args, options) => {
+        observedEnv = options.env;
+        return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
+      },
+    });
+
+    expect(observedEnv).toEqual({ PATH: "/safe/bin", MCP_TOKEN: "selected-secret" });
+  });
+
+  it("filters unrelated parent secrets from ordinary OpenShell commands", () => {
+    vi.stubEnv("NEMOCLAW_TEST_UNRELATED_SECRET", "must-not-leak");
+    let observedEnv: NodeJS.ProcessEnv | undefined;
+    runOpenshellCommand("openshell", ["status"], {
+      spawnSyncImpl: (_command, _args, options) => {
+        observedEnv = options.env;
+        return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
+      },
+    });
+
+    expect(observedEnv?.NEMOCLAW_TEST_UNRELATED_SECRET).toBeUndefined();
+    expect(observedEnv?.PATH).toBe(process.env.PATH);
   });
 
   it("passes timeout and maxBuffer options through to OpenShell spawn calls", () => {
@@ -362,7 +408,7 @@ describe("openshell helpers", () => {
     const version = getInstalledOpenshellVersion("openshell", {
       spawnSyncImpl: stubSpawnSync({
         status: 0,
-        stdout: "openshell 0.0.11\n",
+        stdout: "built on 2026.7.1, openshell 0.0.11\n",
         stderr: "",
       }),
     });

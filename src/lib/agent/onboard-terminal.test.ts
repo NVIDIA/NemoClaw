@@ -5,13 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "./defs";
 import { loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
-import { handleAgentSetup } from "./onboard";
+import { handleAgentSetup, type OnboardContext } from "./onboard";
 import {
+  recordDriftedDeepAgentsRuntimeCall,
   recordFailingDeepAgentsSmokeCall,
   recordSuccessfulDeepAgentsRuntimeCall,
+  recordUnrelatedVersionDeepAgentsRuntimeCall,
+  recordUnverifiedDeepAgentsRuntimeCall,
 } from "./onboard-terminal-fixtures";
 
-type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) => string | null;
+type RunCaptureOpenshell = OnboardContext["runCaptureOpenshell"];
 
 function makeDeepAgentsCodeAgent(): AgentDefinition {
   return loadAgent("langchain-deepagents-code");
@@ -36,6 +39,21 @@ function createAgentSetupContext(
     }),
     skippedStepMessage: vi.fn((_stepName: string, _sandboxName: string) => undefined),
   };
+}
+
+async function expectSetupExit(action: () => Promise<void>): Promise<void> {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+  const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string) => {
+    throw new Error(`process.exit:${String(code)}`);
+  }) as never);
+  try {
+    await expect(action()).rejects.toThrow("process.exit:1");
+  } finally {
+    exitSpy.mockRestore();
+    debugSpy.mockRestore();
+    errorSpy.mockRestore();
+  }
 }
 
 describe("Deep Agents Code terminal onboard acceptance", () => {
@@ -67,7 +85,6 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
       model: "model-x",
     });
     expect(context.recordStepFailed).not.toHaveBeenCalled();
-    expect(calls.filter((call) => call.includes("NEMOCLAW_AGENT_SMOKE_EXIT"))).toHaveLength(2);
     expect(calls.some((call) => call.includes("nemoclaw-agent-smoke dcode --version"))).toBe(true);
     expect(calls.some((call) => call.includes("/sandbox/.deepagents/config.toml"))).toBe(true);
     expect(calls.some((call) => call.includes("curl"))).toBe(false);
@@ -98,12 +115,162 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     });
     expect(context.startRecordedStep).not.toHaveBeenCalled();
     expect(context.recordStepFailed).not.toHaveBeenCalled();
-    expect(calls).toHaveLength(3);
-    expect(calls[0]).toContain("NEMOCLAW_AGENT_BINARY_CHECK");
-    expect(calls.filter((call) => call.includes("NEMOCLAW_AGENT_SMOKE_EXIT"))).toHaveLength(2);
+    expect(calls.some((call) => call.includes("NEMOCLAW_AGENT_BINARY_CHECK"))).toBe(true);
     expect(calls.some((call) => call.includes("nemoclaw-agent-smoke dcode --version"))).toBe(true);
     expect(calls.some((call) => call.includes("/sandbox/.deepagents/config.toml"))).toBe(true);
     expect(calls.some((call) => call.includes("curl"))).toBe(false);
+    // #6193: a plain (non-smoke-wrapped) `dcode --version` version-drift probe runs.
+    expect(
+      calls.some(
+        (call) => call.includes("dcode --version") && !call.includes("nemoclaw-agent-smoke"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a below-minimum terminal version on fresh setup (#6193)", async () => {
+    // BINARY_CHECK ok, both smoke commands pass, but the plain version probe
+    // reports 0.0.1 — below the manifest's expected_version (0.1.34).
+    const calls: string[] = [];
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      recordDriftedDeepAgentsRuntimeCall(args, calls),
+    );
+    const context = createAgentSetupContext(runCaptureOpenshell);
+
+    await expectSetupExit(() =>
+      handleAgentSetup(
+        "deepagents-code",
+        "model-x",
+        "provider-x",
+        makeDeepAgentsCodeAgent(),
+        false,
+        null,
+        context,
+      ),
+    );
+
+    expect(context.recordStepComplete).not.toHaveBeenCalled();
+    expect(context.recordStepFailed).toHaveBeenCalledWith(
+      "agent_setup",
+      expect.stringMatching(/version 0\.0\.1 is below required minimum 0\.1\.34/),
+    );
+  });
+
+  it("rejects a below-minimum terminal version on resume (#6193)", async () => {
+    const calls: string[] = [];
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      recordDriftedDeepAgentsRuntimeCall(args, calls),
+    );
+    const context = createAgentSetupContext(runCaptureOpenshell);
+
+    await expectSetupExit(() =>
+      handleAgentSetup(
+        "deepagents-code",
+        "model-x",
+        "provider-x",
+        makeDeepAgentsCodeAgent(),
+        true,
+        null,
+        context,
+      ),
+    );
+
+    expect(context.skippedStepMessage).not.toHaveBeenCalled();
+    expect(context.startRecordedStep).toHaveBeenCalledWith("agent_setup", {
+      sandboxName: "deepagents-code",
+      provider: "provider-x",
+      model: "model-x",
+    });
+    expect(context.recordStepComplete).not.toHaveBeenCalled();
+    expect(context.recordStepFailed).toHaveBeenCalledWith(
+      "agent_setup",
+      expect.stringMatching(/version 0\.0\.1 is below required minimum 0\.1\.34/),
+    );
+  });
+
+  it("rejects setup when the required terminal version cannot be verified (#6193)", async () => {
+    const calls: string[] = [];
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      recordUnverifiedDeepAgentsRuntimeCall(args, calls),
+    );
+    const context = createAgentSetupContext(runCaptureOpenshell);
+
+    await expectSetupExit(() =>
+      handleAgentSetup(
+        "deepagents-code",
+        "model-x",
+        "provider-x",
+        makeDeepAgentsCodeAgent(),
+        false,
+        null,
+        context,
+      ),
+    );
+
+    expect(context.recordStepComplete).not.toHaveBeenCalled();
+    expect(context.recordStepFailed).toHaveBeenCalledWith(
+      "agent_setup",
+      expect.stringMatching(
+        /version could not be verified against required version 0\.1\.34: the version probe failed/,
+      ),
+    );
+  });
+
+  it("rejects resume when the required terminal version cannot be verified (#6193)", async () => {
+    const calls: string[] = [];
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      recordUnverifiedDeepAgentsRuntimeCall(args, calls),
+    );
+    const context = createAgentSetupContext(runCaptureOpenshell);
+
+    await expectSetupExit(() =>
+      handleAgentSetup(
+        "deepagents-code",
+        "model-x",
+        "provider-x",
+        makeDeepAgentsCodeAgent(),
+        true,
+        null,
+        context,
+      ),
+    );
+
+    expect(context.skippedStepMessage).not.toHaveBeenCalled();
+    expect(context.startRecordedStep).toHaveBeenCalledWith("agent_setup", {
+      sandboxName: "deepagents-code",
+      provider: "provider-x",
+      model: "model-x",
+    });
+    expect(context.recordStepComplete).not.toHaveBeenCalled();
+    expect(context.recordStepFailed).toHaveBeenCalledWith(
+      "agent_setup",
+      expect.stringContaining("version probe failed or returned no output"),
+    );
+  });
+
+  it("rejects setup when probe output contains only unrelated versions (#6193)", async () => {
+    const calls: string[] = [];
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      recordUnrelatedVersionDeepAgentsRuntimeCall(args, calls),
+    );
+    const context = createAgentSetupContext(runCaptureOpenshell);
+
+    await expectSetupExit(() =>
+      handleAgentSetup(
+        "deepagents-code",
+        "model-x",
+        "provider-x",
+        makeDeepAgentsCodeAgent(),
+        false,
+        null,
+        context,
+      ),
+    );
+
+    expect(context.recordStepComplete).not.toHaveBeenCalled();
+    expect(context.recordStepFailed).toHaveBeenCalledWith(
+      "agent_setup",
+      expect.stringContaining("version command returned no attributable version"),
+    );
   });
 
   it("fails setup with an actionable terminal smoke error", async () => {

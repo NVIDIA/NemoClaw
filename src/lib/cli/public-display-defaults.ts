@@ -5,6 +5,7 @@ import type { PublicCommandDisplayEntry } from "./command-display";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import { SANDBOX_AGENTS_DISPLAY_LAYOUT } from "./public-display-agents";
 import type { PublicDisplayLayout } from "./public-display-layout";
+import { SANDBOX_MCP_DISPLAY_LAYOUT } from "./public-display-mcp";
 import { SANDBOX_SESSIONS_DISPLAY_LAYOUT } from "./public-display-sessions";
 import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-metadata";
 
@@ -197,6 +198,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--channel <channel>] [--json]",
     },
   ],
+  ...SANDBOX_MCP_DISPLAY_LAYOUT,
   "sandbox:config:get": [
     {
       group: "Sandbox Management",
@@ -339,6 +341,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
     },
   ],
+  "sandbox:policy:get": [
+    {
+      group: "Policy Presets",
+      order: 16,
+      description: "Export round-trippable base policy YAML",
+      flags: "[--raw]",
+    },
+  ],
   "sandbox:policy:add": [
     {
       group: "Policy Presets",
@@ -373,7 +383,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 13,
-      flags: "[--yes|-y|--force] [--verbose|-v]",
+      flags: "[--yes|-y|--force] [--verbose|-v] [--observability|--no-observability]",
     },
   ],
   "sandbox:recover": [

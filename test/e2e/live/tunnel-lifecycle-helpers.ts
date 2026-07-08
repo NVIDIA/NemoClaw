@@ -18,9 +18,9 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const TEST_SANDBOX_PREFIX = "e2e-tunnel-lifecycle";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 const LOCAL_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789";
@@ -138,6 +138,13 @@ export function publicTunnelProbeCurlArgs(tunnelUrl: string): string[] {
   // documented same-host redirect requirement. If that happens, replace this
   // with explicit redirect target inspection before issuing a second request.
   return ["-sS", "--max-time", "30", "-w", "\n__HTTP_CODE:%{http_code}\n", tunnelUrl];
+}
+
+export function tunnelLifecycleInstallArgs(): string[] {
+  // Self-hosted runners can retain an unrelated failed onboarding session.
+  // This target owns a fresh sandbox and must not resume or reject stale state
+  // from an earlier job before it reaches the tunnel lifecycle under test.
+  return ["install.sh", "--non-interactive", "--fresh", "--yes-i-accept-third-party-software"];
 }
 
 function parseCurlProbe(result: ShellProbeResult): CurlProbe {
@@ -269,21 +276,17 @@ export async function runTunnelLifecycleContract({
     timeoutMs: 15 * 60_000,
   });
 
-  const install = await host.command(
-    "bash",
-    ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
-    {
-      artifactName: "install-sh-tunnel-lifecycle",
-      cwd: REPO_ROOT,
-      env: commandEnv({
-        ...hosted.env,
-        NVIDIA_INFERENCE_API_KEY: apiKey,
-        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
-      }),
-      redactionValues: [apiKey],
-      timeoutMs: ONBOARD_TIMEOUT_MS,
-    },
-  );
+  const install = await host.command("bash", tunnelLifecycleInstallArgs(), {
+    artifactName: "install-sh-tunnel-lifecycle",
+    cwd: REPO_ROOT,
+    env: commandEnv({
+      ...hosted.env,
+      NVIDIA_INFERENCE_API_KEY: apiKey,
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+    }),
+    redactionValues: [apiKey],
+    timeoutMs: ONBOARD_TIMEOUT_MS,
+  });
   expect(install.exitCode, resultText(install)).toBe(0);
 
   await host.expectListed(SANDBOX_NAME, { artifactName: "post-install-nemoclaw-list" });

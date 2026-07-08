@@ -22,121 +22,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { buildHermesConfig } from "../agents/hermes/config/hermes-config.ts";
 import { buildOpenshellExecArgs } from "../src/lib/actions/sandbox/exec.ts";
-
-const WRAPPER = path.join(import.meta.dirname, "..", "agents", "hermes", "hermes-wrapper.py");
-const VALIDATOR = path.join(
-  import.meta.dirname,
-  "..",
-  "agents",
-  "hermes",
-  "validate-env-secret-boundary.py",
-);
-
-function python3Available(): boolean {
-  try {
-    return spawnSync("python3", ["--version"], { timeout: 5000 }).status === 0;
-  } catch {
-    return false;
-  }
-}
-const canRun = process.platform === "linux" && python3Available();
-
-type WrapperRun = {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-  realInvoked: boolean;
-  realArgs: string;
-};
-
-type StubBehaviour = {
-  stdout?: string;
-  stderr?: string;
-  exitCode?: number;
-};
-
-// Run the wrapper against a temp install: a copy of the wrapper alongside the
-// real validator and a `hermes.real` stub. The wrapper's dev fallback resolves
-// both from its own directory because the /usr/local install paths are absent.
-// The stub records the args it was exec'd with so we can prove pass-through vs.
-// refusal. `env` fully replaces the process env so CI-injected secret-shaped
-// vars (e.g. GITHUB_TOKEN) cannot perturb the validator.
-function runWrapper(
-  args: string[],
-  env: Record<string, string>,
-  opts: {
-    shadowPython?: boolean;
-    shadowHelpers?: Record<string, string>;
-    stub?: StubBehaviour;
-    validatorScript?: string;
-  } = {},
-): WrapperRun {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-"));
-  try {
-    fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
-    const validatorContent = opts.validatorScript ?? fs.readFileSync(VALIDATOR, "utf-8");
-    // Write with the source-layout filename so the wrapper's dev fallback
-    // (_resolve_guard() -> _self_dir()/validate-env-secret-boundary.py) picks
-    // it up; the installed-layout tests further down write to the
-    // /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py install
-    // path instead.
-    fs.writeFileSync(path.join(dir, "validate-env-secret-boundary.py"), validatorContent, {
-      mode: 0o755,
-    });
-    fs.chmodSync(path.join(dir, "hermes"), 0o755);
-
-    const marker = path.join(dir, "real-invoked.txt");
-    const stubStdout = opts.stub?.stdout ?? "";
-    const stubStderr = opts.stub?.stderr ?? "";
-    const stubExit = opts.stub?.exitCode ?? 0;
-    const stubScript = [
-      "#!/usr/bin/env bash",
-      `printf '%s' "$*" > ${JSON.stringify(marker)}`,
-      stubStdout ? `cat <<'__NEMOCLAW_STUB_EOF__'\n${stubStdout}\n__NEMOCLAW_STUB_EOF__` : "",
-      stubStderr
-        ? `cat <<'__NEMOCLAW_STUB_ERR_EOF__' >&2\n${stubStderr}\n__NEMOCLAW_STUB_ERR_EOF__`
-        : "",
-      `exit ${stubExit}`,
-      "",
-    ].join("\n");
-    fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
-
-    // Optionally plant malicious helpers earlier on PATH that would subvert the
-    // wrapper. The wrapper must ignore them and resolve each helper from a
-    // trusted absolute path. `shadowPython` covers the python3 interpreter;
-    // `shadowHelpers` lets a test plant arbitrary scripts (e.g. mktemp / rm).
-    const planted: Record<string, string> = {
-      ...(opts.shadowHelpers ?? {}),
-      ...(opts.shadowPython ? { python3: "#!/usr/bin/env bash\nexit 0\n" } : {}),
-    };
-    let pathPrefix = "";
-    if (Object.keys(planted).length > 0) {
-      const evilBin = path.join(dir, "evil-bin");
-      fs.mkdirSync(evilBin);
-      for (const [name, script] of Object.entries(planted)) {
-        fs.writeFileSync(path.join(evilBin, name), script, { mode: 0o755 });
-      }
-      pathPrefix = `${evilBin}${path.delimiter}`;
-    }
-
-    const result = spawnSync(path.join(dir, "hermes"), args, {
-      encoding: "utf-8",
-      timeout: 10000,
-      env: { PATH: `${pathPrefix}${process.env.PATH ?? ""}`, HOME: dir, ...env },
-    });
-
-    const realInvoked = fs.existsSync(marker);
-    return {
-      status: result.status,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-      realInvoked,
-      realArgs: realInvoked ? fs.readFileSync(marker, "utf-8") : "",
-    };
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-}
+import { canRun, runWrapper, VALIDATOR, WRAPPER } from "./helpers/hermes-wrapper-harness.ts";
 
 describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   // Surface a hard error in CI when the prerequisites are missing instead of
@@ -398,6 +284,14 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stdout).toContain("api_key: sk-****");
   });
 
+  it("fails closed without a traceback when config show cannot exec Hermes", () => {
+    const run = runWrapper(["config", "show"], {}, { stubMode: 0o644 });
+    expect(run.status).toBe(126);
+    expect(run.stderr).toContain("[SECURITY] Refusing hermes config show: failed to exec Hermes");
+    expect(run.stderr).not.toContain("Traceback");
+    expect(run.realInvoked).toBe(false);
+  });
+
   it("leaves non-`config show` output untouched even when api_key shapes appear", () => {
     const fixture = "providers:\n  nemoclaw-inference:\n    api_key: sk-OPENSHELL-PROXY-REWRITE";
     const run = runWrapper(["config", "list"], {}, { stub: { stdout: fixture, exitCode: 0 } });
@@ -561,22 +455,43 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stdout).toContain("passwords: sk-****");
   });
 
-  it("masks multi-digit and reversed-order YAML block-scalar headers (|2-, |-2, >5+)", () => {
+  it("masks YAML block-scalar headers with indentation and chomping indicators", () => {
     const fixture = [
+      "token: |2",
+      "    leaked-yaml-indent-12345",
       "api_key: |2-",
       "    leaked-yaml-indent-trail-12345",
       "access_token: |-2",
       "    leaked-yaml-trail-indent-12345",
+      "auth_token: >2",
+      "    leaked-yaml-folded-indent-12345",
       "client_secret: >5+",
       "     leaked-yaml-folded-12345",
     ].join("\n");
     const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
 
     expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("leaked-yaml-indent-12345");
     expect(run.stdout).not.toContain("leaked-yaml-indent-trail-12345");
     expect(run.stdout).not.toContain("leaked-yaml-trail-indent-12345");
+    expect(run.stdout).not.toContain("leaked-yaml-folded-indent-12345");
     expect(run.stdout).not.toContain("leaked-yaml-folded-12345");
     expect(run.stdout).toContain("sk-****");
+  });
+
+  it("fails closed when the config masker succeeds with oversized stderr", () => {
+    const validatorScript = [
+      "#!/usr/bin/env python3",
+      "import sys",
+      "sys.stderr.write('x' * (11 * 1024 * 1024))",
+      "raise SystemExit(0)",
+      "",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { validatorScript });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("output masker stderr exceeded");
+    expect(run.stderr).not.toContain("xxxxxxxxxxxxxxxx");
   });
 
   it("fails closed with a stable error when config show stdout exceeds the 4 MiB masker cap", () => {
@@ -1138,6 +1053,9 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       providerKey: "custom",
       upstreamProvider: "nemoclaw-inference",
       inferenceApi: "",
+      contextWindow: null,
+      toolDisclosure: "progressive" as const,
+      webSearchProvider: null,
       messagingCredentialPlaceholders: [],
       managedToolGateways: { brokerEnabled: false, presets: [] },
     };
@@ -1183,6 +1101,9 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         providerKey: "custom",
         upstreamProvider: "nemoclaw-inference",
         inferenceApi: "",
+        contextWindow: null,
+        toolDisclosure: "progressive" as const,
+        webSearchProvider: null,
         messagingCredentialPlaceholders: [],
         managedToolGateways: { brokerEnabled: false, presets: [] },
       };

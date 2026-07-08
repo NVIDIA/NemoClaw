@@ -5,7 +5,7 @@
 # Case: Deep Agents Code interactive TUI startup (#5620).
 #
 # This live check runs against a real Deep Agents Code sandbox. It proves the
-# interactive `dcode` TUI starts in a PTY, reaches a prompt-like startup state,
+# interactive `dcode` TUI starts in a PTY, opens and closes the `/agents` modal,
 # exits after Ctrl-C, and leaves only sanitized, secret-free capture artifacts.
 #
 # shellcheck disable=SC2016
@@ -20,14 +20,14 @@ TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
 # test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
 CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
-# Upstream dcode does not expose a stable machine-readable TUI ready marker.
-# Keep this localized heuristic prompt-shaped; do not match banner-only text.
-TUI_READY_PATTERN='(what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help)'
-# New dcode homes enter a first-run modal before the coding prompt. Match only
-# the pinned upstream name screen so Expect can take its documented skip path.
-# deepagents-code 0.1.12 has no non-interactive first-run switch for its name screen.
-# Remove this compatibility path once the pinned TUI exposes a stable skip or ready contract.
-TUI_ONBOARDING_PATTERN='(your name \(optional\)|what should deep agents call you)'
+# Pinned DCode 0.1.34 renders this exact modal title for `/agents`. Opening it
+# proves input reached the main composer after optional onboarding; headless
+# check 07 independently owns backend readiness and inference acceptance.
+TUI_READY_PATTERN='(select agent)'
+# NemoClaw configures DCode's model and managed provider before launch, so
+# the model picker is a regression. The name prompt is allowed on first run.
+TUI_FIRST_RUN_PATTERN='(choose a recommended model)'
+TUI_NAME_PROMPT_PATTERN='(your name \(optional\)|what should deep agents call you)'
 SENSITIVE_CAPTURE_FILES=()
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
@@ -51,21 +51,10 @@ is_positive_integer() {
 
 ensure_expect_available() {
   # The Deep Agents Code TUI proof is a PTY contract, so expect(1) is a
-  # required test dependency. Source of truth: the E2E workflows install the
-  # `expect` apt package before jobs that can run this check. This fallback
-  # keeps older/manual GitHub-hosted runner invocations aligned instead of
-  # silently skipping the release-gate signal.
-  if command -v expect >/dev/null 2>&1; then
-    return 0
-  fi
-  if [ "${GITHUB_ACTIONS:-}" = "true" ] && command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-    info "expect is not preinstalled; installing expect for the Deep Agents Code TUI PTY check"
-    if sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends expect; then
-      command -v expect >/dev/null 2>&1
-      return $?
-    fi
-  fi
-  return 1
+  # required host dependency. Privileged installation belongs to the reviewed
+  # E2E workflow setup; this PR-controlled check only verifies the prerequisite
+  # and fails closed when manual/older runners do not provide it.
+  command -v expect >/dev/null 2>&1
 }
 
 contains_secret() {
@@ -77,9 +66,12 @@ contains_secret() {
         $context_value_pattern = $ENV{"NEMOCLAW_CONTEXT_SECRET_VALUE_PATTERN"};
       }
       if (
+        /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/ ||
         /$token_pattern/ ||
         /Bearer\s+$context_value_pattern/i ||
-        /(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]["'\''"]?$context_value_pattern/i
+        /(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?[^\s"'\''"]{10,}/i ||
+        /(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?[^\s"'\''"]{10,}/ ||
+        /(?:^|[^A-Za-z0-9])KEY["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?[^\s"'\''"]{10,}/
       ) {
         $found = 1;
       }
@@ -95,9 +87,12 @@ redact_secrets() {
         $token_pattern = $ENV{"NEMOCLAW_TOKEN_SECRET_PATTERN"};
         $context_value_pattern = $ENV{"NEMOCLAW_CONTEXT_SECRET_VALUE_PATTERN"};
       }
+      s/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/[REDACTED_SECRET]/g;
       s/$token_pattern/[REDACTED_SECRET]/g;
       s/(Bearer\s+)$context_value_pattern/${1}[REDACTED_SECRET]/gi;
-      s/((?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]["'\''"]?)$context_value_pattern/${1}[REDACTED_SECRET]/gi;
+      s/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?)[^\s"'\''"]{10,}/${1}[REDACTED_SECRET]/gim;
+      s/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?)[^\s"'\''"]{10,}/${1}[REDACTED_SECRET]/gm;
+      s/((?:^|[^A-Za-z0-9])KEY["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?)[^\s"'\''"]{10,}/${1}[REDACTED_SECRET]/gm;
     '
 }
 
@@ -144,11 +139,14 @@ make_capture_dir() {
 run_tui_expect() {
   local raw_capture_file="$1"
   local marker_capture_file="$2"
+  local expect_name_prompt="$3"
   env \
     NEMOCLAW_TUI_CAPTURE="$raw_capture_file" \
     NEMOCLAW_TUI_MARKERS="$marker_capture_file" \
-    NEMOCLAW_TUI_ONBOARDING_PATTERN="$TUI_ONBOARDING_PATTERN" \
+    NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN" \
+    NEMOCLAW_TUI_NAME_PROMPT_PATTERN="$TUI_NAME_PROMPT_PATTERN" \
     NEMOCLAW_TUI_READY_PATTERN="$TUI_READY_PATTERN" \
+    NEMOCLAW_TUI_EXPECT_NAME_PROMPT="$expect_name_prompt" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
     expect <<'EXPECT'
@@ -156,8 +154,10 @@ set timeout $env(NEMOCLAW_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_TUI_SANDBOX_NAME)
 set capture $env(NEMOCLAW_TUI_CAPTURE)
 set markers $env(NEMOCLAW_TUI_MARKERS)
-set onboarding_pattern $env(NEMOCLAW_TUI_ONBOARDING_PATTERN)
+set first_run_pattern $env(NEMOCLAW_TUI_FIRST_RUN_PATTERN)
+set name_prompt_pattern $env(NEMOCLAW_TUI_NAME_PROMPT_PATTERN)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
+set expect_name_prompt $env(NEMOCLAW_TUI_EXPECT_NAME_PROMPT)
 log_file -a $capture
 
 proc append_marker {markers marker} {
@@ -166,20 +166,75 @@ proc append_marker {markers marker} {
   close $fh
 }
 
+proc submit_agents {markers} {
+  # Type at human cadence so DCode 0.1.34's reactive slash completion processes
+  # the exact command before Enter submits the selected /agents entry.
+  foreach char [split "/agents" ""] {
+    send -- $char
+    after 150
+  }
+  after 500
+  send -- "\r"
+  append_marker $markers "NEMOCLAW_TUI_AGENTS_SUBMITTED"
+}
+
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
-set saw_onboarding 0
+
+# DCode's own onboarding predicate is sampled immediately before launch. This
+# avoids guessing from a short negative observation while imports/first paint
+# are still in flight (which could otherwise type `/agents` into the name field).
+if {$expect_name_prompt eq "1"} {
+  set timeout $env(NEMOCLAW_TUI_TIMEOUT)
+  expect {
+    -nocase -re $name_prompt_pattern {
+      append_marker $markers "$expect_out(0,string)"
+      append_marker $markers "NEMOCLAW_TUI_NAME_PROMPT"
+      puts "\nNEMOCLAW_TUI_NAME_PROMPT"
+      # The prompt copy can render just before its input receives focus. Let the
+      # first frame settle, then submit the empty optional name accepted by 0.1.34.
+      after 500
+      send -- "\r"
+      after 500
+      submit_agents $markers
+    }
+    -nocase -re $first_run_pattern {
+      append_marker $markers "$expect_out(0,string)"
+      append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+      puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+      send -- "\003"
+      exit 24
+    }
+    timeout {
+      append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
+      puts "\nNEMOCLAW_TUI_TIMEOUT"
+      send -- "\003"
+      exit 20
+    }
+    eof {
+      append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
+      puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
+      exit 21
+    }
+  }
+} else {
+  append_marker $markers "NEMOCLAW_TUI_NO_NAME_PROMPT"
+  after 1000
+  submit_agents $markers
+}
+
 set ready_match ""
+set timeout $env(NEMOCLAW_TUI_TIMEOUT)
 expect {
   -nocase -re $ready_pattern {
     set ready_match $expect_out(0,string)
   }
-  -nocase -re $onboarding_pattern {
+  -nocase -re $first_run_pattern {
     append_marker $markers "$expect_out(0,string)"
-    append_marker $markers "NEMOCLAW_TUI_ONBOARDING_SKIPPED"
-    puts "\nNEMOCLAW_TUI_ONBOARDING_SKIPPED"
-    send -- "\033"
-    set saw_onboarding 1
+    append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+    puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+    send -- "\003"
+    exit 24
   }
   timeout {
     append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
@@ -194,28 +249,12 @@ expect {
   }
 }
 
-if {$saw_onboarding} {
-  expect {
-    -nocase -re $ready_pattern {
-      set ready_match $expect_out(0,string)
-    }
-    timeout {
-      append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
-      puts "\nNEMOCLAW_TUI_TIMEOUT"
-      send -- "\003"
-      exit 20
-    }
-    eof {
-      append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
-      puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
-      exit 21
-    }
-  }
-}
-
 append_marker $markers "$ready_match"
 append_marker $markers "NEMOCLAW_TUI_READY"
 puts "\nNEMOCLAW_TUI_READY"
+# Close the Select Agent modal before exercising the idle-app quit path.
+send -- "\033"
+after 500
 # Idle dcode arms quit on the first Ctrl-C and exits on the second.
 send -- "\003"
 after 250
@@ -291,14 +330,15 @@ main() {
     exit 1
   fi
 
-  local probe_output
-  if ! probe_output="$(sandbox_exec 'if test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1; then printf "NEMOCLAW_DCODE_PROBE:deepagents\n"; else printf "NEMOCLAW_DCODE_PROBE:other\n"; fi')"; then
+  local probe_output expect_name_prompt
+  if ! probe_output="$(sandbox_exec 'if test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1; then printf "NEMOCLAW_DCODE_PROBE:deepagents\n"; env -u PYTHONHOME -u PYTHONPATH HOME=/sandbox /opt/venv/bin/python3 -I -c "from deepagents_code.onboarding import should_run_onboarding; print(\"NEMOCLAW_DCODE_ONBOARDING:\" + (\"pending\" if should_run_onboarding() else \"complete\"))"; else printf "NEMOCLAW_DCODE_PROBE:other\n"; fi')"; then
     fail_test "unable to probe sandbox '${SANDBOX_NAME}' for Deep Agents Code markers"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
   fi
   case "$probe_output" in
-    *NEMOCLAW_DCODE_PROBE:deepagents*) ;;
+    *NEMOCLAW_DCODE_PROBE:deepagents*NEMOCLAW_DCODE_ONBOARDING:pending*) expect_name_prompt=1 ;;
+    *NEMOCLAW_DCODE_PROBE:deepagents*NEMOCLAW_DCODE_ONBOARDING:complete*) expect_name_prompt=0 ;;
     *NEMOCLAW_DCODE_PROBE:other*)
       info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
       exit 0
@@ -338,7 +378,7 @@ main() {
 
   local expect_rc
   set +e
-  run_tui_expect "$raw_capture_file" "$marker_capture_file" >"$expect_log_file" 2>&1
+  run_tui_expect "$raw_capture_file" "$marker_capture_file" "$expect_name_prompt" >"$expect_log_file" 2>&1
   expect_rc=$?
   set -e
 
@@ -364,9 +404,9 @@ main() {
   fi
 
   if grep -q "NEMOCLAW_TUI_READY" "$plain_capture_file" && is_tui_ready_capture <"$plain_capture_file"; then
-    pass "dcode TUI rendered a usable startup prompt signature"
+    pass "dcode TUI reached the main composer and opened Select Agent"
   else
-    fail_test "dcode TUI prompt-ready marker missing from capture"
+    fail_test "dcode TUI Select Agent readiness marker missing from capture"
   fi
 
   assert_clean_exit_code "$plain_capture_file"

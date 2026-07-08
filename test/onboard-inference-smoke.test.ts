@@ -105,7 +105,10 @@ process.env.NEMOCLAW_ONBOARD_INFERENCE_SMOKE_E2E = "1";
 process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
 process.env.BROKEN_API_KEY = "test-key";
 
-const { setupInference } = require(${onboardPath});
+const { createSetupInference } = require(${onboardPath});
+const setupInference = createSetupInference({
+  resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
+});
 
 (async () => {
   await setupInference(
@@ -114,6 +117,9 @@ const { setupInference } = require(${onboardPath});
     "compatible-endpoint",
     "https://broken.example.invalid/v1",
     "BROKEN_API_KEY",
+    null,
+    [],
+    { preferredInferenceApi: "openai-completions" },
   );
   console.log(JSON.stringify({ outcome: "resolved", calls }));
 })().catch((error) => {

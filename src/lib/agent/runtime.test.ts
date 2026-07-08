@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDefinition } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
-import { buildRecoveryScript } from "./runtime";
+import { buildRecoveryScript, getRegisteredAgent } from "./runtime";
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
@@ -23,6 +23,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       format: "yaml",
     },
     inferenceProviderOptions: [],
+    mcpCapability: { support: "disabled", reason: "test fixture" },
     stateDirs: [],
     stateFiles: [],
     userManagedFiles: [],
@@ -57,6 +58,31 @@ const hermesAgent = makeAgent({
     envFile: "/sandbox/.hermes/.env",
     format: "yaml",
   },
+});
+
+describe("getRegisteredAgent", () => {
+  it("does not invent an agent when the target registry row is absent or OpenClaw", () => {
+    expect(getRegisteredAgent(null)).toBeNull();
+    expect(getRegisteredAgent({})).toBeNull();
+    expect(getRegisteredAgent({ agent: "openclaw" })).toBeNull();
+  });
+
+  it("loads only the agent named by the supplied registry row", () => {
+    expect(getRegisteredAgent({ agent: "hermes" })?.name).toBe("hermes");
+  });
+
+  it("fails closed when the registered agent definition is unavailable", () => {
+    expect(getRegisteredAgent({ agent: "missing-agent" })).toBeNull();
+  });
+
+  it.each([
+    "../openclaw",
+    "/tmp/agent",
+    "hermes/../openclaw",
+    "hermes\\openclaw",
+  ])("fails closed for path-like persisted agent name %j", (agent) => {
+    expect(getRegisteredAgent({ agent })).toBeNull();
+  });
 });
 
 function extractGatewayProcessPattern(script: string | null): string {

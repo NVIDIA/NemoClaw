@@ -10,6 +10,8 @@ type TavilyEndpoint = {
   port: number;
   protocol: string;
   enforcement: string;
+  access?: string;
+  request_body_credential_rewrite?: boolean;
   rules: Array<{ allow: { method: string; path: string } }>;
   tls?: string;
 };
@@ -17,7 +19,6 @@ type TavilyEndpoint = {
 type TavilyPolicy = {
   endpoints?: TavilyEndpoint[];
   binaries?: Array<{ path: string }>;
-  access?: string;
 };
 
 describe("tavily opt-in preset", () => {
@@ -38,20 +39,30 @@ describe("tavily opt-in preset", () => {
         port: 443,
         protocol: "rest",
         enforcement: "enforce",
+        request_body_credential_rewrite: true,
         rules: [
-          { allow: { method: "GET", path: "/**" } },
-          { allow: { method: "POST", path: "/**" } },
+          { allow: { method: "POST", path: "/search" } },
+          { allow: { method: "POST", path: "/extract" } },
         ],
       },
     ]);
     expect(policy?.binaries).toEqual([
       { path: "/opt/venv/bin/python3*" },
+      { path: "/opt/hermes/.venv/bin/python" },
       { path: "/usr/local/bin/node" },
       { path: "/usr/bin/node" },
       { path: "/usr/local/bin/curl" },
       { path: "/usr/bin/curl" },
     ]);
+    expect(policy?.binaries).not.toEqual(
+      expect.arrayContaining([
+        { path: "/usr/bin/python3*" },
+        { path: "/usr/local/bin/python3*" },
+        { path: "/sandbox/**/bin/python3*" },
+      ]),
+    );
     expect(policy).not.toHaveProperty("access", "full");
+    expect(policy?.endpoints?.[0]).not.toHaveProperty("access");
     expect(policy?.endpoints?.[0]).not.toHaveProperty("tls", "skip");
   });
 });

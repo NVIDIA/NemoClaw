@@ -13,6 +13,11 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     verifyOnboardInferenceSmoke: vi.fn(),
     isNonInteractive: vi.fn(() => false),
     registry: { updateSandbox: vi.fn() },
+    exitProcess: vi.fn((code: number): never => {
+      throw new Error(`EXIT_CALLED:${code}`);
+    }),
+    error: vi.fn(),
+    log: vi.fn(),
     hermesProviderAuth: {
       isHermesProviderRegistered: vi.fn(() => true),
       ensureHermesProviderApiKeyCredentials: vi.fn(() => ({})),

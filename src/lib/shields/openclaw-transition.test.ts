@@ -28,6 +28,7 @@ describe("OpenClaw shields top-config transaction", () => {
   let homeDir: string;
   let shields: ShieldsModule;
   let spies: MockInstance[];
+  let privilegedExecSpy: MockInstance;
   let dockerExecSpy: MockInstance;
   let guardSpy: MockInstance;
   let applyStateSpy: MockInstance;
@@ -83,14 +84,15 @@ describe("OpenClaw shields top-config transaction", () => {
         events.push(`state:restore:${locked ? "locked" : "mutable"}`);
         return [];
       });
+    privilegedExecSpy = vi
+      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
+      .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]);
 
     spies.push(
       vi.spyOn(runner, "run").mockReturnValue({ status: 0 }),
       vi.spyOn(runner, "runCapture").mockReturnValue(""),
       vi.spyOn(config, "resolveAgentConfig").mockImplementation(() => openClawTarget()),
-      vi
-        .spyOn(privilegedExec, "privilegedSandboxExecArgv")
-        .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]),
+      privilegedExecSpy,
       dockerExecSpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
       applyStateSpy,
@@ -218,5 +220,22 @@ describe("OpenClaw shields top-config transaction", () => {
       /recursive unlock failed/,
     );
     expect(events).toEqual(["top:preflight", "state:unlock", "top:lock", "state:restore:locked"]);
+  });
+
+  it("reports a failed mutable top-config transition without falling back to recursive unlock", () => {
+    privilegedExecSpy.mockImplementationOnce(() => {
+      throw new Error("top-config permission repair failed");
+    });
+
+    const result = shields.repairMutableConfigPerms("openclaw");
+
+    expect(result).toEqual({
+      applied: true,
+      verified: false,
+      errors: [expect.stringContaining("top-config permission repair failed")],
+    });
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
+    expect(restoreStateSpy).not.toHaveBeenCalled();
   });
 });

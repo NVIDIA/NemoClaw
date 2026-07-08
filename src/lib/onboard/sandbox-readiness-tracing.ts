@@ -76,15 +76,25 @@ export type CreatedSandboxReadinessResult =
   | { ready: false; reason: "terminal_failure_phase"; failurePhase: string | null }
   | { ready: false; reason: "timeout"; failurePhase: null };
 
-export function waitForSandboxReadyWithTrace(options: {
-  sandboxName: string;
-  attempts: number;
-  delaySeconds: number;
+export interface SandboxReadyWaitDeps {
   runCaptureOpenshell: RunCaptureOpenshell;
   isSandboxReady: (output: string, sandboxName: string) => boolean;
   isLinuxDockerDriverGatewayEnabled: () => boolean;
   sleep: (seconds: number) => void;
-}): boolean {
+}
+
+export interface SandboxReadyWaitOptions extends SandboxReadyWaitDeps {
+  sandboxName: string;
+  attempts: number;
+  delaySeconds: number;
+}
+
+function pollSandboxReady(
+  options: SandboxReadyWaitOptions & {
+    sleepAfterFinalPodPoll?: boolean;
+    trace?: (event: string, attributes: Record<string, unknown>) => void;
+  },
+): boolean {
   const {
     sandboxName,
     attempts,
@@ -94,45 +104,64 @@ export function waitForSandboxReadyWithTrace(options: {
     isLinuxDockerDriverGatewayEnabled,
     sleep,
   } = options;
-  return withSandboxReadinessTrace(sandboxName, { attempts, delay_seconds: delaySeconds }, () => {
-    for (let i = 0; i < attempts; i += 1) {
-      const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      if (isSandboxReady(list, sandboxName)) {
-        addTraceEvent("ready", { attempt: i + 1, source: "sandbox_list" });
-        return true;
-      }
-
-      // Package-managed OpenShell gateways report readiness through
-      // `sandbox list`; legacy Kubernetes gateways may still expose pod state.
-      if (isLinuxDockerDriverGatewayEnabled()) {
-        if (i < attempts - 1) sleep(delaySeconds);
-        continue;
-      }
-      const podPhase = runCaptureOpenshell(
-        [
-          "doctor",
-          "exec",
-          "--",
-          "kubectl",
-          "-n",
-          "openshell",
-          "get",
-          "pod",
-          sandboxName,
-          "-o",
-          "jsonpath={.status.phase}",
-        ],
-        { ignoreError: true },
-      );
-      if (podPhase === "Running") {
-        addTraceEvent("ready", { attempt: i + 1, source: "pod_phase" });
-        return true;
-      }
-      if (i < attempts - 1) sleep(delaySeconds);
+  for (let i = 0; i < attempts; i += 1) {
+    const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+    if (isSandboxReady(list, sandboxName)) {
+      options.trace?.("ready", { attempt: i + 1, source: "sandbox_list" });
+      return true;
     }
-    addTraceEvent("not_ready", { attempts });
-    return false;
-  });
+
+    // Package-managed OpenShell gateways report readiness through
+    // `sandbox list`; legacy Kubernetes gateways may still expose pod state.
+    if (isLinuxDockerDriverGatewayEnabled()) {
+      if (i < attempts - 1) sleep(delaySeconds);
+      continue;
+    }
+    const podPhase = runCaptureOpenshell(
+      [
+        "doctor",
+        "exec",
+        "--",
+        "kubectl",
+        "-n",
+        "openshell",
+        "get",
+        "pod",
+        sandboxName,
+        "-o",
+        "jsonpath={.status.phase}",
+      ],
+      { ignoreError: true },
+    );
+    if (podPhase === "Running") {
+      options.trace?.("ready", { attempt: i + 1, source: "pod_phase" });
+      return true;
+    }
+    if (i < attempts - 1 || options.sleepAfterFinalPodPoll) sleep(delaySeconds);
+  }
+  options.trace?.("not_ready", { attempts });
+  return false;
+}
+
+export function waitForSandboxReadyWithTrace(options: SandboxReadyWaitOptions): boolean {
+  return withSandboxReadinessTrace(
+    options.sandboxName,
+    { attempts: options.attempts, delay_seconds: options.delaySeconds },
+    () => pollSandboxReady({ ...options, trace: addTraceEvent }),
+  );
+}
+
+export function createSandboxReadyWaiter(
+  deps: SandboxReadyWaitDeps,
+): (sandboxName: string, attempts?: number, delaySeconds?: number) => boolean {
+  return (sandboxName, attempts = 10, delaySeconds = 2) =>
+    pollSandboxReady({
+      sandboxName,
+      attempts,
+      delaySeconds,
+      ...deps,
+      sleepAfterFinalPodPoll: true,
+    });
 }
 
 export function waitForCreatedSandboxReadyWithTrace(options: {

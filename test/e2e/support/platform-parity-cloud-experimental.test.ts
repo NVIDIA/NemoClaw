@@ -3,16 +3,30 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const execSandboxMock = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("../../../src/lib/actions/sandbox/exec", () => ({
+  execSandbox: execSandboxMock,
+}));
+
+import SandboxExecCommand from "../../../src/commands/sandbox/exec.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import {
   assertRequiredCloudExperimentalResult,
   buildCloudExperimentalChecksEvidence,
   buildCloudExperimentalCommandEnv,
+  cloudExperimentalCheckTimeoutMs,
 } from "../live/cloud-experimental-checks.ts";
+
+const dcodeTavilyCheck = path.join(
+  process.cwd(),
+  "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+);
 
 function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
   return {
@@ -31,6 +45,165 @@ function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeR
 }
 
 describe("P0-E cloud-experimental parity guardrails", () => {
+  it("skips the destructive fresh re-onboard check outside a Deep Agents sandbox", () => {
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
+    try {
+      fs.writeFileSync(path.join(binDir, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const result = spawnSync(
+        "bash",
+        [
+          path.join(
+            process.cwd(),
+            "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+          ),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+            SANDBOX_NAME: "openclaw-sandbox",
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        "04-deepagents-code-fresh-reonboard: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+    } finally {
+      fs.rmSync(binDir, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
+    await SandboxExecCommand.run(
+      [
+        "deepagents-sandbox",
+        "--",
+        "env",
+        "-u",
+        "ALL_PROXY",
+        "-u",
+        "HTTPS_PROXY",
+        "-u",
+        "HTTP_PROXY",
+        "-u",
+        "all_proxy",
+        "-u",
+        "https_proxy",
+        "-u",
+        "http_proxy",
+        "/opt/venv/bin/python3",
+        "-I",
+        "-c",
+        "pass",
+      ],
+      process.cwd(),
+    );
+
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "deepagents-sandbox",
+      [
+        "env",
+        "-u",
+        "ALL_PROXY",
+        "-u",
+        "HTTPS_PROXY",
+        "-u",
+        "HTTP_PROXY",
+        "-u",
+        "all_proxy",
+        "-u",
+        "https_proxy",
+        "-u",
+        "http_proxy",
+        "/opt/venv/bin/python3",
+        "-I",
+        "-c",
+        "pass",
+      ],
+      { workdir: undefined, tty: null, timeoutSeconds: undefined },
+    );
+  });
+
+  it("routes the live OTLP probe through managed Python and the OpenShell proxy", () => {
+    const script = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      ),
+      "utf8",
+    );
+
+    expect(script).toMatch(
+      /grep -Fq 'CAPTURE_READY:'[\s\S]*COLLECTOR_PORT}\/health[\s\S]*DECOY_PORT}\/health/,
+    );
+    expect(script).toContain("urllib.request.urlopen(request, timeout=10)");
+    expect(script).toContain("except urllib.error.HTTPError as error:");
+    expect(script).toContain('body = error.read(512).decode("utf-8", "replace")');
+    expect(script).not.toContain("urllib.request.ProxyHandler({})");
+    expect(script).not.toContain("os.environ.pop");
+    expect(script).toMatch(/\"\$CLI\" \"\$SANDBOX_NAME\" exec -- \\\n\s+\/opt\/venv\/bin\/python3/);
+    expect(script).not.toContain("env -u ALL_PROXY");
+    expect(script.match(/--noproxy '\*'/g)).toHaveLength(2);
+    expect(script).toContain("/usr/bin/curl --fail-with-body -sS");
+    expect(script).toMatch(
+      /run_deterministic_tool_trace\(\)[\s\S]*"\$CLI" "\$SANDBOX_NAME" exec --[\s\S]*\/opt\/venv\/bin\/python3/,
+    );
+  });
+
+  it("skips the DCode observability probe before host prerequisites on other agents", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-observability-skip-"));
+    try {
+      const invocationLog = path.join(tempDir, "openshell-args.txt");
+      const openshell = path.join(tempDir, "openshell");
+      fs.writeFileSync(
+        openshell,
+        '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$NEMOCLAW_FAKE_OPENSHELL_LOG"\nexit 1\n',
+        { mode: 0o755 },
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          path.join(
+            process.cwd(),
+            "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+          ),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            NEMOCLAW_CLI_BIN: path.join(tempDir, "missing-nemoclaw"),
+            NEMOCLAW_FAKE_OPENSHELL_LOG: invocationLog,
+            PATH: `${tempDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+            REPO: path.join(tempDir, "missing-repo"),
+            SANDBOX_NAME: "openclaw-sandbox",
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain(
+        "11-deepagents-code-observability: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+      expect(fs.readFileSync(invocationLog, "utf8")).toBe(
+        [
+          "sandbox",
+          "exec",
+          "--name",
+          "openclaw-sandbox",
+          "--",
+          "bash",
+          "-c",
+          "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1",
+          "",
+        ].join("\n"),
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("fails required Deep Agents cloud-experimental checks when scripts print SKIP", () => {
     expect(() =>
       assertRequiredCloudExperimentalResult(
@@ -131,20 +304,77 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
-  it("registers executable Deep Agents cloud-experimental checks", () => {
+  it.each([
+    ["BLOCKED:policy denied", "ok", 0, /returns to the default Tavily denial/],
+    ["REACHED:403", "ok", 1, /did not restore the default Tavily denial/],
+    ["BLOCKED:policy denied", "fail", 1, /policy-remove tavily failed/],
+  ])("restores Tavily denial after opt-in (%s/%s)", (fixture, removeFixture, status, expected) => {
+    const result = spawnSync("bash", [dcodeTavilyCheck], {
+      encoding: "utf8",
+      env: {
+        NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
+        NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        SANDBOX_NAME: "deepagents-sandbox",
+      },
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
+    expect(result.stdout).toContain("managed observability state restores after policy-remove");
+  });
+
+  it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
+    const scriptPath = path.join(
+      process.cwd(),
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+    );
+    const result = spawnSync("bash", ["-n", scriptPath], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("registers executable Deep Agents cloud-experimental checks in execution order", () => {
     expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
+      "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
+      "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
       "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+      "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
     ]);
 
     for (const scriptPath of DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS) {
       const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;
       expect(mode & 0o111, `${scriptPath} must be executable`).not.toBe(0);
     }
+  });
+
+  it("gives the destructive fresh re-onboard check its onboarding budget", () => {
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+      ),
+    ).toBe(15 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+      ),
+    ).toBe(180_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      ),
+    ).toBe(8 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      ),
+    ).toBe(35 * 60_000);
   });
 
   it("documents Deep Agents check scripts in generated launch/QA evidence", () => {

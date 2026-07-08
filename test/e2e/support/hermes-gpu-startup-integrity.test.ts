@@ -22,6 +22,7 @@ interface IntegrityFixture {
 }
 
 const roots: string[] = [];
+const MCP_STATE_RECORD = `# nemoclaw-hermes-mcp-state-v1 intended=${"1".repeat(64)} applied=${"2".repeat(64)}`;
 
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -38,7 +39,18 @@ function writeHash(
   envPath: string,
   env: string,
 ): void {
-  fs.writeFileSync(hashPath, `${digest(config)}  ${configPath}\n${digest(env)}  ${envPath}\n`);
+  fs.writeFileSync(
+    hashPath,
+    `${digest(config)}  ${configPath}\n${digest(env)}  ${envPath}\n${MCP_STATE_RECORD}\n`,
+  );
+}
+
+function readHashRecords(hashPath: string): string[] {
+  return fs.readFileSync(hashPath, "utf-8").split("\n").slice(0, -1);
+}
+
+function writeHashRecords(hashPath: string, records: readonly string[]): void {
+  fs.writeFileSync(hashPath, `${records.join("\n")}\n`);
 }
 
 function createFixture(): IntegrityFixture {
@@ -96,7 +108,7 @@ function runProof(fixture: IntegrityFixture, extraEnv: NodeJS.ProcessEnv = {}) {
 }
 
 describe("Hermes managed startup integrity proof", () => {
-  it("accepts a current compatibility hash and one generated API key beyond the strict base", () => {
+  it("accepts canonical file and MCP state records with one generated API key beyond the strict base (#6427)", () => {
     const fixture = createFixture();
     const rawStrictCheck = spawnSync("sha256sum", ["-c", fixture.strictHashPath, "--status"], {
       encoding: "utf-8",
@@ -109,6 +121,68 @@ describe("Hermes managed startup integrity proof", () => {
     const proof = runProof(fixture);
     expect(proof.status, proof.stderr).toBe(0);
     expect(proof.stdout).toBe("OK\n");
+  });
+
+  it("rejects a missing Hermes MCP state record (#6427)", () => {
+    const fixture = createFixture();
+    const [configRecord, envRecord] = readHashRecords(fixture.compatHashPath);
+    writeHashRecords(fixture.compatHashPath, [configRecord!, envRecord!]);
+
+    const proof = runProof(fixture);
+    expect(proof.status).not.toBe(0);
+    expect(proof.stderr).toContain(
+      "Hermes compatibility hash does not contain exactly three records",
+    );
+  });
+
+  it("rejects a malformed Hermes MCP state record (#6427)", () => {
+    const fixture = createFixture();
+    const [configRecord, envRecord] = readHashRecords(fixture.compatHashPath);
+    writeHashRecords(fixture.compatHashPath, [
+      configRecord!,
+      envRecord!,
+      `# nemoclaw-hermes-mcp-state-v1 intended=${"1".repeat(64)} applied=invalid`,
+    ]);
+
+    const proof = runProof(fixture);
+    expect(proof.status).not.toBe(0);
+    expect(proof.stderr).toContain(
+      "Hermes compatibility hash contains an unexpected MCP state record",
+    );
+  });
+
+  it("rejects duplicate Hermes MCP state records (#6427)", () => {
+    const fixture = createFixture();
+    const records = readHashRecords(fixture.compatHashPath);
+    writeHashRecords(fixture.compatHashPath, [...records, MCP_STATE_RECORD]);
+
+    const proof = runProof(fixture);
+    expect(proof.status).not.toBe(0);
+    expect(proof.stderr).toContain(
+      "Hermes compatibility hash does not contain exactly three records",
+    );
+  });
+
+  it("rejects a reordered Hermes MCP state record (#6427)", () => {
+    const fixture = createFixture();
+    const [configRecord, envRecord, stateRecord] = readHashRecords(fixture.compatHashPath);
+    writeHashRecords(fixture.compatHashPath, [stateRecord!, configRecord!, envRecord!]);
+
+    const proof = runProof(fixture);
+    expect(proof.status).not.toBe(0);
+    expect(proof.stderr).toContain("Hermes compatibility hash contains an unexpected file record");
+  });
+
+  it("rejects unexpected records after the Hermes MCP state record (#6427)", () => {
+    const fixture = createFixture();
+    const records = readHashRecords(fixture.compatHashPath);
+    writeHashRecords(fixture.compatHashPath, [...records, "unexpected"]);
+
+    const proof = runProof(fixture);
+    expect(proof.status).not.toBe(0);
+    expect(proof.stderr).toContain(
+      "Hermes compatibility hash does not contain exactly three records",
+    );
   });
 
   it("rejects non-key environment drift even when the compatibility hash accepts it", () => {

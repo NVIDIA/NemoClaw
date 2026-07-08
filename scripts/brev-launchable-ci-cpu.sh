@@ -25,11 +25,14 @@
 #
 # Usage (Brev launchable startup script — one-liner that curls this):
 #   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
+#   bash scripts/brev-launchable-ci-cpu.sh --print-openshell-version  # resolve only
 #
 # Environment overrides:
-#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.72)
-#   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
-#   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
+#   OPENSHELL_VERSION          — OpenShell CLI release tag (default: v0.0.72)
+#   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/dev/auto)
+#   NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL — Required opt-in for the unverified dev channel
+#   NEMOCLAW_REF               — NemoClaw git ref to clone (default: main)
+#   NEMOCLAW_CLONE_DIR         — Where to clone NemoClaw (default: ~/NemoClaw)
 #
 # Related:
 #   - Epic: https://github.com/NVIDIA/NemoClaw/issues/1326
@@ -38,11 +41,8 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.72}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
-TARGET_USER="${SUDO_USER:-$(id -un)}"
-TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
-NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 
 LAUNCH_LOG="${LAUNCH_LOG:-/tmp/launch-plugin.log}"
 SENTINEL="/var/run/nemoclaw-launchable-ready"
@@ -51,7 +51,7 @@ SENTINEL="/var/run/nemoclaw-launchable-ready"
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-# ── Logging ──────────────────────────────────────────────────────────
+# Logging
 mkdir -p "$(dirname "$LAUNCH_LOG")"
 exec > >(tee -a "$LAUNCH_LOG") 2>&1
 
@@ -70,11 +70,32 @@ assert_openshell_version() {
   fi
 }
 
-assert_openshell_version "$OPENSHELL_VERSION"
-if [[ "$OPENSHELL_VERSION" != v* ]]; then
-  OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
+if [ -z "$OPENSHELL_VERSION" ]; then
+  case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
+    dev) OPENSHELL_VERSION="dev" ;;
+    stable | auto) OPENSHELL_VERSION="v0.0.72" ;;
+    *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto" ;;
+  esac
+fi
+if [ "${1:-}" = "--print-openshell-version" ]; then
+  printf '%s\n' "$OPENSHELL_VERSION"
+  exit 0
+fi
+if [[ "$OPENSHELL_VERSION" = "dev" ]]; then
+  if [[ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]]; then
+    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install."
+  fi
+  warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
+else
+  assert_openshell_version "$OPENSHELL_VERSION"
+  if [[ "$OPENSHELL_VERSION" != v* ]]; then
+    OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
+  fi
 fi
 OPENSHELL_VERSION_NO_V="${OPENSHELL_VERSION#v}"
+TARGET_USER="${SUDO_USER:-$(id -un)}"
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 
 # ── Retry helper ─────────────────────────────────────────────────────
 # Usage: retry 3 10 "description" command arg1 arg2
@@ -96,7 +117,7 @@ retry() {
   done
 }
 
-# ── Wait for apt locks ───────────────────────────────────────────────
+# Wait for apt locks.
 # Brev VMs sometimes have unattended-upgrades running at boot.
 wait_for_apt_lock() {
   local max_wait=120 elapsed=0
@@ -177,7 +198,9 @@ install_openshell_cli_release() {
   retry 3 10 "download openshell" \
     curl -fsSL -o "$tmpdir/$asset" \
     "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${asset}"
-  verify_openshell_cli_asset "$tmpdir" "$asset"
+  if [[ "$OPENSHELL_VERSION" != "dev" ]]; then
+    verify_openshell_cli_asset "$tmpdir" "$asset"
+  fi
   tar xzf "$tmpdir/$asset" -C "$tmpdir"
   sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
   rm -rf "$tmpdir"
@@ -185,7 +208,6 @@ install_openshell_cli_release() {
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. System packages
-# ══════════════════════════════════════════════════════════════════════
 # Kill unattended-upgrades immediately — it grabs the apt lock on boot
 # and can block for 60-120s. Irrelevant on an ephemeral CI VM.
 sudo systemctl stop unattended-upgrades 2>/dev/null || true
@@ -199,9 +221,7 @@ retry 3 10 "apt-get install" sudo apt-get install -y -qq \
   ca-certificates curl git jq tar >/dev/null 2>&1
 info "System packages installed"
 
-# ══════════════════════════════════════════════════════════════════════
 # 2. Docker
-# ══════════════════════════════════════════════════════════════════════
 if command -v docker >/dev/null 2>&1; then
   info "Docker already installed"
 else
@@ -218,9 +238,7 @@ sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
 # Docker socket permissions to work around stale group membership.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
-# ══════════════════════════════════════════════════════════════════════
 # 3. Node.js 22
-# ══════════════════════════════════════════════════════════════════════
 node_major=""
 if command -v node >/dev/null 2>&1; then
   node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
@@ -259,9 +277,7 @@ else
   info "Node.js $(node --version) installed"
 fi
 
-# ══════════════════════════════════════════════════════════════════════
 # 4. OpenShell CLI
-# ══════════════════════════════════════════════════════════════════════
 if command -v openshell >/dev/null 2>&1; then
   _installed_ver="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '0.0.0')"
   _pinned_ver="$OPENSHELL_VERSION_NO_V"
@@ -278,9 +294,7 @@ else
   info "OpenShell CLI installed: $(openshell --version 2>&1 || echo unknown)"
 fi
 
-# ══════════════════════════════════════════════════════════════════════
 # 5. Clone NemoClaw and install deps
-# ══════════════════════════════════════════════════════════════════════
 if [[ -d "$NEMOCLAW_CLONE_DIR/.git" ]]; then
   info "NemoClaw repo exists at $NEMOCLAW_CLONE_DIR — refreshing"
   git -C "$NEMOCLAW_CLONE_DIR" fetch origin "$NEMOCLAW_REF"

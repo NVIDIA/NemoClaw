@@ -9,7 +9,7 @@
 name: langchain-deepagents-code
 display_name: "LangChain Deep Agents Code"
 description: "Terminal coding agent built on the Deep Agents SDK"
-version_constraint: ">=0.1.12"
+version_constraint: ">=0.1.34"
 language: python
 license: MIT
 homepage: "https://docs.langchain.com/oss/python/deepagents/code/overview"
@@ -18,7 +18,7 @@ homepage: "https://docs.langchain.com/oss/python/deepagents/code/overview"
 install_method: pip
 binary_path: /usr/local/bin/dcode
 version_command: "dcode --version"
-expected_version: "0.1.12"
+expected_version: "0.1.34"
 version_scheme: semver
 runtime:
   kind: terminal
@@ -27,6 +27,7 @@ runtime:
   smoke_commands:
     - "dcode --version"
     - "test -s /sandbox/.deepagents/config.toml && echo NEMOCLAW_DEEPAGENTS_CONFIG_OK"
+    - 'empty_prompt=; output="$(timeout 10 dcode -n "$empty_prompt" 2>&1)"; status=$?; [ "$status" -eq 2 ] && [ "$output" = "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ] && echo NEMOCLAW_DCODE_EMPTY_PROMPT_OK'
 
 # ── Configuration ───────────────────────────────────────────────
 config:
@@ -46,15 +47,24 @@ state_dirs:
   - agent/skills
 
 # ── Top-level durable state files ───────────────────────────────
-# config.toml is non-secret NemoClaw-generated provider/model configuration.
-# .env and .mcp.json are intentionally omitted because they may contain
-# user-added service credentials; this managed harness disables MCP at runtime.
+# config.toml mixes DCode preferences with NemoClaw-managed model routing.
+# Managed re-onboard restore carries forward only boolean ui.show_scrollbar,
+# ui.show_url_open_toast, and threads.relative_time preferences, plus
+# threads.sort_order when it is updated_at or created_at. Fresh models/update
+# tables and provider metadata remain authoritative. All other backup keys,
+# including ui.theme and behavior-bearing, unknown, or security-sensitive keys,
+# are dropped.
+# .env and user-authored .deepagents/.mcp.json content are intentionally omitted
+# because they may contain service credentials. NemoClaw writes only direct-HTTP
+# bridge endpoint config and OpenShell placeholders to its separate
+# .deepagents/.nemoclaw-mcp.json projection, then restores that projection from
+# the registry after rebuild. The managed projection is reconstructable state,
+# not user-authored durable state.
 state_files:
   - path: config.toml
-  - path: hooks.json
 user_managed_files:
-  - .env
-  - .mcp.json
+  - .deepagents/.env
+  - .deepagents/.mcp.json
 
 device_pairing: false
 
@@ -63,9 +73,15 @@ device_pairing: false
 # inference.local endpoint using Deep Agents Code's OpenAI-compatible provider.
 inference:
   provider_type: openai_compatible
+  default_model: nvidia/nemotron-3-ultra-550b-a55b
   base_url_config_key: "models.providers.openai.base_url"
   model_config_key: "models.default"
   proxy_support: implicit
+
+# ── MCP server support ───────────────────────────────────────────
+mcp:
+  support: bridge
+  adapter: deepagents-config
 
 package_registry:
   hosts:

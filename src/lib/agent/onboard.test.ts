@@ -26,6 +26,10 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       format: "yaml",
     },
     inferenceProviderOptions: [],
+    mcpCapability: {
+      support: "disabled",
+      reason: "test fixture",
+    },
     stateDirs: [],
     stateFiles: [],
     userManagedFiles: [],
@@ -145,10 +149,10 @@ describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
 
   it("prints the optional Hermes web dashboard URL when dashboard mode is enabled", () => {
     process.env.NEMOCLAW_HERMES_DASHBOARD = "1";
-    process.env.NEMOCLAW_HERMES_DASHBOARD_PORT = "9120";
 
     printDashboardUi("sandbox-x", null, apiAgent, {
       note: noteSpy,
+      effectiveDashboardPort: 9120,
       buildControlUiUrls: buildUrlsLoopback,
     });
 
@@ -189,7 +193,7 @@ describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
     expect(noteSpy).not.toHaveBeenCalled();
   });
 
-  it("announces manifest-declared secondary forward_ports alongside the primary dashboard", () => {
+  it("uses the effective Hermes dashboard port while preserving the secondary API (#6277)", () => {
     const hermesShipped = makeAgent({
       name: "hermes",
       displayName: "Hermes Agent",
@@ -207,13 +211,15 @@ describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
 
     printDashboardUi("hermes-box", null, hermesShipped, {
       note: noteSpy,
+      effectiveDashboardPort: 9121,
       buildControlUiUrls: buildUrlsLoopback,
     });
 
     const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
     expect(output).toContain("Hermes Agent Dashboard");
-    expect(output).toContain("Port 18789 must be forwarded before opening this URL.");
-    expect(output).toContain("http://127.0.0.1:18789/");
+    expect(output).toContain("Port 9121 must be forwarded before opening this URL.");
+    expect(output).toContain("http://127.0.0.1:9121/");
+    expect(output).not.toContain("http://127.0.0.1:18789/");
     expect(output).toContain("Hermes Agent OpenAI-compatible API");
     expect(output).toContain("Port 8642 must be forwarded before connecting.");
     expect(output).toContain("http://127.0.0.1:8642/v1");

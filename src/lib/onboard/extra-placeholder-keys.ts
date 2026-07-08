@@ -26,7 +26,9 @@ export interface ExtraPlaceholderKeysResult {
 export function canonicalPlaceholderKeys(): Set<string> {
   const channels = listChannels();
   return new Set<string>(
-    channels.flatMap((c) => getChannelTokenKeys(c)).concat(webSearch.BRAVE_API_KEY_ENV),
+    channels
+      .flatMap((c) => getChannelTokenKeys(c))
+      .concat(webSearch.BRAVE_API_KEY_ENV, webSearch.TAVILY_API_KEY_ENV),
   );
 }
 
@@ -100,7 +102,7 @@ export function registerExtraPlaceholderProviders(
   );
   for (const warning of parsed.warnings) log(warning);
   for (const envKey of parsed.keys) {
-    // Match the brave-search precedence in src/lib/onboard.ts: the credential
+    // Match web-search precedence: the credential
     // store wins so a same-named host env var cannot override an out-of-process
     // credential that the operator has staged through `nemoclaw credentials
     // set`. Collapse the empty-string result from normalizeCredentialValue to

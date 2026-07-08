@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
 import type { BackupResult } from "../state/sandbox";
 import {
   backupSandboxBeforeRecreate,
@@ -40,6 +39,46 @@ describe("backupSandboxBeforeRecreate", () => {
     expect(result.failureKind).toBe("none");
     expect(backupImpl).toHaveBeenCalledWith("my-assistant");
     expect(log).toHaveBeenCalledWith(expect.stringContaining("State backed up"));
+  });
+
+  it("rejects an unmarked custom OpenClaw backup before recreate deletion (#6108)", () => {
+    const errorLog = vi.fn();
+    const result = backupSandboxBeforeRecreate({
+      sandboxName: "my-assistant",
+      sandboxEntry: {
+        name: "my-assistant",
+        agent: "openclaw",
+        fromDockerfile: "/tmp/Dockerfile.custom",
+      },
+      backupImpl: () => makeBackup(),
+      log: vi.fn(),
+      errorLog,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failureKind).toBe("plugin-provenance");
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining("aborting recreate before delete"),
+    );
+  });
+
+  it("rejects an unmarked backup for an orphan custom OpenClaw target (#6108)", () => {
+    const errorLog = vi.fn();
+    const result = backupSandboxBeforeRecreate({
+      sandboxName: "orphan",
+      sandboxEntry: null,
+      requireOpenClawImagePluginProvenance: true,
+      backupImpl: () => makeBackup(),
+      log: vi.fn(),
+      errorLog,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failureKind).toBe("plugin-provenance");
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("new name"));
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_RECREATE_WITHOUT_BACKUP=1"),
+    );
   });
 
   it("returns ok:false with failureKind=partial when some entries failed", () => {
@@ -83,6 +122,7 @@ describe("backupSandboxBeforeRecreate", () => {
       failedDirs: ["workspace"],
       backedUpFiles: [],
       failedFiles: [],
+      error: "Pre-backup audit rejected an unsafe symlink",
     });
     const errorLog = vi.fn();
     const result = backupSandboxBeforeRecreate({
@@ -95,6 +135,7 @@ describe("backupSandboxBeforeRecreate", () => {
     expect(result.failureKind).toBe("empty");
     expect(result.backup).toBeNull();
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("aborting recreate"));
+    expect(errorLog).toHaveBeenCalledWith("  Reason: Pre-backup audit rejected an unsafe symlink");
   });
 
   it("returns ok:false with failureKind=threw when backup throws", () => {

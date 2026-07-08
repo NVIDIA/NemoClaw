@@ -35,6 +35,26 @@ const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["E2E", "ADVISOR", "API", "KEY"].join("_");
+const CLOUD_ONBOARD_E2E_RECOMMENDATION: AdvisorTest = {
+  id: "cloud-onboard",
+  workflow: "e2e.yaml",
+  job: "cloud-onboard",
+  script: "test/e2e/live/cloud-onboard.test.ts",
+  cost: "high",
+  runner: "ubuntu-latest",
+  reason:
+    "Changed onboard, trace timing, scorecard, or E2E workflow code can affect cloud onboard wall-clock behavior and should refresh the trusted cloud-onboard trace timing signal.",
+};
+const CLOUD_ONBOARD_E2E_PATTERNS: readonly RegExp[] = [
+  /^src\/lib\/onboard(?:\.ts|\/)/,
+  /^src\/lib\/trace\.ts$/,
+  /^scripts\/scorecard\/analyze-trace-timing\.ts$/,
+  /^ci\/onboard-performance-budget\.json$/,
+  /^scripts\/e2e\/sanitize-trace-timing\.py$/,
+  /^\.github\/actions\/(?:prepare-e2e|upload-e2e-artifacts)\//,
+  /^\.github\/workflows\/e2e\.yaml$/,
+  /^test\/e2e\/live\/cloud-onboard\.test\.ts$/,
+];
 
 type ArtifactPaths = AdvisorArtifactPaths;
 
@@ -334,7 +354,35 @@ function normalizeAdvisorResult(result: unknown, metadata: AdvisorMetadata): Adv
     normalized.dispatchHint = dispatchHint;
   }
 
-  return normalized;
+  return applyDeterministicRecommendations(normalized);
+}
+
+export function applyDeterministicRecommendations(result: AdvisorResult): AdvisorResult {
+  if (!requiresCloudOnboardE2e(result.changedFiles)) return result;
+  if (result.requiredTests.some(isCloudOnboardE2eRecommendation)) {
+    return result;
+  }
+
+  return {
+    ...result,
+    requiredTests: [...result.requiredTests, CLOUD_ONBOARD_E2E_RECOMMENDATION],
+    noE2eReason: null,
+    confidence: result.confidence === "low" ? "medium" : result.confidence,
+  };
+}
+
+function isCloudOnboardE2eRecommendation(test: AdvisorTest): boolean {
+  return (
+    test.id === CLOUD_ONBOARD_E2E_RECOMMENDATION.id ||
+    (test.workflow === CLOUD_ONBOARD_E2E_RECOMMENDATION.workflow &&
+      test.job === CLOUD_ONBOARD_E2E_RECOMMENDATION.job)
+  );
+}
+
+export function requiresCloudOnboardE2e(changedFiles: string[]): boolean {
+  return changedFiles.some((file) =>
+    CLOUD_ONBOARD_E2E_PATTERNS.some((pattern) => pattern.test(file)),
+  );
 }
 
 function sanitizeDomains(value: unknown): AdvisorDomain[] {

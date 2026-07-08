@@ -43,8 +43,8 @@ function makeWrapperFixture(tempDir: string): { wrapperPath: string; ranMarker: 
   );
   fixture = replaceOrThrow(
     fixture,
-    "exec python3 -m deepagents_code",
-    `touch "${ranMarker}"; exit 0; : python3 -m deepagents_code`,
+    "exec /opt/venv/bin/python3 -I -m deepagents_code",
+    `touch "${ranMarker}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
   );
 
   fs.writeFileSync(dcodeEnvFile, "", "utf8");

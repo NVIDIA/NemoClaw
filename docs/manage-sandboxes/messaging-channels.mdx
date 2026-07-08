@@ -247,8 +247,10 @@ For Telegram, Discord, Slack, and Microsoft Teams, `channels add` also checks th
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `TELEGRAM_GROUP_POLICY`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, `SLACK_ALLOWED_CHANNELS`, `TEAMS_ALLOWED_USERS`, `MSTEAMS_PORT`, or `TEAMS_REQUIRE_MENTION`, export them before the rebuild starts.
 You can omit `TELEGRAM_REQUIRE_MENTION` and `DISCORD_REQUIRE_MENTION` when you want the default mention-only mode.
 You can omit `TELEGRAM_GROUP_POLICY` when you want OpenClaw Telegram group access to stay open.
-Telegram Bot API `sendMessage` calls prove outbound delivery from the bot; to test inbound agent replies, send a message from the Telegram client as an allowed user.
-For a repeatable live Telegram reply check, run `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/messaging-providers.test.ts --silent=false --reporter=default` with `TELEGRAM_BOT_TOKEN_REAL`, `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`.
+Telegram Bot API `sendMessage` calls prove outbound delivery from the bot; to test inbound agent replies, send a message from the Telegram client as an allowed user and inspect the gateway log for the inbound agent turn and outbound reply.
+For a repeatable installed-runtime outbound check, run `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/messaging-providers.test.ts --silent=false --reporter=default` with `NVIDIA_INFERENCE_API_KEY` set.
+The lane imports the installed OpenClaw Telegram `runtime-api.js`, calls `sendMessageTelegram` through the OpenShell credential rewrite path against a host-side fake Telegram API, and verifies the captured send has no unresolved placeholder.
+Set `TELEGRAM_BOT_TOKEN_REAL` and `TELEGRAM_CHAT_ID_E2E` only when you also want the optional real outbound send; this lane does not automate an interactive inbound reply.
 If you defer the rebuild, apply the change later:
 
 ```bash
@@ -369,6 +371,9 @@ For Slack, NemoClaw checks both the bot token and the Socket Mode app token so d
 For Microsoft Teams, NemoClaw also checks the local webhook port because active Teams sandboxes cannot share the same forwarded port.
 If NemoClaw only has legacy channel metadata and cannot compare credential hashes, it keeps the conservative warning.
 Re-run `channels add <channel>` with the intended token to refresh the stored non-secret hash.
+Before any rebuild, including one started by `channels add` or `channels start`, NemoClaw rechecks the staged messaging plan against other registered sandboxes.
+A credential or channel-resource conflict aborts before backup or deletion and leaves the original sandbox registered and intact.
+Resolve the conflict, then rerun the operation.
 `$$nemoclaw status` reports cross-sandbox overlaps so you can resolve duplicates before messages start dropping.
 
 ## Stop Messaging Delivery

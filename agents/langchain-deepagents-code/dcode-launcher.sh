@@ -1,14 +1,37 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Proxy-normalizing launcher for every managed Deep Agents Code entry point.
 
 set -euo pipefail
+unset BASH_ENV ENV
+while IFS= read -r _nemoclaw_auto_approval_env; do
+  unset "$_nemoclaw_auto_approval_env"
+done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
+unset _nemoclaw_auto_approval_env
 
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
+readonly MANAGED_EXEC_LAUNCHER="/usr/local/lib/nemoclaw/dcode-managed-exec"
+readonly MANAGED_OBSERVABILITY_MARKER="/tmp/nemoclaw-observability-enabled"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Invalid state: raw OpenShell exec processes do not inherit the sandbox
+# entrypoint's environment, so an opted-in direct dcode exec can lose tracing.
+# Source boundary: start.sh materializes only the credential-free enable bit;
+# this launcher recovers it only from a regular, non-symlink marker.
+# Source-fix constraint: NemoClaw cannot make OpenShell preserve entrypoint env.
+# Regression: the proxy-launcher tests cover exact values and unsafe file types.
+# Removal condition: OpenShell propagates the bit to every exec/login process.
+# The marker is convenience state, not an authorization boundary; the
+# host-selected network policy controls whether local OTLP egress exists.
+unset NEMOCLAW_OBSERVABILITY
+if [ -f "$MANAGED_OBSERVABILITY_MARKER" ] \
+  && [ ! -L "$MANAGED_OBSERVABILITY_MARKER" ] \
+  && [ "$(<"$MANAGED_OBSERVABILITY_MARKER")" = "1" ]; then
+  export NEMOCLAW_OBSERVABILITY=1
+fi
 
 # Raw OpenShell exec processes do not inherit the entrypoint's environment or
 # source shell startup files. Rebuild the proxy-only dcode contract here so a
@@ -59,7 +82,7 @@ PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 # Generic proxy fallbacks are outside the managed dcode contract and may carry
 # host credentials even after the scheme-specific proxy values are normalized.
-unset ALL_PROXY all_proxy
+unset ALL_PROXY all_proxy OPENAI_PROXY
 
 # This validator is applied only to image-baked values that onboard writes
 # into root-owned files at build time; runtime env is explicitly unset above
@@ -96,5 +119,17 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+
+# Diagnostics need this launcher's image-baked proxy normalization and optional
+# observability bit, but must not invoke the stateful sandbox entrypoint. Keep
+# the mode bound to a separate root-owned regular-file install so older images
+# fail before launching anything, then exact-exec without shell evaluation.
+if [ "$0" = "$MANAGED_EXEC_LAUNCHER" ]; then
+  if [ "$#" -eq 0 ]; then
+    printf '%s\n' 'dcode-managed-exec requires a command.' >&2
+    exit 64
+  fi
+  exec "$@"
+fi
 
 exec "$MANAGED_DCODE_WRAPPER" "$@"

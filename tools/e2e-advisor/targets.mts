@@ -148,9 +148,7 @@ async function main(): Promise<void> {
 
   fs.mkdirSync(outDir, { recursive: true });
 
-  logProgress(
-    `Starting target advisor analysis: base=${baseRef} head=${headRef} outDir=${outDir}`,
-  );
+  logProgress(`Starting target advisor analysis: base=${baseRef} head=${headRef} outDir=${outDir}`);
   const schema = readJson<AdvisorSchema>(schemaPath);
   const changedFiles = getChangedFiles(baseRef, headRef);
   logProgress(`Detected ${changedFiles.length} changed file(s)`);
@@ -503,9 +501,7 @@ export function extractFreeStandingE2eJobs(workflowText: string): E2eWorkflowJob
     const body = bodyLines.join("\n");
     if (!body.includes("inputs.jobs") || !body.includes(`,${id},`)) continue;
     const liveTestFiles = uniqueStrings(
-      [...body.matchAll(/test\/e2e\/live\/[A-Za-z0-9._-]+\.test\.ts/g)].map(
-        (item) => item[0],
-      ),
+      [...body.matchAll(/test\/e2e\/live\/[A-Za-z0-9._-]+\.test\.ts/g)].map((item) => item[0]),
     ).filter((file) => file !== REGISTRY_LIVE_ENTRYPOINT);
     if (liveTestFiles.length === 0) continue;
     jobs.push({ id, liveTestFiles });
@@ -537,11 +533,7 @@ function shouldSuppressFanoutForUnwiredLiveTests(
 }
 
 function isE2eTargetRelevantFile(file: string): boolean {
-  return (
-    file === E2E_WORKFLOW_PATH ||
-    file.startsWith("test/e2e/") ||
-    file.startsWith("tools/e2e")
-  );
+  return file === E2E_WORKFLOW_PATH || file.startsWith("test/e2e/") || file.startsWith("tools/e2e");
 }
 
 function missingFreeStandingLiveWiringReason(files: string[]): string {

@@ -438,19 +438,22 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
     }
   });
 
-  it("allows whitelisted npm symlinks baked into base image (extensions/openclaw-weixin/node_modules/openclaw)", async () => {
+  it.each([
+    "weather",
+    "slack",
+  ])("allows the %s OpenClaw extension peer link with the exact global package target", async (extensionName) => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-extract-"));
     try {
       const targetDir = path.join(workDir, "backup");
       fs.mkdirSync(targetDir, { recursive: true });
 
-      // The WeChat plugin install symlinks `node_modules/openclaw` to the
-      // global npm install. Target escapes both the archive and /sandbox/,
-      // so it would be rejected without the whitelist.
+      // Archive-installed plugins symlink their OpenClaw peer dependency to
+      // the global package. The exact target escapes both the archive and
+      // /sandbox/, so it requires the narrow extension peer-link exception.
       const tar = buildTar([
         {
-          path: "extensions/openclaw-weixin/node_modules/openclaw",
+          path: `extensions/${extensionName}/node_modules/openclaw`,
           type: "2",
           linkTarget: "/usr/local/lib/node_modules/openclaw",
         },
@@ -463,12 +466,25 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
     }
   });
 
-  it("rejects whitelisted source path when the symlink target is tampered", async () => {
-    // The path matches AUDIT_SYMLINK_WHITELIST, but the linkTarget points to
-    // /etc/passwd instead of the expected /usr/local/lib/node_modules/openclaw.
-    // Source-only matching would let a compromised sandbox repoint a known npm
-    // symlink at arbitrary host paths; the post-extraction audit must compare
-    // both fields.
+  it.each([
+    ["a tampered weather target", "extensions/weather/node_modules/openclaw", "/etc/passwd"],
+    ["a tampered slack target", "extensions/slack/node_modules/openclaw", "/etc/passwd"],
+    [
+      "a glob basename",
+      "extensions/*/node_modules/openclaw",
+      "/usr/local/lib/node_modules/openclaw",
+    ],
+    [
+      "a nested extension path",
+      "extensions/nested/weather/node_modules/openclaw",
+      "/usr/local/lib/node_modules/openclaw",
+    ],
+    [
+      "a noncanonical target",
+      "extensions/weather/node_modules/openclaw",
+      "/usr/local/lib/node_modules/openclaw/",
+    ],
+  ])("rejects an OpenClaw extension peer link with %s", async (_case, source, target) => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
     try {
@@ -477,9 +493,9 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
 
       const tar = buildTar([
         {
-          path: "extensions/openclaw-weixin/node_modules/openclaw",
+          path: source,
           type: "2",
-          linkTarget: "/etc/passwd",
+          linkTarget: target,
         },
       ]);
 

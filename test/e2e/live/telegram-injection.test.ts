@@ -4,7 +4,6 @@
 import path from "node:path";
 
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   base64,
   bestEffort,
@@ -192,183 +191,175 @@ async function assertSandboxProcessTableDoesNotExposeSecret(
   expect(result.stdout.trim(), resultText(result)).toBe("SECRET_ABSENT");
 }
 
-test.skipIf(!shouldRunLiveE2E())(
-  "Telegram bridge-style message handling treats shell metacharacters as data",
-  { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    const env = phase6Env({
-      sandboxName: SANDBOX_NAME,
-      agent: "openclaw",
-      apiKey,
+test("Telegram bridge-style message handling treats shell metacharacters as data", {
+  timeout: LIVE_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+  const env = phase6Env({
+    sandboxName: SANDBOX_NAME,
+    agent: "openclaw",
+    apiKey,
+  });
+  const redactions = redactionValues(apiKey);
+
+  await artifacts.target.declare({
+    id: "telegram-injection",
+    boundary:
+      "install.sh OpenClaw sandbox + OpenShell sandbox exec and ssh-config stdin paths + process table and validateName probes",
+    sandboxName: SANDBOX_NAME,
+    contracts: [
+      "command substitution payloads are literal input through exec and ssh-config paths and do not create files",
+      "parameter expansion does not leak NVIDIA_INFERENCE_API_KEY",
+      "host and sandbox process tables do not expose the API key after setup",
+      "invalid sandbox names with shell metacharacters are rejected by validateName",
+      "normal messages and benign special characters still pass through",
+    ],
+  });
+
+  cleanup.add(`destroy telegram injection sandbox ${SANDBOX_NAME}`, () =>
+    cleanupSandbox(host, SANDBOX_NAME, env, redactions, "cleanup-telegram-injection"),
+  );
+  await cleanupSandbox(host, SANDBOX_NAME, env, redactions, "preclean-telegram-injection");
+
+  const docker = await dockerInfo(host, env);
+  expect(docker.exitCode, resultText(docker)).toBe(0);
+
+  const install = await installSandboxOrSkipOnRateLimit(
+    host,
+    env,
+    redactions,
+    "install-telegram-injection",
+    skip,
+    "NVIDIA endpoint validation was rate-limited before Telegram injection assertions ran",
+  );
+  expectExitZero(install, "install.sh --non-interactive");
+  await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-telegram-injection");
+
+  for (const [label, marker, payload] of [
+    [
+      "command-substitution",
+      "/tmp/injection-proof-t1",
+      "$(touch /tmp/injection-proof-t1 && echo INJECTED)",
+    ],
+    ["backtick-substitution", "/tmp/injection-proof-t2", "`touch /tmp/injection-proof-t2`"],
+    [
+      "single-quote-breakout",
+      "/tmp/injection-proof-t3",
+      "'; touch /tmp/injection-proof-t3; echo '",
+    ],
+  ] as const) {
+    await sandboxSh(sandbox, SANDBOX_NAME, `rm -f ${shellQuote(marker)}`, {
+      artifactName: `remove-${label}-marker`,
+      redactionValues: redactions,
     });
-    const redactions = redactionValues(apiKey);
-
-    await artifacts.writeJson("target.json", {
-      id: "telegram-injection",
-      boundary:
-        "install.sh OpenClaw sandbox + OpenShell sandbox exec and ssh-config stdin paths + process table and validateName probes",
-      sandboxName: SANDBOX_NAME,
-      contracts: [
-        "command substitution payloads are literal input through exec and ssh-config paths and do not create files",
-        "parameter expansion does not leak NVIDIA_INFERENCE_API_KEY",
-        "host and sandbox process tables do not expose the API key after setup",
-        "invalid sandbox names with shell metacharacters are rejected by validateName",
-        "normal messages and benign special characters still pass through",
-      ],
-    });
-
-    cleanup.add(`destroy telegram injection sandbox ${SANDBOX_NAME}`, () =>
-      cleanupSandbox(host, SANDBOX_NAME, env, redactions, "cleanup-telegram-injection"),
-    );
-    await cleanupSandbox(host, SANDBOX_NAME, env, redactions, "preclean-telegram-injection");
-
-    const docker = await dockerInfo(host, env);
-    expect(docker.exitCode, resultText(docker)).toBe(0);
-
-    const install = await installSandboxOrSkipOnRateLimit(
+    const send = await sendPayloadViaSandboxStdin(
       host,
-      env,
-      redactions,
-      "install-telegram-injection",
-      skip,
-      "NVIDIA endpoint validation was rate-limited before Telegram injection assertions ran",
-    );
-    expectExitZero(install, "install.sh --non-interactive");
-    await expectSandboxReady(
-      host,
-      SANDBOX_NAME,
-      env,
-      redactions,
-      "sandbox-list-telegram-injection",
-    );
-
-    for (const [label, marker, payload] of [
-      [
-        "command-substitution",
-        "/tmp/injection-proof-t1",
-        "$(touch /tmp/injection-proof-t1 && echo INJECTED)",
-      ],
-      ["backtick-substitution", "/tmp/injection-proof-t2", "`touch /tmp/injection-proof-t2`"],
-      [
-        "single-quote-breakout",
-        "/tmp/injection-proof-t3",
-        "'; touch /tmp/injection-proof-t3; echo '",
-      ],
-    ] as const) {
-      await sandboxSh(sandbox, SANDBOX_NAME, `rm -f ${shellQuote(marker)}`, {
-        artifactName: `remove-${label}-marker`,
-        redactionValues: redactions,
-      });
-      const send = await sendPayloadViaSandboxStdin(
-        host,
-        payload,
-        'MSG=$(cat) && echo "Received: $MSG"',
-        env,
-        `send-${label}-payload`,
-        redactions,
-      );
-      expect(send.exitCode, resultText(send)).toBe(0);
-      const markerCheck = await sandboxSh(
-        sandbox,
-        SANDBOX_NAME,
-        `test -f ${shellQuote(marker)} && echo EXPLOITED || echo SAFE`,
-        { artifactName: `check-${label}-marker`, redactionValues: redactions },
-      );
-      expectExitZero(markerCheck, `check ${label} marker`);
-      expect(markerCheck.stdout.trim(), resultText(markerCheck)).toBe("SAFE");
-
-      const sshMarker = marker.replace("/tmp/injection-proof-", "/tmp/injection-proof-ssh-");
-      await sandboxSh(sandbox, SANDBOX_NAME, `rm -f ${shellQuote(sshMarker)}`, {
-        artifactName: `remove-${label}-ssh-marker`,
-        redactionValues: redactions,
-      });
-      const sshPayload = payload.replace(marker, sshMarker);
-      const sshSend = await sendPayloadViaOpenShellSshStdin(
-        host,
-        sshPayload,
-        'MSG=$(cat) && echo "Received: $MSG"',
-        env,
-        `send-${label}-ssh-payload`,
-        redactions,
-      );
-      expect(sshSend.exitCode, resultText(sshSend)).toBe(0);
-      const sshMarkerCheck = await sandboxSh(
-        sandbox,
-        SANDBOX_NAME,
-        `test -f ${shellQuote(sshMarker)} && echo EXPLOITED || echo SAFE`,
-        {
-          artifactName: `check-${label}-ssh-marker`,
-          redactionValues: redactions,
-        },
-      );
-      expectExitZero(sshMarkerCheck, `check ${label} ssh marker`);
-      expect(sshMarkerCheck.stdout.trim(), resultText(sshMarkerCheck)).toBe("SAFE");
-    }
-
-    await assertParameterPayloadStaysLiteral(host, env, redactions);
-    await assertSshParameterPayloadStaysLiteral(host, env, redactions);
-    await assertHostProcessTableDoesNotExposeSecret(host, env, redactions);
-    await assertSandboxProcessTableDoesNotExposeSecret(host, env, redactions);
-
-    const invalidNames = [
-      "foo;rm -rf /",
-      "--help",
-      "$(whoami)",
-      "`id`",
-      "foo bar",
-      "../etc/passwd",
-      "UPPERCASE",
-    ];
-    for (const invalidName of invalidNames) {
-      const validation = await host.command(
-        "node",
-        [
-          "-e",
-          `const { validateName } = require(${JSON.stringify(path.join(REPO_ROOT, "dist/lib/runner"))});\ntry { validateName(process.argv[1], "SANDBOX_NAME"); console.log("ACCEPTED"); } catch (error) { console.log("REJECTED:" + error.message); }`,
-          "--",
-          invalidName,
-        ],
-        {
-          artifactName: `validate-name-${invalidName.replace(/[^a-z0-9]+/gi, "-")}`,
-          env,
-          redactionValues: redactions,
-          timeoutMs: 30_000,
-        },
-      );
-      expectExitZero(validation, `validateName ${invalidName}`);
-      expect(validation.stdout, invalidName).toContain("REJECTED");
-    }
-
-    const normal = await sendPayloadViaSandboxStdin(
-      host,
-      "Hello, what is two plus two?",
+      payload,
       'MSG=$(cat) && echo "Received: $MSG"',
       env,
-      "normal-message-passthrough",
+      `send-${label}-payload`,
       redactions,
     );
-    expect(normal.exitCode, resultText(normal)).toBe(0);
-    expect(resultText(normal)).toContain("Hello, what is two plus two?");
+    expect(send.exitCode, resultText(send)).toBe(0);
+    const markerCheck = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      `test -f ${shellQuote(marker)} && echo EXPLOITED || echo SAFE`,
+      { artifactName: `check-${label}-marker`, redactionValues: redactions },
+    );
+    expectExitZero(markerCheck, `check ${label} marker`);
+    expect(markerCheck.stdout.trim(), resultText(markerCheck)).toBe("SAFE");
 
-    const special = await sendPayloadViaSandboxStdin(
+    const sshMarker = marker.replace("/tmp/injection-proof-", "/tmp/injection-proof-ssh-");
+    await sandboxSh(sandbox, SANDBOX_NAME, `rm -f ${shellQuote(sshMarker)}`, {
+      artifactName: `remove-${label}-ssh-marker`,
+      redactionValues: redactions,
+    });
+    const sshPayload = payload.replace(marker, sshMarker);
+    const sshSend = await sendPayloadViaOpenShellSshStdin(
       host,
-      "What's the meaning of life? It costs $5 & is 100% free!",
-      'MSG=$(cat) && echo "$MSG"',
+      sshPayload,
+      'MSG=$(cat) && echo "Received: $MSG"',
       env,
-      "special-message-passthrough",
+      `send-${label}-ssh-payload`,
       redactions,
     );
-    expect(special.exitCode, resultText(special)).toBe(0);
-    expect(resultText(special).trim()).not.toBe("");
+    expect(sshSend.exitCode, resultText(sshSend)).toBe(0);
+    const sshMarkerCheck = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      `test -f ${shellQuote(sshMarker)} && echo EXPLOITED || echo SAFE`,
+      {
+        artifactName: `check-${label}-ssh-marker`,
+        redactionValues: redactions,
+      },
+    );
+    expectExitZero(sshMarkerCheck, `check ${label} ssh marker`);
+    expect(sshMarkerCheck.stdout.trim(), resultText(sshMarkerCheck)).toBe("SAFE");
+  }
 
-    await bestEffort(() =>
-      host.command("node", [CLI, SANDBOX_NAME, "status"], {
-        artifactName: "post-assert-status-telegram-injection",
+  await assertParameterPayloadStaysLiteral(host, env, redactions);
+  await assertSshParameterPayloadStaysLiteral(host, env, redactions);
+  await assertHostProcessTableDoesNotExposeSecret(host, env, redactions);
+  await assertSandboxProcessTableDoesNotExposeSecret(host, env, redactions);
+
+  const invalidNames = [
+    "foo;rm -rf /",
+    "--help",
+    "$(whoami)",
+    "`id`",
+    "foo bar",
+    "../etc/passwd",
+    "UPPERCASE",
+  ];
+  for (const invalidName of invalidNames) {
+    const validation = await host.command(
+      "node",
+      [
+        "-e",
+        `const { validateName } = require(${JSON.stringify(path.join(REPO_ROOT, "dist/lib/runner"))});\ntry { validateName(process.argv[1], "SANDBOX_NAME"); console.log("ACCEPTED"); } catch (error) { console.log("REJECTED:" + error.message); }`,
+        "--",
+        invalidName,
+      ],
+      {
+        artifactName: `validate-name-${invalidName.replace(/[^a-z0-9]+/gi, "-")}`,
         env,
         redactionValues: redactions,
-        timeoutMs: 60_000,
-      }),
+        timeoutMs: 30_000,
+      },
     );
-  },
-);
+    expectExitZero(validation, `validateName ${invalidName}`);
+    expect(validation.stdout, invalidName).toContain("REJECTED");
+  }
+
+  const normal = await sendPayloadViaSandboxStdin(
+    host,
+    "Hello, what is two plus two?",
+    'MSG=$(cat) && echo "Received: $MSG"',
+    env,
+    "normal-message-passthrough",
+    redactions,
+  );
+  expect(normal.exitCode, resultText(normal)).toBe(0);
+  expect(resultText(normal)).toContain("Hello, what is two plus two?");
+
+  const special = await sendPayloadViaSandboxStdin(
+    host,
+    "What's the meaning of life? It costs $5 & is 100% free!",
+    'MSG=$(cat) && echo "$MSG"',
+    env,
+    "special-message-passthrough",
+    redactions,
+  );
+  expect(special.exitCode, resultText(special)).toBe(0);
+  expect(resultText(special).trim()).not.toBe("");
+
+  await bestEffort(() =>
+    host.command("node", [CLI, SANDBOX_NAME, "status"], {
+      artifactName: "post-assert-status-telegram-injection",
+      env,
+      redactionValues: redactions,
+      timeoutMs: 60_000,
+    }),
+  );
+});

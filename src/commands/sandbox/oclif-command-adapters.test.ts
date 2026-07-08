@@ -118,15 +118,37 @@ describe("sandbox oclif command adapters", () => {
     try {
       await ConnectCliCommand.run(["alpha", "--probe-only"], rootDir);
       await DestroyCliCommand.run(["alpha", "--yes"], rootDir);
-      await RebuildCliCommand.run(["alpha", "--force", "--verbose"], rootDir);
+      await RebuildCliCommand.run(
+        [
+          "alpha",
+          "--force",
+          "--verbose",
+          "--tool-disclosure",
+          "direct",
+          "--dcode-auto-approval",
+          "thread-opt-in",
+        ],
+        rootDir,
+      );
+      await RebuildCliCommand.run(["dcode", "--yes", "--no-observability"], rootDir);
       await GatewayRestartCliCommand.run(["alpha", "--quiet"], rootDir);
 
       expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
       expect(mocks.destroySandbox).toHaveBeenCalledWith("alpha", { force: false, yes: true });
       expect(mocks.rebuildSandbox).toHaveBeenCalledWith("alpha", {
+        dcodeAutoApprovalMode: "thread-opt-in",
         force: true,
+        toolDisclosure: "direct",
         verbose: true,
         yes: false,
+      });
+      expect(mocks.rebuildSandbox).toHaveBeenCalledWith("dcode", {
+        dcodeAutoApprovalMode: undefined,
+        force: false,
+        observabilityEnabled: false,
+        toolDisclosure: undefined,
+        verbose: false,
+        yes: true,
       });
       expect(mocks.restartSandboxGateway).toHaveBeenCalledWith("alpha", { quiet: true });
     } finally {
@@ -135,6 +157,28 @@ describe("sandbox oclif command adapters", () => {
       } else {
         process.env.NEMOCLAW_CLEANUP_GATEWAY = originalCleanupGatewayEnv;
       }
+    }
+  });
+
+  it("rejects the removed connect permission bypass before dispatch", async () => {
+    const previousExitCode = process.exitCode;
+    const lines: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    process.exitCode = undefined;
+
+    try {
+      await ConnectCliCommand.run(["alpha", "--dangerously-skip-permissions"], rootDir);
+
+      expect(lines.join("\n")).toContain(
+        "--dangerously-skip-permissions was removed; use shields commands instead.",
+      );
+      expect(process.exitCode).toBe(1);
+      expect(mocks.connectSandbox).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      process.exitCode = previousExitCode;
     }
   });
 
@@ -203,6 +247,9 @@ describe("sandbox oclif command adapters", () => {
     expect(RecoverCliCommand.summary).not.toMatch(/^Restart\b/);
     expect(RebuildCliCommand.id).toBe("sandbox:rebuild");
     expect(usage(RebuildCliCommand)).toContain("[--yes|-y|--force]");
+    expect(usage(RebuildCliCommand)).toContain("[--tool-disclosure <progressive|direct>]");
+    expect(usage(RebuildCliCommand)).toContain("[--dcode-auto-approval <disabled|thread-opt-in>]");
+    expect(usage(RebuildCliCommand)).toContain("[--observability|--no-observability]");
     expect(SandboxPolicyListCommand.id).toBe("sandbox:policy:list");
     expect(SandboxChannelsListCommand.id).toBe("sandbox:channels:list");
     expect(SandboxConfigGetCommand.id).toBe("sandbox:config:get");
@@ -260,9 +307,37 @@ describe("sandbox oclif command adapters", () => {
       timeout: "5m",
       reason: "debugging",
       policy: "permissive",
+      throwOnError: true,
     });
-    expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha");
+    expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha", { throwOnError: true });
     expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha");
+  });
+
+  it("sets a nonzero JSON exit when doctor reports inference.local failure (#6192)", async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    mocks.runSandboxDoctor.mockResolvedValueOnce({
+      schemaVersion: 1,
+      sandbox: "alpha",
+      status: "fail",
+      failed: 1,
+      warnings: 0,
+      checks: [
+        {
+          group: "Inference",
+          label: "Inference route (gateway)",
+          status: "fail",
+          detail: "Inference gateway returned HTTP 503",
+        },
+      ],
+    });
+
+    try {
+      await SandboxDoctorCliCommand.run(["alpha", "--json"], rootDir);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it("keeps doctor --json stdout clean while diagnostics recovery prints progress", async () => {

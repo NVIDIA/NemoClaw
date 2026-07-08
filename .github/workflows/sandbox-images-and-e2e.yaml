@@ -4,6 +4,10 @@
 name: Images / Sandbox Images and E2E
 
 on:
+  # Manual dispatch is the branch-validation path. Non-main refs set
+  # DOCKERHUB_AUTH_REQUIRED=0 and pull anonymously; only trusted NVIDIA main
+  # dispatches receive Docker Hub credentials.
+  workflow_dispatch:
   workflow_call:
     inputs:
       run_arm64:
@@ -11,6 +15,11 @@ on:
         required: false
         type: boolean
         default: false
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -20,16 +29,70 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - &checkout
+        name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      # Keep the credential-bearing auth anchor isolated from the shared
+      # non-secret setup anchors. Each image builder gets its own Docker config
+      # and explicit cleanup. Direct branch
+      # dispatches pull anonymously; only trusted NVIDIA main push/manual runs
+      # receive Docker Hub credentials (this workflow has no schedule trigger).
+      - &dockerhub-auth
+        name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_AUTH_REQUIRED: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_USERNAME || '' }}
+          DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_TOKEN || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker_config="$(mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX")"
+          chmod 700 "${docker_config}"
+          export DOCKER_CONFIG="${docker_config}"
+          printf 'DOCKER_CONFIG=%s\n' "${DOCKER_CONFIG}" >> "${GITHUB_ENV}"
+
+          if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then
+            echo "::notice::Docker Hub credentials are withheld for this ref; continuing with anonymous pulls."
+            exit 0
+          fi
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::error::Docker Hub credentials are required for trusted image builds."
+            exit 1
+          fi
+
+          auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"
+          : > "${auth_marker}"
+          chmod 600 "${auth_marker}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if printf '%s' "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "${login_succeeded}" -ne 1 ]]; then
+            echo "::error::Docker Hub login failed after 3 attempts."
+            exit 1
+          fi
 
       - name: Resolve sandbox base image
         uses: ./.github/actions/resolve-sandbox-base-image
 
       - name: Build production image
-        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production .
+        env:
+          BASE_IMAGE: ${{ env.BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-production .
 
       - name: Build sandbox test image (fixtures layered on production)
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
@@ -59,38 +122,43 @@ jobs:
           path: /tmp/isolation-image.tar.gz
           retention-days: 1
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   build-hermes-sandbox-image:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Preserve the former 30-minute image-build, 60-minute secret-boundary,
+    # and 45-minute root-entrypoint budgets, plus orchestration/cleanup time.
+    timeout-minutes: 150
     steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
+      - *checkout
 
-      - name: Set up Node
+      - *dockerhub-auth
+
+      - &setup-node
+        name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
           node-version: 22
           cache: npm
 
-      - name: Install root dependencies
+      - &install-root-dependencies
+        name: Install root dependencies
         run: npm ci --ignore-scripts
 
       - name: Resolve Hermes base image
         uses: ./.github/actions/resolve-hermes-base-image
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
       - name: Build Hermes production image
-        run: docker build -f agents/hermes/Dockerfile --build-arg BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }} -t nemoclaw-hermes-production .
+        env:
+          HERMES_BASE_IMAGE: ${{ env.HERMES_BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          build_args=(-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-hermes-production .
 
       - name: Verify sandbox user can read copied files
         run: |
@@ -107,20 +175,29 @@ jobs:
             test -x /usr/local/bin/nemoclaw-start
 
       - name: Run Hermes sandbox secret boundary test
+        id: hermes-secret-boundary
+        timeout-minutes: 60
         env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-sandbox-secret-boundary
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
           NEMOCLAW_RUN_LIVE_E2E: "1"
         run: npx vitest run --project e2e-live test/e2e/live/hermes-sandbox-secret-boundary.test.ts --silent=false --reporter=default
 
-      - name: Upload Hermes sandbox secret boundary log on failure
-        if: failure()
+      - name: Upload Hermes sandbox secret boundary artifacts
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hermes-sandbox-secret-boundary-log
-          path: /tmp/nemoclaw-hermes-sandbox-secret-boundary.log
+          name: hermes-sandbox-secret-boundary-artifacts
+          path: |
+            e2e-artifacts/live/hermes-sandbox-secret-boundary/
+            /tmp/nemoclaw-hermes-sandbox-secret-boundary.log
+          include-hidden-files: false
           if-no-files-found: ignore
+          retention-days: 14
 
       - name: Run Hermes root entrypoint smoke Vitest test
+        if: ${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}
+        timeout-minutes: 45
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
@@ -141,34 +218,46 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   build-sandbox-images-arm64:
     if: inputs.run_arm64
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
+      - *checkout
+
+      - *dockerhub-auth
 
       - name: Resolve sandbox base image
         uses: ./.github/actions/resolve-sandbox-base-image
 
       - name: Build production image on arm64
-        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production-arm64 .
+        env:
+          BASE_IMAGE: ${{ env.BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-production-arm64 .
 
       - name: Build sandbox test image on arm64
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   test-e2e-sandbox:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build-sandbox-images
     steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
+      - *checkout
 
       - name: Download image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -187,41 +276,68 @@ jobs:
     timeout-minutes: 15
     needs: build-sandbox-images
     steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
+      - *checkout
 
-      - name: Download image artifact
+      - &download-isolation-image
+        name: Download image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: isolation-image
           path: /tmp
 
-      - name: Load image
-        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
+      - &load-isolation-image
+        name: Load image
+        run: |
+          set -euo pipefail
+          gunzip -c /tmp/isolation-image.tar.gz | docker load
+          docker image inspect nemoclaw-production >/dev/null
 
       - name: Run gateway isolation E2E tests
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
+
+  runtime-overrides:
+    runs-on: ubuntu-latest
+    # The live target owns 45 minutes; retain 15 minutes for setup, image
+    # transfer, and the always-running artifact upload.
+    timeout-minutes: 60
+    needs: build-sandbox-images
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/runtime-overrides
+      E2E_TARGET_ID: runtime-overrides
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_TEST_IMAGE: nemoclaw-production
+    steps:
+      - *checkout
+
+      - *setup-node
+
+      - *install-root-dependencies
+
+      - *download-isolation-image
+
+      - *load-isolation-image
+
+      - name: Run runtime overrides test against production image
+        timeout-minutes: 45
+        run: |
+          npx vitest run --project e2e-live \
+            test/e2e/live/runtime-overrides.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload runtime overrides artifacts
+        if: always()
+        uses: ./.github/actions/upload-e2e-artifacts
 
   test-e2e-port-overrides:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: build-sandbox-images
     steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
+      - *checkout
 
-      - name: Download image artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: isolation-image
-          path: /tmp
+      - *download-isolation-image
 
-      - name: Load image
-        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
+      - *load-isolation-image
 
       - name: Run port override E2E tests
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-port-overrides.sh

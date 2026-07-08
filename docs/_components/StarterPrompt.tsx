@@ -54,10 +54,11 @@ Before giving install instructions, ask me which supported agent I want to use:
 
 - OpenClaw, the default NemoClaw agent.
 - Hermes.
+- LangChain Deep Agents Code.
 
 Ask this as a single selection question after I answer the operating-system question.
 
-After I choose, use the matching documentation variant. Do not mix OpenClaw-specific and Hermes-specific instructions unless you explain why.
+After I choose, use the matching documentation variant. Do not mix OpenClaw-specific, Hermes-specific, and Deep Agents-specific instructions unless you explain why.
 
 Use these Markdown documentation pages as the first sources:
 
@@ -68,6 +69,9 @@ Use these Markdown documentation pages as the first sources:
 - Hermes home: https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/home.md
 - Hermes prerequisites: https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/prerequisites.md
 - Hermes quickstart: https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md
+- Deep Agents home: https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/home.md
+- Deep Agents prerequisites: https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/prerequisites.md
+- Deep Agents quickstart: https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md
 
 ## Avoid Getting Stuck on Interactive NemoClaw Prompts
 
@@ -75,23 +79,35 @@ Do not start the interactive installer first and then try to answer terminal men
 
 Instead, collect the required choices from me first, one clickable selection at a time, then run NemoClaw in non-interactive mode whenever possible.
 
-- After I choose OpenClaw or Hermes, ask me which inference provider I want as one selection question.
-- If I choose a provider that requires a model, endpoint URL, credential, model download, sandbox name, web search, messaging channel, or policy tier choice, ask those follow-up questions one at a time before running the installer.
+- After I choose an agent, ask me which inference provider I want as one selection question.
+- If I choose a provider that requires a model, endpoint URL, credential, model download, sandbox name, web search, supported messaging channel, or policy tier choice, ask those follow-up questions one at a time before running the installer.
 - For Local Ollama, ask for the model before running the installer. Offer choices such as "use NemoClaw's recommended default" and any models the local Ollama server reports. If I approve downloading a model, set \`NEMOCLAW_YES=1\`.
 - For hosted or compatible providers, help me set the required credential in the local command environment without pasting the real value into chat.
 - Never echo a command that contains a real secret. Use redacted placeholders in chat, and keep the real value only in the local process environment or a secure local prompt.
+- If I choose Hermes, include \`NEMOCLAW_AGENT=hermes\` when you run the installer or use \`nemohermes onboard\` after installation.
+- If I choose LangChain Deep Agents Code, include \`NEMOCLAW_AGENT=langchain-deepagents-code\` when you run the installer or use \`nemo-deepagents onboard\` after installation.
 
 ## Handle Tokens Securely and Visually
 
-When you need an API key, bot token, app token, or other secret, prefer a local visual credential form instead of chat.
+When you need an API key, bot token, app token, or other secret, use the checked-in NemoClaw local credential helper and form instead of chat.
 
-- Ask permission before creating a local credential form.
-- Create a temporary local-only HTML form and open it in your coding-agent UI's browser. Bind any helper server to \`127.0.0.1\` on a random local port. Do not use external scripts, analytics, CDNs, or network resources.
-- Use password-style inputs for secret values and normal text inputs for non-secret IDs such as server IDs, allowlists, endpoint URLs, and sandbox names.
-- Keep submitted secrets only in memory long enough to run the approved command. Do not print them, write them to logs, commit them, or paste them into chat.
-- If you must write a temporary file for the helper, use a private temporary directory, restrict permissions when possible, and delete it immediately after use.
-- Show me a redacted summary before running commands, such as \`TELEGRAM_BOT_TOKEN=********\`, and ask permission to continue.
-- After the command finishes, shut down the local helper and delete the temporary HTML file.
+- Before collecting anything, decide the exact environment-variable names and exact command argv that will receive them. Explain the command in plain language, say that the form's final confirmation runs that already-approved command immediately, and ask my permission.
+- Do not generate, rewrite, or redesign the helper or form. Use this reviewed pair exactly, and verify both SHA-256 digests before use:
+  - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/scripts/local-credential-helper.mts (SHA-256 \`1a42bbe8dbc9003cb79d4e641b53760571aacd85293671aee97c09c0746fef33\`)
+  - Form: https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/docs/resources/local-credential-form.html (SHA-256 \`5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8\`)
+- Treat the two immutable URL and digest pairs as one reviewed trust boundary. Stop if either verification fails; do not substitute another URL, helper, form, or digest. Put fetched copies in a private temporary directory restricted to the current user.
+- The helper requires Node.js 22.16 or newer. If that runtime is unavailable, use a secure local terminal prompt or local app prompt instead; never ask for the value in chat and never fall back to generated code.
+- Run the helper with \`--execution-profile isolated\` for stateless commands. Pass one \`--field NAME:type\` per value, then a literal \`--\` and the exact approved argv. The helper serves a one-time \`http://127.0.0.1\` form, accepts a single submission, then runs that argv; it enforces loopback-only access, requires an absolute executable, and strips ambient credential and process-control variables. Never put credentials in argv. For example:
+
+\`\`\`shell
+node --experimental-strip-types <private-dir>/local-credential-helper.mts --execution-profile isolated --form <private-dir>/local-credential-form.html --field NVIDIA_INFERENCE_API_KEY:secret -- <absolute-approved-executable> <approved-args...>
+\`\`\`
+
+- Use \`:secret\` for every secret and \`:text\` only for non-secret IDs, endpoint URLs, model names, and sandbox names.
+- Open only the one-time \`http://127.0.0.1\` URL the helper prints. In the form, enter the values and choose **Preview Credentials** for a redacted local-only summary, or **Edit** to re-enter them. Choose **Confirm and Run Approved Command** once that summary matches the command I approved.
+- If the form says the outcome is unknown, do not retry or resubmit. Check the coding-agent terminal to see whether the command ran, then start a fresh helper session only if needed.
+- Keep secrets in memory only long enough to start the command; treat this as exposure minimization, not guaranteed erasure. Do not print, log, commit, or paste them into chat, and delete the fetched copies afterward.
+- For a command that must persist account state, such as a NemoClaw install or onboarding run, prefer letting that command prompt for the credential itself. If you use the helper instead, run it with \`--execution-profile account-home --cwd <approved-absolute-directory>\` and ask my permission for both paths. Do not hand-assemble a \`curl | bash\` wrapper.
 
 Use this provider mapping for non-interactive setup:
 
@@ -107,7 +123,8 @@ Use this provider mapping for non-interactive setup:
 | Local Ollama | \`ollama\` | Optional \`NEMOCLAW_MODEL\`; set \`NEMOCLAW_YES=1\` only if I approve model download |
 | Model Router | \`routed\` | \`NVIDIA_INFERENCE_API_KEY\` |
 
-When you have the approved values, run the installer with the environment variables on the \`bash\` side of the pipe, not before \`curl\`.
+When you have the approved values, run the installer with the credentials in the environment on the \`bash\` side of the pipe, not before \`curl\`, and never in a command echoed to chat. For an install-time credential, prefer the installer's own secure prompt over routing it through the helper.
+Do not offer the Hermes Provider option for OpenClaw or Deep Agents.
 
 For example, for an approved Local Ollama setup:
 
@@ -125,8 +142,9 @@ If non-interactive mode cannot cover a later prompt, stop before running the int
 
 ## Configure Messaging Channels after Non-Interactive Onboarding
 
-Non-interactive onboarding can skip the interactive messaging-channel picker. After the sandbox is created, ask whether I want to set up messaging as a separate one-question selection.
+Non-interactive onboarding can skip the interactive messaging-channel picker for agents that support messaging. After an OpenClaw or Hermes sandbox is created, ask whether I want to set up messaging as a separate one-question selection.
 
+- If I chose LangChain Deep Agents Code, skip messaging setup because NemoClaw does not support messaging channels for that terminal harness today.
 - First ask: "Do you want to set up a messaging channel now?" with choices: No, Telegram, Discord, Slack, WhatsApp, WeChat (experimental).
 - Configure one channel at a time. If I want another channel, ask again after the current channel finishes.
 - Run channel commands from the host with \`nemoclaw <sandbox-name> channels add <channel>\`, not from inside the sandbox.

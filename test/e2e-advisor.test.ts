@@ -9,7 +9,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { readFreeStandingJobsInventory } from "../tools/e2e/workflow-boundary.mts";
-import { buildSystemPrompt } from "../tools/e2e-advisor/analyze.mts";
+import {
+  applyDeterministicRecommendations,
+  buildSystemPrompt,
+  requiresCloudOnboardE2e,
+} from "../tools/e2e-advisor/analyze.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -84,6 +88,45 @@ function runPrepareTargetCheckout(env: {
 }
 
 describe("E2E recommendation advisor prompt", () => {
+  it("requires cloud-onboard for timing-sensitive infrastructure changes", () => {
+    for (const file of [
+      "src/lib/onboard/command.ts",
+      "src/lib/trace.ts",
+      "scripts/scorecard/analyze-trace-timing.ts",
+      "ci/onboard-performance-budget.json",
+      ".github/workflows/e2e.yaml",
+      "test/e2e/live/cloud-onboard.test.ts",
+    ]) {
+      expect(requiresCloudOnboardE2e([file]), file).toBe(true);
+    }
+    expect(requiresCloudOnboardE2e(["docs/index.mdx"])).toBe(false);
+  });
+
+  it("adds the canonical cloud-onboard recommendation once", () => {
+    const baseResult = {
+      version: 1 as const,
+      baseRef: "main",
+      headRef: "feature",
+      changedFiles: ["ci/onboard-performance-budget.json"],
+      classifiedDomains: [],
+      requiredTests: [],
+      optionalTests: [],
+      newE2eRecommendations: [],
+      noE2eReason: "No E2E needed",
+      confidence: "low" as const,
+    };
+
+    const once = applyDeterministicRecommendations(baseResult);
+    const twice = applyDeterministicRecommendations(once);
+
+    expect(once.requiredTests).toEqual([
+      expect.objectContaining({ id: "cloud-onboard", workflow: "e2e.yaml", job: "cloud-onboard" }),
+    ]);
+    expect(once.noE2eReason).toBeNull();
+    expect(once.confidence).toBe("medium");
+    expect(twice.requiredTests).toHaveLength(1);
+  });
+
   it("requires resume and repair E2E for onboarding machine compatibility changes", () => {
     const prompt = buildSystemPrompt();
     const inventory = readFreeStandingJobsInventory();

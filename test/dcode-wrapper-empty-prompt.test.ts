@@ -6,9 +6,9 @@
 // fail fast with a non-zero exit and never launch Deep Agents Code, instead of
 // running a task or dropping into the interactive TUI.
 //
-// Linux gated: the wrapper hardcodes `PATH=/usr/local/bin:...` and launches
-// `python3 -m deepagents_code`. The test patches only the copied wrapper's
-// managed PATH so the launch reaches the stubbed python3 planted below.
+// Linux gated: the wrapper launches the isolated `/opt/venv/bin/python3`.
+// The test patches only the copied wrapper's interpreter path and managed PATH
+// so the launch reaches the stubbed python3 planted below.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -42,9 +42,8 @@ type WrapperRun = {
 };
 
 // Run the wrapper against a temp install: a copy of the wrapper plus a stub
-// `python3` that records the argv it was launched with. dcode's real launch is
-// `python3 -m deepagents_code ...`, so a recorded marker proves the wrapper
-// passed through; its absence proves the wrapper refused before launching.
+// `python3` that records the argv it was launched with. A recorded marker proves
+// the wrapper passed through; its absence proves the wrapper refused first.
 function runWrapper(args: string[]): WrapperRun {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
   try {
@@ -52,10 +51,12 @@ function runWrapper(args: string[]): WrapperRun {
     const bin = path.join(dir, "bin");
     fs.mkdirSync(bin);
     const wrapperSource = fs.readFileSync(WRAPPER, "utf-8");
-    const wrapperFixture = wrapperSource.replace(
-      /export PATH="([^"]*)"/,
-      (_match, managedPath: string) => `export PATH=${JSON.stringify(`${bin}:${managedPath}`)}`,
-    );
+    const wrapperFixture = wrapperSource
+      .replace(
+        /export PATH="([^"]*)"/,
+        (_match, managedPath: string) => `export PATH=${JSON.stringify(`${bin}:${managedPath}`)}`,
+      )
+      .replaceAll("/opt/venv/bin/python3 -I", "python3 -I");
     expect(wrapperFixture).not.toBe(wrapperSource);
     fs.writeFileSync(path.join(dir, "dcode"), wrapperFixture, { mode: 0o755 });
 

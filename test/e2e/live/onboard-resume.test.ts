@@ -7,13 +7,13 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 // Disruption-recovery contract — regression for #446.
 //
@@ -28,8 +28,6 @@ import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 // This stays as a simple live Vitest test: assertions are inline, with no
 // registry, migration ledger, or new shared helper.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-resume";
@@ -109,383 +107,375 @@ function containsExactJsonToken(value: unknown, token: string): boolean {
   return false;
 }
 
-async function hostAddressForSandbox(host: HostCliClient): Promise<string> {
-  const probe = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        'ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk \'{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}\')"',
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "ip_addr=\"$(hostname -I 2>/dev/null | awk '{print $1}')\"",
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        'if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then',
-        "  for iface in en0 en1 bridge100; do",
-        '    ip_addr="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"',
-        '    if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "  done",
-        "  ip_addr=\"$(ifconfig 2>/dev/null | awk '/inet / && $2 !~ /^127\\./ {print $2; exit}')\"",
-        '  if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "fi",
-        "echo 127.0.0.1",
-      ].join("\n"),
-    ],
-    {
-      artifactName: "host-ip-for-onboard-resume-compatible-endpoint",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  return probe.stdout.trim().split(/\s+/)[0] || "127.0.0.1";
+function expectHermeticCompatibleEndpointUsed(
+  fake: FakeOpenAiCompatibleServer,
+  requestOffset: number,
+): void {
+  const requests = fake.requests().slice(requestOffset);
+  expect(
+    requests.some(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path === "/v1/chat/completions" &&
+        entry.authorizationSent === true &&
+        entry.auth === "ok",
+    ),
+    `expected authenticated fake endpoint inference, got ${JSON.stringify(requests)}`,
+  ).toBe(true);
 }
 
-function expectHermeticCompatibleInferenceUsed(fake: FakeOpenAiCompatibleServer): void {
-  const requests = fake.requests();
-  const inferencePosts = requests.filter(
-    (entry) =>
-      entry.method === "POST" &&
-      ["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"].includes(
-        entry.path,
-      ),
-  );
+// The e2e-live Vitest project owns the NEMOCLAW_RUN_LIVE_E2E collection gate,
+// so accidental cli-test-shard discovery cannot run this without real
+// `openshell`, Docker, or a sandbox-reachable fake OpenAI-compatible endpoint.
+test("onboard-resume: interrupted onboard then --resume completes without redoing cached steps", async ({
+  artifacts,
+  cleanup,
+  host,
+  sandbox,
+}) => {
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 1: prerequisites (host-side, all faithful on ubuntu-latest)
+  // ──────────────────────────────────────────────────────────────────
+
+  // Assertion: cli-built — `bin/nemoclaw.js` exists in the repo checkout.
   expect(
-    inferencePosts.length,
-    `expected fake inference POST, got ${JSON.stringify(requests)}`,
-  ).toBeGreaterThan(0);
-  expect(
-    requests.filter((entry) => entry.auth === "missing"),
-    `fake endpoint saw unauthenticated requests: ${JSON.stringify(requests)}`,
-  ).toEqual([]);
-  expect(
-    inferencePosts.filter((entry) => entry.auth !== "ok"),
-    `fake inference POST had missing auth: ${JSON.stringify(requests)}`,
-  ).toEqual([]);
-}
+    fs.existsSync(CLI_ENTRYPOINT),
+    `bin/nemoclaw.js missing — ensure the workflow runs npm ci + npm run build:cli before this test`,
+  ).toBe(true);
 
-// Gate the test on NEMOCLAW_RUN_LIVE_E2E=1 so accidental cli-test-shard
-// discovery does not run it without real `openshell`, Docker, or a sandbox-
-// reachable fake OpenAI-compatible endpoint. Live-only tests opt in to the same
-// gate used by the `e2e-live` project include glob in vitest.config.ts.
-test.skipIf(!shouldRunLiveE2E())(
-  "onboard-resume: interrupted onboard then --resume completes without redoing cached steps",
-  async ({ artifacts, cleanup, host, sandbox }) => {
-    // ──────────────────────────────────────────────────────────────────
-    // Phase 1: prerequisites (host-side, all faithful on ubuntu-latest)
-    // ──────────────────────────────────────────────────────────────────
+  // Assertion: docker-running — `docker info` exits 0. Pass fixture allowlist
+  // env (includes PATH, HOME, etc.) so spawn can locate `docker`.
+  // The shell-probe boundary defaults to no env inheritance; fixture spawns
+  // must opt in via buildAvailabilityProbeEnv() to keep secret-passthrough
+  // explicit (NVIDIA_INFERENCE_API_KEY is NOT in the allowlist; we layer it explicitly
+  // in Phase 2 below).
+  const dockerInfo = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(dockerInfo.exitCode, dockerInfo.stderr).toBe(0);
 
-    // Assertion: cli-built — `bin/nemoclaw.js` exists in the repo checkout.
-    expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      `bin/nemoclaw.js missing — ensure the workflow runs npm ci + npm run build:cli before this test`,
-    ).toBe(true);
+  // Assertion: openshell-installed — openshell CLI is on PATH (installed by
+  // the live validation setup before this test runs).
+  const openshellVersion = await host.command("openshell", ["--version"], {
+    artifactName: "prereq-openshell-version",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(openshellVersion.exitCode, openshellVersion.stderr).toBe(0);
 
-    // Assertion: docker-running — `docker info` exits 0. Pass fixture allowlist
-    // env (includes PATH, HOME, etc.) so spawn can locate `docker`.
-    // The shell-probe boundary defaults to no env inheritance; fixture spawns
-    // must opt in via buildAvailabilityProbeEnv() to keep secret-passthrough
-    // explicit (NVIDIA_INFERENCE_API_KEY is NOT in the allowlist; we layer it explicitly
-    // in Phase 2 below).
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(dockerInfo.exitCode, dockerInfo.stderr).toBe(0);
+  // Assertion: hermetic-compatible-endpoint-ready — the workflow does not
+  // pass hosted NVIDIA inference secrets. Instead, this test exposes a local
+  // fake OpenAI-compatible endpoint at a host address the OpenShell gateway and
+  // sandbox can route to, matching test/e2e/lib/hermetic-compatible-inference.sh.
+  const fakePublicHost = "host.openshell.internal";
+  const fake = await startFakeOpenAiCompatibleServer({
+    apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
+    host: "0.0.0.0",
+    model: FAKE_COMPATIBLE_MODEL,
+    publicHost: fakePublicHost,
+    requireAuth: true,
+    requireAuthModels: true,
+  });
+  cleanup.add("close fake OpenAI-compatible endpoint", async () => {
+    await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
+    await fake.close();
+  });
+  await artifacts.writeJson("fake-openai-compatible.json", {
+    baseUrl: fake.baseUrl,
+    model: FAKE_COMPATIBLE_MODEL,
+    publicHost: fakePublicHost,
+  });
+  const localModelsUrl = new URL(`${fake.baseUrl}/models`);
+  localModelsUrl.hostname = "127.0.0.1";
+  const modelsResponse = await fetch(localModelsUrl, {
+    headers: { Authorization: `Bearer ${FAKE_COMPATIBLE_AUTH_VALUE}` },
+  });
+  expect(modelsResponse.ok, `fake endpoint ${fake.baseUrl}/models should be reachable`).toBe(true);
+  const onboardingRequestOffset = fake.requests().length;
 
-    // Assertion: openshell-installed — openshell CLI is on PATH (installed by
-    // the live validation setup before this test runs).
-    const openshellVersion = await host.command("openshell", ["--version"], {
-      artifactName: "prereq-openshell-version",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(openshellVersion.exitCode, openshellVersion.stderr).toBe(0);
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 0 (deferred): pre-cleanup of leftover sandbox/session state.
+  // Done after the prereq gates pass so we don't mutate host state if
+  // the test would have skipped anyway.
+  // ──────────────────────────────────────────────────────────────────
+  const probeEnv = buildAvailabilityProbeEnv();
+  await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "pre-cleanup-nemoclaw-destroy",
+    env: probeEnv,
+    timeoutMs: 60_000,
+  });
+  await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+    artifactName: "pre-cleanup-openshell-sandbox-delete",
+    env: probeEnv,
+    timeoutMs: 60_000,
+  });
+  await sandbox.openshell(["forward", "stop", "18789"], {
+    artifactName: "pre-cleanup-openshell-forward-stop",
+    env: probeEnv,
+    timeoutMs: 30_000,
+  });
+  await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+    artifactName: "pre-cleanup-openshell-gateway-destroy",
+    env: probeEnv,
+    timeoutMs: 60_000,
+  });
+  fs.rmSync(SESSION_FILE, { force: true });
 
-    // Assertion: hermetic-compatible-endpoint-ready — the workflow does not
-    // pass hosted NVIDIA inference secrets. Instead, this test exposes a local
-    // fake OpenAI-compatible endpoint at a host address the OpenShell gateway and
-    // sandbox can route to, matching test/e2e/lib/hermetic-compatible-inference.sh.
-    const fakePublicHost = await hostAddressForSandbox(host);
-    const fake = await startFakeOpenAiCompatibleServer({
-      apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
-      host: "0.0.0.0",
-      model: FAKE_COMPATIBLE_MODEL,
-      publicHost: fakePublicHost,
-      requireAuth: true,
-    });
-    cleanup.add("close fake OpenAI-compatible endpoint", async () => {
-      await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
-      await fake.close();
-    });
-    await artifacts.writeJson("fake-openai-compatible.json", {
-      baseUrl: fake.baseUrl,
-      model: FAKE_COMPATIBLE_MODEL,
-      publicHost: fakePublicHost,
-    });
-    const modelsResponse = await fetch(`${fake.baseUrl}/models`);
-    expect(modelsResponse.ok, `fake endpoint ${fake.baseUrl}/models should be reachable`).toBe(
-      true,
-    );
-
-    // ──────────────────────────────────────────────────────────────────
-    // Phase 0 (deferred): pre-cleanup of leftover sandbox/session state.
-    // Done after the prereq gates pass so we don't mutate host state if
-    // the test would have skipped anyway.
-    // ──────────────────────────────────────────────────────────────────
-    const probeEnv = buildAvailabilityProbeEnv();
+  // Register cleanup for the sandbox we are about to create. The cleanup
+  // fixture runs these in LIFO at end-of-test regardless of pass/fail.
+  cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
+    const cleanupEnv = buildAvailabilityProbeEnv();
     await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "pre-cleanup-nemoclaw-destroy",
-      env: probeEnv,
-      timeoutMs: 60_000,
+      artifactName: "cleanup-nemoclaw-destroy",
+      env: cleanupEnv,
+      timeoutMs: 120_000,
     });
     await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "pre-cleanup-openshell-sandbox-delete",
-      env: probeEnv,
+      artifactName: "cleanup-openshell-sandbox-delete",
+      env: cleanupEnv,
       timeoutMs: 60_000,
     });
     await sandbox.openshell(["forward", "stop", "18789"], {
-      artifactName: "pre-cleanup-openshell-forward-stop",
-      env: probeEnv,
+      artifactName: "cleanup-openshell-forward-stop",
+      env: cleanupEnv,
       timeoutMs: 30_000,
     });
     await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "pre-cleanup-openshell-gateway-destroy",
-      env: probeEnv,
+      artifactName: "cleanup-openshell-gateway-destroy",
+      env: cleanupEnv,
       timeoutMs: 60_000,
     });
     fs.rmSync(SESSION_FILE, { force: true });
 
-    // Register cleanup for the sandbox we are about to create. The cleanup
-    // fixture runs these in LIFO at end-of-test regardless of pass/fail.
-    cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-      const cleanupEnv = buildAvailabilityProbeEnv();
-      await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "cleanup-nemoclaw-destroy",
-        env: cleanupEnv,
-        timeoutMs: 120_000,
-      });
-      await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-        artifactName: "cleanup-openshell-sandbox-delete",
-        env: cleanupEnv,
-        timeoutMs: 60_000,
-      });
-      await sandbox.openshell(["forward", "stop", "18789"], {
-        artifactName: "cleanup-openshell-forward-stop",
-        env: cleanupEnv,
-        timeoutMs: 30_000,
-      });
-      await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-        artifactName: "cleanup-openshell-gateway-destroy",
-        env: cleanupEnv,
-        timeoutMs: 60_000,
-      });
-      fs.rmSync(SESSION_FILE, { force: true });
-
-      const sandboxAfterCleanup = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
-        artifactName: "cleanup-openshell-sandbox-get-after-delete",
-        env: cleanupEnv,
-        timeoutMs: 30_000,
-      });
-      expect(
-        sandboxAfterCleanup.exitCode,
-        `sandbox ${SANDBOX_NAME} still exists after cleanup`,
-      ).not.toBe(0);
-      expect(fs.existsSync(SESSION_FILE), `${SESSION_FILE} still exists after cleanup`).toBe(false);
-    });
-
-    // ──────────────────────────────────────────────────────────────────
-    // Phase 2: first onboard (forced failure at the policies step)
-    // ──────────────────────────────────────────────────────────────────
-    const firstRunEnv: NodeJS.ProcessEnv = {
-      ...buildAvailabilityProbeEnv(),
-      COMPATIBLE_API_KEY: FAKE_COMPATIBLE_AUTH_VALUE,
-      NEMOCLAW_COMPAT_MODEL: FAKE_COMPATIBLE_MODEL,
-      NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
-      NEMOCLAW_MODEL: FAKE_COMPATIBLE_MODEL,
-      NEMOCLAW_PREFERRED_API: "openai-completions",
-      NEMOCLAW_PROVIDER: "custom",
-      NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-      NEMOCLAW_RECREATE_SANDBOX: "1",
-      NEMOCLAW_POLICY_MODE: "suggested",
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-      NEMOCLAW_E2E_FAILURE_INJECTION: "1",
-      NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "policies",
-    };
-    expect(firstRunEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
-    const firstRun = await host.command("node", [CLI_ENTRYPOINT, "onboard", "--non-interactive"], {
-      artifactName: "phase-2-onboard-interrupted",
-      env: firstRunEnv,
-      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-      timeoutMs: ONBOARD_TIMEOUT_MS,
-    });
-    const firstText = `${firstRun.stdout}\n${firstRun.stderr}`;
-
-    // Assertion: interrupted-exit-1.
-    expect(firstRun.exitCode, firstText).toBe(1);
-
-    // Assertion: sandbox-created-log.
-    expect(firstText).toContain(`Sandbox '${SANDBOX_NAME}' created`);
-
-    // Assertion: forced-failure-log — failure injection fired at the policies step.
-    expect(firstText).toContain("[e2e] Forced onboarding failure at step 'policies'.");
-
-    // Assertion: sandbox-exists-after-interrupt — `openshell sandbox get` exits 0.
-    // Keep this check local to the test instead of adding a shared helper for a
-    // single assertion.
-    const sandboxAfterInterrupt = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
-      artifactName: "phase-2-openshell-sandbox-get",
-      env: buildAvailabilityProbeEnv(),
+    const sandboxAfterCleanup = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "cleanup-openshell-sandbox-get-after-delete",
+      env: cleanupEnv,
       timeoutMs: 30_000,
     });
-    expect(sandboxAfterInterrupt.exitCode, sandboxAfterInterrupt.stderr).toBe(0);
-
-    // Assertion: session-file-present.
-    expect(fs.existsSync(SESSION_FILE)).toBe(true);
-
-    // Assertion: session-file-interrupted-state.
-    const interrupted = readSession<SessionStateInterrupted>(SESSION_FILE);
-    await artifacts.writeJson(
-      "phase-2-session-summary.json",
-      interruptedSessionSummary(interrupted),
-    );
-    expect(interrupted.status).toBe("failed");
-    expect(interrupted.lastCompletedStep).toBe("openclaw");
-    expect(interrupted.failure?.step).toBe("policies");
-
-    await artifacts.writeJson("phase-2-fake-openai-compatible-requests.json", fake.requests());
-    expectHermeticCompatibleInferenceUsed(fake);
-
-    // ──────────────────────────────────────────────────────────────────
-    // Phase 3: resume — NVIDIA_INFERENCE_API_KEY and COMPATIBLE_API_KEY are
-    // removed from env so the resume run must hydrate the credential from the
-    // gateway/session state.
-    // ──────────────────────────────────────────────────────────────────
-    const resumeEnv: NodeJS.ProcessEnv = {
-      ...buildAvailabilityProbeEnv(),
-      NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-      NEMOCLAW_POLICY_MODE: "skip",
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    };
-    expect(resumeEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
-    expect(resumeEnv.COMPATIBLE_API_KEY).toBeUndefined();
-    const resumeRun = await host.command(
-      "node",
-      [CLI_ENTRYPOINT, "onboard", "--resume", "--non-interactive"],
-      {
-        artifactName: "phase-3-onboard-resume",
-        env: resumeEnv,
-        redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      },
-    );
-    const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
-
-    // Assertion: resume-exit-0.
-    expect(resumeRun.exitCode, resumeText).toBe(0);
-
-    // Assertion: resume-skipped-{preflight,gateway,sandbox}-log.
-    expect(resumeText).toContain("[resume] Skipping preflight (cached)");
-    expect(resumeText).toContain("[resume] Skipping gateway (running)");
-    expect(resumeText).toContain(`[resume] Skipping sandbox (${SANDBOX_NAME})`);
-
-    // Assertion: resume-no-{preflight,gateway,sandbox}-redo. Current CLI output
-    // still prints phase headings before the resume-skip decisions, so assert
-    // the skip evidence and absence of redo-only success strings instead of
-    // rejecting headings that now frame the skipped phases.
-    expect(resumeText).not.toContain("Sandbox '" + SANDBOX_NAME + "' created");
-    expect(resumeText).not.toContain("Starting OpenShell Docker-driver gateway...");
-
-    // Assertion: resume-inference-handled — first onboard completed through
-    // openclaw before failing at policies. Inference was already configured
-    // during that run, so the resume path either re-runs it or detects
-    // readiness and skips. Both are valid.
-    const ranInference = resumeText.includes("[4/8] Setting up inference provider");
-    const skippedInference =
-      resumeText.includes("[resume] Skipping inference") ||
-      resumeText.includes("[reuse] Skipping inference");
-    expect(ranInference || skippedInference, resumeText).toBe(true);
-
-    // Assertion: sandbox-manageable-after-resume.
-    const sandboxStatus = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
-      artifactName: "phase-3-nemoclaw-status",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    });
-    expect(sandboxStatus.exitCode, sandboxStatus.stderr).toBe(0);
-
-    // Assertion: session-file-complete-state.
-    const complete = readSession<SessionStateComplete>(SESSION_FILE);
-    await artifacts.writeJson("phase-3-session-summary.json", completeSessionSummary(complete));
-    expect(complete.status).toBe("complete");
-    expect(complete.provider).toBe("compatible-endpoint");
-    for (const step of [
-      "preflight",
-      "gateway",
-      "sandbox",
-      "provider_selection",
-      "inference",
-      "openclaw",
-      "policies",
-      "agent_setup",
-    ] as const) {
-      expect(["complete", "skipped"]).toContain(complete.steps[step]?.status);
-    }
-
-    // Assertion: registry-has-sandbox.
-    expect(fs.existsSync(REGISTRY_FILE)).toBe(true);
-    const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as unknown;
-    expect(containsExactJsonToken(registry, SANDBOX_NAME)).toBe(true);
-
-    // ──────────────────────────────────────────────────────────────────
-    // Phase 3.5: implicit resume — a plain `onboard` auto-detects an
-    // in_progress session, and `--fresh` suppresses that auto-resume.
-    // ──────────────────────────────────────────────────────────────────
-    markSessionInProgress(SESSION_FILE);
-    const implicitResumeRun = await host.command(
-      "node",
-      [CLI_ENTRYPOINT, "onboard", "--non-interactive"],
-      {
-        artifactName: "phase-3-5-onboard-implicit-resume",
-        env: {
-          ...buildAvailabilityProbeEnv(),
-          NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-          NEMOCLAW_POLICY_MODE: "skip",
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-        },
-        redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      },
-    );
-    const implicitResumeText = `${implicitResumeRun.stdout}\n${implicitResumeRun.stderr}`;
-    expect(implicitResumeRun.exitCode, implicitResumeText).toBe(0);
-    expect(implicitResumeText).toContain("(resume mode)");
     expect(
-      implicitResumeText.includes("[resume] Skipping") ||
-        implicitResumeText.includes("[reuse] Skipping"),
-      implicitResumeText,
-    ).toBe(true);
+      sandboxAfterCleanup.exitCode,
+      `sandbox ${SANDBOX_NAME} still exists after cleanup`,
+    ).not.toBe(0);
+    expect(fs.existsSync(SESSION_FILE), `${SESSION_FILE} still exists after cleanup`).toBe(false);
+  });
 
-    markSessionInProgress(SESSION_FILE);
-    const freshRun = await host.command(
-      "node",
-      [CLI_ENTRYPOINT, "onboard", "--fresh", "--non-interactive"],
-      {
-        artifactName: "phase-3-5-onboard-fresh-suppresses-resume",
-        env: {
-          ...buildAvailabilityProbeEnv(),
-          NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-          NEMOCLAW_POLICY_MODE: "skip",
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-          NEMOCLAW_E2E_FAILURE_INJECTION: "1",
-          NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "preflight",
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 2: first onboard (forced failure at the policies step)
+  // ──────────────────────────────────────────────────────────────────
+  const firstRunEnv: NodeJS.ProcessEnv = {
+    ...buildAvailabilityProbeEnv(),
+    COMPATIBLE_API_KEY: FAKE_COMPATIBLE_AUTH_VALUE,
+    NEMOCLAW_COMPAT_MODEL: FAKE_COMPATIBLE_MODEL,
+    NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
+    NEMOCLAW_MODEL: FAKE_COMPATIBLE_MODEL,
+    NEMOCLAW_PREFERRED_API: "openai-completions",
+    NEMOCLAW_PROVIDER: "custom",
+    NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+    NEMOCLAW_RECREATE_SANDBOX: "1",
+    NEMOCLAW_POLICY_MODE: "suggested",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_E2E_FAILURE_INJECTION: "1",
+    NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "policies",
+  };
+  expect(firstRunEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+  const firstRun = await host.command("node", [CLI_ENTRYPOINT, "onboard", "--non-interactive"], {
+    artifactName: "phase-2-onboard-interrupted",
+    env: firstRunEnv,
+    redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
+    timeoutMs: ONBOARD_TIMEOUT_MS,
+  });
+  const firstText = `${firstRun.stdout}\n${firstRun.stderr}`;
+
+  // Assertion: interrupted-exit-1.
+  expect(firstRun.exitCode, firstText).toBe(1);
+
+  // Assertion: sandbox-created-log.
+  expect(firstText).toContain(`Sandbox '${SANDBOX_NAME}' created`);
+
+  // Assertion: forced-failure-log — failure injection fired at the policies step.
+  expect(firstText).toContain("[e2e] Forced onboarding failure at step 'policies'.");
+
+  // Assertion: sandbox-exists-after-interrupt — `openshell sandbox get` exits 0.
+  // Keep this check local to the test instead of adding a shared helper for a
+  // single assertion.
+  const sandboxAfterInterrupt = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+    artifactName: "phase-2-openshell-sandbox-get",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(sandboxAfterInterrupt.exitCode, sandboxAfterInterrupt.stderr).toBe(0);
+
+  // Exercise the configured route through the sandbox. The OpenShell gateway
+  // must inject the stored compatible-endpoint credential upstream; this POST
+  // is the positive auth proof and is deliberately newer than fixture startup
+  // and the direct readiness fetch excluded by onboardingRequestOffset.
+  const inferenceAfterInterrupt = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
+        {
+          model: FAKE_COMPATIBLE_MODEL,
+          messages: [{ role: "user", content: "reply with OK" }],
+          max_tokens: 8,
         },
-        redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
+      )}'`,
+    ),
+    {
+      artifactName: "phase-2-authenticated-inference-post",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  expect(
+    inferenceAfterInterrupt.exitCode,
+    `${inferenceAfterInterrupt.stdout}\n${inferenceAfterInterrupt.stderr}`,
+  ).toBe(0);
+
+  // Assertion: session-file-present.
+  expect(fs.existsSync(SESSION_FILE)).toBe(true);
+
+  // Assertion: session-file-interrupted-state.
+  const interrupted = readSession<SessionStateInterrupted>(SESSION_FILE);
+  await artifacts.writeJson("phase-2-session-summary.json", interruptedSessionSummary(interrupted));
+  expect(interrupted.status).toBe("failed");
+  expect(interrupted.lastCompletedStep).toBe("openclaw");
+  expect(interrupted.failure?.step).toBe("policies");
+
+  await artifacts.writeJson("phase-2-fake-openai-compatible-requests.json", fake.requests());
+  expectHermeticCompatibleEndpointUsed(fake, onboardingRequestOffset);
+
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 3: resume — NVIDIA_INFERENCE_API_KEY and COMPATIBLE_API_KEY are
+  // removed from env so the resume run must hydrate the credential from the
+  // gateway/session state.
+  // ──────────────────────────────────────────────────────────────────
+  const resumeEnv: NodeJS.ProcessEnv = {
+    ...buildAvailabilityProbeEnv(),
+    NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+    NEMOCLAW_POLICY_MODE: "skip",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+  };
+  expect(resumeEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+  expect(resumeEnv.COMPATIBLE_API_KEY).toBeUndefined();
+  const resumeRun = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "onboard", "--resume", "--non-interactive"],
+    {
+      artifactName: "phase-3-onboard-resume",
+      env: resumeEnv,
+      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
+
+  // Assertion: resume-exit-0.
+  expect(resumeRun.exitCode, resumeText).toBe(0);
+
+  // Assertion: resume-skipped-{preflight,gateway,sandbox}-log.
+  expect(resumeText).toContain("[resume] Skipping preflight (cached)");
+  expect(resumeText).toContain("[resume] Skipping gateway (running)");
+  expect(resumeText).toContain(`[resume] Skipping sandbox (${SANDBOX_NAME})`);
+
+  // Assertion: resume-no-{preflight,gateway,sandbox}-redo. Current CLI output
+  // still prints phase headings before the resume-skip decisions, so assert
+  // the skip evidence and absence of redo-only success strings instead of
+  // rejecting headings that now frame the skipped phases.
+  expect(resumeText).not.toContain("Sandbox '" + SANDBOX_NAME + "' created");
+  expect(resumeText).not.toContain("Starting OpenShell Docker-driver gateway...");
+
+  // Assertion: resume-inference-handled — first onboard completed through
+  // openclaw before failing at policies. Inference was already configured
+  // during that run, so the resume path either re-runs it or detects
+  // readiness and skips. Both are valid.
+  const ranInference = resumeText.includes("[4/8] Setting up inference provider");
+  const skippedInference =
+    resumeText.includes("[resume] Skipping inference") ||
+    resumeText.includes("[reuse] Skipping inference");
+  expect(ranInference || skippedInference, resumeText).toBe(true);
+
+  // Assertion: sandbox-manageable-after-resume.
+  const sandboxStatus = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
+    artifactName: "phase-3-nemoclaw-status",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(sandboxStatus.exitCode, sandboxStatus.stderr).toBe(0);
+
+  // Assertion: session-file-complete-state.
+  const complete = readSession<SessionStateComplete>(SESSION_FILE);
+  await artifacts.writeJson("phase-3-session-summary.json", completeSessionSummary(complete));
+  expect(complete.status).toBe("complete");
+  expect(complete.provider).toBe("compatible-endpoint");
+  for (const step of [
+    "preflight",
+    "gateway",
+    "sandbox",
+    "provider_selection",
+    "inference",
+    "openclaw",
+    "policies",
+    "agent_setup",
+  ] as const) {
+    expect(["complete", "skipped"]).toContain(complete.steps[step]?.status);
+  }
+
+  // Assertion: registry-has-sandbox.
+  expect(fs.existsSync(REGISTRY_FILE)).toBe(true);
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as unknown;
+  expect(containsExactJsonToken(registry, SANDBOX_NAME)).toBe(true);
+
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 3.5: implicit resume — a plain `onboard` auto-detects an
+  // in_progress session, and `--fresh` suppresses that auto-resume.
+  // ──────────────────────────────────────────────────────────────────
+  markSessionInProgress(SESSION_FILE);
+  const implicitResumeRun = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "onboard", "--non-interactive"],
+    {
+      artifactName: "phase-3-5-onboard-implicit-resume",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+        NEMOCLAW_POLICY_MODE: "skip",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       },
-    );
-    const freshText = `${freshRun.stdout}\n${freshRun.stderr}`;
-    expect(freshRun.exitCode, freshText).not.toBe(0);
-    expect(freshText).toContain("[e2e] Forced onboarding failure at step 'preflight'.");
-    expect(freshText).not.toContain("(resume mode)");
-  },
-);
+      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  const implicitResumeText = `${implicitResumeRun.stdout}\n${implicitResumeRun.stderr}`;
+  expect(implicitResumeRun.exitCode, implicitResumeText).toBe(0);
+  expect(implicitResumeText).toContain("(resume mode)");
+  expect(
+    implicitResumeText.includes("[resume] Skipping") ||
+      implicitResumeText.includes("[reuse] Skipping"),
+    implicitResumeText,
+  ).toBe(true);
+
+  markSessionInProgress(SESSION_FILE);
+  const freshRun = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "onboard", "--fresh", "--non-interactive"],
+    {
+      artifactName: "phase-3-5-onboard-fresh-suppresses-resume",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+        NEMOCLAW_POLICY_MODE: "skip",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_E2E_FAILURE_INJECTION: "1",
+        NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "preflight",
+      },
+      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  const freshText = `${freshRun.stdout}\n${freshRun.stderr}`;
+  expect(freshRun.exitCode, freshText).not.toBe(0);
+  expect(freshText).toContain("[e2e] Forced onboarding failure at step 'preflight'.");
+  expect(freshText).not.toContain("(resume mode)");
+});

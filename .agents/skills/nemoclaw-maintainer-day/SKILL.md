@@ -8,7 +8,7 @@ user_invocable: true
 
 Execute one pass of the maintainer loop, prioritizing version-targeted work.
 
-**Autonomy:** push small fixes and approve when gates pass. Never merge. Stop and ask for merge decisions, architecture decisions, and unclear contributor intent.
+**Autonomy:** push small fixes and approve when gates pass. Surface contributor/approver overlap reported by the merge gate as an advisory warning; it does not require another reviewer or change merge readiness. Never merge. Stop and ask for merge decisions, architecture decisions, and unclear contributor intent.
 
 ## References
 

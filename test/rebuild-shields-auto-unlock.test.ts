@@ -97,6 +97,11 @@ function createFixture(opts: { shieldsLocked: boolean }) {
           model: "meta/llama-3.3-70b-instruct",
           provider: "nvidia-prod",
           gpuEnabled: false,
+          sandboxGpuMode: "0",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          dashboardPort: 18789,
+          fromDockerfile: null,
           policies: [],
           agent: null,
           openshellDriver: "vm",
@@ -172,22 +177,36 @@ function createFixture(opts: { shieldsLocked: boolean }) {
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.72\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
 if (a[0]==="policy" && a[1]==="get")         { process.stdout.write("version: 1\\nnetwork_policies:\\n  test: {}\\n"); process.exit(0); }
 if (a[0]==="policy" && a[1]==="set")         { process.exit(0); }
-if (a[0]==="status")                         { process.stdout.write("running\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n"); process.exit(0); }
+if (a[0]==="status")                         { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="info")       { const i=a.indexOf("-g"); const name=i>=0?a[i+1]:"nemoclaw"; process.stdout.write("Gateway Info\\n\\nGateway: " + name + "\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
-if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"nvidia-prod","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
+if (a[0]==="inference" && a[1]==="get")      { process.stdout.write("Gateway inference:\\n  Provider: nvidia-prod\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
 if (a[0]==="provider")                       { process.exit(0); }
+if (a[0]==="forward" && a[1]==="list")      { process.stdout.write("SANDBOX BIND PORT PID STATUS\\n${sandboxName} 127.0.0.1 18789 4242 running\\n"); process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
 process.exit(0);
 `,
     { mode: 0o755 },
   );
+  for (const component of ["openshell-gateway", "openshell-sandbox"]) {
+    fs.writeFileSync(
+      path.join(tmpDir, component),
+      `#!/usr/bin/env node
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.72\\n");
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+  }
 
   // Fake docker — covers both the basic cases and kubectl exec proxying.
   // For shields lock/unlock, we return zero exit with the data shields.ts
@@ -204,10 +223,26 @@ function readLockState() {
 function writeLockState(state) {
   fs.writeFileSync(lockStatePath, state);
 }
+if (a[0]==="info") {
+  process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
+  process.exit(0);
+}
 if (a[0]==="build")  { process.exit(0); }
-if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
+if (a[0]==="image" && a[1]==="inspect") {
+  const formatIndex = a.indexOf("--format");
+  const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
+  if (format === "{{.Id}}") process.stdout.write("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n");
+  if (format === "{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  process.exit(0);
+}
+if (a[0]==="tag" || a[0]==="rmi") { process.exit(0); }
+if (a[0]==="run") {
+  if (a.includes("nslookup")) process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
+  else if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
+  process.exit(0);
+}
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
-if (a[0]==="ps")     { process.stdout.write("openshell-${sandboxName}-abc123\\n"); process.exit(0); }
+if (a[0]==="ps")     { process.stdout.write("abc123\\topenshell-${sandboxName}-abc123\\n"); process.exit(0); }
 // Supports both direct exec ("docker exec --user root <container> <cmd...>")
 // and legacy kubectl proxying ("docker exec <k3s> kubectl exec ... -- <cmd...>").
 if (a[0]==="exec") {
@@ -346,6 +381,7 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
         HOME: fixture.tmpDir,
         PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NO_COLOR: "1",

@@ -4,7 +4,7 @@
 title: "NVIDIA NemoClaw"
 sidebar-title: "Home"
 description: "NemoClaw is an open-source reference stack for running sandboxed AI agents more safely, with a single command and Markdown docs for AI assistants."
-keywords: "NemoClaw, OpenClaw, Hermes, OpenShell, AI agents, Markdown docs, sandboxing, inference routing"
+keywords: "NemoClaw, OpenClaw, Hermes, LangChain Deep Agents Code, dcode, OpenShell, AI agents, Markdown docs, sandboxing, inference routing"
 layout: overview
 position: 1
 ---
@@ -45,7 +45,7 @@ Install NemoClaw and run the onboard wizard to get started.
 ### From Your Coding Agent
 
 Copy the starter prompt and paste it into your local coding agent, such as Cursor, Claude Code, Codex, Copilot, or another assistant that can run local commands with your approval.
-The prompt tells your agent to use NemoClaw skills when available, bootstrap the docs-routing skill when it is missing, fetch the Markdown docs, collect choices one question at a time, and avoid asking you to paste secrets into chat.
+The prompt tells your agent to use NemoClaw skills when available, bootstrap the docs-routing skill when it is missing, fetch the Markdown docs, ask whether you want OpenClaw, Hermes, or Deep Agents, collect choices one question at a time, and use the checked-in local credential helper and form after you approve the exact command that will receive the credentials.
 
 <StarterPromptButton />
 
@@ -78,6 +78,7 @@ By default, NemoClaw installs the OpenClaw agent. Use one of the following quick
 |-------|-------|
 | OpenClaw (default) | [Quickstart with OpenClaw](../openclaw/get-started/quickstart) |
 | Hermes | [Quickstart with Hermes](../hermes/get-started/quickstart) |
+| LangChain Deep Agents Code | [Quickstart with Deep Agents](../deepagents/get-started/quickstart) |
 
 <section>
 
@@ -134,6 +135,13 @@ Read the OpenClaw-focused overview before launching the default sandboxed agent.
 <Card title="NemoClaw for Hermes" href="../hermes/about/overview">
 
 Read the Hermes-focused overview before launching a Hermes sandboxed agent.
+
+<Badge intent="tip" minimal outlined>Overview</Badge>
+</Card>
+
+<Card title="NemoClaw for Deep Agents" href="../deepagents/about/overview">
+
+Read the Deep Agents-focused overview before launching a `dcode` sandboxed terminal agent.
 
 <Badge intent="tip" minimal outlined>Overview</Badge>
 </Card>

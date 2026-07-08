@@ -29,7 +29,6 @@
  *   TEST_SUITE             — which test to run: full (default), deploy-cli, gpu,
  *                             credential-sanitization, telegram-injection, messaging-providers,
  *                             messaging-compatible-endpoint, dashboard-remote-bind, all
- *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
  *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp for CPU, any for GPU)
@@ -54,6 +53,16 @@ import { execFileSync, execSync, type StdioOptions, spawnSync } from "node:child
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { shellQuote } from "../../src/lib/core/shell-quote";
+import {
+  BREV_MESSAGING_COMPAT_TIMEOUT_MS,
+  BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
+  BREV_REMOTE_WRAPPER_GRACE_MS,
+  BREV_SECURITY_SUITE_TIMEOUT_MS,
+  brevSuiteHarnessSandboxName,
+  brevSuiteNeedsHarnessSandbox,
+  brevWorkflowOwnsInstance,
+  buildBrevRemoteVitestCommand,
+} from "../../tools/e2e/brev-remote-vitest.mts";
 
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
@@ -102,11 +111,9 @@ function requireInstanceName(): string {
 // Launchable configuration
 // CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, and npm deps.
 // The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
-// Default: use the repo-local script (hermetic — always matches the checked-out branch).
-// Override via LAUNCHABLE_SETUP_SCRIPT env var to test a remote URL instead.
-const DEFAULT_SETUP_SCRIPT_PATH =
-  process.env.LAUNCHABLE_SETUP_SCRIPT ||
-  path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
+// Use the repo-local script so secret-bearing branch validation cannot execute
+// mutable setup code selected outside the reviewed checkout.
+const SETUP_SCRIPT_PATH = path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
 // Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
 // More reliable than grepping log files.
 const LAUNCHABLE_SENTINEL = "/var/run/nemoclaw-launchable-ready";
@@ -264,12 +271,15 @@ function sshEnv(
   { timeout = 600_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
   const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen3.5:9b";
+  const harnessSandboxName = brevSuiteHarnessSandboxName(TEST_SUITE);
   const envParts = [
     `export NVIDIA_INFERENCE_API_KEY='${shellEscape(process.env.NVIDIA_INFERENCE_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
-    `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+    ...(harnessSandboxName
+      ? [`export NEMOCLAW_SANDBOX_NAME='${shellEscape(harnessSandboxName)}'`]
+      : []),
     `export NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces`,
   ];
   if (GPU_TEST_SUITE) {
@@ -425,10 +435,8 @@ function runRemoteCommand(
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
 
-function runRemoteVitest(project: "cli" | "e2e-live", target: string): string {
-  return runRemoteCommand(
-    `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project ${project} ${target} --silent=false --reporter=default`,
-  );
+function runRemoteVitest(project: "cli" | "e2e-live", target: string, timeoutMs?: number): string {
+  return runRemoteCommand(buildBrevRemoteVitestCommand(project, target), timeoutMs);
 }
 
 function expectVitestPassed(output: string): void {
@@ -591,7 +599,7 @@ function summarizeBrevCandidates(output: string, maxLines = 10): string {
 function createBrevInstance(elapsed: () => string): void {
   const instanceKind = GPU_TEST_SUITE ? "gpu" : "cpu";
   console.log(`[${elapsed()}] Creating ${instanceKind} instance via launchable...`);
-  console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
+  console.log(`[${elapsed()}]   setup-script: ${SETUP_SCRIPT_PATH}`);
   console.log(`[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`);
   if (GPU_TEST_SUITE) {
     if (BREV_GPU_TYPE) {
@@ -607,21 +615,8 @@ function createBrevInstance(elapsed: () => string): void {
     );
   }
 
-  // Resolve the setup script to a local file path.
-  // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
-  // Override: set LAUNCHABLE_SETUP_SCRIPT to a URL and it gets downloaded.
-  let setupScriptPath: string;
-  if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
-    setupScriptPath = "/tmp/brev-ci-setup.sh";
-    execFileSync("curl", ["-fsSL", "-o", setupScriptPath, DEFAULT_SETUP_SCRIPT_PATH], {
-      encoding: "utf-8",
-      timeout: 30_000,
-    });
-    console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
-  } else {
-    setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
-    console.log(`[${elapsed()}] Using repo-local setup script`);
-  }
+  const setupScriptPath = SETUP_SCRIPT_PATH;
+  console.log(`[${elapsed()}] Using repo-local setup script`);
 
   try {
     if (GPU_TEST_SUITE) {
@@ -874,7 +869,13 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] nemoclaw CLI linked`);
 
-  return { remoteDir: resolvedRemoteDir, needsOnboard: true };
+  return {
+    remoteDir: resolvedRemoteDir,
+    // The composite security suite provisions and tears down its own sandbox
+    // in each live target. Seeding a second harness-owned registry here leaves
+    // stale state after the first target destroys the shared gateway.
+    needsOnboard: brevSuiteNeedsHarnessSandbox(TEST_SUITE),
+  };
 }
 
 /**
@@ -1061,7 +1062,7 @@ describe("Brev deploy input validation", () => {
         NEMOCLAW_DEPLOY_NO_CONNECT: "1",
         NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
       },
-      timeout: 30_000,
+      timeout: 60_000,
     });
 
     const output = `${result.stdout}${result.stderr}`;
@@ -1076,7 +1077,7 @@ describe("Brev deploy input validation", () => {
     expect(output).not.toContain("Waiting for Brev instance readiness");
     expect(output).not.toContain("Waiting for SSH");
     expect(output).not.toContain("bash scripts/install.sh");
-  });
+  }, 65_000);
 });
 
 describe("Brev GPU runtime setup", () => {
@@ -1131,7 +1132,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     }
 
     // Verify sandbox registry (only when beforeAll created a sandbox)
-    if (TEST_SUITE !== "full" && !GPU_TEST_SUITE) {
+    if (brevSuiteNeedsHarnessSandbox(TEST_SUITE) && !GPU_TEST_SUITE) {
       console.log(`[${elapsed()}] Verifying sandbox registry...`);
       const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
       expect(registry.defaultSandbox).toBe("e2e-test");
@@ -1150,19 +1151,25 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
 
   afterAll(() => {
     if (!instanceCreated) return;
-    if (process.env.KEEP_ALIVE === "true") {
-      console.log(`\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`);
-      console.log(`  To connect: brev refresh && ssh ${INSTANCE_NAME}`);
-      console.log(`  To delete:  brev delete ${INSTANCE_NAME}\n`);
+    const keepAlive = process.env.KEEP_ALIVE === "true";
+    const workflowOwnsInstance = brevWorkflowOwnsInstance();
+    if (keepAlive || workflowOwnsInstance) {
+      const lines = keepAlive
+        ? [
+            `\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`,
+            `  To connect: brev refresh && ssh ${INSTANCE_NAME}`,
+            `  To delete:  brev delete ${INSTANCE_NAME}\n`,
+          ]
+        : [`Instance "${INSTANCE_NAME}" deletion deferred to workflow-owned cleanup.`];
+      console.log(lines.join("\n"));
       return;
     }
     deleteBrevInstance(requireInstanceName());
   }, 120_000); // 2 min for cleanup
 
-  // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
-  // rebuilds the sandbox from scratch. It cannot run alongside the security tests
-  // (credential-sanitization, telegram-injection) which depend on the sandbox
-  // that beforeAll already created. Run it only when TEST_SUITE=full.
+  // NOTE: The full E2E test runs install.sh --non-interactive and owns the
+  // complete sandbox lifecycle. The composite security suite also lets each
+  // remote target own that lifecycle, without a shared harness registry.
   it.runIf(TEST_SUITE === "full")(
     "full E2E suite passes on remote VM",
     () => {
@@ -1184,19 +1191,27 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "credential-sanitization" || TEST_SUITE === "all")(
     "credential sanitization suite passes on remote VM",
     () => {
-      const output = runRemoteVitest("e2e-live", "test/e2e/live/credential-sanitization.test.ts");
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/credential-sanitization.test.ts",
+        BREV_SECURITY_SUITE_TIMEOUT_MS,
+      );
       expectVitestPassed(output);
     },
-    600_000,
+    BREV_SECURITY_SUITE_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "telegram-injection" || TEST_SUITE === "all")(
     "telegram bridge injection suite passes on remote VM",
     () => {
-      const output = runRemoteVitest("e2e-live", "test/e2e/live/telegram-injection.test.ts");
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/telegram-injection.test.ts",
+        BREV_SECURITY_SUITE_TIMEOUT_MS,
+      );
       expectVitestPassed(output);
     },
-    600_000,
+    BREV_SECURITY_SUITE_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "deploy-cli")(
@@ -1216,31 +1231,35 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     120_000,
   );
 
-  // NOTE: The messaging-providers test creates its own sandbox (e2e-msg-provider)
-  // with messaging tokens attached. It does not conflict with the e2e-test sandbox
-  // used by other tests, but it may recreate the gateway.
-  it.runIf(TEST_SUITE === "messaging-providers" || TEST_SUITE === "all")(
+  // This stateful target owns its sandbox and gateway lifecycle. Brev runs it
+  // single-shot on a dedicated instance; a retry means a new workflow run and
+  // therefore a new VM, never a second installer behind a live onboard lock.
+  it.runIf(TEST_SUITE === "messaging-providers")(
     "messaging credential provider suite passes on remote VM",
     () => {
-      const output = runRemoteVitest("e2e-live", "test/e2e/live/messaging-providers.test.ts");
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/messaging-providers.test.ts",
+        BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
+      );
       expectVitestPassed(output);
     },
-    900_000, // 15 min — creates a new sandbox with messaging providers
+    BREV_MESSAGING_PROVIDER_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
-  // NOTE: The compatible-endpoint messaging test creates its own sandbox
-  // (e2e-msg-compat) with Telegram attached and a local OpenAI-compatible
-  // mock endpoint. It covers the inference.local path used by Telegram turns.
-  it.runIf(TEST_SUITE === "messaging-compatible-endpoint" || TEST_SUITE === "all")(
+  // The compatible-endpoint target also owns its sandbox lifecycle and runs
+  // on a separate Brev instance so provider cleanup cannot leak across it.
+  it.runIf(TEST_SUITE === "messaging-compatible-endpoint")(
     "messaging compatible endpoint suite passes on remote VM",
     () => {
       const output = runRemoteVitest(
         "e2e-live",
         "test/e2e/live/messaging-compatible-endpoint.test.ts",
+        BREV_MESSAGING_COMPAT_TIMEOUT_MS,
       );
       expectVitestPassed(output);
     },
-    900_000, // 15 min — creates a new sandbox with Telegram + compatible endpoint
+    BREV_MESSAGING_COMPAT_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "dashboard-remote-bind")(

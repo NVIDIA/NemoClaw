@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../state/onboard-session";
+import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { ResumeConfigConflict } from "./resume-config";
-import type { SessionRecoveryPlan } from "./session-recovery";
 
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
@@ -12,8 +12,11 @@ export interface OnboardSessionBootstrapInput {
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
   nonInteractive: boolean;
+  authoritativeResumeConfig?: boolean;
   agentFlag?: string | null;
   envAgent?: string | null;
+  requestedToolDisclosure?: ToolDisclosure | null;
+  requestedObservabilityEnabled?: boolean | null;
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -22,7 +25,7 @@ export interface OnboardSessionBootstrapDeps {
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
   updateSession(mutator: (session: Session) => Session | void): Session;
-  applySessionRecovery(session: Session): SessionRecoveryPlan;
+  applySessionRecovery(session: Session): void;
   setOnboardBrandingAgent(agentName: string | null): void;
   getResumeConfigConflicts(
     session: Session | null,
@@ -31,6 +34,9 @@ export interface OnboardSessionBootstrapDeps {
       fromDockerfile?: string | null;
       sandboxName?: string | null;
       agent?: string | null;
+      toolDisclosure?: ToolDisclosure | null;
+      observabilityEnabled?: boolean | null;
+      authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
   recordResumeConflict(conflict: ResumeConfigConflict): Promise<unknown>;
@@ -43,12 +49,6 @@ export interface OnboardSessionBootstrapDeps {
 export interface OnboardSessionBootstrapResult {
   session: Session | null;
   fromDockerfile: string | null;
-  /**
-   * The recovery decision applied during resume bootstrap, or null for a fresh
-   * session. The caller emits exactly one explicit recovery event when
-   * `action === "recover"`.
-   */
-  recovery: SessionRecoveryPlan | null;
 }
 
 function mode(nonInteractive: boolean): "non-interactive" | "interactive" {
@@ -159,14 +159,20 @@ async function prepareResumeSession(
     fromDockerfile: input.requestedFromDockerfile,
     sandboxName: input.requestedSandboxName,
     agent: input.agentFlag || null,
+    toolDisclosure: input.requestedToolDisclosure ?? null,
+    observabilityEnabled: input.requestedObservabilityEnabled ?? null,
+    authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
     await exitForResumeConflicts(resumeConflicts, deps);
   }
 
-  let recovery: SessionRecoveryPlan | null = null;
   deps.updateSession((current: Session) => {
-    recovery = deps.applySessionRecovery(current);
+    deps.applySessionRecovery(current);
+    if (typeof input.requestedObservabilityEnabled === "boolean") {
+      current.observabilityEnabled = input.requestedObservabilityEnabled;
+      current.observabilityRequestedExplicitly = true;
+    }
     current.mode = mode(input.nonInteractive);
     current.failure = null;
     current.status = "in_progress";
@@ -174,7 +180,7 @@ async function prepareResumeSession(
   });
   session = deps.loadSession();
   assertRecoverableResumeSandboxName(session, input, deps);
-  return { session, fromDockerfile, recovery };
+  return { session, fromDockerfile };
 }
 
 function prepareFreshSession(
@@ -190,10 +196,13 @@ function prepareFreshSession(
   const session = deps.saveSession(
     deps.createSession({
       mode: mode(input.nonInteractive),
+      toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
+      observabilityEnabled: input.requestedObservabilityEnabled === true,
+      observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
     }),
   );
-  return { session, fromDockerfile, recovery: null };
+  return { session, fromDockerfile };
 }
 
 export async function prepareOnboardSession(

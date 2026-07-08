@@ -24,25 +24,22 @@
 // test/onboard-gateway-docker-unreachable.test.ts.
 
 import { describe, expect, it, vi } from "vitest";
-// `handleFinalGatewayStartFailure` is exposed via `module.exports = {...}` at
-// the bottom of onboard.ts (it is not a TypeScript `export`). The shared source
-// hook preserves those CommonJS semantics without requiring a CLI build.
-import * as onboardExports from "../onboard";
 import { classifyGatewayStartFailure } from "../validation";
 import {
+  createFinalGatewayStartFailureHandler,
   printDockerDaemonRecovery,
   reportLegacyGatewayStartResultFailure,
 } from "./gateway-start-failure";
 
-const handleFinalGatewayStartFailure: (opts: {
-  retries: number;
-  dockerUnreachable?: boolean;
-  collectDiagnostics?: () => string;
-  cleanupGateway?: () => void;
-  exitProcess?: (code: number) => never;
-  printError?: (message?: string) => void;
-}) => never = (onboardExports as unknown as Record<string, unknown>)
-  .handleFinalGatewayStartFailure as never;
+// The production binding itself remains covered by
+// test/gateway-final-failure-cleanup.test.ts. These helper and composition
+// checks only need the production factory, and should not load onboard.ts's
+// full dependency graph for every source-test worker.
+const handleFinalGatewayStartFailure = createFinalGatewayStartFailureHandler({
+  getGatewayName: () => "nemoclaw",
+  collectDiagnostics: () => "",
+  cleanupGateway: () => undefined,
+});
 
 // Real signatures the legacy script's fake openshell binary emitted from
 // `gateway start` to simulate Colima-stopped (macOS) and dockerd-stopped

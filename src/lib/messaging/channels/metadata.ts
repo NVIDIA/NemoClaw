@@ -299,6 +299,21 @@ export function listOpenClawManagedChannelNames(
   );
 }
 
+export function listOpenClawPluginExtensionIds(
+  options: MessagingManifestMetadataOptions = {},
+): string[] {
+  return uniqueStrings(
+    selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) => {
+      const extensionId = manifest.runtime?.openclaw?.channelName;
+      const installsPlugin = (manifest.agentPackages ?? []).some(
+        (agentPackage) =>
+          agentPackage.agent === "openclaw" && agentPackage.manager === "openclaw-plugin",
+      );
+      return extensionId && installsPlugin ? [extensionId] : [];
+    }),
+  );
+}
+
 export function listOpenClawRuntimeChannelMetadata(
   options: MessagingManifestMetadataOptions = {},
 ): OpenClawRuntimeChannelMetadata[] {

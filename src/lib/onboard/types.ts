@@ -52,3 +52,53 @@ export interface ModelValidationFailure extends ValidationFailureLike {
 }
 
 export type ModelValidationResult = ModelValidationSuccess | ModelValidationFailure;
+
+export interface SandboxCreateIntent {
+  readonly recreate: boolean;
+  readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
+  readonly observabilityEnabled: boolean;
+  /** Present only when the operator explicitly selected observability on or off. */
+  readonly observabilityRequestedExplicitly?: true;
+  readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
+  /** Internal authoritative rebuild tier used before replacement registration completes. */
+  readonly policyTier?: string | null;
+}
+
+export type OnboardOptions = {
+  nonInteractive?: boolean;
+  recreateSandbox?: boolean;
+  authoritativeResumeConfig?: boolean;
+  /** Internal authoritative rebuild target; never exposed as a public CLI option. */
+  targetGatewayName?: string | null;
+  /** Internal authoritative rebuild target; must match targetGatewayName. */
+  targetGatewayPort?: number | null;
+  /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
+  onboardLockAlreadyHeld?: boolean;
+  /** Internal one-shot handoff for a prevalidated managed DCode replacement. */
+  preparedDcodeRebuild?: import("./prepared-dcode-rebuild").PreparedDcodeRebuildHandoff;
+  /** Internal authoritative registry route captured before rebuild deletion. */
+  rebuildRegistryInferenceRoute?: import("./rebuild-route-handoff").RebuildRouteHandoff | null;
+  /** Internal one-shot authority to upsert a provider observed missing during rebuild preflight. */
+  rebuildProviderReconfigure?: import("./rebuild-route-handoff").RebuildProviderReconfigureHandoff;
+  /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
+  preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
+  resume?: boolean;
+  fresh?: boolean;
+  fromDockerfile?: string | null;
+  sandboxName?: string | null;
+  sandboxGpu?: "enable" | "disable" | null;
+  sandboxGpuDevice?: string | null;
+  acceptThirdPartySoftware?: boolean;
+  agent?: string | null;
+  toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;
+  observabilityEnabled?: boolean | null;
+  /** Internal provenance for an authoritative observability value. */
+  observabilityRequestedExplicitly?: boolean;
+  dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode | null;
+  /** Internal authoritative rebuild tier; never exposed as an onboard CLI option. */
+  policyTier?: string | null;
+  controlUiPort?: number | null;
+  gpu?: boolean;
+  noGpu?: boolean;
+  autoYes?: boolean;
+};

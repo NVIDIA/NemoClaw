@@ -193,6 +193,24 @@ describe("sandbox skill action orchestration", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it("stops skill installation at the shared gateway liveness guard (#2276)", async () => {
+    const skillDir = makeSkillDir();
+    ensureLiveSandboxOrExit.mockRejectedValueOnce(new Error("wrong gateway active"));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await expect(
+        installSandboxSkill("alpha", { command: "install", path: skillDir }),
+      ).rejects.toThrow("wrong gateway active");
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha");
+    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
+  });
+
   it("continues skill install when the existence probe is unknown because upload plus verify are authoritative", async () => {
     const skillDir = makeSkillDir();
     let tempConfig = "";

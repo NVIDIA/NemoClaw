@@ -8,6 +8,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { shellQuote } from "../src/lib/core/shell-quote";
+import {
+  bashPrintfQ,
+  extractShellFunction as extractShellFunctionFromSource,
+} from "./support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
@@ -20,31 +24,6 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
 const GENERATED_API_SERVER_KEY = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
-
-function bashPrintfQ(value: string): string {
-  const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
-    encoding: "utf-8",
-    timeout: 5000,
-    env: process.env,
-  });
-  if (result.status !== 0) {
-    throw new Error(`bash printf %q failed: ${result.stderr}`);
-  }
-  return result.stdout;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function extractShellFunctionFromSource(src: string, name: string): string {
-  const escapedName = escapeRegExp(name);
-  const match = src.match(new RegExp(`${escapedName}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) {
-    throw new Error(`Expected ${name} in agents/hermes/start.sh`);
-  }
-  return `${name}() {${match[1]}\n}`;
-}
 
 function extractRuntimeShellEnvBlock(src: string): string {
   const start = src.indexOf("write_runtime_shell_env() {");
@@ -192,7 +171,12 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      '_HERMES_BOUNDARY_TIMEOUT=(); _HERMES_PYTHON="$(command -v python3)"',
+      // A harmless single-element no-op prefix. It must not be an empty array:
+      // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
+      // `set -u`, aborting the harness before the validator runs. It also must
+      // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
+      // `command` builtin execs the validator unchanged on every platform.
+      '_HERMES_BOUNDARY_TIMEOUT=(command); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
@@ -221,7 +205,12 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      '_HERMES_BOUNDARY_TIMEOUT=(); _HERMES_PYTHON="$(command -v python3)"',
+      // A harmless single-element no-op prefix. It must not be an empty array:
+      // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
+      // `set -u`, aborting the harness before the validator runs. It also must
+      // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
+      // `command` builtin execs the validator unchanged on every platform.
+      '_HERMES_BOUNDARY_TIMEOUT=(command); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_runtime_env_secret_boundary",
@@ -1030,6 +1019,49 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).toContain("raw secret-shaped values");
     expect(result.stderr).toContain("DEVTEST_API_TOKEN (line 1)");
     expect(result.stderr).not.toContain(rawToken);
+  });
+
+  it("checks the .env secret boundary before MCP integrity", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          "set -euo pipefail",
+          'trace() { printf "%s\\n" "$1"; }',
+          "verify_config_integrity_if_locked() { trace integrity; }",
+          "validate_hermes_env_secret_boundary() { trace env-boundary; }",
+          "inspect_hermes_mcp_integrity() { trace mcp-integrity; }",
+          "ensure_hermes_runtime_api_server_key() { trace api-key; }",
+          "apply_shields_up_runtime_env() { trace shields-env; }",
+          "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
+          "refresh_hermes_provider_placeholders() { trace placeholders; }",
+          "refresh_hermes_runtime_config_hashes() { trace hashes; }",
+          "configure_messaging_channels() { trace channels; }",
+          "retry_tirith_marker_if_needed() { trace tirith; }",
+          extractShellFunctionFromSource(source, "prepare_hermes_nonroot_runtime"),
+          "HERMES_DIR=/sandbox/.hermes; prepare_hermes_nonroot_runtime",
+        ].join("\n"),
+      ],
+      { encoding: "utf-8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "integrity",
+      "env-boundary",
+      "mcp-integrity",
+      "api-key",
+      "shields-env",
+      "env-boundary",
+      "runtime-boundary",
+      "placeholders",
+      "hashes",
+      "mcp-integrity",
+      "channels",
+      "tirith",
+    ]);
   });
 
   it("rejects bare API-named raw values without printing the value", () => {

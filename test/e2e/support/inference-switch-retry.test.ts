@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  inferenceResponseModel,
   inferenceSetAttemptCount,
   runInferenceSetWithRetry,
 } from "../fixtures/inference-switch-retry.ts";
@@ -22,6 +23,12 @@ function result(exitCode: number, stderr = ""): ShellProbeResult {
 }
 
 describe("inference switch retry", () => {
+  it("reads only the top-level response model used for route proof", () => {
+    expect(inferenceResponseModel('{"model":"target-model"}')).toBe("target-model");
+    expect(inferenceResponseModel('{"model":null}')).toBe("");
+    expect(inferenceResponseModel('{"choices":[{"model":"nested-model"}]}')).toBe("");
+  });
+
   it("retries transient verification failures and preserves verification", async () => {
     const run = vi
       .fn()

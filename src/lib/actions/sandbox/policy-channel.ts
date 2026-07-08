@@ -3,10 +3,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import { runOpenshell } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
+import {
+  type PolicyAddOptions,
+  type PolicyRemoveOptions,
+  parsePolicyAddOptions,
+} from "../../domain/policy-channel";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import {
   type ChannelManifest,
@@ -27,28 +32,13 @@ import {
   toMessagingAgentId,
   tryGetMessagingAgentId,
 } from "../../messaging";
+import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
-import { hashCredential } from "../../security/credential-hash";
-import { getSandboxTargetGatewayName } from "./gateway-target";
-
-const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
-const onboardProviders = require("../../onboard/providers");
-
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import { getMessagingToken } from "../../onboard/messaging-token";
 import * as policies from "../../policy";
 import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
-
-const onboardSession =
-  require("../../state/onboard-session") as typeof import("../../state/onboard-session");
-
-import { runOpenshell } from "../../adapters/openshell/runtime";
-import {
-  type PolicyAddOptions,
-  type PolicyRemoveOptions,
-  parsePolicyAddOptions,
-} from "../../domain/policy-channel";
-import { getMessagingToken } from "../../onboard/messaging-token";
 import { shellQuote } from "../../runner";
 import {
   type ChannelDef,
@@ -59,12 +49,20 @@ import {
   knownChannelNames,
   persistChannelTokens,
 } from "../../sandbox/channels";
+import { hashCredential } from "../../security/credential-hash";
+import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
+import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
+import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
-import { rebuildSandbox } from "./rebuild";
+
+function isNonInteractive(): boolean {
+  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+}
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -94,6 +92,13 @@ const YW = useColor ? "\x1b[1;33m" : "";
 export async function addSandboxPolicy(
   sandboxName: string,
   options: PolicyAddOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () => addSandboxPolicyUnlocked(sandboxName, options));
+}
+
+async function addSandboxPolicyUnlocked(
+  sandboxName: string,
+  options: PolicyAddOptions,
 ): Promise<void> {
   const { dryRun, skipConfirm, source, presetArg } = parsePolicyAddOptions(options);
 
@@ -402,9 +407,6 @@ async function checkChannelAddConflict(
   }
   if (Object.keys(credentialHashes).length === 0) return true;
 
-  const { findChannelConflicts } =
-    require("../../messaging/applier") as typeof import("../../messaging/applier");
-
   let conflicts: ReturnType<typeof findChannelConflicts>;
   try {
     conflicts = findChannelConflicts(
@@ -560,7 +562,7 @@ async function applyChannelAddToGatewayAndRegistry(
     }
     // upsertMessagingProviders handles create-or-update and process.exits on
     // failure, so reaching the next line means every entry is registered.
-    onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+    policyChannelDependencies.upsertMessagingProviders(tokenDefs);
   }
 }
 
@@ -688,7 +690,7 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
     );
     return false;
   }
-  await rebuildSandbox(sandboxName, ["--yes"]);
+  await policyChannelDependencies.rebuildSandbox(sandboxName, ["--yes"]);
   return true;
 }
 
@@ -917,6 +919,15 @@ export async function addSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    addSandboxChannelUnlocked(sandboxName, options),
+  );
+}
+
+async function addSandboxChannelUnlocked(
+  sandboxName: string,
+  options: ChannelMutationOptions,
+): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const force = Boolean(options.force);
   const rawChannelArg = options.channel;
@@ -1087,7 +1098,7 @@ async function rollbackChannelAdd(
           envKey,
           token,
         }));
-        onboardProviders.upsertMessagingProviders(priorTokenDefs, runOpenshell, {
+        policyChannelDependencies.upsertMessagingProviders(priorTokenDefs, {
           bestEffort: true,
         });
       } catch (err) {
@@ -1291,6 +1302,15 @@ export async function removeSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    removeSandboxChannelUnlocked(sandboxName, options),
+  );
+}
+
+async function removeSandboxChannelUnlocked(
+  sandboxName: string,
+  options: ChannelMutationOptions,
+): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const rawChannelArg = options.channel;
   if (!rawChannelArg) {
@@ -1456,19 +1476,32 @@ export async function stopSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, options, true);
+  await withSandboxMutationLock(sandboxName, () =>
+    sandboxChannelsSetEnabled(sandboxName, options, true),
+  );
 }
 
 export async function startSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, options, false);
+  await withSandboxMutationLock(sandboxName, () =>
+    sandboxChannelsSetEnabled(sandboxName, options, false),
+  );
 }
 
 export async function removeSandboxPolicy(
   sandboxName: string,
   options: PolicyRemoveOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    removeSandboxPolicyUnlocked(sandboxName, options),
+  );
+}
+
+async function removeSandboxPolicyUnlocked(
+  sandboxName: string,
+  options: PolicyRemoveOptions,
 ): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const skipConfirm = Boolean(
