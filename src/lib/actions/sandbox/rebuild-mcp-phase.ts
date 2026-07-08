@@ -19,6 +19,11 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
 
+// The registry's MCP destroy markers are the recovery source of truth. Only an
+// ownership-proven `prepared` marker with the sandbox still present is safe to
+// compensate; `pending`, an absent sandbox, or an incomplete manifest may have
+// crossed the delete boundary and must fail closed. The recovery tests below
+// protect this rule until MCP destroy joins the rebuild transaction journal.
 export async function preflightMcpRebuildState(
   sandbox: RebuildSandboxEntry,
   sandboxAbsent: boolean,
