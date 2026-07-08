@@ -134,8 +134,6 @@ describe("redactForLog", () => {
       [`replyToken=${payload}`, "replyToken=<REDACTED>"],
       [`{"replyToken":"${payload}"}`, '{"replyToken":"<REDACTED>"}'],
       [`githubToken=${payload}`, "githubToken=<REDACTED>"],
-      [`replyToken=${payload}`, "replyToken=<REDACTED>"],
-      [`{"replyToken":"${payload}"}`, '{"replyToken":"<REDACTED>"}'],
       [`webhookSecret=${payload}`, "webhookSecret=<REDACTED>"],
       [`databaseCredential=${payload}`, "databaseCredential=<REDACTED>"],
       [`customPass=${payload}`, "customPass=<REDACTED>"],
