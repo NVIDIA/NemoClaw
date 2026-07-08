@@ -75,7 +75,10 @@ describe("rebuild process-death recovery", () => {
       );
       expect(interrupted.signal, interrupted.output).toBe("SIGKILL");
 
-      const resumeEnv = { ...fixtureEnv, NEMOCLAW_REBUILD_PROCESS_ROLE: "resume" };
+      const resumeEnv: NodeJS.ProcessEnv = {
+        ...fixtureEnv,
+        NEMOCLAW_REBUILD_PROCESS_ROLE: "resume",
+      };
       delete resumeEnv.NEMOCLAW_E2E_FAILURE_INJECTION;
       delete resumeEnv.NEMOCLAW_E2E_FORCE_FAIL_AT_STEP;
       const resumed = await runChild(resumeEnv, false);

@@ -12,6 +12,7 @@ import {
   createRebuildFlowSession,
   installTerminalStepFailureMock,
   originalSandboxName,
+  type RebuildSandbox,
   type RebuildFlowHarness,
   type RebuildFlowOverrides,
 } from "./rebuild-flow-test-support";
