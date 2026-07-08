@@ -63,7 +63,7 @@ export type OllamaRestartRecoveryResult =
       reason: OllamaRestartRecoveryFailureReason;
     };
 
-const OLLAMA_PROVIDER = "ollama-local";
+export const OLLAMA_LOCAL_PROVIDER = "ollama-local";
 const OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS = 300;
 const OPENSHELL_HOST_BRIDGE = "host.openshell.internal";
 const ALLOWED_RAW_OLLAMA_HOSTS = new Set([
@@ -189,7 +189,7 @@ export function maybeWarmOllamaAfterDaemonRestart(
   route: OllamaRestartRecoveryRoute,
   deps: OllamaRestartRecoveryDeps = {},
 ): OllamaRestartRecoveryResult {
-  if (normalizeRouteValue(route.provider) !== OLLAMA_PROVIDER) {
+  if (normalizeRouteValue(route.provider) !== OLLAMA_LOCAL_PROVIDER) {
     return { kind: "skipped", reason: "not-ollama" };
   }
 

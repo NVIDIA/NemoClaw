@@ -110,7 +110,7 @@ import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
-import { runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
+import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
 
 export {
@@ -448,7 +448,7 @@ export async function runAgentPassthrough(
     rejectNoTargetSelector(proc);
   }
   if (isOpenClawPassthroughCommand(command)) {
-    if (lookup.kind === "agent" && lookup.provider === "ollama-local") {
+    if (lookup.kind === "agent" && lookup.provider === OLLAMA_LOCAL_PROVIDER) {
       const recoverOllama = deps.runOllamaRestartRecovery ?? runOllamaRestartRecovery;
       recoverOllama(lookup, proc);
     }

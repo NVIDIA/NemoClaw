@@ -3,10 +3,13 @@
 
 import {
   maybeWarmOllamaAfterDaemonRestart,
+  OLLAMA_LOCAL_PROVIDER,
   type OllamaRestartRecoveryFailureReason,
   type OllamaRestartRecoveryResult,
   type OllamaRestartRecoveryRoute,
 } from "./ollama-restart-recovery";
+
+export { OLLAMA_LOCAL_PROVIDER };
 
 export type OllamaRestartRecoveryFn = (
   route: OllamaRestartRecoveryRoute,
