@@ -19,8 +19,8 @@ import * as sandboxList from "../../openshell-sandbox-list";
 import * as sandboxVersion from "../../sandbox/version";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
-import * as registry from "../../state/registry";
 import { RebuildTransactionStore } from "../../state/rebuild-transaction";
+import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import * as sandboxSession from "../../state/sandbox-session";
 import * as destroy from "./destroy";
@@ -93,6 +93,18 @@ describe("rebuild resume snapshot repair", () => {
       session = cloneSession((mutator as (value: Session) => Session | void)(current) ?? current);
       return loadSession();
     };
+    const registryEntry = {
+      name: "alpha",
+      provider: "ollama-local",
+      model: "nvidia/nemotron",
+      policies: [],
+      agent: null,
+      nimContainer: null,
+      nemoclawVersion: "0.1.0",
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    };
 
     spies.push(
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null),
@@ -123,18 +135,12 @@ describe("rebuild resume snapshot repair", () => {
       }),
       vi.spyOn(onboardSession, "releaseOnboardLock").mockImplementation(() => undefined),
       vi.spyOn(onboardSession, "markStepFailed").mockImplementation(() => loadSession()),
-      vi.spyOn(registry, "getSandbox").mockReturnValue({
-        name: "alpha",
-        provider: "ollama-local",
-        model: "nvidia/nemotron",
-        policies: [],
-        agent: null,
-        nimContainer: null,
-        nemoclawVersion: "0.1.0",
-        dashboardPort: 18789,
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-      } as never),
+      vi.spyOn(registry, "getSandbox").mockReturnValue(registryEntry as never),
+      vi.spyOn(registry, "load").mockReturnValue({
+        sandboxes: { alpha: registryEntry },
+        defaultSandbox: "alpha",
+        defaultSelectionRevision: 1,
+      }),
       vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),
       vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
