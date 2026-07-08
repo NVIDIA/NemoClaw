@@ -49,11 +49,14 @@ function urlsIn(content: string): URL[] {
   return Array.from(content.matchAll(/https?:\/\/[^\s"'<>;]+/g), ([match]) => new URL(match));
 }
 
+function fail(message: string): never {
+  throw new Error(message);
+}
+
 function extractTagContent(content: string, tagName: "script" | "style"): string {
-  const match = content.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`));
-  if (!match) {
-    throw new Error(`Missing <${tagName}> block`);
-  }
+  const match =
+    content.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`)) ??
+    fail(`Missing <${tagName}> block`);
   return match[1];
 }
 
@@ -123,9 +126,7 @@ class FakeElement {
         selector === "input[data-secret='true']" &&
         element.tagName === "input" &&
         element.dataset.secret === "true";
-      if (matchesSecretInput) {
-        result.push(element);
-      }
+      matchesSecretInput && result.push(element);
       for (const child of element.children) {
         visit(child);
       }
@@ -161,11 +162,7 @@ class FakeDocument {
   }
 
   getElementById(id: string): FakeElement {
-    const element = this.elements.get(id);
-    if (!element) {
-      throw new Error(`Missing fake element ${id}`);
-    }
-    return element;
+    return this.elements.get(id) ?? fail(`Missing fake element ${id}`);
   }
 
   createElement(tagName: string): FakeElement {
@@ -178,9 +175,9 @@ class FakeFormData {
 
   constructor(form: FakeElement) {
     const visit = (element: FakeElement) => {
-      if (element.tagName === "input" && element.name) {
+      element.tagName === "input" &&
+        element.name &&
         this.entriesList.push([element.name, element.value]);
-      }
       for (const child of element.children) {
         visit(child);
       }
@@ -228,10 +225,7 @@ function runCredentialForm(url: string, fetchImpl = async () => ({ ok: true, sta
     originNotice: document.getElementById("origin-notice"),
     resultElement: document.getElementById("result"),
     submit: async () => {
-      const listener = form.listeners.get("submit");
-      if (!listener) {
-        throw new Error("Missing submit listener");
-      }
+      const listener = form.listeners.get("submit") ?? fail("Missing submit listener");
       await listener({ preventDefault: () => undefined });
     },
     submitButton: document.getElementById("submit-button"),
