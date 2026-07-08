@@ -12,6 +12,12 @@ publication uses rename. A copy fallback is intentionally excluded because it ca
 same no-replace guarantee for competing creators. An unexpected cross-device error is therefore an
 invariant failure, not a recoverable publication mode.
 
+Transaction filenames are deterministic SHA-256 hashes of validated sandbox names. The hash is a
+stable traversal-safe key, not a confidentiality boundary; transaction contents and names remain
+protected by the `0700` state directory and `0600` record mode. Backup receipt timestamps preserve
+the product's filename-safe dashed format and are validated by a bijective conversion to canonical
+UTC ISO time.
+
 After publication, the store calls `fsync` on the containing directory. Common Linux filesystems
 use this to persist the directory entry, but exact guarantees remain filesystem and device
 specific. On macOS, Node.js does not expose `F_FULLFSYNC`; strict persistence through sudden power

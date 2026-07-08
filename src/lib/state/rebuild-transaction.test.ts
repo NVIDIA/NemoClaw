@@ -302,6 +302,20 @@ describe("RebuildTransactionStore", () => {
       },
     ],
     [
+      "legacy recovery authorization",
+      (record: Record<string, unknown>) => {
+        const intent = record.intent as Record<string, Record<string, unknown>>;
+        intent.source!.legacyManagedImageRecoveryAuthorized = "yes";
+      },
+    ],
+    [
+      "credential environment variable",
+      (record: Record<string, unknown>) => {
+        const intent = record.intent as Record<string, Record<string, unknown>>;
+        intent.target!.credentialEnv = "not-an-env-name";
+      },
+    ],
+    [
       "timestamp",
       (record: Record<string, unknown>) => {
         record.updatedAt = "2026-07-08";

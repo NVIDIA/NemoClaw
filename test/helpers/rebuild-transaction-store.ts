@@ -36,7 +36,11 @@ export function intent(
 ): RebuildTransactionIntentV1 {
   return {
     sandboxName: SANDBOX,
-    source: { agent: "openclaw", registryFingerprint: FP_A },
+    source: {
+      agent: "openclaw",
+      registryFingerprint: FP_A,
+      legacyManagedImageRecoveryAuthorized: false,
+    },
     target: {
       agent: "openclaw",
       provider: "nvidia",
