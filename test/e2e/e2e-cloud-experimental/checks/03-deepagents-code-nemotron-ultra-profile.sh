@@ -41,6 +41,7 @@ import tomllib
 from deepagents.profiles import _builtin_profiles
 from deepagents.profiles.harness import _nvidia_nemotron_3_ultra
 from deepagents.profiles.harness.harness_profiles import _harness_profile_for_model
+from deepagents_code.model_config import ModelConfig
 from langchain_openai import ChatOpenAI
 
 CONFIG_PATH = Path("/sandbox/.deepagents/config.toml")
@@ -53,6 +54,9 @@ MANAGED_MODEL_IDS = (
     "nvidia/nemotron-3-ultra-550b-a55b",
     "nvidia/nvidia/nemotron-3-ultra",
 )
+EXPECTED_EXTRA_BODY = {
+    "chat_template_kwargs": {"force_nonempty_content": True},
+}
 EXPECTED_NATIVE_PROFILE_SHA256 = (
     "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
 )
@@ -100,14 +104,26 @@ assert bootstrap_hash == EXPECTED_BOOTSTRAP_SHA256, bootstrap_hash
 
 config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 default_model = config["models"]["default"]
-assert default_model.removeprefix("openai:") in MANAGED_MODEL_IDS, default_model
+configured_model_id = default_model.removeprefix("openai:")
+assert configured_model_id in MANAGED_MODEL_IDS, default_model
 
 provider = config["models"]["providers"]["openai"]
-assert provider["models"] == [default_model.removeprefix("openai:")]
+assert provider["models"] == [configured_model_id]
 assert provider["api_key_env"] == "DEEPAGENTS_CODE_OPENAI_API_KEY"
 assert provider["base_url"] == "https://inference.local/v1"
 assert provider["enabled"] is True
-assert provider["params"] == {"use_responses_api": False}
+assert provider["params"] == {
+    "use_responses_api": False,
+    configured_model_id: {"extra_body": EXPECTED_EXTRA_BODY},
+}
+
+model_kwargs = ModelConfig.load(CONFIG_PATH).get_kwargs(
+    "openai", model_name=configured_model_id
+)
+assert model_kwargs == {
+    "use_responses_api": False,
+    "extra_body": EXPECTED_EXTRA_BODY,
+}
 
 
 class ProfileOnlyChatOpenAI(ChatOpenAI):
@@ -127,12 +143,14 @@ class ProfileOnlyChatOpenAI(ChatOpenAI):
 
 
 def make_model(model_id):
-    return ProfileOnlyChatOpenAI(
+    model = ProfileOnlyChatOpenAI(
         model=model_id,
         api_key="nemoclaw-managed-placeholder",
         base_url=provider["base_url"],
-        use_responses_api=provider["params"]["use_responses_api"],
+        **model_kwargs,
     )
+    assert model.extra_body == EXPECTED_EXTRA_BODY
+    return model
 
 
 def middleware_names(profile):
