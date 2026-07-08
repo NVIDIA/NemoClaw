@@ -601,7 +601,9 @@ async function runAdvisorConversation(
     credentialEnv: ADVISOR_CREDENTIAL_ENV,
     logPrefix: options.logPrefix,
     logProgress,
-    onTurnComplete: (turn) => writeTurnArtifact(options.turnDir, turn),
+    onTurnComplete: (turn) => {
+      writeTurnArtifact(options.turnDir, turn);
+    },
   });
   return result;
 }

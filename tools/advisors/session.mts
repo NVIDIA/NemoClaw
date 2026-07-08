@@ -93,7 +93,7 @@ export type RunReadOnlyAdvisorOptions = {
   credentialEnv: string;
   logPrefix: string;
   logProgress: (message: string) => void;
-  onTurnComplete?: (turn: AdvisorCompletedTurn) => void;
+  onTurnComplete?: (turn: AdvisorCompletedTurn) => void | Promise<void>;
 };
 
 export type AdvisorCompletedTurn = {
@@ -119,7 +119,7 @@ export async function settleAdvisorTurn(options: {
   run: () => Promise<void>;
   readText: () => string;
   readError: () => string | undefined;
-  onTurnComplete?: (turn: AdvisorCompletedTurn) => void;
+  onTurnComplete?: (turn: AdvisorCompletedTurn) => void | Promise<void>;
 }): Promise<AdvisorTurnSettlement> {
   let didThrow = false;
   let thrown: unknown;
@@ -148,7 +148,7 @@ export async function settleAdvisorTurn(options: {
   };
   let callbackError: string | undefined;
   try {
-    options.onTurnComplete?.(turn);
+    await options.onTurnComplete?.(turn);
   } catch (callbackFailure: unknown) {
     callbackError =
       normalizeProviderError(errorText(callbackFailure)) || "unknown advisor turn callback failure";
