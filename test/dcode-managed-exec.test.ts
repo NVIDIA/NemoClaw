@@ -65,18 +65,38 @@ function makeLauncherFixture(tempDir: string): {
 }
 
 describe("Deep Agents Code side-effect-free managed exec", () => {
-  it.each([
-    { expected: "1", marker: "1\n", name: "enabled", observability: undefined },
-    { expected: "__unset__", marker: null, name: "disabled", observability: "1" },
-  ])("keeps $name observability state unchanged during route diagnostics (#6504)", ({
-    expected,
-    marker,
-    observability,
-  }) => {
+  it("preserves enabled observability during route diagnostics (#6504)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-managed-exec-"));
     try {
       const { launcherPath, markerPath, wrapperMarkerPath } = makeLauncherFixture(tempDir);
-      if (marker !== null) fs.writeFileSync(markerPath, marker, { mode: 0o444 });
+      fs.writeFileSync(markerPath, "1\n", { mode: 0o444 });
+
+      const result = spawnSync(
+        launcherPath,
+        [
+          "/bin/sh",
+          "-c",
+          'printf "OBS=%s PROXY=%s" "${NEMOCLAW_OBSERVABILITY-__unset__}" "$HTTPS_PROXY"',
+        ],
+        {
+          env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+          encoding: "utf8",
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("OBS=1 PROXY=http://managed-proxy.internal:3128");
+      expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
+      expect(fs.readFileSync(markerPath, "utf8")).toBe("1\n");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves disabled observability during route diagnostics (#6504)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-managed-exec-"));
+    try {
+      const { launcherPath, markerPath, wrapperMarkerPath } = makeLauncherFixture(tempDir);
 
       const result = spawnSync(
         launcherPath,
@@ -88,20 +108,16 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
         {
           env: {
             PATH: process.env.PATH ?? "/usr/bin:/bin",
-            ...(observability === undefined ? {} : { NEMOCLAW_OBSERVABILITY: observability }),
+            NEMOCLAW_OBSERVABILITY: "1",
           },
           encoding: "utf8",
         },
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe(`OBS=${expected} PROXY=http://managed-proxy.internal:3128`);
+      expect(result.stdout).toBe("OBS=__unset__ PROXY=http://managed-proxy.internal:3128");
       expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
-      if (marker === null) {
-        expect(fs.existsSync(markerPath)).toBe(false);
-      } else {
-        expect(fs.readFileSync(markerPath, "utf8")).toBe(marker);
-      }
+      expect(fs.existsSync(markerPath)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
