@@ -16,7 +16,7 @@ describe("resolveRebuildDurableConfig", () => {
       "always",
       "thread-opt-in",
       "thread-opt-in",
-      "disabled or thread-opt-in",
+      "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in",
     ],
   ] as const)("%s (#6478)", (_label, recorded, requested, expected, error) => {
     const config = resolveRebuildDurableConfig(
@@ -35,8 +35,7 @@ describe("resolveRebuildDurableConfig", () => {
     );
 
     expect(config.dcodeAutoApprovalMode).toBe(expected);
-    if (error) expect(config.dcodeAutoApprovalModeError).toContain(error);
-    else expect(config.dcodeAutoApprovalModeError).toBeNull();
+    expect(config.dcodeAutoApprovalModeError).toBe(error);
   });
 
   it("keeps the registry tool-disclosure selection authoritative", () => {

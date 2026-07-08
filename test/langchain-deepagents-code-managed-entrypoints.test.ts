@@ -31,6 +31,14 @@ const MANAGED_MCP_VALIDATOR_INVOCATION = [
   ')"',
 ].join("\n");
 
+function writeAutoApprovalCapability(path: string, content?: string): void {
+  const configuredContents = content === undefined ? [] : [content];
+  for (const configuredContent of configuredContents) {
+    fs.writeFileSync(path, configuredContent, { mode: 0o444 });
+    fs.chmodSync(path, 0o444);
+  }
+}
+
 function makeWrapperFixture(
   tempDir: string,
   autoApprovalContent?: string,
@@ -73,10 +81,7 @@ function makeWrapperFixture(
       `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
   fs.writeFileSync(envFile, "", "utf8");
-  if (autoApprovalContent !== undefined) {
-    fs.writeFileSync(autoApprovalPath, autoApprovalContent, { mode: 0o444 });
-    fs.chmodSync(autoApprovalPath, 0o444);
-  }
+  writeAutoApprovalCapability(autoApprovalPath, autoApprovalContent);
   fs.writeFileSync(wrapperPath, fixture, { mode: 0o755 });
   return { wrapperPath, ranMarker, autoApprovalPath };
 }

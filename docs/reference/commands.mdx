@@ -233,6 +233,8 @@ $$nemoclaw onboard --name my-assistant --recreate-sandbox --tool-disclosure dire
 Without an explicit flag or environment value, recreation preserves the recorded setting and only falls back to `progressive` for legacy state.
 Resuming an interrupted session with a different explicit setting fails with a conflict instead of changing behavior mid-session.
 
+<AgentOnly variant="deepagents">
+
 #### `--observability` and `--no-observability`
 
 Enable backend-neutral trace export for a LangChain Deep Agents Code sandbox.
