@@ -10,18 +10,19 @@ const path = require("node:path");
 const ts = require("typescript");
 
 const sourceLoader = path.join(__dirname, "register-source-require.ts");
-const { outputText } = ts.transpileModule(fs.readFileSync(sourceLoader, "utf8"), {
-  compilerOptions: {
-    esModuleInterop: true,
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
-  fileName: sourceLoader,
-});
-const sourceLoaderModule = new Module(sourceLoader, module);
-sourceLoaderModule.filename = sourceLoader;
-sourceLoaderModule.paths = module.paths;
-sourceLoaderModule._compile(outputText, sourceLoader);
+
+Module._extensions[".ts"] = (targetModule, filename) => {
+  const { outputText } = ts.transpileModule(fs.readFileSync(filename, "utf8"), {
+    compilerOptions: {
+      esModuleInterop: true,
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+    fileName: filename,
+  });
+  targetModule._compile(outputText, filename);
+};
+require(sourceLoader);
 
 function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
