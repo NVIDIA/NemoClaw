@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http, { type IncomingHttpHeaders } from "node:http";
@@ -513,7 +513,7 @@ describe("local credential helper", () => {
     expect(csp).toContain("style-src 'sha256-");
   });
 
-  it("sanitizes inherited names case-insensitively without mutating the source environment (#5048)", () => {
+  it("drops every ambient entry without mutating the source environment (#5048)", () => {
     const ambient = {
       ...CONFIG_ROOT_ENV_OVERRIDES,
       ...NETWORK_TRUST_ENV_OVERRIDES,
@@ -535,14 +535,14 @@ describe("local credential helper", () => {
       Node_Options: "--no-warnings",
       Path: "/ambient/search/path",
       Public_Id: "ambient-field-collision",
-      SAFE_SETTING: "preserved",
+      UNKNOWN_AMBIENT_SETTING: "removed",
       SSH_AUTH_SOCK: "/ambient/agent.sock",
     } satisfies NodeJS.ProcessEnv;
     const original = { ...ambient };
 
     const sanitized = sanitizeInheritedChildEnvironment(ambient, new Set(["PUBLIC_ID"]));
 
-    expect(sanitized).toEqual({ SAFE_SETTING: "preserved" });
+    expect(sanitized).toEqual({});
     expect(ambient).toEqual(original);
   });
 
@@ -855,6 +855,59 @@ describe("local credential helper", () => {
     expect(accepted.status).toBe(202);
     await expectSuccessfulCompletion(helper, fixture.markerPath);
   });
+
+  it.runIf(process.platform !== "win32" && fs.existsSync("/usr/bin/git"))(
+    "blocks an ambient Git template hook from observing submitted credentials (#5048)",
+    async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-git-template-test-"));
+      tempDirs.add(dir);
+      const source = path.join(dir, "source");
+      const destination = path.join(dir, "clone");
+      const template = path.join(dir, "template");
+      const hooks = path.join(template, "hooks");
+      const leakPath = path.join(dir, "leaked-secret.txt");
+      fs.mkdirSync(hooks, { recursive: true });
+
+      execFileSync("/usr/bin/git", ["init", "--quiet", source]);
+      fs.writeFileSync(path.join(source, "tracked.txt"), "fixture\n");
+      execFileSync("/usr/bin/git", ["-C", source, "add", "tracked.txt"]);
+      execFileSync("/usr/bin/git", [
+        "-C",
+        source,
+        "-c",
+        "user.name=NemoClaw Test",
+        "-c",
+        "user.email=nemoclaw-test@example.invalid",
+        "commit",
+        "--quiet",
+        "--no-gpg-sign",
+        "-m",
+        "fixture",
+      ]);
+
+      const hookPath = path.join(hooks, "post-checkout");
+      const quotedLeakPath = `'${leakPath.replaceAll("'", `'"'"'`)}'`;
+      fs.writeFileSync(hookPath, `#!/bin/sh\nprintf '%s' "$OPENAI_API_KEY" > ${quotedLeakPath}\n`);
+      fs.chmodSync(hookPath, 0o755);
+
+      const helper = await startHelper(["/usr/bin/git", "clone", "--quiet", source, destination], {
+        GIT_TEMPLATE_DIR: template,
+      });
+      const accepted = await request(helper.formUrl, {
+        body: validBody(),
+        headers: validHeaders(helper),
+        method: "POST",
+        path: "/submit",
+      });
+
+      expect(accepted.status).toBe(202);
+      await expect(helper.closed).resolves.toEqual({ code: 0, signal: null });
+      expect(fs.readFileSync(path.join(destination, "tracked.txt"), "utf8")).toBe("fixture\n");
+      expect(fs.existsSync(path.join(destination, ".git", "hooks", "post-checkout"))).toBe(false);
+      expect(fs.existsSync(leakPath)).toBe(false);
+      expect(helper.output()).not.toContain(TEST_SECRET);
+    },
+  );
 
   it("uses only the explicit cwd and OS account home in account-home mode (#5048)", async () => {
     const commandCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-account-cwd-test-"));

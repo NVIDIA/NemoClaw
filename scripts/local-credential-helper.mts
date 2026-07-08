@@ -232,25 +232,13 @@ export function isForbiddenChildEnvName(name: string): boolean {
   );
 }
 
-function isForbiddenInheritedChildEnvName(name: string): boolean {
-  return name.startsWith("NEMOCLAW_") || isForbiddenChildEnvName(name);
-}
-
 export function sanitizeInheritedChildEnvironment(
-  environment: NodeJS.ProcessEnv,
-  approvedFieldNames: ReadonlySet<string>,
+  _environment: NodeJS.ProcessEnv,
+  _approvedFieldNames: ReadonlySet<string>,
 ): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(environment).filter(([name, value]) => {
-      const canonicalName = name.toUpperCase();
-      return (
-        value !== undefined &&
-        !approvedFieldNames.has(canonicalName) &&
-        !isCredentialShapedName(canonicalName) &&
-        !isForbiddenInheritedChildEnvName(canonicalName)
-      );
-    }),
-  );
+  // Unknown variables can be tool-specific execution controls. The child gets
+  // only the selected profile environment and explicitly submitted fields.
+  return {};
 }
 
 function createPrivateExecutionRoot(): string {
