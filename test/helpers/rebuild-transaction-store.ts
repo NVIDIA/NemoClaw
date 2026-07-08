@@ -40,6 +40,7 @@ export function intent(
       agent: "openclaw",
       registryFingerprint: FP_A,
       legacyManagedImageRecoveryAuthorized: false,
+      shieldsLocked: false,
     },
     target: {
       agent: "openclaw",

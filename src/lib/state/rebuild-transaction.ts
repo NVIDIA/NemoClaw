@@ -38,6 +38,7 @@ export interface RebuildTransactionIntentV1 {
     readonly agent: string | null;
     readonly registryFingerprint: string;
     readonly legacyManagedImageRecoveryAuthorized: boolean;
+    readonly shieldsLocked: boolean;
   };
   readonly target: {
     readonly agent: string | null;
@@ -282,6 +283,9 @@ function normalizeIntent(value: unknown, sandboxName: string): RebuildTransactio
       "intent.source.legacyManagedImageRecoveryAuthorized is invalid",
     );
   }
+  if (typeof source.shieldsLocked !== "boolean") {
+    throw transactionError("CORRUPT", sandboxName, "intent.source.shieldsLocked is invalid");
+  }
   return {
     sandboxName,
     source: {
@@ -292,6 +296,7 @@ function normalizeIntent(value: unknown, sandboxName: string): RebuildTransactio
         sandboxName,
       ),
       legacyManagedImageRecoveryAuthorized: source.legacyManagedImageRecoveryAuthorized,
+      shieldsLocked: source.shieldsLocked,
     },
     target: {
       agent: nullableString(target.agent, "intent.target.agent", sandboxName),
