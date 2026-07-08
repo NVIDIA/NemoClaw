@@ -23,6 +23,10 @@ import {
   cloudExperimentalCheckTimeoutMs,
 } from "../live/cloud-experimental-checks.ts";
 
+const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
+const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
+const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
+
 function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
   return {
     command: [],
@@ -278,33 +282,56 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   });
 
   it("keeps Deep Agents Tavily opt-in probe command single-line for OpenShell exec", () => {
-    const result = spawnSync(
-      "bash",
-      [
-        path.join(
-          process.cwd(),
-          "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-        ),
-      ],
-      {
-        encoding: "utf8",
-        env: {
-          NEMOCLAW_E2E_TAVILY_SELF_TEST: "probe-command-shape",
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
-        },
+    const result = spawnSync("bash", [dcodeTavilyCheck], {
+      encoding: "utf8",
+      env: {
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: "probe-command-shape",
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
       },
-    );
+    });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
+  it.each([
+    { fixture: "BLOCKED:policy denied", status: 0 },
+    { fixture: "REACHED:403", status: 1 },
+  ])("restores the default Tavily denial after opt-in ($fixture)", ({ fixture, status }) => {
+    const result = spawnSync("bash", [dcodeTavilyCheck], {
+      encoding: "utf8",
+      env: {
+        NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        SANDBOX_NAME: "deepagents-sandbox",
+      },
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+    expect(fs.readFileSync(dcodeTavilyCheck, "utf8")).toContain("trap restore_tavily_denial EXIT");
+  });
+
+  it("skips the DCode auto-approval check before optional host prerequisites", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-approval-skip-"));
+    try {
+      fs.writeFileSync(path.join(tempDir, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const result = spawnSync("/bin/bash", [dcodeApprovalCheck], {
+        encoding: "utf8",
+        env: { PATH: tempDir, REPO: process.cwd(), SANDBOX_NAME: "openclaw-sandbox" },
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain(
+        "12-deepagents-code-thread-auto-approval: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
-    const scriptPath = path.join(
-      process.cwd(),
-      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
-    );
-    const result = spawnSync("bash", ["-n", scriptPath], { encoding: "utf8" });
+    const result = spawnSync("bash", ["-n", dcodeApprovalCheck], { encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
   });
 

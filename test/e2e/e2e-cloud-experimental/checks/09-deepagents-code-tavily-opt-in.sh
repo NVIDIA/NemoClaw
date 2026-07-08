@@ -113,6 +113,23 @@ python_probe() {
   sandbox_exec "$remote_cmd"
 }
 
+restore_tavily_denial() {
+  local remove_output post_remove_probe_output
+  if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
+    fail_test "policy-remove tavily failed after the opt-in proof: $remove_output"
+    return 1
+  fi
+  sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
+  post_remove_probe_output="$(python_probe "https://api.tavily.com/search" || true)"
+  if [[ "$post_remove_probe_output" == *"BLOCKED:"* &&
+    "$post_remove_probe_output" != *"REACHED:"* ]]; then
+    pass "managed Deep Agents Code python returns to the default Tavily denial"
+  else
+    fail_test "policy-remove did not restore the default Tavily denial: $post_remove_probe_output"
+    return 1
+  fi
+}
+
 PASSED=0
 FAILED=0
 
@@ -130,6 +147,14 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "probe-command-shape" ]; then
     esac
   }
   python_probe "https://api.tavily.com/search"
+  exit 0
+fi
+
+if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
+  nemoclaw_cli() {
+    [[ "$*" == "$SANDBOX_NAME policy-remove tavily --yes" ]]
+  }
+  NEMOCLAW_E2E_POLICY_SETTLE_SECONDS=0 restore_tavily_denial
   exit 0
 fi
 
@@ -165,6 +190,7 @@ APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   exit 1
 }
 pass "tavily policy preset applies"
+trap restore_tavily_denial EXIT
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
 
@@ -199,6 +225,9 @@ if echo "$PROJECT_OUT" | grep -Fxq "$PROJECT_PYTHON"; then
 else
   fail_test "project venv under /sandbox did not expose a usable python3 executable: $PROJECT_OUT"
 fi
+
+# Do not leak this check's durable opt-in into later sequential checks.
+restore_tavily_denial && trap - EXIT
 
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ] || exit 1
