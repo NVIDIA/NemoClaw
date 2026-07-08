@@ -3,12 +3,11 @@
 
 /**
  * SOURCE_OF_TRUTH
- * Invalid state: rebuild must remove the registered sandbox before recreation,
- * but a failed recreation would otherwise permanently lose the prior row and
- * default selection.
- * Source boundary: runRebuildDestroyPhase removes the registry row only after
- * OpenShell has successfully deleted (or confirms absence of) the old sandbox;
- * the rebuild pipeline restores that receipt if recreation then fails.
+ * Invalid state: a lifecycle operation may remove a registered sandbox before
+ * later cleanup fails, which would otherwise permanently lose the prior row
+ * and default selection.
+ * Source boundary: callers capture removal receipts at the registry mutation
+ * and restore only while the removed name/default generation is still owned.
  * Source-fix constraint: OpenShell cannot yet create and verify a replacement
  * under a temporary name and atomically swap it with the existing sandbox.
  * Regression proof: registry-reversible-removal.test.ts covers receipt-based

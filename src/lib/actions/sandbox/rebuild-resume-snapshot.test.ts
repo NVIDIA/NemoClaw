@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
@@ -16,6 +20,7 @@ import * as sandboxVersion from "../../sandbox/version";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
+import { RebuildTransactionStore } from "../../state/rebuild-transaction";
 import * as sandboxState from "../../state/sandbox";
 import * as sandboxSession from "../../state/sandbox-session";
 import * as destroy from "./destroy";
@@ -34,6 +39,7 @@ describe("rebuild resume snapshot repair", () => {
   let errorSpy: MockInstance;
   let logSpy: MockInstance;
   let session: Session;
+  let transactionStateDir: string;
   const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const observed = {
     handoffOptions: null as Record<string, unknown> | null,
@@ -56,6 +62,7 @@ describe("rebuild resume snapshot repair", () => {
     observed.preRepairResumable = null;
     observed.repairedMachineState = null;
     observed.sandboxEnvInsideOnboard = null;
+    transactionStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resume-transaction-"));
 
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -192,6 +199,7 @@ describe("rebuild resume snapshot repair", () => {
     for (const spy of spies) spy.mockRestore();
     errorSpy.mockRestore();
     logSpy.mockRestore();
+    fs.rmSync(transactionStateDir, { recursive: true, force: true });
     if (originalSandboxName === undefined) {
       delete process.env.NEMOCLAW_SANDBOX_NAME;
     } else {
@@ -200,9 +208,12 @@ describe("rebuild resume snapshot repair", () => {
   });
 
   it("replaces complete history with a target-scoped resume snapshot (#6245)", async () => {
-    await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
-      "Recreate failed",
-    );
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        transactionStore: new RebuildTransactionStore({ stateDir: transactionStateDir }),
+      }),
+    ).rejects.toThrow("Recreate failed");
 
     expect(observed.handoffOptions).toMatchObject({
       resume: true,

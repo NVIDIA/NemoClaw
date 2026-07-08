@@ -274,6 +274,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       }
       return true;
     });
+  const restorePreservedSandboxEntryIfMissingSpy = vi
+    .spyOn(registry, "restorePreservedSandboxEntryIfMissing")
+    .mockImplementation((...args: unknown[]) => {
+      const entryName = String((args[0] as { name: string }).name);
+      if (currentRegistryEntryNames.has(entryName)) return false;
+      currentRegistryEntryNames.add(entryName);
+      return true;
+    });
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: false,
     sessions: [],
@@ -466,6 +474,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     reattachMcpProvidersAfterRebuildAbortSpy,
     restoreSandboxEntrySpy,
     restoreSandboxEntryIfMissingSpy,
+    restorePreservedSandboxEntryIfMissingSpy,
     restoreMcpBridgesAfterRebuildSpy,
     warnUnpreservedUserManagedFilesSpy,
     session,

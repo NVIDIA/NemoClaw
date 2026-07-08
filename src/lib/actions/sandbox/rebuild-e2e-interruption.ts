@@ -3,6 +3,7 @@
 
 /** Testing-only process-death checkpoint; inert unless the shared E2E gate is enabled. */
 export function maybePauseForRebuildInterruption(phase: "prepared" | "delete_unjournaled"): void {
+  if (process.env.VITEST !== "true") return;
   if (process.env.NEMOCLAW_E2E_FAILURE_INJECTION !== "1") return;
   if (process.env.NEMOCLAW_E2E_FORCE_FAIL_AT_STEP !== `rebuild_${phase}`) return;
   process.stderr.write(

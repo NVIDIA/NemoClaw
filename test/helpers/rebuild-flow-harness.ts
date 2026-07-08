@@ -379,6 +379,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const restoreRegistryEntryIfMissingSpy = vi
     .spyOn(registry, "restoreSandboxEntryIfMissing")
     .mockReturnValue(true);
+  vi.spyOn(registry, "restorePreservedSandboxEntryIfMissing").mockReturnValue(false);
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: false,
     sessions: [],

@@ -510,6 +510,22 @@ describe("registry", () => {
     expect(registry.getDefault()).toBe("concurrent");
   });
 
+  it("restores preserved rebuild metadata only when no replacement row exists", () => {
+    registry.registerSandbox({ name: "alpha", model: "old" });
+    registry.registerSandbox({ name: "beta", model: "selected" });
+    registry.setDefault("beta");
+    const original = registry.getSandbox("alpha");
+
+    registry.updateSandbox("alpha", { model: "replacement" });
+    expect(registry.restorePreservedSandboxEntryIfMissing(original)).toBe(false);
+    expect(registry.getSandbox("alpha").model).toBe("replacement");
+
+    registry.removeSandbox("alpha");
+    expect(registry.restorePreservedSandboxEntryIfMissing(original)).toBe(true);
+    expect(registry.getSandbox("alpha").model).toBe("old");
+    expect(registry.getDefault()).toBe("beta");
+  });
+
   it("serializes a spawned registration that starts during an atomic restore", () => {
     const { spawnSync } = require("child_process");
     registry.registerSandbox({ name: "alpha", model: "original", imageTag: "old-image" });

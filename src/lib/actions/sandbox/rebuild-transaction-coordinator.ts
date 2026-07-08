@@ -3,6 +3,7 @@
 
 import crypto from "node:crypto";
 
+import { CLI_NAME } from "../../cli/branding";
 import {
   type RebuildTransactionIntentV1,
   type RebuildTransactionRecordV1,
@@ -40,11 +41,6 @@ export function loadRebuildRecovery(
   if (!transaction || transaction.status === "completed") {
     return { transaction, recoveryManifest: null };
   }
-  if (transaction.phase === "replacement_created") {
-    throw new Error(
-      `Rebuild transaction '${transaction.transactionId}' already created a replacement; automatic recovery is not supported yet.`,
-    );
-  }
   const recoveryManifest = sandboxState.getLatestBackup(sandboxName);
   if (
     !recoveryManifest ||
@@ -55,10 +51,15 @@ export function loadRebuildRecovery(
       `Rebuild transaction '${transaction.transactionId}' no longer matches the latest validated backup.`,
     );
   }
+  if (transaction.phase === "replacement_created") {
+    throw new Error(
+      `Rebuild transaction '${transaction.transactionId}' already created a replacement, so this phase cannot be resumed automatically in #6435. Inspect the replacement before changing it. Validated backup: ${recoveryManifest.backupPath}. If state restoration is needed, run '${CLI_NAME} ${sandboxName} snapshot restore "${recoveryManifest.timestamp}"'.`,
+    );
+  }
   return { transaction, recoveryManifest };
 }
 
-export async function prepareRebuildTransaction(args: {
+async function prepareRebuildTransaction(args: {
   store: RebuildTransactionStore;
   existing: RebuildTransactionRecordV1 | null;
   sandboxName: string;
@@ -67,6 +68,7 @@ export async function prepareRebuildTransaction(args: {
   recreateOptions: RebuildRecreateOnboardOpts;
   backupManifest: RebuildBackupManifest;
   imageIdentity: unknown;
+  oldSandboxPresent: boolean;
 }): Promise<RebuildTransactionRecordV1 | null> {
   if (!args.backupManifest) return null;
   const { resumeConfig, durableConfig } = args.targetConfig;
@@ -106,18 +108,113 @@ export async function prepareRebuildTransaction(args: {
   if (!args.existing || args.existing.status === "completed") {
     return args.store.create(intent, receipts);
   }
-  if (fingerprintRebuildValue(args.existing.intent) !== fingerprintRebuildValue(intent)) {
+  const intentChanged =
+    fingerprintRebuildValue(args.existing.intent) !== fingerprintRebuildValue(intent);
+  const backupChanged =
+    fingerprintRebuildValue(args.existing.receipts.backup) !==
+    fingerprintRebuildValue(receipts.backup);
+  if (
+    args.existing.phase === "prepared" &&
+    args.oldSandboxPresent &&
+    (intentChanged || backupChanged)
+  ) {
+    return args.store.refreshPrepared(args.sandboxName, args.existing.revision, intent, receipts);
+  }
+  if (intentChanged) {
     throw new Error(
       `Rebuild transaction '${args.existing.transactionId}' intent changed; refusing another destructive effect.`,
     );
   }
-  if (
-    fingerprintRebuildValue(args.existing.receipts.backup) !==
-    fingerprintRebuildValue(receipts.backup)
-  ) {
+  if (backupChanged) {
     throw new Error(
       `Rebuild transaction '${args.existing.transactionId}' recovery inputs changed; refusing another destructive effect.`,
     );
   }
   return args.existing;
+}
+
+export class RebuildTransactionCoordinator {
+  private transaction: RebuildTransactionRecordV1 | null;
+
+  constructor(
+    private readonly store: RebuildTransactionStore,
+    private readonly sandboxName: string,
+    recovered: RebuildTransactionRecordV1 | null,
+  ) {
+    this.transaction = recovered;
+  }
+
+  get phase(): RebuildTransactionRecordV1["phase"] | null {
+    return this.transaction?.phase ?? null;
+  }
+
+  async prepare(
+    args: Omit<
+      Parameters<typeof prepareRebuildTransaction>[0],
+      "store" | "existing" | "sandboxName"
+    >,
+  ): Promise<void> {
+    this.transaction = await prepareRebuildTransaction({
+      ...args,
+      store: this.store,
+      existing: this.transaction,
+      sandboxName: this.sandboxName,
+    });
+  }
+
+  async reconcileObservedDeletion(staleRecovery: boolean): Promise<void> {
+    if (!staleRecovery || this.transaction?.phase !== "prepared") return;
+    this.transaction = await this.store.transition(
+      this.sandboxName,
+      this.transaction.revision,
+      "old_deleted",
+      {
+        ...this.transaction.receipts,
+        oldSandboxDeletion: { observedAt: new Date().toISOString() },
+      },
+    );
+  }
+
+  async markDeleted(): Promise<void> {
+    if (this.transaction?.phase !== "prepared") return;
+    this.transaction = await this.store.transition(
+      this.sandboxName,
+      this.transaction.revision,
+      "old_deleted",
+      {
+        ...this.transaction.receipts,
+        oldSandboxDeletion: { observedAt: new Date().toISOString() },
+      },
+    );
+  }
+
+  async markReplacementCreated(identity: unknown): Promise<void> {
+    if (this.transaction?.phase !== "old_deleted") return;
+    this.transaction = await this.store.transition(
+      this.sandboxName,
+      this.transaction.revision,
+      "replacement_created",
+      {
+        ...this.transaction.receipts,
+        replacement: {
+          identityFingerprint: fingerprintRebuildValue(identity),
+          observedAt: new Date().toISOString(),
+        },
+      },
+    );
+  }
+
+  async recordReplacementFailure(): Promise<void> {
+    if (this.transaction?.phase !== "old_deleted") return;
+    this.transaction = await this.store.recordFailure(this.sandboxName, this.transaction.revision, {
+      code: "REPLACEMENT_RETRY_REQUIRED",
+      recordedAt: new Date().toISOString(),
+      retryable: true,
+    });
+  }
+
+  async complete(): Promise<void> {
+    if (this.transaction?.phase !== "replacement_created") return;
+    this.transaction = await this.store.complete(this.sandboxName, this.transaction.revision);
+  }
 }

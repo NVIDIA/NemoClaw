@@ -33,11 +33,7 @@ import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-pr
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import { runRebuildShieldsPhase } from "./rebuild-shields-phase";
-import {
-  fingerprintRebuildValue,
-  loadRebuildRecovery,
-  prepareRebuildTransaction,
-} from "./rebuild-transaction-coordinator";
+import { RebuildTransactionCoordinator } from "./rebuild-transaction-coordinator";
 
 export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPlanForRebuild };
 
@@ -83,14 +79,13 @@ async function rebuildSandboxUnlocked(
   opts: RebuildSandboxExecutionOptions,
 ): Promise<void> {
   const transactionStore = opts.transactionStore ?? new RebuildTransactionStore();
-  const recovery = loadRebuildRecovery(transactionStore, sandboxName);
-  let transaction = recovery.transaction;
   const preflight = await runRebuildPreflightPhase(sandboxName, options, {
     ...opts,
-    recoveryManifest: recovery.recoveryManifest ?? opts.recoveryManifest,
+    transactionStore,
   });
   if (!preflight) return;
   const {
+    transaction: recoveredTransaction,
     sandboxEntry,
     rebuildAgent,
     versionCheck,
@@ -106,6 +101,11 @@ async function rebuildSandboxUnlocked(
     log,
     bail,
   } = preflight;
+  const transaction = new RebuildTransactionCoordinator(
+    transactionStore,
+    sandboxName,
+    recoveredTransaction,
+  );
   const {
     resumeConfig,
     sessionSnapshot,
@@ -149,9 +149,8 @@ async function rebuildSandboxUnlocked(
 
       const backup = runRebuildBackupPhase({
         sandboxName,
-        // The requested observability bit is replacement intent, not a
-        // preflight mutation of the old registry row. Use a copy only for
-        // target policy normalization; replacement registration commits it.
+        // Apply replacement observability only to target policy normalization;
+        // replacement registration commits it to the registry later.
         sandboxEntry: {
           ...sandboxEntry,
           observabilityEnabled: recreateOptions.observabilityEnabled,
@@ -166,9 +165,8 @@ async function rebuildSandboxUnlocked(
       });
       if (!backup) return;
 
-      // The post-delete create must consume the exact context that passed the
-      // image preflight. Revalidate at the last safe point so mutation of the
-      // retained copy cannot cross the destructive boundary.
+      // Revalidate the retained image context at the last safe point before
+      // the destructive boundary.
       if (preparedImage && !verifyPreparedBuildContext(preparedImage)) {
         printRebuildPreflightFailure(
           "the retained replacement image context changed after preflight.",
@@ -179,9 +177,8 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
-      // DCode's retained replacement and live inference route must still match at
-      // the last safe point. This check intentionally precedes MCP adapter scrub,
-      // provider detach, NIM stop, and sandbox deletion in the destroy phase.
+      // Revalidate DCode's replacement and inference route before MCP scrub,
+      // provider detach, NIM stop, or sandbox deletion.
       if (
         !(await dcodePreflight.revalidateBeforeDelete(
           resumeConfig,
@@ -193,10 +190,9 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
-      transaction = await prepareRebuildTransaction({
-        store: transactionStore,
-        existing: transaction,
-        sandboxName,
+      // Journal creation follows the immutable backup: failure can orphan a
+      // backup, but cannot create a transaction without recovery data.
+      await transaction.prepare({
         sandboxEntry,
         targetConfig,
         recreateOptions,
@@ -207,23 +203,10 @@ async function rebuildSandboxUnlocked(
           recordedImage: sandboxEntry.imageTag ?? null,
           nemoclawVersion: sandboxEntry.nemoclawVersion ?? null,
         },
+        oldSandboxPresent: !staleRecovery,
       });
-      if (transaction?.phase === "old_deleted" && !staleRecovery) {
-        bail("A replacement sandbox exists while the rebuild transaction still owns recovery.");
-        return;
-      }
-      if (transaction?.phase === "prepared" && staleRecovery) {
-        transaction = await transactionStore.transition(
-          sandboxName,
-          transaction.revision,
-          "old_deleted",
-          {
-            ...transaction.receipts,
-            oldSandboxDeletion: { observedAt: new Date().toISOString() },
-          },
-        );
-      }
-      if (transaction?.phase === "prepared") maybePauseForRebuildInterruption("prepared");
+      await transaction.reconcileObservedDeletion(staleRecovery);
+      if (transaction.phase === "prepared") maybePauseForRebuildInterruption("prepared");
 
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
@@ -264,20 +247,10 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
-        oldSandboxAlreadyDeleted: transaction?.phase === "old_deleted",
+        oldSandboxAlreadyDeleted: transaction.phase === "old_deleted",
         onDeleted: async () => {
           sandboxStillExists = false;
-          if (transaction?.phase === "prepared") {
-            transaction = await transactionStore.transition(
-              sandboxName,
-              transaction.revision,
-              "old_deleted",
-              {
-                ...transaction.receipts,
-                oldSandboxDeletion: { observedAt: new Date().toISOString() },
-              },
-            );
-          }
+          await transaction.markDeleted();
         },
       });
       if (!mcpPreparation) return;
@@ -309,33 +282,10 @@ async function rebuildSandboxUnlocked(
           relockShieldsIfNeeded,
           onCreated: async () => {
             sandboxStillExists = true;
-            if (transaction?.phase === "old_deleted") {
-              transaction = await transactionStore.transition(
-                sandboxName,
-                transaction.revision,
-                "replacement_created",
-                {
-                  ...transaction.receipts,
-                  replacement: {
-                    identityFingerprint: fingerprintRebuildValue(registry.getSandbox(sandboxName)),
-                    observedAt: new Date().toISOString(),
-                  },
-                },
-              );
-            }
+            await transaction.markReplacementCreated(registry.getSandbox(sandboxName));
           },
           onFailed: async () => {
-            if (transaction?.phase === "old_deleted") {
-              transaction = await transactionStore.recordFailure(
-                sandboxName,
-                transaction.revision,
-                {
-                  code: "REPLACEMENT_RETRY_REQUIRED",
-                  recordedAt: new Date().toISOString(),
-                  retryable: true,
-                },
-              );
-            }
+            await transaction.recordReplacementFailure();
           },
           log,
           bail,
@@ -390,9 +340,7 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
       });
-      if (transaction?.phase === "replacement_created") {
-        await transactionStore.complete(sandboxName, transaction.revision);
-      }
+      await transaction.complete();
     } finally {
       if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);
     }

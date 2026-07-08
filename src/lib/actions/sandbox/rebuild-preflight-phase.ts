@@ -4,6 +4,11 @@
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
+import { redactFull } from "../../security/redact";
+import {
+  RebuildTransactionStore,
+  type RebuildTransactionRecordV1,
+} from "../../state/rebuild-transaction";
 import type { RebuildManifest } from "../../state/sandbox";
 import {
   preflightRebuildCredentials,
@@ -48,8 +53,10 @@ import {
 } from "./rebuild-prepared-recovery";
 import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
+import { loadRebuildRecovery } from "./rebuild-transaction-coordinator";
 
 export interface RebuildPreflightPhaseResult {
+  transaction: RebuildTransactionRecordV1 | null;
   sandboxEntry: RebuildSandboxEntry;
   rebuildAgent: string | null;
   versionCheck: RebuildVersionCheck;
@@ -80,17 +87,31 @@ export async function runRebuildPreflightPhase(
 ): Promise<RebuildPreflightPhaseResult | null> {
   const { log, bail, requestedToolDisclosure, requestedObservabilityEnabled, skipConfirm } =
     createRebuildCommandContext(options, opts);
+  const transactionStore = opts.transactionStore ?? new RebuildTransactionStore();
+  let recovery: ReturnType<typeof loadRebuildRecovery>;
+  try {
+    recovery = loadRebuildRecovery(transactionStore, sandboxName);
+  } catch (error) {
+    const detail = redactFull(error instanceof Error ? error.message : String(error));
+    printRebuildPreflightFailure(
+      `the durable rebuild transaction could not be validated: ${detail}`,
+      "Inspect the recorded transaction and latest backup before retrying; no rebuild side effect was attempted.",
+      "Rebuild transaction recovery failed",
+      bail,
+    );
+    return null;
+  }
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
-  const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
-  if (!sandboxEntry) return null;
-  if (!preflightMcpRebuildState(sandboxName, bail)) return null;
+  const initialSandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
+  if (!initialSandboxEntry) return null;
+  let sandboxEntry = initialSandboxEntry;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
   const recoveryManifest = validatePreparedRecoveryManifest(
     sandboxName,
     sandboxEntry,
-    opts.recoveryManifest,
+    recovery.recoveryManifest ?? opts.recoveryManifest,
     allowLegacyManagedImageRecovery,
     bail,
   );
@@ -140,6 +161,31 @@ export async function runRebuildPreflightPhase(
     let retainOnboardLock = false;
     try {
       assertRebuildEntryUnchanged(sandboxName, confirmedEntrySnapshot, bail);
+      const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
+      if (!liveState) return null;
+      const mcpPreflight = await preflightMcpRebuildState(
+        sandboxEntry,
+        liveState.staleRecovery,
+        log,
+        bail,
+      );
+      if (!mcpPreflight) return null;
+      sandboxEntry = mcpPreflight;
+      const preparedTransactionNeedsFreshBackup =
+        recovery.transaction?.status === "active" &&
+        recovery.transaction.phase === "prepared" &&
+        !liveState.staleRecovery;
+      const effectiveRecoveryManifest = preparedTransactionNeedsFreshBackup
+        ? null
+        : recoveryManifest;
+      if (
+        recovery.transaction?.status === "active" &&
+        recovery.transaction.phase === "old_deleted" &&
+        !liveState.staleRecovery
+      ) {
+        bail("A replacement sandbox exists while the rebuild transaction still owns recovery.");
+        return null;
+      }
       const preparedTarget = await prepareRebuildTargetPreflights({
         sandboxName,
         sandboxEntry,
@@ -154,17 +200,15 @@ export async function runRebuildPreflightPhase(
         // a missing gateway provider and route during recreate. The exact
         // endpoint, credential, image, and registry checks still run before
         // deletion; ordinary rebuilds continue to require the live bindings.
-        preparedBackupRecovery: recoveryManifest !== null,
+        preparedBackupRecovery: effectiveRecoveryManifest !== null,
         log,
         bail,
       });
       if (!preparedTarget) return null;
       preparedImage = preparedTarget.preparedImage;
 
-      const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
-      if (!liveState) return null;
       if (isDcodeRebuildAgent(rebuildAgent)) {
-        const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;
+        const recoveryRecreate = liveState.staleRecovery || effectiveRecoveryManifest !== null;
         const imageReady = await dcodePreflight.prepareImage(
           preparedTarget.targetConfig.resumeConfig,
           preparedTarget.targetConfig.durableConfig.webSearchConfig,
@@ -196,12 +240,13 @@ export async function runRebuildPreflightPhase(
       retainDcodePreflight = true;
       retainPreparedImage = true;
       return {
+        transaction: recovery.transaction,
         sandboxEntry,
         rebuildAgent,
         versionCheck,
         ...preparedTarget,
         liveState,
-        recoveryManifest,
+        recoveryManifest: effectiveRecoveryManifest,
         dcodePreflight,
         releaseOnboardLock,
         log,

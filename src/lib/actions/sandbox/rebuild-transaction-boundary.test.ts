@@ -107,6 +107,44 @@ describe("rebuild transaction boundary", () => {
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
   });
 
+  it("takes a fresh backup before retrying a prepared transaction against a live sandbox", async () => {
+    const manifest = makePreparedRecoveryManifest();
+    const interrupted = createRebuildFlowHarness({
+      runOpenshell: (args) =>
+        args[0] === "sandbox" && args[1] === "delete"
+          ? { status: 7, output: "delete failed" }
+          : { status: 0, output: "" },
+    });
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: manifest,
+      }),
+    ).rejects.toThrow("Failed to delete sandbox");
+
+    const resumed = createRebuildFlowHarness();
+    resumed.runOpenshellSpy.mockClear();
+    await resumed.rebuildSandbox("alpha", ["--yes"], {
+      throwOnError: true,
+      transactionStore: interrupted.transactionStore,
+    });
+
+    const deleteCallOrder = resumed.runOpenshellSpy.mock.invocationCallOrder.find(
+      (_order, index) => {
+        const args = resumed.runOpenshellSpy.mock.calls[index]?.[0];
+        return args?.[0] === "sandbox" && args[1] === "delete";
+      },
+    );
+    expect(resumed.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(resumed.backupSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteCallOrder ?? Number.POSITIVE_INFINITY,
+    );
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      status: "completed",
+      receipts: { backup: { manifestTimestamp: "2026-06-01T00:00:00.000Z" } },
+    });
+  });
+
   it("resumes old-deleted recovery in a fresh coordinator without deleting twice", async () => {
     const interrupted = createRebuildFlowHarness({
       staleRecovery: true,
@@ -166,6 +204,41 @@ describe("rebuild transaction boundary", () => {
       status: "completed",
       phase: "completed",
     });
+    expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("reports mismatched journal recovery through the preflight error boundary", async () => {
+    const interrupted = createRebuildFlowHarness({
+      runOpenshell: (args) =>
+        args[0] === "sandbox" && args[1] === "delete"
+          ? { status: 7, output: "delete failed" }
+          : { status: 0, output: "" },
+    });
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Failed to delete sandbox");
+
+    const resumed = createRebuildFlowHarness({
+      preDeleteLatestManifest: {
+        ...makePreparedRecoveryManifest(),
+        timestamp: "2026-07-08T12-00-00-000Z",
+      },
+    });
+    resumed.runOpenshellSpy.mockClear();
+    await expect(
+      resumed.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        transactionStore: interrupted.transactionStore,
+      }),
+    ).rejects.toThrow("Rebuild transaction recovery failed");
+
+    expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),

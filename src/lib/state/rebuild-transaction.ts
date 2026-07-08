@@ -587,6 +587,37 @@ export class RebuildTransactionStore {
     return readStrictRecord(this.path(sandboxName), sandboxName);
   }
 
+  async refreshPrepared(
+    sandboxName: string,
+    expectedRevision: number,
+    intent: RebuildTransactionIntentV1,
+    receipts: RebuildTransactionReceiptsV1,
+  ): Promise<RebuildTransactionRecordV1> {
+    return this.withMutationLock(sandboxName, () => {
+      const current = this.requireActive(sandboxName, expectedRevision);
+      if (current.phase !== "prepared") {
+        throw transactionError(
+          "INVALID_TRANSITION",
+          sandboxName,
+          `cannot refresh recovery inputs from ${current.phase}`,
+        );
+      }
+      const refreshed = normalizeRecord(
+        {
+          ...current,
+          intent,
+          receipts,
+          failure: null,
+          revision: current.revision + 1,
+          updatedAt: this.now().toISOString(),
+        },
+        sandboxName,
+      );
+      durablePublish(this.path(sandboxName), refreshed, false);
+      return refreshed;
+    });
+  }
+
   async transition(
     sandboxName: string,
     expectedRevision: number,

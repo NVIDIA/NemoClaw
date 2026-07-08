@@ -3,7 +3,13 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { printMcpRebuildRetryCommand } from "./rebuild-mcp-phase";
+import * as registry from "../../state/registry";
+import * as mcpBridge from "./mcp-bridge";
+import {
+  preflightMcpRebuildState,
+  printMcpRebuildRetryCommand,
+  restoreMcpRegistryForRebuildRetry,
+} from "./rebuild-mcp-phase";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -64,5 +70,58 @@ describe("MCP rebuild retry guidance", () => {
     const command = error.mock.calls.flat().find((line) => line.includes("onboard --resume"));
     expect(command).not.toContain("--observability");
     expect(command).not.toContain("--no-observability");
+  });
+});
+
+describe("MCP rebuild transaction recovery", () => {
+  it("rolls back an ownership-proven prepared destroy without deleting the sandbox", async () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", mcp: { bridges: {} } });
+    const preparation = {
+      entries: [{ server: "server" }] as never[],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      destroyAlreadyPrepared: true,
+      destroyAlreadyPending: false,
+    };
+    vi.spyOn(mcpBridge, "prepareMcpBridgesForDestroy").mockResolvedValue(preparation);
+    const restore = vi
+      .spyOn(mcpBridge, "restoreMcpBridgesAfterDestroyAbort")
+      .mockResolvedValue(undefined);
+    const log = vi.fn();
+
+    await expect(
+      preflightMcpRebuildState(
+        {
+          name: "alpha",
+          mcp: {
+            bridges: { server: { server: "server" } as never },
+            destroyPreparedAt: "2026-07-08T00:00:00.000Z",
+          },
+        },
+        false,
+        log,
+        (message) => {
+          throw new Error(message);
+        },
+      ),
+    ).resolves.toMatchObject({ name: "alpha" });
+
+    expect(restore).toHaveBeenCalledWith("alpha", preparation);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("without deleting"));
+  });
+
+  it("keeps replacement registry metadata authoritative after recreate failure", () => {
+    const original = { name: "alpha", model: "old" };
+    const restoreIfMissing = vi
+      .spyOn(registry, "restorePreservedSandboxEntryIfMissing")
+      .mockReturnValue(false);
+    const restore = vi.spyOn(registry, "restoreSandboxEntry");
+    const log = vi.fn();
+
+    restoreMcpRegistryForRebuildRetry(false, [{} as never], original, log);
+
+    expect(restoreIfMissing).toHaveBeenCalledWith(original);
+    expect(restore).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("kept the current"));
   });
 });

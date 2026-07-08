@@ -7,10 +7,11 @@ import { explicitObservabilityFlag } from "../../onboard/observability-command-f
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
-  assertMcpRebuildNotBlocked,
   prepareMcpBridgesForAbsentSandboxRebuild,
+  prepareMcpBridgesForDestroy,
   prepareMcpBridgesForRebuild,
   reattachMcpProvidersAfterRebuildAbort,
+  restoreMcpBridgesAfterDestroyAbort,
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge";
 import type { RebuildBail } from "./rebuild-credential-preflight";
@@ -18,15 +19,46 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
 
-export function preflightMcpRebuildState(sandboxName: string, bail: RebuildBail): boolean {
+export async function preflightMcpRebuildState(
+  sandbox: RebuildSandboxEntry,
+  sandboxAbsent: boolean,
+  log: (message: string) => void,
+  bail: RebuildBail,
+): Promise<RebuildSandboxEntry | null> {
+  const sandboxName = sandbox.name;
+  const destroyPrepared = sandbox?.mcp?.destroyPreparedAt !== undefined;
+  const destroyPending = sandbox?.mcp?.destroyPendingAt !== undefined;
+  if (!destroyPrepared && !destroyPending) return sandbox;
+
+  if (sandboxAbsent || destroyPending) {
+    bail(
+      `Cannot rebuild while sandbox '${sandboxName}' has an incomplete MCP destroy transaction that may have crossed the sandbox-delete boundary. No rebuild backup or delete was attempted. Complete the existing sandbox destroy only if deletion is still intended.`,
+    );
+    return null;
+  }
+
   try {
-    assertMcpRebuildNotBlocked(sandboxName);
-    return true;
+    const preparation = await prepareMcpBridgesForDestroy(sandboxName);
+    if (
+      !preparation.destroyAlreadyPrepared ||
+      preparation.destroyAlreadyPending ||
+      preparation.entries.length === 0
+    ) {
+      throw new Error("the prepared MCP destroy ownership manifest is incomplete");
+    }
+    await restoreMcpBridgesAfterDestroyAbort(sandboxName, preparation);
+    const recovered = registry.getSandbox(sandboxName);
+    if (recovered?.mcp?.destroyPreparedAt || recovered?.mcp?.destroyPendingAt) {
+      throw new Error("the MCP destroy marker remained after runtime restoration");
+    }
+    if (!recovered) throw new Error("the sandbox registry entry disappeared during restoration");
+    log("Recovered the transaction-owned prepared MCP destroy without deleting the sandbox");
+    return recovered;
   } catch (error) {
     bail(
-      `Cannot rebuild while MCP lifecycle state is incomplete: ${error instanceof Error ? error.message : String(error)}`,
+      `Cannot safely recover the incomplete MCP destroy transaction before rebuild: ${error instanceof Error ? error.message : String(error)}. No rebuild backup or delete was attempted.`,
     );
-    return false;
+    return null;
   }
 }
 
@@ -70,12 +102,15 @@ export function restoreMcpRegistryForRebuildRetry(
 ): void {
   if (staleRecovery || entries.length === 0) return;
   try {
-    // MCP-bearing rebuilds deliberately preserve the registry entry instead of
-    // removing it. Restore any metadata overwritten by a partial onboard, but
-    // leave the current default pointer alone: a concurrent `nemoclaw use`
-    // selection must win because this rebuild never moved that pointer.
-    registry.restoreSandboxEntry(original);
-    log("Recreate failed: restored MCP-bearing registry entry for stale recovery retry");
+    // The old row was preserved through deletion. Restore it only if a failed
+    // recreate left the name absent; a replacement row is newer evidence and
+    // must remain authoritative. This helper never reclaims the default.
+    const restored = registry.restorePreservedSandboxEntryIfMissing(original);
+    log(
+      restored
+        ? "Recreate failed: restored missing MCP-bearing registry metadata for retry"
+        : "Recreate failed: kept the current sandbox registry metadata",
+    );
   } catch (error) {
     log(`Failed to restore MCP-bearing registry entry after recreate failure: ${String(error)}`);
   }

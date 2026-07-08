@@ -619,6 +619,24 @@ export function restoreSandboxEntryIfMissing(receipt: SandboxRemovalReceipt): bo
   });
 }
 
+/** Restore preserved rebuild metadata only when no current row owns the name. */
+export function restorePreservedSandboxEntryIfMissing(entry: SandboxEntry): boolean {
+  return withLock(() => {
+    const current = load();
+    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(current, {
+      entry,
+      wasDefault: false,
+      fallbackDefault: current.defaultSandbox,
+      postRemovalDefaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
+        current.defaultSelectionRevision,
+      ),
+    });
+    if (!result.restored) return false;
+    save(result.registry);
+    return true;
+  });
+}
+
 export function listSandboxes(): { sandboxes: SandboxEntry[]; defaultSandbox: string | null } {
   const data = load();
   return {
