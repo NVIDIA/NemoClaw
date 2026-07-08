@@ -37,6 +37,11 @@ vi.mock("../../../agent/defs", () => ({
 vi.mock("../../../shields/audit", () => ({
   readRecentShieldsAutoRestore: vi.fn(() => ({ kind: "none" })),
 }));
+vi.mock("../../../../../nemoclaw/src/onboard/config.js", () => ({
+  loadOnboardConfig: vi.fn(() => null),
+  describeOnboardEndpoint: vi.fn(() => "build.nvidia.com"),
+  describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
+}));
 
 import registerPlugin, { type OpenClawPluginApi } from "../../../../../nemoclaw/src/index";
 import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
