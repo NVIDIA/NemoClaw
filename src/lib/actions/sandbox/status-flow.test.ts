@@ -24,6 +24,37 @@ describe("showSandboxStatus flow", () => {
     resetStatusFlowModuleCache();
   });
 
+  it("warns when the live gateway route differs from the sandbox's recorded route (#6315)", async () => {
+    const harness = createStatusFlowHarness({
+      currentProvider: "openai",
+      currentModel: "gpt-5.2",
+      routeDrift: {
+        live: { provider: "openai", model: "gpt-5.2" },
+        recorded: { provider: "nvidia", model: "nvidia/nemotron" },
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain(
+      "Warning: gateway inference route (openai/gpt-5.2) differs from the recorded route for this sandbox (nvidia/nvidia/nemotron).",
+    );
+    expect(output).toContain(
+      "'nemoclaw alpha connect' realigns the gateway to nvidia/nvidia/nemotron",
+    );
+    expect(output).toContain("inference set --provider openai --model gpt-5.2 --sandbox alpha");
+  });
+
+  it("prints no route drift warning when the live route matches the recorded route (#6315)", async () => {
+    const harness = createStatusFlowHarness();
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toContain("differs from the recorded route");
+  });
+
   it("prints the live sandbox, inference, runtime, session, version, and recovery signals", async () => {
     const harness = createStatusFlowHarness();
 

@@ -8,7 +8,12 @@ import {
 import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
-import { parseGatewayInference } from "../../inference/config";
+import {
+  type GatewayInference,
+  parseGatewayInference,
+  planInferenceRouteReconcile,
+  type RecordedInferenceRoute,
+} from "../../inference/config";
 import {
   type ProviderHealthProbeOptions,
   type ProviderHealthStatus,
@@ -105,12 +110,18 @@ export interface SandboxStatusReport {
   dockerPaused: boolean;
 }
 
+export interface SandboxStatusRouteDrift {
+  live: GatewayInference;
+  recorded: RecordedInferenceRoute;
+}
+
 export interface SandboxStatusSnapshot {
   sb: registry.SandboxEntry | null;
   lookup: SandboxGatewayState;
   rpcIssue: OpenShellStateRpcIssue | null;
   currentModel: string;
   currentProvider: string;
+  routeDrift: SandboxStatusRouteDrift | null;
   inferenceHealth: ProviderHealthStatus | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
 }
@@ -199,6 +210,7 @@ export async function collectSandboxStatusSnapshot(
       rpcIssue,
       currentModel: "unknown",
       currentProvider: "unknown",
+      routeDrift: null,
       inferenceHealth: null,
       terminalRuntimeHealth: null,
     };
@@ -207,6 +219,18 @@ export async function collectSandboxStatusSnapshot(
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
+  // Status shows the live gateway route when one is readable, which silently
+  // masks a route another sandbox (or a direct `openshell inference set`)
+  // moved from under this one — the shared-route trap of #6315. Surface the
+  // divergence instead of letting the live value pass as this sandbox's own.
+  const routeDriftPlan =
+    sb && sb.provider && sb.model
+      ? planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model })
+      : null;
+  const routeDrift =
+    routeDriftPlan && routeDriftPlan.kind === "diverged"
+      ? { live: routeDriftPlan.live, recorded: routeDriftPlan.recorded }
+      : null;
   // When the caller has already determined that the local stack is failed
   // (docker daemon down, sandbox container stopped, dashboard port held),
   // skip the provider probe entirely. Without this gate
@@ -250,6 +274,7 @@ export async function collectSandboxStatusSnapshot(
     rpcIssue,
     currentModel,
     currentProvider,
+    routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
   };
