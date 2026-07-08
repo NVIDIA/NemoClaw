@@ -26,12 +26,24 @@ const localCredentialFormSource = path.join(
   "local-credential-form.html",
 );
 const localCredentialFormUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/b3f9a545ee5754603fcbceee9ed12f821ac93d1f/docs/resources/local-credential-form.html";
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 = [
-  "93ce24d100c4448f",
-  "c3b206365148cb6c",
-  "774d84a0f88aae57",
-  "f5ccdb16be8a3b7d",
+  "57068851991cfa3e",
+  "547827e564d1c842",
+  "243a84c89d3dd14d",
+  "5900c81d1f7b740b",
+].join("");
+const localCredentialFormScriptCspHash = [
+  "'sha256-gMKcS2M/",
+  "PaFPwkPUPGDZ9haV",
+  "wA7m+QRLgf2wZT1",
+  "73ls='",
+].join("");
+const localCredentialFormStyleCspHash = [
+  "'sha256-W4wSJyrm",
+  "RXSCgQSjhVRZBhE",
+  "msaHh6dbUj9ZlKh",
+  "xipME='",
 ].join("");
 const starterPromptPages = [
   "docs/index.mdx",
@@ -62,6 +74,13 @@ function extractTagContent(content: string, tagName: "script" | "style"): string
 
 function sha256Source(content: string): string {
   return `'sha256-${createHash("sha256").update(content).digest("base64")}'`;
+}
+
+function cspMetaContent(content: string): string {
+  return (
+    content.match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/)?.[1] ??
+    fail("Missing Content-Security-Policy meta content")
+  );
 }
 
 class FakeClassList {
@@ -272,8 +291,7 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain(localCredentialFormUrl);
     expect(promptSource).toContain(localCredentialFormSha256);
     expect(createHash("sha256").update(formSource).digest("hex")).toBe(localCredentialFormSha256);
-    expect(localCredentialFormUrl).toMatch(/\/[0-9a-f]{40}\//);
-    expect(localCredentialFormUrl).not.toContain("/main/");
+    expect(localCredentialFormUrl).toContain("/main/");
     expect(promptSource).toContain("Do not generate, rewrite, or redesign credential-form HTML.");
     expect(promptSource).toContain("serve it from a helper bound to \\`127.0.0.1\\`");
     expect(promptSource).toContain("?fields=NVIDIA_INFERENCE_API_KEY:secret");
@@ -281,13 +299,15 @@ describe("starter prompt docs CTA", () => {
     expect(formSource).toContain("Content-Security-Policy");
     expect(formSource).toContain("connect-src 'self';");
     expect(formSource).not.toContain("'unsafe-inline'");
+    expect(formSource).toContain(`script-src ${localCredentialFormScriptCspHash};`);
+    expect(formSource).toContain(`style-src ${localCredentialFormStyleCspHash};`);
     expect(formSource).toContain(
       `style-src ${sha256Source(extractTagContent(formSource, "style"))};`,
     );
     expect(formSource).toContain(
       `script-src ${sha256Source(extractTagContent(formSource, "script"))};`,
     );
-    expect(formSource).not.toContain("frame-ancestors");
+    expect(cspMetaContent(formSource)).not.toContain("frame-ancestors");
     expect(promptSource).toContain("Content-Security-Policy: frame-ancestors 'none'");
     expect(formSource).toContain('const LOCAL_SUBMIT_PATH = "/submit";');
     expect(formSource).toContain("fetch(LOCAL_SUBMIT_PATH");
