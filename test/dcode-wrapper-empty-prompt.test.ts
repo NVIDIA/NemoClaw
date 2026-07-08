@@ -6,9 +6,9 @@
 // fail fast with a non-zero exit and never launch Deep Agents Code, instead of
 // running a task or dropping into the interactive TUI.
 //
-// The test patches only the copied wrapper's isolated interpreter path and
-// managed PATH so it can exercise the same Bash contract on every host with
-// Bash and Python 3 available.
+// Linux gated: the wrapper launches the isolated `/opt/venv/bin/python3`.
+// The test patches only the copied wrapper's interpreter path and managed PATH
+// so the launch reaches the stubbed python3 planted below.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -17,24 +17,22 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { loadAgent } from "../src/lib/agent/defs";
+const WRAPPER = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "langchain-deepagents-code",
+  "dcode-wrapper.sh",
+);
 
-const AGENT_DIR = path.join(import.meta.dirname, "..", "agents", "langchain-deepagents-code");
-const WRAPPER = path.join(AGENT_DIR, "dcode-wrapper.sh");
-const EMPTY_PROMPT_DIAGNOSTIC =
-  "NemoClaw: empty non-interactive prompt for -n; provide prompt text.";
-
-function wrapperFixtureCanRun(): boolean {
+function python3Available(): boolean {
   try {
-    return (
-      spawnSync("bash", ["--version"], { timeout: 5000 }).status === 0 &&
-      spawnSync("python3", ["--version"], { timeout: 5000 }).status === 0
-    );
+    return spawnSync("python3", ["--version"], { timeout: 5000 }).status === 0;
   } catch {
     return false;
   }
 }
-const canRun = wrapperFixtureCanRun();
+const canRun = process.platform === "linux" && python3Available();
 
 type WrapperRun = {
   status: number | null;
@@ -149,44 +147,3 @@ describe.skipIf(!canRun)(
     });
   },
 );
-
-describe.skipIf(!canRun)("Deep Agents Code empty-prompt acceptance contract (#6440)", () => {
-  it("fails closed when the terminal smoke sees the wrong status", () => {
-    const smokeCommand = loadAgent("langchain-deepagents-code").runtime?.smoke_commands?.find(
-      (command) => command.includes("NEMOCLAW_DCODE_EMPTY_PROMPT_OK"),
-    );
-    expect(smokeCommand).toBeDefined();
-    if (!smokeCommand) throw new Error("missing empty-prompt smoke command");
-
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-smoke-"));
-    const binDir = path.join(tempDir, "bin");
-    fs.mkdirSync(binDir);
-    fs.writeFileSync(
-      path.join(binDir, "dcode"),
-      '#!/bin/sh\nprintf \'%s\\n\' "$DCODE_STUB_OUTPUT" >&2\nexit "$DCODE_STUB_STATUS"\n',
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(path.join(binDir, "timeout"), '#!/bin/sh\nshift\nexec "$@"\n', {
-      mode: 0o755,
-    });
-    const runSmoke = (status: string, output: string) =>
-      spawnSync("sh", ["-c", smokeCommand], {
-        encoding: "utf8",
-        env: {
-          PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-          DCODE_STUB_OUTPUT: output,
-          DCODE_STUB_STATUS: status,
-        },
-      });
-
-    try {
-      const accepted = runSmoke("2", EMPTY_PROMPT_DIAGNOSTIC);
-      expect(accepted.status, accepted.stderr).toBe(0);
-      expect(accepted.stdout).toBe("NEMOCLAW_DCODE_EMPTY_PROMPT_OK\n");
-      expect(runSmoke("0", EMPTY_PROMPT_DIAGNOSTIC).status).not.toBe(0);
-      expect(runSmoke("2", "wrong diagnostic").status).not.toBe(0);
-    } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-});

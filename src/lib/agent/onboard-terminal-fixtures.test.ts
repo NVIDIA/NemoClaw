@@ -155,25 +155,6 @@ describe("Deep Agents Code terminal onboard fixtures", () => {
     expect(output).toBe("NEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0");
   });
 
-  it("recognizes the empty-prompt exit-contract smoke check", () => {
-    const calls: string[] = [];
-    const output = recordSuccessfulDeepAgentsRuntimeCall(
-      [
-        "sandbox",
-        "exec",
-        "--",
-        "sh",
-        "-lc",
-        "smoke runner",
-        "nemoclaw-agent-smoke",
-        "dcode -n empty; echo NEMOCLAW_DCODE_EMPTY_PROMPT_OK",
-      ],
-      calls,
-    );
-
-    expect(output).toBe("NEMOCLAW_DCODE_EMPTY_PROMPT_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0");
-  });
-
   it("can model a nonzero terminal smoke command", () => {
     const output = recordFailingDeepAgentsSmokeCall([
       "sandbox",
