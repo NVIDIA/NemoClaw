@@ -22,6 +22,7 @@ const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_p
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
 const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
 const DEFAULT_MANAGED_PROXY = { host: "10.200.0.1", port: "3128" } as const;
+const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
 const TEST_OWNER_UID = process.getuid?.() ?? 0;
 
 function readAgentFile(name: string): string {
@@ -128,7 +129,7 @@ function runLauncher(
   env: NodeJS.ProcessEnv,
 ): SpawnSyncReturns<string> {
   return spawnSync("bash", [launcherPath, ...args], {
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env },
+    env: { PATH: DEFAULT_TEST_PATH, ...env },
     encoding: "utf8",
   });
 }
@@ -185,7 +186,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     );
     fs.writeFileSync(bashEnv, `touch ${JSON.stringify(bashEnvMarker)}\nexit 92\n`, "utf8");
     const hostileEnv = {
-      PATH: `${fakeBin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+      PATH: `${fakeBin}:${DEFAULT_TEST_PATH}`,
       BASH_ENV: bashEnv,
     };
 
@@ -254,7 +255,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
 
     const noncanonicalStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
       env: {
-        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        PATH: DEFAULT_TEST_PATH,
         NEMOCLAW_OBSERVABILITY: "true",
       },
       encoding: "utf8",
@@ -269,7 +270,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
 
     const enabledStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
       env: {
-        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        PATH: DEFAULT_TEST_PATH,
         NEMOCLAW_OBSERVABILITY: "1",
       },
       encoding: "utf8",
@@ -283,7 +284,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(enabledLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=1");
 
     const disabledStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      env: { PATH: DEFAULT_TEST_PATH },
       encoding: "utf8",
     });
     const disabledLaunch = runLauncher(launcherPath, [], { NEMOCLAW_OBSERVABILITY: "1" });
@@ -302,7 +303,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     fs.mkdirSync(markerFile);
 
     const result = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...observabilityEnv },
+      env: { PATH: DEFAULT_TEST_PATH, ...observabilityEnv },
       encoding: "utf8",
     });
 
@@ -381,7 +382,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
         'printf \'START_PROXY=%s|%s|%s|%s|%s|%s\\n\' "$HTTPS_PROXY" "$NO_PROXY" "${NEMOCLAW_PROXY_HOST-__unset__}" "${NEMOCLAW_PROXY_PORT-__unset__}" "${ALL_PROXY-__unset__}" "${all_proxy-__unset__}"',
       ],
       {
-        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...untrustedEnv },
+        env: { PATH: DEFAULT_TEST_PATH, ...untrustedEnv },
         encoding: "utf8",
       },
     );
@@ -428,7 +429,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       });
       const startResult = spawnSync("bash", [scriptPath, "true"], {
         env: {
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          PATH: DEFAULT_TEST_PATH,
           NEMOCLAW_PROXY_HOST: "attacker-proxy.internal",
           NEMOCLAW_PROXY_PORT: "4444",
         },
@@ -450,7 +451,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     fs.chmodSync(path.join(tempDir, "trusted-proxy-host"), 0o644);
     const launcherResult = runLauncher(launcherPath, ["-n", "PONG"], {});
     const startResult = spawnSync("bash", [scriptPath, "true"], {
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      env: { PATH: DEFAULT_TEST_PATH },
       encoding: "utf8",
     });
 
@@ -526,7 +527,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       const { scriptPath } = makeStartProxyProbeFixture(tempDir, managedProxy);
       const result = runLauncher(launcherPath, ["-n", "PONG"], {});
       const startResult = spawnSync("bash", [scriptPath, "true"], {
-        env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        env: { PATH: DEFAULT_TEST_PATH },
         encoding: "utf8",
       });
 

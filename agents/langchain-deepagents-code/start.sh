@@ -133,6 +133,8 @@ write_export_if_set() {
 }
 
 prepare_runtime_env() {
+  # Unlike prepare_observability_marker below, this file is intentionally
+  # volatile: every stateful start rebuilds it from root-owned proxy inputs.
   local target=/tmp/nemoclaw-proxy-env.sh
   local tmp
   tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"

@@ -26,6 +26,7 @@ import {
 const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
 const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
 const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
+const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
 const tavilyBlocked = "BLOCKED:policy denied";
 const observabilityEnabled = "enabled";
 const denialRestored = /returns to the default Tavily denial/;
@@ -67,7 +68,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         {
           encoding: "utf8",
           env: {
-            PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+            PATH: `${binDir}:${DEFAULT_TEST_PATH}`,
             SANDBOX_NAME: "openclaw-sandbox",
           },
         },
@@ -182,7 +183,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
           env: {
             NEMOCLAW_CLI_BIN: path.join(tempDir, "missing-nemoclaw"),
             NEMOCLAW_FAKE_OPENSHELL_LOG: invocationLog,
-            PATH: `${tempDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+            PATH: `${tempDir}:${DEFAULT_TEST_PATH}`,
             REPO: path.join(tempDir, "missing-repo"),
             SANDBOX_NAME: "openclaw-sandbox",
           },
@@ -234,7 +235,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         env: {
           NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "blocked-no-marker",
           NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE: "OpenShell runtime error without denial marker",
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          PATH: DEFAULT_TEST_PATH,
         },
       },
     );
@@ -258,7 +259,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         encoding: "utf8",
         env: {
           NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "probe-command-shape",
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          PATH: DEFAULT_TEST_PATH,
         },
       },
     );
@@ -280,7 +281,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         encoding: "utf8",
         env: {
           NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST: "probe-command-shape",
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          PATH: DEFAULT_TEST_PATH,
         },
       },
     );
@@ -294,7 +295,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       encoding: "utf8",
       env: {
         NEMOCLAW_E2E_TAVILY_SELF_TEST: "probe-command-shape",
-        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        PATH: DEFAULT_TEST_PATH,
       },
     });
 
@@ -323,7 +324,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
         NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
         NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
-        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        PATH: DEFAULT_TEST_PATH,
         SANDBOX_NAME: "deepagents-sandbox",
       },
     });
