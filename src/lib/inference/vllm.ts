@@ -227,6 +227,9 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
 
 export async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pulling vLLM image: ${profile.image}`);
+  // Docker can be quiet while finalizing large layers on every supported vLLM
+  // profile, so all profiles intentionally share the 15-minute stall default.
+  // The profile-specific maximum still bounds the complete pull operation.
   const result = await dockerPullWithProgressWatchdog(profile.image, {
     maxTimeoutMs: profile.pullTimeoutSec * 1000,
     logLine: emit,

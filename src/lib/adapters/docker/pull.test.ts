@@ -146,6 +146,26 @@ describe("docker pull progress watchdog", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("respects a custom stall timeout", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const pull = dockerPullWithProgressWatchdog("example/image:latest", {
+      suppressOutput: true,
+      stallTimeoutMs: 5 * 60_000,
+      spawnImpl: () => child,
+    });
+
+    child.stderr.emit("data", Buffer.from("abc123def: Pull complete\n"));
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    await expect(pull).resolves.toMatchObject({
+      status: 124,
+      timedOut: true,
+      timeoutKind: "stall",
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("kills a pull when output repeats without forward progress", async () => {
     vi.useFakeTimers();
     const child = new FakeChild();
