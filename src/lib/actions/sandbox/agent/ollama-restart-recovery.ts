@@ -1,6 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Source-of-truth boundary for Ollama restart recovery.
+//
+// Invalid state: restarting the external Ollama daemon drops its loaded model,
+// so the first OpenClaw turn can exhaust its request budget cold-loading it.
+// Ollama owns daemon/model lifecycle; NemoClaw owns the persisted inference
+// route and the host-side passthrough that can perform a bounded warm-up before
+// dispatch. This cannot be fixed at the producer in this PR because Ollama does
+// not persist loaded runners across daemon restarts. Focused tests cover direct
+// and proxied route translation, unreachable/already-loaded states, timeouts,
+// process failures, and semantic response validation. Remove this recovery when
+// supported Ollama versions persist runners across restart, or when NemoClaw
+// manages daemon lifecycle and can warm the model at restart time instead.
+
 import { buildValidatedCurlCommandArgs } from "../../../adapters/http/curl-args";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import {
@@ -56,7 +69,6 @@ const OPENSHELL_HOST_BRIDGE = "host.openshell.internal";
 const ALLOWED_RAW_OLLAMA_HOSTS = new Set([
   OLLAMA_LOCALHOST,
   "localhost",
-  "::1",
   OLLAMA_HOST_DOCKER_INTERNAL,
 ]);
 
@@ -117,10 +129,6 @@ function resolveRawOllamaHost(
   return getAllowedFallbackHost(getOllamaHost);
 }
 
-function formatUrlHostname(hostname: string): string {
-  return hostname.includes(":") ? `[${hostname}]` : hostname;
-}
-
 function buildWarmCommand(model: string, hostname: string): string[] {
   const body = JSON.stringify({
     model,
@@ -141,7 +149,7 @@ function buildWarmCommand(model: string, hostname: string): string[] {
       "Content-Type: application/json",
       "-d",
       body,
-      `http://${formatUrlHostname(hostname)}:${OLLAMA_PORT}/api/generate`,
+      `http://${hostname}:${OLLAMA_PORT}/api/generate`,
     ]),
   ];
 }

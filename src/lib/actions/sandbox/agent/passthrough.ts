@@ -3,8 +3,8 @@
 
 // Source-of-truth boundary for the `nemoclaw <name> agent` passthrough.
 //
-// The wrapper enforces three host-side mirrors of upstream contracts and one
-// advisory diagnostic:
+// The wrapper enforces three host-side mirrors of upstream contracts, one
+// advisory diagnostic, and one best-effort pre-dispatch recovery:
 //
 // 1. Agent-kind guard (registry mirror).
 //
@@ -72,6 +72,12 @@
 //    source-boundary analysis lives with the focused implementation in
 //    `passthrough-shields-warning.ts`.
 //
+// 5. Ollama restart recovery (best-effort lifecycle bridge). Ollama owns model
+//    runner lifetime, while NemoClaw owns the registered route and dispatch
+//    ordering. The focused source-boundary analysis, reporting, and regression
+//    coverage live in `ollama-restart-recovery.ts` and
+//    `passthrough-ollama-recovery.ts`.
+//
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
 // forwarded argv, the registry-miss fallback to OpenClaw, registry and
 // manifest-resolution fail-closed paths, quoted manifest command rejection,
@@ -79,7 +85,8 @@
 // unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
 // the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
 // captured transport path used to append failure provenance without polluting
-// machine-readable stdout. The focused shields diagnostic owns its tests.
+// machine-readable stdout. The focused shields and Ollama modules own their
+// diagnostic and recovery tests.
 //
 // Removal conditions:
 //
@@ -91,6 +98,8 @@
 //     missing selector with a clean exit 2 and an actionable message.
 //   - Drop the simple-token parser when terminal runtime manifests expose
 //     argv arrays natively.
+//   - Drop Ollama pre-dispatch recovery when supported daemon restarts preserve
+//     loaded runners or NemoClaw manages and warms the daemon lifecycle.
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
@@ -99,14 +108,9 @@ import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
-import {
-  maybeWarmOllamaAfterDaemonRestart,
-  type OllamaRestartRecoveryFailureReason,
-  type OllamaRestartRecoveryResult,
-  type OllamaRestartRecoveryRoute,
-} from "./ollama-restart-recovery";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
+import { runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
 
 export {
@@ -140,9 +144,7 @@ export interface AgentPassthroughDeps {
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
   execJson?: typeof runAgentJsonPassthrough;
-  maybeWarmOllamaAfterDaemonRestart?: (
-    route: OllamaRestartRecoveryRoute,
-  ) => OllamaRestartRecoveryResult;
+  runOllamaRestartRecovery?: typeof runOllamaRestartRecovery;
   getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreReadResult;
   process?: {
     exit(code: number): never;
@@ -182,62 +184,6 @@ function readSandboxAgentFromRegistry(
     };
   } catch (error) {
     return { kind: "error", message: (error as Error).message ?? String(error) };
-  }
-}
-
-function getOllamaRestartRecoveryRoute(
-  lookup: ResolvedRegistryReadResult,
-): OllamaRestartRecoveryRoute | null {
-  if (lookup.kind !== "agent" || lookup.provider !== "ollama-local") return null;
-  return {
-    provider: lookup.provider,
-    model: lookup.model,
-    endpointUrl: lookup.endpointUrl,
-  };
-}
-
-function describeOllamaWarmFailure(reason: OllamaRestartRecoveryFailureReason): string {
-  switch (reason) {
-    case "timeout":
-      return "timed out";
-    case "command-failed":
-      return "curl exited unsuccessfully";
-    case "ollama-error":
-      return "Ollama returned an error";
-    case "invalid-response":
-      return "Ollama returned an invalid response";
-    case "spawn-failed":
-      return "the warm-up process could not start";
-  }
-}
-
-function reportOllamaRestartRecovery(
-  route: OllamaRestartRecoveryRoute,
-  result: OllamaRestartRecoveryResult,
-  proc: NonNullable<AgentPassthroughDeps["process"]>,
-): void {
-  const model = String(route.model ?? "").trim() || "the registered model";
-  if (result.kind === "warmed") {
-    if (result.ok) {
-      proc.stderr.write(`  Ollama model '${model}' is loaded and ready.\n`);
-      return;
-    }
-    proc.stderr.write(
-      `  Ollama warm-up for '${model}' ${describeOllamaWarmFailure(result.reason)}; continuing to OpenClaw dispatch.\n`,
-    );
-    return;
-  }
-
-  if (result.reason === "already-loaded") {
-    proc.stderr.write(`  Ollama model '${model}' is already loaded.\n`);
-  } else if (result.reason === "unreachable") {
-    proc.stderr.write(
-      "  Ollama was unreachable during the restart check; continuing to OpenClaw dispatch.\n",
-    );
-  } else if (result.reason === "missing-model") {
-    proc.stderr.write(
-      "  No Ollama model is recorded for this sandbox; continuing to OpenClaw dispatch.\n",
-    );
   }
 }
 
@@ -502,18 +448,9 @@ export async function runAgentPassthrough(
     rejectNoTargetSelector(proc);
   }
   if (isOpenClawPassthroughCommand(command)) {
-    const route = getOllamaRestartRecoveryRoute(lookup);
-    if (route) {
-      const recoverOllama =
-        deps.maybeWarmOllamaAfterDaemonRestart ?? maybeWarmOllamaAfterDaemonRestart;
-      proc.stderr.write("  Checking Ollama model readiness after daemon restart...\n");
-      try {
-        reportOllamaRestartRecovery(route, recoverOllama(route), proc);
-      } catch {
-        proc.stderr.write(
-          "  Ollama restart recovery failed unexpectedly; continuing to OpenClaw dispatch.\n",
-        );
-      }
+    if (lookup.kind === "agent" && lookup.provider === "ollama-local") {
+      const recoverOllama = deps.runOllamaRestartRecovery ?? runOllamaRestartRecovery;
+      recoverOllama(lookup, proc);
     }
     maybeEmitShieldsRelockWarning(proc, sandboxName, deps.getRecentShieldsAutoRestore);
   }
