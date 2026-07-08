@@ -23,6 +23,7 @@ import {
   resolveRebuildLiveState,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { preflightMcpRebuildState } from "./rebuild-mcp-phase";
 import {
   confirmRebuildIntent,
   countActiveSandboxSessionsForRebuild,
@@ -82,6 +83,7 @@ export async function runRebuildPreflightPhase(
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
+  if (!preflightMcpRebuildState(sandboxName, bail)) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;

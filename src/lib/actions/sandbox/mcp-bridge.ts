@@ -16,6 +16,7 @@ import {
 } from "./mcp-bridge-destroy";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import {
+  assertMcpRebuildNotBlocked as assertMcpRebuildNotBlockedLifecycle,
   prepareMcpBridgesForAbsentSandboxRebuild as prepareMcpBridgesForAbsentSandboxRebuildLifecycle,
   prepareMcpBridgesForRebuild as prepareMcpBridgesForRebuildLifecycle,
   reattachMcpProvidersAfterRebuildAbort as reattachMcpProvidersAfterRebuildAbortLifecycle,
@@ -147,6 +148,10 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
 ): Promise<McpRebuildPreparation> {
   return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName);
+}
+
+export function assertMcpRebuildNotBlocked(sandboxName: string): void {
+  assertMcpRebuildNotBlockedLifecycle(sandboxName);
 }
 
 export async function prepareMcpBridgesForRebuild(

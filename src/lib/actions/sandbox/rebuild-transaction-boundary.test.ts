@@ -54,6 +54,21 @@ describe("rebuild transaction boundary", () => {
     expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
   });
 
+  it("blocks an unrelated incomplete MCP destroy before backup", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        mcp: { bridges: {}, destroyPendingAt: "2026-07-08T00:00:00.000Z" },
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("incomplete MCP destroy transaction");
+
+    expect(harness.transactionStore.load("alpha")).toBeNull();
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps an actionable old-deleted transaction when recreate fails", async () => {
     const harness = createRebuildFlowHarness({
       onboard: () => {

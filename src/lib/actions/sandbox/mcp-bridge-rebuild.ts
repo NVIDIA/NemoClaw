@@ -44,13 +44,17 @@ export interface McpRebuildPreparation {
   scrubbedAdapterEntries: McpBridgeEntry[];
 }
 
+export function assertMcpRebuildNotBlocked(sandboxName: string): void {
+  validateSandboxName(sandboxName);
+  assertMcpDestroyNotPending(getSandboxOrThrow(sandboxName));
+}
+
 async function getCompleteMcpRebuildEntries(
   sandboxName: string,
   options: { sandboxAbsent?: boolean } = {},
 ): Promise<McpBridgeEntry[]> {
-  validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
-  assertMcpDestroyNotPending(currentSandbox);
+  assertMcpRebuildNotBlocked(sandboxName);
   if (!options.sandboxAbsent) {
     const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
       (entry) => entry.addState !== "prepared",

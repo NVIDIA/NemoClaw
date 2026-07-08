@@ -7,6 +7,7 @@ import { explicitObservabilityFlag } from "../../onboard/observability-command-f
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
+  assertMcpRebuildNotBlocked,
   prepareMcpBridgesForAbsentSandboxRebuild,
   prepareMcpBridgesForRebuild,
   reattachMcpProvidersAfterRebuildAbort,
@@ -16,6 +17,18 @@ import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
+
+export function preflightMcpRebuildState(sandboxName: string, bail: RebuildBail): boolean {
+  try {
+    assertMcpRebuildNotBlocked(sandboxName);
+    return true;
+  } catch (error) {
+    bail(
+      `Cannot rebuild while MCP lifecycle state is incomplete: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  }
+}
 
 export async function prepareMcpForRebuild(
   sandboxName: string,
