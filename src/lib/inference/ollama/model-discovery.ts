@@ -44,7 +44,6 @@ export function waitForPulledOllamaModel(
 ): boolean {
   const getModelOptions = deps.getModelOptions ?? getOllamaModelOptions;
   const now = deps.now ?? Date.now;
-  const sleep = deps.sleep ?? (process.env.NEMOCLAW_TEST_NO_SLEEP === "1" ? () => {} : undefined);
   return waitUntil(() => getModelOptions().some((listed) => ollamaModelRefsMatch(listed, model)), {
     deadlineMs: now() + PULLED_MODEL_DISCOVERY_TIMEOUT_MS,
     initialIntervalMs: 250,
@@ -52,6 +51,6 @@ export function waitForPulledOllamaModel(
     backoffFactor: 2,
     maxAttempts: PULLED_MODEL_DISCOVERY_ATTEMPTS,
     now,
-    sleep,
+    sleep: deps.sleep,
   });
 }

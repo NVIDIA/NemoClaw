@@ -885,7 +885,11 @@ async function prepareOllamaModel(
       };
     }
     console.log(`  Waiting for Ollama to register model: ${model}`);
-    if (!waitForPulledOllamaModel(model, discoveryDeps)) {
+    const waitDeps =
+      process.env.NEMOCLAW_TEST_NO_SLEEP === "1"
+        ? { sleep: () => {}, ...discoveryDeps }
+        : discoveryDeps;
+    if (!waitForPulledOllamaModel(model, waitDeps)) {
       return {
         ok: false,
         message:

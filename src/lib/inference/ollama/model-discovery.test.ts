@@ -35,6 +35,16 @@ describe("waitForPulledOllamaModel", () => {
     ).toBe(true);
   });
 
+  it("does not match a different tag on the same model", () => {
+    expect(
+      waitForPulledOllamaModel("acme/model:7b", {
+        getModelOptions: () => ["acme/model:8b"],
+        now: () => 0,
+        sleep: () => {},
+      }),
+    ).toBe(false);
+  });
+
   it("retries model discovery with bounded backoff after a completed pull (#6038)", () => {
     const sleeps: number[] = [];
     let nowMs = 0;
