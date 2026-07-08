@@ -7,6 +7,10 @@ import { pathToFileURL } from "node:url";
 
 import * as importedMcpBridgeValidation from "../../src/lib/actions/sandbox/mcp-bridge-validation.ts";
 
+// The root TypeScript package is exposed as CJS under the exact `node --import
+// tsx` / `npx tsx` workflow execution mode, but as an ESM namespace under
+// Vitest. Normalize both representations so the executable and tests load the
+// same production assertion instead of maintaining a second version parser.
 const mcpBridgeValidation = (
   "default" in importedMcpBridgeValidation && importedMcpBridgeValidation.default
     ? importedMcpBridgeValidation.default
@@ -32,6 +36,19 @@ export interface McpBridgeRuntimeCompatibilityResult {
 
 type AssertRuntimeVersion = () => void;
 
+// invalidState: A moving OpenShell dev artifact enters credential-bearing MCP
+// lifecycle assertions even though it is outside the reviewed manifest version.
+// sourceBoundary: The versioned child-visible credential manifest and the
+// production assertion own exact support; this workflow helper only classifies
+// that assertion's typed version-mismatch result.
+// whyNotSourceFix: NemoClaw cannot hold the upstream dev tag at one reviewed
+// version, and weakening the production assertion would expose credentials to
+// an unreviewed runtime.
+// regressionTest: mcp-bridge-runtime-compatibility tests cover aligned,
+// mismatch, and fatal probes; mcp-workflow-compatibility tests lock the branch.
+// removalCondition: Remove this branch when an attested machine-readable
+// credential-boundary capability replaces exact-version matching, or when this
+// lane stops consuming a moving tag.
 export function classifyMcpBridgeRuntimeCompatibility(
   assertRuntimeVersion: AssertRuntimeVersion = assertMcpCredentialBoundaryRuntimeVersion,
 ): McpBridgeRuntimeCompatibilityResult {

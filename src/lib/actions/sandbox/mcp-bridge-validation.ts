@@ -43,6 +43,10 @@ export type McpCredentialBoundaryRuntimeVersionErrorReason =
   | "unparseable-output"
   | "version-mismatch";
 
+/**
+ * Adds in-process classification metadata without changing the established
+ * McpBridgeError message, name, or generic exit code contract.
+ */
 export class McpCredentialBoundaryRuntimeVersionError extends McpBridgeError {
   constructor(
     readonly actualVersion: string,

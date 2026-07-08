@@ -79,6 +79,16 @@ function requireContains(
   if (!asString(actual).includes(expected)) errors.push(message);
 }
 
+function hasExactEntries(actual: UnknownRecord, expected: UnknownRecord): boolean {
+  const actualKeys = Object.keys(actual).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key, index) => key === expectedKeys[index]) &&
+    expectedKeys.every((key) => actual[key] === expected[key])
+  );
+}
+
 function validateJobIdentity(
   errors: string[],
   jobName: (typeof MCP_JOBS)[number],
@@ -319,7 +329,7 @@ function validateJobExecution(
       name: DEV_COMPATIBILITY_STEP_NAME,
       run: DEV_COMPATIBILITY_RUN,
     };
-    if (JSON.stringify(compatibility) !== JSON.stringify(expectedCompatibility)) {
+    if (!hasExactEntries(compatibility, expectedCompatibility)) {
       errors.push(
         "mcp-bridge-dev must use the canonical unconditional runtime compatibility classifier",
       );
