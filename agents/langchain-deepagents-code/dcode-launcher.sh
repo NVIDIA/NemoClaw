@@ -12,6 +12,7 @@ done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
 unset _nemoclaw_auto_approval_env
 
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
+readonly MANAGED_EXEC_LAUNCHER="/usr/local/lib/nemoclaw/dcode-managed-exec"
 readonly MANAGED_OBSERVABILITY_MARKER="/tmp/nemoclaw-observability-enabled"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -118,5 +119,17 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+
+# Diagnostics need this launcher's image-baked proxy normalization and optional
+# observability bit, but must not invoke the stateful sandbox entrypoint. Keep
+# the mode bound to a separate root-owned regular-file install so older images
+# fail before launching anything, then exact-exec without shell evaluation.
+if [ "$0" = "$MANAGED_EXEC_LAUNCHER" ]; then
+  if [ "$#" -eq 0 ]; then
+    printf '%s\n' 'dcode-managed-exec requires a command.' >&2
+    exit 64
+  fi
+  exec "$@"
+fi
 
 exec "$MANAGED_DCODE_WRAPPER" "$@"
