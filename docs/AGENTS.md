@@ -8,7 +8,7 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 
 ## Role
 
-- Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, and OpenShell sandboxes.
+- Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, and OpenShell sandboxes.
 - Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
 - Prefer small, focused edits that match the structure of the current page.
 - Verify behavior against source code, tests, scripts, or existing docs before documenting it.
@@ -33,7 +33,7 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 
 ## NemoClaw Doc Patterns
 
-- Use `$$nemoclaw` for host CLI command examples on shared OpenClaw and Hermes pages.
+- Use `$$nemoclaw` for host CLI command examples on shared OpenClaw, Hermes, and Deep Agents pages.
 - Use literal command names on pages that have only one agent variant.
 - Use `<AgentOnly>` blocks only when content differs by behavior, setup flow, state layout, or agent-specific wording.
 - Use route-style links without `.mdx` extensions for links between docs pages.

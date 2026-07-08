@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  type CurrentGatewayRouteCompatibilityCheck,
+  formatGatewayRouteConflict,
+} from "../../../inference/gateway-route-compatibility";
+import {
   parseExplicitWebSearchProvider,
   type WebSearchConfig as SharedWebSearchConfig,
   WEB_SEARCH_PROVIDER_ENV,
@@ -13,7 +17,19 @@ import {
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import { resolveSandboxGatewayName } from "../../gateway-binding";
+import {
+  type ManagedSandboxFeatureIssue,
+  managedSandboxFeatureNeedsSessionUpdate,
+  resolveManagedSandboxFeature,
+} from "../../managed-sandbox-feature";
+import {
+  DCODE_OBSERVABILITY_FEATURE,
+  hasDcodeObservabilityDrift,
+  isDcodeAgent,
+} from "../../observability-policy-presets";
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -39,7 +55,11 @@ export interface SandboxStateOptions<
   fresh: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
+  /** Internal rebuild tier that must govern create-time and resumed policy selection. */
+  authoritativePolicyTier?: string | null;
   resumeAgentChanged: boolean;
+  requestedObservabilityEnabled?: boolean | null;
+  gatewayName: string;
   session: Session | null;
   sandboxName: string | null;
   model: string;
@@ -60,6 +80,11 @@ export interface SandboxStateOptions<
   rootDir: string;
   env: NodeJS.ProcessEnv;
   deps: dcodeResume.Deps & {
+    checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
+    withGatewayRouteMutationLock<T>(
+      gatewayName: string,
+      operation: () => Promise<T> | T,
+    ): Promise<T>;
     resolvePath(value: string): string;
     agentSupportsWebSearch(
       agent: Agent,
@@ -261,6 +286,18 @@ function mcpRegistryRemovalBlockReason(
   return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
 }
 
+function observabilityRequestValidationError(
+  issue: ManagedSandboxFeatureIssue | null,
+): string | null {
+  if (issue === "unsupported-request") {
+    return "  --observability is supported only with --agent langchain-deepagents-code.";
+  }
+  if (issue === "recorded-state-on-unsupported-agent") {
+    return "  Recorded observability belongs to the existing Deep Agents Code sandbox. Pass --no-observability explicitly when switching agents.";
+  }
+  return null;
+}
+
 class SandboxStateFlow<
   Gpu,
   Agent,
@@ -410,45 +447,139 @@ class SandboxStateFlow<
         recordedToolGateways,
         effectiveToolGateways,
       ),
+      observabilityChanged: hasDcodeObservabilityDrift({
+        liveExists: sandboxReuseState === "ready",
+        managedDcodeAgent: isDcodeAgent((this.options.agent as { name?: string } | null)?.name),
+        hasRegistryEntry: registryEntry !== null,
+        recordedObservabilityEnabled: registryEntry?.observabilityEnabled,
+        requestedObservabilityEnabled: state.session?.observabilityEnabled,
+      }),
       ...toolDisclosureSignals,
       ...dcodeResumeSignals,
     });
     return dcodeResume.preserveManagedDcodeRegistryEntry(this.options, decision);
   }
 
+  private applyObservabilityRequest(
+    state: SandboxStepState<WebSearchConfig>,
+  ): SandboxStepState<WebSearchConfig> {
+    const registryEntry = state.sandboxName
+      ? this.deps.getSandboxRegistryEntry(state.sandboxName)
+      : null;
+    const selectedAgent = (this.options.agent as { name?: string } | null)?.name;
+    const requested = this.options.requestedObservabilityEnabled;
+    const resolution = resolveManagedSandboxFeature(DCODE_OBSERVABILITY_FEATURE, {
+      agent: selectedAgent,
+      requested,
+      resume: this.options.resume,
+      sessionValue: state.session?.observabilityEnabled,
+      sessionRequestedExplicitly: state.session?.observabilityRequestedExplicitly,
+      registryValue: registryEntry?.observabilityEnabled,
+    });
+    const validationError = observabilityRequestValidationError(resolution.issue);
+    if (validationError) {
+      this.deps.error(validationError);
+      return this.deps.exitProcess(1);
+    }
+    if (
+      !managedSandboxFeatureNeedsSessionUpdate(
+        DCODE_OBSERVABILITY_FEATURE,
+        state.session?.observabilityEnabled,
+        state.session?.observabilityRequestedExplicitly,
+        resolution,
+      )
+    ) {
+      return state;
+    }
+    const session = this.deps.updateSession((current) => {
+      current.observabilityEnabled = resolution.value;
+      current.observabilityRequestedExplicitly =
+        current.observabilityRequestedExplicitly || resolution.requestedExplicitly;
+      return current;
+    });
+    return { ...state, session };
+  }
+
+  private assertGatewayRouteCompatible(sandboxName: string | null): void {
+    const targetEntry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
+    if (!sandboxName || !targetEntry) {
+      this.failGatewayRouteCheck(
+        `  Error: sandbox route reservation '${sandboxName ?? "unknown"}' disappeared while onboarding was in progress. Retry onboarding.`,
+      );
+    }
+    if (getSandboxEntryInference(targetEntry).kind !== "configured") {
+      this.failGatewayRouteCheck(
+        `  Error: sandbox '${sandboxName}' has incomplete route metadata, so its shared-gateway compatibility cannot be proven. Remove and re-onboard that sandbox.`,
+      );
+    }
+    if (resolveSandboxGatewayName(targetEntry) !== this.options.gatewayName) {
+      this.failGatewayRouteCheck(
+        `  Error: sandbox '${sandboxName}' changed OpenShell gateways while onboarding was in progress. Retry onboarding.`,
+      );
+    }
+    const compatibility = this.deps.checkGatewayRouteCompatibility({
+      gatewayName: this.options.gatewayName,
+      sandboxName: null,
+      route: {
+        provider: this.options.provider,
+        model: this.options.model,
+        endpointUrl: this.options.endpointUrl,
+        preferredInferenceApi: this.options.preferredInferenceApi,
+        credentialEnv: this.options.credentialEnv,
+      },
+    });
+    if (!compatibility.ok) {
+      this.failGatewayRouteCheck(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+    }
+  }
+
+  private failGatewayRouteCheck(message: string): never {
+    this.deps.error(message);
+    this.deps.exitProcess(1);
+    throw new Error("exitProcess returned while aborting an incompatible gateway route");
+  }
+
   private async reuseSandbox(
     state: SandboxStepState<WebSearchConfig>,
   ): Promise<SandboxStepState<WebSearchConfig>> {
-    if (state.webSearchConfig) {
-      const provider = webSearchProviderForConfig(
-        state.webSearchConfig as unknown as SharedWebSearchConfig,
+    return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
+      this.assertGatewayRouteCompatible(state.sandboxName);
+      if (state.webSearchConfig) {
+        const provider = webSearchProviderForConfig(
+          state.webSearchConfig as unknown as SharedWebSearchConfig,
+        );
+        this.deps.note(
+          `  [resume] Reusing ${webSearchLabelFor(provider)} configuration already baked into the sandbox.`,
+        );
+      }
+      const messaging = reconcileReusedSandboxMessaging(
+        state.session?.messagingPlan ?? null,
+        this.options.agent,
+        this.deps,
       );
-      this.deps.note(
-        `  [resume] Reusing ${webSearchLabelFor(provider)} configuration already baked into the sandbox.`,
-      );
-    }
-    const messaging = reconcileReusedSandboxMessaging(
-      state.session?.messagingPlan ?? null,
-      this.options.agent,
-      this.deps,
-    );
-    if (messaging.changed) {
-      this.deps.updateSession((current) => {
-        current.messagingPlan = messaging.plan;
-        return current;
+      if (messaging.changed) {
+        this.deps.updateSession((current) => {
+          current.messagingPlan = messaging.plan;
+          return current;
+        });
+      }
+      this.backfillReusedSandboxFidelity(state);
+      if (state.sandboxName) {
+        this.deps.updateSandboxRegistry(state.sandboxName, {
+          pendingRouteReservation: undefined,
+        });
+      }
+      this.deps.skippedStepMessage("sandbox", state.sandboxName);
+      const skippedSession = await this.deps.recordStateSkipped("sandbox", {
+        reason: "resume",
+        sandboxName: state.sandboxName,
       });
-    }
-    this.backfillReusedSandboxFidelity(state);
-    this.deps.skippedStepMessage("sandbox", state.sandboxName);
-    const skippedSession = await this.deps.recordStateSkipped("sandbox", {
-      reason: "resume",
-      sandboxName: state.sandboxName,
+      return {
+        ...state,
+        session: skippedSession,
+        selectedMessagingChannels: messaging.selectedChannels,
+      };
     });
-    return {
-      ...state,
-      session: skippedSession,
-      selectedMessagingChannels: messaging.selectedChannels,
-    };
   }
 
   private backfillReusedSandboxFidelity(state: SandboxStepState<WebSearchConfig>): void {
@@ -507,68 +638,92 @@ class SandboxStateFlow<
       this.options.hermesToolGateways,
     );
     const resourceProfile = await this.deps.selectResourceProfileForSandbox();
-    if (this.options.fresh) {
-      this.deps.stopStaleDashboardListenersForSandbox(
-        this.deps.listRegistrySandboxes().sandboxes,
-        requestedSandboxName,
-      );
-    }
-    const sandboxName = await withSandboxPhaseTrace(
-      requestedSandboxName,
-      this.options.provider,
-      this.options.model,
-      (this.options.agent as { name?: string } | null)?.name,
-      () =>
-        this.deps.createSandbox(
-          this.options.gpu,
-          this.options.model,
-          this.options.provider,
-          this.options.preferredInferenceApi,
-          requestedSandboxName,
-          state.webSearchConfig,
-          state.selectedMessagingChannels,
-          this.options.fromDockerfile,
-          this.options.agent,
-          this.options.controlUiPort,
-          this.options.sandboxGpuConfig,
-          resourceProfile,
-          effectiveHermesToolGateways,
-          this.options.hermesAuthMethod,
-          {
-            recreate: decision.kind !== "create",
-            toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
-          },
-        ),
-    );
-    // createSandbox() owns the build fingerprint. In particular, reusing an
-    // image must not stamp it with the current version and hide build drift.
-    const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
-      this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
-    // Preserve the validated route and credential env-var name, never a credential value.
-    this.deps.updateSandboxRegistry(sandboxName, {
-      model: this.options.model,
-      provider: this.options.provider,
-      endpointUrl: this.options.endpointUrl,
-      credentialEnv: this.options.credentialEnv,
-      nimContainer: this.options.nimContainer,
-      preferredInferenceApi: this.options.preferredInferenceApi,
-      ...agentRegistryFields,
-    });
-    // Finalization marks the default so a cancelled onboarding cannot leave a
-    // partially configured sandbox selected as the default.
-    const completedSession = await this.deps.recordStepComplete(
-      "sandbox",
-      this.deps.toSessionUpdates({
-        sandboxName,
+    const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
+      this.assertGatewayRouteCompatible(requestedSandboxName);
+      await applySandboxResumeDecision(decision, state.sandboxName, this.deps);
+      await this.deps.startRecordedStep("sandbox", {
         provider: this.options.provider,
         model: this.options.model,
+      });
+      if (this.options.fresh) {
+        this.deps.stopStaleDashboardListenersForSandbox(
+          this.deps.listRegistrySandboxes().sandboxes,
+          requestedSandboxName,
+        );
+      }
+      this.deps.updateSession((current) => {
+        current.messagingPlan = messagingPlan;
+        return current;
+      });
+      const sandboxName = await withSandboxPhaseTrace(
+        requestedSandboxName,
+        this.options.provider,
+        this.options.model,
+        (this.options.agent as { name?: string } | null)?.name,
+        () =>
+          this.deps.createSandbox(
+            this.options.gpu,
+            this.options.model,
+            this.options.provider,
+            this.options.preferredInferenceApi,
+            requestedSandboxName,
+            state.webSearchConfig,
+            state.selectedMessagingChannels,
+            this.options.fromDockerfile,
+            this.options.agent,
+            this.options.controlUiPort,
+            this.options.sandboxGpuConfig,
+            resourceProfile,
+            effectiveHermesToolGateways,
+            this.options.hermesAuthMethod,
+            {
+              recreate: decision.kind !== "create",
+              toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+              observabilityEnabled: state.session?.observabilityEnabled === true,
+              ...(state.session?.observabilityRequestedExplicitly === true
+                ? { observabilityRequestedExplicitly: true as const }
+                : {}),
+              ...(this.options.authoritativePolicyTier
+                ? { policyTier: this.options.authoritativePolicyTier }
+                : {}),
+            },
+          ),
+      );
+      // createSandbox() owns the build fingerprint. In particular, reusing an
+      // image must not stamp it with the current version and hide build drift.
+      const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
+        this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
+      // Preserve the validated route and credential env-var name, never a credential value.
+      this.deps.updateSandboxRegistry(sandboxName, {
+        model: this.options.model,
+        provider: this.options.provider,
+        endpointUrl: this.options.endpointUrl,
+        credentialEnv: this.options.credentialEnv,
         nimContainer: this.options.nimContainer,
-        webSearchConfig: state.webSearchConfig,
-        messagingPlan,
-        hermesToolGateways: effectiveHermesToolGateways,
-      }),
-    );
-    return { ...state, sandboxName, session: completedSession };
+        preferredInferenceApi: this.options.preferredInferenceApi,
+        ...agentRegistryFields,
+      });
+      // Finalization marks the default so a cancelled onboarding cannot leave a
+      // partially configured sandbox selected as the default.
+      const completedSession = await this.deps.recordStepComplete(
+        "sandbox",
+        this.deps.toSessionUpdates({
+          sandboxName,
+          provider: this.options.provider,
+          model: this.options.model,
+          nimContainer: this.options.nimContainer,
+          webSearchConfig: state.webSearchConfig,
+          messagingPlan,
+          hermesToolGateways: effectiveHermesToolGateways,
+        }),
+      );
+      return { ...state, sandboxName, session: completedSession };
+    };
+    const withGatewayLock = () =>
+      this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
+    return this.deps.withSandboxMutationLock
+      ? this.deps.withSandboxMutationLock(requestedSandboxName, withGatewayLock)
+      : withGatewayLock();
   }
 
   private async recreateSandbox(
@@ -592,14 +747,6 @@ class SandboxStateFlow<
         state.webSearchConfig as unknown as SharedWebSearchConfig | null,
         webSearchConfig as unknown as SharedWebSearchConfig | null,
       );
-    // Validate the replacement provider before any resume cleanup removes the
-    // still-live sandbox from the registry. A bad or missing credential must
-    // leave the existing sandbox recoverable.
-    await applySandboxResumeDecision(decision, state.sandboxName, this.deps);
-    await this.deps.startRecordedStep("sandbox", {
-      provider: this.options.provider,
-      model: this.options.model,
-    });
     const requestedSandboxName =
       state.sandboxName ?? (await this.deps.promptValidatedSandboxName(this.options.agent));
     const messaging = await reconcileSandboxMessaging({
@@ -609,14 +756,9 @@ class SandboxStateFlow<
       agent: this.options.agent,
       deps: this.deps,
     });
-    const session = this.deps.updateSession((current) => {
-      current.messagingPlan = messaging.plan;
-      return current;
-    });
     return this.createAndRecordSandbox(
       {
         ...state,
-        session,
         sandboxName: requestedSandboxName,
         webSearchConfig,
         webSearchConfigChanged,
@@ -665,7 +807,7 @@ class SandboxStateFlow<
   }
 
   async run(): Promise<SandboxStateResult<WebSearchConfig>> {
-    const initialState = this.prepareWebSearchSupport();
+    const initialState = this.applyObservabilityRequest(this.prepareWebSearchSupport());
     const decision = this.resolveResumeDecision(initialState);
     const completedState =
       decision.kind === "reuse"

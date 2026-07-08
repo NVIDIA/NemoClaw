@@ -22,7 +22,7 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -39,9 +39,6 @@ import { stripAnsi } from "./json-envelope.ts";
 // agent path. Helpers stay local because this test is a focused migration of
 // one bash script, not a new shared e2e framework.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
 const OPENCLAW_BALANCED_SANDBOX =
   process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_BALANCED_SANDBOX ??
   "e2e-common-egress-openclaw-balanced";
@@ -561,10 +558,8 @@ async function runHermesAgentAssertion(
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
 
-const liveTest = shouldRunLiveE2E() ? test : test.skip;
-const openClawTest =
-  process.env.NEMOCLAW_COMMON_EGRESS_SKIP_OPENCLAW === "1" ? test.skip : liveTest;
-const hermesTest = process.env.NEMOCLAW_COMMON_EGRESS_SKIP_HERMES === "1" ? test.skip : liveTest;
+const openClawTest = process.env.NEMOCLAW_COMMON_EGRESS_SKIP_OPENCLAW === "1" ? test.skip : test;
+const hermesTest = process.env.NEMOCLAW_COMMON_EGRESS_SKIP_HERMES === "1" ? test.skip : test;
 
 describe.sequential("common-egress agent live targets", () => {
   openClawTest(
@@ -574,7 +569,7 @@ describe.sequential("common-egress agent live targets", () => {
       const hosted = await assertPrerequisites(host, secrets, skip);
       const apiKey = hosted.apiKey;
       const braveApiKey = secrets.required("BRAVE_API_KEY");
-      await artifacts.writeJson("target.json", {
+      await artifacts.target.declare({
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
@@ -687,7 +682,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
       );
       expect(weatherProof.exitCode, text(weatherProof)).toBe(0);
       expect(weatherProof.stdout.trim()).toMatch(/^[a-f0-9]{64}\s+/);
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
         status: "passed",
@@ -701,7 +696,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
       const apiKey = hosted.apiKey;
-      await artifacts.writeJson("target.json", {
+      await artifacts.target.declare({
         id: "common-egress-agent",
         case: "openclaw-open-public-reference",
         sandboxName: OPENCLAW_OPEN_SANDBOX,
@@ -733,7 +728,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
 https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json
 After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.`,
       });
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "common-egress-agent",
         case: "openclaw-open-public-reference",
         status: "passed",
@@ -747,7 +742,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
       const apiKey = hosted.apiKey;
-      await artifacts.writeJson("target.json", {
+      await artifacts.target.declare({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",
         sandboxName: HERMES_SANDBOX,
@@ -783,7 +778,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         prompt: buildHermesReferencePrompt(),
         sandboxName: HERMES_SANDBOX,
       });
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",
         status: "passed",

@@ -29,6 +29,7 @@ function dcodeRegistryEntry(
     name,
     agent: "langchain-deepagents-code",
     nemoclawVersion: "0.1.0",
+    observabilityEnabled: false,
     toolDisclosure: "progressive",
     webSearchEnabled: false,
     webSearchProvider: null,
@@ -70,6 +71,7 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
       recreate: true,
       toolDisclosure: "progressive",
+      observabilityEnabled: false,
     });
     expect(calls.removeSandbox).not.toHaveBeenCalled();
   });
@@ -88,6 +90,7 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
       recreate: true,
       toolDisclosure: "progressive",
+      observabilityEnabled: false,
     });
   });
 
@@ -141,18 +144,32 @@ describe("handleSandboxState live DCode selection", () => {
 
     expect(getDcodeSelectionDrift).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
+      pendingRouteReservation: undefined,
+    });
   });
 
-  it.each([
-    ["missing fields", {}],
-    ["stale", { provider: "old-provider", model: "old-model" }],
-  ])("backfills %s registry selection after verified live reuse (#6311)", async (_label, selection) => {
+  it("fails closed for missing registry selection before live reuse (#6311)", async () => {
     const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
       getDcodeSelectionDrift,
-      getSandboxRegistryEntry: (name) => dcodeRegistryEntry(name, selection),
+      getSandboxRegistryEntry: (name) => dcodeRegistryEntry(name, {}),
+    });
+
+    await expect(handleSandboxState(dcodeOptions(deps))).rejects.toThrow("exit 1");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("backfills stale registry selection after verified live reuse (#6311)", async () => {
+    const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getDcodeSelectionDrift,
+      getSandboxRegistryEntry: (name) =>
+        dcodeRegistryEntry(name, { provider: "old-provider", model: "old-model" }),
     });
 
     await handleSandboxState(dcodeOptions(deps));
@@ -162,8 +179,8 @@ describe("handleSandboxState live DCode selection", () => {
       provider: "provider",
       model: "model",
     });
-    expect(getDcodeSelectionDrift.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.updateSandbox.mock.invocationCallOrder[0],
-    );
+    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
+      pendingRouteReservation: undefined,
+    });
   });
 });

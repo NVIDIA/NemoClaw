@@ -37,7 +37,7 @@ describe("CLI dispatch for terminal agents", () => {
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "-n" ] && [ "$4" = "alpha" ]; then',
         '  cmd="${10}"',
         '  case "$cmd" in',
-        '    *"dcode --version"*) echo "dcode 0.1.30"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"dcode --version"*) echo "dcode 0.1.34"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         '    *"config.toml"*) echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         "  esac",
         "fi",

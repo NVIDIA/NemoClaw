@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
+import { explicitObservabilityFlag } from "../../onboard/observability-command-flag";
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
@@ -71,17 +72,24 @@ export function printMcpRebuildRetryCommand(
   sandboxName: string,
   entries: McpRebuildPreparation["entries"],
   toolDisclosure?: ToolDisclosure,
+  observability?: { enabled: boolean; requestedExplicitly: boolean },
 ): void {
+  const observabilityFlag = observability
+    ? explicitObservabilityFlag(observability.enabled, observability.requestedExplicitly)
+    : null;
+  const observabilityArg = observabilityFlag ? ` ${observabilityFlag}` : "";
   if (entries.length > 0) {
     const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
-    console.error(`    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes${disclosureArg}`);
+    console.error(
+      `    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes${disclosureArg}${observabilityArg}`,
+    );
     console.error(
       `       This will recreate sandbox '${sandboxName}' and restore its MCP bridges.`,
     );
     return;
   }
   const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
-  console.error(`    2. Run: ${CLI_NAME} onboard --resume${disclosureArg}`);
+  console.error(`    2. Run: ${CLI_NAME} onboard --resume${disclosureArg}${observabilityArg}`);
   console.error(`       This will recreate sandbox '${sandboxName}'.`);
 }
 

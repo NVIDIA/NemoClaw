@@ -179,6 +179,29 @@ describe("vllm model registry", () => {
     expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
   });
 
+  it("builds the Nemotron-3-Nano-4B FP8 serve command with auto tool-choice enabled (#6314)", () => {
+    // #6314: the generic-Linux managed-vLLM default (`GENERIC_LINUX_PROFILE.defaultModel`)
+    // used to omit `--enable-auto-tool-choice` and `--tool-call-parser`, so every agent
+    // request with `tool_choice: "auto"` failed HTTP 400 out of the box on generic Linux.
+    // The Spark and Station defaults already pinned their own tool-call parser; this
+    // asserts the same is true for the Nemotron-3-Nano-4B checkpoint that generic Linux
+    // resolves to, matching the vLLM launch example on the model card.
+    const nemotronNano = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
+    expect(nemotronNano).toBeDefined();
+    const cmd = buildVllmServeCommand(nemotronNano!);
+    expect(cmd).toContain("vllm serve nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
+    expect(cmd).toContain("--max-model-len 262144");
+    expect(cmd).toContain("--gpu-memory-utilization 0.7");
+    expect(cmd).toContain("--load-format fastsafetensors");
+    expect(cmd).toContain("--enable-auto-tool-choice");
+    expect(cmd).toContain("--tool-call-parser qwen3_coder");
+    // The tool-call flags must appear paired: the parser value comes as a single
+    // shell token immediately after `--tool-call-parser`, and each switch is listed
+    // only once.
+    expect(cmd.match(/--enable-auto-tool-choice/g)).toHaveLength(1);
+    expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
+  });
+
   it("registers the Qwen3.6-35B NVFP4 checkpoint for DGX Spark", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
     expect(qwen35b).toBeDefined();

@@ -207,6 +207,9 @@ installed_copy_schema_error() {
       "/sandbox/.hermes/dashboard-home"; do
       grep -Fq "$item" "$dockerfile" || missing+=("marker ${item}")
     done
+    if grep -q '^ARG HERMES_SEMVER=' "$dockerfile"; then
+      missing+=("final Dockerfile #5254 guard must derive Hermes version from installed hermes --version")
+    fi
   fi
 
   if ((${#missing[@]} == 0)); then

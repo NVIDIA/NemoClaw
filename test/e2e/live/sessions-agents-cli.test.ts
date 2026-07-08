@@ -19,13 +19,10 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sessions-agents-cli";
 const TEST_AGENT_ID = process.env.NEMOCLAW_E2E_AGENT_ID ?? "work";
 const ONBOARD_TIMEOUT_MS = 40 * 60_000;
@@ -308,232 +305,226 @@ async function expectJsonCommand(
   return parseJsonEnvelope(result, args.join(" "));
 }
 
-const runSessionsAgentsCliTest = shouldRunLiveE2E() ? test : test.skip;
+test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes", {
+  timeout: TEST_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, secrets, skip }) => {
+  expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
+  expect(
+    fs.existsSync(CLI_DIST_ENTRYPOINT),
+    "run `npm run build:cli` before live repo CLI targets",
+  ).toBe(true);
 
-runSessionsAgentsCliTest(
-  "sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
-  { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, secrets, skip }) => {
-    expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
-    expect(
-      fs.existsSync(CLI_DIST_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
+  await artifacts.target.declare({
+    id: "sessions-agents-cli",
+    boundary: "host-cli-openclaw-sessions-agents-gateway",
+    sandboxName: SANDBOX_NAME,
+    contracts: [
+      "NVIDIA_INFERENCE_API_KEY absence skips the live credential-gated target",
+      "nemoclaw <name> sessions --json defaults to OpenClaw sessions list",
+      "nemoclaw <name> sessions list --json returns a parseable JSON envelope",
+      "sessions reset/delete gateway RPCs retry through pending pairing/scope approval",
+      "nemoclaw <name> agents add/list/delete pass through to the in-sandbox OpenClaw CLI",
+      "the secondary agent session key is removed through sessions delete --json",
+      "cleanup destroys the named sandbox unless NEMOCLAW_E2E_KEEP_SANDBOX=1",
+    ],
+  });
 
-    await artifacts.writeJson("target.json", {
-      id: "sessions-agents-cli",
-      runner: "vitest",
-      boundary: "host-cli-openclaw-sessions-agents-gateway",
-      sandboxName: SANDBOX_NAME,
-      contracts: [
-        "NVIDIA_INFERENCE_API_KEY absence skips the live credential-gated target",
-        "nemoclaw <name> sessions --json defaults to OpenClaw sessions list",
-        "nemoclaw <name> sessions list --json returns a parseable JSON envelope",
-        "sessions reset/delete gateway RPCs retry through pending pairing/scope approval",
-        "nemoclaw <name> agents add/list/delete pass through to the in-sandbox OpenClaw CLI",
-        "the secondary agent session key is removed through sessions delete --json",
-        "cleanup destroys the named sandbox unless NEMOCLAW_E2E_KEEP_SANDBOX=1",
-      ],
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info-sessions-agents-cli",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(docker.exitCode, `Docker is required for sessions/agents E2E\n${resultText(docker)}`).toBe(
+    0,
+  );
+
+  const hosted = requireHostedInferenceConfig(secrets);
+  await ensureOpenshellAvailable(host);
+  cleanup.add(`destroy sessions/agents sandbox ${SANDBOX_NAME}`, async () =>
+    bestEffort(() => cleanupSandbox(host, hosted)),
+  );
+  await cleanupSandbox(host, hosted);
+  fs.rmSync(path.join(process.env.HOME ?? "", ".nemoclaw", "onboard.lock"), { force: true });
+
+  const onboard = await runNemoclaw(
+    host,
+    ["onboard", "--non-interactive", "--yes-i-accept-third-party-software"],
+    hosted,
+    {
+      artifactName: "onboard-sessions-agents-cli",
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  if (onboard.exitCode !== 0 && isPreContractEndpointValidationRateLimit(onboard)) {
+    await artifacts.writeJson("onboard-endpoint-validation-skip.json", {
+      reason:
+        "NVIDIA endpoint validation was externally rate-limited or sanitized before the sessions/agents CLI contract could run.",
+      exitCode: onboard.exitCode,
+      stdoutTail: tailEvidence(onboard.stdout),
+      stderrTail: tailEvidence(onboard.stderr),
     });
-
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-sessions-agents-cli",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(
-      docker.exitCode,
-      `Docker is required for sessions/agents E2E\n${resultText(docker)}`,
-    ).toBe(0);
-
-    const hosted = requireHostedInferenceConfig(secrets);
-    await ensureOpenshellAvailable(host);
-    cleanup.add(`destroy sessions/agents sandbox ${SANDBOX_NAME}`, async () =>
-      bestEffort(() => cleanupSandbox(host, hosted)),
+    skip(
+      "NVIDIA endpoint validation hit HTTP 429/sanitized failure before sessions/agents CLI contract could run",
     );
-    await cleanupSandbox(host, hosted);
-    fs.rmSync(path.join(process.env.HOME ?? "", ".nemoclaw", "onboard.lock"), { force: true });
+  }
+  expect(onboard.exitCode, `onboard failed\n${resultText(onboard)}`).toBe(0);
 
-    const onboard = await runNemoclaw(
+  await approvePendingPairingRequests(host, hosted, "post-onboard-scope");
+
+  const mainSeed = await runNemoclaw(
+    host,
+    [SANDBOX_NAME, "exec", "--", "openclaw", "agent", "--agent", "main", "-m", "ping"],
+    hosted,
+    {
+      artifactName: "seed-main-session",
+      timeoutMs: AGENT_TURN_TIMEOUT_MS,
+    },
+  );
+
+  if (mainSeed.exitCode === 0) {
+    await approvePendingPairingRequests(host, hosted, "post-main-seed-scope");
+    await expectJsonCommand(
       host,
-      ["onboard", "--non-interactive", "--yes-i-accept-third-party-software"],
+      [SANDBOX_NAME, "sessions", "--json"],
       hosted,
-      {
-        artifactName: "onboard-sessions-agents-cli",
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      },
+      "tc-sess-01-sessions-default-json",
     );
-    if (onboard.exitCode !== 0 && isPreContractEndpointValidationRateLimit(onboard)) {
-      await artifacts.writeJson("onboard-endpoint-validation-skip.json", {
-        reason:
-          "NVIDIA endpoint validation was externally rate-limited or sanitized before the sessions/agents CLI contract could run.",
-        exitCode: onboard.exitCode,
-        stdoutTail: tailEvidence(onboard.stdout),
-        stderrTail: tailEvidence(onboard.stderr),
-      });
-      skip(
-        "NVIDIA endpoint validation hit HTTP 429/sanitized failure before sessions/agents CLI contract could run",
-      );
-    }
-    expect(onboard.exitCode, `onboard failed\n${resultText(onboard)}`).toBe(0);
-
-    await approvePendingPairingRequests(host, hosted, "post-onboard-scope");
-
-    const mainSeed = await runNemoclaw(
+    await expectJsonCommand(
       host,
-      [SANDBOX_NAME, "exec", "--", "openclaw", "agent", "--agent", "main", "-m", "ping"],
+      [SANDBOX_NAME, "sessions", "list", "--json"],
       hosted,
-      {
-        artifactName: "seed-main-session",
-        timeoutMs: AGENT_TURN_TIMEOUT_MS,
-      },
+      "tc-sess-02-sessions-list-json",
     );
 
-    if (mainSeed.exitCode === 0) {
-      await approvePendingPairingRequests(host, hosted, "post-main-seed-scope");
-      await expectJsonCommand(
-        host,
-        [SANDBOX_NAME, "sessions", "--json"],
-        hosted,
-        "tc-sess-01-sessions-default-json",
-      );
-      await expectJsonCommand(
-        host,
-        [SANDBOX_NAME, "sessions", "list", "--json"],
-        hosted,
-        "tc-sess-02-sessions-list-json",
-      );
-
-      const reset = await runGatewayRpcWithScopeRetry(
-        host,
-        [SANDBOX_NAME, "sessions", "reset", "agent:main:main", "--json"],
-        hosted,
-        "tc-sess-03-sessions-reset-main-json",
-      );
-      expect(reset.exitCode, `sessions reset failed\n${resultText(reset)}`).toBe(0);
-      const resetEnvelope = parseJsonEnvelope(reset, "sessions reset --json");
-      expect(asRecord(resetEnvelope)?.key, "sessions reset JSON must include key").toBe(
-        "agent:main:main",
-      );
-
-      await expectJsonCommand(
-        host,
-        [SANDBOX_NAME, "sessions", "list", "--json"],
-        hosted,
-        "tc-sess-04-sessions-list-after-reset-json",
-      );
-    } else {
-      await artifacts.writeJson("main-session-cases-skipped.json", {
-        reason: "main agent seed failed; preserving legacy TC-SESS-01..04 skip behavior",
-        exitCode: mainSeed.exitCode,
-        stderr: mainSeed.stderr,
-      });
-    }
-
-    const addAgent = await runNemoclaw(
+    const reset = await runGatewayRpcWithScopeRetry(
       host,
-      [
-        SANDBOX_NAME,
-        "agents",
-        "add",
-        TEST_AGENT_ID,
-        "--workspace",
-        `/sandbox/.openclaw/workspace-${TEST_AGENT_ID}`,
-        "--non-interactive",
-      ],
+      [SANDBOX_NAME, "sessions", "reset", "agent:main:main", "--json"],
       hosted,
-      {
-        artifactName: "tc-agent-01-agents-add-passthrough",
-        timeoutMs: 120_000,
-      },
+      "tc-sess-03-sessions-reset-main-json",
     );
-    expect(addAgent.exitCode, `agents add failed\n${resultText(addAgent)}`).toBe(0);
+    expect(reset.exitCode, `sessions reset failed\n${resultText(reset)}`).toBe(0);
+    const resetEnvelope = parseJsonEnvelope(reset, "sessions reset --json");
+    expect(asRecord(resetEnvelope)?.key, "sessions reset JSON must include key").toBe(
+      "agent:main:main",
+    );
 
     await expectJsonCommand(
       host,
-      [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
+      [SANDBOX_NAME, "sessions", "list", "--json"],
       hosted,
-      "tc-agent-01-sessions-list-agent-after-add-json",
+      "tc-sess-04-sessions-list-after-reset-json",
     );
+  } else {
+    await artifacts.writeJson("main-session-cases-skipped.json", {
+      reason: "main agent seed failed; preserving legacy TC-SESS-01..04 skip behavior",
+      exitCode: mainSeed.exitCode,
+      stderr: mainSeed.stderr,
+    });
+  }
 
-    const agentsList = await expectJsonCommand(
-      host,
-      [SANDBOX_NAME, "agents", "list", "--json"],
-      hosted,
-      "tc-agent-03-agents-list-json",
-    );
-    expect(
-      agentEntries(agentsList).some((entry) => entry.id === TEST_AGENT_ID),
-      `agents list --json must include '${TEST_AGENT_ID}'`,
-    ).toBe(true);
+  const addAgent = await runNemoclaw(
+    host,
+    [
+      SANDBOX_NAME,
+      "agents",
+      "add",
+      TEST_AGENT_ID,
+      "--workspace",
+      `/sandbox/.openclaw/workspace-${TEST_AGENT_ID}`,
+      "--non-interactive",
+    ],
+    hosted,
+    {
+      artifactName: "tc-agent-01-agents-add-passthrough",
+      timeoutMs: 120_000,
+    },
+  );
+  expect(addAgent.exitCode, `agents add failed\n${resultText(addAgent)}`).toBe(0);
 
-    const workSeed = await runNemoclaw(
-      host,
-      [SANDBOX_NAME, "exec", "--", "openclaw", "agent", "--agent", TEST_AGENT_ID, "-m", "ping"],
-      hosted,
-      {
-        artifactName: "seed-work-agent-session",
-        timeoutMs: AGENT_TURN_TIMEOUT_MS,
-      },
-    );
-    expect(workSeed.exitCode, `work-agent seed failed\n${resultText(workSeed)}`).toBe(0);
+  await expectJsonCommand(
+    host,
+    [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
+    hosted,
+    "tc-agent-01-sessions-list-agent-after-add-json",
+  );
 
-    await approvePendingPairingRequests(host, hosted, "post-work-seed-scope");
-    const workSessions = await expectJsonCommand(
-      host,
-      [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
-      hosted,
-      "tc-sess-05-work-agent-sessions-json",
-    );
-    const sessionKey = firstSessionKey(workSessions);
-    expect(
-      sessionKey,
-      `expected a session key for agent '${TEST_AGENT_ID}' after seed prompt`,
-    ).toBeTruthy();
+  const agentsList = await expectJsonCommand(
+    host,
+    [SANDBOX_NAME, "agents", "list", "--json"],
+    hosted,
+    "tc-agent-03-agents-list-json",
+  );
+  expect(
+    agentEntries(agentsList).some((entry) => entry.id === TEST_AGENT_ID),
+    `agents list --json must include '${TEST_AGENT_ID}'`,
+  ).toBe(true);
 
-    const deleteSession = await runGatewayRpcWithScopeRetry(
-      host,
-      [SANDBOX_NAME, "sessions", "delete", sessionKey!, "--json"],
-      hosted,
-      "tc-sess-05-sessions-delete-json",
-    );
-    expect(deleteSession.exitCode, `sessions delete failed\n${resultText(deleteSession)}`).toBe(0);
-    const deleteEnvelope = parseJsonEnvelope(deleteSession, "sessions delete --json");
-    expect(asRecord(deleteEnvelope)?.key, "sessions delete JSON must include deleted key").toBe(
-      sessionKey,
-    );
+  const workSeed = await runNemoclaw(
+    host,
+    [SANDBOX_NAME, "exec", "--", "openclaw", "agent", "--agent", TEST_AGENT_ID, "-m", "ping"],
+    hosted,
+    {
+      artifactName: "seed-work-agent-session",
+      timeoutMs: AGENT_TURN_TIMEOUT_MS,
+    },
+  );
+  expect(workSeed.exitCode, `work-agent seed failed\n${resultText(workSeed)}`).toBe(0);
 
-    const workSessionsAfterDelete = await expectJsonCommand(
-      host,
-      [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
-      hosted,
-      "tc-sess-05-work-agent-sessions-after-delete-json",
-    );
-    expect(
-      sessionEntries(workSessionsAfterDelete).some((entry) => entry.key === sessionKey),
-      `session key '${sessionKey}' must be absent after delete`,
-    ).toBe(false);
+  await approvePendingPairingRequests(host, hosted, "post-work-seed-scope");
+  const workSessions = await expectJsonCommand(
+    host,
+    [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
+    hosted,
+    "tc-sess-05-work-agent-sessions-json",
+  );
+  const sessionKey = firstSessionKey(workSessions);
+  expect(
+    sessionKey,
+    `expected a session key for agent '${TEST_AGENT_ID}' after seed prompt`,
+  ).toBeTruthy();
 
-    const deleteAgent = await runNemoclaw(
-      host,
-      [SANDBOX_NAME, "agents", "delete", TEST_AGENT_ID, "--force", "--json"],
-      hosted,
-      {
-        artifactName: "tc-agent-02-agents-delete-json",
-        timeoutMs: 120_000,
-      },
-    );
-    expect(deleteAgent.exitCode, `agents delete failed\n${resultText(deleteAgent)}`).toBe(0);
+  const deleteSession = await runGatewayRpcWithScopeRetry(
+    host,
+    [SANDBOX_NAME, "sessions", "delete", sessionKey!, "--json"],
+    hosted,
+    "tc-sess-05-sessions-delete-json",
+  );
+  expect(deleteSession.exitCode, `sessions delete failed\n${resultText(deleteSession)}`).toBe(0);
+  const deleteEnvelope = parseJsonEnvelope(deleteSession, "sessions delete --json");
+  expect(asRecord(deleteEnvelope)?.key, "sessions delete JSON must include deleted key").toBe(
+    sessionKey,
+  );
 
-    const agentsAfterDelete = await expectJsonCommand(
-      host,
-      [SANDBOX_NAME, "agents", "list", "--json"],
-      hosted,
-      "tc-agent-02-agents-list-after-delete-json",
-    );
-    expect(
-      agentEntries(agentsAfterDelete).some((entry) => entry.id === TEST_AGENT_ID),
-      `agent '${TEST_AGENT_ID}' still visible after delete`,
-    ).toBe(false);
-  },
-);
+  const workSessionsAfterDelete = await expectJsonCommand(
+    host,
+    [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
+    hosted,
+    "tc-sess-05-work-agent-sessions-after-delete-json",
+  );
+  expect(
+    sessionEntries(workSessionsAfterDelete).some((entry) => entry.key === sessionKey),
+    `session key '${sessionKey}' must be absent after delete`,
+  ).toBe(false);
+
+  const deleteAgent = await runNemoclaw(
+    host,
+    [SANDBOX_NAME, "agents", "delete", TEST_AGENT_ID, "--force", "--json"],
+    hosted,
+    {
+      artifactName: "tc-agent-02-agents-delete-json",
+      timeoutMs: 120_000,
+    },
+  );
+  expect(deleteAgent.exitCode, `agents delete failed\n${resultText(deleteAgent)}`).toBe(0);
+
+  const agentsAfterDelete = await expectJsonCommand(
+    host,
+    [SANDBOX_NAME, "agents", "list", "--json"],
+    hosted,
+    "tc-agent-02-agents-list-after-delete-json",
+  );
+  expect(
+    agentEntries(agentsAfterDelete).some((entry) => entry.id === TEST_AGENT_ID),
+    `agent '${TEST_AGENT_ID}' still visible after delete`,
+  ).toBe(false);
+});

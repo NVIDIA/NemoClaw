@@ -93,6 +93,7 @@ type SetupHarnessOptions = {
   policyPresets?: string;
   currentApplied?: string[];
   customPresets?: TestPreset[];
+  customOwnsObservability?: boolean;
   recordedPolicyTier?: string | null;
   env?: NodeJS.ProcessEnv;
 };
@@ -103,6 +104,7 @@ function createSetupHarness({
   policyPresets = "",
   currentApplied = [],
   customPresets = [],
+  customOwnsObservability = false,
   recordedPolicyTier = null,
   env = {},
 }: SetupHarnessOptions = {}) {
@@ -116,6 +118,7 @@ function createSetupHarness({
   const appliedCalls: string[] = [];
   const removedCalls: string[] = [];
   const tierUpdates: Array<{ sandboxName: string; policyTier: string }> = [];
+  const removedBuiltinAttributions: string[] = [];
 
   const deps: SetupPolicySelectionDeps = {
     policies: {
@@ -128,6 +131,10 @@ function createSetupHarness({
         ...customPresets,
       ],
       listCustomPresets: () => customPresets,
+      customPresetOwnsNetworkPolicyKey: () => customOwnsObservability,
+      removeBuiltinPresetAttribution: (_sandboxName, presetName) => {
+        removedBuiltinAttributions.push(presetName);
+      },
       getAppliedPresets: () => [...currentApplied],
       clampSetupPolicyPresetNames: policy.clampSetupPolicyPresetNames,
     },
@@ -166,7 +173,15 @@ function createSetupHarness({
     },
   };
 
-  return { appliedCalls, deps, notes, removedCalls, syncCalls, tierUpdates };
+  return {
+    appliedCalls,
+    deps,
+    notes,
+    removedBuiltinAttributions,
+    removedCalls,
+    syncCalls,
+    tierUpdates,
+  };
 }
 
 async function runPolicySetup(
@@ -552,6 +567,57 @@ describe("policy tier setup", () => {
     assert.deepEqual(result.removedCalls, []);
   });
 
+  it("treats exact custom OTLP ownership as attribution-only during non-interactive re-onboard", async () => {
+    const result = await runPolicySetup(
+      {
+        currentApplied: ["observability-otlp-local", "corp-otel"],
+        customPresets: [{ name: "corp-otel", description: "custom preset" }],
+        customOwnsObservability: true,
+      },
+      { agent: "langchain-deepagents-code", observabilityEnabled: true },
+    );
+
+    assert.ok(result.applied.includes("corp-otel"));
+    assert.ok(!result.applied.includes("observability-otlp-local"));
+    assert.ok(!result.removedCalls.includes("observability-otlp-local"));
+    assert.deepEqual(result.removedBuiltinAttributions, ["observability-otlp-local"]);
+  });
+
+  it("keeps exact custom OTLP ownership during selected resume without live built-in removal", async () => {
+    const result = await runPolicySetup(
+      {
+        currentApplied: ["observability-otlp-local", "corp-otel"],
+        customPresets: [{ name: "corp-otel", description: "custom preset" }],
+        customOwnsObservability: true,
+      },
+      {
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        selectedPresets: ["observability-otlp-local", "corp-otel"],
+      },
+    );
+
+    assert.deepEqual(result.applied, ["corp-otel"]);
+    assert.deepEqual(result.removedCalls, []);
+    assert.deepEqual(result.removedBuiltinAttributions, ["observability-otlp-local"]);
+  });
+
+  it("does not let stale declared custom OTLP content suppress the required built-in", async () => {
+    const result = await runPolicySetup(
+      {
+        currentApplied: ["corp-otel"],
+        customPresets: [{ name: "corp-otel", description: "custom preset" }],
+        customOwnsObservability: false,
+      },
+      { agent: "langchain-deepagents-code", observabilityEnabled: true },
+    );
+
+    assert.ok(result.applied.includes("corp-otel"));
+    assert.ok(result.applied.includes("observability-otlp-local"));
+    assert.ok(result.appliedCalls.includes("observability-otlp-local"));
+    assert.deepEqual(result.removedBuiltinAttributions, []);
+  });
+
   it("falls back to tier suggestions when NEMOCLAW_POLICY_MODE is unknown (#2429)", async () => {
     const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const result = await runPolicySetup({ tierName: "balanced", policyMode: "restricted" });
@@ -657,6 +723,22 @@ describe("policy tier setup", () => {
 
     assert.ok(!result.applied.includes("openclaw-pricing"));
     assert.ok(!result.appliedCalls.includes("openclaw-pricing"));
+  });
+
+  it("never applies DCode observability while an authoritative restricted rebuild tier is pending registration", async () => {
+    const result = await runPolicySetup(
+      { recordedPolicyTier: null },
+      {
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        selectedPresets: ["observability-otlp-local"],
+        tierName: " Restricted ",
+      },
+    );
+
+    assert.deepEqual(result.applied, []);
+    assert.ok(!result.appliedCalls.includes("observability-otlp-local"));
+    assert.deepEqual(result.syncCalls[0]?.selected, []);
   });
 
   it("removes previously-applied OpenClaw pricing during a restricted resume", async () => {

@@ -125,6 +125,8 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       model: "nemotron",
       policyPresets: ["npm"],
       nimContainer: null,
+      observabilityEnabled: true,
+      agent: "langchain-deepagents-code",
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
       },
@@ -136,6 +138,59 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     const recovered = result.sandboxes.find((s) => s.name === "alpha");
     expect(recovered).toBeDefined();
     expect(recovered?.policies).toEqual(["npm"]);
+    expect(recovered?.observabilityEnabled).toBe(true);
+  });
+
+  it("restores complete custom-route identity from a confirmed session", async () => {
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "custom-route",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-ultra",
+      endpointUrl: "https://inference.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      policyPresets: [],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.recoveredFromSession).toBe(true);
+    expect(result.sandboxes.find((sandbox) => sandbox.name === "custom-route")).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-ultra",
+      endpointUrl: "https://inference.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("still fails closed for a confirmed legacy custom route without full identity", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "legacy-custom-route",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-ultra",
+      endpointUrl: null,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: null,
+      policyPresets: [],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.recoveredFromSession).toBe(false);
+    expect(result.sandboxes).toEqual([]);
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
+      "requested custom route lacks durable endpoint or API-family metadata",
+    );
   });
 
   it("returns empty recovery when there is no session and no registry entries", async () => {
@@ -207,6 +262,34 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     await recoverRegistryEntries();
 
     expect(mockRegistryState.sandboxes["my-hermes"]?.agent).toBe("hermes");
+  });
+
+  it("preserves recorded observability when an older confirmed session omits the field", async () => {
+    mockRegistryState.sandboxes.alpha = {
+      name: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      gpuEnabled: false,
+      policies: [],
+      nimContainer: null,
+      agent: "langchain-deepagents-code",
+      observabilityEnabled: true,
+    };
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      policyPresets: [],
+      nimContainer: null,
+      agent: "langchain-deepagents-code",
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    await recoverRegistryEntries();
+
+    expect(mockRegistryState.sandboxes.alpha?.observabilityEnabled).toBe(true);
   });
 
   it("does not evict a registered sandbox even when its session step is incomplete (avoids false positives)", async () => {

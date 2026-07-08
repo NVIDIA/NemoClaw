@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +21,7 @@ import {
   formatHostServiceUnreachableMessage,
   probeHostServiceSandboxReachability,
 } from "./host-service-reachability";
+import { createModelRouterCommandProvisioner } from "./model-router-command";
 import {
   doesModelRouterProcessOwnPort,
   findModelRouterPidForPort,
@@ -30,25 +30,17 @@ import {
 } from "./model-router-process";
 import { prepareModelRouterVenv } from "./model-router-python";
 
+export {
+  createModelRouterCommandProvisioner,
+  type ModelRouterCommandDeps,
+  type ModelRouterCommandPaths,
+  type ModelRouterCommandProvisioner,
+} from "./model-router-command";
+
 const ROUTER_HEALTH_RETRIES = 15;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
 const MODEL_ROUTER_RELATIVE_DIR = path.join("nemoclaw-blueprint", "router", "llm-router");
 const MODEL_ROUTER_VENV_DIR = path.join(os.homedir(), ".nemoclaw", "model-router-venv");
-const MODEL_ROUTER_FINGERPRINT_FILE = ".nemoclaw-source-fingerprint";
-const MODEL_ROUTER_FINGERPRINT_IGNORED_NAMES = new Set([
-  ".git",
-  ".hg",
-  ".mypy_cache",
-  ".pytest_cache",
-  ".ruff_cache",
-  ".svn",
-  ".venv",
-  "__pycache__",
-  "build",
-  "dist",
-  "node_modules",
-  "venv",
-]);
 export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 
 export type BlueprintRouterConfig = {
@@ -65,6 +57,48 @@ export type BlueprintInferenceProfile = {
   credential_env?: string;
   credential_default?: string;
   router: BlueprintRouterConfig;
+};
+
+type ModelRouterProxyConfigResult = {
+  status: number | null;
+  stderr?: string | Buffer;
+  error?: Error;
+};
+
+type ModelRouterSpawnedProcess = {
+  pid: number | undefined;
+  onError(listener: (error: Error) => void): void;
+  onExit(listener: (code: number | null, signal: string | null) => void): void;
+  unref(): void;
+};
+
+export type StartModelRouterDeps = {
+  rootDir: string;
+  homeDir: string;
+  ensureModelRouterCommand: () => string;
+  mkdirSync: (directory: string) => void;
+  runProxyConfig: (
+    command: string,
+    args: string[],
+    options: { encoding: "utf8"; timeout: number; cwd: string },
+  ) => ModelRouterProxyConfigResult;
+  spawnProxy: (
+    command: string,
+    args: string[],
+    options: {
+      detached: true;
+      stdio: "ignore";
+      cwd: string;
+      env: Record<string, string>;
+    },
+  ) => ModelRouterSpawnedProcess;
+  resolveProviderCredential: (name: string) => string | null;
+  buildSubprocessEnv: (extra: Record<string, string>) => Record<string, string>;
+  isRouterHealthy: (port: number) => Promise<boolean>;
+  sleep: (milliseconds: number) => Promise<void>;
+  isProcessAlive: (pid: number) => boolean;
+  terminateProcess: (pid: number) => void;
+  getProviderKey: () => string;
 };
 
 /**
@@ -93,13 +127,6 @@ export function loadBlueprintProfile(
   }
 }
 
-function resolveHostCommandPath(commandName: string): string | null {
-  const result = runCapture(["sh", "-c", 'command -v "$1"', "--", commandName], {
-    ignoreError: true,
-  }).trim();
-  return result || null;
-}
-
 function modelRouterPackageDir(): string {
   return path.join(ROOT, MODEL_ROUTER_RELATIVE_DIR);
 }
@@ -108,204 +135,39 @@ function modelRouterVenvDir(): string {
   return process.env.NEMOCLAW_MODEL_ROUTER_VENV || MODEL_ROUTER_VENV_DIR;
 }
 
-function modelRouterCommandPath(venvDir = modelRouterVenvDir()): string {
-  return path.join(venvDir, "bin", "model-router");
-}
-
-function modelRouterFingerprintPath(venvDir = modelRouterVenvDir()): string {
-  return path.join(venvDir, MODEL_ROUTER_FINGERPRINT_FILE);
-}
-
-function isExecutableFile(filePath: string): boolean {
-  try {
-    fs.accessSync(filePath, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isModelRouterPackageReady(routerDir = modelRouterPackageDir()): boolean {
-  return (
-    fs.existsSync(path.join(routerDir, "pyproject.toml")) ||
-    fs.existsSync(path.join(routerDir, "setup.py"))
-  );
-}
-
-function shouldSkipModelRouterFingerprintEntry(name: string): boolean {
-  return MODEL_ROUTER_FINGERPRINT_IGNORED_NAMES.has(name) || name.endsWith(".egg-info");
-}
-
-function hashModelRouterSourceTree(routerDir = modelRouterPackageDir()): string | null {
-  const sourceHash = crypto.createHash("sha256");
-
-  const hashDirectory = (currentDir: string): boolean => {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs
-        .readdirSync(currentDir, { withFileTypes: true })
-        .sort((left: fs.Dirent, right: fs.Dirent) => left.name.localeCompare(right.name));
-    } catch {
-      return false;
-    }
-
-    let hashedSourceFile = false;
-    for (const entry of entries) {
-      if (shouldSkipModelRouterFingerprintEntry(entry.name)) continue;
-      if (entry.name.endsWith(".pyc") || entry.name.endsWith(".pyo")) continue;
-
-      const entryPath = path.join(currentDir, entry.name);
-      const relativePath = path.relative(routerDir, entryPath).split(path.sep).join("/");
-      if (entry.isDirectory()) {
-        hashedSourceFile = hashDirectory(entryPath) || hashedSourceFile;
-        continue;
-      }
-      if (entry.isSymbolicLink()) {
-        try {
-          sourceHash.update(`link:${relativePath}\0`);
-          sourceHash.update(fs.readlinkSync(entryPath));
-          sourceHash.update("\0");
-          hashedSourceFile = true;
-        } catch {
-          // Ignore unreadable links; the install step will fail if they are required.
-        }
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      sourceHash.update(`file:${relativePath}\0`);
-      sourceHash.update(fs.readFileSync(entryPath));
-      sourceHash.update("\0");
-      hashedSourceFile = true;
-    }
-    return hashedSourceFile;
-  };
-
-  return hashDirectory(routerDir) ? `files:${sourceHash.digest("hex")}` : null;
-}
-
-function getModelRouterSourceFingerprint(routerDir = modelRouterPackageDir()): string | null {
-  const gitHead = runCapture(["git", "-C", routerDir, "rev-parse", "HEAD"], {
-    ignoreError: true,
-  }).trim();
-  if (/^[0-9a-f]{40}$/i.test(gitHead)) return `git:${gitHead}`;
-
-  const gitLink = runCapture(
-    ["git", "-C", ROOT, "rev-parse", `HEAD:${MODEL_ROUTER_RELATIVE_DIR}`],
-    {
-      ignoreError: true,
-    },
-  ).trim();
-  if (/^[0-9a-f]{40}$/i.test(gitLink)) return `gitlink:${gitLink}`;
-
-  return hashModelRouterSourceTree(routerDir);
-}
-
-function readModelRouterInstalledFingerprint(venvDir = modelRouterVenvDir()): string | null {
-  try {
-    const fingerprint = fs.readFileSync(modelRouterFingerprintPath(venvDir), "utf8").trim();
-    return fingerprint || null;
-  } catch {
-    return null;
-  }
-}
-
-function writeModelRouterInstalledFingerprint(
-  fingerprint: string | null,
+export function createProductionModelRouterCommandProvisioner(
+  routerDir = modelRouterPackageDir(),
   venvDir = modelRouterVenvDir(),
-): void {
-  if (!fingerprint) return;
-  fs.writeFileSync(modelRouterFingerprintPath(venvDir), `${fingerprint}\n`, { mode: 0o600 });
+) {
+  return createModelRouterCommandProvisioner(
+    {
+      rootDir: ROOT,
+      routerDir,
+      venvDir,
+      defaultVenvDir: MODEL_ROUTER_VENV_DIR,
+    },
+    {
+      run,
+      runCapture,
+      prepareModelRouterVenv,
+      packageVersion: () =>
+        JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version ?? "unknown",
+    },
+  );
 }
 
 export function isManagedModelRouterCurrent(
   routerDir = modelRouterPackageDir(),
   venvDir = modelRouterVenvDir(),
 ): boolean {
-  if (!isExecutableFile(modelRouterCommandPath(venvDir))) return false;
-  const sourceFingerprint = getModelRouterSourceFingerprint(routerDir);
-  if (sourceFingerprint) {
-    return readModelRouterInstalledFingerprint(venvDir) === sourceFingerprint;
-  }
-  // When source fingerprint is unavailable (no git), accept an existing
-  // install-prefixed fingerprint to avoid reinstalling on every onboard.
-  const installed = readModelRouterInstalledFingerprint(venvDir);
-  return installed !== null && installed.startsWith("install:");
-}
-
-function initializeModelRouterSubmodule(routerDir = modelRouterPackageDir()): void {
-  if (isModelRouterPackageReady(routerDir)) return;
-  if (!fs.existsSync(path.join(ROOT, ".gitmodules")) || !fs.existsSync(path.join(ROOT, ".git"))) {
-    return;
-  }
-  console.log("  Initializing Model Router source...");
-  run(
-    ["git", "-C", ROOT, "submodule", "update", "--init", "--depth", "1", MODEL_ROUTER_RELATIVE_DIR],
-    {
-      ignoreError: true,
-    },
-  );
-}
-
-function installModelRouterCommand(routerDir = modelRouterPackageDir()): string {
-  initializeModelRouterSubmodule(routerDir);
-  if (!isModelRouterPackageReady(routerDir)) {
-    throw new Error(
-      `Model Router source is not initialized at ${routerDir}. ` +
-        `Run: git -C ${ROOT} submodule update --init --depth 1 ${MODEL_ROUTER_RELATIVE_DIR}`,
-    );
-  }
-
-  const venvDir = modelRouterVenvDir();
-  const routerCommand = modelRouterCommandPath(venvDir);
-  const sourceFingerprint = getModelRouterSourceFingerprint(routerDir);
-  const allowReplaceExistingVenv =
-    path.resolve(venvDir) === path.resolve(MODEL_ROUTER_VENV_DIR) ||
-    readModelRouterInstalledFingerprint(venvDir) !== null;
-  const venvPython = prepareModelRouterVenv({
+  return createProductionModelRouterCommandProvisioner(
+    routerDir,
     venvDir,
-    allowReplaceExisting: allowReplaceExistingVenv,
-  });
-
-  const installResult = run(
-    [venvPython, "-m", "pip", "install", "--quiet", "--upgrade", `${routerDir}[prefill,proxy]`],
-    {
-      ignoreError: true,
-      timeout: 600_000,
-    },
-  );
-  if (installResult.status !== 0) {
-    throw new Error("Failed to install Model Router dependencies.");
-  }
-  if (!isExecutableFile(routerCommand)) {
-    throw new Error("Model Router install did not produce the model-router command.");
-  }
-  const version =
-    JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version ?? "unknown";
-  const effectiveFingerprint = sourceFingerprint ?? `install:${version}`;
-  writeModelRouterInstalledFingerprint(effectiveFingerprint, venvDir);
-  return routerCommand;
+  ).isManagedModelRouterCurrent();
 }
 
 function ensureModelRouterCommand(): string {
-  const routerDir = modelRouterPackageDir();
-  const venvDir = modelRouterVenvDir();
-  const managedCommand = modelRouterCommandPath(venvDir);
-
-  if (isModelRouterPackageReady(routerDir) && isManagedModelRouterCurrent(routerDir, venvDir)) {
-    return managedCommand;
-  }
-
-  if (!isModelRouterPackageReady(routerDir)) {
-    initializeModelRouterSubmodule(routerDir);
-  }
-
-  if (isModelRouterPackageReady(routerDir)) {
-    if (isManagedModelRouterCurrent(routerDir, venvDir)) return managedCommand;
-    return installModelRouterCommand(routerDir);
-  }
-
-  if (isExecutableFile(managedCommand)) return managedCommand;
-  return resolveHostCommandPath("model-router") || installModelRouterCommand();
+  return createProductionModelRouterCommandProvisioner().ensureModelRouterCommand();
 }
 
 /**
@@ -313,20 +175,61 @@ function ensureModelRouterCommand(): string {
  * Follows the same pattern as Ollama startup (spawn detached, poll health).
  * Returns the PID of the child process.
  */
-async function startModelRouter(routerCfg: BlueprintRouterConfig): Promise<number> {
-  const routerCommand = ensureModelRouterCommand();
+function createStartModelRouterDeps(): StartModelRouterDeps {
+  return {
+    rootDir: ROOT,
+    homeDir: os.homedir(),
+    ensureModelRouterCommand,
+    mkdirSync: (directory) => fs.mkdirSync(directory, { recursive: true }),
+    runProxyConfig: (command, args, options) => spawnSync(command, args, options),
+    spawnProxy: (command, args, options) => {
+      const child = spawn(command, args, options);
+      return {
+        pid: child.pid,
+        onError: (listener) => {
+          child.once("error", listener);
+        },
+        onExit: (listener) => {
+          child.once("exit", listener);
+        },
+        unref: () => child.unref(),
+      };
+    },
+    resolveProviderCredential,
+    buildSubprocessEnv,
+    isRouterHealthy,
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    isProcessAlive: (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    terminateProcess: (pid) => process.kill(pid, "SIGTERM"),
+    getProviderKey: () => (process.env.NEMOCLAW_PROVIDER_KEY || "").trim(),
+  };
+}
+
+export async function startModelRouter(
+  routerCfg: BlueprintRouterConfig,
+  overrides: Partial<StartModelRouterDeps> = {},
+): Promise<number> {
+  const deps: StartModelRouterDeps = { ...createStartModelRouterDeps(), ...overrides };
+  const routerCommand = deps.ensureModelRouterCommand();
   const port = routerCfg.port || 4000;
-  const blueprintDir = path.join(ROOT, "nemoclaw-blueprint");
+  const blueprintDir = path.join(deps.rootDir, "nemoclaw-blueprint");
   const poolConfigPath = path.join(
     blueprintDir,
     routerCfg.pool_config_path || "router/pool-config.yaml",
   );
-  const stateDir = path.join(os.homedir(), ".nemoclaw", "state");
+  const stateDir = path.join(deps.homeDir, ".nemoclaw", "state");
   const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
 
-  fs.mkdirSync(stateDir, { recursive: true });
+  deps.mkdirSync(stateDir);
 
-  const proxyConfigResult = spawnSync(
+  const proxyConfigResult = deps.runProxyConfig(
     routerCommand,
     ["proxy-config", "--config", poolConfigPath, "--output", litellmConfigPath],
     { encoding: "utf8", timeout: 30_000, cwd: blueprintDir },
@@ -339,26 +242,26 @@ async function startModelRouter(routerCfg: BlueprintRouterConfig): Promise<numbe
 
   const credEnvVars: Record<string, string> = {};
   const credName = routerCfg.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
-  const routedCredential = resolveProviderCredential(credName);
-  const openAiCredential = resolveProviderCredential("OPENAI_API_KEY");
+  const routedCredential = deps.resolveProviderCredential(credName);
+  const openAiCredential = deps.resolveProviderCredential("OPENAI_API_KEY");
   if (routedCredential) {
     credEnvVars[credName] = routedCredential;
     if (!openAiCredential) credEnvVars.OPENAI_API_KEY = routedCredential;
   }
   if (openAiCredential) credEnvVars.OPENAI_API_KEY = openAiCredential;
-  const _providerKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
+  const _providerKey = deps.getProviderKey();
   if (_providerKey) {
     if (!credEnvVars[credName]) credEnvVars[credName] = _providerKey;
     if (!credEnvVars.OPENAI_API_KEY) credEnvVars.OPENAI_API_KEY = _providerKey;
   }
 
-  if (await isRouterHealthy(port)) {
+  if (await deps.isRouterHealthy(port)) {
     throw new Error(
       `Port ${port} already has a healthy router endpoint; refusing to start a second router.`,
     );
   }
 
-  const child = spawn(
+  const child = deps.spawnProxy(
     routerCommand,
     [
       "proxy",
@@ -375,16 +278,16 @@ async function startModelRouter(routerCfg: BlueprintRouterConfig): Promise<numbe
       detached: true,
       stdio: "ignore",
       cwd: blueprintDir,
-      env: buildSubprocessEnv(credEnvVars),
+      env: deps.buildSubprocessEnv(credEnvVars),
     },
   );
   let childExited = false;
   let childExitDetail = "";
-  child.once("error", (err: Error) => {
+  child.onError((err: Error) => {
     childExited = true;
     childExitDetail = `child failed to start: ${err.message}`;
   });
-  child.once("exit", (code: number | null, signal: string | null) => {
+  child.onExit((code: number | null, signal: string | null) => {
     childExited = true;
     if (!childExitDetail) {
       childExitDetail = `child exited with code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`;
@@ -401,15 +304,10 @@ async function startModelRouter(routerCfg: BlueprintRouterConfig): Promise<numbe
   }
 
   for (let attempt = 0; attempt < ROUTER_HEALTH_RETRIES; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, ROUTER_HEALTH_INTERVAL_MS));
+    await deps.sleep(ROUTER_HEALTH_INTERVAL_MS);
     if (childExited) break;
-    const healthy = await isRouterHealthy(port);
-    let processAlive = true;
-    try {
-      process.kill(pid, 0);
-    } catch {
-      processAlive = false;
-    }
+    const healthy = await deps.isRouterHealthy(port);
+    const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
     if (!processAlive) {
       childExited = true;
@@ -418,7 +316,7 @@ async function startModelRouter(routerCfg: BlueprintRouterConfig): Promise<numbe
     }
   }
   try {
-    process.kill(pid, "SIGTERM");
+    deps.terminateProcess(pid);
   } catch {
     // already dead
   }

@@ -12,6 +12,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
+  getCompatibleAnthropicOpenAiSurfaceBaseUrl,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
@@ -21,10 +22,27 @@ import {
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   parseGatewayInference,
   planInferenceRouteReconcile,
+  resolveAgentDefaultCloudModel,
   resolveAgentInferenceApi,
+  resolveAgentProviderInferenceApi,
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "./config";
+
+describe("resolveAgentDefaultCloudModel", () => {
+  it("uses the Deep Agents manifest default without changing shared agent defaults", () => {
+    expect(
+      resolveAgentDefaultCloudModel({
+        name: "langchain-deepagents-code",
+        inference: { default_model: "nvidia/nemotron-3-ultra-550b-a55b" },
+      }),
+    ).toBe("nvidia/nemotron-3-ultra-550b-a55b");
+
+    for (const agent of [null, { name: "openclaw" }, { name: "hermes" }]) {
+      expect(resolveAgentDefaultCloudModel(agent)).toBe(DEFAULT_CLOUD_MODEL);
+    }
+  });
+});
 
 describe("resolveAgentInferenceApi", () => {
   it("uses the managed OpenAI frontend for Hermes custom Anthropic routes (#6289)", () => {
@@ -43,6 +61,35 @@ describe("resolveAgentInferenceApi", () => {
     expect(resolveAgentInferenceApi("hermes", "anthropic-prod", "anthropic-messages")).toBe(
       "anthropic-messages",
     );
+  });
+});
+
+describe("resolveAgentProviderInferenceApi", () => {
+  it("uses Chat Completions for an OpenAI-only DCode agent on a custom Anthropic provider (#6294)", () => {
+    const dcodeAgent = {
+      name: "langchain-deepagents-code",
+      inference: { provider_type: "openai_compatible" },
+    };
+
+    expect(
+      resolveAgentProviderInferenceApi(
+        dcodeAgent.name,
+        dcodeAgent,
+        "compatible-anthropic-endpoint",
+        "anthropic-messages",
+      ),
+    ).toBe("openai-completions");
+  });
+});
+
+describe("getCompatibleAnthropicOpenAiSurfaceBaseUrl", () => {
+  it.each([
+    ["https://proxy.example.com", "https://proxy.example.com/v1"],
+    ["https://proxy.example.com/tenant", "https://proxy.example.com/tenant/v1"],
+    ["https://proxy.example.com/v1", "https://proxy.example.com/v1"],
+    ["https://proxy.example.com/v1/", "https://proxy.example.com/v1"],
+  ])("maps %s to the runtime Chat Completions base", (endpointUrl, expected) => {
+    expect(getCompatibleAnthropicOpenAiSurfaceBaseUrl(endpointUrl)).toBe(expected);
   });
 });
 

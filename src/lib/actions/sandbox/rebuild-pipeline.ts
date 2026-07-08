@@ -5,11 +5,14 @@ import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import { BRAVE_API_KEY_ENV, TAVILY_API_KEY_ENV } from "../../inference/web-search";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
 import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-config";
+import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
-import { runRebuildBackupPhase } from "./rebuild-backup-phase";
+import { normalizeRebuildTargetPolicyPresets, runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
+import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
@@ -24,6 +27,7 @@ import {
   type RebuildSandboxExecutionOptions,
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
+import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
@@ -138,6 +142,7 @@ async function rebuildSandboxUnlocked(
         sandboxEntry,
         recoveryManifest,
         recoveryRegistrySnapshot,
+        opts.allowLegacyManagedImageRecovery === true,
         bail,
       );
       recoveryManifest = preDeleteRecovery.manifest;
@@ -145,7 +150,13 @@ async function rebuildSandboxUnlocked(
 
       const backup = runRebuildBackupPhase({
         sandboxName,
-        sandboxEntry,
+        // The requested observability bit is replacement intent, not a
+        // preflight mutation of the old registry row. Use a copy only for
+        // target policy normalization; replacement registration commits it.
+        sandboxEntry: {
+          ...sandboxEntry,
+          observabilityEnabled: recreateOptions.observabilityEnabled,
+        },
         staleRecovery,
         preparedRecoveryManifest: recoveryManifest,
         messagingPlan,
@@ -191,13 +202,37 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         relockShieldsIfNeeded,
-        validateAfterMcpPreparation: () =>
-          dcodePreflight.checkAtDeleteEdge(
+        validateAfterMcpPreparation: async () => {
+          const providerReconfigure = recreateOptions.rebuildProviderReconfigure;
+          if (providerReconfigure && !hydrateCredentialEnv(providerReconfigure.credentialEnv)) {
+            return {
+              ok: false,
+              message: `Provider credential ${providerReconfigure.credentialEnv} became unavailable before sandbox deletion.`,
+            };
+          }
+          const providerRegistration = providerReconfigure
+            ? inspectRebuildGatewayProviderRegistration(
+                providerReconfigure.provider,
+                log,
+                "Delete-edge",
+              )
+            : "missing";
+          if (providerReconfigure && providerRegistration !== "missing") {
+            return {
+              ok: false,
+              message:
+                providerRegistration === "registered"
+                  ? `Gateway provider '${providerReconfigure.provider}' changed during rebuild preflight. Retry the rebuild.`
+                  : `Gateway provider '${providerReconfigure.provider}' could not be verified before sandbox deletion.`,
+            };
+          }
+          return dcodePreflight.checkAtDeleteEdge(
             resumeConfig,
             durableConfig.toolDisclosure,
             recoveryRecreate,
             recreateOptions.targetGatewayPort,
-          ),
+          );
+        },
         onDeleted: () => {
           sandboxStillExists = false;
         },
@@ -242,25 +277,42 @@ async function rebuildSandboxUnlocked(
       }
       if (!recreated) return;
 
+      const completedInnerSession = onboardSession.loadSession();
+      const freshInnerOnboardPolicyPresets =
+        completedInnerSession?.sandboxName === sandboxName &&
+        Array.isArray(completedInnerSession.policyPresets)
+          ? completedInnerSession.policyPresets
+          : [];
+      const targetPolicyPresets = normalizeRebuildTargetPolicyPresets(
+        [...backup.policyPresets, ...freshInnerOnboardPolicyPresets],
+        {
+          ...sandboxEntry,
+          observabilityEnabled: recreateOptions.observabilityEnabled,
+        },
+        durableConfig.webSearchConfig,
+      );
+
       const restored = runRebuildRestorePhase({
         sandboxName,
         backupManifest: backup.backupManifest,
-        policyPresets: backup.policyPresets,
+        policyPresets: targetPolicyPresets,
         customPolicies:
           backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
           preservedCustomPolicies,
+        reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
         log,
       });
       await runRebuildPostRestorePhase({
         sandboxName,
         sandboxEntry,
-        preservedCustomPolicies,
         messagingPlan,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         restoreSucceeded: restored.restoreSucceeded,
-        restoredPresets: restored.restoredPresets,
         failedPresets: restored.failedPresets,
+        finalBuiltinPresets: restored.finalBuiltinPresets,
+        failedPresetRemovals: restored.failedPresetRemovals,
+        policyPresetReconciliationVerified: restored.policyPresetReconciliationVerified,
         staleRecovery,
         recoveryRecreate,
         preparedBackupRecovery,

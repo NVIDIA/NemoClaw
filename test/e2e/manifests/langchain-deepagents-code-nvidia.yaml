@@ -25,6 +25,7 @@ spec:
       terminalRuntime: true
       interactiveCommand: dcode
       headlessCommand: dcode -n
+      observability: true
       remoteDeepAgentsSandboxes: false
       mcpAutoLoad: false
   state:

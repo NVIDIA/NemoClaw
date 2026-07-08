@@ -606,9 +606,9 @@ cryptography==49.0.0 \
     #   google-auth
     #   langgraph-api
     #   pyjwt
-deepagents==0.7.0a3 \
-    --hash=sha256:4e85532ca25e1a662b96f23998a7cfd681b4b6380769ebaa128c8ddbcc0e305c \
-    --hash=sha256:a68d4743a6868b369e88d2aab131c46a844ad7de86316d6c4c788d8eb21e5f44
+deepagents==0.7.0a6 \
+    --hash=sha256:6a866affc9276aa084825094fa0c5d96e9b4dc4b8097eb94e2a9fe796f40f3c3 \
+    --hash=sha256:81357e06ad76e71185f48e8b4f2483ddcd1193c4e9dfa59610c98e3a5d2a941a
     # via
     #   deepagents-acp
     #   deepagents-code
@@ -617,9 +617,9 @@ deepagents-acp==0.0.8 \
     --hash=sha256:0380c8e804a5d5c0fa245a5b1d7dfde8a867f7a9a17ef54749a69da31ed341cf \
     --hash=sha256:9fb5cecfe9e9238de27e69ac76e7b0bc80a31cbff268c542bf5c9f4727dde1f4
     # via deepagents-code
-deepagents-code==0.1.30 \
-    --hash=sha256:903f71f2fb65397644fe616947ea3104cd11bc80a3103f674e1511deadeb8ce0 \
-    --hash=sha256:b943d6321c32c9c81093ab54c2eb112f2e8b7d1a07c22c0908840fc47065683c
+deepagents-code==0.1.34 \
+    --hash=sha256:4b5d659afb388aacb1dc3c668de94bdea3ffd17f5eb3368c686e2ff79b8e7f91 \
+    --hash=sha256:fec34e7a08f6851762c3c068aaa881dab41084ad41f210c57be29a11d96bb308
     # via -r agents/langchain-deepagents-code/requirements.in
 distro==1.9.0 \
     --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \
@@ -1173,6 +1173,7 @@ langchain==1.3.11 \
     #   deepagents
     #   deepagents-code
     #   langchain-quickjs
+    #   nemo-relay
 langchain-anthropic==1.4.8 \
     --hash=sha256:778e9301b6fd517824f76ec1776975ce8add97a1f6a36c50ae3c2f4b03a66f7f \
     --hash=sha256:c76891b2044d56105ff13c106ed12650637b53bd598a4bdf15b4796eefa2a4ec
@@ -1196,9 +1197,10 @@ langchain-core==1.4.8 \
     #   langgraph-checkpoint
     #   langgraph-prebuilt
     #   langgraph-sdk
-langchain-google-genai==4.2.6 \
-    --hash=sha256:653dc331e691ddd79784d9ff6a4082749e0f873394c6dc782c414eb4409850eb \
-    --hash=sha256:c40db0c2d033a5fb6db8e2cc3fb6d49c5678b89b337a64da095fb73ec9f72021
+    #   nemo-relay
+langchain-google-genai==4.2.7 \
+    --hash=sha256:03b1463ffe4d42435f43c7870467f2215f684bb46400d2543435d10157c80ac7 \
+    --hash=sha256:0d9c388d0e6c629718fca6abb19c6fdca728a9a7873d0324c1ec821288b5b571
     # via
     #   deepagents
     #   deepagents-code
@@ -1233,6 +1235,7 @@ langgraph==1.2.6 \
     #   langchain-quickjs
     #   langgraph-api
     #   langgraph-runtime-inmem
+    #   nemo-relay
 langgraph-api==0.10.0 \
     --hash=sha256:f4b545bf1936c4e90bed1cc07a6852b1be37e1667007ab4736d800cc18e9f9b3 \
     --hash=sha256:f594a160857e2cd7fb2352bba585111177a4a394625ad0cf5898814754fb7bc1
@@ -1460,6 +1463,13 @@ multidict==6.7.1 \
     # via
     #   aiohttp
     #   yarl
+nemo-relay==0.4.0 \
+    --hash=sha256:0f92883b81540076e4b6c5e754eb7726225336634204ebd22ff730ccbcfb2723 \
+    --hash=sha256:6a5a5f5dec1428085f6c41c3645f1773f9cfb154cfa47306c93d6514091a8006 \
+    --hash=sha256:a5d02d9d0a2d19bf341bf9fd1faae01713bc2021a5b144ef79f91a07ec4c0bfb \
+    --hash=sha256:d5f14fe5c8e5fbcc26827cc88e5b867f4ad37d6f983100cbf31705234c39f9d3 \
+    --hash=sha256:dc1effd4052d1d47a1cdc553415c878a73d1e01c81a7e9f9194b30a3c88d1947
+    # via -r agents/langchain-deepagents-code/requirements.in
 openai==2.43.0 \
     --hash=sha256:65a670b54fadf2268c9e1330133373c963eb779ee969e5cbad419ec2c21dce97 \
     --hash=sha256:e74d238200a26868977002190fb6631613480a93dfe0c9c982e77021ed60a017
