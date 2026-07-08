@@ -256,6 +256,34 @@ describe("provider model helpers", () => {
     });
   });
 
+  it("routes OpenAI-compatible extra headers through curl --config instead of argv (#5826)", () => {
+    fetchOpenAiLikeModels("https://openrouter.ai/api/v1", "sk-or-test", {
+      extraHeaders: [
+        "HTTP-Referer: https://www.nvidia.com/nemoclaw/",
+        "X-OpenRouter-Title: NVIDIA NemoClaw",
+      ],
+      runCurlProbeImpl: (argv, opts) => {
+        expect(argv.at(-1)).toBe("https://openrouter.ai/api/v1/models");
+        expect(argv.join(" ")).not.toContain("sk-or-test");
+        expect(argv.join(" ")).not.toContain("HTTP-Referer:");
+        expect(argv.join(" ")).not.toContain("X-OpenRouter-Title:");
+        const contents = readAuthConfigContents(argv);
+        expect(contents).toContain('header = "Authorization: Bearer sk-or-test"');
+        expect(contents).toContain('header = "HTTP-Referer: https://www.nvidia.com/nemoclaw/"');
+        expect(contents).toContain('header = "X-OpenRouter-Title: NVIDIA NemoClaw"');
+        expectTrustedConfig(argv, opts);
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: JSON.stringify({ data: [{ id: "moonshotai/kimi-k2.6" }] }),
+          stderr: "",
+          message: "",
+        };
+      },
+    });
+  });
+
   it("validates Gemini models with query-param auth without leaking the API key into argv", () => {
     const result = validateOpenAiLikeModel(
       "Google Gemini",

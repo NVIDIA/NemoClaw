@@ -44,6 +44,7 @@ export const MODELS_JSON_CREDENTIAL_ENV_REFERENCES: ReadonlySet<string> = new Se
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
   "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
 ]);
 const BRACED_ENV_REFERENCE_PATTERN = /^\$\{([A-Z_][A-Z0-9_]*)\}$/;
 const SECRETREF_ENV_MARKER_PATTERN = /^secretref-env:[A-Z_][A-Z0-9_]*$/;

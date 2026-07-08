@@ -18,6 +18,7 @@ const {
   getChatCompletionsProbeCurlArgs,
   getChatCompletionsProbePayload,
   getDeepSeekV4ProValidationProbeCurlArgs,
+  getProbeExtraHeaders,
   getKimiK26ValidationProbeCurlArgs,
   getValidationProbeCurlArgs,
   hasChatCompletionsToolCall,
@@ -41,6 +42,16 @@ function restoreEnv(name: string, original: string | undefined): void {
 
 const FAKE_CONFIG_PATH = "/tmp/nemoclaw-test-credential.conf";
 const FAKE_CREDENTIAL_ARGS = ["--config", FAKE_CONFIG_PATH] as const;
+
+describe("OpenRouter probe headers", () => {
+  it("adds default OpenRouter headers only for the OpenRouter provider (#5826)", () => {
+    expect(getProbeExtraHeaders("openrouter-api")).toEqual([
+      "HTTP-Referer: https://www.nvidia.com/nemoclaw/",
+      "X-OpenRouter-Title: NVIDIA NemoClaw",
+    ]);
+    expect(getProbeExtraHeaders("openai-api")).toEqual([]);
+  });
+});
 
 describe("OpenAI-compatible inference probe response parsing", () => {
   it("detects tool-calling responses payloads conservatively", () => {

@@ -22,6 +22,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
   nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
+  openRouterFeaturedModels?: NvidiaFeaturedModelSession;
   /** Attempt-wide shared-gateway guard, invoked after identity selection and before probes. */
   assertRouteCompatible?: () => GatewayRouteDiscoveryConstraints;
 };
@@ -103,6 +104,7 @@ type ProbeOptions = {
   requireResponsesToolCalling?: boolean;
   skipResponsesProbe?: boolean;
   authMode?: ProbeAuthMode;
+  extraHeaders?: readonly string[];
 };
 
 type ValidationResult =
@@ -153,6 +155,7 @@ type RemoteModelValidatorDeps = {
   shouldRequireResponsesToolCalling: (provider: string) => boolean;
   shouldSkipResponsesProbe: (provider: string) => boolean;
   getProbeAuthMode: (provider: string) => ProbeAuthMode;
+  getProbeExtraHeaders?: (provider: string) => readonly string[];
   configureCompatibleEndpointReasoning?: () => Promise<"true" | "false">;
   log?: (message: string) => void;
 };
@@ -291,6 +294,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),
           authMode: deps.getProbeAuthMode(state.provider),
+          extraHeaders: deps.getProbeExtraHeaders?.(state.provider),
         },
       );
       if (validation.ok) {

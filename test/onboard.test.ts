@@ -39,7 +39,6 @@ type CommandEntry = {
   dockerfileReadError?: string;
 };
 type ResumeConflict = { field: string; requested: string | null; recorded: string | null };
-
 type OnboardTestInternals = {
   getNavigationChoice: (value?: string | null) => string | null;
   getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
@@ -742,6 +741,7 @@ startGateway(null).catch(() => {});
     assert.deepEqual(evidence.setupCredentialValues, [credentialValue, credentialValue]);
     assert.equal(evidence.parentCredentialUnchanged, true);
   });
+
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
       {

@@ -810,6 +810,7 @@ const {
   classifyApplyFailure,
   classifySandboxCreateFailure,
   validateNvidiaApiKeyValue,
+  validateOpenRouterApiKeyValue,
   isSafeModelId,
   shouldSkipResponsesProbe,
 } = validation;
@@ -1023,6 +1024,7 @@ const {
   shouldRequireResponsesToolCalling,
   verifyOnboardInferenceSmoke,
   getProbeAuthMode,
+  getProbeExtraHeaders,
   getValidationProbeCurlArgs,
 } = require("./inference/onboard-probes");
 
@@ -1048,12 +1050,14 @@ const { validateSelectedRemoteModel } = createRemoteModelValidator({
   shouldRequireResponsesToolCalling,
   shouldSkipResponsesProbe,
   getProbeAuthMode,
+  getProbeExtraHeaders,
   configureCompatibleEndpointReasoning: reasoningMode.configureCompatibleEndpointReasoning,
 });
 
 const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 const nousModels: typeof import("./inference/nous-models") = require("./inference/nous-models");
+const openrouter: typeof import("./inference/openrouter") = require("./inference/openrouter");
 
 // Build context helpers — delegated to src/lib/build-context.ts
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
@@ -1481,8 +1485,9 @@ async function ensureNamedCredential(
   envName: string | null,
   label: string,
   helpUrl: string | null = null,
+  validator: ((value: string) => string | null) | null = null,
 ): Promise<string | typeof BACK_TO_SELECTION> {
-  return credentialPrompt.ensureNamedCredential(envName, label, helpUrl);
+  return credentialPrompt.ensureNamedCredential(envName, label, helpUrl, validator);
 }
 
 // parsePolicyPresetEnv — see urlUtils import above
@@ -3601,13 +3606,27 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         selectedCredentialEnv,
         `${remoteConfig.label} API key`,
         remoteConfig.helpUrl,
+        selected.key === "openrouter" ? validateOpenRouterApiKeyValue : null,
       );
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
     }
+    if (
+      isNonInteractive() &&
+      selected.key === "openrouter" &&
+      !state.reuseGatewayCredentialWithoutLocalKey
+    ) {
+      const credentialValue =
+        resolveProviderCredential(selectedCredentialEnv) || getCredential(selectedCredentialEnv) || "";
+      const validationError = validateOpenRouterApiKeyValue(credentialValue);
+      if (validationError) {
+        console.error(validationError);
+        process.exit(1);
+      }
+    }
     let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
-    if (selected.key === "openai" || selected.key === "gemini") {
+    if (selected.key === "openai" || selected.key === "gemini" || selected.key === "openrouter") {
       const modelAuthMode = getProbeAuthMode(state.provider);
       modelValidator = (candidate) => {
         state.model = candidate;
@@ -3617,7 +3636,10 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
           state.endpointUrl || remoteConfig.endpointUrl,
           candidate,
           getCredential(selectedCredentialEnv) || "",
-          ...(modelAuthMode ? [{ authMode: modelAuthMode }] : []),
+          {
+            ...(modelAuthMode ? { authMode: modelAuthMode } : {}),
+            extraHeaders: getProbeExtraHeaders(state.provider),
+          },
         );
       };
     } else if (selected.key === "anthropic") {
@@ -3634,6 +3656,28 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     while (true) {
       if (isNonInteractive()) {
         state.model = defaultModel;
+      } else if (selected.key === "openrouter") {
+        state.model = await state.openRouterFeaturedModels!.select(
+          requestedModel || (typeof state.model === "string" ? state.model : null),
+          recoveredFromSandbox ? recoveredModel : null,
+          false,
+          process.env.NEMOCLAW_MODEL,
+          {
+            cloudModelMenuLabel: "OpenRouter cloud models",
+            manualCredentialEnv: openrouter.OPENROUTER_CREDENTIAL_ENV,
+            manualCredentialMissingMessage:
+              "  OPENROUTER_API_KEY is required before validating a custom OpenRouter model.",
+            manualModelLabel: "OpenRouter",
+            validateCloudModelFn: (model, apiKey) =>
+              validateOpenAiLikeModel(
+                remoteConfig.label,
+                state.endpointUrl || remoteConfig.endpointUrl,
+                model,
+                apiKey,
+                { extraHeaders: openrouter.getOpenRouterCurlHeaders() },
+              ),
+          },
+        );
       } else if (remoteConfig.modelMode === "curated") {
         state.model = await promptRemoteModel(
           remoteConfig.label,

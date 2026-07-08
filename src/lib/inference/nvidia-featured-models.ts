@@ -22,7 +22,9 @@ const MAX_NVIDIA_FEATURED_MODEL_LABEL_LENGTH = 160;
 const ANSI_ESCAPE_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UNSAFE_TERMINAL_TEXT_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu;
 
-interface NvidiaFeaturedModelOptions {
+export interface NvidiaFeaturedModelOptions {
+  catalogLabel?: string;
+  catalogUrl?: string;
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
   warn?: (message: string) => void;
 }
@@ -132,11 +134,12 @@ export function parseNvidiaFeaturedModels(body: string): FeaturedModelOption[] {
   return models;
 }
 
-/** Fetches NVIDIA's public featured-models catalog without credentials. */
+/** Fetches a public featured-models catalog without credentials. */
 export function fetchNvidiaFeaturedModels(
   options: NvidiaFeaturedModelOptions = {},
 ): FeaturedModelFetchResult {
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
+  const catalogUrl = options.catalogUrl?.trim() || NVIDIA_FEATURED_MODELS_URL;
   try {
     const result = runCurlProbeImpl([
       "-sS",
@@ -144,7 +147,7 @@ export function fetchNvidiaFeaturedModels(
       "5",
       "--max-time",
       "15",
-      NVIDIA_FEATURED_MODELS_URL,
+      catalogUrl,
     ]);
     if (!result.ok) {
       return {
@@ -182,11 +185,12 @@ export function getNvidiaFeaturedModelOptions(
   if (result.ok && result.models.length > 0) {
     return result.models;
   }
+  const catalogLabel = options.catalogLabel?.trim() || "NVIDIA's featured model catalog";
   const detail = result.ok
     ? "catalog returned no safe model IDs"
     : `${sanitizeFeaturedCatalogText(result.message, 200) || "catalog request failed without details"}${result.httpStatus > 0 ? `; HTTP ${result.httpStatus}` : ""}`;
   (options.warn ?? console.warn)(
-    `  Warning: failed to load NVIDIA's featured model catalog; falling back to the bundled list (${detail}).`,
+    `  Warning: failed to load ${catalogLabel}; falling back to the bundled list (${detail}).`,
   );
   return CLOUD_MODEL_OPTIONS;
 }

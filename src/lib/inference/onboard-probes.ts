@@ -28,6 +28,7 @@ const {
 const { isWsl } = require("../platform");
 const httpProbe = require("../adapters/http/probe");
 const authConfigModule = require("../adapters/http/auth-config");
+const openrouter = require("./openrouter");
 const {
   getHostDockerInternalProbeFailure,
   isHijackedDockerInternalUrl,
@@ -52,7 +53,9 @@ const { createOpenAiLikeAuthConfig } = authConfigModule;
 
 function buildOpenAiLikeAuthConfig(apiKey, options = {}) {
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
-  return createOpenAiLikeAuthConfig(normalizedKey, options.authMode);
+  return createOpenAiLikeAuthConfig(normalizedKey, options.authMode, {
+    extraHeaders: options.extraHeaders,
+  });
 }
 
 // Convert an exception from the curl auth-config setup boundary (mkdtempSync,
@@ -222,6 +225,13 @@ function shouldRequireResponsesToolCalling(provider) {
 // probes default to Bearer auth and Gemini onboarding succeeds.
 function getProbeAuthMode(_provider) {
   return undefined;
+}
+
+function getProbeExtraHeaders(provider) {
+  if (provider === openrouter.OPENROUTER_PROVIDER_NAME) {
+    return openrouter.getOpenRouterCurlHeaders();
+  }
+  return [];
 }
 
 // Per-validation-probe curl timing. Tighter than the default 60s in
@@ -592,6 +602,7 @@ function runDoubledTimeoutChatCompletionsRetry({
     options.requireChatCompletionsToolCalling === true
       ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
           authMode: options.authMode,
+          extraHeaders: options.extraHeaders,
           timingArgs: doubledArgs,
         })
       : (() => {
@@ -644,7 +655,10 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
             name: "Responses API with tool calling",
             api: "openai-responses",
             execute: () =>
-              probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
+              probeResponsesToolCalling(endpointUrl, model, apiKey, {
+                authMode: options.authMode,
+                extraHeaders: options.extraHeaders,
+              }),
           }
         : {
             name: "Responses API",
@@ -675,6 +689,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         options.requireChatCompletionsToolCalling === true
           ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
               authMode: options.authMode,
+              extraHeaders: options.extraHeaders,
             })
           : runChatCompletionsProbe({
               credentialArgs: authConfig.args,
@@ -870,6 +885,7 @@ module.exports = {
   hasChatCompletionsToolCallLeak,
   shouldRequireResponsesToolCalling,
   getProbeAuthMode,
+  getProbeExtraHeaders,
   getValidationProbeCurlArgs,
   getDeepSeekV4ProValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
@@ -903,7 +919,9 @@ export function shouldSmokeOpenAiLikeOnboardRoute(
   const { REMOTE_PROVIDER_CONFIG } = require("../onboard/providers");
   if (provider === "nvidia-nim" || provider === "nvidia-router") return true;
   return Object.values(REMOTE_PROVIDER_CONFIG).some(
-    (entry) => entry.providerName === provider && entry.providerType === "openai",
+    (entry) =>
+      entry.providerName === provider &&
+      (entry.providerType === "openai" || entry.providerType === "openrouter"),
   );
 }
 
@@ -923,6 +941,7 @@ export function verifyOnboardInferenceSmoke(options: any) {
     : "";
   const probe = probeOpenAiLikeEndpoint(endpointUrl, options.model, apiKey, {
     authMode: getProbeAuthMode(options.provider),
+    extraHeaders: getProbeExtraHeaders(options.provider),
     skipResponsesProbe: true,
   });
 

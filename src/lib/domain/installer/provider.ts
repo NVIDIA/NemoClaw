@@ -3,6 +3,7 @@
 
 export const INSTALLER_PROVIDER_VALUES = [
   "build",
+  "openrouter",
   "openai",
   "anthropic",
   "anthropicCompatible",
@@ -20,6 +21,8 @@ export const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, InstallerProvid
   anthropiccompatible: "anthropicCompatible",
   cloud: "build",
   nim: "nim-local",
+  "open-router": "openrouter",
+  openrouterai: "openrouter",
 };
 
 const PROVIDERS_BY_LOWERCASE = new Map<string, InstallerProvider>(
