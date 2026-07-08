@@ -32,7 +32,7 @@ export interface RebuildDestroyPhaseInput {
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
   oldSandboxAlreadyDeleted?: boolean;
-  onDeleted: () => void;
+  onDeleted: () => Promise<void> | void;
 }
 
 /**
@@ -114,7 +114,7 @@ export async function runRebuildDestroyPhase(
   const rebuildScrubbedMcpAdapterEntries = mcpPreparation.scrubbedAdapterEntries;
 
   if (oldSandboxAlreadyDeleted) {
-    onDeleted();
+    await onDeleted();
     log("Rebuild journal confirms the old sandbox is already absent; skipping duplicate delete");
     return mcpPreparation;
   }
@@ -151,7 +151,7 @@ export async function runRebuildDestroyPhase(
     return null;
   }
   maybePauseForRebuildInterruption("delete_unjournaled");
-  onDeleted();
+  await onDeleted();
   // The registry row is durable rebuild intent. The inner onboard run observes
   // that the sandbox is absent and replaces the row only after creation. Keep
   // it for every agent so process death cannot discard recovery metadata.

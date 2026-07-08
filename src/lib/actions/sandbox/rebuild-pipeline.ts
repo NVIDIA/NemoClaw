@@ -193,7 +193,7 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
-      transaction = prepareRebuildTransaction({
+      transaction = await prepareRebuildTransaction({
         store: transactionStore,
         existing: transaction,
         sandboxName,
@@ -213,7 +213,7 @@ async function rebuildSandboxUnlocked(
         return;
       }
       if (transaction?.phase === "prepared" && staleRecovery) {
-        transaction = transactionStore.transition(
+        transaction = await transactionStore.transition(
           sandboxName,
           transaction.revision,
           "old_deleted",
@@ -265,10 +265,10 @@ async function rebuildSandboxUnlocked(
           );
         },
         oldSandboxAlreadyDeleted: transaction?.phase === "old_deleted",
-        onDeleted: () => {
+        onDeleted: async () => {
           sandboxStillExists = false;
           if (transaction?.phase === "prepared") {
-            transaction = transactionStore.transition(
+            transaction = await transactionStore.transition(
               sandboxName,
               transaction.revision,
               "old_deleted",
@@ -307,10 +307,10 @@ async function rebuildSandboxUnlocked(
           mcpEntries: mcpPreparation.entries,
           rebuildShieldsWindow,
           relockShieldsIfNeeded,
-          onCreated: () => {
+          onCreated: async () => {
             sandboxStillExists = true;
             if (transaction?.phase === "old_deleted") {
-              transaction = transactionStore.transition(
+              transaction = await transactionStore.transition(
                 sandboxName,
                 transaction.revision,
                 "replacement_created",
@@ -324,13 +324,17 @@ async function rebuildSandboxUnlocked(
               );
             }
           },
-          onFailed: () => {
+          onFailed: async () => {
             if (transaction?.phase === "old_deleted") {
-              transaction = transactionStore.recordFailure(sandboxName, transaction.revision, {
-                code: "REPLACEMENT_RETRY_REQUIRED",
-                recordedAt: new Date().toISOString(),
-                retryable: true,
-              });
+              transaction = await transactionStore.recordFailure(
+                sandboxName,
+                transaction.revision,
+                {
+                  code: "REPLACEMENT_RETRY_REQUIRED",
+                  recordedAt: new Date().toISOString(),
+                  retryable: true,
+                },
+              );
             }
           },
           log,
@@ -387,7 +391,7 @@ async function rebuildSandboxUnlocked(
         bail,
       });
       if (transaction?.phase === "replacement_created") {
-        transactionStore.complete(sandboxName, transaction.revision);
+        await transactionStore.complete(sandboxName, transaction.revision);
       }
     } finally {
       if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);

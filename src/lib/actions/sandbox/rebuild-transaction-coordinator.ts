@@ -58,7 +58,7 @@ export function loadRebuildRecovery(
   return { transaction, recoveryManifest };
 }
 
-export function prepareRebuildTransaction(args: {
+export async function prepareRebuildTransaction(args: {
   store: RebuildTransactionStore;
   existing: RebuildTransactionRecordV1 | null;
   sandboxName: string;
@@ -67,7 +67,7 @@ export function prepareRebuildTransaction(args: {
   recreateOptions: RebuildRecreateOnboardOpts;
   backupManifest: RebuildBackupManifest;
   imageIdentity: unknown;
-}): RebuildTransactionRecordV1 | null {
+}): Promise<RebuildTransactionRecordV1 | null> {
   if (!args.backupManifest) return null;
   const { resumeConfig, durableConfig } = args.targetConfig;
   const intent: RebuildTransactionIntentV1 = {
