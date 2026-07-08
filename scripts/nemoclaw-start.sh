@@ -2741,6 +2741,17 @@ merge_corporate_proxy_ca() {
     _base_bundle="/etc/ssl/certs/ca-certificates.crt"
   fi
   _merged="/tmp/nemoclaw-ca-bundle.pem"
+  # Trust-anchor path safety (#6210): in the normal container start this
+  # entrypoint runs as root (the step-down prefix wraps only the later agent
+  # commands, not this top-level merge), so the merged bundle is written
+  # root-owned 0444 — the non-root sandbox user that the agent later runs as
+  # inherits SSL_CERT_FILE but cannot rewrite it. The predictable /tmp path is
+  # still handled safely: it is built in a fresh mktemp sibling and atomically
+  # renamed into place; a pre-planted symlink at the target is dropped first
+  # (below); and rename(2) replaces the target link/file rather than writing
+  # through it, so a pre-planted symlink or file cannot redirect the write. On a
+  # non-root start the whole entrypoint (and the agent) is the same sandbox user,
+  # so there is no privilege boundary to cross.
   # Build the bundle in a private temp file next to the target, verifying every
   # write, then atomically rename into place. If any step fails we bail without
   # exporting anything, leaving the OpenShell-only trust intact rather than
