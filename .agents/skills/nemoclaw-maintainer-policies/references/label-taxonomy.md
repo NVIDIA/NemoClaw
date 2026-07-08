@@ -191,7 +191,7 @@ Do not combine:
 
 ### Release Train
 
-Daily `v0.0.x` labels activate PRs for daily release work. Issues may use a daily label as a tracking or attention signal, but issue labels do not determine release inclusion. See `release-train.md`.
+Daily `v0.0.x` labels activate open PRs for daily release work. After a PR merges to `main`, authorized post-merge automation adds its earliest containing release label, or the next patch label after the highest strict-ancestor release when no tag contains it yet. This gives every landed PR release attribution, is additive, and does not remove earlier version labels. Issues may use a daily label as a tracking or attention signal, but issue labels do not determine release inclusion. See `release-train.md`.
 
 ### Agent-Owned
 

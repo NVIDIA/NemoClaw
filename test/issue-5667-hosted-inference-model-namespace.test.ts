@@ -86,12 +86,23 @@ printf '200'
 
 function writeDcodeWrapperFixture(tmpDir: string, home: string): string {
   const wrapperPath = path.join(tmpDir, "dcode-wrapper.sh");
+  const managedMcpValidator = [
+    'managed_mcp_config="$(',
+    "  /opt/venv/bin/python3 -I -c \\",
+    "    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or \"\")'",
+    ')"',
+  ].join("\n");
   const wrapper = fs
     .readFileSync(
       path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "dcode-wrapper.sh"),
       "utf8",
     )
-    .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`);
+    .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`)
+    .replace(managedMcpValidator, 'managed_mcp_config=""')
+    .replace(
+      "exec /opt/venv/bin/python3 -I -m deepagents_code",
+      `exec env PYTHONPATH=${JSON.stringify(path.join(tmpDir, "python"))} python3 -m deepagents_code`,
+    );
   fs.writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
   return wrapperPath;
 }
@@ -113,7 +124,7 @@ function writeFakeDeepAgentsCodeModule(tmpDir: string): string {
       'match = re.search(r\'^default = "openai:([^"]+)"\', text, re.MULTILINE)',
       "if not match:",
       '    raise SystemExit("missing default model")',
-      'print(f"App: v0.1.12 | Agent: agent (default) | Model: {match.group(1)}")',
+      'print(f"App: v0.1.34 | Agent: agent (default) | Model: {match.group(1)}")',
       'print("ARGS:" + " ".join(sys.argv[1:]))',
     ].join("\n"),
     "utf8",
@@ -336,7 +347,7 @@ const { setupNim } = require(${onboardPath});
       const dcodeOutput = `${dcodeResult.stdout}\n${dcodeResult.stderr}`;
       assert.equal(dcodeResult.status, 0, dcodeOutput);
       expect(dcodeOutput).toContain(
-        "App: v0.1.12 | Agent: agent (default) | Model: nvidia/nvidia/nemotron-3-ultra",
+        "App: v0.1.34 | Agent: agent (default) | Model: nvidia/nvidia/nemotron-3-ultra",
       );
       expect(dcodeOutput).toContain("ARGS:--sandbox none --no-mcp -n ping");
       expect(dcodeOutput).not.toContain("nvidia/nvidia/nvidia/");

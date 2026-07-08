@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Trusted installer hash check
+description: Run the trusted installer hash verifier against an explicit repository tree.
+
+inputs:
+  repo-root:
+    description: Absolute path to the repository tree whose installer pins are being verified.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify installer hashes are current
+      shell: bash
+      env:
+        NEMOCLAW_INSTALLER_HASH_REPO_ROOT: ${{ inputs.repo-root }}
+      run: bash "${{ github.action_path }}/../../../scripts/check-installer-hash.sh"

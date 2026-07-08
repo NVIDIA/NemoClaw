@@ -3,23 +3,19 @@
 
 import { recoverNamedGatewayRuntime } from "../actions/global";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
-import { listMessagingProviderSuffixes } from "../messaging/channels";
 
-// Suffixes that mark per-sandbox messaging integrations in the gateway's
-// provider list. These are managed by `channels`, not `credentials`.
-const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [...listMessagingProviderSuffixes()];
-
-export function isBridgeProviderName(name: string): boolean {
-  return BRIDGE_PROVIDER_SUFFIXES.some((suffix) => name.endsWith(suffix));
-}
+export { isBridgeProviderName } from "./provider-list";
 
 export function printCredentialsUsage(log: (message?: string) => void = console.log): void {
   log("");
   log(`  Usage: ${CLI_NAME} credentials <subcommand>`);
   log("");
   log("  Subcommands:");
-  log("    list                  List provider credentials registered with the OpenShell gateway");
-  log("    reset <PROVIDER> [--yes]   Remove a provider credential so onboard re-prompts");
+  log(
+    "    list                            List provider credentials registered with the OpenShell gateway",
+  );
+  log("    add <PROVIDER> --type <TYPE>    Register a provider credential (reads value from env)");
+  log("    reset <PROVIDER> [--yes]        Remove a provider credential so onboard re-prompts");
   log("");
   log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
   log("  Nothing is persisted to host disk; deploy/non-onboard commands read from env vars.");

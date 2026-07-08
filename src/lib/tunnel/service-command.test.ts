@@ -78,4 +78,14 @@ describe("services command", () => {
     });
     expect(stopAll).toHaveBeenCalledWith({ sandboxName: undefined });
   });
+
+  it("opts the legacy full-stop command into managed gateway release", () => {
+    const stopAll = vi.fn();
+    runStopCommand({
+      listSandboxes: () => ({ defaultSandbox: "alpha" }),
+      stopAll,
+      releaseGatewayPort: true,
+    });
+    expect(stopAll).toHaveBeenCalledWith({ sandboxName: "alpha", releaseGatewayPort: true });
+  });
 });

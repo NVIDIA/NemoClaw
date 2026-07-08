@@ -8,7 +8,6 @@ import {
   buildSandboxLogsArgs,
   buildSandboxOpenclawGatewayLogsArgs,
   describeLogProbeResult,
-  exitCodeFromSignal,
   getLogsProbeTimeoutMs,
   normalizeSandboxLogsOptions,
 } from "./logs";
@@ -74,11 +73,6 @@ describe("sandbox logs helpers", () => {
     expect(getLogsProbeTimeoutMs({ NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "0" })).toBe(5000);
     expect(getLogsProbeTimeoutMs({ NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "not-a-number" })).toBe(5000);
     expect(getLogsProbeTimeoutMs({})).toBe(5000);
-  });
-
-  it("maps signals to conventional process exit codes", () => {
-    expect(exitCodeFromSignal(null)).toBe(1);
-    expect(exitCodeFromSignal("SIGINT")).toBe(130);
   });
 });
 

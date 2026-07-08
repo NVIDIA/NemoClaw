@@ -133,33 +133,13 @@ export const wechatManifest = {
       manager: "openclaw-plugin",
       spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
       pin: true,
+      integrity:
+        "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+      tarballUrl:
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
       required: true,
     },
   ],
-  state: {
-    persist: {
-      wechatConfig: ["accountId", "baseUrl", "userId"],
-      allowedIds: ["allowedIds"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "wechatConfig.accountId",
-        env: "WECHAT_ACCOUNT_ID",
-      },
-      {
-        statePath: "wechatConfig.baseUrl",
-        env: "WECHAT_BASE_URL",
-      },
-      {
-        statePath: "wechatConfig.userId",
-        env: "WECHAT_USER_ID",
-      },
-      {
-        statePath: "allowedIds.wechat",
-        env: "WECHAT_ALLOWED_IDS",
-      },
-    ],
-  },
   hooks: [
     {
       id: "wechat-host-qr",

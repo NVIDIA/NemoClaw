@@ -68,7 +68,6 @@ classDiagram
     hostForward?: ChannelHostForwardSpec
     runtime?: ChannelRuntimeByAgentSpec
     agentPackages?: ChannelAgentPackageSpec[]
-    state: ChannelStateSpec
     hooks: ChannelHookSpec[]
   }
 
@@ -182,7 +181,7 @@ Important plan sections are:
 | `agentRender` | `manifest.render` after template and credential placeholder resolution. | Host config applier and build-time config applier. |
 | `buildSteps` | `manifest.agentPackages` and hook outputs of kind `build-arg`, `build-file`, or `package-install`. | Image build and post-agent-install application. |
 | `runtimeSetup` | `manifest.runtime`. | Runtime preload, env alias, secret scan, and reduced runtime artifact generation. |
-| `stateUpdates` | `manifest.state`. | Registry persistence and rebuild hydration. |
+| `stateUpdates` | Config inputs with `statePath`. | Registry persistence and rebuild hydration. |
 | `healthChecks` | Health-check hook declarations. | Lifecycle success gates. |
 
 Disabled channels must not produce side effects.
@@ -289,14 +288,13 @@ It is a serializable declaration for one channel and one set of supported agents
 | `description`, `enrollmentHelp`, `enrollmentNotes` | Optional operator-facing guidance. |
 | `supportedAgents` | Agents that can consume this channel, such as `openclaw` or `hermes`. |
 | `auth` | High-level enrollment mode: `none`, `token-paste`, `host-qr`, or `in-sandbox-qr`. |
-| `inputs` | Secret and config inputs, env keys, prompts, validation, aliases, and persistence paths. |
+| `inputs` | Secret and config inputs, env keys, prompts, validation, and persistence paths. |
 | `credentials` | Provider bindings derived from secret inputs. |
 | `policyPresets` | Optional network policy presets and policy keys required by the channel. |
 | `render` | Agent config fragments or env-file lines to render when the channel is active. |
 | `hostForward` | Optional host-side forward for inbound webhooks. |
 | `runtime` | Optional runtime visibility, preload, env alias, and secret scan metadata. |
 | `agentPackages` | Optional build-time agent package installs. |
-| `state` | Persisted config keys and rebuild hydration rules. |
 | `hooks` | Hook references for enrollment, checks, render, apply, status, and diagnostics. |
 
 Secret inputs cannot declare `statePath` or defaults.
@@ -360,17 +358,6 @@ export const exampleManifest = {
       },
     },
   ],
-  state: {
-    persist: {
-      allowedIds: ["allowedUsers"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.example",
-        env: "EXAMPLE_ALLOWED_USERS",
-      },
-    ],
-  },
   hooks: [
     {
       id: "example-token-paste",
@@ -480,7 +467,7 @@ Add the channel through the manifest-first path.
 5. Register template resolution in `channels/template-resolver.ts`.
 6. Register hook handlers in `channels/<channel>/hooks/index.ts` and `hooks/builtins.ts`.
 7. Add runtime preload assets under `channels/<channel>/runtime/` only when the agent runtime needs boot or connect-time shims.
-8. Add `nemoclaw-blueprint/policies/presets/<channel>.yaml` when `policyPresets` declares a new policy preset.
+8. Add `src/lib/messaging/channels/<channel>/policy/<agent>.yaml` when `policyPresets` declares a new policy preset.
 9. Add manifest, compiler, applier, lifecycle, build-applier, and policy tests for the behavior you changed.
 
 ## Invariants

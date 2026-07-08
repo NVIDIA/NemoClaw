@@ -28,7 +28,7 @@ function runScript(scriptBody: string): SpawnSyncReturns<string> {
 }
 
 describe("policy preset sync", () => {
-  it("batches only all-built-in additions and preserves mixed preset order", () => {
+  it("batches built-in additions and preserves mixed and removal order", () => {
     const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const syncPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "onboard", "policy-preset-sync.ts"),
@@ -44,6 +44,7 @@ policies.removePreset = (_sandbox, name) => { calls.push("remove:" + name); retu
 const { syncPresetSelection } = require(${syncPath});
 syncPresetSelection("test-sb", [], ["npm", "pypi"]);
 syncPresetSelection("test-sb", [], ["npm", "custom", "pypi"]);
+syncPresetSelection("test-sb", ["slack", "npm", "pypi"], ["npm"]);
 process.stdout.write(JSON.stringify(calls) + "\n");
 `;
 
@@ -54,6 +55,8 @@ process.stdout.write(JSON.stringify(calls) + "\n");
       "single:npm",
       "single:custom",
       "single:pypi",
+      "remove:slack",
+      "remove:pypi",
     ]);
   });
 });

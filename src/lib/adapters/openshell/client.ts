@@ -10,6 +10,8 @@ import {
   spawnSync,
 } from "node:child_process";
 
+import { buildSubprocessEnv } from "../../subprocess-env";
+
 export type OpenshellSpawnSync = (
   command: string,
   args: readonly string[],
@@ -21,11 +23,21 @@ export type OpenshellSpawn = typeof spawn;
 interface OpenshellSpawnOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  replaceEnv?: boolean;
   timeout?: number;
   ignoreError?: boolean;
   spawnSyncImpl?: OpenshellSpawnSync;
   errorLine?: (message: string) => void;
   exit?: (code: number) => never;
+}
+
+function openshellSpawnEnv(opts: OpenshellSpawnOptions): NodeJS.ProcessEnv {
+  const explicitEnv = Object.fromEntries(
+    Object.entries(opts.env ?? {}).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  return opts.replaceEnv ? explicitEnv : buildSubprocessEnv(explicitEnv);
 }
 
 export interface RunOpenshellOptions extends OpenshellSpawnOptions {
@@ -59,8 +71,30 @@ export function stripAnsi(value = ""): string {
   return String(value).replace(ANSI_RE, "");
 }
 
-export function parseVersionFromText(value = ""): string | null {
-  const match = String(value || "").match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function parseVersionFromText(value = "", versionCommand?: string): string | null {
+  const text = String(value || "");
+  const commandToken = versionCommand?.trim().split(/\s+/, 1)[0] ?? "";
+  const executable = commandToken.split("/").pop() ?? "";
+  if (executable) {
+    const executablePattern = new RegExp(`\\b${escapeRegExp(executable)}\\b`, "i");
+    let executableSeen = false;
+    for (const line of text.split(/\r?\n/)) {
+      const executableMatch = executablePattern.exec(line);
+      if (!executableMatch) continue;
+      executableSeen = true;
+      const versionMatch = line
+        .slice(executableMatch.index + executableMatch[0].length)
+        .match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+      if (versionMatch) return versionMatch[1];
+    }
+    if (executableSeen) return null;
+  }
+
+  const match = text.match(/([0-9]+\.[0-9]+\.[0-9]+)/);
   return match ? match[1] : null;
 }
 
@@ -149,7 +183,7 @@ export function runOpenshellCommand(
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
   const result = spawnSyncImpl(binary, args, {
     cwd: opts.cwd,
-    env: { ...process.env, ...opts.env },
+    env: openshellSpawnEnv(opts),
     encoding: "utf-8",
     stdio: opts.stdio ?? "inherit",
     input: opts.input,
@@ -176,7 +210,7 @@ export function captureOpenshellCommand(
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
   const result = spawnSyncImpl(binary, args, {
     cwd: opts.cwd,
-    env: { ...process.env, ...opts.env },
+    env: openshellSpawnEnv(opts),
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: opts.timeout,
@@ -231,7 +265,7 @@ export function captureOpenshellCommandAsync(
   return new Promise((resolve) => {
     const child = spawnImpl(binary, args, {
       cwd: opts.cwd,
-      env: { ...process.env, ...opts.env },
+      env: openshellSpawnEnv(opts),
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     }) as ChildProcess;
@@ -309,5 +343,5 @@ export function getInstalledOpenshellVersion(
     ...opts,
     ignoreError: true,
   });
-  return parseVersionFromText(versionResult.output);
+  return parseVersionFromText(versionResult.output, binary);
 }

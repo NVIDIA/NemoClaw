@@ -4,13 +4,14 @@
 title: "NVIDIA NemoClaw"
 sidebar-title: "Home"
 description: "NemoClaw is an open-source reference stack for running sandboxed AI agents more safely, with a single command and Markdown docs for AI assistants."
-keywords: "NemoClaw, OpenClaw, Hermes, OpenShell, AI agents, Markdown docs, sandboxing, inference routing"
+keywords: "NemoClaw, OpenClaw, Hermes, LangChain Deep Agents Code, dcode, OpenShell, AI agents, Markdown docs, sandboxing, inference routing"
 layout: overview
 position: 1
 ---
 
 import { BadgeLinks } from "./_components/BadgeLinks";
 import { CommandTerminal } from "./_components/CommandTerminal";
+import { StarterPromptFallback } from "./_components/StarterPrompt";
 import { StarterPromptButton } from "./_components/StarterPromptButton";
 
 <BadgeLinks
@@ -43,9 +44,12 @@ Install NemoClaw and run the onboard wizard to get started.
 
 ### From Your Coding Agent
 
-Copy the starter prompt and paste it into your local coding agent such as Codex, Cursor, or Claude Code.
+Copy the starter prompt and paste it into your local coding agent, such as Cursor, Claude Code, Codex, Copilot, or another assistant that can run local commands with your approval.
+The prompt tells your agent to use NemoClaw skills when available, bootstrap the docs-routing skill when it is missing, fetch the Markdown docs, ask whether you want OpenClaw, Hermes, or Deep Agents, collect choices one question at a time, and reuse the checked-in local credential form instead of asking you to paste secrets into chat.
 
 <StarterPromptButton />
+
+<StarterPromptFallback />
 
 ### From Your Terminal
 
@@ -65,7 +69,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 </llms-only>
 
-This starts the interactive installer and onboard wizard.
+This starts the maintained last-known-good (`lkg`) installer and onboard wizard.
 Use the quickstart guides for scripted installs and failed-session recovery.
 
 By default, NemoClaw installs the OpenClaw agent. Use one of the following quickstart guides to get started with your preferred agent.
@@ -74,6 +78,7 @@ By default, NemoClaw installs the OpenClaw agent. Use one of the following quick
 |-------|-------|
 | OpenClaw (default) | [Quickstart with OpenClaw](../openclaw/get-started/quickstart) |
 | Hermes | [Quickstart with Hermes](../hermes/get-started/quickstart) |
+| LangChain Deep Agents Code | [Quickstart with Deep Agents](../deepagents/get-started/quickstart) |
 
 <section>
 
@@ -84,7 +89,7 @@ The assistant fetches the same canonical pages that power this site and applies 
 
 <Cards>
 
-<Card title="Use AI Agent Docs" href="resources/agent-skills">
+<Card title="Add NemoClaw Docs to Your Agent" href="resources/agent-skills">
 
 Give your assistant the docs entry points or optional routing skill so NemoClaw guidance is available directly in chat.
 
@@ -130,6 +135,13 @@ Read the OpenClaw-focused overview before launching the default sandboxed agent.
 <Card title="NemoClaw for Hermes" href="../hermes/about/overview">
 
 Read the Hermes-focused overview before launching a Hermes sandboxed agent.
+
+<Badge intent="tip" minimal outlined>Overview</Badge>
+</Card>
+
+<Card title="NemoClaw for Deep Agents" href="../deepagents/about/overview">
+
+Read the Deep Agents-focused overview before launching a `dcode` sandboxed terminal agent.
 
 <Badge intent="tip" minimal outlined>Overview</Badge>
 </Card>

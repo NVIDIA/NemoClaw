@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+id: tavily-hermes-v1
+display_name: Tavily Search for Hermes
+description: Tavily Search API access for the Hermes managed Python runtime
+category: agent
+credentials:
+  - name: api_key
+    description: Tavily Search API key
+    env_vars:
+      - TAVILY_API_KEY
+    required: true
+    # OpenShell stores static placement as profile metadata, while runtime
+    # injection resolves env placeholders. The Tavily policy independently
+    # enables JSON-body rewriting for Hermes' native `api_key` field.
+    auth_style: bearer
+    header_name: authorization
+    query_param: ''
+endpoints:
+  - host: api.tavily.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    request_body_credential_rewrite: true
+    rules:
+      - allow: { method: POST, path: "/search" }
+      - allow: { method: POST, path: "/extract" }
+binaries:
+  - /opt/hermes/.venv/bin/python
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: false

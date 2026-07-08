@@ -172,7 +172,7 @@ const onboardModule = require(${onboardPath});
   } catch (error) {
     exitCode = error.exitCode ?? null;
     process.stdout.write(
-      JSON.stringify({ completed: false, exitCode, lines, message: error.message }),
+      JSON.stringify({ completed: false, exitCode, lines, message: error.message, nonInteractiveEnv: process.env.NEMOCLAW_NON_INTERACTIVE }),
     );
   } finally {
     console.error = originalError;
@@ -188,12 +188,13 @@ const onboardModule = require(${onboardPath});
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",
-      env: { ...process.env, HOME: tmpDir },
+      env: { ...process.env, HOME: tmpDir, NEMOCLAW_NON_INTERACTIVE: "preserve-me" },
     });
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.completed, false);
     assert.equal(payload.exitCode, 1);
+    assert.equal(payload.nonInteractiveEnv, "preserve-me");
     assert.ok(
       payload.lines.some((line: string) => line.includes("Invalid sandbox name: 'MyAssistant'.")),
       `expected 'Invalid sandbox name' line, got ${JSON.stringify(payload.lines)}`,

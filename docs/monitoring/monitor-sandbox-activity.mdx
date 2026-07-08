@@ -72,7 +72,7 @@ Use these files for audit trails, compliance review, or replay tooling that incl
 Inspect the session directory from the host by running a sandbox command.
 
 ```bash
-$$nemoclaw sandbox exec <name> -- ls -lh /sandbox/.openclaw/agents/main/sessions
+$$nemoclaw <name> exec -- ls -lh /sandbox/.openclaw/agents/main/sessions
 ```
 
 Copy a session log for offline review with the OpenShell sandbox download command.
@@ -108,13 +108,13 @@ Send a test inference request to verify that the provider responds.
 
 <AgentOnly variant="openclaw">
 ```bash
-$$nemoclaw my-assistant connect
+$$nemoclaw <name> connect
 openclaw agent --agent main -m "Test inference" --session-id debug
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
 ```bash
-$$nemoclaw my-hermes connect
+$$nemoclaw <name> connect
 hermes
 ```
 </AgentOnly>
@@ -126,6 +126,7 @@ If the request fails, check these items.
    If it shows `unreachable`, restart the local backend before retrying from inside the sandbox.
 2. Run `$$nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
 3. Verify that the host can reach the inference endpoint.
+4. If the agent reports a context-overflow or token-limit error, clear the conversation with `/reset` (or start a fresh one with `/new`) in the TUI before retrying.
 
 ## Related Topics
 

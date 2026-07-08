@@ -3,11 +3,11 @@
 
 import type { WebSearchConfig } from "../../inference/web-search";
 import {
-  assertProviderSelectedContext,
   mergeProviderModelSelectedContext,
   mergeSandboxCreatedContext,
   type OnboardFlowContext,
 } from "./flow-context";
+import { createProviderInferencePhase, createSandboxPhase } from "./flow-phases/provider-sandbox";
 import { runCoreOnboardFlowSequence } from "./flow-slices";
 import {
   handleProviderInferenceState,
@@ -25,12 +25,17 @@ export interface CoreOnboardFlowPhaseOptions<
   MessagingChannelConfig = unknown,
   ResourceProfile = unknown,
 > {
+  gatewayName: string;
   forceProviderSelection: boolean;
+  forceInferenceSetup?: boolean;
+  authoritativeResumeConfig?: boolean;
   env: NodeJS.ProcessEnv;
   constants: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["constants"];
   providerDeps: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["deps"];
   sandbox: {
     resumeAgentChanged: boolean;
+    requestedObservabilityEnabled?: boolean | null;
+    authoritativePolicyTier?: string | null;
     controlUiPort: number | null;
     rootDir: string;
   };
@@ -52,91 +57,99 @@ export function createCoreOnboardFlowPhases<
 >(
   options: CoreOnboardFlowPhaseOptions<Context, Host, MessagingChannelConfig, ResourceProfile>,
 ): [OnboardSequencePhase<Context>, OnboardSequencePhase<Context>] {
-  const providerInferencePhase: OnboardSequencePhase<Context> = {
-    state: "provider_selection",
-    async run(context) {
-      const providerInferenceResult = await handleProviderInferenceState({
-        resume: context.resume,
-        fresh: context.fresh,
-        session: context.session,
-        gpu: context.gpu,
-        sandboxName: context.sandboxName,
-        agent: context.agent,
-        forceProviderSelection: options.forceProviderSelection,
-        initial: {
-          model: context.model,
-          provider: context.provider,
-          endpointUrl: context.endpointUrl,
-          credentialEnv: context.credentialEnv,
-          hermesAuthMethod: context.hermesAuthMethod,
-          hermesToolGateways: context.hermesToolGateways,
-          preferredInferenceApi: context.preferredInferenceApi,
-          nimContainer: context.nimContainer,
-          webSearchConfig: context.webSearchConfig,
-        },
-        selectedMessagingChannels: context.selectedMessagingChannels,
-        env: options.env,
-        constants: options.constants,
-        deps: options.providerDeps,
-      });
-
-      return {
-        context: mergeProviderModelSelectedContext(context, {
-          session: providerInferenceResult.session,
-          sandboxName: providerInferenceResult.sandboxName,
-          model: providerInferenceResult.model,
-          provider: providerInferenceResult.provider,
-          endpointUrl: providerInferenceResult.endpointUrl,
-          credentialEnv: providerInferenceResult.credentialEnv,
-          hermesAuthMethod: providerInferenceResult.hermesAuthMethod,
-          hermesToolGateways: providerInferenceResult.hermesToolGateways,
-          preferredInferenceApi: providerInferenceResult.preferredInferenceApi,
-          nimContainer: providerInferenceResult.nimContainer,
-          webSearchConfig: providerInferenceResult.webSearchConfig,
-        }),
-        result: providerInferenceResult.stateResults,
-      };
-    },
-  };
-
-  const sandboxPhase: OnboardSequencePhase<Context> = {
-    state: "sandbox",
-    async run(context) {
-      assertProviderSelectedContext(context, "sandbox setup");
-      const sandboxStateResult = await handleSandboxState({
-        resume: context.resume,
-        fresh: context.fresh,
-        resumeAgentChanged: options.sandbox.resumeAgentChanged,
-        session: context.session,
-        sandboxName: context.sandboxName,
+  const providerInferencePhase = createProviderInferencePhase<Context>(async (context) => {
+    const providerInferenceResult = await handleProviderInferenceState({
+      gatewayName: options.gatewayName,
+      resume: context.resume,
+      fresh: context.fresh,
+      session: context.session,
+      gpu: context.gpu,
+      sandboxName: context.sandboxName,
+      agent: context.agent,
+      forceProviderSelection: options.forceProviderSelection,
+      forceInferenceSetup: options.forceInferenceSetup,
+      authoritativeResumeConfig: options.authoritativeResumeConfig,
+      initial: {
         model: context.model,
         provider: context.provider,
+        endpointUrl: context.endpointUrl,
+        credentialEnv: context.credentialEnv,
+        hermesAuthMethod: context.hermesAuthMethod,
+        hermesToolGateways: context.hermesToolGateways,
+        preferredInferenceApi: context.preferredInferenceApi,
+        compatibleEndpointReasoning: context.compatibleEndpointReasoning,
         nimContainer: context.nimContainer,
         webSearchConfig: context.webSearchConfig,
-        selectedMessagingChannels: context.selectedMessagingChannels,
-        fromDockerfile: context.fromDockerfile,
-        agent: context.agent,
-        gpu: context.gpu,
-        preferredInferenceApi: context.preferredInferenceApi,
-        sandboxGpuConfig: context.sandboxGpuConfig,
-        hermesToolGateways: context.hermesToolGateways,
-        controlUiPort: options.sandbox.controlUiPort,
-        rootDir: options.sandbox.rootDir,
-        deps: options.sandboxDeps,
-      });
+      },
+      selectedMessagingChannels: context.selectedMessagingChannels,
+      env: options.env,
+      constants: options.constants,
+      deps: options.providerDeps,
+    });
 
-      return {
-        context: mergeSandboxCreatedContext(context, {
-          session: sandboxStateResult.session,
-          sandboxName: sandboxStateResult.sandboxName,
-          webSearchConfig: sandboxStateResult.webSearchConfig,
-          selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
-          webSearchSupported: sandboxStateResult.webSearchSupported,
-        }),
-        result: sandboxStateResult.stateResult,
-      };
-    },
-  };
+    return {
+      context: mergeProviderModelSelectedContext(context, {
+        session: providerInferenceResult.session,
+        sandboxName: providerInferenceResult.sandboxName,
+        model: providerInferenceResult.model,
+        provider: providerInferenceResult.provider,
+        endpointUrl: providerInferenceResult.endpointUrl,
+        credentialEnv: providerInferenceResult.credentialEnv,
+        hermesAuthMethod: providerInferenceResult.hermesAuthMethod,
+        hermesToolGateways: providerInferenceResult.hermesToolGateways,
+        preferredInferenceApi: providerInferenceResult.preferredInferenceApi,
+        compatibleEndpointReasoning: providerInferenceResult.compatibleEndpointReasoning,
+        nimContainer: providerInferenceResult.nimContainer,
+        webSearchConfig: providerInferenceResult.webSearchConfig,
+      }),
+      result: providerInferenceResult.stateResults,
+    };
+  });
+
+  const sandboxPhase = createSandboxPhase<Context>(async (context) => {
+    const sandboxStateResult = await handleSandboxState({
+      resume: context.resume,
+      fresh: context.fresh,
+      gatewayName: options.gatewayName,
+      authoritativeResumeConfig: options.authoritativeResumeConfig,
+      authoritativePolicyTier: options.sandbox.authoritativePolicyTier,
+      resumeAgentChanged: options.sandbox.resumeAgentChanged,
+      requestedObservabilityEnabled: options.sandbox.requestedObservabilityEnabled,
+      session: context.session,
+      sandboxName: context.sandboxName,
+      model: context.model,
+      provider: context.provider,
+      endpointUrl: context.endpointUrl,
+      credentialEnv: context.credentialEnv,
+      nimContainer: context.nimContainer,
+      webSearchConfig: context.webSearchConfig,
+      selectedMessagingChannels: context.selectedMessagingChannels,
+      fromDockerfile: context.fromDockerfile,
+      agent: context.agent,
+      gpu: context.gpu,
+      preferredInferenceApi: context.preferredInferenceApi,
+      sandboxGpuConfig: context.sandboxGpuConfig,
+      hermesToolGateways: context.hermesToolGateways,
+      hermesAuthMethod: context.hermesAuthMethod,
+      controlUiPort: options.sandbox.controlUiPort,
+      rootDir: options.sandbox.rootDir,
+      env: options.env,
+      deps: options.sandboxDeps,
+    });
+
+    return {
+      context: mergeSandboxCreatedContext(context, {
+        session: sandboxStateResult.session,
+        sandboxName: sandboxStateResult.sandboxName,
+        webSearchConfig: sandboxStateResult.webSearchConfig,
+        webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
+        hermesToolGateways: sandboxStateResult.hermesToolGateways,
+        selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
+        webSearchSupported: sandboxStateResult.webSearchSupported,
+      }),
+      result: sandboxStateResult.stateResult,
+    };
+  });
 
   return [providerInferencePhase, sandboxPhase];
 }

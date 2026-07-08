@@ -84,6 +84,7 @@ python3 "$VLM_DEMO_DIR/vlm-subagent/openclaw-patch.py" "$NVIDIA_API_KEY" < /tmp/
 ```
 
 The helper reads `/tmp/openclaw.json` from standard input, adds the Omni provider and `vision-operator` entry, and writes the patched config to `/tmp/openclaw.updated.json`.
+For a sub-agent other than the Omni example, create `/tmp/openclaw.updated.json` from the exported config with `cp /tmp/openclaw.json /tmp/openclaw.updated.json`, then edit it before the upload step with your provider under `models.providers` and your sub-agent under `agents`.
 Do not commit `/tmp/openclaw.updated.json` or any other file that contains a real API key.
 
 Upload the patched config and refresh the hash.

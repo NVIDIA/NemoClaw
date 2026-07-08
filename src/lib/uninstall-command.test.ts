@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildVersionedUninstallUrl,
-  exitWithSpawnResult,
   resolveUninstallScript,
   runUninstallCommand,
 } from "./uninstall-command";
@@ -28,12 +27,6 @@ describe("uninstall command", () => {
   it("selects the first existing uninstall script", () => {
     const script = resolveUninstallScript(["/a", "/b"], (candidate) => candidate === "/b");
     expect(script).toBe("/b");
-  });
-
-  it("maps spawn signals to shell-style exit codes", () => {
-    expect(() => exitWithSpawnResult({ status: null, signal: "SIGTERM" }, exitWithCode)).toThrow(
-      "exit:143",
-    );
   });
 
   it("runs the local uninstall script when present", () => {

@@ -1,0 +1,60 @@
+{
+  "SPDX-FileCopyrightText": "Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/tools/e2e-advisor/targets-schema.json",
+  "title": "NemoClaw E2E Target Advisor Result",
+  "type": "object",
+  "required": [
+    "version",
+    "baseRef",
+    "headRef",
+    "changedFiles",
+    "relevantChangedFiles",
+    "required",
+    "optional",
+    "noTargetE2eReason",
+    "confidence"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "baseRef": { "type": "string" },
+    "headRef": { "type": "string" },
+    "changedFiles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "relevantChangedFiles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "required": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/targetRecommendation" }
+    },
+    "optional": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/targetRecommendation" }
+    },
+    "noTargetE2eReason": { "type": ["string", "null"] },
+    "confidence": { "enum": ["low", "medium", "high"] }
+  },
+  "$defs": {
+    "targetRecommendation": {
+      "type": "object",
+      "required": ["id", "workflow", "selectorType", "required", "reason", "dispatchCommand"],
+      "properties": {
+        "id": { "type": "string" },
+        "workflow": { "type": "string" },
+        "selectorType": { "enum": ["all", "target", "job"] },
+        "target": { "type": "string" },
+        "suiteFilter": { "type": "string" },
+        "required": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "dispatchCommand": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

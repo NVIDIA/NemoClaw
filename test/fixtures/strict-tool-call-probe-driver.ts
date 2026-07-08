@@ -4,11 +4,10 @@
 //
 // Process-level driver for the Local Ollama strict Chat Completions
 // tool-call probe. Loaded by test/strict-tool-call-probe.test.ts via
-// `tsx <driver>`; not picked up by Vitest's discovery (lives under
+// `node --import tsx <driver>`; not picked up by Vitest's discovery (lives under
 // test/fixtures/, which is excluded from the test glob).
 //
 // Mirrors the inline `node -e` block from the retired
-// test/e2e/test-strict-tool-call-probe.sh, retained here so the
 // caller-level behavior under test stays identical to production
 // runtime conditions (subprocess curl probes, real env propagation,
 // no Vitest worker shims). Refs #4537, #4349, #5098, #5119.

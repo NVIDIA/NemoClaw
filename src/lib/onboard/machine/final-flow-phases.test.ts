@@ -29,7 +29,7 @@ describe("final onboard flow phases", () => {
 
     const result = await policiesPhase.run(context({ selectedMessagingChannels: ["slack"] }));
 
-    expect(mergePolicyMessagingChannels).toHaveBeenCalledWith(["slack"], [], null, null);
+    expect(mergePolicyMessagingChannels).toHaveBeenCalledWith(["slack"], [], [], []);
     expect(result.context.selectedMessagingChannels).toEqual(["slack", "discord"]);
   });
 

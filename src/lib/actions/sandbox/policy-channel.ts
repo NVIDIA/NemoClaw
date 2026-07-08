@@ -3,12 +3,16 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import { runOpenshell } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
+import {
+  type PolicyAddOptions,
+  type PolicyRemoveOptions,
+  parsePolicyAddOptions,
+} from "../../domain/policy-channel";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
-import { getSandboxTargetGatewayName } from "./gateway-target";
 import {
   type ChannelManifest,
   createBuiltInChannelManifestRegistry,
@@ -28,26 +32,13 @@ import {
   toMessagingAgentId,
   tryGetMessagingAgentId,
 } from "../../messaging";
+import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
-import { hashCredential } from "../../security/credential-hash";
-
-const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
-const onboardProviders = require("../../onboard/providers");
-
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
-import * as policies from "../../policy";
-
-const onboardSession =
-  require("../../state/onboard-session") as typeof import("../../state/onboard-session");
-
-import { runOpenshell } from "../../adapters/openshell/runtime";
-import {
-  type PolicyAddOptions,
-  type PolicyRemoveOptions,
-  parsePolicyAddOptions,
-} from "../../domain/policy-channel";
 import { getMessagingToken } from "../../onboard/messaging-token";
+import * as policies from "../../policy";
+import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
 import { shellQuote } from "../../runner";
 import {
   type ChannelDef,
@@ -58,12 +49,20 @@ import {
   knownChannelNames,
   persistChannelTokens,
 } from "../../sandbox/channels";
+import { hashCredential } from "../../security/credential-hash";
+import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
+import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import { getSandboxTargetGatewayName } from "./gateway-target";
+import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
+import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
-import { rebuildSandbox } from "./rebuild";
-import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
+
+function isNonInteractive(): boolean {
+  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+}
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -93,6 +92,13 @@ const YW = useColor ? "\x1b[1;33m" : "";
 export async function addSandboxPolicy(
   sandboxName: string,
   options: PolicyAddOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () => addSandboxPolicyUnlocked(sandboxName, options));
+}
+
+async function addSandboxPolicyUnlocked(
+  sandboxName: string,
+  options: PolicyAddOptions,
 ): Promise<void> {
   const { dryRun, skipConfirm, source, presetArg } = parsePolicyAddOptions(options);
 
@@ -137,7 +143,10 @@ export async function addSandboxPolicy(
   }
 
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
-  const allPresets = filterSetupPolicyPresetsForAgent(policies.listPresets(), sandboxAgent);
+  const allPresets = filterSetupPolicyPresetsForAgent(
+    policies.listPresets({ agent: sandboxAgent }),
+    sandboxAgent,
+  );
   const applied = policies.getAppliedPresets(sandboxName);
 
   let answer = null;
@@ -166,7 +175,7 @@ export async function addSandboxPolicy(
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPreset(answer);
+  const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
   if (!presetContent) return;
 
   const endpoints = policies.getPresetEndpoints(presetContent);
@@ -260,7 +269,8 @@ async function applyExternalPreset(
 }
 
 export function listSandboxPolicies(sandboxName: string) {
-  const builtin = policies.listPresets();
+  const sandboxEntry = registry.getSandbox(sandboxName);
+  const builtin = policies.listPresets({ agent: sandboxEntry?.agent ?? null });
   const custom = policies.listCustomPresets(sandboxName);
   const allPresets = [...builtin, ...custom];
   const registryPresets = policies.getAppliedPresets(sandboxName);
@@ -269,30 +279,24 @@ export function listSandboxPolicies(sandboxName: string) {
   // array of matched preset names when reachable (possibly empty).
   const gatewayPresets = policies.getGatewayPresets(sandboxName);
 
+  const provenanceContext = {
+    tierName: sandboxEntry?.policyTier ?? null,
+    agentName: sandboxEntry?.agent ?? null,
+  };
+
   console.log("");
   console.log(`  Policy presets for sandbox '${sandboxName}':`);
   allPresets.forEach((p: { name: string; description: string }) => {
     const inRegistry = registryPresets.includes(p.name);
     const inGateway = gatewayPresets ? gatewayPresets.includes(p.name) : null;
-
-    let marker;
-    let suffix = "";
-    if (inGateway === null) {
-      // Gateway unreachable — fall back to registry-only display
-      marker = inRegistry ? "●" : "○";
-    } else if (inRegistry && inGateway) {
-      marker = "●";
-    } else if (!inRegistry && !inGateway) {
-      marker = "○";
-    } else if (inGateway && !inRegistry) {
-      marker = "●";
-      suffix = " (active on gateway, missing from local state)";
-    } else {
-      // inRegistry && !inGateway
-      marker = "○";
-      suffix = " (recorded locally, not active on gateway)";
-    }
-    console.log(`    ${marker} ${p.name} — ${p.description}${suffix}`);
+    console.log(
+      formatPolicyListPresetRow({
+        preset: p,
+        provenanceContext,
+        inRegistry,
+        inGateway,
+      }),
+    );
   });
 
   if (gatewayPresets === null) {
@@ -402,9 +406,6 @@ async function checkChannelAddConflict(
     if (hash) credentialHashes[cred.providerEnvKey] = hash;
   }
   if (Object.keys(credentialHashes).length === 0) return true;
-
-  const { findChannelConflicts } =
-    require("../../messaging/applier") as typeof import("../../messaging/applier");
 
   let conflicts: ReturnType<typeof findChannelConflicts>;
   try {
@@ -561,7 +562,7 @@ async function applyChannelAddToGatewayAndRegistry(
     }
     // upsertMessagingProviders handles create-or-update and process.exits on
     // failure, so reaching the next line means every entry is registered.
-    onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+    policyChannelDependencies.upsertMessagingProviders(tokenDefs);
   }
 }
 
@@ -689,7 +690,7 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
     );
     return false;
   }
-  await rebuildSandbox(sandboxName, ["--yes"]);
+  await policyChannelDependencies.rebuildSandbox(sandboxName, ["--yes"]);
   return true;
 }
 
@@ -918,6 +919,15 @@ export async function addSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    addSandboxChannelUnlocked(sandboxName, options),
+  );
+}
+
+async function addSandboxChannelUnlocked(
+  sandboxName: string,
+  options: ChannelMutationOptions,
+): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const force = Boolean(options.force);
   const rawChannelArg = options.channel;
@@ -949,7 +959,7 @@ export async function addSandboxChannel(
     process.exit(1);
   }
 
-  const presetContent = policies.loadPreset(canonical);
+  const presetContent = policies.loadPresetForSandbox(sandboxName, canonical);
   const presetPolicyKeys =
     presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
   if (presetContent === null || presetPolicyKeys.length === 0) {
@@ -1088,7 +1098,7 @@ async function rollbackChannelAdd(
           envKey,
           token,
         }));
-        onboardProviders.upsertMessagingProviders(priorTokenDefs, runOpenshell, {
+        policyChannelDependencies.upsertMessagingProviders(priorTokenDefs, {
           bestEffort: true,
         });
       } catch (err) {
@@ -1120,7 +1130,11 @@ async function rollbackChannelAdd(
   return result;
 }
 
-export function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
+export function applyChannelPresetIfAvailable(
+  sandboxName: string,
+  channelName: string,
+  retryAction: "add" | "start" = "add",
+): boolean {
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
     if (!applied) {
@@ -1128,7 +1142,7 @@ export function applyChannelPresetIfAvailable(sandboxName: string, channelName: 
         `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,
       );
       console.error(
-        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
+        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${retryAction} ${channelName}`,
       );
       return false;
     }
@@ -1139,7 +1153,7 @@ export function applyChannelPresetIfAvailable(sandboxName: string, channelName: 
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
     console.error(
-      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${retryAction} ${channelName}`,
     );
     return false;
   }
@@ -1288,6 +1302,15 @@ export async function removeSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    removeSandboxChannelUnlocked(sandboxName, options),
+  );
+}
+
+async function removeSandboxChannelUnlocked(
+  sandboxName: string,
+  options: ChannelMutationOptions,
+): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const rawChannelArg = options.channel;
   if (!rawChannelArg) {
@@ -1426,6 +1449,21 @@ async function sandboxChannelsSetEnabled(
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
   }
+  // Rebuild persists only the presets it actually restores. Re-apply a
+  // restarted channel's preset before a queued or immediate rebuild so the
+  // registry and backup manifest carry the enabled plan's policy intent.
+  // If policy application fails, put the plan back in its disabled state so
+  // runtime configuration cannot later be rebuilt without the required egress.
+  if (!disabled && !applyChannelPresetIfAvailable(sandboxName, normalized, "start")) {
+    const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, normalized, true);
+    if (!rolledBack) {
+      console.error(
+        `  ${YW}⚠${R} Could not restore '${normalized}' to disabled state after its policy preset failed to apply.`,
+      );
+      console.error(`    Re-run: ${CLI_NAME} ${sandboxName} channels stop ${normalized}`);
+    }
+    process.exit(1);
+  }
   const state = disabled ? "disabled" : "enabled";
   console.log(`  ${G}✓${R} Marked ${normalized} ${state} for '${sandboxName}'.`);
   const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);
@@ -1438,19 +1476,32 @@ export async function stopSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, options, true);
+  await withSandboxMutationLock(sandboxName, () =>
+    sandboxChannelsSetEnabled(sandboxName, options, true),
+  );
 }
 
 export async function startSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, options, false);
+  await withSandboxMutationLock(sandboxName, () =>
+    sandboxChannelsSetEnabled(sandboxName, options, false),
+  );
 }
 
 export async function removeSandboxPolicy(
   sandboxName: string,
   options: PolicyRemoveOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    removeSandboxPolicyUnlocked(sandboxName, options),
+  );
+}
+
+async function removeSandboxPolicyUnlocked(
+  sandboxName: string,
+  options: PolicyRemoveOptions,
 ): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const skipConfirm = Boolean(
@@ -1494,7 +1545,7 @@ export async function removeSandboxPolicy(
   // Resolve preset content: built-in first, then custom (persisted in
   // registry). Needed only for the endpoint preview below — removePreset()
   // itself re-resolves on the library side.
-  let presetContent: string | null = policies.loadPreset(answer);
+  let presetContent: string | null = policies.loadPresetForSandbox(sandboxName, answer);
   if (!presetContent) {
     const entry = customPresets.find((p: { name: string }) => p.name === answer);
     if (entry) {

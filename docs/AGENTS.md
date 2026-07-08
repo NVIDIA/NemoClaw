@@ -8,7 +8,7 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 
 ## Role
 
-- Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, and OpenShell sandboxes.
+- Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, and OpenShell sandboxes.
 - Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
 - Prefer small, focused edits that match the structure of the current page.
 - Verify behavior against source code, tests, scripts, or existing docs before documenting it.
@@ -33,7 +33,7 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 
 ## NemoClaw Doc Patterns
 
-- Use `$$nemoclaw` for host CLI command examples on shared OpenClaw and Hermes pages.
+- Use `$$nemoclaw` for host CLI command examples on shared OpenClaw, Hermes, and Deep Agents pages.
 - Use literal command names on pages that have only one agent variant.
 - Use `<AgentOnly>` blocks only when content differs by behavior, setup flow, state layout, or agent-specific wording.
 - Use route-style links without `.mdx` extensions for links between docs pages.
@@ -43,6 +43,6 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 
 - Run `npm run docs:sync-agent-variants` after editing shared variant source pages or navigation.
 - Run `npm run docs` before opening a PR for docs or Fern changes.
-- For doc-only PRs, rely on normal commit and push hooks when they ran.
-  If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD`.
-- Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
+- For doc-only PRs, rely on normal `pre-commit`, `commit-msg`, and `pre-push` hooks when they pass.
+  If hooks were skipped or unavailable, refresh `origin/main` and run `npm run check:diff` once to reproduce those checks.
+- Leave the broad-gate verification item unchecked unless you actually ran the applicable command.

@@ -7,10 +7,8 @@
 #
 # OpenClaw TUI flow in one command (local / interactive).
 #
-# Local helper for manually launching the OpenClaw TUI inside an existing sandbox.
-#
-#   default: use `expect` to run `nemoclaw <sandbox> connect`, then send `openclaw tui`
-#   manual:  pass --manual to only run `nemoclaw <sandbox> connect`
+# Default: use `expect` to run `nemoclaw <sandbox> connect`, then send `openclaw tui`.
+# Manual: pass --manual to only run `nemoclaw <sandbox> connect`.
 #
 # Usage:
 #   bash test/e2e/e2e-cloud-experimental/openclaw-tui-in-sandbox.sh

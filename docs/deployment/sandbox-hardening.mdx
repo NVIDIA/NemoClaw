@@ -55,7 +55,8 @@ To make the drop fail-closed instead, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the e
 This is opt-in because many hosts cannot drop capabilities, including cloud VMs, Docker Desktop, and WSL environments without `CAP_SETPCAP`.
 The check covers the agent process tree only.
 
-For defense-in-depth, also drop all Linux capabilities at the container runtime when you launch the image directly:
+For defense-in-depth, also drop all Linux capabilities at the container runtime when you launch the image directly.
+In the examples below, `nemoclaw-sandbox` is a placeholder for the sandbox image NemoClaw builds during onboarding; substitute the image tag your install produced, which you can find with `docker images`.
 
 ```bash
 docker run --rm \
@@ -137,6 +138,9 @@ Verify Landlock availability:
 ```bash
 ls /sys/kernel/security/landlock
 ```
+
+On a kernel with Landlock support, the path exists and `ls` succeeds.
+If it reports `No such file or directory`, the kernel does not expose Landlock, and the sandbox falls back to DAC-only enforcement as described above.
 
 For production deployments, use kernel 5.13+ with Landlock enabled.
 The `test/e2e/e2e-cloud-experimental/checks/04-landlock-readonly.sh` script validates enforcement at runtime.

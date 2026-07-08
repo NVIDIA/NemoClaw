@@ -89,7 +89,7 @@ brev exec "$INSTANCE_NAME" 'export PATH="$HOME/.local/bin:$PATH" && bash ~/repro
 ```
 
 - **Match:** validated (with −30 baked in). Proceed to 8d.
-- **Still no match:** mark `verify-inconclusive`. Post a comment that includes both reproducer attempts and both baseline transcripts with the message "couldn't establish a working reproducer for this bug on `$REPORTED_VERSION`." **Skip 8d** — there's nothing to verify on latest.
+- **Still no match:** select the `verify-inconclusive` verdict. Prepare a comment that includes both reproducer attempts and both baseline transcripts with the message "couldn't establish a working reproducer for this bug on `$REPORTED_VERSION`." **Skip 8d** — there's nothing to verify on latest.
 
 ### Step 8d: Install latest, run validated reproducer
 
@@ -146,7 +146,7 @@ brev copy ./reproducer.sh "$INSTANCE_NAME":~/reproducer.sh
 brev exec "$INSTANCE_NAME" 'export PATH="$HOME/.local/bin:$PATH" && bash ~/reproducer.sh' 2>&1 | tee ./latest-transcript.log
 ```
 
-If the install of **latest** fails (e.g. installer regression — see #3058 for a current example), this is an infra failure — see Step 11. Do not score or label the issue.
+If the install of **latest** fails (e.g. installer regression — see #3058 for a current example), this is an infra failure — see Step 11. Do not score the issue or mutate its labels or Project fields.
 
 If install succeeds, `latest-transcript.log` is the input to Step 9 scoring.
 
@@ -237,7 +237,7 @@ Performance bugs (#2598 "10s P50", #2600 "hangs ~2 min", #2733 Ollama tool-call 
    - Latest's p50 within `$SLA_P50_MS` AND baseline's p50 also within → reproducer doesn't actually exercise the bug; route to Step 8c synth-repro.
    - **p90 backstop**: if `$SLA_P90_MS` was parsed from the issue, latest's p90 outside `$SLA_P90_MS` flips a within-SLA-p50 verdict to `still-reproduces` — tail-latency regressions matter for the issues that name them.
 
-**Hardware-substitution caveat.** Performance numbers are silicon-dependent. When the issue is `Platform: DGX Spark` or `Platform: GB10` and we're measuring on a Brev x86 GPU SKU, the comment must say so explicitly: a Brev p50 of 1.5s on a `H100` does not prove the DGX Spark p50 is fixed. Cap the score at 60 unless the bug is clearly silicon-independent (e.g. an algorithmic regression in user-space JS that would manifest the same on any silicon).
+**Hardware-substitution caveat.** Performance numbers are silicon-dependent. When the issue is `platform: dgx-spark` or `platform: gb10` and we're measuring on a Brev x86 GPU SKU, the comment must say so explicitly: a Brev p50 of 1.5s on an `H100` does not prove the DGX Spark p50 is fixed. Cap the score at 60 unless the bug is clearly silicon-independent (e.g. an algorithmic regression in user-space JS that would manifest the same on any silicon).
 
 ---
 

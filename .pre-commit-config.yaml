@@ -12,9 +12,10 @@
 # Usage:
 #   npx prek install
 #   npx prek run --all-files
+#   npx prek run --all-files --stage manual  # full CLI/plugin coverage
 #
-# CI / diff-only runs:
-#   npx prek run --from-ref <base> --to-ref HEAD
+# Diff-only fallback for automatic commit, commit-message, and push checks:
+#   npm run check:diff
 #
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
@@ -170,7 +171,7 @@ repos:
         name: Repository checks
         entry: npm run checks
         language: system
-        files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.tsx?$|scripts/.*\.(cjs|js|mjs|ts|tsx)$|test/.*\.(cjs|js|mjs|ts|tsx)$|nemoclaw/src/.*\.tsx?$)
+        files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
         pass_filenames: false
         priority: 10
 
@@ -240,17 +241,16 @@ repos:
         entry: bash -c 'npm run build:cli && npx tsc -p jsconfig.json'
         language: system
         pass_filenames: false
-        files: ^(bin|test|scripts)/.*\.js$
+        files: ^(bin|test|scripts)/.*\.js$|^(jsconfig\.json|package(-lock)?\.json)$
         stages: [pre-push]
         priority: 10
 
       - id: tsc-cli
         name: TypeScript (CLI)
-        entry: npx tsc -p tsconfig.cli.json
+        entry: npm run typecheck:cli -- --incremental
         language: system
         pass_filenames: false
-        files: ^(bin|scripts|src|test|nemoclaw-blueprint/scripts)/.*\.(ts|tsx)$|^tsconfig\.cli\.json$
-        always_run: true
+        files: ^(agents/hermes|bin|scripts|src|test|tools|nemoclaw-blueprint/scripts)/.*\.(ts|tsx|mts|cts|json)$|^\.agents/skills/nemoclaw-maintainer-day/scripts/(check-gates|pra-gate|shared)\.ts$|^nemoclaw/src/(lib/subprocess-env|blueprint/private-networks)\.ts$|^(package(-lock)?\.json|tsconfig\.cli\.json|vitest\.config\.ts)$
         stages: [pre-push]
         priority: 10
 
@@ -279,25 +279,26 @@ repos:
         stages: [post-merge, post-checkout]
         priority: 10
 
-  # ── Priority 20: project-level checks (coverage + ratchet) ─────────────────
+  # ── Priority 20: project-level checks (full coverage is manual) ────────────
   - repo: local
     hooks:
       - id: test-cli
         name: Test (CLI)
-        entry: >-
-          bash -c 'node -e "require(\"node:fs\").rmSync(\"dist\", { recursive: true, force: true })" && npm run build:cli && npx tsx scripts/check-dist-sourcemaps.ts dist && npx vitest run --project cli --project integration --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="src/**/*.ts" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
+        entry: npm run test:coverage:cli
         language: system
         pass_filenames: false
         files: ^(bin/|src/.*\.(ts|tsx|js|mjs|cjs)$|test/.*\.(ts|tsx|js|mjs|cjs)$)
         require_serial: true
+        stages: [manual]
         priority: 20
 
       - id: test-plugin
         name: Test (plugin)
-        entry: bash -c 'npx vitest run --project plugin --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/plugin --coverage.include="nemoclaw/src/**/*.ts" --coverage.exclude="**/*.test.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"'
+        entry: npm run test:coverage:plugin
         language: system
         pass_filenames: false
         files: ^nemoclaw/
+        stages: [manual]
         priority: 20
 
       - id: source-shape-test-budget

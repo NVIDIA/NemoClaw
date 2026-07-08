@@ -15,6 +15,7 @@ type ProviderRecoveryInternals = {
   readRecordedProvider: (sandboxName: string | null | undefined) => string | null;
   readRecordedModel: (sandboxName: string | null | undefined) => string | null;
   readRecordedNimContainer: (sandboxName: string | null | undefined) => string | null;
+  readRecordedEndpointUrl: (sandboxName: string | null | undefined) => string | null;
 };
 
 function isProviderRecoveryInternals(value: object | null): value is ProviderRecoveryInternals {
@@ -40,10 +41,13 @@ const {
   readRecordedProvider,
   readRecordedModel,
   readRecordedNimContainer,
+  readRecordedEndpointUrl,
 } = onboardModule;
 
 const registry: typeof import("../src/lib/state/registry") = require("../src/lib/state/registry");
 const onboardSession: typeof import("../src/lib/state/onboard-session") = require("../src/lib/state/onboard-session");
+const rebuildResumeSession: typeof import("../src/lib/actions/sandbox/rebuild-resume-session") = require("../src/lib/actions/sandbox/rebuild-resume-session");
+const { rewindSessionForRebuildResume } = rebuildResumeSession;
 
 // Force readLiveInference's defaultSandbox check to fail so unit tests that
 // expect null don't depend on whether openshell is on PATH.
@@ -183,6 +187,89 @@ describe("readRecordedProvider", () => {
   });
 });
 
+describe("rebuild resume session normalization", () => {
+  it("normalizes a mid-recreate OpenClaw session to the gateway resume boundary without data loss", () => {
+    const session = onboardSession.createSession({
+      sandboxName: "spark-1",
+      provider: "old-provider",
+      model: "old-model",
+      endpointUrl: "https://old-provider.example/v1",
+      credentialEnv: "OLD_PROVIDER_KEY",
+      lastCompletedStep: "inference",
+      lastStepStarted: "openclaw",
+      resumable: false,
+      status: "failed",
+      failure: {
+        step: "openclaw",
+        message: "stale recreate failed",
+        recordedAt: "2026-06-01T00:02:00.000Z",
+      },
+      agent: "stale-agent",
+      machine: {
+        version: onboardSession.MACHINE_SNAPSHOT_VERSION,
+        state: "openclaw",
+        stateEnteredAt: "2026-06-01T00:01:00.000Z",
+        revision: 7,
+      },
+    });
+    session.metadata.fromDockerfile = "/tmp/reviewed.Dockerfile";
+    session.migratedLegacyValueHashes = { OLD_PROVIDER_KEY: "abc123" };
+    session.steps.gateway.status = "complete";
+    session.steps.inference.status = "complete";
+    session.steps.openclaw.status = "failed";
+    session.steps.openclaw.error = "stale recreate failure";
+
+    const originalSessionId = session.sessionId;
+    const rewound = rewindSessionForRebuildResume(session, {
+      sandboxName: "spark-1",
+      rebuildAgent: "openclaw",
+      rebuildMessagingPlan: null,
+      rebuildsHermesSandbox: false,
+      rebuildHermesToolGateways: ["stale-gateway"],
+      resumeConfig: {
+        agent: null,
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron-3",
+        nimContainer: null,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai",
+        compatibleEndpointReasoning: null,
+        pinEndpoint: true,
+        endpointUrl: "https://new-provider.example/v1",
+        registryInferenceRoute: null,
+        ambient: { presentVars: [], agentMismatch: null },
+      },
+    });
+
+    expect(rewound.sessionId).toBe(originalSessionId);
+    expect(rewound.metadata.fromDockerfile).toBe("/tmp/reviewed.Dockerfile");
+    expect(rewound.migratedLegacyValueHashes).toEqual({ OLD_PROVIDER_KEY: "abc123" });
+    expect(rewound.machine).toMatchObject({
+      version: onboardSession.MACHINE_SNAPSHOT_VERSION,
+      state: "complete",
+      revision: 8,
+    });
+    expect(rewound).toMatchObject({
+      status: "in_progress",
+      resumable: true,
+      failure: null,
+      lastCompletedStep: "gateway",
+      lastStepStarted: "gateway",
+      endpointUrl: "https://new-provider.example/v1",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      hermesToolGateways: [],
+    });
+    expect(rewound.steps.openclaw).toMatchObject({
+      status: "pending",
+      startedAt: null,
+      completedAt: null,
+      error: null,
+    });
+  });
+});
+
 describe("readRecordedModel", () => {
   const originalGetSandbox = registry.getSandbox;
   const originalListSandboxes = registry.listSandboxes;
@@ -297,6 +384,41 @@ describe("readRecordedNimContainer", () => {
   });
 });
 
+describe("readRecordedEndpointUrl", () => {
+  const originalGetSandbox = registry.getSandbox;
+  const originalLoadSession = onboardSession.loadSession;
+  afterEach(() => {
+    registry.getSandbox = originalGetSandbox;
+    onboardSession.loadSession = originalLoadSession;
+  });
+
+  it("returns the endpoint URL from a matching session", () => {
+    registry.getSandbox = () => null;
+    onboardSession.loadSession = () =>
+      ({
+        sandboxName: "spark-1",
+        endpointUrl: "https://compatible.example/v1",
+      }) as ReturnType<typeof onboardSession.loadSession>;
+    expect(readRecordedEndpointUrl("spark-1")).toBe("https://compatible.example/v1");
+  });
+
+  it("ignores unrelated or missing session endpoint URLs", () => {
+    registry.getSandbox = () => null;
+    onboardSession.loadSession = () =>
+      ({
+        sandboxName: "other-sandbox",
+        endpointUrl: "https://compatible.example/v1",
+      }) as ReturnType<typeof onboardSession.loadSession>;
+    expect(readRecordedEndpointUrl("spark-1")).toBeNull();
+
+    onboardSession.loadSession = () =>
+      ({ sandboxName: "spark-1", endpointUrl: null }) as ReturnType<
+        typeof onboardSession.loadSession
+      >;
+    expect(readRecordedEndpointUrl("spark-1")).toBeNull();
+  });
+});
+
 describe("readRecordedProvider — live gateway fallback", () => {
   // Covers the #2728 captured state: session.provider = null, registry has
   // the entry but with no useful provider field, AND the live gateway still
@@ -362,6 +484,126 @@ console.log(JSON.stringify({
 });
 
 describe("setupNim provider recovery policy", () => {
+  it("recovers a custom endpoint URL from the matching session during non-interactive rebuild resume", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-custom-recovery-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "custom-endpoint-recovery-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const sessionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+    );
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"choices":[{"message":{"role":"assistant","content":"OK"}}]}'
+status="200"
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    http://*|https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+if [[ "$url" != https://compatible.example/v1* ]]; then
+  body='{"error":{"message":"unexpected endpoint"}}'
+  status="599"
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const onboardSession = require(${sessionPath});
+
+runner.runCapture = () => "";
+registry.getSandbox = () => null;
+registry.listSandboxes = () => ({ sandboxes: [], defaultSandbox: null });
+onboardSession.loadSession = () => ({
+  sandboxName: "dcode-station",
+  provider: "compatible-endpoint",
+  model: "custom-model",
+  endpointUrl: "https://compatible.example/v1",
+});
+credentials.prompt = async () => "";
+credentials.ensureApiKey = async () => {};
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  for (const key of [
+    "NEMOCLAW_PROVIDER",
+    "NEMOCLAW_ENDPOINT_URL",
+    "NEMOCLAW_MODEL",
+    "NEMOCLAW_PROVIDER_KEY",
+    "NVIDIA_INFERENCE_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "COMPATIBLE_ANTHROPIC_API_KEY",
+  ]) {
+    delete process.env[key];
+  }
+  process.env.COMPATIBLE_API_KEY = "compat-key";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null, "dcode-station", null, true);
+    originalLog(JSON.stringify({ result, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_TEST_NO_SLEEP: "1",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout.trim());
+    expect(payload.result.provider).toBe("compatible-endpoint");
+    expect(payload.result.model).toBe("custom-model");
+    expect(payload.result.endpointUrl).toBe("https://compatible.example/v1");
+    expect(payload.result.preferredInferenceApi).toBe("openai-completions");
+    expect(
+      payload.lines.some((line: string) =>
+        line.includes(
+          "[non-interactive] Provider: custom (recovered from sandbox 'dcode-station')",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("ignores stale recorded providers when fresh setup disables provider recovery", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-fresh-provider-"));

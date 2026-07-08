@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setOnboardBrandingAgent } from "./branding";
 import {
   printContainerDnsRemediation,
+  printContainerDnsResolutionFailedRemediation,
   printDockerBridgeContainerStartFailure,
 } from "./bridge-dns-preflight";
 
@@ -222,5 +223,47 @@ describe("printDockerBridgeContainerStartFailure", () => {
     const blob = messages.join("\n");
     expect(blob).toContain("Docker Desktop > Settings > Resources > WSL integration");
     expect(blob).toContain("enable integration for this distro");
+  });
+});
+
+describe("printContainerDnsResolutionFailedRemediation (#6149)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const capture = (host: { platform: string; isWsl: boolean }): string => {
+    const messages: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((arg?: unknown) => {
+      messages.push(String(arg ?? ""));
+    });
+    printContainerDnsResolutionFailedRemediation(
+      host as unknown as Parameters<typeof printContainerDnsResolutionFailedRemediation>[0],
+    );
+    errSpy.mockRestore();
+    return messages.join("\n");
+  };
+
+  it("names registry.npmjs.org and frames the resolver as reachable-but-refused, not UDP:53-blocked", () => {
+    const blob = capture({ platform: "linux", isWsl: false });
+    expect(blob).toContain("registry.npmjs.org");
+    expect(blob).toMatch(/reachable/i);
+    expect(blob).toMatch(/NXDOMAIN\/REFUSED/);
+    expect(blob).toContain("#6149");
+    // Must NOT emit the servers_unreachable (UDP:53-blocked) remediation, whose
+    // distinctive markers are the systemd-resolved stub listener and the #2101
+    // npm-hang framing.
+    expect(blob).not.toContain("DNSStubListenerExtra");
+    expect(blob).not.toContain("Exit handler never called");
+  });
+
+  it("suggests the Linux daemon.json path on native Linux", () => {
+    const blob = capture({ platform: "linux", isWsl: false });
+    expect(blob).toContain("/etc/docker/daemon.json");
+  });
+
+  it("suggests the Docker Desktop path on macOS instead of the Linux daemon.json path", () => {
+    const blob = capture({ platform: "darwin", isWsl: false });
+    expect(blob).toContain("Docker Desktop");
+    expect(blob).not.toContain("/etc/docker/daemon.json");
   });
 });

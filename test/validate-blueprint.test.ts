@@ -9,7 +9,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 const BLUEPRINT_PATH = new URL("../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
@@ -25,11 +25,35 @@ const BRAVE_PROVIDER_PROFILE_PATH = new URL(
   "../nemoclaw-blueprint/provider-profiles/brave.yaml",
   import.meta.url,
 );
+const TAVILY_PROVIDER_PROFILE_PATH = new URL(
+  "../nemoclaw-blueprint/provider-profiles/tavily.yaml",
+  import.meta.url,
+);
+const TAVILY_PROVIDER_PROFILE_FOR_HERMES_PATH = new URL(
+  "../nemoclaw-blueprint/provider-profiles/tavily-hermes-v1.yaml",
+  import.meta.url,
+);
+const TAVILY_POLICY_PRESET_PATH = new URL(
+  "../nemoclaw-blueprint/policies/presets/tavily.yaml",
+  import.meta.url,
+);
+const DEEPAGENTS_POLICY_PATH = new URL(
+  "../agents/langchain-deepagents-code/policy-additions.yaml",
+  import.meta.url,
+);
 const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
 );
 const HERMES_POLICY_PATH = new URL("../agents/hermes/policy-additions.yaml", import.meta.url);
+const hermesPermissivePolicyPath = new URL(
+  "../agents/hermes/policy-permissive.yaml",
+  import.meta.url,
+);
+const OPENCLAW_PERMISSIVE_POLICY_PATH = new URL(
+  "../agents/openclaw/policy-permissive.yaml",
+  import.meta.url,
+);
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
   "provider_type",
   "endpoint",
@@ -83,6 +107,7 @@ type PolicyEntry = {
 
 type SandboxPolicy = {
   version?: number;
+  filesystem_policy?: { read_only?: string[] };
   network_policies?: Record<string, PolicyEntry>;
 };
 
@@ -103,12 +128,15 @@ type ProviderProfileEndpoint = {
   protocol?: string;
   access?: string;
   enforcement?: string;
+  request_body_credential_rewrite?: boolean;
+  rules?: Rule[];
 };
 
 type ProviderProfile = {
   id?: string;
   credentials?: ProviderProfileCredential[];
   endpoints?: ProviderProfileEndpoint[];
+  binaries?: string[];
 };
 
 function loadYaml<T>(path: URL): T {
@@ -472,6 +500,124 @@ describe("Brave Search provider profile", () => {
   });
 });
 
+describe("Tavily Search provider profile", () => {
+  const profile = loadYaml<ProviderProfile>(TAVILY_PROVIDER_PROFILE_PATH);
+  const hermesProfile = loadYaml<ProviderProfile>(TAVILY_PROVIDER_PROFILE_FOR_HERMES_PATH);
+  const preset = loadYaml<PolicyPreset>(TAVILY_POLICY_PRESET_PATH);
+  const deepAgentsPolicy = loadYaml<SandboxPolicy>(DEEPAGENTS_POLICY_PATH);
+  const defaultOpenClawPermissivePolicy = loadYaml<SandboxPolicy>(PERMISSIVE_POLICY_PATH);
+  const hermesPermissivePolicy = loadYaml<SandboxPolicy>(hermesPermissivePolicyPath);
+  const openClawPermissivePolicy = loadYaml<SandboxPolicy>(OPENCLAW_PERMISSIVE_POLICY_PATH);
+
+  it("routes TAVILY_API_KEY through a bearer authorization header", () => {
+    expect(profile.id).toBe("tavily");
+    expect(profile.credentials).toEqual([
+      expect.objectContaining({
+        env_vars: ["TAVILY_API_KEY"],
+        auth_style: "bearer",
+        header_name: "authorization",
+      }),
+    ]);
+  });
+
+  it("keeps both provider policy layers aligned with the least-privilege preset", () => {
+    const presetEndpoint = preset.network_policies?.tavily?.endpoints?.[0];
+    const expectedRules = [
+      { allow: { method: "POST", path: "/search" } },
+      { allow: { method: "POST", path: "/extract" } },
+    ];
+
+    expect(presetEndpoint?.rules).toEqual(expectedRules);
+    for (const candidate of [profile, hermesProfile]) {
+      expect(candidate.endpoints).toEqual([
+        {
+          host: "api.tavily.com",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          request_body_credential_rewrite: true,
+          rules: expectedRules,
+        },
+      ]);
+      expect(candidate.endpoints?.[0]).not.toHaveProperty("access");
+    }
+  });
+
+  it("limits the binary allowlist to runtimes the Tavily client actually uses", () => {
+    expect(profile.binaries).toEqual([
+      "/opt/venv/bin/python3*",
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ]);
+  });
+
+  it("keeps its binary allowlist aligned with the Tavily policy preset", () => {
+    const presetBinaries = preset.network_policies?.tavily?.binaries?.map(({ path }) => path);
+    for (const binary of profile.binaries ?? []) expect(presetBinaries).toContain(binary);
+  });
+
+  it("anchors managed Python access to Deep Agents Code's read-only venv", () => {
+    const managedPython = "/opt/venv/bin/python3*";
+    const managedInferenceBinaries = deepAgentsPolicy.network_policies?.managed_inference?.binaries;
+
+    expect(deepAgentsPolicy.filesystem_policy?.read_only).toContain("/opt/venv");
+    expect(managedInferenceBinaries).toContainEqual({ path: managedPython });
+    expect(profile.binaries).toContain(managedPython);
+  });
+
+  it("supports Hermes' exact managed Python path and JSON credential rewrite", () => {
+    const endpoint = preset.network_policies?.tavily?.endpoints?.find(
+      (candidate) => candidate.host === "api.tavily.com",
+    );
+
+    expect(hermesProfile).toMatchObject({
+      id: "tavily-hermes-v1",
+      credentials: [
+        expect.objectContaining({
+          env_vars: ["TAVILY_API_KEY"],
+          auth_style: "bearer",
+          header_name: "authorization",
+        }),
+      ],
+      endpoints: [expect.objectContaining({ host: "api.tavily.com", port: 443 })],
+      binaries: ["/opt/hermes/.venv/bin/python", "/usr/local/bin/curl", "/usr/bin/curl"],
+    });
+    expect(endpoint).toMatchObject({
+      protocol: "rest",
+      enforcement: "enforce",
+      request_body_credential_rewrite: true,
+      rules: [
+        { allow: { method: "POST", path: "/search" } },
+        { allow: { method: "POST", path: "/extract" } },
+      ],
+    });
+    expect(endpoint).not.toHaveProperty("access");
+  });
+
+  it("preserves Tavily credential rewriting when agent shields are down", () => {
+    for (const policy of [
+      defaultOpenClawPermissivePolicy,
+      openClawPermissivePolicy,
+      hermesPermissivePolicy,
+    ]) {
+      const endpoint = policy.network_policies?.tavily?.endpoints?.find(
+        (candidate) => candidate.host === "api.tavily.com",
+      );
+
+      expect(endpoint).toMatchObject({
+        protocol: "rest",
+        enforcement: "enforce",
+        access: "full",
+        request_body_credential_rewrite: true,
+      });
+      expect(endpoint?.rules).toBeUndefined();
+      expect(policy.network_policies?.tavily?.binaries).toEqual([{ path: "/**" }]);
+    }
+  });
+});
+
 describe("permissive sandbox policy", () => {
   // openclaw-sandbox-permissive.yaml is applied by `shields down --policy
   // permissive`. It must carry forward the gateway-managed inference route
@@ -664,11 +810,11 @@ describe("jira preset", () => {
 
 describe("messaging WebSocket presets", () => {
   const DISCORD_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/discord.yaml",
+    "../src/lib/messaging/channels/discord/policy/openclaw.yaml",
     import.meta.url,
   );
   const SLACK_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
     import.meta.url,
   );
 
@@ -724,7 +870,7 @@ describe("messaging WebSocket presets", () => {
 
 describe("Slack REST credential rewrite", () => {
   const SLACK_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
     import.meta.url,
   );
   const data = loadYaml<PolicyPreset>(SLACK_PRESET_PATH);

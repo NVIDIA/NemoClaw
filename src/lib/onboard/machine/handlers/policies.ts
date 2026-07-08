@@ -24,16 +24,20 @@ export interface PolicyPresetEntry {
 
 export interface ActiveSandboxPolicyState {
   messaging?: { plan: SandboxMessagingPlan } | null;
+  policyTier?: string | null;
 }
 
 export interface PolicyResumeSelection {
   policyPresets: string[];
   recordedPolicyPresetsNeedReconcile: boolean;
   disabledMessagingPolicyPresetApplied: boolean;
+  suppressedAgentRequiredPresetsLive: boolean;
 }
 
 export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   resume: boolean;
+  /** Internal rebuild tier that takes precedence over a not-yet-complete registry row. */
+  authoritativePolicyTier?: string | null;
   sandboxName: string;
   provider: string;
   model: string;
@@ -41,6 +45,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   credentialEnv: string | null;
   selectedMessagingChannels: string[];
   webSearchConfig: WebSearchConfig | null;
+  webSearchConfigChanged?: boolean;
   webSearchSupported: boolean;
   hermesToolGateways: string[];
   agent: Agent;
@@ -70,8 +75,11 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         enabledChannels: string[];
         hermesToolGateways: string[];
         agent?: string | null;
+        observabilityEnabled?: boolean | null;
         webSearchConfig: WebSearchConfig | null;
+        webSearchConfigChanged: boolean;
         webSearchSupported: boolean;
+        tierName?: string | null;
       },
     ): PolicyResumeSelection;
     arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[]): boolean;
@@ -93,6 +101,8 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         webSearchConfig: WebSearchConfig | null;
         provider: string;
         agent?: string | null;
+        observabilityEnabled?: boolean | null;
+        tierName?: string | null;
         webSearchSupported: boolean;
         hermesToolGateways: string[];
         onSelection: (policyPresets: string[]) => void;
@@ -121,6 +131,7 @@ export interface PoliciesStateResult {
 
 export async function handlePoliciesState<Agent, WebSearchConfig>({
   resume,
+  authoritativePolicyTier,
   sandboxName,
   provider,
   model,
@@ -128,17 +139,20 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   credentialEnv,
   selectedMessagingChannels,
   webSearchConfig,
+  webSearchConfigChanged = false,
   webSearchSupported,
   hermesToolGateways,
   agent,
   deps,
 }: PoliciesStateOptions<Agent, WebSearchConfig>): Promise<PoliciesStateResult> {
   const latestSession = deps.loadSession();
+  const observabilityEnabled = latestSession?.observabilityEnabled === true;
   const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
     ? latestSession.policyPresets
     : null;
-  const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan) ?? [];
+  const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
+  const effectivePolicyTier = authoritativePolicyTier ?? activeSandbox?.policyTier ?? null;
   const activePlan = activeSandbox?.messaging?.plan;
   const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);
   const disabledChannels = getDisabledChannelsFromPlan(activePlan);
@@ -164,14 +178,18 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     enabledChannels: policyMessagingChannels,
     hermesToolGateways,
     agent: normalizeAgentName((agent as { name?: string } | null)?.name),
+    observabilityEnabled,
     webSearchConfig,
+    webSearchConfigChanged,
     webSearchSupported,
+    tierName: effectivePolicyTier,
   });
   const recordedPolicyPresetsForSupport = policyResumeSelection.policyPresets;
   const resumePolicies =
     resume &&
     !policyResumeSelection.recordedPolicyPresetsNeedReconcile &&
     !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
+    !policyResumeSelection.suppressedAgentRequiredPresetsLive &&
     deps.arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
 
   let appliedPolicyPresets = recordedPolicyPresetsForSupport;
@@ -223,6 +241,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       // to "openclaw" so the auto-suggest gate still fires; explicit
       // Hermes runs keep their own name.
       agent: normalizeAgentName((agent as { name?: string } | null)?.name),
+      observabilityEnabled,
+      tierName: effectivePolicyTier,
       webSearchSupported,
       hermesToolGateways,
       onSelection: (policyPresets) => {

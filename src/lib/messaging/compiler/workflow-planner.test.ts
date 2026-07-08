@@ -50,7 +50,6 @@ const CREDENTIAL_ONLY_MANIFEST: ChannelManifest = {
     },
   ],
   render: [],
-  state: {},
   hooks: [],
 };
 

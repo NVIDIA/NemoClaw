@@ -4,6 +4,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  expectTrustedConfig,
+  readAuthConfigContents,
+} from "../adapters/http/auth-config-test-helpers";
+import {
   BUILD_ENDPOINT_URL,
   fetchAnthropicModels,
   fetchNvidiaEndpointModels,
@@ -14,11 +18,15 @@ import {
 } from "./provider-models";
 
 describe("provider model helpers", () => {
-  it("fetches NVIDIA endpoint model ids", () => {
+  it("fetches NVIDIA endpoint model ids through a 0600 curl config tmpfile so no API key reaches argv", () => {
     const result = fetchNvidiaEndpointModels("nvapi-x", {
-      runCurlProbeImpl: (argv) => {
+      runCurlProbeImpl: (argv, opts) => {
         expect(argv.at(-1)).toBe(`${BUILD_ENDPOINT_URL}/models`);
-        expect(argv).toContain("Authorization: Bearer nvapi-x");
+        expect(argv.join(" ")).not.toContain("nvapi-x");
+        expect(argv.join(" ")).not.toContain("Authorization:");
+        const contents = readAuthConfigContents(argv);
+        expect(contents).toContain('header = "Authorization: Bearer nvapi-x"');
+        expectTrustedConfig(argv, opts);
         return {
           ok: true,
           httpStatus: 200,
@@ -196,18 +204,20 @@ describe("provider model helpers", () => {
     });
   });
 
-  it("sends API key as ?key= query param when authMode is query-param (Gemini)", () => {
+  it("routes a query-param API key through curl --config instead of the URL", () => {
     const result = fetchOpenAiLikeModels(
       "https://generativelanguage.googleapis.com/v1beta/openai/",
       "AIzaFakeKey123",
       {
         authMode: "query-param",
-        runCurlProbeImpl: (argv) => {
+        runCurlProbeImpl: (argv, opts) => {
           const url = argv.at(-1);
-          expect(url).toBe(
-            "https://generativelanguage.googleapis.com/v1beta/openai/models?key=AIzaFakeKey123",
-          );
-          expect(argv.join(" ")).not.toContain("Authorization: Bearer");
+          expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/openai/models");
+          expect(argv.join(" ")).not.toContain("AIzaFakeKey123");
+          expect(argv.join(" ")).not.toContain("Authorization:");
+          const contents = readAuthConfigContents(argv);
+          expect(contents).toContain('url-query = "key=AIzaFakeKey123"');
+          expectTrustedConfig(argv, opts);
           return {
             ok: true,
             httpStatus: 200,
@@ -223,13 +233,17 @@ describe("provider model helpers", () => {
     expect(result).toEqual({ ok: true, ids: ["gemini-2.5-flash"] });
   });
 
-  it("uses Bearer header by default even when an API key is provided", () => {
+  it("routes the Bearer API key through curl --config instead of the argv header", () => {
     fetchOpenAiLikeModels("https://api.openai.com/v1", "sk-test", {
-      runCurlProbeImpl: (argv) => {
+      runCurlProbeImpl: (argv, opts) => {
         const url = argv.at(-1);
         expect(url).toBe("https://api.openai.com/v1/models");
         expect(url).not.toContain("?key=");
-        expect(argv).toContain("Authorization: Bearer sk-test");
+        expect(argv.join(" ")).not.toContain("sk-test");
+        expect(argv.join(" ")).not.toContain("Authorization:");
+        const contents = readAuthConfigContents(argv);
+        expect(contents).toContain('header = "Authorization: Bearer sk-test"');
+        expectTrustedConfig(argv, opts);
         return {
           ok: true,
           httpStatus: 200,
@@ -242,7 +256,7 @@ describe("provider model helpers", () => {
     });
   });
 
-  it("validates Gemini models with query-param auth when authMode is passed through", () => {
+  it("validates Gemini models with query-param auth without leaking the API key into argv", () => {
     const result = validateOpenAiLikeModel(
       "Google Gemini",
       "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -250,10 +264,15 @@ describe("provider model helpers", () => {
       "AIzaFakeKey123",
       {
         authMode: "query-param",
-        runCurlProbeImpl: (argv) => {
+        runCurlProbeImpl: (argv, opts) => {
           const url = argv.at(-1);
-          expect(url).toContain("?key=AIzaFakeKey123");
-          expect(argv.join(" ")).not.toContain("Authorization: Bearer");
+          expect(url).not.toContain("?key=");
+          expect(url).not.toContain("AIzaFakeKey123");
+          expect(argv.join(" ")).not.toContain("AIzaFakeKey123");
+          expect(argv.join(" ")).not.toContain("Authorization:");
+          const contents = readAuthConfigContents(argv);
+          expect(contents).toContain('url-query = "key=AIzaFakeKey123"');
+          expectTrustedConfig(argv, opts);
           return {
             ok: true,
             httpStatus: 200,
@@ -268,4 +287,69 @@ describe("provider model helpers", () => {
 
     expect(result).toEqual({ ok: true, validated: true });
   });
+
+  it("routes the Anthropic x-api-key header through curl --config instead of argv", () => {
+    fetchAnthropicModels("https://api.anthropic.com", "sk-ant-secret", {
+      runCurlProbeImpl: (argv, opts) => {
+        expect(argv.at(-1)).toBe("https://api.anthropic.com/v1/models");
+        expect(argv.join(" ")).not.toContain("sk-ant-secret");
+        expect(argv.join(" ")).not.toContain("x-api-key:");
+        const contents = readAuthConfigContents(argv);
+        expect(contents).toContain('header = "x-api-key: sk-ant-secret"');
+        expectTrustedConfig(argv, opts);
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: JSON.stringify({ data: [{ id: "claude-sonnet" }] }),
+          stderr: "",
+          message: "",
+        };
+      },
+    });
+  });
+
+  it("returns a structured failure shape when temp-file auth config creation throws", () => {
+    const restoreMkdtemp = stubFsMkdtempToThrow();
+    try {
+      const result = fetchNvidiaEndpointModels("nvapi-x");
+      expect(result).toMatchObject({
+        ok: false,
+        httpStatus: 0,
+        curlStatus: 0,
+        message: expect.stringMatching(/mkdtemp/i),
+      });
+    } finally {
+      restoreMkdtemp();
+    }
+  });
+
+  it("returns a structured failure shape when auth config creation fails for fetchOpenAiLikeModels", () => {
+    const restoreMkdtemp = stubFsMkdtempToThrow();
+    try {
+      const result = fetchOpenAiLikeModels("https://example.test/v1", "sk-x");
+      expect(result).toMatchObject({
+        ok: false,
+        httpStatus: 0,
+        curlStatus: 0,
+        message: expect.stringMatching(/mkdtemp/i),
+      });
+    } finally {
+      restoreMkdtemp();
+    }
+  });
 });
+
+function stubFsMkdtempToThrow(): () => void {
+  // Force mkdtempSync to fail so the auth-config setup boundary in
+  // provider-models.ts has to convert the error into a structured probe
+  // failure (PR #5975 review note PRA-2).
+  const fs = require("node:fs") as typeof import("node:fs");
+  const original = fs.mkdtempSync;
+  fs.mkdtempSync = ((_prefix: string) => {
+    throw new Error("simulated mkdtemp failure");
+  }) as typeof fs.mkdtempSync;
+  return () => {
+    fs.mkdtempSync = original;
+  };
+}

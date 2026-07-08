@@ -18,9 +18,10 @@ const expected = {
   pid: 1234,
   desiredEnv: {
     OPENSHELL_DRIVERS: "docker",
-    OPENSHELL_GRPC_ENDPOINT: "http://127.0.0.1:8080",
+    OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+    OPENSHELL_LOCAL_TLS_DIR: "/Users/me/.local/state/nemoclaw/gateway-8080/tls",
   },
-  endpoint: "http://127.0.0.1:8080",
+  endpoint: "https://127.0.0.1:8080",
   gatewayBin: "/usr/local/bin/openshell-gateway",
   openshellVersion: "0.0.44",
   dockerHost: "unix:///Users/me/.colima/default/docker.sock",
@@ -45,7 +46,7 @@ describe("docker-driver gateway runtime marker", () => {
     expect(
       getDockerDriverGatewayRuntimeMarkerDrift(marker, {
         ...expected,
-        desiredEnv: { ...expected.desiredEnv, OPENSHELL_GRPC_ENDPOINT: "http://127.0.0.1:9000" },
+        desiredEnv: { ...expected.desiredEnv, OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:9000" },
       })?.reason,
     ).toContain("env hash");
 

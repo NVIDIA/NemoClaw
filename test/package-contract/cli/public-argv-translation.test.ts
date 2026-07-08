@@ -163,6 +163,23 @@ describe("translatePublicSandboxArgv", () => {
       "sandbox:gateway:token",
       ["alpha", "--quiet"],
     );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "hosts-add", [
+        "searxng.local",
+        "192.168.1.105",
+        "--dry-run",
+      ]),
+      "sandbox:hosts:add",
+      ["alpha", "searxng.local", "192.168.1.105", "--dry-run"],
+    );
+    expectNative(translatePublicSandboxArgv("alpha", "hosts-list", []), "sandbox:hosts:list", [
+      "alpha",
+    ]);
+    expectNative(
+      translatePublicSandboxArgv("alpha", "hosts-remove", ["searxng.local", "--dry-run"]),
+      "sandbox:hosts:remove",
+      ["alpha", "searxng.local", "--dry-run"],
+    );
   });
 
   it("translates sandbox help to native oclif argv", () => {
@@ -211,6 +228,54 @@ describe("translatePublicSandboxArgv", () => {
     );
   });
 
+  it("translates sandbox-scoped inference get/set to native oclif argv (#5977)", () => {
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", ["get"]),
+      "sandbox:inference:get",
+      ["hermes-sb-5977"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", ["get", "--json"]),
+      "sandbox:inference:get",
+      ["hermes-sb-5977", "--json"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", [
+        "set",
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "nvidia/nemotron-3-super-120b-a12b",
+      ]),
+      "sandbox:inference:set",
+      [
+        "hermes-sb-5977",
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "nvidia/nemotron-3-super-120b-a12b",
+      ],
+    );
+  });
+
+  it("routes bare/help sandbox-scoped inference to the oclif parent like config does (#5977)", () => {
+    // `inference` exposes only get/set leaves (no `sandbox:inference` parent),
+    // so bare and --help forms defer to oclif exactly as `config` does above —
+    // never the NemoClaw-owned `Unknown action` path that broke this workflow.
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", ["--help"]),
+      "sandbox:inference",
+      ["--help"],
+      ["sandbox", "inference", "--help"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", []),
+      "sandbox:inference",
+      ["--help"],
+      ["sandbox", "inference", "--help"],
+    );
+  });
+
   it("translates nested sandbox subcommands and defaults", () => {
     expectNative(translatePublicSandboxArgv("alpha", "channels", []), "sandbox:channels:list", [
       "alpha",
@@ -221,9 +286,34 @@ describe("translatePublicSandboxArgv", () => {
       ["alpha", "slack"],
     );
     expectNative(
+      translatePublicSandboxArgv("alpha", "mcp", [
+        "add",
+        "github",
+        "--url",
+        "https://api.githubcopilot.com/mcp/",
+        "--env",
+        "GITHUB_TOKEN",
+      ]),
+      "sandbox:mcp",
+      [
+        "alpha",
+        "add",
+        "github",
+        "--url",
+        "https://api.githubcopilot.com/mcp/",
+        "--env",
+        "GITHUB_TOKEN",
+      ],
+    );
+    expectNative(
       translatePublicSandboxArgv("alpha", "snapshot", ["restore", "latest"]),
       "sandbox:snapshot:restore",
       ["alpha", "latest"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "gateway", ["restart", "--quiet"]),
+      "sandbox:gateway:restart",
+      ["alpha", "--quiet"],
     );
     expectNative(
       translatePublicSandboxArgv("alpha", "skill", ["remove", "my-skill"]),

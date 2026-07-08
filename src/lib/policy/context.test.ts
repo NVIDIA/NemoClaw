@@ -14,6 +14,7 @@ vi.mock(".", () => ({
   listCustomPresets: vi.fn(),
   listPresets: vi.fn(),
   loadPreset: vi.fn(),
+  loadPresetForSandbox: vi.fn(),
 }));
 
 vi.mock("./tiers", () => ({
@@ -58,6 +59,9 @@ function mockBuiltinPresets() {
   ]);
   vi.mocked(policies.listCustomPresets).mockReturnValue([]);
   vi.mocked(policies.loadPreset).mockImplementation((name: string) => PRESET_CONTENT[name] ?? null);
+  vi.mocked(policies.loadPresetForSandbox).mockImplementation(
+    (_sandboxName: string, name: string) => PRESET_CONTENT[name] ?? null,
+  );
   vi.mocked(policies.getPresetEndpoints).mockImplementation((content: string) => {
     const hosts: string[] = [];
     const regex = /host:\s*(\S+)/g;
@@ -93,6 +97,7 @@ function resetMocks() {
   vi.mocked(policies.listPresets).mockReset();
   vi.mocked(policies.listCustomPresets).mockReset();
   vi.mocked(policies.loadPreset).mockReset();
+  vi.mocked(policies.loadPresetForSandbox).mockReset();
   vi.mocked(policies.getPresetEndpoints).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReturnValue(null);

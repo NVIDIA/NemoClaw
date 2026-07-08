@@ -104,6 +104,13 @@ function createFixture({
   tmpFixtures.push(tmpDir);
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
+  const durableFromDockerfile = fromDockerfile
+    ? path.join(tmpDir, "custom-image", "Dockerfile")
+    : null;
+  for (const dockerfilePath of durableFromDockerfile ? [durableFromDockerfile] : []) {
+    fs.mkdirSync(path.dirname(dockerfilePath), { recursive: true });
+    fs.writeFileSync(dockerfilePath, "FROM scratch\n");
+  }
   const rebuildTargetMessagingPlan = rebuildTarget.messagingPlanChannels
     ? makeMessagingPlan(
         rebuildTarget.name,
@@ -130,6 +137,11 @@ function createFixture({
           model: "m",
           provider: "p",
           gpuEnabled: false,
+          sandboxGpuMode: "0",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          dashboardPort: 18789,
+          fromDockerfile: durableFromDockerfile,
           policies: [],
           agent: rebuildTarget.agent,
           ...(rebuildTargetMessagingPlan
@@ -141,6 +153,11 @@ function createFixture({
           model: "m",
           provider: "p",
           gpuEnabled: false,
+          sandboxGpuMode: "0",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          dashboardPort: 18790,
+          fromDockerfile: lastOnboarded.name === rebuildTarget.name ? durableFromDockerfile : null,
           policies: [],
           agent: lastOnboarded.agent,
           ...(lastOnboardedMessagingPlan
@@ -177,7 +194,7 @@ function createFixture({
       webSearchConfig: null,
       policyPresets: [],
       messagingPlan: lastOnboardedMessagingPlan,
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile },
+      metadata: { gatewayName: "nemoclaw", fromDockerfile: durableFromDockerfile },
       steps: {
         preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
         gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -213,6 +230,12 @@ function createFixture({
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.72\\n"); process.exit(0); }
+if (a[0]==="status")                            { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="info")          { const i=a.indexOf("-g"); const name=i>=0?a[i+1]:"nemoclaw"; process.stdout.write("Gateway Info\\n\\nGateway: " + name + "\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="select")        { process.exit(0); }
+if (a[0]==="inference" && a[1]==="get")         { process.stdout.write("Gateway inference:\\n  Provider: p\\n  Model: m\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
@@ -220,6 +243,17 @@ process.exit(0);
 `,
     { mode: 0o755 },
   );
+  for (const component of ["openshell-gateway", "openshell-sandbox"]) {
+    fs.writeFileSync(
+      path.join(tmpDir, component),
+      `#!/usr/bin/env node
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.72\\n");
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+  }
 
   // ── Fake docker ─────────────────────────────────────────────────
   // Hermes rebuilds refresh the local agent base image before deleting the
@@ -228,8 +262,29 @@ process.exit(0);
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+if (a[0]==="info") {
+  process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
+  process.exit(0);
+}
 if (a[0]==="build") { process.exit(0); }
+if (a[0]==="image" && a[1]==="inspect" && a[2]==="--format") {
+  if (a[3]==="{{.Id}}") process.stdout.write("sha256:${"a".repeat(64)}\\n");
+  if (a[3]==="{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  process.exit(0);
+}
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
+if (a[0]==="run" && a.includes("nslookup")) {
+  process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
+  process.exit(0);
+}
+if (a[0]==="run" && a.includes("/usr/bin/ldd")) {
+  process.stdout.write("ldd (GNU libc) 2.41\\n");
+  process.exit(0);
+}
+if (a[0]==="run" && a.includes("/opt/hermes/.venv/bin/python")) {
+  process.stdout.write("nemoclaw-hermes-mcp-runtime-ok\\n");
+  process.exit(0);
+}
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
 process.exit(0);
 `,
@@ -278,11 +333,13 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
       env: {
         HOME: fixture.tmpDir,
         PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NO_COLOR: "1",
       },
-      timeout: 30_000,
+      timeout: 50_000,
     },
   );
 }
@@ -339,10 +396,10 @@ describe("rebuild syncs agent from registry instead of a stale session (#2201)",
       rebuildTarget: { name: "hermes", agent: "hermes" },
       lastOnboarded: { name: "openclaw", agent: null },
     });
-    runRebuild(f);
+    const result = runRebuild(f);
     // With fix: session.agent = "hermes" (synced from hermes registry entry)
     // Without fix: session.agent stays null (from openclaw onboard)
-    expect(readSessionAgent(f)).toBe("hermes");
+    expect(readSessionAgent(f), `${result.stderr}\n${result.stdout}`).toBe("hermes");
   });
 
   it("does not inherit messaging plan from a stale session for another sandbox", {

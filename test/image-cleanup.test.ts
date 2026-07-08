@@ -72,6 +72,7 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     ).toEqual({
       output: "Error: sandbox alpha not found",
       alreadyGone: true,
+      gatewayUnreachable: false,
     });
   });
 

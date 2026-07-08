@@ -15,7 +15,6 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 // an OpenAI-compatible mock endpoint so payload-shape and retry regressions
 // do not require a GPU/Ollama runner to catch.
 //
-// Replaces test/e2e/test-strict-tool-call-probe.sh per #5119 retirement
 // pattern: caller-level mock-driven probes belong in test/, not in live E2E
 // scenario/fixture surfaces or the regression-e2e bash workflow. Refs #5098, #4349.
 //
@@ -33,6 +32,9 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DRIVER = path.join(import.meta.dirname, "fixtures", "strict-tool-call-probe-driver.ts");
 const SOURCE_REQUIRE_HOOK = path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs");
+const SOURCE_NODE_OPTIONS = [process.env.NODE_OPTIONS, `--require=${SOURCE_REQUIRE_HOOK}`]
+  .filter(Boolean)
+  .join(" ");
 const REQUIRED_SOURCE_MODULES = [
   path.join(REPO_ROOT, "src", "lib", "onboard", "inference-selection-validation.ts"),
   path.join(REPO_ROOT, "src", "lib", "inference", "local.ts"),
@@ -59,10 +61,14 @@ describe("strict Chat Completions tool-call probe (#4537)", () => {
         `strict tool-call probe is missing source modules:\n${missingSourceModules.join("\n")}`,
       );
 
-      const result = spawnSync(process.execPath, ["--require", SOURCE_REQUIRE_HOOK, DRIVER], {
+      const result = spawnSync(process.execPath, ["--import", "tsx", DRIVER], {
         cwd: REPO_ROOT,
         encoding: "utf8",
-        env: { ...process.env, NEMOCLAW_TEST_NO_SLEEP: "1" },
+        env: {
+          ...process.env,
+          NODE_OPTIONS: SOURCE_NODE_OPTIONS,
+          NEMOCLAW_TEST_NO_SLEEP: "1",
+        },
         timeout: 110_000,
         // Inherit stderr for diagnostic visibility on failure; capture stdout
         // to assert the [PASS] markers below.

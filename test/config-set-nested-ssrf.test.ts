@@ -7,8 +7,19 @@ import { describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
 
-function installMockPrivilegedExec(privilegedExecPath: string): () => void {
+type MockGuardRestore = (() => void) & { guardSpy: ReturnType<typeof vi.fn> };
+
+function restoreCachedModule(modulePath: string, previous: unknown): void {
+  Reflect.deleteProperty(requireCache, modulePath);
+  Object.assign(requireCache, previous === undefined ? {} : { [modulePath]: previous });
+}
+
+function installMockPrivilegedExec(privilegedExecPath: string): MockGuardRestore {
   const priorPrivilegedExec = require.cache[privilegedExecPath];
+  const timerBoundLockPath = require.resolve("../src/lib/shields/timer-bound-lock");
+  const priorTimerBoundLock = require.cache[timerBoundLockPath];
+  const openClawConfigLockPath = require.resolve("../src/lib/shields/openclaw-config-lock");
+  const priorOpenClawConfigLock = require.cache[openClawConfigLockPath];
   requireCache[privilegedExecPath] = {
     id: privilegedExecPath,
     filename: privilegedExecPath,
@@ -19,11 +30,51 @@ function installMockPrivilegedExec(privilegedExecPath: string): () => void {
       privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
     },
   } as any;
+  requireCache[timerBoundLockPath] = {
+    id: timerBoundLockPath,
+    filename: timerBoundLockPath,
+    loaded: true,
+    exports: {
+      // Transition-lock behavior has dedicated coverage. Keep this SSRF suite
+      // independent from host process-identity discovery while it mocks ps.
+      withTimerBoundShieldsMutationLock: (
+        _sandboxName: string,
+        _command: string,
+        callback: () => unknown,
+      ) => callback(),
+      withTimerBoundShieldsMutationLockAsync: async (
+        _sandboxName: string,
+        _command: string,
+        callback: () => Promise<unknown>,
+      ) => callback(),
+    },
+  } as any;
+  const guardSpy = vi.fn((_privileged: unknown, _action: string, options: { input?: string }) => ({
+    issues: [],
+    chattrApplied: true,
+    configSha256: require("node:crypto")
+      .createHash("sha256")
+      .update(options.input ?? "")
+      .digest("hex"),
+  }));
+  requireCache[openClawConfigLockPath] = {
+    id: openClawConfigLockPath,
+    filename: openClawConfigLockPath,
+    loaded: true,
+    exports: {
+      // Config-guard protocol and transaction behavior have dedicated tests.
+      // This suite only needs a successful digest-bound write boundary.
+      runOpenClawConfigGuard: guardSpy,
+    },
+  } as any;
 
-  return () => {
-    if (priorPrivilegedExec) requireCache[privilegedExecPath] = priorPrivilegedExec;
-    else delete requireCache[privilegedExecPath];
-  };
+  const restore = (() => {
+    restoreCachedModule(privilegedExecPath, priorPrivilegedExec);
+    restoreCachedModule(timerBoundLockPath, priorTimerBoundLock);
+    restoreCachedModule(openClawConfigLockPath, priorOpenClawConfigLock);
+  }) as MockGuardRestore;
+  restore.guardSpy = guardSpy;
+  return restore;
 }
 
 describe("config set nested URL SSRF enforcement", () => {
@@ -253,7 +304,11 @@ describe("config set nested URL SSRF enforcement", () => {
       ).resolves.toBeUndefined();
 
       expect(errorSpy).not.toHaveBeenCalled();
-      expect(execSpy).toHaveBeenCalled();
+      expect(restorePrivilegedExec.guardSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        "write-config",
+        expect.objectContaining({ input: expect.any(String) }),
+      );
       expect(appendAuditEntry).toHaveBeenCalledWith(
         expect.objectContaining({
           action: "config_set",
@@ -342,7 +397,11 @@ describe("config set nested URL SSRF enforcement", () => {
       ).resolves.toBeUndefined();
 
       expect(errorSpy).not.toHaveBeenCalled();
-      expect(execSpy).toHaveBeenCalled();
+      expect(restorePrivilegedExec.guardSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        "write-config",
+        expect.objectContaining({ input: expect.any(String) }),
+      );
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();
@@ -423,7 +482,11 @@ describe("config set nested URL SSRF enforcement", () => {
       ).resolves.toBeUndefined();
 
       expect(errorSpy).not.toHaveBeenCalled();
-      expect(execSpy).toHaveBeenCalled();
+      expect(restorePrivilegedExec.guardSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        "write-config",
+        expect.objectContaining({ input: expect.any(String) }),
+      );
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();

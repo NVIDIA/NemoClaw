@@ -6,12 +6,30 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import { createOpenshellCliHelpers } from "./openshell-cli";
-import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
+import {
+  prepareSandboxCreateLaunch,
+  prepareSandboxCreateLaunchWithPrebuild,
+} from "./sandbox-create-launch";
 
 const disabledHermesDashboardState = { config: null, enabled: false };
+const temporaryBuildContexts: string[] = [];
+
+function createTrustedBuildContext(): string {
+  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
+  temporaryBuildContexts.push(buildCtx);
+  fs.writeFileSync(path.join(buildCtx, "Dockerfile"), "FROM scratch\n");
+  return buildCtx;
+}
+
+afterEach(() => {
+  for (const buildCtx of temporaryBuildContexts.splice(0)) {
+    fs.rmSync(buildCtx, { recursive: true, force: true });
+  }
+});
 
 describe("prepareSandboxCreateLaunch", () => {
   it("builds the sandbox create command and runtime env envelope", () => {
@@ -70,12 +88,50 @@ describe("prepareSandboxCreateLaunch", () => {
     );
   });
 
+  it("forwards only the allowlisted OpenClaw auto-pair runtime controls", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "openclaw" } as any,
+      chatUiUrl: "",
+      createArgs: [],
+      env: {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
+        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "99",
+        NEMOCLAW_PROVIDER_KEY: "must-not-enter-the-sandbox",
+      },
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: vi.fn(() => {
+        throw new Error("dashboard port should not be resolved");
+      }),
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    expect(result.envArgs).toEqual([
+      "OPENCLAW_HOME=/sandbox",
+      "OPENCLAW_STATE_DIR=/sandbox/.openclaw",
+      "OPENCLAW_WORKSPACE_DIR=/sandbox/.openclaw/workspace",
+      "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=30",
+      "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=3",
+      "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=10",
+      "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=600",
+    ]);
+    expect(result.sandboxStartupCommand.join(" ")).not.toContain(
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+    );
+    expect(result.sandboxStartupCommand.join(" ")).not.toContain("NEMOCLAW_PROVIDER_KEY");
+  });
+
   it("adds Hermes dashboard env and skips OpenClaw env for non-OpenClaw agents", () => {
     const result = prepareSandboxCreateLaunch({
       agent: { name: "hermes" } as any,
       chatUiUrl: "http://127.0.0.1:18789/",
       createArgs: [],
-      env: {},
+      env: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30" },
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "18789",
       hermesDashboardState: {
@@ -222,5 +278,113 @@ describe("prepareSandboxCreateLaunch", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("forwards the validated sandbox name into the Deep Agents Code sandbox create env", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "langchain-deepagents-code" } as any,
+      chatUiUrl: "",
+      createArgs: ["--name", "rendered-name"],
+      sandboxName: "dcode-demo",
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: vi.fn(() => "0"),
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    expect(result.envArgs).toContain("NEMOCLAW_SANDBOX_NAME=dcode-demo");
+    expect(result.envArgs).not.toContain("NEMOCLAW_SANDBOX_NAME=rendered-name");
+  });
+
+  it("does not forward the sandbox name for non-Deep-Agents-Code agents", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.custom-openclaw" } } as any,
+      chatUiUrl: "http://127.0.0.1:19000/",
+      createArgs: ["--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "19000",
+      hermesDashboardState: disabledHermesDashboardState,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    expect(result.envArgs.some((arg) => arg.startsWith("NEMOCLAW_SANDBOX_NAME="))).toBe(false);
+  });
+});
+
+describe("prepareSandboxCreateLaunchWithPrebuild", () => {
+  it("hands the build-qualified image to the canonical launch renderer", async () => {
+    const buildCtx = createTrustedBuildContext();
+    const dockerfile = path.join(buildCtx, "Dockerfile");
+    const buildImage = vi.fn(async () => 0);
+    const result = await prepareSandboxCreateLaunchWithPrebuild({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", dockerfile, "--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      sandboxName: "demo",
+      buildEnv: () => ({}),
+      prebuild: {
+        buildCtx,
+        buildId: "build-123",
+        dockerDriverGateway: true,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        buildImage,
+        log: vi.fn(),
+        origin: "generated",
+      },
+    });
+
+    expect(result.prebuild).toEqual({
+      createArgs: ["--from", "nemoclaw-sandbox-local:demo-build-123", "--name", "demo"],
+      imageRef: "nemoclaw-sandbox-local:demo-build-123",
+    });
+    expect(result.createCommand).toContain(
+      "sandbox create --from nemoclaw-sandbox-local:demo-build-123 --name demo",
+    );
+    expect(buildImage).toHaveBeenCalledOnce();
+  });
+
+  it("renders the original Dockerfile after a local build failure", async () => {
+    const buildCtx = createTrustedBuildContext();
+    const dockerfile = path.join(buildCtx, "Dockerfile");
+    const result = await prepareSandboxCreateLaunchWithPrebuild({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", dockerfile, "--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      sandboxName: "demo",
+      buildEnv: () => ({}),
+      prebuild: {
+        buildCtx,
+        buildId: "build-123",
+        dockerDriverGateway: true,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        buildImage: async () => 1,
+        log: vi.fn(),
+        origin: "generated",
+      },
+    });
+
+    expect(result.prebuild).toEqual({
+      createArgs: ["--from", dockerfile, "--name", "demo"],
+      imageRef: null,
+    });
+    expect(result.createCommand).toContain(`sandbox create --from ${dockerfile} --name demo`);
+    expect(result.createCommand).not.toContain("nemoclaw-sandbox-local");
   });
 });

@@ -7,12 +7,17 @@ import {
   enforceDockerGpuPatchPreserveNetwork,
   getSandboxRuntimeInferenceEndpoint,
   printDockerGpuSandboxInferenceVerificationFailure,
+  shouldSkipGpuBridgeProbe,
   shouldUseDockerGpuPatchHostNetwork,
   verifyDockerGpuSandboxLocalInference,
   verifyGpuSandboxAfterReady,
 } from "./docker-gpu-local-inference";
 
-const HOST_NETWORK_ENV = { NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" } as NodeJS.ProcessEnv;
+const HOST_NETWORK_ENV = {
+  NEMOCLAW_DOCKER_GPU_PATCH: "1",
+  NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
+} as NodeJS.ProcessEnv;
+const LEGACY_PATCH_ENV = { NEMOCLAW_DOCKER_GPU_PATCH: "1" } as NodeJS.ProcessEnv;
 const GPU_CONFIG = { sandboxGpuEnabled: true };
 
 function gpuPatchOptions(extra: Record<string, unknown> = {}) {
@@ -20,7 +25,7 @@ function gpuPatchOptions(extra: Record<string, unknown> = {}) {
     sandboxName: "alpha",
     dockerDriverGateway: true,
     platform: "linux" as NodeJS.Platform,
-    env: {} as NodeJS.ProcessEnv,
+    env: { ...LEGACY_PATCH_ENV },
     ...extra,
   };
 }
@@ -55,6 +60,33 @@ describe("shouldUseDockerGpuPatchHostNetwork", () => {
         dockerDriverGateway: true,
         platform: "darwin",
         env: HOST_NETWORK_ENV,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldSkipGpuBridgeProbe", () => {
+  it("forces the gateway context and skips only for an active legacy host-network patch", () => {
+    expect(
+      shouldSkipGpuBridgeProbe(true, "linux", {
+        dockerDriverGateway: false,
+        dockerDesktopWsl: false,
+        env: HOST_NETWORK_ENV,
+        platform: "linux",
+      }),
+    ).toBe(true);
+    expect(
+      shouldSkipGpuBridgeProbe(true, "linux", {
+        dockerDesktopWsl: false,
+        env: { NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" },
+        platform: "linux",
+      }),
+    ).toBe(false);
+    expect(
+      shouldSkipGpuBridgeProbe(false, "linux", {
+        dockerDesktopWsl: false,
+        env: HOST_NETWORK_ENV,
+        platform: "linux",
       }),
     ).toBe(false);
   });
@@ -267,7 +299,7 @@ describe("verifyGpuSandboxAfterReady", () => {
       sandboxName: "alpha",
       dockerDriverGateway: true,
       platform: "linux" as NodeJS.Platform,
-      env: {} as NodeJS.ProcessEnv,
+      env: { ...LEGACY_PATCH_ENV },
       useDockerGpuPatch: true,
       verifyDirectSandboxGpu: vi.fn(),
       selectedMode: () => null,

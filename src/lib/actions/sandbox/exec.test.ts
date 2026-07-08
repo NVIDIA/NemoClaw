@@ -3,11 +3,16 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// The multi-line guard suites (findMultilineExecArg, multilineExecMessage, and
+// the execSandbox dispatch guard for #5980) live in exec.multiline-guard.test.ts
+// so this file stays focused on argv construction and the workdir probe.
 import {
   buildOpenshellExecArgs,
   buildWorkdirProbeArgs,
   computeExitCode,
   evaluateWorkdirProbe,
+  execSandbox,
+  type SandboxExecCleanupDeps,
   validateWorkdirOrFail,
   workdirMissingMessage,
 } from "./exec";
@@ -96,22 +101,6 @@ describe("computeExitCode", () => {
   it("returns the remote command's status when it exits normally", () => {
     expect(computeExitCode({ status: 0 })).toEqual({ code: 0 });
     expect(computeExitCode({ status: 42 })).toEqual({ code: 42 });
-  });
-
-  it("translates a terminating signal into 128 + signal number", () => {
-    expect(computeExitCode({ status: null, signal: "SIGTERM" })).toEqual({ code: 128 + 15 });
-    expect(computeExitCode({ status: null, signal: "SIGKILL" })).toEqual({ code: 128 + 9 });
-  });
-
-  it("falls back to 1 when the signal is unknown to os.constants.signals", () => {
-    expect(computeExitCode({ status: null, signal: "SIGBOGUS" as NodeJS.Signals })).toEqual({
-      code: 1,
-    });
-  });
-
-  it("falls back to 1 when neither status nor signal is set", () => {
-    expect(computeExitCode({ status: null })).toEqual({ code: 1 });
-    expect(computeExitCode({ status: null, signal: null })).toEqual({ code: 1 });
   });
 
   it("surfaces spawn transport errors with the error message and code 1", () => {
@@ -226,5 +215,185 @@ describe("validateWorkdirOrFail", () => {
 
     expect(exitSpy).not.toHaveBeenCalled();
     expect(errSpy).not.toHaveBeenCalled();
+  });
+});
+
+// End-to-end wiring of the post-exec policy-denial hint through execSandbox
+// (#5978): proves the breadcrumb fires for a denied failure while the command's
+// exit code is preserved, and stays silent on success and unrelated failures.
+// All host seams are injected so the test never spawns openshell or touches the
+// registry/shields (getSandbox returns null → cleanup is a no-op).
+describe("execSandbox policy-denial hint wiring (#5978)", () => {
+  const START_MS = 1_000_000;
+  // Epoch [1000.500] parses to 1000500ms, at/after START so it is "fresh".
+  const DENIAL_LINE =
+    "[1000.500] [sandbox] [OCSF ] NET:OPEN [MED] DENIED /usr/bin/curl(1) -> example.com:443 [reason:not allowed by any policy]";
+
+  const cleanupSkipped: SandboxExecCleanupDeps = {
+    getSandbox: () => null,
+    inspectMutableConfigPerms: vi.fn(() => {
+      throw new Error("cleanup should be skipped for an unregistered sandbox");
+    }) as unknown as SandboxExecCleanupDeps["inspectMutableConfigPerms"],
+    repairMutableConfigPerms: vi.fn(() => {
+      throw new Error("cleanup should be skipped for an unregistered sandbox");
+    }) as unknown as SandboxExecCleanupDeps["repairMutableConfigPerms"],
+  };
+
+  const runExec = async (
+    status: number | null,
+    probeOutput: string,
+    options: {
+      error?: Error;
+      now?: () => number;
+      onRun?: () => void;
+      probeError?: Error;
+      cleanupDeps?: SandboxExecCleanupDeps;
+      writeStderr?: (line: string) => void;
+    } = {},
+  ) => {
+    const stderr: string[] = [];
+    const probeError = options.probeError;
+    const probeLogs = vi.fn(
+      probeError
+        ? () => {
+            throw probeError;
+          }
+        : () => probeOutput,
+    );
+    const enableAudit = vi.fn(() => {});
+    let exitCode = Number.NaN;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      exitCode = code ?? 0;
+      throw new Error("__exec_exit__");
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await execSandbox(
+      "wire-sbx",
+      ["curl", "-sS", "https://example.com/"],
+      {},
+      {
+        resolveBinary: () => "openshell",
+        run: async () => {
+          options.onRun?.();
+          return { status, ...(options.error ? { error: options.error } : {}) };
+        },
+        cleanupDeps: options.cleanupDeps ?? cleanupSkipped,
+        policyHint: {
+          now: options.now ?? (() => START_MS),
+          env: {},
+          probeLogs,
+          enableAudit,
+          sleep: async () => {},
+          attempts: 1,
+          writeStderr: options.writeStderr ?? ((line) => stderr.push(line)),
+        },
+      },
+    ).catch(() => {});
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+    return { enableAudit, exitCode, probeLogs, stderr };
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("appends the breadcrumb and preserves the command exit code on a denied failure", async () => {
+    const { exitCode, stderr } = await runExec(56, DENIAL_LINE);
+    expect(exitCode).toBe(56);
+    expect(stderr.join("\n")).toContain(
+      "recent network policy denial detected for example.com:443",
+    );
+    expect(stderr.join("\n")).toContain("nemoclaw wire-sbx logs --tail 50");
+  });
+
+  it("stays silent and exits 0 on success", async () => {
+    const { exitCode, stderr } = await runExec(0, DENIAL_LINE);
+    expect(exitCode).toBe(0);
+    expect(stderr).toHaveLength(0);
+  });
+
+  it("stays silent and preserves the exit code on an unrelated failure", async () => {
+    // A present-but-non-denial log line exercises the filter, not just "no logs".
+    const { exitCode, stderr } = await runExec(
+      2,
+      "[1000.500] [sandbox] [INFO ] some unrelated runtime error: connection reset",
+    );
+    expect(exitCode).toBe(2);
+    expect(stderr).toHaveLength(0);
+  });
+
+  it("does not probe policy logs when OpenShell invocation fails", async () => {
+    const { enableAudit, exitCode, probeLogs, stderr } = await runExec(null, DENIAL_LINE, {
+      error: new Error("openshell: command not found"),
+    });
+    expect(exitCode).toBe(1);
+    expect(enableAudit).not.toHaveBeenCalled();
+    expect(probeLogs).not.toHaveBeenCalled();
+    expect(stderr).toHaveLength(0);
+  });
+
+  it("preserves the command exit code when policy-hint stderr writing throws", async () => {
+    const { exitCode } = await runExec(56, DENIAL_LINE, {
+      writeStderr: () => {
+        throw new Error("stderr unavailable");
+      },
+    });
+    expect(exitCode).toBe(56);
+  });
+
+  it("preserves the command exit code when the policy log probe fails", async () => {
+    const { exitCode, probeLogs, stderr } = await runExec(56, "", {
+      probeError: Object.assign(new Error("OpenShell log read timed out"), {
+        code: "ETIMEDOUT",
+      }),
+    });
+    expect(exitCode).toBe(56);
+    expect(probeLogs).toHaveBeenCalledOnce();
+    expect(stderr).toHaveLength(0);
+  });
+
+  it("emits after active OpenClaw cleanup and preserves the command exit code", async () => {
+    const inspectMutableConfigPerms = vi.fn(() => ({
+      applies: false as const,
+      skipReason: "locked" as const,
+      reason: "shields up",
+    }));
+    const repairMutableConfigPerms = vi.fn(() => ({
+      applied: false as const,
+      skipReason: "locked" as const,
+      reason: "shields up",
+    }));
+    const { exitCode, stderr } = await runExec(56, DENIAL_LINE, {
+      cleanupDeps: {
+        getSandbox: () => ({ agent: "openclaw" }),
+        inspectMutableConfigPerms,
+        repairMutableConfigPerms,
+      },
+    });
+    expect(inspectMutableConfigPerms).toHaveBeenCalledOnce();
+    expect(repairMutableConfigPerms).toHaveBeenCalledOnce();
+    expect(exitCode).toBe(56);
+    expect(stderr.join("\n")).toContain("recent network policy denial detected");
+  });
+
+  it("captures the denial cutoff before dispatch and rejects an older denial", async () => {
+    let dispatched = false;
+    const now = vi.fn(() => {
+      expect(dispatched).toBe(false);
+      return START_MS;
+    });
+    const staleDenial =
+      "[999.999] [sandbox] [OCSF ] NET:OPEN [MED] DENIED /usr/bin/curl(1) -> example.com:443 [reason:not allowed by any policy]";
+    const { exitCode, stderr } = await runExec(56, staleDenial, {
+      now,
+      onRun: () => {
+        dispatched = true;
+      },
+    });
+    expect(now).toHaveBeenCalledOnce();
+    expect(dispatched).toBe(true);
+    expect(exitCode).toBe(56);
+    expect(stderr).toHaveLength(0);
   });
 });

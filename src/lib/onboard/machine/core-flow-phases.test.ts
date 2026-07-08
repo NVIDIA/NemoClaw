@@ -40,6 +40,7 @@ function context(
     hermesAuthMethod: null,
     hermesToolGateways: [],
     preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,
@@ -74,15 +75,28 @@ function createPhases(
   } = {},
 ) {
   return createCoreOnboardFlowPhases<CoreContext, TestHost>({
+    gatewayName: "nemoclaw",
     forceProviderSelection: false,
     env: {},
     constants: {
       hermesProviderName: "hermes",
-      hermesApiKeyAuthMethod: "api-key",
+      hermesApiKeyAuthMethod: "api_key",
       hermesApiKeyCredentialEnv: "HERMES_API_KEY",
     },
     providerDeps: {
-      normalizeHermesAuthMethod: (value) => value ?? null,
+      checkGatewayRouteCompatibility: () => ({ ok: true }),
+      preflightGatewayRouteDiscovery: () => ({
+        ok: true,
+        requiredModel: null,
+        requiredEndpointUrl: null,
+        requiredInferenceApi: null,
+      }),
+      withGatewayRouteMutationLock: async <T>(
+        _gatewayName: string,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
+      normalizeHermesAuthMethod: (value) =>
+        value === "oauth" || value === "api_key" ? value : null,
       setupNim: vi.fn(async () => ({
         model: "nvidia/test",
         provider: "nim",
@@ -91,6 +105,7 @@ function createPhases(
         hermesAuthMethod: null,
         hermesToolGateways: ["local"],
         preferredInferenceApi: "chat",
+        compatibleEndpointReasoning: null,
         nimContainer: "nim-test",
       })),
       setupInference: vi.fn(async () => ({ ok: true as const })),
@@ -100,21 +115,34 @@ function createPhases(
       ),
       toSessionUpdates: (updates) => updates as SessionUpdates,
       skippedStepMessage: vi.fn(),
-      ensureResumeProviderReady: vi.fn(async () => ({
-        forceInferenceSetup: false,
-        credentialEnv: null,
-      })),
+      ensureResumeProviderReady: vi.fn(
+        async (
+          _gatewayName: string,
+          _provider: string | null | undefined,
+          _credentialEnv: string | null | undefined,
+        ) => ({
+          forceInferenceSetup: false,
+          credentialEnv: null,
+        }),
+      ),
+      isResumeProviderSurfaceReady: vi.fn(() => true),
       recordStateSkipped: vi.fn(async () => createSession()),
       recordRepairEvent: vi.fn(async () => createSession()),
       hydrateCredentialEnv: vi.fn(),
+      configureCompatibleEndpointReasoning: vi.fn(async () => "false" as const),
+      clearCompatibleEndpointReasoning: vi.fn(() => null),
       repairLocalInferenceSystemdOverrideOrExit: vi.fn(),
       isNonInteractive: () => true,
       getOpenshellBinary: () => "openshell",
       needsBedrockRuntimeAdapter: () => false,
-      isInferenceRouteReady: () => false,
+      isInferenceRouteReady: (_gatewayName, _provider, _model) => false,
       isRoutedInferenceProvider: () => false,
       reconcileModelRouter: vi.fn(async () => undefined),
-      reupsertRoutedProvider: () => ({ ok: true, endpointUrl: "https://example.test/v1" }),
+      reupsertRoutedProvider: (_gatewayName, _provider, _endpointUrl, _credentialEnv) => ({
+        ok: true,
+        endpointUrl: "https://example.test/v1",
+      }),
+      reserveSandboxInferenceRoute: vi.fn(() => true),
       registryUpdateSandbox: vi.fn(),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       assessHost: () => ({ memoryGb: 64 }),
@@ -144,14 +172,26 @@ function createPhases(
       hydrateMessagingChannelConfig: (config) => config,
       messagingChannelConfigsEqual: () => true,
       getSandboxReuseState: () => "missing",
+      getDcodeSelectionDrift: () => ({ changed: false, unknown: false }),
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],
+      getSandboxRegistryEntry: () => ({
+        name: "my-sandbox",
+        provider: "nim",
+        model: "nvidia/test",
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        preferredInferenceApi: "chat",
+        gatewayName: "nemoclaw",
+        gpuEnabled: false,
+        policies: [],
+      }),
       normalizeHermesToolGatewaySelections: (value) => (Array.isArray(value) ? value : []),
       stringSetsEqual: (left, right) =>
         left.length === right.length && left.every((item) => right.includes(item)),
       removeSandboxFromRegistry: vi.fn(),
       repairRecordedSandbox: vi.fn(),
-      ensureValidatedBraveSearchCredential: vi.fn(async () => null),
+      ensureValidatedWebSearchCredential: vi.fn(async () => null),
       isBackToSelection: () => false,
       configureWebSearch: vi.fn(async () => null),
       startRecordedStep: vi.fn(async () => undefined),
@@ -180,17 +220,25 @@ function createPhases(
         throw new Error(`exit ${code}`);
       }) as (code: number) => never,
       ...overrides.sandboxDeps,
+      checkGatewayRouteCompatibility:
+        overrides.sandboxDeps?.checkGatewayRouteCompatibility ?? (() => ({ ok: true })),
+      withGatewayRouteMutationLock:
+        overrides.sandboxDeps?.withGatewayRouteMutationLock ??
+        (async <T>(_gatewayName: string, operation: () => Promise<T> | T) => await operation()),
     },
   });
 }
 
 describe("core onboard flow phases", () => {
-  it("runs provider selection and carries inference output into the flow context", async () => {
-    const [providerPhase] = createPhases();
+  it("carries provider selection output into sandbox setup", async () => {
+    const updateSandboxRegistry = vi.fn();
+    const [providerPhase, sandboxPhase] = createPhases({
+      sandboxDeps: { updateSandboxRegistry },
+    });
 
-    const result = await providerPhase.run(context());
+    const providerResult = await providerPhase.run(context());
 
-    expect(result.context).toMatchObject({
+    expect(providerResult.context).toMatchObject({
       sandboxName: "my-sandbox",
       model: "nvidia/test",
       provider: "nim",
@@ -200,7 +248,33 @@ describe("core onboard flow phases", () => {
       preferredInferenceApi: "chat",
       nimContainer: "nim-test",
     });
-    expect(Array.isArray(result.result)).toBe(true);
+    expect(Array.isArray(providerResult.result)).toBe(true);
+
+    const sandboxResult = await sandboxPhase.run(providerResult.context);
+
+    expect(sandboxResult.context).toMatchObject({
+      sandboxName: "created-sandbox",
+      model: "nvidia/test",
+      provider: "nim",
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      fromDockerfile: null,
+      gpu: { platform: "linux" },
+      sandboxGpuConfig: { mode: "cdi" },
+      gpuPassthrough: true,
+      hermesToolGateways: ["local"],
+      preferredInferenceApi: "chat",
+      nimContainer: "nim-test",
+      selectedMessagingChannels: ["slack", "discord"],
+      webSearchSupported: true,
+    });
+    expect(updateSandboxRegistry).toHaveBeenCalledWith(
+      "created-sandbox",
+      expect.objectContaining({
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    );
   });
 
   it("passes fresh context through to provider setup recovery policy", async () => {
@@ -212,6 +286,7 @@ describe("core onboard flow phases", () => {
       hermesAuthMethod: null,
       hermesToolGateways: [],
       preferredInferenceApi: "chat",
+      compatibleEndpointReasoning: null,
       nimContainer: null,
     }));
     const [providerPhase] = createPhases({ providerDeps: { setupNim } });
@@ -223,19 +298,35 @@ describe("core onboard flow phases", () => {
       "my-sandbox",
       { name: "openclaw" },
       false,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
     );
   });
 
   it("uses normalized context Hermes tool gateways for provider inference resume", async () => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
-    const [providerPhase] = createPhases({
+    const [providerPhase, sandboxPhase] = createPhases({
       providerDeps: {
-        ensureResumeProviderReady: vi.fn(async () => ({
+        ensureResumeProviderReady: vi.fn(async (_gatewayName, _provider, _credentialEnv) => ({
           forceInferenceSetup: false,
           credentialEnv: "HERMES_API_KEY",
         })),
-        isInferenceRouteReady: () => true,
+        isInferenceRouteReady: (_gatewayName, _provider, _model) => true,
         setupInference,
+      },
+      sandboxDeps: {
+        getSandboxRegistryEntry: () => ({
+          name: "my-sandbox",
+          provider: "hermes",
+          model: "nvidia/test",
+          endpointUrl: null,
+          credentialEnv: "HERMES_API_KEY",
+          preferredInferenceApi: null,
+          gatewayName: "nemoclaw",
+          gpuEnabled: false,
+          policies: [],
+        }),
       },
     });
     const session = createSession({
@@ -269,32 +360,19 @@ describe("core onboard flow phases", () => {
       "HERMES_API_KEY",
       "api_key",
       ["nous-web"],
-      { allowToolsIncompatible: false },
+      { gatewayName: "nemoclaw", allowToolsIncompatible: false },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
-  });
 
-  it("runs sandbox setup only after provider state is complete", async () => {
-    const [, sandboxPhase] = createPhases();
+    const sandboxResult = await sandboxPhase.run(result.context);
 
-    await expect(sandboxPhase.run(context())).rejects.toThrow(
-      "Onboarding state is incomplete before sandbox setup.",
-    );
-
-    const result = await sandboxPhase.run(
-      context({
-        model: "nvidia/test",
-        provider: "nim",
-        hermesToolGateways: ["local"],
-        preferredInferenceApi: "chat",
-        nimContainer: "nim-test",
-      }),
-    );
-
-    expect(result.context).toMatchObject({
+    expect(sandboxResult.context).toMatchObject({
       sandboxName: "created-sandbox",
-      selectedMessagingChannels: ["slack", "discord"],
-      webSearchSupported: true,
+      model: "nvidia/test",
+      provider: "hermes",
+      credentialEnv: "HERMES_API_KEY",
+      hermesToolGateways: ["nous-web"],
+      sandboxGpuConfig: { mode: "cdi" },
     });
   });
 

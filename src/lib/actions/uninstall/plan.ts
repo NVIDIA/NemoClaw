@@ -32,17 +32,21 @@ function errnoCode(error: unknown): string | undefined {
 function classifyShimPathByMetadata(
   shimPath: string,
   lstatSync: typeof fs.lstatSync,
+  binName: string,
 ): ShimClassification {
   try {
     const stat = lstatSync(shimPath);
-    return classifyNemoclawShim({
-      exists: true,
-      isFile: stat.isFile(),
-      isSymlink: stat.isSymbolicLink(),
-    });
+    return classifyNemoclawShim(
+      {
+        exists: true,
+        isFile: stat.isFile(),
+        isSymlink: stat.isSymbolicLink(),
+      },
+      binName,
+    );
   } catch (error) {
     if (errnoCode(error) === "ENOENT") {
-      return classifyNemoclawShim({ exists: false, isFile: false, isSymlink: false });
+      return classifyNemoclawShim({ exists: false, isFile: false, isSymlink: false }, binName);
     }
     throw error;
   }
@@ -52,7 +56,11 @@ function resolveUninstallHome(envHome: string | undefined): string {
   return envHome || os.homedir();
 }
 
-export function classifyShimPath(shimPath: string, deps: FileSystemDeps = {}): ShimClassification {
+export function classifyShimPath(
+  shimPath: string,
+  deps: FileSystemDeps = {},
+  binName = "nemoclaw",
+): ShimClassification {
   const lstatSync = deps.lstatSync ?? fs.lstatSync;
   const openSync = deps.openSync ?? fs.openSync;
   const fstatSync = deps.fstatSync ?? fs.fstatSync;
@@ -61,26 +69,29 @@ export function classifyShimPath(shimPath: string, deps: FileSystemDeps = {}): S
   const noFollowFlag =
     typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : undefined;
   if (noFollowFlag === undefined) {
-    return classifyShimPathByMetadata(shimPath, lstatSync);
+    return classifyShimPathByMetadata(shimPath, lstatSync, binName);
   }
   const nonblockFlag = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
   try {
     const fd = openSync(shimPath, fs.constants.O_RDONLY | noFollowFlag | nonblockFlag);
     try {
       const fdStat = fstatSync(fd);
-      return classifyNemoclawShim({
-        contents: fdStat.isFile() ? String(readFileSync(fd, "utf-8")) : undefined,
-        exists: true,
-        isFile: fdStat.isFile(),
-        isSymlink: false,
-      });
+      return classifyNemoclawShim(
+        {
+          contents: fdStat.isFile() ? String(readFileSync(fd, "utf-8")) : undefined,
+          exists: true,
+          isFile: fdStat.isFile(),
+          isSymlink: false,
+        },
+        binName,
+      );
     } finally {
       closeSync(fd);
     }
   } catch (error) {
     const code = errnoCode(error);
     if (code === "ENOENT") {
-      return classifyNemoclawShim({ exists: false, isFile: false, isSymlink: false });
+      return classifyNemoclawShim({ exists: false, isFile: false, isSymlink: false }, binName);
     }
     if (
       code === "ELOOP" ||
@@ -91,7 +102,7 @@ export function classifyShimPath(shimPath: string, deps: FileSystemDeps = {}): S
       code === "ENODEV" ||
       code === "ENOTSUP"
     ) {
-      return classifyShimPathByMetadata(shimPath, lstatSync);
+      return classifyShimPathByMetadata(shimPath, lstatSync, binName);
     }
     throw error;
   }

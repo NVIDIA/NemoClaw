@@ -40,9 +40,16 @@ function extractRefreshBlock(): string {
       "Expected plugin-refresh + PID-tracking block between start_auto_pair and SANDBOX_WAIT_PID in scripts/nemoclaw-start.sh",
     );
   }
-  return [extractShellFunction(src, "start_plugin_registry_refresh"), src.slice(start, end)].join(
-    "\n",
-  );
+  return [
+    extractShellFunction(src, "openclaw_load_pid_identity"),
+    extractShellFunction(src, "openclaw_pid_start_identity"),
+    extractShellFunction(src, "capture_openclaw_pid_start_identity"),
+    extractShellFunction(src, "openclaw_supervised_pid_is_live"),
+    extractShellFunction(src, "start_plugin_registry_refresh"),
+    extractShellFunction(src, "openclaw_supervised_aux_pid_is_live"),
+    extractShellFunction(src, "refresh_openclaw_supervised_child_pids"),
+    src.slice(start, end),
+  ].join("\n");
 }
 
 // Drive the refresh block end-to-end with stubs for `openclaw` and the
@@ -102,6 +109,7 @@ function runRefreshBlock(
       `  if [ "$count" -ge ${opts.gatewayReadyAfter} ]; then exit 0; else exit 1; fi`,
       "fi",
       `if [ "$1" = "plugins" ] && [ "$2" = "registry" ] && [ "$3" = "--refresh" ]; then`,
+      "  command sleep 0.2",
       `  printf 'CALL=plugins registry --refresh HOME=%s STEP_DOWN_USER=%s USER=%s\\n' "$HOME" "\${STEP_DOWN_USER:-}" "$(id -un)" >> ${JSON.stringify(envLog)}`,
       `  cp ${JSON.stringify(registryState)} ${JSON.stringify(preRefreshState)}`,
       `  cat > ${JSON.stringify(registryState)} <<'REGISTRY_STATE'`,
@@ -144,9 +152,16 @@ function runRefreshBlock(
     // Stubs for variables the extracted block references that are set
     // earlier in the production script.
     "AUTO_PAIR_PID=",
+    "AUTO_PAIR_PID_START_IDENTITY=",
     "GATEWAY_LOG_TAIL_PID=",
+    "GATEWAY_LOG_TAIL_PID_START_IDENTITY=",
     "GATEWAY_LOG_PERSIST_PID=",
+    "GATEWAY_LOG_PERSIST_PID_START_IDENTITY=",
     "GATEWAY_PID=0",
+    "GATEWAY_PID_START_IDENTITY=",
+    "GATEWAY_WATCHDOG_PID=",
+    "GATEWAY_WATCHDOG_PID_START_IDENTITY=",
+    'gateway_control_pid_is_live() { case "$1" in ""|0|1|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }',
     block,
     "# Surface PLUGIN_REFRESH_PID + tracked SANDBOX_CHILD_PIDS for the test",
     'printf "PLUGIN_REFRESH_PID=%s\\n" "$PLUGIN_REFRESH_PID"',

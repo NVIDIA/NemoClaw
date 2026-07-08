@@ -469,8 +469,9 @@ Dry run:
 Anti-examples:
 
 - Do not treat `v0.0.8` as a readiness claim.
-- Do not change the version label just because the day ended.
-- Do not delete an old version label while an open PR still depends on it.
+- Do not move stragglers before the semver tag and workflow-managed `latest` are verified.
+- Do not leave an open straggler on the released label after authorized post-tag housekeeping succeeds.
+- Do not bulk-edit daily version labels outside the named release automation or another explicit authorization context.
 
 ## Agent-Owned Label Examples
 

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Verdict Template
 
 Render the final scorecard with `scripts/render-verdict.py`. Below is the human-readable shape it produces.
@@ -71,18 +74,20 @@ Every judgment in the trace must include:
 If the verdict is **degraded mode** ("Neither mergeable yet"), substitute the verdict block:
 
 ```markdown
-### Verdict: Neither mergeable yet — PR #A is closer
+### Verdict: Neither mergeable yet — PR #B is closer
 
-**PR #A — fix to merge:**
+**PR #A — ineligible:**
 - Substantive: Rebase against current main (3 conflicts in `<file>`)
-- Trivial: Push DCO sign-off
+- Ineligible: contributor gate failed; the author must fix each failing requirement before re-review
+  - Missing PR-body DCO declaration: update the PR body
+  - Missing GitHub Verified commit history: replace the branch with compliant history
 
-**PR #B — issues to address:**
+**PR #B — fix to merge:**
 - Substantive: 5 unresolved CodeRabbit threads at `<thread-ids>`
 - Substantive: macos-e2e check failing on test "<name>" at `<log-line>`
 
 ### Suggested action
 
-1. Coordinate with PR #A author: rebase + sign-off (~30 min)
-2. After PR #A is mergeable, re-run this skill to confirm winner
+1. Ask the PR #A author to fix each failing contributor gate; do not repair or approve the PR on their behalf
+2. Salvage PR #B by resolving the substantive failures, then re-run this skill to confirm the winner
 ```

@@ -3,7 +3,8 @@
 
 // Source-of-truth boundary for the `nemoclaw <name> agent` passthrough.
 //
-// The wrapper enforces three host-side mirrors of upstream contracts:
+// The wrapper enforces three host-side mirrors of upstream contracts and one
+// advisory diagnostic:
 //
 // 1. Agent-kind guard (registry mirror).
 //
@@ -67,6 +68,10 @@
 //      selector case is intercepted; everything else still flows through to
 //      the in-sandbox binary.
 //
+// 4. Recent shields-relock diagnostic (advisory audit mirror). Its complete
+//    source-boundary analysis lives with the focused implementation in
+//    `passthrough-shields-warning.ts`.
+//
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
 // forwarded argv, the registry-miss fallback to OpenClaw, registry and
 // manifest-resolution fail-closed paths, quoted manifest command rejection,
@@ -74,7 +79,7 @@
 // unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
 // the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
 // captured transport path used to append failure provenance without polluting
-// machine-readable stdout.
+// machine-readable stdout. The focused shields diagnostic owns its tests.
 //
 // Removal conditions:
 //
@@ -89,12 +94,14 @@
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
+import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
+import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
 
 export {
   hasAgentPassthroughHelpToken,
@@ -127,6 +134,7 @@ export interface AgentPassthroughDeps {
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
   execJson?: typeof runAgentJsonPassthrough;
+  getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreReadResult;
   process?: {
     exit(code: number): never;
     stdout?: { write(s: string): unknown };
@@ -299,9 +307,11 @@ function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
   // a value by another OpenClaw option. Source boundary: upstream OpenClaw owns
   // the complete argv grammar; NemoClaw mirrors documented flags only to choose
   // the host transport path. Unknown options fail conservative to normal
-  // passthrough, where OpenClaw parses argv itself. Regression tests cover each
-  // documented value flag, documented equals-form value flags, documented
-  // boolean flags, unknown flag fallback, and the `--` terminator. Removal
+  // passthrough, where OpenClaw parses argv itself. Any newly documented value
+  // flag, including a `--json-*` name, must be added to the value-flag set and
+  // its tests together. Regression tests cover each documented value flag,
+  // documented equals-form value flags, documented boolean flags, unknown flag
+  // fallback, and the `--` terminator. Removal
   // condition: OpenClaw exposes a machine-readable argv schema or NemoClaw stops
   // special-casing the JSON transport path.
   let skipNextValue = false;
@@ -413,6 +423,9 @@ export async function runAgentPassthrough(
   }
   if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
     rejectNoTargetSelector(proc);
+  }
+  if (isOpenClawPassthroughCommand(command)) {
+    maybeEmitShieldsRelockWarning(proc, sandboxName, deps.getRecentShieldsAutoRestore);
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;
