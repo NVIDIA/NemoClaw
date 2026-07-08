@@ -31,16 +31,17 @@ function extractGatewayLogAppendFunction(
     marker,
     `  local log_file=${JSON.stringify(gatewayLog)}`,
   );
-  if (!replaceAfterLstat) return rewrittenSource;
   const replacement =
-    replaceAfterLstat === "fifo"
-      ? ["    os.unlink(path)", "    os.mkfifo(path)"]
-      : [
-          '    replacement = f"{path}.replacement"',
-          '    with open(replacement, "w", encoding="utf-8") as handle:',
-          '        handle.write("replacement\\n")',
-          "    os.replace(replacement, path)",
-        ];
+    replaceAfterLstat === undefined
+      ? []
+      : replaceAfterLstat === "fifo"
+        ? ["    os.unlink(path)", "    os.mkfifo(path)"]
+        : [
+            '    replacement = f"{path}.replacement"',
+            '    with open(replacement, "w", encoding="utf-8") as handle:',
+            '        handle.write("replacement\\n")',
+            "    os.replace(replacement, path)",
+          ];
   return rewrittenSource.replace(
     "    fd = os.open(path, flags)",
     [...replacement, "    fd = os.open(path, flags)"].join("\n"),
