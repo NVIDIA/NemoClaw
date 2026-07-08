@@ -113,7 +113,7 @@ run_dcode() {
 #       raw or escaped bodies before mutable metadata can reach status output.
 #     * Name-context rejection fires case-insensitively when the variable name
 #       ends in a credential keyword (_KEY, _TOKEN, _SECRET, _PASSWORD,
-#       _CREDENTIAL, _PASS) and the value is at least 10 chars (mirroring
+#       _PASSWD, _PASS, _CREDENTIAL) and the value is at least 10 chars (mirroring
 #       CONTEXT_PATTERNS minimum length).
 #     * Managed messaging values (SLACK_BOT_TOKEN, SLACK_APP_TOKEN,
 #       TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN) are allowed only when the value
@@ -145,9 +145,11 @@ run_dcode() {
 has_context_secret_shape() {
   local upper
   upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
-  # The outer class accepts '=', ':', or whitespace; [:space:] is the nested
-  # POSIX character class understood by Bash's [[ string =~ regex ]] operator.
-  [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
+  # Keep horizontal separator whitespace bounded to mirror the canonical
+  # lookbehind and avoid an attacker-controlled scan over arbitrarily long runs.
+  [[ "$upper" =~ (^|[^A-Z0-9])([A-Z0-9]{1,128}_(KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
+    || [[ "$1" =~ (^|[^A-Za-z0-9])([A-Za-z0-9]{1,128}(Token|Secret|Credential)|[A-Za-z0-9]{0,128}([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(Password|Passwd|Pass))[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
+    || [[ "$1" =~ (^|[^A-Za-z0-9])KEY[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]]
 }
 
 has_bearer_secret_shape() {
@@ -166,23 +168,11 @@ has_bearer_secret_shape() {
 
 has_private_key_block_shape() {
   local value="$1"
+  local required_separator="${2-}"
   local begin_marker="-----BEGIN "
   local end_marker="-----END "
   case "$value" in
-    *"$begin_marker"*"PRIVATE KEY-----"*"$end_marker"*"PRIVATE KEY-----"*)
-      return 0
-      ;;
-  esac
-  return 1
-}
-
-has_multiline_private_key_block_shape() {
-  local value="$1"
-  local begin_marker="-----BEGIN "
-  local end_marker="-----END "
-  local newline=$'\n'
-  case "$value" in
-    *"$begin_marker"*"PRIVATE KEY-----"*"$newline"*"$end_marker"*"PRIVATE KEY-----"*)
+    *"$begin_marker"*"PRIVATE KEY-----"*"$required_separator"*"$end_marker"*"PRIVATE KEY-----"*)
       return 0
       ;;
   esac
@@ -331,7 +321,7 @@ has_credential_name_context() {
   local upper
   upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   case "$upper" in
-    KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASS | CREDENTIAL)
+    KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASSWD | PASS | CREDENTIAL)
       return 0
       ;;
     LANGSMITH_RUNS_ENDPOINTS | LANGCHAIN_RUNS_ENDPOINTS)
@@ -340,10 +330,14 @@ has_credential_name_context() {
     OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT | OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
       return 0
       ;;
-    *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASS | *_CREDENTIAL)
+    *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASSWD | *_PASS | *_CREDENTIAL | *-API-KEY | *-KEY | *-TOKEN | *-SECRET | *-PASSWORD | *-PASSWD | *-PASS | *-CREDENTIAL)
       return 0
       ;;
   esac
+  if [[ "$1" =~ [A-Za-z0-9](Token|Secret|Credential|Password|Passwd|Pass)$ ]] \
+    || [[ "$1" =~ ([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key$ ]]; then
+    return 0
+  fi
   return 1
 }
 
@@ -465,7 +459,7 @@ assert_no_secret_env_file() {
   # Scan the whole file before line parsing so raw multiline blocks cannot put
   # their begin and end markers on different physical dotenv lines.
   env_file_content="$(<"$env_file")"
-  if has_multiline_private_key_block_shape "$env_file_content"; then
+  if has_private_key_block_shape "$env_file_content" $'\n'; then
     refuse_secret_env "$env_file" "private-key block"
   fi
   while IFS= read -r line || [ -n "$line" ]; do
