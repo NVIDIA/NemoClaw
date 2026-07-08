@@ -185,6 +185,14 @@ prepare_runtime_env() {
 prepare_observability_marker() {
   local target=/sandbox/.nemoclaw-observability-enabled
   local tmp
+  # Treat the target itself as a file so mv cannot descend into a pre-created
+  # directory and disabled startup does not fail with an opaque rm diagnostic.
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    if [ ! -f "$target" ] || [ -L "$target" ]; then
+      printf 'NemoClaw: refusing unsafe observability marker path: %s\n' "$target" >&2
+      return 1
+    fi
+  fi
   if [ "${NEMOCLAW_OBSERVABILITY:-}" != "1" ]; then
     rm -f "$target"
     return 0
@@ -192,7 +200,7 @@ prepare_observability_marker() {
   tmp="$(mktemp /sandbox/.nemoclaw-observability-enabled.XXXXXX)"
   printf '%s\n' '1' >"$tmp"
   chmod 444 "$tmp"
-  mv -f "$tmp" "$target"
+  mv -fT -- "$tmp" "$target"
 }
 
 prepare_runtime_env
