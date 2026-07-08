@@ -21,6 +21,7 @@ const MAX_TRANSACTION_BYTES = 256 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const BACKUP_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/;
 
 export type RebuildTransactionPhaseV1 =
@@ -185,9 +186,15 @@ function nullableString(value: unknown, label: string, sandboxName: string): str
   return requiredString(value, label, sandboxName);
 }
 
+function isExactIsoTimestamp(candidate: string): boolean {
+  if (!ISO_TIMESTAMP_PATTERN.test(candidate)) return false;
+  const milliseconds = Date.parse(candidate);
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === candidate;
+}
+
 function timestamp(value: unknown, label: string, sandboxName: string): string {
   const candidate = requiredString(value, label, sandboxName);
-  if (!Number.isFinite(Date.parse(candidate))) {
+  if (!isExactIsoTimestamp(candidate)) {
     throw transactionError("CORRUPT", sandboxName, `${label} is not a timestamp`);
   }
   return candidate;
@@ -199,7 +206,7 @@ function backupManifestTimestamp(value: unknown, sandboxName: string): string {
   const parseable = match
     ? `${match[1]}${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`
     : candidate;
-  if (!Number.isFinite(Date.parse(parseable))) {
+  if (!isExactIsoTimestamp(parseable)) {
     throw transactionError(
       "CORRUPT",
       sandboxName,
