@@ -41,7 +41,10 @@ test("Kimi-compatible endpoint config enables plugin wiring and managed inferenc
   await artifacts.target.declare({
     id: "kimi-inference-compat",
     boundary: kimiBoundary(mode),
-    inferenceClassification: "public-nvidia required with mock/hermetic fallback",
+    inferenceClassification:
+      mode === "public-nvidia"
+        ? "public NVIDIA endpoint validation"
+        : "hermetic Kimi compatibility validation",
     inferenceMode: mode,
     sandboxName: SANDBOX_NAME,
     model: KIMI_MODEL,

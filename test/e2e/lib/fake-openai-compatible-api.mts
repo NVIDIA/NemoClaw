@@ -13,8 +13,18 @@ const portFile = process.env.NEMOCLAW_FAKE_OPENAI_PORT_FILE || "";
 const logFile = process.env.NEMOCLAW_FAKE_OPENAI_LOG_FILE || "";
 const requestsFile = process.env.NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE || "";
 const model = process.env.NEMOCLAW_FAKE_OPENAI_MODEL || "test-model";
+// Optional runtime context window advertised on /v1/models, mirroring vLLM's
+// max_model_len so onboarding can probe a real endpoint's context (#6177).
+const maxModelLen = (() => {
+  const raw = (process.env.NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN || "").trim();
+  return /^[1-9][0-9]*$/.test(raw) ? Number(raw) : null;
+})();
 const apiKey = process.env.NEMOCLAW_FAKE_OPENAI_API_KEY || "";
 const requireAuth = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH === "1";
+// Opt-in auth enforcement on GET /v1/models specifically (real vLLM launched
+// with --api-key gates it). Separate from requireAuth so existing tests, whose
+// readiness probe hits /v1/models unauthenticated, keep working. See #6177.
+const requireAuthModels = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS === "1";
 const chatContent = process.env.NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT || "ok";
 const responseText = process.env.NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT || chatContent;
 const forbiddenMarkers = (() => {
@@ -122,14 +132,25 @@ const server = createServer(async (req, res) => {
   const path = requestPath(req);
 
   if (req.method === "GET" && ["/v1/models", "/models"].includes(path)) {
-    log(`GET ${path}`);
+    const modelsAuthOk = !requireAuthModels || req.headers.authorization === `Bearer ${apiKey}`;
+    log(`GET ${path} auth=${modelsAuthOk ? "ok" : "missing"}`);
     recordRequest({
       method: "GET",
       path,
       bodyBytes: 0,
+      auth: modelsAuthOk ? "ok" : "missing",
+      // Presence only (never the token) so callers can prove a probe sent its
+      // credential without leaking it into the requests log (#6177).
+      authorizationSent: Boolean(req.headers.authorization),
       forbiddenMarkerMatches: forbiddenMarkerMatches(req, Buffer.alloc(0)),
     });
-    sendJson(res, 200, { object: "list", data: [{ id: model, object: "model" }] });
+    if (!modelsAuthOk) {
+      sendJson(res, 401, { error: { message: "missing bearer credential" } });
+      return;
+    }
+    const modelEntry: JsonObject = { id: model, object: "model" };
+    if (maxModelLen !== null) modelEntry.max_model_len = maxModelLen;
+    sendJson(res, 200, { object: "list", data: [modelEntry] });
     return;
   }
 
@@ -141,6 +162,8 @@ const server = createServer(async (req, res) => {
     path,
     bodyBytes: raw.length,
     auth,
+    // Presence only (never the token), matching the models request record.
+    authorizationSent: Boolean(req.headers.authorization),
     model: payload.model,
     stream: Boolean(payload.stream),
     forbiddenMarkerMatches: forbiddenMarkerMatches(req, raw),

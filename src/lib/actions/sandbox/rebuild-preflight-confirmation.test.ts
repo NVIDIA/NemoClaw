@@ -3,10 +3,12 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as openshellResolve from "../../adapters/openshell/resolve";
+import { redact } from "../../security/redact";
 import * as sandboxSession from "../../state/sandbox-session";
 import {
   confirmSandboxRebuildIfNeeded,
   countActiveSandboxSessionsForRebuild,
+  createRebuildCommandContext,
 } from "./rebuild-preflight-confirmation";
 import { isSingleAgentRebuildSupported } from "./rebuild-preflight-guards";
 
@@ -54,6 +56,83 @@ describe("rebuild confirmation", () => {
     const prompt = vi.fn(async () => "n");
     await expect(confirmSandboxRebuildIfNeeded(true, 3, prompt)).resolves.toBe(true);
     expect(prompt).not.toHaveBeenCalled();
+  });
+});
+
+describe("createRebuildCommandContext bail behaviour (#6376)", () => {
+  it("prints the bail message to stderr before exiting (non-throw mode)", () => {
+    // Regression for #6376: the non-throw bail path used to discard its
+    // `message` argument and just call `process.exit(code)`, so an actionable
+    // reason (e.g. `Failed to preserve MCP bridges before rebuild: Sandbox
+    // 'X' has an incomplete MCP destroy transaction ...`) exited 1 with NO
+    // output, leaving the user without a diagnosis.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    const ctx = createRebuildCommandContext([], { throwOnError: false });
+    expect(() => ctx.bail("Failed to preserve MCP bridges before rebuild: reason X", 1)).toThrow(
+      "process.exit(1)",
+    );
+
+    // The message must reach stderr; `console.error` inherits the pipeline's
+    // leading two-space rebuild-diagnostic prefix.
+    expect(errorSpy).toHaveBeenCalledWith(
+      "  Failed to preserve MCP bridges before rebuild: reason X",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("still exits with the requested code even when the message is empty (backward compat)", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    const ctx = createRebuildCommandContext([], { throwOnError: false });
+    expect(() => ctx.bail("", 2)).toThrow("process.exit(2)");
+
+    // Empty messages must NOT be printed as a bare two-space line —
+    // silence is fine when the caller passed nothing meaningful.
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+
+  it("keeps the throw-on-error path lossless (bail message becomes the Error)", () => {
+    // Belt-and-suspenders: the other consumer of createRebuildCommandContext
+    // (test / in-process callers) still gets the message via `throw new Error`.
+    const ctx = createRebuildCommandContext([], { throwOnError: true });
+    expect(() => ctx.bail("carried reason", 1)).toThrow("carried reason");
+  });
+
+  it("routes the surfaced bail message through the redaction boundary (#6376)", () => {
+    // The bail message can wrap a lower-level error (`bail("...: " + err.message)`)
+    // that carries a URL/token; the new stderr path must not become the one place
+    // rebuild leaks a secret. It must apply the same `redact` boundary `log` uses.
+    const raw =
+      "Failed to preserve MCP bridges before rebuild: probe https://hub.example.test/v1?api_key=SUPERSECRETTOKEN123 failed";
+    const redacted = redact(raw);
+    // Sanity: the chosen message actually contains something the boundary scrubs,
+    // so this test is meaningful regardless of redact's exact patterns.
+    expect(redacted).not.toBe(raw);
+    expect(redacted).not.toContain("SUPERSECRETTOKEN123");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    const ctx = createRebuildCommandContext([], { throwOnError: false });
+    expect(() => ctx.bail(raw, 1)).toThrow("process.exit(1)");
+
+    // What reached stderr is the redacted form, with the two-space prefix ...
+    expect(errorSpy).toHaveBeenCalledWith(`  ${redacted}`);
+    // ... and the raw secret never surfaced.
+    for (const call of errorSpy.mock.calls) {
+      expect(String(call[0])).not.toContain("SUPERSECRETTOKEN123");
+    }
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
 
