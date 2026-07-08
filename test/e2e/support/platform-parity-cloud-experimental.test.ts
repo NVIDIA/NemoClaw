@@ -247,6 +247,22 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout.trim()).toBe("NO_NEWLINE_IN_FETCH_COMMAND");
   });
 
+  it("keeps sensitive fetch_url denials on HTTPS CONNECT classification", () => {
+    const script = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+      ),
+      "utf8",
+    );
+
+    expect(script).toContain(
+      'expect_fetch_blocked "instance metadata" "https://169.254.169.254/latest/meta-data/"',
+    );
+    expect(script).toContain('expect_fetch_blocked "sandbox loopback" "https://127.0.0.1/"');
+    expect(script).not.toContain("'403 client error: forbidden'");
+  });
+
   it("keeps Deep Agents secret-boundary probe command single-line for OpenShell exec", () => {
     const result = spawnSync(
       "bash",

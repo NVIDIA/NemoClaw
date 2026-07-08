@@ -381,7 +381,7 @@ def _preview_dotenv_environ(*, start_path=None) -> dict[str, str]:
 
 
 def _load_dotenv(*, start_path=None, refresh_loaded=False) -> bool:
-    """Disable project and global dotenv loading in the managed image."""
+    """Disable dotenv, including DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL."""
     del start_path, refresh_loaded
     _dotenv_loaded_values.clear()
     return False

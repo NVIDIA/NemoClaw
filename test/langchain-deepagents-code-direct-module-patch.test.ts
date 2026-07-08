@@ -239,6 +239,7 @@ else:
       [
         "-c",
         `
+import builtins
 import os
 import sys
 import types
@@ -273,13 +274,24 @@ from deepagents_code._nemoclaw_managed import managed_fetch_proxy_url
 
 proxy_host_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-host"
 proxy_port_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-port"
+managed_ca_file = Path(${JSON.stringify(tempDir)}) / "managed-ca.pem"
+writable_ca_file = Path(${JSON.stringify(tempDir)}) / "writable-sensitive-ca.pem"
+symlink_ca_file = Path(${JSON.stringify(tempDir)}) / "symlink-sensitive-ca.pem"
 proxy_host_file.write_text("managed-proxy.internal\\n", encoding="utf-8")
 proxy_port_file.write_text("3128\\n", encoding="utf-8")
+managed_ca_file.write_text("test CA bundle\\n", encoding="utf-8")
+writable_ca_file.write_text("unsafe CA bundle\\n", encoding="utf-8")
+writable_ca_file.chmod(0o666)
+symlink_ca_file.symlink_to(managed_ca_file)
 proxy_host_file.chmod(0o444)
 proxy_port_file.chmod(0o444)
 _nemoclaw_managed._MANAGED_PROXY_HOST_FILE = proxy_host_file
 _nemoclaw_managed._MANAGED_PROXY_PORT_FILE = proxy_port_file
+_nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = managed_ca_file
 _nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
+os.environ["REQUESTS_CA_BUNDLE"] = "relative/../hostile-requests-ca.pem"
+os.environ["CURL_CA_BUNDLE"] = "/missing/hostile-curl-ca.pem"
+os.environ["SSL_CERT_FILE"] = "/missing/hostile-ssl-ca.pem"
 
 def forbidden_direct_dns(*_args, **_kwargs):
     raise AssertionError("managed fetch attempted direct DNS validation")
@@ -295,8 +307,15 @@ assert calls == [(
         "headers": {"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
         "allow_redirects": False,
         "proxies": {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}},
+        "verify": str(managed_ca_file),
     },
 )]
+
+calls.clear()
+path_data_url = "https://raw.githubusercontent.com/example/path@segment:ordinary-data"
+response = tools._fetch_with_redirects(path_data_url, timeout=8)
+assert response.status_code == 200
+assert calls[0][1] == path_data_url
 
 calls.clear()
 responses.extend([
@@ -317,6 +336,7 @@ assert all(
     == {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}}
     for _, _, kwargs in calls
 )
+assert all(kwargs["verify"] == str(managed_ca_file) for _, _, kwargs in calls)
 
 calls.clear()
 responses.append(Response(302))
@@ -388,6 +408,63 @@ for invalid_proxy in (
         assert "proxy-secret" not in str(exc)
     else:
         raise AssertionError(f"invalid managed proxy was accepted: {invalid_proxy!r}")
+
+for proxy_name in (
+    "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+):
+    os.environ[proxy_name] = ${JSON.stringify(proxyUrl)}
+
+original_import = builtins.__import__
+def block_requests_import(name, *args, **kwargs):
+    if name == "requests":
+        raise ImportError("private import detail from /sensitive/runtime/path")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = block_requests_import
+try:
+    tools._fetch_with_redirects("https://raw.githubusercontent.com/example", timeout=8)
+except tools._UrlValidationError as exc:
+    assert str(exc) == "managed fetch transport dependency is unavailable"
+    assert "ImportError" not in str(exc)
+    assert "sensitive" not in str(exc)
+    assert exc.__cause__ is None
+    assert exc.__suppress_context__ is True
+else:
+    raise AssertionError("requests ImportError escaped the structured validation path")
+finally:
+    builtins.__import__ = original_import
+
+for invalid_ca_bundle, expected_error in (
+    (
+        Path(${JSON.stringify(tempDir)}) / "missing-sensitive-ca.pem",
+        "managed fetch CA bundle is unavailable",
+    ),
+    (symlink_ca_file, "managed fetch CA bundle is invalid"),
+    (writable_ca_file, "managed fetch CA bundle is invalid"),
+):
+    _nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = invalid_ca_bundle
+    try:
+        tools._fetch_with_redirects("https://raw.githubusercontent.com/example", timeout=8)
+    except tools._UrlValidationError as exc:
+        assert str(exc) == expected_error
+        assert "sensitive" not in str(exc)
+        assert exc.__cause__ is None
+    else:
+        raise AssertionError(f"invalid CA bundle was accepted: {invalid_ca_bundle!r}")
+
+_nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = managed_ca_file
+_nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid() + 1
+try:
+    _nemoclaw_managed._managed_fetch_ca_bundle()
+except RuntimeError as exc:
+    assert str(exc) == "managed fetch CA bundle is invalid"
+else:
+    raise AssertionError("wrong-owner CA bundle was accepted")
+_nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
 print("managed-fetch-proxy-ok")
 `,
       ],

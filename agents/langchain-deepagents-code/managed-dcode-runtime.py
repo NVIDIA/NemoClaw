@@ -49,11 +49,16 @@ _UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
 _FETCH_URL_TRUSTED_PROXY_ENV = (
     "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"
 )
+_MANAGED_FETCH_CA_BUNDLE_FILE = Path(
+    "/etc/openshell-tls/ca-bundle.pem"
+)
 _MANAGED_ADAPTER_PROVIDER = "openai"
 _NVIDIA_DISPLAY_PROVIDER_ALIASES = frozenset(
     {"nvidia", "nvidia-prod", "nvidia-nim", "nvidia-router"}
 )
 _DISPLAY_PROVIDER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+# Match the launchers' image-baked proxy validator: underscores are accepted
+# intentionally for controlled internal/container aliases, not public DNS.
 _MANAGED_PROXY_HOST = re.compile(r"[A-Za-z0-9._-]+")
 _MCP_SERVER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 _MCP_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
@@ -967,6 +972,34 @@ def _managed_fetch_proxy_url_from_files() -> str:
     return f"http://{host}:{port}"
 
 
+def _managed_fetch_ca_bundle() -> str:
+    """Validate fixed OpenShell TLS trust without granting network authority."""
+    path = _MANAGED_FETCH_CA_BUNDLE_FILE
+    try:
+        link_metadata = path.lstat()
+    except FileNotFoundError:
+        raise RuntimeError("managed fetch CA bundle is unavailable") from None
+    except OSError:
+        raise RuntimeError("managed fetch CA bundle is invalid") from None
+    if stat.S_ISLNK(link_metadata.st_mode):
+        raise RuntimeError("managed fetch CA bundle is invalid")
+    try:
+        metadata = path.stat()
+    except FileNotFoundError:
+        raise RuntimeError("managed fetch CA bundle is unavailable") from None
+    except OSError:
+        raise RuntimeError("managed fetch CA bundle is invalid") from None
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != _MANAGED_FILE_OWNER_UID
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or metadata.st_size <= 0
+        or not os.access(path, os.R_OK)
+    ):
+        raise RuntimeError("managed fetch CA bundle is invalid")
+    return str(path)
+
+
 def managed_fetch_with_redirects(
     url: str,
     *,
@@ -991,7 +1024,18 @@ def managed_fetch_with_redirects(
     if proxy_url is None:
         return original_fetch(url, timeout=timeout)
 
-    import requests
+    try:
+        import requests
+    except ImportError:
+        # Keep an optional dependency failure inside fetch_url's structured
+        # validation result without exposing import paths or stack details.
+        raise validation_error(
+            "managed fetch transport dependency is unavailable"
+        ) from None
+    try:
+        ca_bundle = _managed_fetch_ca_bundle()
+    except RuntimeError as exc:
+        raise validation_error(str(exc)) from None
 
     def validate_url(candidate: str) -> None:
         try:
@@ -1008,6 +1052,10 @@ def managed_fetch_with_redirects(
             )
         if not hostname:
             raise validation_error("URL is missing a hostname")
+        # username/password describe only authority userinfo. An `@` or `:` in
+        # parsed.path is ordinary path data and must not be misclassified as a
+        # credential. These validation errors never echo the candidate URL;
+        # the explicit OpenShell proxy remains the policy and SSRF authority.
         if parsed.username is not None or parsed.password is not None:
             raise validation_error("URL credentials are not allowed")
         try:
@@ -1019,6 +1067,11 @@ def managed_fetch_with_redirects(
 
     current_url = url
     session = requests.Session()
+    # Disable every requests environment-derived session setting, including
+    # proxy/NO_PROXY, netrc, and CA-bundle discovery. Each request receives the
+    # sole root-verified proxy mapping explicitly below. The separately
+    # selected CA bundle establishes TLS transport trust only; it cannot choose
+    # a proxy or authorize a destination under OpenShell policy.
     session.trust_env = False
     proxies = {"http": proxy_url, "https": proxy_url}
     for _hop in range(max_redirects + 1):
@@ -1029,6 +1082,7 @@ def managed_fetch_with_redirects(
             headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
             allow_redirects=False,
             proxies=proxies,
+            verify=ca_bundle,
         )
         if 300 <= response.status_code < 400:
             location = response.headers.get("Location")

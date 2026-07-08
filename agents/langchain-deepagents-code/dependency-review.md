@@ -27,9 +27,12 @@ hash-locked third-party `fetch_url` implementation. The exact-version build
 patch therefore delegates only managed launches to a proxy URL independently
 derived from the image's root-owned host and port files. The runtime rejects a
 missing, unsafe, or mismatched file/environment contract, disables Requests'
-ambient proxy and `NO_PROXY` discovery, and supplies the verified proxy
-explicitly on every redirect hop. Imports outside the managed launcher retain
-the upstream direct DNS-pinning behavior.
+ambient proxy, `NO_PROXY`, netrc, and CA discovery, and supplies the verified
+proxy explicitly on every redirect hop. It separately validates the fixed,
+root-owned CA-bundle mount injected into the sandbox and passes it as explicit
+TLS transport trust; that bundle cannot select a proxy or authorize a
+destination. Imports outside the managed launcher retain the upstream direct
+DNS-pinning behavior.
 
 Focused tests patch the released wheel, exercise managed and unmanaged paths,
 reject forged proxy environments and malformed redirects, and prove that

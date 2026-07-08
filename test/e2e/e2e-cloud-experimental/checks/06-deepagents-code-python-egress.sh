@@ -299,8 +299,8 @@ expect_fetch_reached \
   "raw GitHub" \
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md"
 expect_fetch_blocked "unapproved hosts" "https://example.com/"
-expect_fetch_blocked "instance metadata" "http://169.254.169.254/latest/meta-data/"
-expect_fetch_blocked "sandbox loopback" "http://127.0.0.1/"
+expect_fetch_blocked "instance metadata" "https://169.254.169.254/latest/meta-data/"
+expect_fetch_blocked "sandbox loopback" "https://127.0.0.1/"
 
 # Exercise the writable-project-venv allowlist entries directly. The managed
 # /opt/venv Python creates the project venv, then the probes run through the

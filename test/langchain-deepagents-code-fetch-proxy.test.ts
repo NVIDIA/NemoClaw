@@ -151,8 +151,9 @@ print("root-owned-proxy-verification-ok")
     expect(check).toContain("https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md");
     expect(check).toContain('expect_fetch_blocked "unapproved hosts" "https://example.com/"');
     expect(check).toContain(
-      'expect_fetch_blocked "instance metadata" "http://169.254.169.254/latest/meta-data/"',
+      'expect_fetch_blocked "instance metadata" "https://169.254.169.254/latest/meta-data/"',
     );
-    expect(check).toContain('expect_fetch_blocked "sandbox loopback" "http://127.0.0.1/"');
+    expect(check).toContain('expect_fetch_blocked "sandbox loopback" "https://127.0.0.1/"');
+    expect(check).not.toContain("'403 client error: forbidden'");
   });
 });
