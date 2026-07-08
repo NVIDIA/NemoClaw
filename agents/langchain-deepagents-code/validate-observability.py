@@ -664,7 +664,9 @@ def _assert_secret_value_redaction(observability: ModuleType) -> None:
             "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
         ),
         ("Bearer token", "Bearer ABCDEFGHIJ"),
-        ("key assignment", "Api_" + "Key" + "=" + "ABCDEFGHIJ"),
+        # Context patterns require a real non-identifier boundary. Without the
+        # space this is an oversized x...Api_Key identifier, not an assignment.
+        ("key assignment", " " + "Api_" + "Key" + "=" + "ABCDEFGHIJ"),
     )
     for label, credential in boundary_probes:
         boundary_prefix = credential[:-3]
