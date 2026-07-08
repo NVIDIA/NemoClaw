@@ -304,14 +304,14 @@ describe("RebuildTransactionStore", () => {
     [
       "timestamp",
       (record: Record<string, unknown>) => {
-        record.updatedAt = "yesterday";
+        record.updatedAt = "2026-07-08";
       },
     ],
     [
       "backup timestamp",
       (record: Record<string, unknown>) => {
         const receipts = record.receipts as Record<string, unknown>;
-        (receipts.backup as Record<string, unknown>).manifestTimestamp = "not-a-date";
+        (receipts.backup as Record<string, unknown>).manifestTimestamp = "2026-07-08T00:00:00Z";
       },
     ],
     [
