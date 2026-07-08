@@ -40,7 +40,8 @@ gateway_marker_file="/tmp/nemoclaw-gateway-local"
 # a pathname in world-writable /tmp between validation and the PID read.
 pidfile_owner=""
 marker_owner=""
-if [ ! -L "$gateway_pid_file" ] && [ ! -L "$gateway_marker_file" ] && \
+if [ -f "$gateway_pid_file" ] && [ -f "$gateway_marker_file" ] && \
+   [ ! -L "$gateway_pid_file" ] && [ ! -L "$gateway_marker_file" ] && \
    exec 3<"$gateway_pid_file" 4<"$gateway_marker_file"; then
   trusted_identity_fd() {
     fd_path="$1"

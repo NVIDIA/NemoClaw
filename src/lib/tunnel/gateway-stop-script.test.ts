@@ -203,8 +203,8 @@ ${script}`;
   });
 
   it.runIf(process.platform === "linux")(
-    "keeps the validated PID file bound when its pathname is replaced",
-    async () => {
+    "fails closed when the validated PID file pathname is replaced",
+    () => {
       const intended = spawnWithArgv0("openclaw");
       const decoy = spawnWithArgv0("openclaw");
       const { script, pidFile } = identityFixture(intended);
@@ -218,9 +218,8 @@ ${script}`;
         replaceAfterOpen,
       );
 
-      expect(runStopScript(racedScript, [intended, decoy])).toBe(0);
-      await new Promise((r) => setTimeout(r, 300));
-      expect(isAlive(intended)).toBe(false);
+      expect(runStopScript(racedScript, [intended, decoy])).toBe(1);
+      expect(isAlive(intended)).toBe(true);
       expect(isAlive(decoy)).toBe(true);
     },
   );
