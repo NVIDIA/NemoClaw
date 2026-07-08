@@ -69,6 +69,19 @@ describe("sandbox inference route health", () => {
 
     expect(result).toMatchObject({ ok: true, httpStatus: 200 });
     expect(getSessionAgentImpl).toHaveBeenCalledWith("deep-code");
-    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(captureOpenshellImpl).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        "deep-code",
+        "--",
+        "/usr/local/lib/nemoclaw/dcode-managed-exec",
+        "/bin/sh",
+        "-c",
+        expect.stringContaining("/usr/bin/curl -q"),
+      ],
+      expect.objectContaining({ ignoreError: true }),
+    );
   });
 });

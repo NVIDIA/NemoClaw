@@ -12,6 +12,7 @@ REPO="${REPO:-$(pwd)}"
 CLI="${NEMOCLAW_E2E_CLI:-${REPO}/bin/nemoclaw.js}"
 PROJECT_VENV="/sandbox/.nemoclaw-e2e-project-venv"
 PROJECT_PYTHON="${PROJECT_VENV}/bin/python3"
+OBSERVABILITY_MARKER_BEFORE="absent"
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -121,6 +122,62 @@ python_probe() {
   sandbox_exec "$remote_cmd"
 }
 
+restore_observability_state() {
+  local marker_after restore_output
+  [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ] || return 0
+
+  marker_after="$(observability_marker_value || true)"
+  if [ "$marker_after" != "1" ]; then
+    if ! restore_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      /usr/bin/env NEMOCLAW_OBSERVABILITY=1 \
+      /usr/local/bin/nemoclaw-start /usr/bin/true 2>&1)"; then
+      fail_test "could not restore managed observability after policy-remove: $restore_output"
+      return 1
+    fi
+  fi
+
+  marker_after="$(observability_marker_value || true)"
+  if [ "$marker_after" = "1" ]; then
+    pass "managed observability state restores after policy-remove"
+  else
+    fail_test "managed observability marker was not restored after policy-remove"
+    return 1
+  fi
+}
+
+restore_tavily_denial() {
+  local cleanup_status=0 remove_output post_remove_probe_output
+  OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
+  if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
+    fail_test "policy-remove tavily failed after the opt-in proof: $remove_output"
+    cleanup_status=1
+  else
+    sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
+    post_remove_probe_output="$(python_probe "https://api.tavily.com/search" || true)"
+    if [[ "$post_remove_probe_output" == *"BLOCKED:"* &&
+      "$post_remove_probe_output" != *"REACHED:"* ]]; then
+      pass "managed Deep Agents Code python returns to the default Tavily denial"
+    else
+      fail_test "policy-remove did not restore the default Tavily denial: $post_remove_probe_output"
+      cleanup_status=1
+    fi
+  fi
+
+  restore_observability_state || cleanup_status=1
+  return "$cleanup_status"
+}
+
+cleanup_policy_fixture() {
+  [ -z "${POLICY_CLEANUP_FIXTURE_DIR:-}" ] || rm -rf "$POLICY_CLEANUP_FIXTURE_DIR"
+}
+
+cleanup_after_tavily_opt_in() {
+  local cleanup_status=0
+  restore_tavily_denial || cleanup_status=1
+  cleanup_policy_fixture || cleanup_status=1
+  return "$cleanup_status"
+}
+
 PASSED=0
 FAILED=0
 
@@ -150,7 +207,7 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "policy-cleanup-order" ]; then
   POLICY_CLEANUP_MARKER="${POLICY_CLEANUP_FIXTURE_DIR}/observability-marker"
   printf '%s\n' "baseline" >"$POLICY_CLEANUP_STATE"
   printf '%s\n' "absent" >"$POLICY_CLEANUP_MARKER"
-  trap 'rm -rf "$POLICY_CLEANUP_FIXTURE_DIR"' EXIT
+  trap cleanup_policy_fixture EXIT
 
   sandbox_exec() {
     # Match the literal command substitution sent to the sandbox.
@@ -220,6 +277,28 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "policy-cleanup-order" ]; then
   }
 fi
 
+if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
+  OBSERVABILITY_MARKER_FIXTURE="$(mktemp)"
+  printf '%s\n' "1" >"$OBSERVABILITY_MARKER_FIXTURE"
+  trap 'rm -f "$OBSERVABILITY_MARKER_FIXTURE"' EXIT
+  observability_marker_value() {
+    cat "$OBSERVABILITY_MARKER_FIXTURE"
+  }
+  nemoclaw_cli() {
+    [[ "$*" == "$SANDBOX_NAME policy-remove tavily --yes" ]] || return 1
+    [ "${NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE:-ok}" = "ok" ] || return 1
+    printf '%s\n' "absent" >"$OBSERVABILITY_MARKER_FIXTURE"
+  }
+  openshell() {
+    [[ "$*" == "sandbox exec --name $SANDBOX_NAME -- /usr/bin/env NEMOCLAW_OBSERVABILITY=1 /usr/local/bin/nemoclaw-start /usr/bin/true" ]] || return 1
+    printf '%s\n' "1" >"$OBSERVABILITY_MARKER_FIXTURE"
+  }
+  NEMOCLAW_E2E_POLICY_SETTLE_SECONDS=0 restore_tavily_denial
+  [ "$(cat "$OBSERVABILITY_MARKER_FIXTURE")" = "1" ]
+  [ "$FAILED" -eq 0 ]
+  exit 0
+fi
+
 if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
   info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
   exit 0
@@ -251,6 +330,7 @@ APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
+trap cleanup_after_tavily_opt_in EXIT
 pass "tavily policy preset applies"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
@@ -287,56 +367,14 @@ else
   fail_test "project venv under /sandbox did not expose a usable python3 executable: $PROJECT_OUT"
 fi
 
-# The Tavily policy-add rebuild materializes the configured observability
-# marker, so preserve the state immediately before removing that policy.
-OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
-
-# Restore the deny-by-default posture for later checks in this ordered live
-# suite. Rebuild validation intentionally preserves active policy presets, so
-# leaving Tavily enabled here would make a later baseline egress check claim
-# that thread auto-approval widened network access when it only retained this
-# explicit opt-in.
-REMOVE_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)" || {
-  fail_test "policy-remove tavily failed: $REMOVE_OUTPUT"
-  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
-  exit 1
-}
-pass "tavily policy preset removes after the opt-in proof"
-
-sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
-
-REMOVED_PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search" || true)"
-if echo "$REMOVED_PROBE_OUTPUT" | grep -q "BLOCKED:" \
-  && ! echo "$REMOVED_PROBE_OUTPUT" | grep -q "REACHED:"; then
-  pass "managed Deep Agents Code python is blocked again after policy-remove"
-elif echo "$REMOVED_PROBE_OUTPUT" | grep -q "REACHED:"; then
-  fail_test "managed Deep Agents Code python still reached Tavily after policy-remove: $REMOVED_PROBE_OUTPUT"
-else
-  fail_test "post-remove Tavily probe lacked denial evidence: $REMOVED_PROBE_OUTPUT"
-fi
-
-# The temporary Tavily policy belongs only to this check. OpenShell can clear
-# /tmp while applying the narrower replacement policy, so restore an
-# observability marker that existed before policy removal through the canonical
-# startup helper instead of manufacturing the marker in the test.
-if [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ]; then
-  OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
-  if [ "$OBSERVABILITY_MARKER_AFTER" != "1" ]; then
-    RESTORE_OUTPUT="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-      /usr/bin/env NEMOCLAW_OBSERVABILITY=1 \
-      /usr/local/bin/nemoclaw-start /usr/bin/true 2>&1)" \
-      || fail_test "could not restore managed observability after policy-remove: $RESTORE_OUTPUT"
-  fi
-  OBSERVABILITY_MARKER_AFTER="$(observability_marker_value || true)"
-  if [ "$OBSERVABILITY_MARKER_AFTER" = "1" ]; then
-    pass "managed observability state restores after policy-remove"
-  else
-    fail_test "managed observability marker was not restored after policy-remove"
-  fi
-fi
+# Do not leak this check's durable opt-in into later sequential checks.
+restore_tavily_denial || true
+trap - EXIT
 
 if [ -n "$POLICY_CLEANUP_TRACE" ]; then
   cat "$POLICY_CLEANUP_TRACE"
 fi
+cleanup_policy_fixture
+
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ] || exit 1
