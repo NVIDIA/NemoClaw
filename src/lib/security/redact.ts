@@ -292,6 +292,7 @@ export function redactUrl(value: unknown): string | null {
 }
 
 const SENSITIVE_KEY_WORDS: ReadonlySet<string> = new Set([
+  "apikey",
   "auth",
   "authorization",
   "bearer",

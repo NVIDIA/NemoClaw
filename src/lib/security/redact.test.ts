@@ -220,6 +220,8 @@ describe("redactForLog", () => {
         setCookie: "session=opaque-set-cookie-secret",
         "API Key": "opaque-api-secret",
         APIKey: "opaque-api-secret-with-acronym",
+        apikey: "opaque-run-together-api-secret",
+        APIKEY: "opaque-uppercase-api-secret",
         headers: {
           "Proxy-Authorization": "Basic opaque-basic-secret",
           Cookie: "session=opaque-cookie-secret",
@@ -242,6 +244,8 @@ describe("redactForLog", () => {
       setCookie: "<REDACTED>",
       "API Key": "<REDACTED>",
       APIKey: "<REDACTED>",
+      apikey: "<REDACTED>",
+      APIKEY: "<REDACTED>",
       headers: {
         "Proxy-Authorization": "<REDACTED>",
         Cookie: "<REDACTED>",
