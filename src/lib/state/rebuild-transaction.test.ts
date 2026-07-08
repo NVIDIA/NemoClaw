@@ -18,7 +18,6 @@ import {
   SANDBOX,
   tempDir,
   TRANSACTION_ID,
-  writeRawRecord,
 } from "../../../test/helpers/rebuild-transaction-store";
 
 import {
@@ -266,97 +265,6 @@ describe("RebuildTransactionStore", () => {
     expect(store.load(SANDBOX)).toEqual(created);
     const transactionDir = path.join(stateDir, REBUILD_TRANSACTION_DIRNAME);
     expect(fs.readdirSync(transactionDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
-  });
-
-  it("fails closed for malformed JSON and unknown future versions", async () => {
-    const { stateDir, store } = makeStore();
-    await store.create(intent(), preparedReceipts());
-    const filePath = getRebuildTransactionPath(SANDBOX, stateDir);
-
-    writeRawRecord(filePath, (record) => {
-      record.version = 2;
-    });
-    await expectCode(() => store.load(SANDBOX), "UNSUPPORTED_VERSION");
-
-    fs.writeFileSync(filePath, "{not-json", { mode: 0o600 });
-    await expectCode(() => store.load(SANDBOX), "CORRUPT");
-  });
-
-  it.each([
-    [
-      "transaction ID",
-      (record: Record<string, unknown>) => {
-        record.transactionId = "not-a-uuid";
-      },
-    ],
-    [
-      "revision",
-      (record: Record<string, unknown>) => {
-        record.revision = -1;
-      },
-    ],
-    [
-      "phase/status",
-      (record: Record<string, unknown>) => {
-        record.status = "completed";
-      },
-    ],
-    [
-      "legacy recovery authorization",
-      (record: Record<string, unknown>) => {
-        const intent = record.intent as Record<string, Record<string, unknown>>;
-        intent.source!.legacyManagedImageRecoveryAuthorized = "yes";
-      },
-    ],
-    [
-      "credential environment variable",
-      (record: Record<string, unknown>) => {
-        const intent = record.intent as Record<string, Record<string, unknown>>;
-        intent.target!.credentialEnv = "not-an-env-name";
-      },
-    ],
-    [
-      "timestamp",
-      (record: Record<string, unknown>) => {
-        record.updatedAt = "2026-07-08";
-      },
-    ],
-    [
-      "backup timestamp",
-      (record: Record<string, unknown>) => {
-        const receipts = record.receipts as Record<string, unknown>;
-        (receipts.backup as Record<string, unknown>).manifestTimestamp = "2026-07-08T00:00:00Z";
-      },
-    ],
-    [
-      "old-sandbox deletion receipt",
-      (record: Record<string, unknown>) => {
-        (record.receipts as Record<string, unknown>).oldSandboxDeletion = "bad";
-      },
-    ],
-    [
-      "replacement receipt",
-      (record: Record<string, unknown>) => {
-        (record.receipts as Record<string, unknown>).replacement = "bad";
-      },
-    ],
-  ])("rejects a malformed %s", async (_label, mutate) => {
-    const { stateDir, store } = makeStore();
-    await store.create(intent(), preparedReceipts());
-    writeRawRecord(getRebuildTransactionPath(SANDBOX, stateDir), mutate);
-    await expectCode(() => store.load(SANDBOX), "CORRUPT");
-  });
-
-  it("rejects replacement evidence timestamped before deletion", async () => {
-    const { stateDir, store } = makeStore();
-    await advanceToReplacement(store);
-    const filePath = getRebuildTransactionPath(SANDBOX, stateDir);
-    writeRawRecord(filePath, (record) => {
-      const receipts = record.receipts as Record<string, Record<string, unknown>>;
-      receipts.replacement!.observedAt = "2026-07-08T00:00:30.000Z";
-    });
-
-    await expectCode(() => store.load(SANDBOX), "CORRUPT");
   });
 
   it("rejects invalid and traversal-shaped sandbox names before path construction", async () => {

@@ -14,9 +14,10 @@ invariant failure, not a recoverable publication mode.
 
 Transaction filenames are deterministic SHA-256 hashes of validated sandbox names. The hash is a
 stable traversal-safe key, not a confidentiality boundary; transaction contents and names remain
-protected by the `0700` state directory and `0600` record mode. Backup receipt timestamps preserve
-the product's filename-safe dashed format and are validated by a bijective conversion to canonical
-UTC ISO time.
+protected by the `0700` state directory and `0600` record mode. Backup receipts accept canonical
+millisecond UTC ISO timestamps and the filename-safe dashed form emitted by backup generation. The
+dashed form is validated by a bijective conversion to canonical UTC ISO time and can be removed if
+backup manifests later standardize on a filename-safe encoding separate from their timestamp.
 
 After publication, the store calls `fsync` on the containing directory. Common Linux filesystems
 use this to persist the directory entry, but exact guarantees remain filesystem and device
