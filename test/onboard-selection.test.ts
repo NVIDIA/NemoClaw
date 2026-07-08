@@ -1012,7 +1012,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.doesNotMatch(buildOption?.label || "", /recommended/i);
   });
 
-  it("selects Kimi K2.6 from the filtered NVIDIA Endpoints featured model list (#6245)", async () => {
+  it("filters retired Kimi K2.6 from the NVIDIA Endpoints featured model list", async () => {
     const answers = ["3"];
     const messages: string[] = [];
     const lines: string[] = [];
@@ -1061,24 +1061,24 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
       }),
     );
 
-    assert.equal(model, "moonshotai/kimi-k2.6");
+    assert.equal(model, "minimaxai/minimax-m3");
     assert.equal(validated.result, "selected");
     assert.equal(state.provider, "nvidia-prod");
     assert.equal(state.preferredInferenceApi, "openai-completions");
     assert.match(messages[0], /Choose model \[2\]/);
-    assert.ok(lines.some((line) => line.includes("Kimi K2.6")));
+    assert.ok(!lines.some((line) => line.includes("Kimi K2.6")));
     assert.ok(!lines.some((line) => line.includes("GLM 5.1")));
     assert.ok(validated.lines.some((line) => line.includes("Chat Completions API available")));
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
       "https://integrate.api.nvidia.com/v1",
-      "moonshotai/kimi-k2.6",
+      "minimaxai/minimax-m3",
       "nvapi-test",
       expect.any(Object),
     );
   });
 
   it("accepts a manually entered NVIDIA Endpoints model after validating it against /models (#6245)", async () => {
-    const answers = ["5", "custom/provider-model"];
+    const answers = ["4", "custom/provider-model"];
     const messages: string[] = [];
     const lines: string[] = [];
     const validateNvidiaEndpointModelFn = vi.fn((model: string) => ({
@@ -1136,7 +1136,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
   });
 
   it("reprompts for a manual NVIDIA Endpoints model when /models validation rejects it (#6245)", async () => {
-    const answers = ["5", "bad/model", "custom/provider-model"];
+    const answers = ["4", "bad/model", "custom/provider-model"];
     const messages: string[] = [];
     const lines: string[] = [];
     const model = await promptCloudModel({

@@ -117,7 +117,9 @@ describe("inference options model task-fit docs (#4755)", () => {
     expect(section).toContain(
       "| Model | Best-for task type | Relative latency | Tool-use quality | Context-window fit | Relative cost |",
     );
-    expect(section).toContain("provider catalog remains authoritative");
+    expect(section).toContain(
+      "Successful runtime route validation determines current availability",
+    );
     expect(section).not.toMatch(/\bTBD\b|\bTODO\b/i);
     expect(section).not.toContain("Very large context");
 
@@ -128,7 +130,10 @@ describe("inference options model task-fit docs (#4755)", () => {
     expect(documentedModelIds).toEqual(readCuratedOnboardingModelIds());
   });
 
-  it("keeps GLM 5.1 scoped to the independent Hermes Provider catalog", () => {
+  it.each([
+    ["GLM 5.1", /GLM-?5\.1|z-ai\/glm-5\.1/i, "`z-ai/glm-5.1`"],
+    ["Kimi K2.6", /Kimi K2\.6|moonshotai\/kimi-k2\.6/i, "`moonshotai/kimi-k2.6`"],
+  ])("keeps %s scoped to the independent Hermes Provider catalog", (_label, matcher, id) => {
     const markdown = fs.readFileSync(inferenceOptionsPath, "utf8");
     const start = markdown.indexOf("## Provider Options");
     const end = markdown.indexOf("## Model Task-Fit Guide", start);
@@ -140,7 +145,7 @@ describe("inference options model task-fit docs (#4755)", () => {
     const hermesRow = lines.find((line) => line.startsWith("| Hermes Provider |"));
 
     expect(nvidiaRow).toBeDefined();
-    expect(nvidiaRow).not.toMatch(/GLM-?5\.1|z-ai\/glm-5\.1/i);
-    expect(hermesRow).toContain("`z-ai/glm-5.1`");
+    expect(nvidiaRow).not.toMatch(matcher as RegExp);
+    expect(hermesRow).toContain(id);
   });
 });
