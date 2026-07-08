@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
+import type { RebuildTransactionStore as RebuildTransactionStoreType } from "../../src/lib/state/rebuild-transaction";
 
 type RebuildSandbox = typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
 
@@ -128,6 +129,7 @@ export type RebuildFlowOverrides = {
 
 export type RebuildFlowHarness = {
   rebuildSandbox: RebuildSandbox;
+  transactionStore: RebuildTransactionStoreType;
   applyPresetSpy: MockInstance;
   applyPresetContentSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
@@ -438,7 +440,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     manifest: {
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       timestamp: "2026-06-01T00:00:00.000Z",
-      policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
+      policyPresets: overrides.backupPolicyPresets ?? ["npm"],
     },
   });
   vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
@@ -618,6 +620,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     });
   return {
     rebuildSandbox,
+    transactionStore,
     applyPresetSpy,
     applyPresetContentSpy,
     backupSandboxStateSpy,

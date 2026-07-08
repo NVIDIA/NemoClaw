@@ -243,7 +243,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     };
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
-  const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  const registryUpdateSpy = vi
+    .spyOn(registry, "updateSandbox")
+    .mockImplementation(
+      (...args: unknown[]) => overrides.updateSandbox?.(String(args[0]), args[1]) ?? true,
+    );
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation((...args: unknown[]) => {
@@ -321,9 +325,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const relockSpy = vi
     .spyOn(rebuildShields, "relockRebuildShieldsWindow")
     .mockImplementation((...args: unknown[]) => {
+      const relocked = overrides.relockShieldsWindow?.() ?? true;
       const window = args[1] as typeof rebuildShieldsWindow;
-      window.relocked = true;
-      return true;
+      window.relocked = relocked;
+      return relocked;
     });
   const backupSandboxStateSpy = vi
     .spyOn(sandboxState, "backupSandboxState")
@@ -428,7 +433,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
   const ensureMessagingHostForwardAfterRebuildSpy = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
-    .mockReturnValue(true);
+    .mockImplementation(overrides.ensureMessagingHostForwardAfterRebuild ?? (() => true));
   const prepareMcpBridgesForRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForRebuild")
     .mockResolvedValue(

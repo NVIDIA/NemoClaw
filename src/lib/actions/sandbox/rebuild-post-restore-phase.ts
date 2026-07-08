@@ -8,6 +8,7 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import type * as sandboxVersion from "../../sandbox/version";
+import { redactFull } from "../../security/redact";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
@@ -225,8 +226,21 @@ export async function runRebuildPostRestorePhase(
       policyTier: normalizePolicyTierName(sb.policyTier),
       policyPresetsFinalized,
     });
-  } catch {
-    // The finding code below is the redacted durable recovery contract.
+  } catch (error) {
+    // Source-of-truth boundary review:
+    // - Invalid state: the replacement is live while its registry metadata is
+    //   absent or stale, so the transaction must not be marked completed.
+    // - Source boundary: registry.updateSandbox owns the atomic registry write;
+    //   post-restore cannot safely reconstruct or bypass a failed write.
+    // - Source-fix constraint: retain replacement_created and retry the same
+    //   authoritative update instead of introducing a second registry writer.
+    // - Regression evidence: rebuild-transaction-finalization-boundary.test.ts
+    //   covers a throwing update, redacted cause, guidance, and durable failure.
+    // - Removal condition: remove this adapter only when the registry boundary
+    //   returns a typed failure carrying equivalent redacted diagnostics.
+    console.error(
+      `  ${YW}⚠${R} Registry reconciliation failed: ${redactFull(error instanceof Error ? error.message : String(error))}`,
+    );
   }
   if (registryReconciliationVerified) {
     log(

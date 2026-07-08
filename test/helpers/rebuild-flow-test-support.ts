@@ -51,6 +51,9 @@ export type RebuildFlowOverrides = {
     failedFiles: string[];
   };
   restoreMcpBridgesAfterRebuild?: () => Promise<void>;
+  updateSandbox?: (name: string, updates: unknown) => boolean;
+  relockShieldsWindow?: () => boolean;
+  ensureMessagingHostForwardAfterRebuild?: () => boolean;
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
   registryEntryMissing?: boolean;

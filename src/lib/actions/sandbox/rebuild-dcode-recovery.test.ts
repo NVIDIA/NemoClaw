@@ -366,7 +366,7 @@ describe("rebuildSandbox DCode flow: recovery", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Rebuild completed with unverified live policy reconciliation for 'alpha'.");
+    ).rejects.toThrow("POLICY_RECONCILIATION_UNVERIFIED");
 
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
       "alpha",
@@ -376,6 +376,11 @@ describe("rebuildSandbox DCode flow: recovery", () => {
         policyPresetsFinalized: undefined,
       }),
     );
+    expect(harness.transactionStore.load("alpha")).toMatchObject({
+      status: "active",
+      phase: "replacement_created",
+      failure: { code: "POLICY_RECONCILIATION_UNVERIFIED", retryable: true },
+    });
     expect(harness.relockSpy).toHaveBeenCalled();
   });
 
