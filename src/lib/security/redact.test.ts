@@ -131,9 +131,9 @@ describe("redactForLog", () => {
       [`api-key=${payload}`, "api-key=<REDACTED>"],
       [`X-Api-Key=${payload}`, "X-Api-Key=<REDACTED>"],
       [`clientSecret=${payload}`, "clientSecret=<REDACTED>"],
-      [`githubToken=${payload}`, "githubToken=<REDACTED>"],
       [`replyToken=${payload}`, "replyToken=<REDACTED>"],
       [`{"replyToken":"${payload}"}`, '{"replyToken":"<REDACTED>"}'],
+      [`githubToken=${payload}`, "githubToken=<REDACTED>"],
       [`webhookSecret=${payload}`, "webhookSecret=<REDACTED>"],
       [`databaseCredential=${payload}`, "databaseCredential=<REDACTED>"],
       [`customPass=${payload}`, "customPass=<REDACTED>"],
@@ -177,6 +177,7 @@ describe("redactForLog", () => {
     const result = redactForLog({
       provider: "openai",
       apiKey: "sk-" + "a".repeat(24),
+      replyToken: "opaqueCredentialPayloadZ1234567890",
       nested: {
         model: "gpt-4o",
         refreshToken: "refresh-token-value",
@@ -187,6 +188,7 @@ describe("redactForLog", () => {
     expect(result).toEqual({
       provider: "openai",
       apiKey: "<REDACTED>",
+      replyToken: "<REDACTED>",
       nested: {
         model: "gpt-4o",
         refreshToken: "<REDACTED>",

@@ -258,6 +258,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/dcode.real",
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/deepagents-code",
       "/opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin",
+      "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
       "/opt/venv/bin/pip3 check",
       "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
     ]) {
