@@ -72,6 +72,7 @@ describe("handleSandboxState live DCode selection", () => {
       recreate: true,
       toolDisclosure: "progressive",
       observabilityEnabled: false,
+      dcodeAutoApprovalMode: "disabled",
     });
     expect(calls.removeSandbox).not.toHaveBeenCalled();
   });
@@ -91,6 +92,7 @@ describe("handleSandboxState live DCode selection", () => {
       recreate: true,
       toolDisclosure: "progressive",
       observabilityEnabled: false,
+      dcodeAutoApprovalMode: "disabled",
     });
   });
 

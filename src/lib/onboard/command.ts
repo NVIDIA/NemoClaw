@@ -12,6 +12,7 @@ import {
 } from "../tool-disclosure";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
+import { DCODE_AUTO_APPROVAL_FEATURE, type DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -31,6 +32,7 @@ export interface OnboardCommandOptions {
   agentsManifest: string | null;
   toolDisclosure: ToolDisclosure | null;
   observabilityEnabled: boolean | null;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
   controlUiPort: number | null;
   gpu: boolean;
   noGpu: boolean;
@@ -145,12 +147,37 @@ function validateObservabilityAgent(
   }
 }
 
+function validateDcodeAutoApprovalAgent(
+  requested: DcodeAutoApprovalMode | undefined,
+  agent: string | null,
+  fromDockerfile: string | undefined,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  if (requested !== "thread-opt-in") return;
+  // An omitted flag may still resolve to DCode through NEMOCLAW_AGENT; defer
+  // that check until agent selection, as the observability flag does.
+  if (!fromDockerfile && !agent) return;
+  const effectiveAgent = fromDockerfile ? null : agent;
+  if (
+    managedSandboxFeatureIssue(DCODE_AUTO_APPROVAL_FEATURE, {
+      agent: effectiveAgent,
+      requested,
+    }) === "unsupported-request"
+  ) {
+    fail(
+      deps,
+      "  --dcode-auto-approval thread-opt-in is supported only with the managed --agent langchain-deepagents-code image.",
+    );
+  }
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
 ): OnboardCommandOptions {
   const agent = resolveAgent(flags.agent, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
+  validateDcodeAutoApprovalAgent(flags["dcode-auto-approval"], agent, flags.from, deps);
   let toolDisclosure: ToolDisclosure | null;
   try {
     toolDisclosure = resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
@@ -172,6 +199,7 @@ export function resolveOnboardOptions(
     agentsManifest: resolveAgentsManifest(flags.agents, agent, deps),
     toolDisclosure,
     observabilityEnabled: typeof flags.observability === "boolean" ? flags.observability : null,
+    dcodeAutoApprovalMode: flags["dcode-auto-approval"] ?? null,
     controlUiPort: flags["control-ui-port"] ?? null,
     gpu: flags.gpu === true,
     noGpu: flags["no-gpu"] === true,

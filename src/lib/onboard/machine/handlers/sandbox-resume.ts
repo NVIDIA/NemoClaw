@@ -16,6 +16,7 @@ export interface SandboxResumeSignals {
   readonly messagingChannelConfigChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly observabilityChanged?: boolean;
+  readonly dcodeAutoApprovalChanged?: boolean;
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
   readonly inferenceSelectionChanged: boolean;
@@ -107,6 +108,7 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.messagingChannelConfigChanged &&
     !signals.hermesToolGatewayConfigChanged &&
     !signals.observabilityChanged &&
+    !signals.dcodeAutoApprovalChanged &&
     !signals.toolDisclosureMigrationNeeded &&
     !signals.toolDisclosureChanged &&
     signals.sandboxReuseState === "ready"
@@ -197,6 +199,14 @@ function runtimeConfigurationResumeDecision(
       kind: "recreate",
       note: "  [resume] Observability configuration changed; recreating sandbox.",
       // Preserve the row until createSandbox captures registry-only fidelity.
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.dcodeAutoApprovalChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] DCode auto-approval capability changed; recreating sandbox.",
+      // Preserve registry-only fidelity until createSandbox captures it.
       removeRegistryEntry: false,
     };
   }

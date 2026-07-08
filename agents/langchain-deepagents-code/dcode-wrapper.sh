@@ -12,6 +12,10 @@ if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
 fi
 
 unset BASH_ENV ENV OPENAI_PROXY
+while IFS= read -r _nemoclaw_auto_approval_env; do
+  unset "$_nemoclaw_auto_approval_env"
+done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
+unset _nemoclaw_auto_approval_env
 
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -40,6 +44,49 @@ readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
 readonly OPENSHELL_TLS_KEY_PATH="/etc/openshell/tls/client/tls.key"
 readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
 readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"
+readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"
+readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=0
+
+managed_auto_approval_file_metadata() {
+  local file="$1"
+  local metadata
+  if metadata="$(stat -c '%u:%a:%s' "$file" 2>/dev/null)"; then
+    printf '%s' "$metadata"
+  else
+    stat -f '%u:%Lp:%z' "$file" 2>/dev/null
+  fi
+}
+
+read_managed_auto_approval_mode() {
+  local file="$MANAGED_DCODE_AUTO_APPROVAL_FILE"
+  local metadata
+  if [ ! -f "$file" ] || [ -L "$file" ] || [ ! -r "$file" ]; then
+    printf '%s' 'disabled'
+    return 0
+  fi
+  metadata="$(managed_auto_approval_file_metadata "$file")" || {
+    printf '%s' 'disabled'
+    return 0
+  }
+  case "$metadata" in
+    "${MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID}:444:9")
+      if cmp -s -- "$file" <(printf '%s\n' 'disabled'); then
+        printf '%s' 'disabled'
+        return 0
+      fi
+      ;;
+    "${MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID}:444:14")
+      if cmp -s -- "$file" <(printf '%s\n' 'thread-opt-in'); then
+        printf '%s' 'thread-opt-in'
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s' 'disabled'
+}
+
+MANAGED_DCODE_AUTO_APPROVAL_MODE="$(read_managed_auto_approval_mode)"
+readonly MANAGED_DCODE_AUTO_APPROVAL_MODE
 
 run_dcode() {
   unset PYTHONHOME PYTHONPATH
@@ -789,7 +836,9 @@ for arg in "$@"; do
       reject_managed_override "interpreter posture" "$arg"
       ;;
     -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve)
-      reject_managed_override "tool approval posture" "$arg"
+      if [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
+        reject_managed_override "tool approval posture" "$arg"
+      fi
       ;;
     --acp)
       reject_managed_override "ACP approval posture" "$arg"

@@ -39,6 +39,9 @@ function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeR
   };
 }
 
+const tclshAvailable =
+  spawnSync("tclsh", ["-"], { encoding: "utf8", input: "exit 0\n" }).status === 0;
+
 describe("P0-E cloud-experimental parity guardrails", () => {
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
     await SandboxExecCommand.run(
@@ -269,6 +272,155 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
   });
 
+  it("pins the managed DCode thread-auto-approval live acceptance boundary (#6478)", () => {
+    const script = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      ),
+      "utf8",
+    );
+
+    for (const expected of [
+      "/usr/local/share/nemoclaw/dcode-auto-approval",
+      "NEMOCLAW_DCODE_AUTO_APPROVAL=thread-opt-in",
+      '"$CLI" "$SANDBOX_NAME" rebuild --yes',
+      "--dcode-auto-approval thread-opt-in",
+      "status.dcodeAutoApprovalMode !== process.env.EXPECTED_MODE",
+      "auto-approve for this thread",
+      "auto-approval is enabled",
+      'submit_text "/clear"',
+      "NEMOCLAW_AUTORUN_MANUAL_APPROVAL_RESTORED",
+      "06-deepagents-code-python-egress.sh",
+      "08-deepagents-code-secret-boundary.sh",
+      "log_user 0",
+    ]) {
+      expect(script).toContain(expected);
+    }
+    expect(script).toMatch(
+      /Round 1:[\s\S]*shell execute[\s\S]*Round 2:[\s\S]*write_file[\s\S]*Round 3:[\s\S]*shell execute[\s\S]*Round 4:[\s\S]*read_file/,
+    );
+    expect(script).toMatch(
+      /run_autorun_tui[\s\S]*assert_autorun_evidence[\s\S]*run_boundary_check "OpenShell network policy boundary"[\s\S]*run_boundary_check "managed credential boundary"/,
+    );
+    expect(script).not.toContain("log_file -a");
+  });
+
+  it("requires the managed exit and denial evidence for default auto-approval", () => {
+    const scriptPath = path.join(
+      process.cwd(),
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+    );
+    const classify = (exitCode: number, fixture: string) =>
+      spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$1"; printf \'%s\\n\' "$FIXTURE" | is_default_auto_approval_denial "$2"',
+          "nemoclaw-dcode-autorun-self-test",
+          scriptPath,
+          String(exitCode),
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, FIXTURE: fixture },
+        },
+      ).status;
+
+    const denial =
+      "NemoClaw manages Deep Agents Code tool approval posture; remove --auto-approve.";
+    expect(classify(2, denial)).toBe(0);
+    expect(classify(0, denial)).not.toBe(0);
+    expect(classify(124, denial)).not.toBe(0);
+    expect(classify(2, "upstream dcode failed for an unrelated reason")).not.toBe(0);
+  });
+
+  it.runIf(tclshAvailable)(
+    "drives the thread opt-in and reset sequence through a finite Expect state machine",
+    () => {
+      const script = fs.readFileSync(
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+        ),
+        "utf8",
+      );
+      const expectProgram = script.match(/expect <<'EXPECT'\n([\s\S]*?)\nEXPECT/)?.[1];
+      expect(expectProgram).toBeTruthy();
+
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-autorun-expect-"));
+      const markers = path.join(tempDir, "markers.log");
+      const trace = path.join(tempDir, "send.hex");
+      fs.writeFileSync(markers, "");
+      fs.writeFileSync(trace, "");
+      const prelude = String.raw`
+proc log_user {args} {}
+proc spawn {args} {}
+proc after {args} {}
+proc send {args} {
+  binary scan [lindex $args end] H* encoded
+  set fh [open $::env(NEMOCLAW_AUTORUN_EXPECT_TRACE) a]
+  puts -nonewline $fh $encoded
+  close $fh
+}
+set ::fake_events [list approval warning workflow newThread approval exit]
+proc expect {branches} {
+  if {[llength $::fake_events] == 0} {
+    error "fake Expect event queue exhausted"
+  }
+  set event [lindex $::fake_events 0]
+  set ::fake_events [lrange $::fake_events 1 end]
+  switch -- $event {
+    approval { set branch_index [lsearch -exact $branches {auto-approve for this thread}] }
+    warning { set branch_index [lsearch -exact $branches {auto-approval is enabled}] }
+    workflow { set branch_index [lsearch -exact $branches {NEMOCLAW_AUTORUN_COMPLETE}] }
+    newThread { set branch_index [lsearch -exact $branches {started new thread:}] }
+    exit {
+      set branch_index [lsearch -glob $branches {NEMOCLAW_AUTORUN_TUI_EXIT:*}]
+      set ::expect_out(1,string) "0"
+    }
+    default { error "unsupported fake Expect event: $event" }
+  }
+  if {$branch_index < 0} {
+    error "fake Expect event $event has no matching branch"
+  }
+  uplevel 1 [lindex $branches [expr {$branch_index + 1}]]
+}
+`;
+
+      try {
+        const result = spawnSync("tclsh", ["-"], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NEMOCLAW_AUTORUN_EXPECT_MARKERS: markers,
+            NEMOCLAW_AUTORUN_EXPECT_TRACE: trace,
+            NEMOCLAW_AUTORUN_FIRST_PROMPT: "FIRST",
+            NEMOCLAW_AUTORUN_RESET_PROMPT: "RESET",
+            NEMOCLAW_AUTORUN_SANDBOX_NAME: "fake-dcode",
+            NEMOCLAW_AUTORUN_TUI_TIMEOUT: "5",
+          },
+          input: `${prelude}\n${expectProgram}\n`,
+        });
+
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(fs.readFileSync(markers, "utf8").trim().split("\n")).toEqual([
+          "NEMOCLAW_AUTORUN_APPROVAL_MENU",
+          "NEMOCLAW_AUTORUN_WARNING",
+          "NEMOCLAW_AUTORUN_WORKFLOW_COMPLETE",
+          "NEMOCLAW_AUTORUN_NEW_THREAD",
+          "NEMOCLAW_AUTORUN_MANUAL_APPROVAL_RESTORED",
+          "NEMOCLAW_AUTORUN_TUI_EXIT:0",
+        ]);
+        expect(Buffer.from(fs.readFileSync(trace, "utf8"), "hex").toString("utf8")).toBe(
+          "a/clear\rRESET\rn/quit\r",
+        );
+      } finally {
+        fs.rmSync(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
   it("registers executable Deep Agents cloud-experimental checks", () => {
     expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
@@ -280,6 +432,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
     ]);
 
     for (const scriptPath of DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS) {
@@ -325,6 +478,11 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
       ),
     ).toBe(8 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      ),
+    ).toBe(35 * 60_000);
   });
 
   it("documents Deep Agents check scripts in generated launch/QA evidence", () => {

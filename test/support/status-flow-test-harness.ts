@@ -60,6 +60,7 @@ export type StatusFlowHarnessOptions = {
   sandboxEntry?: Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
     agent?: string | null;
     agentVersion?: string | null;
+    dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
   };
   shieldsPosture?: {
     mode: "locked" | "mutable_default" | "mutable";

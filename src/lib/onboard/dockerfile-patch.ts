@@ -20,6 +20,11 @@ import {
   type ToolDisclosure,
 } from "../tool-disclosure";
 import {
+  DCODE_AUTO_APPROVAL_BUILD_ARG,
+  type DcodeAutoApprovalMode,
+  isDcodeAutoApprovalMode,
+} from "./dcode-auto-approval";
+import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
   replaceDockerfilePatchSnapshot,
@@ -53,6 +58,24 @@ export interface PatchStagedDockerfileOptions {
   toolDisclosure?: ToolDisclosure;
   requireToolDisclosureContract?: boolean;
   baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
+  dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
+}
+
+export function patchDcodeAutoApprovalDockerArg(
+  dockerfile: string,
+  mode: DcodeAutoApprovalMode,
+): string {
+  if (!isDcodeAutoApprovalMode(mode)) {
+    throw new Error("Invalid DCode auto-approval mode; refusing to patch the Dockerfile.");
+  }
+  const instruction = new RegExp(`^ARG ${DCODE_AUTO_APPROVAL_BUILD_ARG}=[^\\r\\n]*$`, "gm");
+  const matches = dockerfile.match(instruction) ?? [];
+  if (matches.length !== 1) {
+    throw new Error(
+      `Dockerfile must contain exactly one ARG ${DCODE_AUTO_APPROVAL_BUILD_ARG}=... instruction; found ${matches.length}.`,
+    );
+  }
+  return dockerfile.replace(instruction, `ARG ${DCODE_AUTO_APPROVAL_BUILD_ARG}=${mode}`);
 }
 
 export function isValidProxyHost(value: string): boolean {
@@ -100,6 +123,9 @@ export function patchStagedDockerfile(
       );
   if (toolDisclosureInstruction) {
     dockerfile = `${dockerfile.slice(0, toolDisclosureInstruction.start)}ARG NEMOCLAW_TOOL_DISCLOSURE=${sanitizeDockerArg(toolDisclosure)}${dockerfile.slice(toolDisclosureInstruction.end)}`;
+  }
+  if (options.dcodeAutoApprovalMode !== undefined) {
+    dockerfile = patchDcodeAutoApprovalDockerArg(dockerfile, options.dcodeAutoApprovalMode);
   }
   // Pin the base image to a specific digest when available (#1904).
   // The ref must come from pullAndResolveBaseImageDigest() — never from

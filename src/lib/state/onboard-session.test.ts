@@ -156,6 +156,8 @@ describe("onboard session", () => {
     expect(saved.toolDisclosure).toBe("progressive");
     expect(saved.observabilityEnabled).toBe(false);
     expect(saved.observabilityRequestedExplicitly).toBe(false);
+    expect(saved.dcodeAutoApprovalMode).toBe("disabled");
+    expect(saved.dcodeAutoApprovalRequestedExplicitly).toBe(false);
     expect(saved.machine).toMatchObject({
       version: 1,
       state: "init",
@@ -194,6 +196,36 @@ describe("onboard session", () => {
 
     expect(normalized.observabilityEnabled).toBe(false);
     expect(normalized.observabilityRequestedExplicitly).toBe(false);
+  });
+
+  it("persists explicit DCode auto-approval intent and provenance (#6478)", () => {
+    session.saveSession(
+      session.createSession({
+        dcodeAutoApprovalMode: "thread-opt-in",
+        dcodeAutoApprovalRequestedExplicitly: true,
+      }),
+    );
+    const loaded = requireLoadedSession(session.loadSession());
+    const summary = requireDebugSummary(session.summarizeForDebug());
+
+    expect(loaded.dcodeAutoApprovalMode).toBe("thread-opt-in");
+    expect(loaded.dcodeAutoApprovalRequestedExplicitly).toBe(true);
+    expect(summary.dcodeAutoApprovalMode).toBe("thread-opt-in");
+    expect(summary.dcodeAutoApprovalRequestedExplicitly).toBe(true);
+  });
+
+  it("defaults missing legacy mode closed and marks malformed recorded state (#6478)", () => {
+    const legacy = session.createSession() as unknown as Record<string, unknown>;
+    delete legacy.dcodeAutoApprovalMode;
+    delete legacy.dcodeAutoApprovalRequestedExplicitly;
+    const normalizedLegacy = requireLoadedSession(session.normalizeSession(legacy as never));
+    expect(normalizedLegacy.dcodeAutoApprovalMode).toBe("disabled");
+    expect(normalizedLegacy.dcodeAutoApprovalRequestedExplicitly).toBe(false);
+
+    const malformed = { ...legacy, dcodeAutoApprovalMode: "always" };
+    const normalizedMalformed = requireLoadedSession(session.normalizeSession(malformed as never));
+    expect(normalizedMalformed.dcodeAutoApprovalMode).toBe("disabled");
+    expect(session.hasInvalidSessionDcodeAutoApprovalMode(normalizedMalformed)).toBe(true);
   });
 
   it("redacts credential-bearing endpoint URLs before persisting them", () => {

@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-import { hasInvalidSessionToolDisclosure } from "../state/onboard-session";
+import {
+  hasInvalidSessionDcodeAutoApprovalMode,
+  hasInvalidSessionToolDisclosure,
+} from "../state/onboard-session";
 import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
+import { type DcodeAutoApprovalMode, isDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { preflightVllmModelEnvOrExit } from "./vllm-model-preflight";
 
 const onboardProviders = require("./providers");
@@ -15,6 +19,7 @@ export interface ResumeSessionLike {
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
+  dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   metadata?: { fromDockerfile?: string | null } | null;
   steps?: { sandbox?: { status?: string | null } | null } | null;
 }
@@ -110,6 +115,7 @@ export function getResumeConfigConflicts(
     agent?: string | null;
     toolDisclosure?: ToolDisclosure | null;
     observabilityEnabled?: boolean | null;
+    dcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
     /**
      * Internal rebuild-resume mode: the caller already rewrote the session from
      * validated registry state, so credential aliases must not synthesize a new
@@ -183,6 +189,16 @@ export function getResumeConfigConflicts(
       field: "tool disclosure",
       requested: requestedToolDisclosure,
       recorded: recordedToolDisclosure,
+    });
+  }
+
+  if (hasInvalidSessionDcodeAutoApprovalMode(session)) {
+    conflicts.push({
+      field: "DCode auto-approval",
+      requested: isDcodeAutoApprovalMode(opts.dcodeAutoApprovalMode)
+        ? opts.dcodeAutoApprovalMode
+        : null,
+      recorded: "invalid",
     });
   }
 

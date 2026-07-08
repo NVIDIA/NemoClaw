@@ -31,9 +31,13 @@ const MANAGED_MCP_VALIDATOR_INVOCATION = [
   ')"',
 ].join("\n");
 
-function makeWrapperFixture(tempDir: string): { wrapperPath: string; ranMarker: string } {
+function makeWrapperFixture(
+  tempDir: string,
+  autoApprovalContent?: string,
+): { wrapperPath: string; ranMarker: string; autoApprovalPath: string } {
   const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const ranMarker = path.join(tempDir, "dcode-ran");
+  const autoApprovalPath = path.join(tempDir, "dcode-auto-approval");
   const envFile = path.join(tempDir, ".env");
   const authFile = path.join(tempDir, "auth.json");
   const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
@@ -55,14 +59,26 @@ function makeWrapperFixture(tempDir: string): { wrapperPath: string; ranMarker: 
       'readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"',
       `readonly DEEPAGENTS_CODEX_AUTH_FILE="${codexAuthFile}"`,
     )
+    .replace(
+      'readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"',
+      `readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="${autoApprovalPath}"`,
+    )
+    .replace(
+      "readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=0",
+      `readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=${process.getuid?.() ?? 0}`,
+    )
     .replace('/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"')
     .replace(
       "exec /opt/venv/bin/python3 -I -m deepagents_code",
       `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
   fs.writeFileSync(envFile, "", "utf8");
+  if (autoApprovalContent !== undefined) {
+    fs.writeFileSync(autoApprovalPath, autoApprovalContent, { mode: 0o444 });
+    fs.chmodSync(autoApprovalPath, 0o444);
+  }
   fs.writeFileSync(wrapperPath, fixture, { mode: 0o755 });
-  return { wrapperPath, ranMarker };
+  return { wrapperPath, ranMarker, autoApprovalPath };
 }
 
 describe("LangChain Deep Agents Code managed entrypoints", () => {
@@ -178,6 +194,76 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(posture);
     expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it.each([
+    "-y",
+    "--auto-a",
+    "--auto-ap",
+    "--auto-app",
+    "--auto-appr",
+    "--auto-appro",
+    "--auto-approv",
+    "--auto-approve",
+  ])("allows explicit thread auto-approval through %s only in thread-opt-in mode (#6478)", (arg) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-opt-in-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+    const result = spawnSync("bash", [wrapperPath, arg], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
+  it("fails closed for ambient, malformed, symlinked, and writable auto-approval state (#6478)", () => {
+    const cases = [
+      { label: "ambient only", prepare: (_path: string) => undefined },
+      {
+        label: "malformed",
+        prepare: (capabilityPath: string) => {
+          fs.writeFileSync(capabilityPath, "thread-opt-in");
+          fs.chmodSync(capabilityPath, 0o444);
+        },
+      },
+      {
+        label: "writable",
+        prepare: (capabilityPath: string) => {
+          fs.writeFileSync(capabilityPath, "thread-opt-in\n");
+          fs.chmodSync(capabilityPath, 0o644);
+        },
+      },
+      {
+        label: "symlinked",
+        prepare: (capabilityPath: string) => {
+          const target = `${capabilityPath}-target`;
+          fs.writeFileSync(target, "thread-opt-in\n", { mode: 0o444 });
+          fs.symlinkSync(target, capabilityPath);
+        },
+      },
+    ];
+
+    for (const { label, prepare } of cases) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-unsafe-"));
+      const { wrapperPath, ranMarker, autoApprovalPath } = makeWrapperFixture(tempDir);
+      prepare(autoApprovalPath);
+      const result = spawnSync("bash", [wrapperPath, "-y"], {
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          NEMOCLAW_DCODE_AUTO_APPROVAL: "thread-opt-in",
+          NEMOCLAW_DCODE_AUTO_APPROVAL_ENABLED: "1",
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${label}: ${result.stderr}`).not.toBe(0);
+      expect(result.stderr).toContain("tool approval posture");
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    }
   });
 
   it("removes an inherited OpenAI-specific proxy before the managed package starts", () => {

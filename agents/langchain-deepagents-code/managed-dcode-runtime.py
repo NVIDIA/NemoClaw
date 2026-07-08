@@ -23,6 +23,15 @@ _MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
 _INFERENCE_BASE_URL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-inference-base-url"
 )
+_AUTO_APPROVAL_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-auto-approval"
+)
+_AUTO_APPROVAL_DISABLED = "disabled"
+_AUTO_APPROVAL_THREAD_OPT_IN = "thread-opt-in"
+_AUTO_APPROVAL_CONTENTS = {
+    b"disabled\n": _AUTO_APPROVAL_DISABLED,
+    b"thread-opt-in\n": _AUTO_APPROVAL_THREAD_OPT_IN,
+}
 _MANAGED_FILE_OWNER_UID = 0
 _CREDENTIAL_NAME = re.compile(
     r"(?:^|_)(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIAL)$",
@@ -862,6 +871,58 @@ def managed_inference_base_url() -> str:
     ):
         raise RuntimeError("managed inference base URL is invalid")
     return value
+
+
+def managed_auto_approval_mode() -> str:
+    """Return the trusted managed auto-approval mode, failing closed."""
+    path = _AUTO_APPROVAL_FILE
+    try:
+        if path.is_symlink():
+            return _AUTO_APPROVAL_DISABLED
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+    except OSError:
+        return _AUTO_APPROVAL_DISABLED
+
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != _MANAGED_FILE_OWNER_UID
+            or stat.S_IMODE(metadata.st_mode) != 0o444
+            or metadata.st_size not in {
+                len(content) for content in _AUTO_APPROVAL_CONTENTS
+            }
+        ):
+            return _AUTO_APPROVAL_DISABLED
+
+        chunks: list[bytes] = []
+        remaining = metadata.st_size
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                return _AUTO_APPROVAL_DISABLED
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            return _AUTO_APPROVAL_DISABLED
+    except OSError:
+        return _AUTO_APPROVAL_DISABLED
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+    return _AUTO_APPROVAL_CONTENTS.get(
+        b"".join(chunks), _AUTO_APPROVAL_DISABLED
+    )
+
+
+def managed_auto_approval_enabled() -> bool:
+    """Return whether thread-scoped auto-approval may be explicitly enabled."""
+    return managed_auto_approval_mode() == _AUTO_APPROVAL_THREAD_OPT_IN
 
 
 def managed_display_provider(adapter_provider: object) -> str:

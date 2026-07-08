@@ -36,6 +36,7 @@ const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = requ
 const runtimeControlFlow: typeof import("./onboard/runtime-control-flow") = require("./onboard/runtime-control-flow");
 const observabilityPolicy: typeof import("./onboard/observability-policy-presets") = require("./onboard/observability-policy-presets");
 const observabilityCommandFlag: typeof import("./onboard/observability-command-flag") = require("./onboard/observability-command-flag");
+const dcodeAutoApproval: typeof import("./onboard/dcode-auto-approval") = require("./onboard/dcode-auto-approval");
 const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
@@ -2391,6 +2392,16 @@ async function createSandboxWithBaseImageResolution(
   }
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
+  if (
+    dcodeAutoApproval.invalidRecordedDcodeAutoApprovalMode(existingEntry?.dcodeAutoApprovalMode)
+  ) {
+    console.error(
+      "  Recorded DCode auto-approval mode is invalid. Refusing to enable or reuse the sandbox; repair the recorded state to 'disabled' before retrying.",
+    );
+    process.exit(1);
+  }
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const dcodeAutoApprovalDrift = dcodeAutoApproval.hasRegisteredDcodeAutoApprovalDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.dcodeAutoApprovalMode);
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2485,7 +2496,8 @@ async function createSandboxWithBaseImageResolution(
       !hermesToolGatewayDrift &&
       !hermesDashboardDrift &&
       !toolDisclosureMigrationNeeded &&
-      !observabilityDrift
+      !observabilityDrift &&
+      !dcodeAutoApprovalDrift
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -2640,6 +2652,8 @@ async function createSandboxWithBaseImageResolution(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
     } else if (observabilityDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply observability settings.`);
+    } else if (dcodeAutoApprovalDrift) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to apply DCode auto-approval settings.`);
     } else if (toolDisclosureMigrationNote) {
       note(toolDisclosureMigrationNote);
     } else if (credentialRotation.changed) {
@@ -2653,11 +2667,13 @@ async function createSandboxWithBaseImageResolution(
     if (preservedMcpState) {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       const explicitObservability = observabilityCommandFlag.explicitObservabilityFlag(createIntent?.observabilityEnabled === true, createIntent?.observabilityRequestedExplicitly === true);
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      const explicitDcodeAutoApproval = createIntent?.dcodeAutoApprovalRequestedExplicitly === true ? ` --dcode-auto-approval ${dcodeAutoApproval.dcodeAutoApprovalModeOrDefault(createIntent.dcodeAutoApprovalMode)}` : "";
       console.error(
         `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
       );
       console.error(
-        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}${explicitObservability ? ` ${explicitObservability}` : ""}\` so MCP providers and adapter state are preserved transactionally.`,
+        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}${explicitObservability ? ` ${explicitObservability}` : ""}${explicitDcodeAutoApproval}\` so MCP providers and adapter state are preserved transactionally.`,
       );
       process.exit(1);
     }
@@ -2807,6 +2823,13 @@ async function createSandboxWithBaseImageResolution(
     preferredInferenceApi,
     webSearchConfig,
     toolDisclosure: effectiveToolDisclosure,
+    ...(isManagedDcodeAgent
+      ? {
+          dcodeAutoApprovalMode: dcodeAutoApproval.dcodeAutoApprovalModeOrDefault(
+            createIntent?.dcodeAutoApprovalMode,
+          ),
+        }
+      : {}),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
@@ -3016,6 +3039,11 @@ async function createSandboxWithBaseImageResolution(
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
+          dcodeAutoApprovalMode: dcodeAutoApproval.dcodeAutoApprovalModeOrDefault(
+            createIntent?.dcodeAutoApprovalMode,
+          ),
+          dcodeAutoApprovalRequestedExplicitly:
+            createIntent?.dcodeAutoApprovalRequestedExplicitly === true,
           policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
@@ -4512,6 +4540,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         sandbox: {
           resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
+          requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
           authoritativePolicyTier:
             opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
           controlUiPort: opts.controlUiPort || null,

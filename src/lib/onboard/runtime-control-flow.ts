@@ -4,6 +4,7 @@
 import { type Session, updateSession } from "../state/onboard-session";
 import { clearAgentScopedResumeState } from "./agent-resume-state";
 import { setOnboardBrandingAgent } from "./branding";
+import { DCODE_AUTO_APPROVAL_FEATURE, isDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { stopTrackedModelRouterForAgentChange } from "./model-router-process";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
@@ -31,15 +32,24 @@ type SelectedAgentTransitionOverrides = Partial<Omit<SelectedAgentTransitionDeps
 export function applyOnboardRuntimeControlRequests(
   opts: Pick<
     OnboardOptions,
-    "toolDisclosure" | "observabilityEnabled" | "observabilityRequestedExplicitly"
+    | "toolDisclosure"
+    | "observabilityEnabled"
+    | "observabilityRequestedExplicitly"
+    | "dcodeAutoApprovalMode"
+    | "dcodeAutoApprovalRequestedExplicitly"
   >,
 ) {
   const observabilityIsExplicit = opts.observabilityRequestedExplicitly !== false;
+  const dcodeAutoApprovalIsExplicit = opts.dcodeAutoApprovalRequestedExplicitly !== false;
   return {
     requestedToolDisclosure: applyOnboardToolDisclosureRequest(opts.toolDisclosure),
     requestedObservabilityEnabled:
       observabilityIsExplicit && typeof opts.observabilityEnabled === "boolean"
         ? opts.observabilityEnabled
+        : null,
+    requestedDcodeAutoApprovalMode:
+      dcodeAutoApprovalIsExplicit && isDcodeAutoApprovalMode(opts.dcodeAutoApprovalMode)
+        ? opts.dcodeAutoApprovalMode
         : null,
   };
 }
@@ -53,8 +63,30 @@ export function updateSessionAgent(
   },
 ): Session {
   validateSessionAgentObservability(session, agentName, deps);
+  validateSessionAgentDcodeAutoApproval(session, agentName, deps);
   session.agent = agentName ?? null;
   return session;
+}
+
+export function validateSessionAgentDcodeAutoApproval(
+  session: Pick<Session, "dcodeAutoApprovalMode"> | null,
+  agentName: string | null | undefined,
+  deps: RuntimeControlAgentDeps = {
+    error: console.error,
+    exitProcess: (code) => process.exit(code),
+  },
+): void {
+  if (
+    managedSandboxFeatureIssue(DCODE_AUTO_APPROVAL_FEATURE, {
+      agent: agentName,
+      sessionValue: session?.dcodeAutoApprovalMode,
+    }) === "recorded-state-on-unsupported-agent"
+  ) {
+    deps.error(
+      "  Recorded DCode auto-approval belongs to Deep Agents Code. Pass --dcode-auto-approval disabled explicitly when switching agents.",
+    );
+    deps.exitProcess(1);
+  }
 }
 
 export function validateSessionAgentObservability(
@@ -98,7 +130,26 @@ export async function applySelectedAgentTransition(
     exitProcess: (code) => process.exit(code),
     ...overrides,
   };
+  if (
+    !input.resume &&
+    input.session?.dcodeAutoApprovalRequestedExplicitly === true &&
+    managedSandboxFeatureIssue(DCODE_AUTO_APPROVAL_FEATURE, {
+      agent: input.selectedAgentName,
+      sessionValue: input.session.dcodeAutoApprovalMode,
+    }) === "recorded-state-on-unsupported-agent"
+  ) {
+    deps.updateSession((current) => {
+      current.dcodeAutoApprovalMode = DCODE_AUTO_APPROVAL_FEATURE.defaultValue;
+      current.dcodeAutoApprovalRequestedExplicitly = false;
+      return current;
+    });
+    deps.error(
+      "  --dcode-auto-approval thread-opt-in is supported only with the managed --agent langchain-deepagents-code image.",
+    );
+    deps.exitProcess(1);
+  }
   validateSessionAgentObservability(input.session, input.selectedAgentName, deps);
+  validateSessionAgentDcodeAutoApproval(input.session, input.selectedAgentName, deps);
 
   const selectedAgentName = normalizeSandboxAgentName(input.selectedAgentName);
   const recordedAgentName = normalizeSandboxAgentName(input.session?.agent);

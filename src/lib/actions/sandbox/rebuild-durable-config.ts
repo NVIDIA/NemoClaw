@@ -20,8 +20,17 @@ import {
   type WebSearchProvider,
   webSearchProviderForConfig,
 } from "../../inference/web-search";
+import {
+  type DcodeAutoApprovalMode,
+  dcodeAutoApprovalModeOrDefault,
+  invalidRecordedDcodeAutoApprovalMode,
+} from "../../onboard/dcode-auto-approval";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
-import { hasInvalidSessionToolDisclosure, type Session } from "../../state/onboard-session";
+import {
+  hasInvalidSessionDcodeAutoApprovalMode,
+  hasInvalidSessionToolDisclosure,
+  type Session,
+} from "../../state/onboard-session";
 import {
   DEFAULT_TOOL_DISCLOSURE,
   invalidRecordedToolDisclosure,
@@ -33,6 +42,8 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
 export type RebuildDurableConfig = {
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode;
+  dcodeAutoApprovalModeError: string | null;
   fromDockerfile: string | null;
   fromDockerfileError: string | null;
   hermesAuthMethod: "oauth" | "api_key" | null;
@@ -127,6 +138,7 @@ export function resolveRebuildDurableConfig(
   },
   requestedToolDisclosure?: ToolDisclosure,
   allowLegacyManagedImageRecovery = false,
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode,
 ): RebuildDurableConfig {
   const matchingSession =
     session?.sandboxName === sandboxName &&
@@ -199,6 +211,18 @@ export function resolveRebuildDurableConfig(
     requestedToolDisclosure ??
     normalizeToolDisclosure(recordedToolDisclosure) ??
     DEFAULT_TOOL_DISCLOSURE;
+  const recordedDcodeAutoApprovalMode =
+    entry.dcodeAutoApprovalMode !== undefined && entry.dcodeAutoApprovalMode !== null
+      ? entry.dcodeAutoApprovalMode
+      : matchingSession?.dcodeAutoApprovalMode;
+  const dcodeAutoApprovalModeError =
+    invalidRecordedDcodeAutoApprovalMode(recordedDcodeAutoApprovalMode) ||
+    ((entry.dcodeAutoApprovalMode === undefined || entry.dcodeAutoApprovalMode === null) &&
+      hasInvalidSessionDcodeAutoApprovalMode(matchingSession))
+      ? "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in"
+      : null;
+  const dcodeAutoApprovalMode =
+    requestedDcodeAutoApprovalMode ?? dcodeAutoApprovalModeOrDefault(recordedDcodeAutoApprovalMode);
   const recordedFromDockerfile: unknown =
     entry.fromDockerfile !== undefined
       ? entry.fromDockerfile
@@ -234,6 +258,8 @@ export function resolveRebuildDurableConfig(
       : null;
 
   return {
+    dcodeAutoApprovalMode,
+    dcodeAutoApprovalModeError,
     fromDockerfile:
       typeof recordedFromDockerfile === "string" && recordedFromDockerfile
         ? recordedFromDockerfile
@@ -277,10 +303,10 @@ export function validatedRebuildRegistryUpdate(
   fromDockerfile: string | null,
   credentialEnv: string | null,
 ): Partial<RebuildSandboxEntry> {
-  // toolDisclosure is intentionally absent: this preflight update still
-  // describes the running old image. Replacement onboarding commits the
-  // requested mode only after creation succeeds; retry rollback keeps the old
-  // registry value if recreation fails.
+  // toolDisclosure and dcodeAutoApprovalMode are intentionally absent: this
+  // preflight update still describes the running old image. Replacement
+  // onboarding commits requested modes only after creation succeeds; retry
+  // rollback keeps the old registry values if recreation fails.
   return {
     provider: resume.provider,
     model: resume.model,

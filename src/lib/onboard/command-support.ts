@@ -4,6 +4,7 @@
 import { Flags } from "@oclif/core";
 import { TOOL_DISCLOSURE_VALUES, type ToolDisclosure } from "../tool-disclosure";
 import { describeAgentFlag } from "./agent-flag-help";
+import { DCODE_AUTO_APPROVAL_MODES, type DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { NOTICE_ACCEPT_FLAG, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
 type AgentRegistryReader = () => readonly string[];
@@ -46,7 +47,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--dcode-auto-approval <disabled|thread-opt-in>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -76,6 +77,7 @@ export type OnboardFlags = {
   agents?: string;
   "tool-disclosure"?: ToolDisclosure;
   observability?: boolean;
+  "dcode-auto-approval"?: DcodeAutoApprovalMode;
   "control-ui-port"?: number;
   yes?: boolean;
   "no-ollama-autostart"?: boolean;
@@ -132,6 +134,11 @@ export function buildOnboardFlags(): Record<string, any> {
       allowNo: true,
       description:
         "Export bounded prompt, response, tool argument, and tool result content to a local OTLP collector (Deep Agents Code only)",
+    }),
+    "dcode-auto-approval": Flags.string({
+      description:
+        "Allow an explicit per-thread auto-approval opt-in inside a managed Deep Agents Code sandbox",
+      options: [...DCODE_AUTO_APPROVAL_MODES],
     }),
     "control-ui-port": Flags.integer({
       description: "Host port for the local control UI",

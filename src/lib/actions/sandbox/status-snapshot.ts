@@ -14,6 +14,10 @@ import {
   type ProviderHealthStatus,
   probeProviderHealth,
 } from "../../inference/health";
+import {
+  type DcodeAutoApprovalMode,
+  dcodeAutoApprovalModeOrDefault,
+} from "../../onboard/dcode-auto-approval";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -77,6 +81,7 @@ export interface SandboxStatusReport {
   agent: string;
   agentDisplayName: string;
   agentRuntime: "gateway" | "terminal" | "unknown";
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
   agentLoadError?: string;
   model: string;
   provider: string;
@@ -121,6 +126,13 @@ export interface SandboxStatusAgentInfo {
   agentRuntime: "gateway" | "terminal" | "unknown";
   agentLoadError?: string;
   agentDefinition: AgentDefinition | null;
+}
+
+export function resolveSandboxStatusDcodeAutoApprovalMode(
+  sandbox: registry.SandboxEntry | null,
+): DcodeAutoApprovalMode | null {
+  if (sandbox?.agent !== "langchain-deepagents-code") return null;
+  return dcodeAutoApprovalModeOrDefault(sandbox.dcodeAutoApprovalMode);
 }
 
 export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatusAgentInfo {
@@ -302,6 +314,7 @@ async function buildSandboxStatusReport(
     agent: agent.agentName,
     agentDisplayName: agent.agentDisplayName,
     agentRuntime: agent.agentRuntime,
+    dcodeAutoApprovalMode: resolveSandboxStatusDcodeAutoApprovalMode(sb),
     ...(agent.agentLoadError ? { agentLoadError: agent.agentLoadError } : {}),
     model: currentModel,
     provider: currentProvider,

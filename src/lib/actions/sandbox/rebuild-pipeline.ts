@@ -187,6 +187,7 @@ async function rebuildSandboxUnlocked(
         !(await dcodePreflight.revalidateBeforeDelete(
           resumeConfig,
           durableConfig.toolDisclosure,
+          durableConfig.dcodeAutoApprovalMode,
           recoveryRecreate,
           recreateOptions.targetGatewayPort,
         ))
@@ -229,6 +230,7 @@ async function rebuildSandboxUnlocked(
           return dcodePreflight.checkAtDeleteEdge(
             resumeConfig,
             durableConfig.toolDisclosure,
+            durableConfig.dcodeAutoApprovalMode,
             recoveryRecreate,
             recreateOptions.targetGatewayPort,
           );

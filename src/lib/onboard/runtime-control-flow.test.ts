@@ -20,15 +20,18 @@ describe("onboard runtime control flow", () => {
       applyOnboardRuntimeControlRequests({
         toolDisclosure: "direct",
         observabilityEnabled: true,
+        dcodeAutoApprovalMode: "thread-opt-in",
       }),
     ).toEqual({
       requestedToolDisclosure: "direct",
       requestedObservabilityEnabled: true,
+      requestedDcodeAutoApprovalMode: "thread-opt-in",
     });
     delete process.env.NEMOCLAW_TOOL_DISCLOSURE;
     expect(applyOnboardRuntimeControlRequests({})).toEqual({
       requestedToolDisclosure: null,
       requestedObservabilityEnabled: null,
+      requestedDcodeAutoApprovalMode: null,
     });
   });
 
@@ -41,7 +44,50 @@ describe("onboard runtime control flow", () => {
     ).toEqual({
       requestedToolDisclosure: null,
       requestedObservabilityEnabled: null,
+      requestedDcodeAutoApprovalMode: null,
     });
+  });
+
+  it("rejects inherited DCode thread opt-in when switching agents", () => {
+    const session = createSession({ dcodeAutoApprovalMode: "thread-opt-in" });
+    const error = vi.fn();
+    const exitProcess = vi.fn(() => {
+      throw new Error("exit 1");
+    });
+
+    expect(() => updateSessionAgent(session, "hermes", { error, exitProcess })).toThrow("exit 1");
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("--dcode-auto-approval disabled"));
+    expect(session.agent).toBeNull();
+  });
+
+  it("clears a fresh unsupported DCode request before rejecting agent selection (#6478)", async () => {
+    const session = createSession({
+      dcodeAutoApprovalMode: "thread-opt-in",
+      dcodeAutoApprovalRequestedExplicitly: true,
+    });
+    const updateSession = vi.fn((mutator) => mutator(session) ?? session);
+    const error = vi.fn();
+    const exitProcess = vi.fn(() => {
+      throw new Error("exit 1");
+    });
+
+    await expect(
+      applySelectedAgentTransition(
+        {
+          resume: false,
+          session,
+          selectedAgentName: "hermes",
+          routerPort: 4000,
+          note: vi.fn(),
+        },
+        { updateSession, error, exitProcess },
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(updateSession).toHaveBeenCalledOnce();
+    expect(session.dcodeAutoApprovalMode).toBe("disabled");
+    expect(session.dcodeAutoApprovalRequestedExplicitly).toBe(false);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("supported only"));
   });
 
   it("records the selected DCode agent when observability is enabled", () => {

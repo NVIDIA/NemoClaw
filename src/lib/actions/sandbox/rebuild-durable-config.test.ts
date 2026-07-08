@@ -7,6 +7,97 @@ import { createSession, normalizeSession } from "../../state/onboard-session";
 import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("resolveRebuildDurableConfig", () => {
+  it("defaults legacy DCode auto-approval state to disabled (#6478)", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        nemoclawVersion: "0.1.0",
+      },
+      null,
+    );
+
+    expect(config.dcodeAutoApprovalMode).toBe("disabled");
+    expect(config.dcodeAutoApprovalModeError).toBeNull();
+  });
+
+  it("keeps registry DCode auto-approval authoritative over a matching session (#6478)", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        nemoclawVersion: "0.1.0",
+        dcodeAutoApprovalMode: "thread-opt-in",
+      },
+      createSession({ sandboxName: "alpha", dcodeAutoApprovalMode: "disabled" }),
+    );
+
+    expect(config.dcodeAutoApprovalMode).toBe("thread-opt-in");
+    expect(config.dcodeAutoApprovalModeError).toBeNull();
+  });
+
+  it("applies an explicit transactional DCode auto-approval override (#6478)", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        nemoclawVersion: "0.1.0",
+        dcodeAutoApprovalMode: "disabled",
+      },
+      null,
+      undefined,
+      undefined,
+      false,
+      "thread-opt-in",
+    );
+
+    expect(config.dcodeAutoApprovalMode).toBe("thread-opt-in");
+    expect(config.dcodeAutoApprovalModeError).toBeNull();
+  });
+
+  it("does not let an explicit override mask corrupt DCode auto-approval state (#6478)", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        nemoclawVersion: "0.1.0",
+        dcodeAutoApprovalMode: "always" as never,
+      },
+      null,
+      undefined,
+      undefined,
+      false,
+      "thread-opt-in",
+    );
+
+    expect(config.dcodeAutoApprovalMode).toBe("thread-opt-in");
+    expect(config.dcodeAutoApprovalModeError).toContain("disabled or thread-opt-in");
+  });
+
+  it("fails closed for corrupt matching-session DCode auto-approval state (#6478)", () => {
+    const session = normalizeSession({
+      version: 1,
+      sandboxName: "alpha",
+      dcodeAutoApprovalMode: "always",
+    } as never);
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        nemoclawVersion: "0.1.0",
+      },
+      session,
+    );
+
+    expect(config.dcodeAutoApprovalMode).toBe("disabled");
+    expect(config.dcodeAutoApprovalModeError).toContain("disabled or thread-opt-in");
+  });
+
   it("keeps the registry tool-disclosure selection authoritative", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",

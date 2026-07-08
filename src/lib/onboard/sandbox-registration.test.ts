@@ -44,6 +44,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       imageTag: "nemoclaw-demo:123",
       appliedPolicies: ["discord", "slack"],
       observabilityEnabled: true,
+      dcodeAutoApprovalMode: "thread-opt-in",
+      dcodeAutoApprovalRequestedExplicitly: true,
       policyTier: "restricted",
       webSearchEnabled: true,
       fromDockerfile: "/tmp/Dockerfile.custom",
@@ -70,6 +72,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       policies: ["discord", "slack"],
       toolDisclosure: "progressive",
       observabilityEnabled: true,
+      dcodeAutoApprovalMode: "thread-opt-in",
+      dcodeAutoApprovalRequestedExplicitly: true,
       policyTier: "restricted",
       webSearchEnabled: true,
       fromDockerfile: "/tmp/Dockerfile.custom",
@@ -147,6 +151,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.hermesAuthMethod).toBeNull();
     expect(entry.toolDisclosure).toBe("progressive");
     expect(entry.observabilityEnabled).toBe(false);
+    expect(entry.dcodeAutoApprovalMode).toBe("disabled");
+    expect(entry.dcodeAutoApprovalRequestedExplicitly).toBe(false);
   });
 
   it("carries a durable MCP rebuild manifest into the replacement registry entry", () => {

@@ -21,7 +21,11 @@ vi.mock("../../messaging-channel-setup", () => ({
 
 const detectMessagingChannelsFromEnvMock = vi.mocked(detectMessagingChannelsFromEnv);
 
-function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
+function dcodeRegistryEntry(
+  name: string,
+  observabilityEnabled?: boolean,
+  dcodeAutoApprovalMode?: "disabled" | "thread-opt-in",
+) {
   return {
     name,
     agent: "langchain-deepagents-code",
@@ -33,6 +37,7 @@ function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
     gatewayName: "nemoclaw",
     toolDisclosure: "progressive" as const,
     ...(typeof observabilityEnabled === "boolean" ? { observabilityEnabled } : {}),
+    ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
   };
 }
 
@@ -70,7 +75,12 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: false, toolDisclosure: "progressive", observabilityEnabled: false },
+      {
+        recreate: false,
+        toolDisclosure: "progressive",
+        observabilityEnabled: false,
+        dcodeAutoApprovalMode: "disabled",
+      },
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
@@ -116,6 +126,7 @@ describe("handleSandboxState", () => {
     const session = createSession({
       observabilityEnabled: true,
       observabilityRequestedExplicitly: true,
+      dcodeAutoApprovalMode: "disabled",
     });
     const { deps, calls } = createDeps({
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
@@ -133,6 +144,7 @@ describe("handleSandboxState", () => {
       toolDisclosure: "progressive",
       observabilityEnabled: true,
       observabilityRequestedExplicitly: true,
+      dcodeAutoApprovalMode: "disabled",
     });
   });
 
@@ -149,6 +161,82 @@ describe("handleSandboxState", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
       policyTier: "restricted",
     });
+  });
+
+  it("warns and carries explicit thread opt-in in the create intent (#6478)", async () => {
+    const session = createSession();
+    const { deps, calls } = createDeps({
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+      requestedDcodeAutoApprovalMode: "thread-opt-in",
+    });
+
+    expect(calls.note).toHaveBeenCalledWith(expect.stringContaining("including shell commands"));
+    expect(calls.note).toHaveBeenCalledWith(
+      expect.stringContaining("does not activate auto-approval"),
+    );
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      dcodeAutoApprovalMode: "thread-opt-in",
+      dcodeAutoApprovalRequestedExplicitly: true,
+    });
+    expect(session.dcodeAutoApprovalMode).toBe("thread-opt-in");
+    expect(session.dcodeAutoApprovalRequestedExplicitly).toBe(true);
+  });
+
+  it("recreates a ready DCode sandbox when the image-baked mode changes (#6478)", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      dcodeAutoApprovalMode: "thread-opt-in",
+      dcodeAutoApprovalRequestedExplicitly: true,
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name: string) => dcodeRegistryEntry(name, false, "disabled"),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      recreate: true,
+      dcodeAutoApprovalMode: "thread-opt-in",
+    });
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] DCode auto-approval capability changed; recreating sandbox.",
+    );
+  });
+
+  it("rejects malformed recorded DCode auto-approval state (#6478)", async () => {
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: (name: string) => ({
+        ...dcodeRegistryEntry(name),
+        dcodeAutoApprovalMode: "always" as never,
+      }),
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps),
+        agent: { name: "langchain-deepagents-code" },
+        sandboxName: "saved",
+      }),
+    ).rejects.toThrow("exit 1");
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("mode is invalid"));
+    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
   it("rejects observability for a selected non-DCode agent", async () => {
@@ -449,7 +537,12 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
-      { recreate: false, toolDisclosure: "progressive", observabilityEnabled: false },
+      {
+        recreate: false,
+        toolDisclosure: "progressive",
+        observabilityEnabled: false,
+        dcodeAutoApprovalMode: "disabled",
+      },
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
     expect(calls.note).toHaveBeenCalledWith(
@@ -554,7 +647,12 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: "progressive", observabilityEnabled: false },
+      {
+        recreate: true,
+        toolDisclosure: "progressive",
+        observabilityEnabled: false,
+        dcodeAutoApprovalMode: "disabled",
+      },
     );
   });
 
@@ -757,7 +855,12 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: "progressive", observabilityEnabled: false },
+      {
+        recreate: true,
+        toolDisclosure: "progressive",
+        observabilityEnabled: false,
+        dcodeAutoApprovalMode: "disabled",
+      },
     );
     expect(result.webSearchConfigChanged).toBe(true);
   });
@@ -871,7 +974,12 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: "progressive", observabilityEnabled: false },
+      {
+        recreate: true,
+        toolDisclosure: "progressive",
+        observabilityEnabled: false,
+        dcodeAutoApprovalMode: "disabled",
+      },
     );
     expect(result.webSearchConfig).toBeNull();
   });

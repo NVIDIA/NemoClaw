@@ -5,6 +5,7 @@ import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { HermesAuthMethod, SessionUpdates } from "../state/onboard-session";
 import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
+import { type DcodeAutoApprovalMode, isDcodeAutoApprovalMode } from "./dcode-auto-approval";
 
 export interface OnboardSessionUpdateInput {
   sandboxName?: string | null;
@@ -19,6 +20,7 @@ export interface OnboardSessionUpdateInput {
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure | string;
   observabilityEnabled?: boolean;
+  dcodeAutoApprovalMode?: DcodeAutoApprovalMode | string;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
   hermesToolGateways?: string[] | null;
@@ -63,6 +65,9 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
   }
   if (typeof updates.observabilityEnabled === "boolean") {
     normalized.observabilityEnabled = updates.observabilityEnabled;
+  }
+  if (isDcodeAutoApprovalMode(updates.dcodeAutoApprovalMode)) {
+    normalized.dcodeAutoApprovalMode = updates.dcodeAutoApprovalMode;
   }
   if (updates.policyPresets !== undefined) normalized.policyPresets = updates.policyPresets;
   if (updates.messagingPlan !== undefined) normalized.messagingPlan = updates.messagingPlan;

@@ -26,6 +26,11 @@ import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
+  assignSafeDcodeAutoApprovalModeUpdate,
+  normalizeSessionDcodeAutoApprovalMode,
+  preserveInvalidSessionDcodeAutoApprovalMode,
+} from "./onboard-session-dcode-auto-approval";
+import {
   assignSafeToolDisclosureUpdate,
   normalizeSessionToolDisclosure,
   preserveInvalidSessionToolDisclosure,
@@ -60,6 +65,7 @@ const STEP_STATES: readonly StepStatus[] = [
 ];
 const VALID_STEP_STATES: ReadonlySet<string> = new Set(STEP_STATES);
 
+export { hasInvalidSessionDcodeAutoApprovalMode } from "./onboard-session-dcode-auto-approval";
 export { hasInvalidSessionToolDisclosure } from "./onboard-session-tool-disclosure";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -119,6 +125,9 @@ export interface Session {
   observabilityEnabled: boolean;
   /** True when observability was explicitly enabled or disabled for this resumable run. */
   observabilityRequestedExplicitly: boolean;
+  dcodeAutoApprovalMode: import("../onboard/dcode-auto-approval").DcodeAutoApprovalMode;
+  /** True when the capability mode was explicitly selected for this resumable run. */
+  dcodeAutoApprovalRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
@@ -191,6 +200,7 @@ export interface SessionUpdates {
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
+  dcodeAutoApprovalMode?: import("../onboard/dcode-auto-approval").DcodeAutoApprovalMode;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
@@ -221,6 +231,8 @@ export interface DebugSessionSummary {
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
   observabilityRequestedExplicitly: boolean;
+  dcodeAutoApprovalMode: import("../onboard/dcode-auto-approval").DcodeAutoApprovalMode;
+  dcodeAutoApprovalRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
@@ -478,6 +490,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
+    dcodeAutoApprovalMode: normalizeSessionDcodeAutoApprovalMode(overrides.dcodeAutoApprovalMode),
+    dcodeAutoApprovalRequestedExplicitly: overrides.dcodeAutoApprovalRequestedExplicitly === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
@@ -497,6 +511,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     steps,
   };
   preserveInvalidSessionToolDisclosure(overrides, session);
+  preserveInvalidSessionDcodeAutoApprovalMode(overrides, session);
   return session;
 }
 
@@ -524,6 +539,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     observabilityEnabled: data.observabilityEnabled === true,
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
+    dcodeAutoApprovalMode: normalizeSessionDcodeAutoApprovalMode(data.dcodeAutoApprovalMode),
+    dcodeAutoApprovalRequestedExplicitly: data.dcodeAutoApprovalRequestedExplicitly === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
@@ -550,6 +567,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 
   normalized.machine = parseMachineSnapshot(data.machine) ?? inferMachineSnapshot(normalized);
   preserveInvalidSessionToolDisclosure(data, normalized);
+  preserveInvalidSessionDcodeAutoApprovalMode(data, normalized);
 
   return normalized;
 }
@@ -1024,6 +1042,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (typeof updates.observabilityEnabled === "boolean") {
     safe.observabilityEnabled = updates.observabilityEnabled;
   }
+  assignSafeDcodeAutoApprovalModeUpdate(safe, updates.dcodeAutoApprovalMode);
   if (updates.hermesToolGateways === null) {
     safe.hermesToolGateways = null;
   } else if (Array.isArray(updates.hermesToolGateways)) {
@@ -1320,6 +1339,8 @@ export function summarizeForDebug(
     toolDisclosure: session.toolDisclosure,
     observabilityEnabled: session.observabilityEnabled,
     observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
+    dcodeAutoApprovalMode: session.dcodeAutoApprovalMode,
+    dcodeAutoApprovalRequestedExplicitly: session.dcodeAutoApprovalRequestedExplicitly,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,
