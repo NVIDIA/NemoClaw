@@ -8,6 +8,12 @@ The E2E target controls the raw trace directory, so CI must never upload it.
 This script accepts only the onboard timing shape needed by the scorecard and
 writes a single allowlisted summary without attributes, events, paths, prompts,
 environment data, or raw error messages.
+
+Source-of-truth note: raw trace shape is produced by src/lib/trace.ts
+TraceArtifact. This reducer is intentionally narrower than that source schema:
+raw traces remain useful local diagnostics, while CI only needs timing evidence.
+If the producer grows a timing-only artifact, this post-run reducer can be
+removed in favor of that source artifact.
 """
 
 from __future__ import annotations
@@ -103,6 +109,7 @@ def extract_spans(artifact: Any) -> list[dict[str, Any]]:
 
 
 def extract_candidate(artifact: Any) -> dict[str, Any] | None:
+    """Extract the allowlisted subset of src/lib/trace.ts TraceArtifact."""
     if not isinstance(artifact, dict):
         return None
     spans = extract_spans(artifact)

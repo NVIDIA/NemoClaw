@@ -33,6 +33,16 @@ function mode(pathname: string): number {
   return fs.statSync(pathname).mode & 0o7777;
 }
 
+function hashInputs(configPath: string, envPath: string): string {
+  const result = spawnSync("sha256sum", [configPath, envPath], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+  expect(result.status, result.stderr).toBe(0);
+  const mcpDigest = createHash("sha256").update("{}").digest("hex");
+  return `${result.stdout}# nemoclaw-hermes-mcp-state-v1 intended=${mcpDigest} applied=${mcpDigest}\n`;
+}
+
 function createRestartFixture(): RestartFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-restart-seal-"));
   const sandboxDir = path.join(root, "sandbox");
@@ -53,13 +63,9 @@ function createRestartFixture(): RestartFixture {
   fs.writeFileSync(envPath, trustedEnv, { mode: 0o600 });
   fs.chmodSync(envPath, 0o600);
 
-  const hash = spawnSync("sha256sum", [configPath, envPath], {
-    encoding: "utf-8",
-    timeout: 5000,
-  });
-  expect(hash.status, hash.stderr).toBe(0);
-  fs.writeFileSync(hashPath, hash.stdout, { mode: 0o600 });
-  fs.writeFileSync(compatHashPath, hash.stdout, { mode: 0o600 });
+  const hash = hashInputs(configPath, envPath);
+  fs.writeFileSync(hashPath, hash, { mode: 0o600 });
+  fs.writeFileSync(compatHashPath, hash, { mode: 0o600 });
 
   return {
     root,
@@ -251,16 +257,13 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
   }, () => {
     const fixture = createRestartFixture();
     const boundarySize = 16 * 1024 * 1024;
-    const originalConfig = `${"a".repeat(boundarySize - 1)}\n`;
-    const updatedConfig = `${"b".repeat(boundarySize - 1)}\n`;
+    const payloadSize = boundarySize - "payload: \n".length;
+    const originalConfig = `payload: ${"a".repeat(payloadSize)}\n`;
+    const updatedConfig = `payload: ${"b".repeat(payloadSize)}\n`;
     fs.writeFileSync(fixture.configPath, originalConfig);
-    const hash = spawnSync("sha256sum", [fixture.configPath, fixture.envPath], {
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-    expect(hash.status, hash.stderr).toBe(0);
-    fs.writeFileSync(fixture.hashPath, hash.stdout);
-    fs.writeFileSync(fixture.compatHashPath, hash.stdout);
+    const hash = hashInputs(fixture.configPath, fixture.envPath);
+    fs.writeFileSync(fixture.hashPath, hash);
+    fs.writeFileSync(fixture.compatHashPath, hash);
     const expectedDigest = createHash("sha256").update(originalConfig).digest("hex");
 
     try {

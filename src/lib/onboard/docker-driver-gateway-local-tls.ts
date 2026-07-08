@@ -6,7 +6,7 @@ import { createPrivateKey, createPublicKey, type KeyObject, X509Certificate } fr
 import fs from "node:fs";
 import path from "node:path";
 
-// See docs/security/openshell-0.0.71-gateway-auth-review.mdx for the source-of-truth review.
+// See docs/security/openshell-0.0.72-compatibility-review.mdx for the source-of-truth review.
 export const DOCKER_DRIVER_GATEWAY_LOCAL_TLS_DIR_NAME = "tls";
 
 const REQUIRED_SERVER_DNS_SANS = ["host.openshell.internal", "localhost"];

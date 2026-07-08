@@ -162,6 +162,93 @@ describe("uninstall run plan", () => {
     }
   });
 
+  it("removes agent-alias CLI shims (nemohermes, nemo-deepagents) (#6098)", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-alias-shims-"));
+    const userBin = path.join(tmpHome, ".local", "bin");
+    fs.mkdirSync(userBin, { recursive: true });
+    const hermesShim = path.join(userBin, "nemohermes");
+    const deepagentsShim = path.join(userBin, "nemo-deepagents");
+    // Installer-managed symlinks → classified as managed-symlink → removed.
+    fs.symlinkSync("/tmp/prefix/bin/nemohermes", hermesShim);
+    fs.symlinkSync("/tmp/prefix/bin/nemo-deepagents", deepagentsShim);
+
+    const removed: string[] = [];
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: false },
+        {
+          commandExists: (command) =>
+            command !== "docker" &&
+            command !== "lsof" &&
+            command !== "openshell" &&
+            command !== "pgrep",
+          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          existsSync: (target) => target === hermesShim || target === deepagentsShim,
+          isTty: false,
+          log: () => {},
+          rmSync: vi.fn((target: fs.PathLike) => {
+            removed.push(String(target));
+          }),
+          run: vi.fn(() => ok()),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(removed).toEqual(expect.arrayContaining([hermesShim, deepagentsShim]));
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("removes agent-alias wrapper shims via binName-aware fd-read classification (#6098)", () => {
+    // Symlinks classify via the metadata fast path. Wrapper scripts go through
+    // classifyShimPath's fd-read branch which reads the file and matches the
+    // wrapper contract with the per-alias binName. Both paths must remove.
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-alias-wrapper-"));
+    const userBin = path.join(tmpHome, ".local", "bin");
+    fs.mkdirSync(userBin, { recursive: true });
+    const hermesShim = path.join(userBin, "nemohermes");
+    const deepagentsShim = path.join(userBin, "nemo-deepagents");
+    const managedWrapper = (binName: string) =>
+      [
+        "#!/usr/bin/env bash",
+        'export PATH="/tmp/node-bin:$PATH"',
+        `exec "/tmp/prefix/bin/${binName}" "$@"`,
+        "",
+      ].join("\n");
+    fs.writeFileSync(hermesShim, managedWrapper("nemohermes"), { mode: 0o755 });
+    fs.writeFileSync(deepagentsShim, managedWrapper("nemo-deepagents"), { mode: 0o755 });
+
+    const removed: string[] = [];
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: false },
+        {
+          commandExists: (command) =>
+            command !== "docker" &&
+            command !== "lsof" &&
+            command !== "openshell" &&
+            command !== "pgrep",
+          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          existsSync: (target) => target === hermesShim || target === deepagentsShim,
+          isTty: false,
+          log: () => {},
+          rmSync: vi.fn((target: fs.PathLike) => {
+            removed.push(String(target));
+          }),
+          run: vi.fn(() => ok()),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(removed).toEqual(expect.arrayContaining([hermesShim, deepagentsShim]));
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   it("uses NemoHermes uninstall copy when Hermes is the active agent", () => {
     const logs: string[] = [];
     const warnings: string[] = [];

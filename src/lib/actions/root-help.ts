@@ -46,6 +46,12 @@ export function help(): void {
   lines.push("");
   lines.push(`  ${B}${G}${CLI_DISPLAY_NAME}${R}  ${D}v${getVersion()}${R}`);
   lines.push(`  ${D}Deploy more secure, always-on AI assistants with a single command.${R}`);
+  lines.push(
+    `  ${D}Global commands run without a sandbox-name prefix; sandbox commands start with a sandbox name.${R}`,
+  );
+  lines.push(
+    `  ${D}Use \`${CLI_NAME} status\` for the global overview, and \`${CLI_NAME} <name> status\` for one sandbox.${R}`,
+  );
 
   for (const [group, cmds] of grouped) {
     lines.push("");

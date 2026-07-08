@@ -13,7 +13,7 @@ import {
 } from "../../../test/support/openshell-gateway-config-helpers";
 
 describe("docker-driver-gateway config TOML", () => {
-  it("writes OpenShell 0.0.71 gateway JWT config into the managed state dir", () => {
+  it("writes OpenShell 0.0.72 gateway JWT config into the managed state dir", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);

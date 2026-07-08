@@ -79,4 +79,14 @@ describe("NemoClawInstance manifests", () => {
     expect(manifest.spec.onboarding.agent).toBe("openclaw");
     expect(manifest.spec.onboarding.provider).toBe("nvidia");
   });
+
+  it("declares observability on the canonical Deep Agents Code live target", () => {
+    const target = listTargets().find(
+      (entry) => entry.id === "ubuntu-repo-cloud-langchain-deepagents-code",
+    );
+
+    expect(target).toBeTruthy();
+    const manifest = loadManifest(path.join(REPO_ROOT, target!.manifestPath as string)).document;
+    expect(manifest.spec.onboarding.features?.observability).toBe(true);
+  });
 });

@@ -1,16 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { execTimeout } from "./helpers/timeouts";
-
-const REPO_ROOT = path.join(import.meta.dirname, "..");
-const ONBOARD_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
-const CREDENTIALS_PATH = JSON.stringify(
-  path.join(REPO_ROOT, "src", "lib", "credentials", "store.ts"),
-);
+import { describe, expect, it, vi } from "vitest";
+import {
+  createPolicySelectionPromptHelpers,
+  type PolicySelectionPromptDeps,
+} from "../src/lib/onboard/policy-selection-prompts";
 
 type Preset = {
   name: string;
@@ -29,140 +24,159 @@ const SAMPLE_PRESETS: Preset[] = [
 ];
 
 /**
- * Parse the JSON result from the last non-empty line of stdout.
- * The subprocess writes console.log output (preset listing, messages) to
- * stdout before the final JSON line, so we must look at only the last line.
- */
-function parseResult(stdout: string): string[] {
-  const lines = stdout.trim().split("\n").filter(Boolean);
-  const parsed: Array<string | null> = JSON.parse(lines[lines.length - 1]);
-  return Array.isArray(parsed)
-    ? parsed.filter((entry): entry is string => typeof entry === "string")
-    : [];
-}
-
-/**
- * Run presetsCheckboxSelector in a subprocess where neither stdin nor stdout
- * is a TTY (spawnSync uses pipes), forcing the non-TTY fallback path.
+ * Run presetsCheckboxSelector with neither stdin nor stdout marked as a TTY,
+ * forcing the non-TTY fallback path.
  *
  * `promptResponse` is what the stubbed prompt() returns — i.e., whatever the
  * user would have typed at the "Select presets" prompt.
  */
-function runCheckboxSelector(
+async function runCheckboxSelector(
   promptResponse: string,
   { presets = SAMPLE_PRESETS, initialSelected = [] }: SelectorOptions = {},
 ) {
-  // Stub credentials.prompt BEFORE requiring onboard so the destructured
-  // binding inside onboard.js picks up the stub at load time.
-  const script = String.raw`
-const credentials = require(${CREDENTIALS_PATH});
-credentials.prompt = () => Promise.resolve(${JSON.stringify(promptResponse)});
-const { presetsCheckboxSelector } = require(${ONBOARD_PATH});
-
-const presets = JSON.parse(process.env.NEMOCLAW_TEST_PRESETS);
-const initialSelected = JSON.parse(process.env.NEMOCLAW_TEST_INITIAL || "[]");
-
-presetsCheckboxSelector(presets, initialSelected)
-  .then((result) => {
-    process.stdout.write(JSON.stringify(result) + "\n");
-  })
-  .catch((err) => {
-    process.stderr.write(String(err) + "\n");
-    process.exit(1);
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const logSpy = vi.spyOn(console, "log").mockImplementation((...args) => {
+    stdout.push(args.map(String).join(" "));
   });
-`;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+    stderr.push(args.map(String).join(" "));
+  });
+  const prompt = vi.fn(async () => promptResponse);
 
-  return spawnSync(process.execPath, ["-e", script], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-    timeout: execTimeout(5_000),
-    env: {
-      ...process.env,
-      NEMOCLAW_TEST_PRESETS: JSON.stringify(presets),
-      NEMOCLAW_TEST_INITIAL: JSON.stringify(initialSelected),
-      NO_COLOR: "1",
+  const deps: PolicySelectionPromptDeps = {
+    tiers: {
+      listTiers: () => [],
+      getTier: () => null,
     },
-  });
+    policyTierEnv: {
+      resolvePolicyTierFromEnv: () => "balanced",
+    },
+    isNonInteractive: () => false,
+    note: () => undefined,
+    prompt,
+    selectFromNumberedMenuOrExit: () => {
+      throw new Error("unexpected numbered-menu selection");
+    },
+    makeOnboardCancelExit: (_rollback, cleanup) => () => cleanup(),
+    sandboxCancelRollback: { markCancelled: () => undefined },
+    useColor: false,
+    stdin: {
+      isTTY: false,
+      on: () => undefined,
+      pause: () => undefined,
+      removeListener: () => undefined,
+      resume: () => undefined,
+      setEncoding: () => undefined,
+      setRawMode: () => undefined,
+    },
+    stdout: {
+      isTTY: false,
+      write: () => true,
+    },
+    processEvents: {
+      once: () => undefined,
+      removeListener: () => undefined,
+    },
+  };
+
+  try {
+    const selection = await createPolicySelectionPromptHelpers(deps).presetsCheckboxSelector(
+      presets,
+      initialSelected,
+    );
+    return {
+      status: 0,
+      selection,
+      stdout: `${stdout.join("\n")}\n`,
+      stderr: stderr.length > 0 ? `${stderr.join("\n")}\n` : "",
+      prompt,
+    };
+  } finally {
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  }
 }
 
 describe("presetsCheckboxSelector (non-TTY path)", () => {
   describe("zero presets", () => {
-    it("returns [] immediately without calling prompt", () => {
-      const result = runCheckboxSelector("should-not-matter", { presets: [] });
+    it("returns [] immediately without calling prompt", async () => {
+      const result = await runCheckboxSelector("should-not-matter", { presets: [] });
       expect(result.status).toBe(0);
-      expect(parseResult(result.stdout)).toEqual([]);
+      expect(result.selection).toEqual([]);
+      expect(result.prompt).not.toHaveBeenCalled();
     });
 
-    it("prints a friendly message when no presets exist", () => {
-      const result = runCheckboxSelector("", { presets: [] });
+    it("prints a friendly message when no presets exist", async () => {
+      const result = await runCheckboxSelector("", { presets: [] });
       expect(result.stdout).toContain("No policy presets are available.");
     });
   });
 
   describe("empty input", () => {
-    it("returns [] when the user presses Enter without typing", () => {
-      const result = runCheckboxSelector("");
+    it("returns [] when the user presses Enter without typing", async () => {
+      const result = await runCheckboxSelector("");
       expect(result.status).toBe(0);
-      expect(parseResult(result.stdout)).toEqual([]);
+      expect(result.selection).toEqual([]);
     });
 
-    it("prints 'Skipping policy presets.' on empty input", () => {
-      const result = runCheckboxSelector("  ");
+    it("prints 'Skipping policy presets.' on empty input", async () => {
+      const result = await runCheckboxSelector("  ");
       expect(result.stdout).toContain("Skipping policy presets.");
     });
   });
 
   describe("valid input", () => {
-    it("returns a single named preset", () => {
-      const result = runCheckboxSelector("npm");
+    it("returns a single named preset", async () => {
+      const result = await runCheckboxSelector("npm");
       expect(result.status).toBe(0);
-      expect(parseResult(result.stdout)).toEqual(["npm"]);
+      expect(result.selection).toEqual(["npm"]);
     });
 
-    it("returns multiple comma-separated presets in order", () => {
-      const result = runCheckboxSelector("npm, pypi");
+    it("returns multiple comma-separated presets in order", async () => {
+      const result = await runCheckboxSelector("npm, pypi");
       expect(result.status).toBe(0);
-      expect(parseResult(result.stdout)).toEqual(["npm", "pypi"]);
+      expect(result.selection).toEqual(["npm", "pypi"]);
     });
 
-    it("trims whitespace around each name", () => {
-      const result = runCheckboxSelector("  npm  ,  slack  ");
+    it("trims whitespace around each name", async () => {
+      const result = await runCheckboxSelector("  npm  ,  slack  ");
       expect(result.status).toBe(0);
-      expect(parseResult(result.stdout)).toEqual(["npm", "slack"]);
+      expect(result.selection).toEqual(["npm", "slack"]);
     });
   });
 
   describe("unknown preset names", () => {
-    it("drops unknown names and returns only valid ones", () => {
-      const result = runCheckboxSelector("npm, typo");
+    it("drops unknown names and returns only valid ones", async () => {
+      const result = await runCheckboxSelector("npm, typo");
       expect(result.status).toBe(0);
-      expect(parseResult(result.stdout)).toEqual(["npm"]);
+      expect(result.selection).toEqual(["npm"]);
     });
 
-    it("warns about each unknown name on stderr", () => {
+    it("warns about each unknown name on stderr", async () => {
       // console.error() → stderr; console.log() → stdout
-      const result = runCheckboxSelector("npm, typo, alsowrong");
+      const result = await runCheckboxSelector("npm, typo, alsowrong");
       expect(result.stderr).toContain("Unknown preset name ignored: typo");
       expect(result.stderr).toContain("Unknown preset name ignored: alsowrong");
     });
 
-    it("returns [] when all names are unknown", () => {
-      const result = runCheckboxSelector("bad1, bad2");
+    it("returns [] when all names are unknown", async () => {
+      const result = await runCheckboxSelector("bad1, bad2");
       expect(result.status).toBe(0);
-      expect(parseResult(result.stdout)).toEqual([]);
+      expect(result.selection).toEqual([]);
     });
   });
 
   describe("preset listing output", () => {
-    it("prints all preset names in the listing", () => {
-      const result = runCheckboxSelector("");
+    it("prints all preset names in the listing", async () => {
+      const result = await runCheckboxSelector("");
       expect(result.stdout).toContain("npm");
       expect(result.stdout).toContain("pypi");
       expect(result.stdout).toContain("slack");
     });
 
-    it("marks initialSelected presets as checked ([✓]) and others as unchecked ([ ])", () => {
-      const result = runCheckboxSelector("", { initialSelected: ["npm"] });
+    it("marks initialSelected presets as checked ([✓]) and others as unchecked ([ ])", async () => {
+      const result = await runCheckboxSelector("", { initialSelected: ["npm"] });
       expect(result.stdout).toContain("[✓]");
       expect(result.stdout).toContain("[ ]");
       // npm line should have the check, pypi should not
@@ -173,17 +187,17 @@ describe("presetsCheckboxSelector (non-TTY path)", () => {
       expect(pypiLine).toContain("[ ]");
     });
 
-    it("shows descriptions alongside names", () => {
-      const result = runCheckboxSelector("");
+    it("shows descriptions alongside names", async () => {
+      const result = await runCheckboxSelector("");
       expect(result.stdout).toContain("npm and Yarn registry access");
       expect(result.stdout).toContain("Python Package Index (PyPI) access");
     });
   });
 
   describe("NO_COLOR respected", () => {
-    it("uses plain [✓] marker when NO_COLOR is set", () => {
-      const result = runCheckboxSelector("", { initialSelected: ["npm"] });
-      // NO_COLOR is set in the test env; no ANSI escape codes expected
+    it("uses plain [✓] marker when NO_COLOR is set", async () => {
+      const result = await runCheckboxSelector("", { initialSelected: ["npm"] });
+      // Color output is disabled through the injected dependency.
       expect(result.stdout).not.toContain("\x1b[");
     });
   });

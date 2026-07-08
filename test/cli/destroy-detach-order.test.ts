@@ -76,6 +76,7 @@ describe("CLI dispatch", () => {
           "sandbox provider detach alpha alpha-slack-bridge",
           "sandbox provider detach alpha alpha-slack-app",
           "sandbox provider detach alpha alpha-brave-search",
+          "sandbox provider detach alpha alpha-tavily-search",
         ];
         for (const line of expectedDetachLines) {
           const idx = indexOfArg(log, line);

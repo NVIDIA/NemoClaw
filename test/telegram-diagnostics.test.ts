@@ -41,6 +41,7 @@ function runDriver(driverBody: string, env: Record<string, string> = {}) {
         encoding: "utf-8",
         env: {
           PATH: process.env.PATH || "/usr/bin:/bin",
+          NODE_OPTIONS: process.env.NODE_OPTIONS,
           DIAGNOSTICS_PATH,
           OPENCLAW_CONFIG_PATH: configPath,
           ...env,

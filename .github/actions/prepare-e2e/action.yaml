@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: prepare-e2e
+description: Install the shared Node.js dependencies and optionally build the CLI for E2E jobs.
+
+inputs:
+  build-cli:
+    description: Build the CLI after installing dependencies.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+      with:
+        node-version: 22
+        cache: npm
+
+    - name: Install root dependencies
+      shell: bash
+      run: npm ci --ignore-scripts
+
+    - name: Build CLI
+      if: ${{ inputs.build-cli == 'true' }}
+      shell: bash
+      run: npm run build:cli

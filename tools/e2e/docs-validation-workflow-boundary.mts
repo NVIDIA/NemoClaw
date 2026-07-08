@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
+import { PREPARE_E2E_ACTION, PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -104,51 +105,13 @@ export function validateDocsValidationWorkflow(workflow: DocsValidationWorkflow)
     errors.push(`${JOB_NAME} checkout must disable persisted credentials`);
   }
 
-  const setup = findStep(job, "Set up Node");
-  if (!/^actions\/setup-node@[0-9a-f]{40}$/u.test(setup.uses ?? "")) {
-    errors.push(`${JOB_NAME} setup-node must pin a full action SHA`);
-  }
-  requireRunContains(errors, findStep(job, "Install root dependencies"), "npm ci --ignore-scripts");
+  const prepare = findStep(job, PREPARE_E2E_STEP);
+  requireEqual(errors, prepare.uses, PREPARE_E2E_ACTION, `${JOB_NAME} must use prepare-e2e`);
+  requireEqual(errors, prepare.with?.["build-cli"], "false", `${JOB_NAME} must skip the CLI build`);
 
   const run = findStep(job, "Run docs validation live Vitest test");
   requireRunContains(errors, run, "npx vitest run --project e2e-live");
   requireRunContains(errors, run, "test/e2e/live/docs-validation.test.ts");
-
-  const upload = findStep(job, "Upload docs validation artifacts");
-  requireEqual(errors, upload.if, "always()", `${JOB_NAME} artifact upload must always run`);
-  if (!/^actions\/upload-artifact@[0-9a-f]{40}$/u.test(upload.uses ?? "")) {
-    errors.push(`${JOB_NAME} artifact upload must pin a full action SHA`);
-  }
-  requireEqual(
-    errors,
-    upload.with?.name,
-    "e2e-docs-validation",
-    `${JOB_NAME} artifact name must remain stable`,
-  );
-  requireEqual(
-    errors,
-    upload.with?.path,
-    "e2e-artifacts/live/docs-validation/",
-    `${JOB_NAME} must upload docs-validation artifacts`,
-  );
-  requireEqual(
-    errors,
-    upload.with?.["include-hidden-files"],
-    false,
-    `${JOB_NAME} artifact upload must exclude hidden files`,
-  );
-  requireEqual(
-    errors,
-    upload.with?.["if-no-files-found"],
-    "ignore",
-    `${JOB_NAME} artifact upload must tolerate missing failure artifacts`,
-  );
-  requireEqual(
-    errors,
-    upload.with?.["retention-days"],
-    14,
-    `${JOB_NAME} artifact retention must remain 14 days`,
-  );
 
   const reportNeeds = workflow.jobs["report-to-pr"]?.needs;
   if (!Array.isArray(reportNeeds) || !reportNeeds.includes(JOB_NAME)) {

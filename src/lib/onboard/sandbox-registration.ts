@@ -4,9 +4,11 @@
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
-import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
+import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
+import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -33,7 +35,19 @@ export interface CreatedSandboxRegistryEntryInput {
   agentVersionKnown: boolean;
   imageTag: string | null;
   appliedPolicies: string[];
+  toolDisclosure?: ToolDisclosure;
+  observabilityEnabled?: boolean;
+  policyTier?: SandboxEntry["policyTier"];
+  webSearchEnabled?: boolean;
+  webSearchProvider?: SandboxEntry["webSearchProvider"];
+  fromDockerfile?: string | null;
+  hermesAuthMethod?: "oauth" | "api_key" | null;
   plannedMessagingState: SandboxMessagingState | undefined;
+  /**
+   * Durable MCP rebuild manifest carried across an already-absent sandbox.
+   * The caller must only supply state captured from the same sandbox name.
+   */
+  preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   dashboardPort: number;
@@ -43,6 +57,22 @@ export interface CreatedSandboxRegistryEntryInput {
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
   registerSandbox?(entry: SandboxEntry): void;
+}
+
+export function creationFidelity(
+  webSearchConfig: WebSearchConfig | null,
+  fromDockerfile: string | null,
+  hermesAuthMethod: "oauth" | "api_key" | null,
+): Pick<
+  SandboxEntry,
+  "webSearchEnabled" | "webSearchProvider" | "fromDockerfile" | "hermesAuthMethod"
+> {
+  return {
+    webSearchEnabled: webSearchConfig?.fetchEnabled === true,
+    webSearchProvider: webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null,
+    fromDockerfile,
+    hermesAuthMethod,
+  };
 }
 
 export function selection(
@@ -62,6 +92,9 @@ export function selection(
     endpointUrl: sessionMatches ? (session.endpointUrl ?? null) : null,
     credentialEnv: sessionMatches ? (session.credentialEnv ?? null) : null,
     preferredInferenceApi,
+    compatibleEndpointReasoning: sessionMatches
+      ? (session.compatibleEndpointReasoning ?? null)
+      : null,
     nimContainer: sessionMatches ? (session.nimContainer ?? null) : null,
   });
 }
@@ -81,7 +114,16 @@ export function buildCreatedSandboxRegistryEntry(
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
     policies: input.appliedPolicies,
+    toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
+    observabilityEnabled: input.observabilityEnabled === true,
+    ...(input.policyTier !== undefined ? { policyTier: input.policyTier } : {}),
+    webSearchEnabled: input.webSearchEnabled === true,
+    webSearchProvider:
+      input.webSearchEnabled === true ? (input.webSearchProvider ?? "brave") : null,
+    fromDockerfile: input.fromDockerfile ?? null,
+    hermesAuthMethod: input.hermesAuthMethod ?? null,
     messaging: messagingState,
+    mcp: input.preservedMcpState,
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),

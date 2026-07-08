@@ -121,8 +121,26 @@ describe("inference options model task-fit docs (#4755)", () => {
     expect(section).not.toMatch(/\bTBD\b|\bTODO\b/i);
     expect(section).not.toContain("Very large context");
 
-    for (const modelId of readCuratedOnboardingModelIds()) {
-      expect(section).toContain(`| \`${modelId}\` |`);
-    }
+    const documentedModelIds = Array.from(
+      section.matchAll(/^\| `([^`]+)` \|/gm),
+      (match) => match[1],
+    );
+    expect(documentedModelIds).toEqual(readCuratedOnboardingModelIds());
+  });
+
+  it("keeps GLM 5.1 scoped to the independent Hermes Provider catalog", () => {
+    const markdown = fs.readFileSync(inferenceOptionsPath, "utf8");
+    const start = markdown.indexOf("## Provider Options");
+    const end = markdown.indexOf("## Model Task-Fit Guide", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const section = markdown.slice(start, end);
+    const lines = section.split("\n");
+    const nvidiaRow = lines.find((line) => line.startsWith("| NVIDIA Endpoints |"));
+    const hermesRow = lines.find((line) => line.startsWith("| Hermes Provider |"));
+
+    expect(nvidiaRow).toBeDefined();
+    expect(nvidiaRow).not.toMatch(/GLM-?5\.1|z-ai\/glm-5\.1/i);
+    expect(hermesRow).toContain("`z-ai/glm-5.1`");
   });
 });

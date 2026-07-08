@@ -81,21 +81,6 @@ describe("tunnel lifecycle workflow boundary", () => {
       "persist-credentials": true,
     };
 
-    const configureDockerAuth = job.steps.find(
-      (step) => step.name === "Configure isolated Docker auth directory",
-    );
-    expect(configureDockerAuth).toBeDefined();
-    configureDockerAuth!.run =
-      'echo "DOCKER_CONFIG=${{ github.workspace }}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"';
-
-    const install = job.steps.find((step) => step.name === "Install root dependencies");
-    expect(install).toBeDefined();
-    install!.env = {
-      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
-      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
-    };
-    install!.run = "npm install";
-
     const cloudflared = job.steps.find(
       (step) => step.name === "Install and verify cloudflared prerequisite",
     );
@@ -118,22 +103,13 @@ describe("tunnel lifecycle workflow boundary", () => {
       "include-hidden-files": true,
     };
 
-    const cleanup = job.steps.find((step) => step.name === "Clean up Docker auth");
-    expect(cleanup).toBeDefined();
-    cleanup!.if = "success()";
-    cleanup!.run = 'set -euo pipefail\necho "missing Docker auth cleanup"\n';
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
           "tunnel-lifecycle job must not set DOCKER_CONFIG at job level",
-          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"',
-          "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",
           "tunnel-lifecycle checkout step must set persist-credentials=false",
-          "tunnel-lifecycle step 'Install root dependencies' env must not include NVIDIA_INFERENCE_API_KEY",
-          "tunnel-lifecycle step 'Install root dependencies' env must not include NVIDIA_API_KEY",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "tunnel-lifecycle step 'Install and verify cloudflared prerequisite' env must not include NVIDIA_INFERENCE_API_KEY",
           "tunnel-lifecycle step 'Install and verify cloudflared prerequisite' env must not include NVIDIA_API_KEY",
           "tunnel-lifecycle cloudflared prerequisite step env must not include NVIDIA_INFERENCE_API_KEY",
@@ -146,11 +122,8 @@ describe("tunnel lifecycle workflow boundary", () => {
           "step 'Install and verify cloudflared prerequisite' run script must include sudo dpkg -i",
           "step 'Install and verify cloudflared prerequisite' run script must include cloudflared version ${CLOUDFLARED_VERSION}",
           "tunnel-lifecycle live E2E step must not run cloudflared APT installation with NVIDIA_INFERENCE_API_KEY in scope",
-          "artifact upload path must include e2e-artifacts/live/tunnel-lifecycle/",
-          "tunnel-lifecycle artifact upload must set include-hidden-files: false",
-          "tunnel-lifecycle Docker auth cleanup must always run",
-          "step 'Clean up Docker auth' run script must include docker logout docker.io",
-          "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
+          "tunnel-lifecycle upload-e2e-artifacts invocation must not override its contract",
+          "tunnel-lifecycle upload-e2e-artifacts must use the action defaults",
         ]),
       );
     } finally {

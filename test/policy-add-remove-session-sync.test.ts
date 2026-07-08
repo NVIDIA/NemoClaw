@@ -82,6 +82,7 @@ const calls = { apply: [], applyContent: [], remove: [] };
 policies.listPresets = () => ${JSON.stringify(presetNamesAvailable.map((name) => ({ name })))};
 policies.getAppliedPresets = () => ${JSON.stringify(appliedPresets)};
 policies.loadPreset = (name) => ({ name, network_policies: {} });
+policies.loadPresetForSandbox = (_sandboxName, name) => policies.loadPreset(name);
 policies.getPresetEndpoints = () => [];
 policies.getPresetValidationWarning = () => null;
 policies.selectFromList = async (items) => items[0]?.name || null;

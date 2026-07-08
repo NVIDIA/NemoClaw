@@ -14,9 +14,11 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
-export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
+export { REPO_ROOT };
+
+export const CLI = CLI_ENTRYPOINT;
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-kimi-compat";
 validateSandboxName(SANDBOX_NAME);
 export const KIMI_MODEL = process.env.NEMOCLAW_KIMI_MODEL ?? "moonshotai/kimi-k2.6";

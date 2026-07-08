@@ -306,6 +306,8 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(env_path, "wb") as handle:
         handle.write(b"API_SERVER_PORT=18642\\n")
 
+    initial_hash, _config_snapshot, _env_snapshot = guard._hash_text(config_path, env_path)
+    guard._write_hash(hash_path, initial_hash)
     before = os.stat(config_path)
     original_write_hash = guard._write_hash
 
@@ -371,15 +373,17 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(env_path, "w", encoding="utf-8") as handle:
         handle.write("API_SERVER_PORT=18642\\n")
 
+    initial_hash, _config_snapshot, _env_snapshot = guard._hash_text(config_path, env_path)
+    guard._write_hash(strict_hash_path, initial_hash)
     original_hash_text = guard._hash_text
     original_write_hash = guard._write_hash
     hash_text_calls = 0
     writes = []
 
-    def counted_hash_text(config, env):
+    def counted_hash_text(config, env, *args):
         global hash_text_calls
         hash_text_calls += 1
-        return original_hash_text(config, env)
+        return original_hash_text(config, env, *args)
 
     def captured_write_hash(path, text):
         writes.append({"path": path, "text": text})
@@ -435,7 +439,9 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(env_path, "w", encoding="utf-8") as handle:
         handle.write("API_SERVER_PORT=18642\\n")
 
-    guard.refresh_hashes(hermes_dir, strict_hash_path, "both")
+    initial_hash, _config_snapshot, _env_snapshot = guard._hash_text(config_path, env_path)
+    guard._write_hash(strict_hash_path, initial_hash)
+    guard._write_hash(compat_hash_path, initial_hash)
     with open(strict_hash_path, encoding="utf-8") as handle:
         old_strict = handle.read()
     with open(config_path, "w", encoding="utf-8") as handle:
@@ -835,6 +841,45 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes startup readiness lease", () => {
+  it("rejects a supervisor argv polluted with the appended startup command (#6110)", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+
+polluted_supervisor = (
+    b"/opt/openshell/bin/openshell-sandbox\\0"
+    b"env\\0CHAT_UI_URL=http://127.0.0.1:18789\\0nemoclaw-start\\0"
+)
+guard.__file__ = guard.INSTALLED_RUNTIME_CONFIG_GUARD
+guard._open_proc_root = lambda: 101
+guard._open_proc_pid = lambda _root, _pid: 102
+guard._read_proc_pid_file = lambda _fd, _name, _display: polluted_supervisor
+guard.os.close = lambda _fd: None
+guard.os.getppid = lambda: 1
+guard.pwd.getpwnam = lambda _name: type("User", (), {"pw_uid": 1000})()
+guard._startup_ready_marker_absent = lambda: True
+guard._openshell_supervised_nonroot_start_is_live = lambda *_args: False
+
+classification = guard._pid1_is_nemoclaw_start()
+
+try:
+    guard._validate_action_readiness("ensure-api-key", True)
+    error = None
+except guard.UnsafePathError as exc:
+    error = str(exc)
+
+print(json.dumps({
+    "classification": classification,
+    "error": error,
+}))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      classification: false,
+      error: "Hermes runtime config guard refuses mutation under a foreign PID 1",
+    });
+  });
+
   it("fails closed under foreign PID 1 only for the installed guard entrypoint", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json
@@ -947,6 +992,34 @@ except guard.UnsafePathError:
 else:
     startup_without_owner_allowed = True
 
+try:
+    guard._validate_action_readiness("inspect-mcp-integrity", True)
+except guard.UnsafePathError:
+    inspect_allowed = False
+else:
+    inspect_allowed = True
+
+try:
+    guard._validate_action_readiness("inspect-mcp-integrity", False)
+except guard.UnsafePathError:
+    inspect_without_owner_allowed = False
+else:
+    inspect_without_owner_allowed = True
+
+try:
+    guard._validate_action_readiness("commit-mcp-applied", True)
+except guard.UnsafePathError:
+    commit_allowed = False
+else:
+    commit_allowed = True
+
+try:
+    guard._validate_action_readiness("commit-mcp-applied", False)
+except guard.UnsafePathError:
+    commit_without_owner_allowed = False
+else:
+    commit_without_owner_allowed = True
+
 guard._startup_ready_marker_absent = lambda: False
 try:
     guard._validate_action_readiness("seal-restart", False)
@@ -956,7 +1029,11 @@ else:
     stale_marker_error = ""
 
 print(json.dumps({
+    "commit_allowed": commit_allowed,
+    "commit_without_owner_allowed": commit_without_owner_allowed,
     "host_allowed": host_allowed,
+    "inspect_allowed": inspect_allowed,
+    "inspect_without_owner_allowed": inspect_without_owner_allowed,
     "startup_allowed": startup_allowed,
     "startup_without_owner_allowed": startup_without_owner_allowed,
     "stale_marker_error": stale_marker_error,
@@ -965,7 +1042,11 @@ print(json.dumps({
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
+      commit_allowed: true,
+      commit_without_owner_allowed: false,
       host_allowed: true,
+      inspect_allowed: true,
+      inspect_without_owner_allowed: false,
       startup_allowed: true,
       startup_without_owner_allowed: false,
       stale_marker_error: "Hermes runtime config guard refuses mutation under a foreign PID 1",

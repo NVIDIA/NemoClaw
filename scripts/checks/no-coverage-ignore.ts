@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SCAN_ROOTS = ["bin", "src", "scripts", "test", "nemoclaw/src"];
-const SOURCE_EXTENSIONS = new Set([".cjs", ".js", ".mjs", ".ts", ".tsx"]);
+const SOURCE_EXTENSIONS = new Set([".cjs", ".cts", ".js", ".mjs", ".ts", ".tsx"]);
 const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
 const FORBIDDEN_DIRECTIVE = ["v8", "ignore"].join(" ");
 const FORBIDDEN_DIRECTIVE_PATTERN = new RegExp(

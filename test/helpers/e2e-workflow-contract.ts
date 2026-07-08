@@ -15,6 +15,7 @@ export type WorkflowJob = {
   "timeout-minutes"?: number;
   uses?: string;
   env?: Record<string, string>;
+  permissions?: Record<string, string>;
   secrets?: Record<string, string>;
   steps?: WorkflowStep[];
   with?: Record<string, string>;

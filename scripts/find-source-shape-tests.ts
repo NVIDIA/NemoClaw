@@ -133,6 +133,7 @@ function looksLikeDeclarativeConfigPath(text: string): boolean {
   return (
     /nemoclaw-blueprint\/blueprint\.yaml/.test(normalized) ||
     /nemoclaw-blueprint\/policies\//.test(normalized) ||
+    /src\/lib\/messaging\/channels\/[^/]+\/policy\/[^/]+\.yaml/.test(normalized) ||
     /nemoclaw-blueprint\/provider-profiles\//.test(normalized) ||
     /nemoclaw-blueprint\/router\/pool-config\.yaml/.test(normalized) ||
     /nemoclaw-blueprint\/model-specific-setup\//.test(normalized) ||

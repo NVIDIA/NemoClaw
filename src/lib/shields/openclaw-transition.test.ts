@@ -28,6 +28,7 @@ describe("OpenClaw shields top-config transaction", () => {
   let homeDir: string;
   let shields: ShieldsModule;
   let spies: MockInstance[];
+  let privilegedExecSpy: MockInstance;
   let dockerExecSpy: MockInstance;
   let guardSpy: MockInstance;
   let applyStateSpy: MockInstance;
@@ -83,14 +84,15 @@ describe("OpenClaw shields top-config transaction", () => {
         events.push(`state:restore:${locked ? "locked" : "mutable"}`);
         return [];
       });
+    privilegedExecSpy = vi
+      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
+      .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]);
 
     spies.push(
       vi.spyOn(runner, "run").mockReturnValue({ status: 0 }),
       vi.spyOn(runner, "runCapture").mockReturnValue(""),
       vi.spyOn(config, "resolveAgentConfig").mockImplementation(() => openClawTarget()),
-      vi
-        .spyOn(privilegedExec, "privilegedSandboxExecArgv")
-        .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]),
+      privilegedExecSpy,
       dockerExecSpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
       applyStateSpy,
@@ -132,6 +134,60 @@ describe("OpenClaw shields top-config transaction", () => {
     expect(restoreStateSpy).not.toHaveBeenCalled();
   });
 
+  it("repairs doctor-tightened permissions without starting a shields transition (#6047)", () => {
+    dockerExecSpy.mockImplementation((cmd) => {
+      const argv = cmd as string[];
+      switch (argv[0]) {
+        case "/usr/bin/id":
+          return "1000\n";
+        case "/usr/bin/timeout":
+          return "";
+        default:
+          throw new Error(`unexpected privileged command: ${argv.join(" ")}`);
+      }
+    });
+
+    expect(shields.repairMutableConfigPerms("openclaw")).toEqual({
+      applied: true,
+      verified: true,
+      errors: [],
+    });
+
+    const commands = dockerExecSpy.mock.calls.map((call) => call[0] as string[]);
+    expect(commands).toEqual([
+      ["/usr/bin/id", "-u", "sandbox"],
+      ["/usr/bin/id", "-g", "sandbox"],
+      [
+        "/usr/bin/timeout",
+        "--signal=TERM",
+        "--kill-after=5s",
+        "15s",
+        "/usr/bin/python3",
+        "-I",
+        "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py",
+        "/sandbox/.openclaw",
+        "1000",
+        "1000",
+      ],
+    ]);
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when mutable repair cannot resolve the sandbox identity (#6047)", () => {
+    dockerExecSpy.mockReturnValue("root\n");
+
+    expect(shields.repairMutableConfigPerms("openclaw")).toEqual({
+      applied: true,
+      verified: false,
+      errors: ["sandbox identity lookup returned an invalid UID"],
+    });
+
+    expect(dockerExecSpy).toHaveBeenCalledTimes(1);
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps the protected top binding until recursive unlock is ready", () => {
     dockerExecSpy.mockImplementation((cmd) => {
       const argv = cmd as string[];
@@ -164,5 +220,22 @@ describe("OpenClaw shields top-config transaction", () => {
       /recursive unlock failed/,
     );
     expect(events).toEqual(["top:preflight", "state:unlock", "top:lock", "state:restore:locked"]);
+  });
+
+  it("reports a failed mutable top-config transition without falling back to recursive unlock", () => {
+    privilegedExecSpy.mockImplementationOnce(() => {
+      throw new Error("top-config permission repair failed");
+    });
+
+    const result = shields.repairMutableConfigPerms("openclaw");
+
+    expect(result).toEqual({
+      applied: true,
+      verified: false,
+      errors: [expect.stringContaining("top-config permission repair failed")],
+    });
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
+    expect(restoreStateSpy).not.toHaveBeenCalled();
   });
 });

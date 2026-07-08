@@ -154,6 +154,41 @@ describe("onboarding phase fixture", () => {
     ]);
   });
 
+  it("opts the canonical Deep Agents Code target into composed observability", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    const instance = await onboard.from(ready({ onboarding: "cloud-langchain-deepagents-code" }), {
+      sandboxName: "e2e-ubuntu-repo-cloud-langchain-deepagents-code",
+    });
+
+    expect(instance).toMatchObject({
+      agent: "langchain-deepagents-code",
+      sandboxName: "e2e-ubuntu-repo-cloud-langchain-deepagents-code",
+    });
+    expect(runner.calls[0]).toMatchObject({
+      command: "nemoclaw",
+      args: [
+        "onboard",
+        "--non-interactive",
+        "--yes",
+        "--yes-i-accept-third-party-software",
+        "--observability",
+      ],
+      options: {
+        artifactName: "onboard-cloud-langchain-deepagents-code",
+        env: expect.objectContaining({
+          NEMOCLAW_AGENT: "langchain-deepagents-code",
+          NVIDIA_INFERENCE_API_KEY: "secret-token",
+        }),
+        redactionValues: ["secret-token"],
+        timeoutMs: 900_000,
+      },
+    });
+  });
+
   it("fails cloud OpenClaw onboarding on non-zero exit", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(42, "provider rejected credential"));

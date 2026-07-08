@@ -144,40 +144,65 @@ fi
 info "4b. Verify blueprint runner apply smoke test"
 # -------------------------------------------------------
 # Apply runs the full codepath (profile resolution, sandbox creation,
-# provider setup, state save) even without openshell — subprocess calls
-# use reject:false so they complete silently. We verify the entire
-# apply pipeline executes and persists run state to disk.
-NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
+# provider setup, state save) against a fixture CLI. Policy mutation reads must
+# return the same metadata + YAML shape as OpenShell 0.0.72; an empty successful
+# response is intentionally rejected by the runner.
+FAKE_OPENSHELL_BIN=$(mktemp -d)
+APPLY_OUTPUT=$(mktemp)
+cleanup_apply_fixture() {
+  rm -rf "$FAKE_OPENSHELL_BIN"
+  rm -f "$APPLY_OUTPUT"
+}
+trap cleanup_apply_fixture EXIT
+cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-} ${2:-} ${3:-}" in
+  "policy get --base")
+    printf '%s\n' 'Policy for sandbox fixture' '---'
+    cat /opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+    ;;
+  "policy get "*)
+    echo "unexpected policy read: expected policy get --base" >&2
+    exit 64
+    ;;
+esac
+SH
+chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
+PATH="$FAKE_OPENSHELL_BIN:$PATH" NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);
-" 2>&1 | tee /tmp/apply-output.txt
-if grep -q "RUN_ID:" /tmp/apply-output.txt; then
+" 2>&1 | tee "$APPLY_OUTPUT"
+rm -rf "$FAKE_OPENSHELL_BIN"
+if grep -q "RUN_ID:" "$APPLY_OUTPUT"; then
   pass "Apply generates run ID"
 else
   fail "No run ID in apply output"
 fi
-if grep -q "PROGRESS:20:Creating OpenClaw sandbox" /tmp/apply-output.txt; then
+if grep -q "PROGRESS:20:Creating OpenClaw sandbox" "$APPLY_OUTPUT"; then
   pass "Apply executes sandbox creation step"
 else
   fail "Apply did not reach sandbox creation step"
 fi
-if grep -q "PROGRESS:50:Configuring inference provider" /tmp/apply-output.txt; then
+if grep -q "PROGRESS:50:Configuring inference provider" "$APPLY_OUTPUT"; then
   pass "Apply executes provider configuration"
 else
   fail "Apply did not reach provider configuration step"
 fi
-if grep -q "PROGRESS:100:Apply complete" /tmp/apply-output.txt; then
+if grep -q "PROGRESS:100:Apply complete" "$APPLY_OUTPUT"; then
   pass "Apply completes full pipeline"
 else
   fail "Apply did not complete"
 fi
 # Verify run state was persisted to disk
-RUN_ID=$(grep -o 'nc-[0-9]*-[0-9]*-[a-f0-9]*' /tmp/apply-output.txt | head -1)
+RUN_ID=$(grep -o 'nc-[0-9]*-[0-9]*-[a-f0-9]*' "$APPLY_OUTPUT" | head -1)
 if [ -f "$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json" ]; then
   pass "Apply persisted run state to disk"
 else
   fail "Apply did not persist run state (plan.json missing for $RUN_ID)"
 fi
+rm -f "$APPLY_OUTPUT"
+trap - EXIT
 
 # -------------------------------------------------------
 info "5. Verify host OpenClaw detection (migration source)"

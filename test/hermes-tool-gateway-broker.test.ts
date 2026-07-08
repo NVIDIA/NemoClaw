@@ -13,6 +13,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { testTimeout } from "./helpers/timeouts";
 
 const SCRIPT = path.join(
   import.meta.dirname,
@@ -32,6 +33,8 @@ const BROKER_WRAPPER = path.join(
 );
 
 let children: ChildProcess[] = [];
+const BROKER_READINESS_TIMEOUT_MS = 15_000;
+const BROKER_TEST_TIMEOUT_MS = testTimeout(45_000);
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -66,25 +69,38 @@ function close(server: http.Server): Promise<void> {
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
-async function waitForHealth(port: number): Promise<void> {
-  for (let i = 0; i < 50; i++) {
+function brokerDiagnostics(child: ChildProcess, output: () => string): string {
+  const captured = output().trim() || "<no broker output>";
+  return [
+    `exit=${child.exitCode ?? "pending"}, signal=${child.signalCode ?? "none"}`,
+    `captured output:\n${captured}`,
+  ].join("; ");
+}
+
+async function waitForBrokerCondition(
+  description: string,
+  child: ChildProcess,
+  output: () => string,
+  predicate: () => boolean | Promise<boolean>,
+): Promise<void> {
+  const deadline = Date.now() + BROKER_READINESS_TIMEOUT_MS;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`${description}: broker exited early; ${brokerDiagnostics(child, output)}`);
+    }
     try {
-      const resp = await fetch(`http://127.0.0.1:${port}/health`);
-      if (resp.status === 200) return;
-    } catch {
-      // keep polling
+      if (await predicate()) return;
+    } catch (error) {
+      lastError = error;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("broker did not become healthy");
-}
-
-async function waitUntil(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 50; i++) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("condition was not met");
+  const lastErrorDetail = lastError instanceof Error ? `; last error: ${lastError.message}` : "";
+  throw new Error(
+    `${description}: condition was not met within ${BROKER_READINESS_TIMEOUT_MS}ms; ` +
+      `${brokerDiagnostics(child, output)}${lastErrorDetail}`,
+  );
 }
 
 afterEach(() => {
@@ -123,7 +139,9 @@ describe("Hermes managed-tool gateway broker", () => {
     ).toBe(true);
   });
 
-  it("refreshes via header, replaces upstream auth, normalizes responses, and rotates OpenShell storage", async () => {
+  it("refreshes via header, replaces upstream auth, normalizes responses, and rotates OpenShell storage", {
+    timeout: BROKER_TEST_TIMEOUT_MS,
+  }, async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tool-broker-"));
     const stateDir = path.join(tmp, "state");
     const binDir = path.join(tmp, "bin");
@@ -264,14 +282,31 @@ describe("Hermes managed-tool gateway broker", () => {
     });
 
     try {
-      await waitForHealth(brokerPort);
-      await waitUntil(() => {
-        try {
-          return fs.readFileSync(openshellLog, "utf8").includes("provider update hermes-provider");
-        } catch {
-          return false;
-        }
-      });
+      await waitForBrokerCondition(
+        "broker health",
+        child,
+        () => output,
+        async () => {
+          const response = await fetch(`http://127.0.0.1:${brokerPort}/health`, {
+            signal: AbortSignal.timeout(1_000),
+          });
+          return response.status === 200;
+        },
+      );
+      await waitForBrokerCondition(
+        "inference provider refresh",
+        child,
+        () => output,
+        () => {
+          try {
+            return fs
+              .readFileSync(openshellLog, "utf8")
+              .includes("provider update hermes-provider");
+          } catch {
+            return false;
+          }
+        },
+      );
 
       const unknown = await fetch(`http://127.0.0.1:${brokerPort}/unknown`);
       expect(unknown.status).toBe(404);

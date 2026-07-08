@@ -1,15 +1,29 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { GatewayReuseState } from "../state/gateway";
 
 import {
-  PREFLIGHT_DEFERRED_RECREATE_MESSAGE,
   applyPreflightGatewayCleanup,
+  PREFLIGHT_DEFERRED_RECREATE_MESSAGE,
   preflightGatewayCleanupDecision,
 } from "./preflight-gateway-cleanup-decision";
+
+function stubStderrColorDepth(colorDepth: number): void {
+  const stderr = Object.assign(Object.create(process.stderr), {
+    getColorDepth: () => colorDepth,
+    isTTY: true,
+  }) as typeof process.stderr;
+  vi.spyOn(process, "stderr", "get").mockReturnValue(stderr);
+  vi.stubEnv("NO_COLOR", "");
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("preflightGatewayCleanupDecision", () => {
   it("defers when state is stale and Docker-driver gateway is enabled", () => {
@@ -69,6 +83,7 @@ describe("applyPreflightGatewayCleanup", () => {
     isDockerDriverGatewayEnabled: boolean;
   }) {
     const log = vi.fn();
+    const warn = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const destroyGateway = vi.fn(() => true);
     const destroyGatewayForReuse = vi.fn<
@@ -84,25 +99,42 @@ describe("applyPreflightGatewayCleanup", () => {
         cliDisplayName: "NemoClaw",
         dashboardPort: 8081,
         log,
+        warn,
         runOpenshell,
         destroyGateway,
         destroyGatewayForReuse,
       },
       log,
+      warn,
       runOpenshell,
       destroyGateway,
       destroyGatewayForReuse,
     };
   }
 
-  it("logs the deferral notice without invoking destroy on the Docker-driver path", () => {
+  it("warns in yellow without invoking destroy on the Docker-driver path", () => {
+    stubStderrColorDepth(24);
     const ctx = makeDeps({ gatewayReuseState: "stale", isDockerDriverGatewayEnabled: true });
     const next = applyPreflightGatewayCleanup(ctx.deps);
     expect(next).toBe("stale");
-    expect(ctx.log).toHaveBeenCalledWith(PREFLIGHT_DEFERRED_RECREATE_MESSAGE);
+    expect(ctx.warn).toHaveBeenCalledWith(
+      `  \x1b[33m⚠ ${PREFLIGHT_DEFERRED_RECREATE_MESSAGE}\x1b[39m`,
+    );
+    expect(ctx.log).not.toHaveBeenCalled();
     expect(ctx.destroyGateway).not.toHaveBeenCalled();
     expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
     expect(ctx.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("prints the deferral warning without ANSI when NO_COLOR is set", () => {
+    stubStderrColorDepth(24);
+    vi.stubEnv("NO_COLOR", "1");
+    const ctx = makeDeps({ gatewayReuseState: "stale", isDockerDriverGatewayEnabled: true });
+
+    applyPreflightGatewayCleanup(ctx.deps);
+
+    expect(ctx.warn).toHaveBeenCalledWith(`  ⚠ ${PREFLIGHT_DEFERRED_RECREATE_MESSAGE}`);
+    expect(String(ctx.warn.mock.calls[0]?.[0])).not.toContain("\x1b[");
   });
 
   it("destroys the legacy gateway and stops the dashboard forward on the non-Docker-driver path", () => {
@@ -123,6 +155,7 @@ describe("applyPreflightGatewayCleanup", () => {
       const next = applyPreflightGatewayCleanup(ctx.deps);
       expect(next).toBe(state);
       expect(ctx.log).not.toHaveBeenCalled();
+      expect(ctx.warn).not.toHaveBeenCalled();
       expect(ctx.destroyGateway).not.toHaveBeenCalled();
       expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
       expect(ctx.runOpenshell).not.toHaveBeenCalled();

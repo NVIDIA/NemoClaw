@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -44,7 +45,9 @@ function writeHermesHash(hashPath: string, configPath: string, envPath: string):
     timeout: 5000,
   });
   expect(result.status, result.stderr).toBe(0);
-  fs.writeFileSync(hashPath, result.stdout, { mode: 0o644 });
+  const mcpDigest = createHash("sha256").update("{}").digest("hex");
+  const hash = `${result.stdout}# nemoclaw-hermes-mcp-state-v1 intended=${mcpDigest} applied=${mcpDigest}\n`;
+  fs.writeFileSync(hashPath, hash, { mode: 0o644 });
 }
 
 function parseApiServerKey(envFileContent: string): string | null {

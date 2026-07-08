@@ -4,9 +4,18 @@
 import { dockerCapture } from "../adapters/docker/run";
 import * as registry from "../state/registry";
 
+const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
+const OPENSHELL_MANAGED_BY_VALUE = "openshell";
+const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+
 type SandboxEntry = {
   name?: string;
   openshellDriver?: string | null;
+};
+
+type LabeledSandboxContainer = {
+  id: string;
+  name: string;
 };
 
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
@@ -81,38 +90,48 @@ function owningRegisteredSandboxName(
   return registeredNames.find((name) => containerNameMatchesSandbox(containerName, name)) ?? null;
 }
 
+function parseLabeledSandboxContainers(output: string): LabeledSandboxContainer[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [id, name, ...unexpected] = line.split("\t");
+      if (!id || !name || unexpected.length > 0 || /\s/.test(id)) {
+        throw new Error("Docker returned malformed OpenShell sandbox container metadata.");
+      }
+      return { id, name };
+    });
+}
+
 function selectDirectSandboxContainer(
   sandboxName: string,
-  containerNames: string,
+  labeledContainerRows: string,
   registeredNames: readonly string[] = [sandboxName],
 ): string | null {
   const names = Array.from(new Set([...registeredNames, sandboxName])).sort(
     (a, b) => b.length - a.length || a.localeCompare(b),
   );
-  const candidates = Array.from(
-    new Set(
-      containerNames
-        .split("\n")
-        .map((line: string) => line.trim())
-        .filter(Boolean)
-        .filter((containerName: string) => {
-          if (!containerNameMatchesSandbox(containerName, sandboxName)) return false;
-          return owningRegisteredSandboxName(containerName, names) === sandboxName;
-        }),
-    ),
-  );
-
-  const exact = candidates.find(
-    (containerName: string) => containerName === `openshell-${sandboxName}`,
-  );
-  if (exact) return exact;
-  if (candidates.length === 1) return candidates[0];
-  if (candidates.length > 1) {
+  const candidates = parseLabeledSandboxContainers(labeledContainerRows);
+  if (
+    candidates.some(
+      ({ name }) =>
+        !containerNameMatchesSandbox(name, sandboxName) ||
+        owningRegisteredSandboxName(name, names) !== sandboxName,
+    )
+  ) {
     throw new Error(
-      `Multiple running direct OpenShell containers match registered sandbox '${sandboxName}': ${candidates.join(", ")}. Refusing privileged exec without an exact container identity.`,
+      `OpenShell container labels and names disagree for sandbox '${sandboxName}'; ` +
+        "refusing lifecycle execution.",
     );
   }
-  return null;
+  if (candidates.length > 1) {
+    throw new Error(
+      `Multiple running OpenShell containers are labeled for sandbox '${sandboxName}'; ` +
+        "refusing ambiguous lifecycle execution.",
+    );
+  }
+  return candidates[0]?.id ?? null;
 }
 
 function expectedDirectContainerPattern(sandboxName: string): string {
@@ -123,9 +142,19 @@ function findDirectSandboxContainer(sandboxName: string): string | null {
   const names = registeredSandboxNames(sandboxName);
   let output: string;
   try {
-    output = dockerCapture(["ps", "--format", "{{.Names}}"], {
-      timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS,
-    });
+    output = dockerCapture(
+      [
+        "ps",
+        "--no-trunc",
+        "--filter",
+        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        "--filter",
+        `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      { timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS },
+    );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new DirectSandboxFallbackUnavailableError(
@@ -140,7 +169,8 @@ function missingDirectContainerError(sandboxName: string, driver: string | null)
   const driverLabel = driver ?? "unspecified";
   return new DirectSandboxFallbackUnavailableError(
     `No running direct OpenShell sandbox container found for '${sandboxName}' ` +
-      `(driver: ${driverLabel}). Expected a running container named ` +
+      `(driver: ${driverLabel}). Expected one OpenShell-managed container labeled ` +
+      `'${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}' and named ` +
       `${expectedDirectContainerPattern(sandboxName)}. Is the sandbox running?`,
   );
 }

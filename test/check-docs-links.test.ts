@@ -121,6 +121,58 @@ describe("check-docs link validation", () => {
     expect(slugAliasResult.status).toBe(0);
   });
 
+  it("resolves route-relative links from Deep Agents generated source aliases", () => {
+    const tempDir = fs.mkdtempSync(path.join(REPO_ROOT, "docs", "check-docs-deepagents-"));
+    const sourcePath = path.join(tempDir, "source.mdx");
+    const navPath = path.join(tempDir, "index.yml");
+    const sourceRel = path.relative(path.join(REPO_ROOT, "docs"), sourcePath);
+    const generatedRel = `_build/agent-variants/${sourceRel.replace(/\.mdx$/, ".deepagents.generated.mdx")}`;
+    const targetRel = path.relative(
+      path.join(REPO_ROOT, "docs"),
+      path.join(tempDir, "target.deepagents.generated.mdx"),
+    );
+    try {
+      fs.writeFileSync(
+        sourcePath,
+        [
+          "---",
+          'title: "Temporary Deep Agents Source"',
+          "---",
+          "",
+          "[Generated target](target)",
+          "",
+        ].join("\n"),
+      );
+      fs.writeFileSync(
+        navPath,
+        [
+          "navigation:",
+          "  - tab: user-guide",
+          "    variants:",
+          "      - title: Deep Agents",
+          "        slug: deepagents",
+          "        layout:",
+          '          - section: "Temporary"',
+          "            slug: temporary",
+          "            contents:",
+          '              - page: "Source"',
+          `                path: ${generatedRel}`,
+          "                slug: source",
+          '              - page: "Target"',
+          `                path: ${targetRel}`,
+          "                slug: target",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runCheckDocs(sourcePath, { CHECK_DOCS_FERN_NAV_YML: navPath });
+
+      expect(result.status).toBe(0);
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("rejects .md/.mdx suffixes for links that resolve as Fern routes", () => {
     const tempDir = fs.mkdtempSync(path.join(REPO_ROOT, "docs", "check-docs-route-suffix-"));
     const tempPath = path.join(tempDir, "temp.mdx");

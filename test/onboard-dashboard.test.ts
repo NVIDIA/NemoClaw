@@ -13,6 +13,20 @@ const { createOnboardDashboardHelpers } = require("../src/lib/onboard/dashboard"
   createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
 };
 
+function createTokenDownloadRunOpenshell() {
+  return vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+    if (args.join(" ").startsWith("sandbox download ")) {
+      const destDir = args[4];
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(destDir, "openclaw.json"),
+        JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
+      );
+    }
+    return { status: 0 };
+  });
+}
+
 describe("onboard dashboard helpers", () => {
   it("prints platform-appropriate service hints for port conflicts", () => {
     expect(getPortConflictServiceHints("darwin").join("\n")).toMatch(/launchctl unload/);
@@ -173,17 +187,7 @@ describe("onboard dashboard helpers", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const nimStatus = vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" }));
     const shouldShowNimLine = vi.fn(() => false);
-    const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
-      if (args.join(" ").startsWith("sandbox download ")) {
-        const destDir = args[4];
-        fs.mkdirSync(destDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(destDir, "openclaw.json"),
-          JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
-        );
-      }
-      return { status: 0 };
-    });
+    const runOpenshell = createTokenDownloadRunOpenshell();
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
@@ -220,6 +224,75 @@ describe("onboard dashboard helpers", () => {
     expect(output).not.toContain("append  #token=<token>");
     expect(output).not.toMatch(/secret[-_]?token/);
     expect(nimStatus).toHaveBeenCalledWith("my-gpt-claw");
+  });
+
+  it("shows the loopback dashboard URL with a WSL host-IP fallback under WSL", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runOpenshell = createTokenDownloadRunOpenshell();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      runCapture: vi.fn(() => "172.22.1.1 10.0.0.2\n"),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
+      shouldShowNimLine: vi.fn(() => false),
+      note: vi.fn(),
+      isWsl: () => true,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    let output = "";
+    try {
+      helpers.printDashboard("my-gpt-claw", "gpt-oss:20b", "ollama");
+      output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(output).toContain("http://127.0.0.1:");
+    expect(output).toContain("WSL fallback");
+    expect(output).toContain("http://172.22.1.1:");
+    // Loopback stays the primary browser URL; the WSL host IP follows it.
+    expect(output.indexOf("http://127.0.0.1:")).toBeLessThan(output.indexOf("http://172.22.1.1:"));
+    expect(output).not.toMatch(/secret[-_]?token/);
+  });
+
+  it("gives the agent dashboard both primary and port-rewritten WSL fallback URLs", () => {
+    const runOpenshell = createTokenDownloadRunOpenshell();
+    const printAgentDashboardUi = vi.fn();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      runCapture: vi.fn(() => "172.22.1.1 10.0.0.2\n"),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
+      shouldShowNimLine: vi.fn(() => false),
+      note: vi.fn(),
+      isWsl: () => true,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi,
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+    const agent = { dashboard: { auth: "url_token" } } as never;
+
+    helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, agent);
+
+    const [, , , agentDeps] = printAgentDashboardUi.mock.calls[0];
+    const urls: string[] = agentDeps.buildControlUiUrls("secret-token", 8642);
+
+    expect(urls).toContain("http://127.0.0.1:8642/#token=secret-token");
+    expect(urls.some((url) => url.startsWith("http://172.22.1.1:8642/"))).toBe(true);
+    expect(urls.some((url) => url.includes(":18789"))).toBe(false);
   });
 
   it("prints a token-free browser URL when the dashboard token is unavailable", () => {

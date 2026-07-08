@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerInfoFormat } from "../adapters/docker";
+import { failLine, warnLine } from "../cli/terminal-style";
 import type { GpuDetection } from "../inference/nim";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs } from "./docker-cdi";
@@ -80,11 +81,14 @@ export function sandboxGpuRemediationLines(
   ];
 }
 
-export function exitOnSandboxGpuConfigErrors(config: SandboxGpuConfig): void {
+export function exitOnSandboxGpuConfigErrors(
+  config: SandboxGpuConfig,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
+): void {
   if (config.errors.length > 0) {
     console.error("");
-    for (const error of config.errors) console.error(`  ✗ ${error}`);
-    process.exit(1);
+    for (const error of config.errors) console.error(failLine(error));
+    exitProcess(1);
   }
 }
 
@@ -123,10 +127,13 @@ export function dockerNvidiaRuntimeAvailable(deps: SandboxGpuPreflightDeps = {})
   }
 }
 
-function validateJetsonSandboxGpuPreflight(deps: SandboxGpuPreflightDeps): void {
+function validateJetsonSandboxGpuPreflight(
+  deps: SandboxGpuPreflightDeps,
+  exitProcess: (code: number) => never,
+): void {
   if (!dockerNvidiaRuntimeAvailable(deps)) {
     console.error("");
-    console.error("  ✗ Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU.");
+    console.error(failLine("Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU."));
     console.error("    Jetson sandbox GPU uses NVIDIA Container Runtime semantics, not CDI.");
     console.error(
       "    Install/configure NVIDIA Container Toolkit for Docker, then restart Docker:",
@@ -134,7 +141,7 @@ function validateJetsonSandboxGpuPreflight(deps: SandboxGpuPreflightDeps): void 
     console.error("      sudo nvidia-ctk runtime configure --runtime=docker");
     console.error("      sudo systemctl restart docker");
     console.error("    Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.");
-    process.exit(1);
+    exitProcess(1);
   }
   console.log("  ✓ Docker NVIDIA runtime detected for Jetson/Tegra sandbox GPU");
 }
@@ -228,7 +235,7 @@ export function createDirectSandboxGpuVerifier(
       if (proof.optional !== true) {
         // Required proof (e.g. the sandbox-exec wrapper itself): keep the
         // historical hard-fail so onboarding aborts and rolls back.
-        console.error(`  ✗ GPU proof failed: ${proof.label}`);
+        console.error(failLine(`GPU proof failed: ${proof.label}`));
         if (diagnostic) console.error(`    ${diagnostic}`);
         for (const line of sandboxGpuRemediationLines({
           wslDockerDesktopStatus: detectWslDockerDesktopStatus(deps),
@@ -248,7 +255,7 @@ export function createDirectSandboxGpuVerifier(
       if (proof.id === CUDA_USABILITY_PROOF_ID && cudaInitRan) {
         cudaFailure = { label: proof.label, detail: diagnostic };
       }
-      console.warn(`  ⚠ GPU proof inconclusive: ${proof.label}`);
+      console.warn(warnLine(`GPU proof inconclusive: ${proof.label}`));
       if (diagnostic) console.warn(`    ${diagnostic}`);
     }
     const status: SandboxGpuProofResult["status"] = cudaVerified
@@ -259,7 +266,7 @@ export function createDirectSandboxGpuVerifier(
     if (status === "verified") {
       console.log("  ✓ Sandbox CUDA usability proven (cuInit succeeded).");
     } else if (status === "failed") {
-      console.warn(`  ⚠ Sandbox CUDA proof failed: ${cudaFailure?.label}`);
+      console.warn(warnLine(`Sandbox CUDA proof failed: ${cudaFailure?.label}`));
       const lines =
         resolvedPlatform === "jetson"
           ? jetsonGpuProofRemediationLines()
@@ -268,7 +275,9 @@ export function createDirectSandboxGpuVerifier(
             });
       for (const line of lines) console.warn(`    ${line}`);
     } else {
-      console.warn("  ⚠ Sandbox GPU enabled but CUDA usability is unverified (no CUDA proof ran).");
+      console.warn(
+        warnLine("Sandbox GPU enabled but CUDA usability is unverified (no CUDA proof ran)."),
+      );
     }
     return {
       status,
@@ -283,14 +292,15 @@ export function createDirectSandboxGpuVerifier(
 export function validateSandboxGpuPreflight(
   config: SandboxGpuConfig,
   deps: SandboxGpuPreflightDeps = {},
+  exitProcess: (code: number) => never = (code) => process.exit(code),
 ): void {
-  exitOnSandboxGpuConfigErrors(config);
+  exitOnSandboxGpuConfigErrors(config, exitProcess);
   if (!config.sandboxGpuEnabled) return;
   const platform = deps.platform ?? process.platform;
   if (platform !== "linux") return;
 
   if (config.hostGpuPlatform === "jetson") {
-    validateJetsonSandboxGpuPreflight(deps);
+    validateJetsonSandboxGpuPreflight(deps, exitProcess);
     return;
   }
 
@@ -308,13 +318,13 @@ export function validateSandboxGpuPreflight(
   );
   if (cdiSpecFiles.length === 0) {
     console.error("");
-    console.error("  ✗ Docker CDI GPU support was not detected.");
+    console.error(failLine("Docker CDI GPU support was not detected."));
     for (const line of sandboxGpuRemediationLines({
       wslDockerDesktopStatus,
     })) {
       console.error(`    ${line}`);
     }
-    process.exit(1);
+    exitProcess(1);
   }
   console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
 }

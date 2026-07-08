@@ -13,6 +13,17 @@ import {
   writeSandboxRegistry,
 } from "./helpers";
 
+const HEALTHY_DEFAULT_GATEWAY_STUB = [
+  'if [ "$1" = "status" ]; then',
+  "  printf 'Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n'",
+  "  exit 0",
+  "fi",
+  'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+  "  echo 'Gateway: nemoclaw'",
+  "  exit 0",
+  "fi",
+];
+
 function createShareTestEnv(prefix: string): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
@@ -237,6 +248,7 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
@@ -310,6 +322,7 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
@@ -387,6 +400,7 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
@@ -459,6 +473,7 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",

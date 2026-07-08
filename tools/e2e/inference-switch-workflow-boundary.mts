@@ -6,11 +6,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import { PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 
 type WorkflowStep = {
+  env?: Record<string, unknown>;
   if?: string;
   name?: string;
   run?: string;
@@ -34,6 +36,7 @@ export type InferenceSwitchWorkflow = {
 type JobSpec = {
   agent: "hermes" | "openclaw";
   job: string;
+  runStep: string;
   scenario: string;
   uploadStep: string;
 };
@@ -42,12 +45,14 @@ const JOBS: JobSpec[] = [
   {
     agent: "hermes",
     job: "hermes-inference-switch",
+    runStep: "Run Hermes inference switch live Vitest test",
     scenario: "hermes-inference-switch",
     uploadStep: "Upload Hermes inference switch artifacts",
   },
   {
     agent: "openclaw",
     job: "openclaw-inference-switch",
+    runStep: "Run OpenClaw inference switch live test",
     scenario: "openclaw-inference-switch",
     uploadStep: "Upload OpenClaw inference switch artifacts",
   },
@@ -58,8 +63,8 @@ function expectedModes(agent: JobSpec["agent"]): Array<Record<string, unknown>> 
     {
       mode: "hosted",
       sandbox_name: `e2e-${agent}-inference-switch`,
-      switch_provider: "compatible-endpoint",
-      switch_model: "nvidia/nvidia/nemotron-3-super-v3",
+      switch_provider: "nvidia-prod",
+      switch_model: "nvidia/nemotron-3-super-120b-a12b",
       switch_inference_api: "openai-completions",
       switch_mock_anthropic: "0",
     },
@@ -98,6 +103,30 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
     if (job.env?.[name] !== value) errors.push(`${spec.job} must map ${name} from its mode matrix`);
   }
 
+  if (job.env?.NVIDIA_INFERENCE_API_KEY !== undefined) {
+    errors.push(`${spec.job} must not expose NVIDIA_INFERENCE_API_KEY at job scope`);
+  }
+  if (job.env?.NVIDIA_API_KEY !== undefined) {
+    errors.push(`${spec.job} must not expose NVIDIA_API_KEY at job scope`);
+  }
+  const runStep = job.steps?.find((step) => step.name === spec.runStep);
+  const hostedSecret = "${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}";
+  if (runStep?.env?.NVIDIA_INFERENCE_API_KEY !== hostedSecret) {
+    errors.push(`${spec.job} must expose NVIDIA_INFERENCE_API_KEY only to its hosted run step`);
+  }
+  const hostedPublicSecret = "${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}";
+  if (runStep?.env?.NVIDIA_API_KEY !== hostedPublicSecret) {
+    errors.push(`${spec.job} must expose NVIDIA_API_KEY only to its hosted run step`);
+  }
+  for (const step of job.steps ?? []) {
+    if (step !== runStep && step.env?.NVIDIA_INFERENCE_API_KEY !== undefined) {
+      errors.push(`${spec.job} must expose NVIDIA_INFERENCE_API_KEY only to its run step`);
+    }
+    if (step !== runStep && step.env?.NVIDIA_API_KEY !== undefined) {
+      errors.push(`${spec.job} must expose NVIDIA_API_KEY only to its run step`);
+    }
+  }
+
   const upload = job.steps?.find((step) => step.name === spec.uploadStep);
   if (upload?.with?.name !== `e2e-${spec.scenario}-\${{ matrix.mode }}`) {
     errors.push(`${spec.job} artifact name must identify its mode`);
@@ -108,29 +137,18 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
   }
 }
 
-function validateOpenClawDockerAuth(errors: string[], job: WorkflowJob): void {
-  const configure = job.steps?.find(
-    (step) => step.name === "Configure isolated Docker auth directory",
-  );
+function validateOpenClawDockerAuthOrder(errors: string[], job: WorkflowJob): void {
   const cleanup = job.steps?.find((step) => step.name === "Clean up Docker auth");
-  const matrixPath = "docker-config-openclaw-inference-switch-${{ matrix.mode }}";
-  if (!configure?.run?.includes(matrixPath)) {
-    errors.push("openclaw-inference-switch Docker auth path must identify its mode");
-  }
-  if (!cleanup?.run?.includes(matrixPath) || !cleanup.run.includes('rm -rf "${docker_config}"')) {
-    errors.push("openclaw-inference-switch must always remove its mode-specific Docker auth");
-  }
   if (cleanup?.if !== "always()") {
     errors.push("openclaw-inference-switch Docker auth cleanup must always run");
   }
 
   const stepOrder = [
-    "Build CLI",
-    "Configure isolated Docker auth directory",
     "Authenticate to Docker Hub",
+    PREPARE_E2E_STEP,
     "Run OpenClaw inference switch live test",
-    "Clean up Docker auth",
     "Upload OpenClaw inference switch artifacts",
+    "Clean up Docker auth",
   ].map((name) => job.steps?.findIndex((step) => step.name === name) ?? -1);
   if (
     stepOrder.some(
@@ -138,7 +156,7 @@ function validateOpenClawDockerAuth(errors: string[], job: WorkflowJob): void {
     )
   ) {
     errors.push(
-      "openclaw-inference-switch must build, authenticate, test, clean credentials, then upload",
+      "openclaw-inference-switch must authenticate, prepare, test, upload artifacts, then clean credentials",
     );
   }
 }
@@ -152,7 +170,7 @@ export function readInferenceSwitchWorkflow(
 export function validateInferenceSwitchWorkflow(workflow: InferenceSwitchWorkflow): string[] {
   const errors: string[] = [];
   for (const spec of JOBS) validateJob(errors, spec, workflow.jobs[spec.job] ?? {});
-  validateOpenClawDockerAuth(errors, workflow.jobs["openclaw-inference-switch"] ?? {});
+  validateOpenClawDockerAuthOrder(errors, workflow.jobs["openclaw-inference-switch"] ?? {});
   return errors;
 }
 

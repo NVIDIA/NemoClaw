@@ -61,6 +61,7 @@ function classifyBedrockRuntimeHostname(
 export function classifyCustomAnthropicEndpoint(
   value: string | URL | null | undefined,
 ): CustomAnthropicEndpointClassification {
+  const original = parseEndpointUrl(value);
   const normalized = normalizeProviderBaseUrl(value, "anthropic");
   const parsed = parseEndpointUrl(normalized);
   if (!parsed) {
@@ -72,7 +73,17 @@ export function classifyCustomAnthropicEndpoint(
   }
 
   const bedrock = classifyBedrockRuntimeHostname(parsed.hostname);
-  if (!bedrock) {
+  // The dedicated adapter relies on normal TLS hostname verification rather
+  // than curl --resolve pinning. Only the canonical HTTPS origin is therefore
+  // eligible: a rebound address cannot receive credentials without presenting
+  // a certificate valid for the AWS-owned hostname. Plain HTTP, custom ports,
+  // and URLs carrying userinfo stay on the generic preflighted path.
+  const isCanonicalTlsOrigin =
+    original?.protocol === "https:" &&
+    original.port === "" &&
+    original.username === "" &&
+    original.password === "";
+  if (!bedrock || !isCanonicalTlsOrigin) {
     return {
       kind: "anthropic-messages",
       endpointUrl: normalized,

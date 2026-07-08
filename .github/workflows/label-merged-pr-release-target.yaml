@@ -1,0 +1,407 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Automation / Label Merged PR Release Target
+
+# pull_request_target runs in the base repo context, giving the token write
+# access even for fork PRs. This workflow is safe because it only reads trusted
+# repository metadata and edits labels. Do NOT add a checkout step or execute
+# PR-sourced code here.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [closed]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  # GITHUB_TOKEN requires PR write access when the issues labels endpoint
+  # targets a pull request; issues:write alone returns 403.
+  pull-requests: write
+
+jobs:
+  label-release-target:
+    if: ${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Apply release target to merged PRs
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            // This intentionally deviates from the shell+gh pull_request_target pattern.
+            // Extracting it to TypeScript would require this privileged job to check out
+            // and execute repository files. The pinned action supplies Octokit without a
+            // checkout, and tests execute this exact inline script.
+            const RELEASE_LABEL_COLOR = '1d76db';
+            const RELEASE_LABEL_DESCRIPTION = 'Release target';
+            const RELEASE_TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/;
+            const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+            const RECONCILIATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+            const { owner, repo } = context.repo;
+            const ensuredLabels = new Set();
+
+            function validateSha(value, description) {
+              if (typeof value !== 'string' || !SHA_PATTERN.test(value)) {
+                throw new Error(`Invalid ${description}: ${value}`);
+              }
+              return value;
+            }
+
+            function validatePullRequest(pullRequest) {
+              if (!pullRequest || typeof pullRequest !== 'object') {
+                throw new Error('Invalid pull_request_target payload: pull_request is missing');
+              }
+              if (!Number.isInteger(pullRequest.number) || pullRequest.number <= 0) {
+                throw new Error(`Invalid merged pull request number: ${pullRequest.number}`);
+              }
+              if (!Array.isArray(pullRequest.labels)) {
+                throw new Error('Invalid pull_request_target payload: labels must be an array');
+              }
+              if (pullRequest.merged !== true) {
+                throw new Error('Invalid pull_request_target payload: merged must be true');
+              }
+              return {
+                mergeSha: validateSha(
+                  pullRequest.merge_commit_sha,
+                  `merge commit SHA for PR #${pullRequest.number}`,
+                ),
+                pullRequest,
+              };
+            }
+
+            function nextPatchLabel(release) {
+              const [major, minor, patch] = release.parts;
+              if (patch === Number.MAX_SAFE_INTEGER) {
+                throw new Error(`Cannot increment release tag ${release.name} safely`);
+              }
+              return `v${major}.${minor}.${patch + 1}`;
+            }
+
+            async function loadReleaseTags() {
+              const listedTags = await github.paginate(github.rest.repos.listTags, {
+                owner,
+                repo,
+                per_page: 100,
+              });
+              const releaseTags = [];
+              const seenTags = new Set();
+
+              for (const tag of listedTags) {
+                const match = RELEASE_TAG_PATTERN.exec(tag.name ?? '');
+                if (!match || seenTags.has(tag.name)) continue;
+                const parts = match.slice(1).map((part) => Number(part));
+                if (!parts.every((part) => Number.isSafeInteger(part))) {
+                  throw new Error(`Release tag exceeds the supported numeric range: ${tag.name}`);
+                }
+                seenTags.add(tag.name);
+                releaseTags.push({ name: tag.name, parts });
+              }
+
+              releaseTags.sort((left, right) => {
+                for (let index = 0; index < 3; index += 1) {
+                  if (left.parts[index] > right.parts[index]) return -1;
+                  if (left.parts[index] < right.parts[index]) return 1;
+                }
+                return 0;
+              });
+
+              if (releaseTags.length === 0) {
+                throw new Error('No strict semver release tags were found');
+              }
+              return releaseTags;
+            }
+
+            async function peelReleaseTag(release) {
+              if (release.commit) return release.commit;
+              const reference = await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: `tags/${release.name}`,
+              });
+              if (reference.data.object.type !== 'tag') {
+                throw new Error(`Release tag ${release.name} must be annotated`);
+              }
+
+              const annotatedTag = await github.rest.git.getTag({
+                owner,
+                repo,
+                tag_sha: reference.data.object.sha,
+              });
+              const releaseCommit = annotatedTag.data.object.sha;
+              if (annotatedTag.data.object.type !== 'commit') {
+                throw new Error(`Release tag ${release.name} does not peel to a commit`);
+              }
+              release.commit = validateSha(releaseCommit, `commit for release tag ${release.name}`);
+              release.taggedAt = Date.parse(annotatedTag.data.tagger?.date ?? '');
+              if (!Number.isFinite(release.taggedAt)) {
+                throw new Error(`Release tag ${release.name} has an invalid tagger date`);
+              }
+              return release.commit;
+            }
+
+            async function compareRelation(base, head) {
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner,
+                repo,
+                basehead: `${base}...${head}`,
+                per_page: 1,
+              });
+              const { status, ahead_by: aheadBy, behind_by: behindBy } = comparison.data;
+              if (aheadBy > 0 && behindBy === 0) return 'ahead';
+              if (behindBy > 0 && aheadBy === 0) return 'behind';
+              if (aheadBy === 0 && behindBy === 0 && status === 'identical') return 'identical';
+              throw new Error(`Release comparison ${base}...${head} is not linear: ${status}`);
+            }
+
+            async function resolveTargetForMerge(mergeSha, releaseTags) {
+              let containingRelease;
+              for (const release of releaseTags) {
+                const releaseCommit = await peelReleaseTag(release);
+                const relation = await compareRelation(releaseCommit, mergeSha);
+
+                if (relation === 'behind' || relation === 'identical') {
+                  containingRelease = release;
+                  continue;
+                }
+                if (containingRelease) {
+                  return {
+                    label: containingRelease.name,
+                    boundary: `containing release ${containingRelease.name}`,
+                  };
+                }
+                return {
+                  label: nextPatchLabel(release),
+                  boundary: `release predecessor ${release.name}`,
+                };
+              }
+
+              if (containingRelease) {
+                return {
+                  label: containingRelease.name,
+                  boundary: `containing release ${containingRelease.name}`,
+                };
+              }
+              throw new Error(`No release tag is linearly related to merge ${mergeSha}`);
+            }
+
+            function releaseLabels(pullRequest) {
+              return (pullRequest.labels ?? [])
+                .map((label) => label?.name)
+                .filter((name) => typeof name === 'string' && RELEASE_TAG_PATTERN.test(name));
+            }
+
+            // Invalid state: another run creates the same label after our 404, yielding
+            // a 422. The source boundary is GitHub's Labels API, which has no atomic
+            // create-or-get operation, so this workflow verifies the winner by re-reading
+            // the label. The concurrent-creation regression test covers the workaround;
+            // remove it when the API offers an atomic equivalent.
+            async function ensureReleaseLabel(targetLabel) {
+              if (ensuredLabels.has(targetLabel)) return;
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: targetLabel });
+              } catch (error) {
+                if (error?.status !== 404) throw error;
+                try {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: targetLabel,
+                    color: RELEASE_LABEL_COLOR,
+                    description: RELEASE_LABEL_DESCRIPTION,
+                  });
+                  core.info(`Created release target label ${targetLabel}`);
+                } catch (createError) {
+                  if (createError?.status !== 422) throw createError;
+                  await github.rest.issues.getLabel({ owner, repo, name: targetLabel });
+                  core.info(`Release target label ${targetLabel} was created concurrently`);
+                }
+              }
+              ensuredLabels.add(targetLabel);
+            }
+
+            async function applyTarget(pullRequest, targetLabel, boundary) {
+              const prNumber = pullRequest?.number;
+              if (!Number.isInteger(prNumber) || prNumber <= 0) {
+                throw new Error(`Invalid merged pull request number: ${prNumber}`);
+              }
+
+              const existingReleaseLabels = releaseLabels(pullRequest);
+              if (existingReleaseLabels.includes(targetLabel)) {
+                core.info(`PR #${prNumber} already has release target ${targetLabel}`);
+                return;
+              }
+              const otherReleaseLabels = existingReleaseLabels.filter(
+                (label) => label !== targetLabel,
+              );
+              if (otherReleaseLabels.length > 0) {
+                core.warning(
+                  `PR #${prNumber} already has release label(s) ${otherReleaseLabels.join(', ')}; preserving them and adding ${targetLabel}`,
+                );
+              }
+
+              await ensureReleaseLabel(targetLabel);
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: prNumber,
+                labels: [targetLabel],
+              });
+              core.info(`Added ${targetLabel} to PR #${prNumber} from ${boundary}`);
+            }
+
+            async function listCommitsBetween(base, head) {
+              const commits = [];
+              let page = 1;
+              let totalCommits;
+
+              while (true) {
+                const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                  owner,
+                  repo,
+                  basehead: `${base}...${head}`,
+                  per_page: 100,
+                  page,
+                });
+                const { status, ahead_by: aheadBy, behind_by: behindBy } = comparison.data;
+                if (behindBy > 0 || (status !== 'ahead' && status !== 'identical')) {
+                  throw new Error(`Release range ${base}...${head} is not forward-only: ${status}`);
+                }
+
+                totalCommits ??= comparison.data.total_commits;
+                const pageCommits = comparison.data.commits ?? [];
+                commits.push(...pageCommits);
+                if (commits.length >= totalCommits || pageCommits.length === 0) break;
+                page += 1;
+              }
+              return commits;
+            }
+
+            async function collectIntervalPullRequests(interval) {
+              const pullRequestsByNumber = new Map();
+              const commits = await listCommitsBetween(interval.base, interval.head);
+              for (const commit of commits) {
+                const pullRequests = await github.paginate(
+                  github.rest.repos.listPullRequestsAssociatedWithCommit,
+                  {
+                    owner,
+                    repo,
+                    commit_sha: commit.sha,
+                    per_page: 100,
+                  },
+                );
+                for (const pullRequest of pullRequests) {
+                  if (
+                    !pullRequest.merged_at ||
+                    pullRequest.base?.ref !== 'main' ||
+                    pullRequest.merge_commit_sha !== commit.sha
+                  ) {
+                    continue;
+                  }
+                  pullRequestsByNumber.set(pullRequest.number, pullRequest);
+                }
+              }
+              return [...pullRequestsByNumber.values()];
+            }
+
+            async function applyInterval(interval, processed) {
+              const pullRequests = await collectIntervalPullRequests(interval);
+              for (const pullRequest of pullRequests) {
+                const key = `${interval.label}:${pullRequest.number}`;
+                if (processed.has(key)) continue;
+                processed.add(key);
+                await applyTarget(pullRequest, interval.label, interval.boundary);
+              }
+            }
+
+            async function refreshLatestRelease(expectedName, expectedCommit) {
+              const releaseTags = await loadReleaseTags();
+              const latest = releaseTags[0];
+              const latestCommit = await peelReleaseTag(latest);
+              return {
+                changed: latest.name !== expectedName || latestCommit !== expectedCommit,
+                latest,
+                latestCommit,
+                releaseTags,
+              };
+            }
+
+            async function reconcileReleaseTargets(releaseTags, restartCount = 0) {
+              const latestRelease = releaseTags[0];
+              const latestCommit = await peelReleaseTag(latestRelease);
+              const processed = new Set();
+              const reconciliationCutoff = Date.now() - RECONCILIATION_WINDOW_MS;
+
+              for (let index = 0; index < releaseTags.length - 1; index += 1) {
+                const newer = releaseTags[index];
+                const older = releaseTags[index + 1];
+                await peelReleaseTag(newer);
+                if (newer.taggedAt < reconciliationCutoff) break;
+                await applyInterval(
+                  {
+                    base: await peelReleaseTag(older),
+                    head: await peelReleaseTag(newer),
+                    label: newer.name,
+                    boundary: `containing release ${newer.name}`,
+                  },
+                  processed,
+                );
+              }
+
+              const refreshed = await refreshLatestRelease(latestRelease.name, latestCommit);
+              if (refreshed.changed) {
+                if (restartCount >= 2) {
+                  throw new Error('Newest release tag kept changing during reconciliation');
+                }
+                core.warning('Newest release tag changed; restarting reconciliation');
+                return reconcileReleaseTargets(refreshed.releaseTags, restartCount + 1);
+              }
+
+              const main = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+              const mainCommit = validateSha(main.data.commit.sha, 'main commit SHA');
+              const currentInterval = {
+                base: refreshed.latestCommit,
+                head: mainCommit,
+                label: nextPatchLabel(refreshed.latest),
+                boundary: `release predecessor ${refreshed.latest.name}`,
+              };
+              const currentPullRequests = await collectIntervalPullRequests(currentInterval);
+              const verified = await refreshLatestRelease(
+                refreshed.latest.name,
+                refreshed.latestCommit,
+              );
+              if (verified.changed) {
+                if (restartCount >= 2) {
+                  throw new Error('Newest release tag kept changing during reconciliation');
+                }
+                core.warning('Newest release tag changed; restarting reconciliation');
+                return reconcileReleaseTargets(verified.releaseTags, restartCount + 1);
+              }
+
+              for (const pullRequest of currentPullRequests) {
+                const key = `${currentInterval.label}:${pullRequest.number}`;
+                if (processed.has(key)) continue;
+                processed.add(key);
+                await applyTarget(
+                  pullRequest,
+                  currentInterval.label,
+                  currentInterval.boundary,
+                );
+              }
+              core.info(`Reconciled ${processed.size} merged PR release target(s)`);
+            }
+
+            if (context.eventName === 'pull_request_target') {
+              const { mergeSha, pullRequest } = validatePullRequest(
+                context.payload.pull_request,
+              );
+              const releaseTags = await loadReleaseTags();
+              const target = await resolveTargetForMerge(mergeSha, releaseTags);
+              await applyTarget(pullRequest, target.label, target.boundary);
+            } else {
+              const releaseTags = await loadReleaseTags();
+              await reconcileReleaseTargets(releaseTags);
+            }

@@ -33,7 +33,7 @@ ARG HERMES_VERSION=v2026.6.19
 ARG HERMES_SEMVER=0.17.0
 ARG HERMES_TARBALL_SHA256=69b805ec0a7a7be880068ba8a3b17479d7ba29f0cac0a2e9c6692c02f346ba91
 ARG HERMES_NPM_INTEGRITY=sha512-PzSJiYqmwpTudmakYs2oCJ57OW3VwEJYf8buTuKvuRvcYEUf/KOTu2dD6pLf2XYgDKErpvcDaoSAJ1nGCyvzAA==
-ARG HERMES_UV_EXTRAS="anthropic messaging web pty"
+ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp"
 ARG UV_VERSION=0.11.8
 
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
@@ -172,9 +172,10 @@ RUN printf '%s\n' \
 # The image prebakes only the extras mapped to NemoClaw-supported onboarding
 # integrations: anthropic (native Anthropic Messages routing), messaging
 # (Telegram, Discord, Slack, WeChat, WhatsApp), web (API health/UI runtime),
-# and pty (optional browser TUI bridge). These extras are resolved from the
-# selected Hermes release's uv.lock via `uv sync --frozen`, so dependency
-# changes remain tied to HERMES_VERSION/HERMES_TARBALL_SHA256 review.
+# pty (optional browser TUI bridge), and mcp (managed MCP bridge consumer).
+# These extras are resolved from the selected Hermes release's uv.lock via
+# `uv sync --frozen`, so dependency changes remain tied to
+# HERMES_VERSION/HERMES_TARBALL_SHA256 review.
 # Microsoft Teams adapter dependencies are installed by the manifest-driven
 # final image when selected.
 # New Hermes integrations should be installed by the agent workflow when they
@@ -271,13 +272,9 @@ RUN set -eu; \
 # route that uses File/Form, so without python-multipart the plugin's API routes
 # fail to mount ("Form data requires python-multipart to be installed").
 #
-# It is NOT a dependency of hermes-agent core or any extra we enable; upstream
-# only pulls it transitively via the mcp/daytona/all extras. Rather than drag in
-# the MCP client (a new agent capability) or the Daytona cloud-provider SDK (an
-# unused, egress/telemetry-capable SDK) just to obtain a dependency-free form
-# parser, vendor python-multipart directly — pinned and hash-verified to the
-# exact version resolved in the checksum-pinned release's uv.lock, so it stays
-# tied to HERMES_VERSION/HERMES_TARBALL_SHA256 review like every other dep.
+# It is resolved by the pinned Hermes web/mcp extras today. Keep this
+# hash-verified backstop tied to the selected release's uv.lock so older base
+# cache layers and future extra reshuffles cannot silently drop the parser.
 # Re-review the version and both hashes on every Hermes version bump.
 # hadolint ignore=DL3059
 RUN printf '%s\n' \
@@ -293,4 +290,6 @@ RUN printf '%s\n' \
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
-RUN /usr/local/bin/hermes --version
+RUN /usr/local/bin/hermes --version \
+    && /opt/hermes/.venv/bin/python -c \
+        'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'

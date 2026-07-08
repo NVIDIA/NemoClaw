@@ -72,8 +72,62 @@ describe("inference switch workflow boundary", () => {
     );
     [steps[cleanupIndex], steps[uploadIndex]] = [steps[uploadIndex], steps[cleanupIndex]];
     expect(validateInferenceSwitchWorkflow(lingeringCredentials)).toContain(
-      "openclaw-inference-switch must build, authenticate, test, clean credentials, then upload",
+      "openclaw-inference-switch must authenticate, prepare, test, upload artifacts, then clean credentials",
     );
+  });
+
+  it("uses a healthy hosted switch target and scopes its credentials to hosted mode", () => {
+    const wrongTarget = readInferenceSwitchWorkflow();
+    const hosted = wrongTarget.jobs["hermes-inference-switch"].strategy?.matrix?.include?.find(
+      (entry) => entry.mode === "hosted",
+    );
+    hosted!.switch_model = "nvidia/nvidia/nemotron-3-super-v3";
+    expect(validateInferenceSwitchWorkflow(wrongTarget)).toContain(
+      "hermes-inference-switch must run the exact hosted and Anthropic-compatible modes",
+    );
+
+    const unscopedSecret = readInferenceSwitchWorkflow();
+    const runStep = unscopedSecret.jobs["openclaw-inference-switch"].steps!.find(
+      (step) => step.name === "Run OpenClaw inference switch live test",
+    )!;
+    runStep.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+    expect(validateInferenceSwitchWorkflow(unscopedSecret)).toContain(
+      "openclaw-inference-switch must expose NVIDIA_INFERENCE_API_KEY only to its hosted run step",
+    );
+
+    const unscopedPublicKey = readInferenceSwitchWorkflow();
+    const publicRunStep = unscopedPublicKey.jobs["hermes-inference-switch"].steps!.find(
+      (step) => step.name === "Run Hermes inference switch live Vitest test",
+    )!;
+    publicRunStep.env!.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+    expect(validateInferenceSwitchWorkflow(unscopedPublicKey)).toContain(
+      "hermes-inference-switch must expose NVIDIA_API_KEY only to its hosted run step",
+    );
+
+    const publicKey = readInferenceSwitchWorkflow();
+    publicKey.jobs["hermes-inference-switch"].env!.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+    expect(validateInferenceSwitchWorkflow(publicKey)).toContain(
+      "hermes-inference-switch must not expose NVIDIA_API_KEY at job scope",
+    );
+  });
+
+  it("accepts shared guarded Docker authentication without mode-specific auth scripts", () => {
+    const workflow = readInferenceSwitchWorkflow();
+    const steps = workflow.jobs["openclaw-inference-switch"].steps!;
+    expect(steps.some((step) => step.name === "Configure isolated Docker auth directory")).toBe(
+      false,
+    );
+
+    const authenticate = steps.find((step) => step.name === "Authenticate to Docker Hub")!;
+    const authIndex = steps.indexOf(authenticate);
+    steps.splice(authIndex, 1);
+    steps.splice(1, 0, authenticate);
+    authenticate.run = "shared guarded Docker Hub login";
+
+    const cleanup = steps.find((step) => step.name === "Clean up Docker auth")!;
+    cleanup.run = "shared guarded Docker auth cleanup";
+
+    expect(validateInferenceSwitchWorkflow(workflow)).toEqual([]);
   });
 
   it("keeps the mode ratchet in the central workflow check", () => {

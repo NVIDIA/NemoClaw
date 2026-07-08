@@ -40,13 +40,33 @@ const TLS = [
 
 const TOOLCHAIN = ["DOCKER_HOST", "KUBECONFIG", "SSH_AUTH_SOCK", "RUST_LOG", "RUST_BACKTRACE"];
 
-const ALLOWED_ENV_NAMES = new Set([...SYSTEM, ...TEMP, ...LOCALE, ...PROXY, ...TLS, ...TOOLCHAIN]);
+export const SUBPROCESS_ENV_ALLOWED_NAMES: readonly string[] = Object.freeze([
+  ...SYSTEM,
+  ...TEMP,
+  ...LOCALE,
+  ...PROXY,
+  ...TLS,
+  ...TOOLCHAIN,
+]);
+const ALLOWED_ENV_NAMES = new Set(SUBPROCESS_ENV_ALLOWED_NAMES);
 
 // ── Allowed prefixes ───────────────────────────────────────────
 
-const ALLOWED_ENV_PREFIXES = ["LC_", "XDG_", "OPENSHELL_", "GRPC_"];
+export const SUBPROCESS_ENV_ALLOWED_PREFIXES: readonly string[] = Object.freeze([
+  "LC_",
+  "XDG_",
+  "OPENSHELL_",
+  "GRPC_",
+]);
 
 // ── Public API ─────────────────────────────────────────────────
+
+export function isSubprocessEnvNameAllowed(name: string): boolean {
+  return (
+    ALLOWED_ENV_NAMES.has(name) ||
+    SUBPROCESS_ENV_ALLOWED_PREFIXES.some((prefix) => name.startsWith(prefix))
+  );
+}
 
 /**
  * When any HTTP proxy is forwarded, augment NO_PROXY so the host proxy is
@@ -102,7 +122,7 @@ export function buildSubprocessEnv(extra?: Record<string, string>): Record<strin
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
-    if (ALLOWED_ENV_NAMES.has(key) || ALLOWED_ENV_PREFIXES.some((p) => key.startsWith(p))) {
+    if (isSubprocessEnvNameAllowed(key)) {
       env[key] = value;
     }
   }

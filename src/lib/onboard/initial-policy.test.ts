@@ -10,7 +10,9 @@ import YAML from "yaml";
 
 vi.mock("../policy", () => ({
   mergePresetNamesIntoPolicy: (policy: string, presetNames: string[]) => ({
-    policy: `${policy.trimEnd()}\n  slack: {}\n`,
+    policy: `${policy.trimEnd()}\n${presetNames
+      .map((preset) => `  ${preset === "wechat" ? "wechat_bridge" : preset}: {}`)
+      .join("\n")}\n`,
     appliedPresets: presetNames,
     missingPresets: [],
   }),

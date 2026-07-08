@@ -114,6 +114,38 @@ describe("docker-driver gateway runtime helpers", () => {
     }
   });
 
+  it("uses the moving dev supervisor image for an explicit or detected dev runtime", () => {
+    const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
+    expect(
+      explicit.helpers.getDockerDriverGatewayEnv("openshell 0.0.72", "linux")
+        .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+    ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
+
+    const detected = makeHelpers({
+      isOpenshellDevVersion: (versionOutput) => String(versionOutput).includes("-dev."),
+    });
+    expect(
+      detected.helpers.getDockerDriverGatewayEnv("openshell 0.0.72-dev.8+g7bce1223", "linux")
+        .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+    ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
+  });
+
+  it("pins the stable 0.0.72 supervisor default while preserving an explicit override", () => {
+    const image = (fallback: string) =>
+      makeHelpers({
+        getBlueprintMaxOpenshellVersion: () => "0.0.72",
+        supportedOpenshellFallbackVersion: fallback,
+      }).helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
+    const stable = withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () => image("0.0.72"));
+    expect(stable).toBe(
+      "ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
+    );
+    const override = "registry.example.test/supervisor@sha256:override";
+    expect(withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: override }, () => image("0.0.72"))).toBe(
+      override,
+    );
+  });
+
   it("clears custom state-dir PID and marker files when the recorded PID is not the gateway", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
     const pid = 9_876_543;
@@ -200,28 +232,6 @@ describe("docker-driver gateway runtime helpers", () => {
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
-  });
-
-  it("rejects an openshell port listener when the injected gateway identity check fails", () => {
-    const { helpers } = makeHelpers();
-    const isDockerDriverGatewayProcessFn = vi.fn(() => false);
-
-    expect(
-      helpers.getDockerDriverGatewayPortListenerPid(
-        { ok: false, process: "openshell-gateway", pid: 1234 },
-        {
-          platform: "linux",
-          gatewayBin: "/opt/openshell/openshell-gateway",
-          isPidAliveFn: () => true,
-          isDockerDriverGatewayProcessFn,
-        },
-      ),
-    ).toBeNull();
-
-    expect(isDockerDriverGatewayProcessFn).toHaveBeenCalledWith(
-      1234,
-      "/opt/openshell/openshell-gateway",
-    );
   });
 
   it("does not match process args that only contain openshell-gateway as a suffix", () => {

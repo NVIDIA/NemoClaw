@@ -86,6 +86,10 @@ describe("messaging legacy bridge credentials", () => {
     expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("DISCORD_BOT_TOKEN");
     expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("SLACK_BOT_TOKEN");
   });
+
+  it("registers TAVILY_API_KEY so the Tavily provider can be sanitized and rotated", () => {
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("TAVILY_API_KEY");
+  });
 });
 
 describe("host-side credential staging", () => {
@@ -768,6 +772,36 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
     } finally {
       createInterfaceSpy.mockRestore();
       killSpy.mockRestore();
+      stdinRef.mockRestore();
+      stdinPause.mockRestore();
+      stdinUnref.mockRestore();
+    }
+  });
+
+  it("rejects standard readline prompts as cancellation when stdin closes before an answer (#5976)", async () => {
+    const readline = require("node:readline") as typeof import("node:readline");
+    const rl = new EventEmitter() as EventEmitter & {
+      close: ReturnType<typeof vi.fn>;
+      question: ReturnType<typeof vi.fn>;
+    };
+    rl.close = vi.fn();
+    rl.question = vi.fn();
+
+    const createInterfaceSpy = vi.spyOn(readline, "createInterface").mockReturnValue(rl as any);
+    const stdinRef = vi.spyOn(process.stdin, "ref").mockImplementation(() => process.stdin);
+    const stdinPause = vi.spyOn(process.stdin, "pause").mockImplementation(() => process.stdin);
+    const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
+
+    try {
+      const credentials = await import("../src/lib/credentials/store.js");
+      const pending = credentials.prompt("question: ");
+      // Simulate stdin EOF (e.g. `< /dev/null`): readline closes without ever
+      // invoking the question callback.
+      rl.emit("close");
+      await expect(pending).rejects.toMatchObject({ code: "EOF" });
+      expect(rl.close).toHaveBeenCalled();
+    } finally {
+      createInterfaceSpy.mockRestore();
       stdinRef.mockRestore();
       stdinPause.mockRestore();
       stdinUnref.mockRestore();

@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { filterSetupPolicyPresetsForAgent } from "../src/lib/onboard/agent-policy-presets";
+import {
+  allMessagingChannelPolicyPresets,
+  mergeEnabledMessagingChannelPolicyPresets,
+} from "../src/lib/onboard/messaging-policy-presets";
 
+// `../src/lib/onboard` is a CommonJS module (`module.exports = {}`), so it is
+// loaded via `require` per the documented CJS exception for the onboard module.
 const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPolicyPresets } =
   require("../src/lib/onboard") as {
     computeSetupPresetSuggestions: (
@@ -12,6 +19,7 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
         knownPresetNames: string[];
         provider?: string | null;
         agent?: string | null;
+        observabilityEnabled?: boolean | null;
         webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
         webSearchSupported?: boolean | null;
         hermesToolGateways?: string[] | null;
@@ -26,7 +34,9 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
       enabledChannels?: string[] | null;
       provider?: string | null;
       agent?: string | null;
+      observabilityEnabled?: boolean | null;
       env?: NodeJS.ProcessEnv;
+      webSearchConfig?: { fetchEnabled?: boolean; provider?: "brave" | "tavily" } | null;
     }) => string[];
   };
 const { mergeRequiredSetupPolicyPresets, suppressedAgentRequiredPresets } =
@@ -37,9 +47,11 @@ const { mergeRequiredSetupPolicyPresets, suppressedAgentRequiredPresets } =
         enabledChannels?: string[] | null;
         hermesToolGateways?: string[] | null;
         agent?: string | null;
+        observabilityEnabled?: boolean | null;
         knownPresetNames?: string[] | Set<string> | null;
         env?: NodeJS.ProcessEnv;
         tierName?: string | null;
+        webSearchConfig?: { fetchEnabled?: boolean; provider?: "brave" | "tavily" } | null;
       },
     ) => string[];
     suppressedAgentRequiredPresets: (
@@ -78,12 +90,6 @@ function withOpenclawOtelEnv<T>(value: string | undefined, body: () => T): T {
     setOrUnset(endpointKey, originalEndpoint);
   }
 }
-const { filterSetupPolicyPresetsForAgent } = require("../src/lib/onboard/agent-policy-presets") as {
-  filterSetupPolicyPresetsForAgent: <T extends { name: string }>(
-    presets: T[],
-    agent?: string | null,
-  ) => T[];
-};
 
 describe("onboard policy preset suggestions", () => {
   const known = [
@@ -92,6 +98,7 @@ describe("onboard policy preset suggestions", () => {
     "huggingface",
     "brew",
     "brave",
+    "tavily",
     "slack",
     "discord",
     "telegram",
@@ -147,6 +154,44 @@ describe("onboard policy preset suggestions", () => {
       if (originalSlackBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
       else process.env.SLACK_BOT_TOKEN = originalSlackBotToken;
     }
+  });
+
+  // Cross-verification (#5967): the suggestion path
+  // (`computeSetupPresetSuggestions`) and the finalization merge
+  // (`mergeEnabledMessagingChannelPolicyPresets`) must contribute the SAME
+  // channel egress presets for a given `enabledChannels` set. If they diverged,
+  // an operator could be suggested a preset finalization later drops (or finalize
+  // one never suggested). Assert both paths yield exactly
+  // `allMessagingChannelPolicyPresets` for every channel individually and combined.
+  it("suggestion and finalization paths contribute identical channel presets for all channels (#5967)", () => {
+    const channels = ["slack", "discord", "telegram", "teams", "whatsapp", "wechat"];
+    const knownNames = [...known, "teams", "whatsapp", "wechat"];
+    const channelPresetSet = new Set(allMessagingChannelPolicyPresets(channels));
+    const channelPresetsFromSuggestions = (enabled: string[]) =>
+      computeSetupPresetSuggestions("balanced", {
+        enabledChannels: enabled,
+        knownPresetNames: knownNames,
+      }).filter((name) => channelPresetSet.has(name));
+
+    for (const channel of channels) {
+      // Compare set equality (sorted) rather than incidental array order, so a
+      // channel later expanding to multiple presets can't fail this guard on a
+      // harmless ordering difference between the two internal paths.
+      const expected = allMessagingChannelPolicyPresets([channel]).slice().sort();
+      // Finalization merge contributes exactly the channel's egress presets...
+      expect(
+        mergeEnabledMessagingChannelPolicyPresets([], [channel], knownNames).slice().sort(),
+      ).toEqual(expected);
+      // ...and the suggestion path surfaces the same set.
+      expect(channelPresetsFromSuggestions([channel]).slice().sort()).toEqual(expected);
+    }
+
+    // All channels enabled together: both paths agree on the full set.
+    const expectedAll = allMessagingChannelPolicyPresets(channels).slice().sort();
+    expect(
+      mergeEnabledMessagingChannelPolicyPresets([], channels, knownNames).slice().sort(),
+    ).toEqual(expectedAll);
+    expect(channelPresetsFromSuggestions(channels).slice().sort()).toEqual(expectedAll);
   });
 
   it("never auto-detects WhatsApp because the channel has no host env key", () => {
@@ -225,6 +270,24 @@ describe("onboard policy preset suggestions", () => {
       if (originalEndpoint === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
       else process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = originalEndpoint;
     }
+  });
+
+  it("suggests local observability only for enabled Deep Agents Code", () => {
+    expect(
+      getSuggestedPolicyPresets({
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+      }),
+    ).toContain("observability-otlp-local");
+    expect(
+      getSuggestedPolicyPresets({
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: false,
+      }),
+    ).not.toContain("observability-otlp-local");
+    expect(
+      getSuggestedPolicyPresets({ agent: "openclaw", observabilityEnabled: true }),
+    ).not.toContain("observability-otlp-local");
   });
 
   it("balanced OpenClaw with web search returns exactly brave brew huggingface npm openclaw-pricing pypi and excludes weather", () => {
@@ -315,6 +378,34 @@ describe("onboard policy preset suggestions", () => {
     expect(disabledSuggestions).not.toContain("openclaw-diagnostics-otel-local");
   });
 
+  it("adds the DCode observability preset only when enabled and non-restricted", () => {
+    const knownWithObservability = [...known, "observability-otlp-local"];
+    expect(
+      computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: knownWithObservability,
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+      }),
+    ).toContain("observability-otlp-local");
+    expect(
+      computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: knownWithObservability,
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: false,
+      }),
+    ).not.toContain("observability-otlp-local");
+    expect(
+      computeSetupPresetSuggestions("restricted", {
+        enabledChannels: [],
+        knownPresetNames: knownWithObservability,
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+      }),
+    ).not.toContain("observability-otlp-local");
+  });
+
   it("returns balanced tier defaults without messaging presets when no channels enabled", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
@@ -333,6 +424,45 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
   });
 
+  it("selects Tavily and removes the stale Brave tier default", () => {
+    const knownWithTavily = [...known, "tavily"];
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithTavily,
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      webSearchSupported: true,
+    });
+
+    expect(suggestions).toContain("tavily");
+    expect(suggestions).not.toContain("brave");
+    expect(
+      getSuggestedPolicyPresets({
+        enabledChannels: [],
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      }),
+    ).toContain("tavily");
+
+    const hermesOpen = computeSetupPresetSuggestions("open", {
+      enabledChannels: [],
+      knownPresetNames: knownWithTavily,
+      agent: "hermes",
+      hermesToolGateways: ["nous-web", "nous-audio"],
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      webSearchSupported: true,
+    });
+    expect(hermesOpen).not.toContain("nous-web");
+    expect(hermesOpen).toContain("nous-audio");
+
+    expect(
+      mergeRequiredSetupPolicyPresets(["nous-audio"], {
+        agent: "hermes",
+        hermesToolGateways: ["nous-web", "nous-audio"],
+        knownPresetNames: knownWithTavily,
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      }),
+    ).toEqual(["nous-audio"]);
+  });
+
   it("filters tier defaults to known presets for agent-specific onboarding", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
@@ -341,7 +471,7 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
   });
 
-  it("omits Brave when web search is unsupported", () => {
+  it("omits web-search presets when web search is unsupported", () => {
     const allPresets = known.map((name) => ({ name }));
     const unsupportedPresets = filterSetupPolicyPresets(allPresets, {
       webSearchSupported: false,
@@ -350,7 +480,9 @@ describe("onboard policy preset suggestions", () => {
       webSearchSupported: true,
     }).map((p) => p.name);
     expect(unsupportedPresets).not.toContain("brave");
+    expect(unsupportedPresets).not.toContain("tavily");
     expect(supportedPresets).toContain("brave");
+    expect(supportedPresets).toContain("tavily");
   });
 
   it("drops Brave tier defaults when web search is unsupported", () => {
@@ -394,6 +526,7 @@ describe("onboard policy preset suggestions", () => {
       { name: "weather" },
       { name: "openclaw-pricing" },
       { name: "openclaw-diagnostics-otel-local" },
+      { name: "observability-otlp-local" },
       { name: "nous-web" },
       { name: "nous-image" },
     ];
@@ -408,6 +541,9 @@ describe("onboard policy preset suggestions", () => {
       "openclaw-pricing",
       "openclaw-diagnostics-otel-local",
     ]);
+    expect(
+      filterSetupPolicyPresetsForAgent(allPresets, "langchain-deepagents-code").map((p) => p.name),
+    ).toEqual(["weather", "observability-otlp-local"]);
   });
 
   it("does not add explicitly requested Hermes Nous presets to OpenClaw suggestions", () => {
@@ -626,6 +762,34 @@ describe("onboard policy preset suggestions", () => {
   });
 
   describe("mergeRequiredSetupPolicyPresets tier plumbing", () => {
+    it("adds enabled DCode observability and removes it when disabled or restricted", () => {
+      const options = {
+        agent: "langchain-deepagents-code",
+        knownPresetNames: ["npm", "observability-otlp-local"],
+      };
+      expect(
+        mergeRequiredSetupPolicyPresets(["npm"], {
+          ...options,
+          observabilityEnabled: true,
+          tierName: "balanced",
+        }),
+      ).toEqual(["npm", "observability-otlp-local"]);
+      expect(
+        mergeRequiredSetupPolicyPresets(["npm", "observability-otlp-local"], {
+          ...options,
+          observabilityEnabled: false,
+          tierName: "balanced",
+        }),
+      ).toEqual(["npm"]);
+      expect(
+        mergeRequiredSetupPolicyPresets(["npm"], {
+          ...options,
+          observabilityEnabled: true,
+          tierName: "restricted",
+        }),
+      ).toEqual(["npm"]);
+    });
+
     it("suppresses openclaw-pricing only when tierName is restricted", () => {
       expect(
         mergeRequiredSetupPolicyPresets(["npm", "openclaw-pricing"], {

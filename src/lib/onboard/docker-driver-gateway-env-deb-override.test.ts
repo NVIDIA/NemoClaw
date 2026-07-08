@@ -63,7 +63,7 @@ describe("buildDockerGatewayDebEnvFile", () => {
     expect(next).toBe("OPENSHELL_DRIVERS=docker\n");
   });
 
-  it("removes stale auth-disable env so OpenShell 0.0.71 TOML auth policy stays authoritative", () => {
+  it("removes stale auth-disable env so OpenShell 0.0.72 TOML auth policy stays authoritative", () => {
     const next = buildDockerGatewayDebEnvFile(
       [
         "KEEP_ME=1",

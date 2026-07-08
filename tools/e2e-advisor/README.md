@@ -9,6 +9,11 @@ PR comment with required/optional E2E recommendations.
 
 The advisor recommends E2E coverage from the PR diff and repository context rather than a fixed path-rule table. The advisor model is expected to inspect existing E2E workflows, target definitions, source files, and nearby tests before recommending coverage.
 The target advisor also emits canonical `gh workflow run e2e.yaml` commands that use the workflow's `targets` or `jobs` inputs.
+After model output is normalized, the analyzer applies a deterministic safety
+net for timing-sensitive onboard infrastructure: changes to onboard behavior,
+trace timing, scorecard analysis, the advisory performance-budget config, or
+the unified E2E workflow require the `cloud-onboard` target so the PR refreshes
+the trusted timing signal.
 
 ## Workflow
 
