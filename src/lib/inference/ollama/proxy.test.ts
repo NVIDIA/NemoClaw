@@ -9,23 +9,33 @@ const PROXY_DIST = require.resolve("./proxy");
 const LOCAL_DIST = require.resolve("../local");
 const CREDS_DIST = require.resolve("../../credentials/store");
 const CHILD_PROCESS_DIST = require.resolve("node:child_process");
+const RUNNER_DIST = require.resolve("../../runner");
 
 interface MockSetup {
   installed: string[] | (() => string[]);
   promptValues: string[];
   pullStatus?: number;
+  completeSuccess?: boolean;
 }
 
 function loadProxyWithMocks(setup: MockSetup): {
   proxy: typeof import("./proxy");
   promptArgs: string[];
+  runCalls: Array<{ command: readonly string[]; options: unknown }>;
+  validateCalls: unknown[][];
+  warmupModels: string[];
   restore: () => void;
 } {
   const local = require(LOCAL_DIST);
   const creds = require(CREDS_DIST);
   const childProcess = require(CHILD_PROCESS_DIST) as typeof import("node:child_process");
+  const runner = require(RUNNER_DIST);
   const originalGetOllamaModelOptions = local.getOllamaModelOptions;
+  const originalGetOllamaWarmupCommand = local.getOllamaWarmupCommand;
   const originalPrompt = creds.prompt;
+  const originalProbeOllamaModelCapabilities = local.probeOllamaModelCapabilities;
+  const originalRun = runner.run;
+  const originalValidateOllamaModel = local.validateOllamaModel;
   const spawnSync =
     setup.pullStatus === undefined
       ? null
@@ -38,6 +48,9 @@ function loadProxyWithMocks(setup: MockSetup): {
           stderr: "",
         });
   const promptArgs: string[] = [];
+  const runCalls: Array<{ command: readonly string[]; options: unknown }> = [];
+  const validateCalls: unknown[][] = [];
+  const warmupModels: string[] = [];
   let promptCallIndex = 0;
 
   local.getOllamaModelOptions = () =>
@@ -48,16 +61,42 @@ function loadProxyWithMocks(setup: MockSetup): {
     promptCallIndex += 1;
     return value ?? "";
   };
+  if (setup.completeSuccess) {
+    local.probeOllamaModelCapabilities = () => ({
+      source: "api",
+      capabilities: ["tools"],
+      supportsTools: true,
+    });
+    local.getOllamaWarmupCommand = (model: string) => {
+      warmupModels.push(model);
+      return ["warmup", model];
+    };
+    local.validateOllamaModel = (...args: unknown[]) => {
+      validateCalls.push(args);
+      return { ok: true };
+    };
+    runner.run = (command: readonly string[], options: unknown) => {
+      runCalls.push({ command, options });
+      return { status: 0 };
+    };
+  }
 
   delete require.cache[PROXY_DIST];
   const proxy = require(PROXY_DIST);
   return {
     proxy,
     promptArgs,
+    runCalls,
+    validateCalls,
+    warmupModels,
     restore() {
       delete require.cache[PROXY_DIST];
       local.getOllamaModelOptions = originalGetOllamaModelOptions;
+      local.getOllamaWarmupCommand = originalGetOllamaWarmupCommand;
       creds.prompt = originalPrompt;
+      local.probeOllamaModelCapabilities = originalProbeOllamaModelCapabilities;
+      runner.run = originalRun;
+      local.validateOllamaModel = originalValidateOllamaModel;
       spawnSync?.mockRestore();
     },
   };
@@ -157,50 +196,29 @@ describe("promptOllamaModel installed-model fit filter", () => {
   });
 });
 
-describe("waitForPulledOllamaModel", () => {
-  it("returns immediately when Ollama already lists the pulled model", () => {
-    const proxy: typeof import("./proxy") = require(PROXY_DIST);
-    const getModelOptions = vi.fn(() => ["qwen3.5:9b"]);
-    const sleep = vi.fn();
-
-    expect(
-      proxy.waitForPulledOllamaModel("qwen3.5:9b", {
-        getModelOptions,
-        now: () => 0,
-        sleep,
-      }),
-    ).toBe(true);
-    expect(getModelOptions).toHaveBeenCalledOnce();
-    expect(sleep).not.toHaveBeenCalled();
+describe("prepareOllamaModel post-pull discovery", () => {
+  let active: { restore: () => void } | null = null;
+  afterEach(() => {
+    active?.restore();
+    active = null;
   });
 
-  it.each([
-    ["llama3.2", "llama3.2:latest"],
-    ["registry.example:5000/acme/model", "registry.example:5000/acme/model:latest"],
-    ["acme/model:7b", "acme/model:7b"],
-    ["acme/model@sha256:abc", "acme/model@sha256:abc"],
-  ])("matches pulled model reference %s to listed reference %s", (requested, listed) => {
-    const proxy: typeof import("./proxy") = require(PROXY_DIST);
-
-    expect(
-      proxy.waitForPulledOllamaModel(requested, {
-        getModelOptions: () => [listed],
-        now: () => 0,
-        sleep: () => {},
-      }),
-    ).toBe(true);
-  });
-
-  it("retries model discovery with bounded backoff after a completed pull (#6038)", () => {
-    const proxy: typeof import("./proxy") = require(PROXY_DIST);
-    const sleeps: number[] = [];
-    let nowMs = 0;
+  it("warms and validates after a pulled model appears in discovery (#6038)", async () => {
+    const setup = loadProxyWithMocks({
+      installed: [],
+      promptValues: [],
+      pullStatus: 0,
+      completeSuccess: true,
+    });
+    active = setup;
     let attempts = 0;
+    let nowMs = 0;
+    const sleeps: number[] = [];
 
-    const discovered = proxy.waitForPulledOllamaModel("qwen3.5:9b", {
+    const result = await setup.proxy.prepareOllamaModel("qwen3.5:9b", [], undefined, {
       getModelOptions: () => {
         attempts += 1;
-        return attempts >= 3 ? ["qwen3.5:9b"] : [];
+        return attempts >= 2 ? ["qwen3.5:9b"] : [];
       },
       now: () => nowMs,
       sleep: (ms) => {
@@ -209,18 +227,26 @@ describe("waitForPulledOllamaModel", () => {
       },
     });
 
-    expect(discovered).toBe(true);
-    expect(attempts).toBe(3);
-    expect(sleeps).toEqual([250, 500]);
+    expect(result).toEqual({ ok: true, allowToolsIncompatible: false });
+    expect(attempts).toBe(2);
+    expect(sleeps).toEqual([250]);
+    expect(setup.warmupModels).toEqual(["qwen3.5:9b"]);
+    expect(setup.runCalls).toEqual([
+      { command: ["warmup", "qwen3.5:9b"], options: { ignoreError: true } },
+    ]);
+    expect(setup.validateCalls).toEqual([
+      ["qwen3.5:9b", undefined, undefined, undefined, { allowToolsIncompatible: false }],
+    ]);
   });
 
-  it("fails after the bounded discovery window when Ollama never lists the model (#6038)", () => {
-    const proxy: typeof import("./proxy") = require(PROXY_DIST);
-    const sleeps: number[] = [];
-    let nowMs = 0;
-    let attempts = 0;
+  it("rejects a zero-exit pull that never appears in discovery (#6038)", async () => {
+    const setup = loadProxyWithMocks({ installed: [], promptValues: [], pullStatus: 0 });
+    active = setup;
 
-    const discovered = proxy.waitForPulledOllamaModel("qwen3.5:9b", {
+    let attempts = 0;
+    let nowMs = 0;
+    const sleeps: number[] = [];
+    const result = await setup.proxy.prepareOllamaModel("qwen3.5:9b", [], undefined, {
       getModelOptions: () => {
         attempts += 1;
         return [];
@@ -232,34 +258,13 @@ describe("waitForPulledOllamaModel", () => {
       },
     });
 
-    expect(discovered).toBe(false);
-    expect(attempts).toBe(8);
-    expect(sleeps).toEqual([250, 500, 1_000, 2_000, 2_000, 2_000, 2_000]);
-  });
-});
-
-describe("prepareOllamaModel post-pull discovery", () => {
-  let active: { restore: () => void } | null = null;
-  afterEach(() => {
-    active?.restore();
-    active = null;
-  });
-
-  it("rejects a zero-exit pull that never appears in discovery (#6038)", async () => {
-    const setup = loadProxyWithMocks({ installed: [], promptValues: [], pullStatus: 0 });
-    active = setup;
-
-    const result = await setup.proxy.prepareOllamaModel("qwen3.5:9b", [], undefined, {
-      getModelOptions: () => [],
-      now: () => 0,
-      sleep: () => {},
-    });
-
     expect(result).toEqual({
       ok: false,
       message:
         "Ollama pull for 'qwen3.5:9b' completed, but Ollama did not list the model afterward. " +
         "Wait for Ollama to finish registering the model, then choose it again.",
     });
+    expect(attempts).toBe(8);
+    expect(sleeps).toEqual([250, 500, 1_000, 2_000, 2_000, 2_000, 2_000]);
   });
 });

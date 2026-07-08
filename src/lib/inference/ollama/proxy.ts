@@ -6,13 +6,17 @@
 // proxy start/stop, model pull and validation.
 
 import type { GpuInfo } from "../local";
+import type { PulledModelDiscoveryDeps } from "./model-discovery";
 
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
-const { waitForPort, waitUntil } = require("../../core/wait");
-const { ollamaModelRefsMatch }: typeof import("./model-ref") = require("./model-ref");
+const { waitForPort } = require("../../core/wait");
+const {
+  ollamaModelRefsMatch,
+  waitForPulledOllamaModel,
+}: typeof import("./model-discovery") = require("./model-discovery");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -762,43 +766,6 @@ async function pullOllamaModel(model) {
     return pullOllamaModelViaHttp(model);
   }
   return pullOllamaModelViaCli(model);
-}
-
-const PULLED_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
-const PULLED_MODEL_DISCOVERY_ATTEMPTS = 8;
-
-type PulledModelDiscoveryDeps = {
-  getModelOptions?: () => string[];
-  now?: () => number;
-  sleep?: (ms: number) => void;
-};
-
-/**
- * Confirm that Ollama exposes a just-pulled model before onboarding continues.
- *
- * Invalid state: a successful `ollama pull` can return before the daemon lists
- * the model, so immediate validation reports a false missing-model failure.
- * Ollama owns pull completion and model registration; NemoClaw can only poll
- * its public model list after the producer says the pull completed. Keep this
- * bounded so a daemon that never registers the model cannot hang onboarding.
- * The focused tests cover immediate, delayed, and exhausted discovery, while
- * `onboard-selection.test.ts` exercises delayed registration through the real
- * selection flow. Remove this compatibility wait when supported Ollama
- * versions guarantee that successful pull completion implies list visibility.
- */
-function waitForPulledOllamaModel(model: string, deps: PulledModelDiscoveryDeps = {}): boolean {
-  const getModelOptions = deps.getModelOptions ?? getOllamaModelOptions;
-  const now = deps.now ?? Date.now;
-  const sleep = deps.sleep ?? (process.env.NEMOCLAW_TEST_NO_SLEEP === "1" ? () => {} : undefined);
-  return waitUntil(() => getModelOptions().some((listed) => ollamaModelRefsMatch(listed, model)), {
-    deadlineMs: now() + PULLED_MODEL_DISCOVERY_TIMEOUT_MS,
-    initialIntervalMs: 250,
-    maxIntervalMs: 2_000,
-    backoffFactor: 2,
-    maxAttempts: PULLED_MODEL_DISCOVERY_ATTEMPTS,
-    now,
-    sleep,
-  });
 }
 
 // ── Tools-capability gate (issue #2667) ─────────────────────────
