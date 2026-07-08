@@ -194,13 +194,35 @@ prepare_runtime_env() {
 }
 
 prepare_observability_marker() {
-  local target=/tmp/nemoclaw-observability-enabled
+  local marker_dir=/sandbox/.deepagents
+  local target="${marker_dir}/.nemoclaw-observability-enabled"
   local tmp
+
+  # OpenShell policy replacement can reset the sandbox's ephemeral /tmp while
+  # preserving its /sandbox workspace. Keep this credential-free convenience
+  # bit with the managed DCode state so independent exec/login shells retain
+  # the host-selected observability setting across policy updates. Reject a
+  # symlinked state directory before creating a same-directory temporary file;
+  # the marker remains non-authoritative and the network policy controls OTLP.
+  if [ -L "$marker_dir" ] || { [ -e "$marker_dir" ] && [ ! -d "$marker_dir" ]; }; then
+    printf '%s\n' 'Unsafe managed Deep Agents Code state directory.' >&2
+    return 1
+  fi
+  mkdir -p "$marker_dir"
+  if [ -L "$marker_dir" ] || [ ! -d "$marker_dir" ]; then
+    printf '%s\n' 'Unsafe managed Deep Agents Code state directory.' >&2
+    return 1
+  fi
+  if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+    printf '%s\n' 'Unsafe managed observability marker target.' >&2
+    return 1
+  fi
+
   if [ "${NEMOCLAW_OBSERVABILITY:-}" != "1" ]; then
     rm -f "$target"
     return 0
   fi
-  tmp="$(mktemp /tmp/nemoclaw-observability-enabled.XXXXXX)"
+  tmp="$(mktemp "${target}.XXXXXX")"
   printf '%s\n' '1' >"$tmp"
   chmod 444 "$tmp"
   mv -f "$tmp" "$target"
