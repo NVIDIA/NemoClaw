@@ -601,7 +601,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("ships a headless inference acceptance check for Deep Agents Code", () => {
     const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
-
     for (const expected of [
       'sandbox_exec "test -d /sandbox/.deepagents"',
       "command -v dcode",
