@@ -312,6 +312,9 @@ describe("P0-E cloud-experimental parity guardrails", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
+    if (status === 0) {
+      expect(result.stdout).toContain("managed observability state restores after policy-remove");
+    }
     expect(fs.readFileSync(dcodeTavilyCheck, "utf8")).toContain("trap restore_tavily_denial EXIT");
   });
 
