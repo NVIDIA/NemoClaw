@@ -5,12 +5,10 @@ import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// The default exec runner shells out via spawn with stdio: "inherit"; the
-// stdin-pipe workaround relies on that inheritance to deliver piped script
-// content to the sandbox shell. Mock node:child_process so a single test can
-// assert the inherited-stdio wiring at the execSandbox boundary without
-// spawning a real process. Every other test injects a runner/probe seam, so
-// this default spawn is exercised only by that one test.
+// The default exec runner shells out via spawn and chooses whether to inherit
+// or ignore stdin. Mock node:child_process so the tests can assert that wiring
+// at the execSandbox boundary without spawning a real process. Every other test
+// injects a runner/probe seam.
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawn: vi.fn() };
@@ -25,7 +23,12 @@ import {
   execSandbox,
   findMultilineExecArg,
   multilineExecMessage,
+  wrapExecCommandWithRuntimeEnv,
 } from "./exec";
+
+function expectedExecArgs(sandboxName: string, command: readonly string[]): string[] {
+  return buildOpenshellExecArgs(sandboxName, wrapExecCommandWithRuntimeEnv(command));
+}
 
 describe("findMultilineExecArg", () => {
   it("returns -1 when every argument is single-line", () => {
@@ -64,13 +67,13 @@ describe("multilineExecMessage", () => {
     expect(message).toContain("command argument 3");
     expect(message).toContain("contains a newline or carriage return");
     expect(message).toContain('nemoclaw bug5980test exec -- bash -lc "cmd1; cmd2"');
-    expect(message).toContain("| nemoclaw bug5980test exec -- bash");
+    expect(message).toContain("| nemoclaw bug5980test exec --stdin -- bash");
     expect(message).toContain("nemoclaw bug5980test exec -- bash <script-path>");
   });
 
   it("uses the active CLI name so the Hermes surface gets nemohermes guidance", () => {
     const message = multilineExecMessage("nemohermes", "alpha", ["bash", "-lc", "a\nb"], 2);
-    expect(message).toContain("nemohermes alpha exec -- bash");
+    expect(message).toContain("nemohermes alpha exec --stdin -- bash");
     expect(message).not.toContain("nemoclaw");
   });
 
@@ -150,16 +153,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
       ),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "bash",
-      "-lc",
-      "echo line1; echo line2",
-    ]);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      expectedExecArgs("bug5980test", ["bash", "-lc", "echo line1; echo line2"]),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -183,15 +180,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
       ),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "printf",
-      "a\u2028b",
-    ]);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      expectedExecArgs("bug5980test", ["printf", "a\u2028b"]),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -254,10 +246,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
   });
 
   it("forwards the stdin-pipe workaround argv to dispatch (script travels over stdin, not argv)", async () => {
-    // `printf 'cmd1\ncmd2\n' | nemoclaw <sb> exec -- bash` puts the multi-line
-    // script on stdin; the forwarded argv is just `bash` (no newline), so it
-    // passes the guard and dispatches. This test pins the argv shape only; the
-    // adjacent "inherits stdio" test proves the runner actually forwards stdin.
+    // `printf 'cmd1\ncmd2\n' | nemoclaw <sb> exec --stdin -- bash` puts the
+    // multi-line script on stdin; the forwarded argv is just `bash` (no newline),
+    // so it passes the guard and dispatches. This test pins the argv shape only;
+    // the adjacent stdio test proves the runner forwards explicitly opted-in stdin.
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
@@ -268,24 +260,20 @@ describe("execSandbox multi-line guard (#5980)", () => {
       execSandbox("bug5980test", ["bash"], {}, { run, resolveBinary: () => "openshell" }),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "bash",
-    ]);
+    expect(run).toHaveBeenCalledWith("openshell", expectedExecArgs("bug5980test", ["bash"]));
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
-  it("dispatches the default runner with inherited stdio so the stdin-pipe workaround receives piped input", async () => {
-    // The argv-only test above cannot catch a regression that stops the runner
-    // from inheriting stdin (#5980). Exercise the *default* runner (no injected
-    // `run`) and assert the async child is spawned with stdio: "inherit", which
-    // is the observable mechanism the documented `printf ... | exec -- bash`
-    // workaround depends on. Only resolveBinary is injected, to avoid the
-    // process-exiting OpenShell binary lookup.
+  it.each([
+    { label: "inherits stdin after explicit --stdin", stdin: true, expectedStdio: "inherit" },
+    {
+      label: "closes stdin after explicit --no-stdin",
+      stdin: false,
+      expectedStdio: ["ignore", "inherit", "inherit"],
+    },
+  ])("dispatches the default runner and $label", async ({ stdin, expectedStdio }) => {
+    // Exercise the *default* runner (no injected `run`) so the assertion covers
+    // the production child-process wiring, not only the pure stdio selector.
     const childEvents = new EventEmitter();
     const child = {
       exitCode: null,
@@ -294,6 +282,7 @@ describe("execSandbox multi-line guard (#5980)", () => {
       once: ((event: string, listener: (...args: unknown[]) => void) =>
         childEvents.once(event, listener)) as never,
     };
+    vi.mocked(spawn).mockReset();
     vi.mocked(spawn).mockImplementation(((): never => {
       // Resolve the runner once the close handler is registered.
       queueMicrotask(() => childEvents.emit("close", 0, null));
@@ -305,14 +294,12 @@ describe("execSandbox multi-line guard (#5980)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(
-      execSandbox("bug5980test", ["bash"], {}, { resolveBinary: () => "openshell" }),
+      execSandbox("bug5980test", ["bash"], { stdin }, { resolveBinary: () => "openshell" }),
     ).rejects.toThrow("exit:0");
 
-    expect(spawn).toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "exec", "--name", "bug5980test", "--", "bash"],
-      { stdio: "inherit" },
-    );
+    expect(spawn).toHaveBeenCalledWith("openshell", expectedExecArgs("bug5980test", ["bash"]), {
+      stdio: expectedStdio,
+    });
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -334,15 +321,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
       ),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "bash",
-      "/sandbox/run.sh",
-    ]);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      expectedExecArgs("bug5980test", ["bash", "/sandbox/run.sh"]),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 

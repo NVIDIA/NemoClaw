@@ -1,38 +1,38 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { describe, expect, it, vi } from "vitest";
 
-import { describe, expect, it } from "vitest";
+const mocks = vi.hoisted(() => ({
+  executeGatewaySupervisorAction: vi.fn(),
+  executeSandboxCommand: vi.fn(),
+}));
+
+vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
+  executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
+  executeSandboxCommand: mocks.executeSandboxCommand,
+}));
+
+import { assertAgentMcpMutationRuntimeCapability } from "../src/lib/actions/sandbox/mcp-bridge-adapters";
 
 type ProbeResult = { status: number; stdout: string; stderr: string } | null;
 
 function runDeepAgentsProbe(result: ProbeResult) {
-  const script = String.raw`
-const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
-const calls = [];
-processRecovery.executeSandboxCommand = (sandboxName, command) => {
-  calls.push({ sandboxName, command });
-  return ${JSON.stringify(result)};
-};
-const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
-let message = "";
-try {
-  adapters.assertAgentMcpMutationRuntimeCapability("deepagents-box", "deepagents-config");
-} catch (error) {
-  message = error instanceof Error ? error.message : String(error);
-}
-process.stdout.write(JSON.stringify({ calls, message }));
-`;
-  const child = spawnSync(process.execPath, ["-e", script], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: process.env,
-  });
-  expect(child.status, `${child.stdout}\n${child.stderr}`).toBe(0);
-  return JSON.parse(child.stdout) as {
-    calls: Array<{ sandboxName: string; command: string }>;
-    message: string;
+  mocks.executeSandboxCommand.mockReset().mockReturnValue(result);
+
+  let message = "";
+  try {
+    assertAgentMcpMutationRuntimeCapability("deepagents-box", "deepagents-config");
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+
+  return {
+    calls: mocks.executeSandboxCommand.mock.calls.map(([sandboxName, command]) => ({
+      sandboxName,
+      command,
+    })),
+    message,
   };
 }
 

@@ -23,12 +23,13 @@ import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   currentGatewayUpgradeInstallerArgs,
@@ -36,7 +37,6 @@ import {
   upgradeGatewayCleanupScript,
 } from "./openshell-gateway-upgrade-helpers.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_OPENSHELL = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 const STATE_DIR = path.join(
   os.homedir(),
@@ -105,10 +105,6 @@ function shellLoginPrefix(): string {
     "fi",
     'export PATH="$HOME/.local/bin:$PATH"',
   ].join("\n");
-}
-
-function expectExitZero(result: ShellProbeResult, label: string): void {
-  expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
 }
 
 function expectOutputContains(result: ShellProbeResult, value: string, label: string): void {
@@ -457,6 +453,13 @@ chmod 755 ${shellQuote(oldInstaller)}`,
   });
   expectExitZero(list, "old nemoclaw list");
   expectOutputContains(list, SURVIVOR_SANDBOX, "old NemoClaw install must register survivor claw");
+
+  const oldRegistry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, { nemoclawVersion?: unknown; fromDockerfile?: unknown }>;
+  };
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]).toBeDefined();
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.nemoclawVersion).toBeUndefined();
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.fromDockerfile).toBeUndefined();
 }
 
 async function startSurvivorAgentInExistingClaw(host: HostCliClient): Promise<number> {
@@ -524,6 +527,7 @@ async function installCurrentNemoclawUpgrade(
     COMPATIBLE_API_KEY: "dummy",
     GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
     NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
+    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify([SURVIVOR_SANDBOX]),
     NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
     NEMOCLAW_INSTALL_REF: resolvedRef,
     NEMOCLAW_INSTALL_TAG: resolvedRef,
@@ -546,8 +550,9 @@ async function installCurrentNemoclawUpgrade(
   );
 
   const currentLog = fs.readFileSync(currentInstallLog, "utf8");
-  expect(currentLog).toContain("Accepted experimental OpenShell gateway upgrade");
+  expect(currentLog).toContain("Confirmed 1 exact pre-fingerprint sandbox name(s)");
   expect(currentLog).toContain("Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped");
+  expect(currentLog).toContain("Existing sandboxes recovered; skipping generic onboarding");
 
   const openshellVersion = await bash(host, `openshell --version`, {
     artifactName: "current-openshell-version",
@@ -576,7 +581,7 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
 
   const marker = await bash(
     host,
-    `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} -- cat ${shellQuote(SURVIVOR_MARKER_PATH)}`,
+    `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- cat ${shellQuote(SURVIVOR_MARKER_PATH)}`,
     { artifactName: "post-upgrade-survivor-marker", timeoutMs: 60_000 },
   );
   expectExitZero(marker, "read survivor marker after gateway upgrade");
@@ -584,7 +589,7 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
 
   const agentCheck = await bash(
     host,
-    `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} -- sh -lc 'command -v openclaw >/dev/null && test -s /sandbox/.openclaw/openclaw.json && openclaw --version 2>/dev/null'`,
+    `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- sh -lc ${shellQuote("command -v openclaw >/dev/null && test -s /sandbox/.openclaw/openclaw.json && openclaw --version 2>/dev/null")}`,
     { artifactName: "post-upgrade-openclaw-agent", timeoutMs: 60_000 },
   );
   expectExitZero(
@@ -657,10 +662,8 @@ exit 99
   );
 }
 
-const runOpenShellGatewayUpgrade = test.skipIf(!shouldRunLiveE2E());
-const runLinuxOpenShellGatewayUpgrade = test.skipIf(
-  !shouldRunLiveE2E() || process.platform !== "linux",
-);
+const runOpenShellGatewayUpgrade = test;
+const runLinuxOpenShellGatewayUpgrade = test.skipIf(process.platform !== "linux");
 
 runLinuxOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",
@@ -672,6 +675,7 @@ runLinuxOpenShellGatewayUpgrade(
       boundary: [
         "real old install.sh fetched from v0.0.36",
         "real Docker/OpenShell gateway and OpenClaw sandbox",
+        "exact-name confirmation for the known-managed legacy fixture",
         "current scripts/install.sh gateway upgrade path",
         "sandbox exec /proc process probe",
         "NemoClaw registry and durable workspace restore",

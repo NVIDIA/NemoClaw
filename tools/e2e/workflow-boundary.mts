@@ -3579,9 +3579,77 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   requireRunContains(errors, configureTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
   requireRunContains(errors, configureTrace, '>> "${GITHUB_ENV}"');
 
+  const dcodeHostDependencies = requireStep(
+    errors,
+    steps,
+    "Install Deep Agents Code TUI host dependencies",
+  );
+  validateInlineHostDependencyInstall(
+    errors,
+    "live",
+    steps,
+    "Install Deep Agents Code TUI host dependencies",
+    ["expect"],
+  );
+  if (
+    dcodeHostDependencies?.if !==
+    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
+  ) {
+    errors.push("live DCode TUI host dependencies must be scoped to the typed DCode target");
+  }
+
   const prepareWorkspace = requireStep(errors, steps, "Prepare E2E workspace");
+  if (
+    dcodeHostDependencies &&
+    prepareWorkspace &&
+    steps.indexOf(dcodeHostDependencies) >= steps.indexOf(prepareWorkspace)
+  ) {
+    errors.push("live DCode TUI host dependencies must be installed before workspace prep");
+  }
+
+  const dcodeProfileImportGate = requireStep(
+    errors,
+    steps,
+    "Verify DCode profile import gate rejects missing base dependencies",
+  );
+  if (
+    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "NEMOCLAW_DCODE_PROFILE_GATE_BASE_IMAGE")
+  ) {
+    errors.push(
+      "live DCode profile import gate must build the reviewed repository base without an override",
+    );
+  }
+  if (
+    dcodeProfileImportGate?.["if"] !==
+    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
+  ) {
+    errors.push("live DCode profile import gate must be scoped to the typed DCode target");
+  }
+  if (dcodeProfileImportGate?.shell !== "bash") {
+    errors.push("live DCode profile import gate must use bash");
+  }
+  if (
+    stringValue(dcodeProfileImportGate?.run).trim() !==
+    "bash scripts/check-dcode-profile-import-gate.sh"
+  ) {
+    errors.push("live DCode profile import gate must run the reviewed negative-build script");
+  }
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
+  if (
+    prepareWorkspace &&
+    dcodeProfileImportGate &&
+    steps.indexOf(prepareWorkspace) >= steps.indexOf(dcodeProfileImportGate)
+  ) {
+    errors.push("live DCode profile import gate must run after workspace prep");
+  }
+  if (
+    dcodeProfileImportGate &&
+    runVitest &&
+    steps.indexOf(dcodeProfileImportGate) >= steps.indexOf(runVitest)
+  ) {
+    errors.push("live DCode profile import gate must run before live E2E tests");
+  }
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
     errors.push("live E2E step must pass matrix.id through TARGET_ID env");

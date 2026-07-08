@@ -51,7 +51,12 @@ function runStartEnvValidation(hermesDir: string) {
       [
         "#!/usr/bin/env bash",
         "set -u",
-        "_HERMES_BOUNDARY_TIMEOUT=()",
+        // A harmless single-element no-op prefix. It must not be an empty array:
+        // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
+        // `set -u`, aborting the harness before the validator runs. It also must
+        // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
+        // `command` builtin execs the validator unchanged on every platform.
+        "_HERMES_BOUNDARY_TIMEOUT=(command)",
         '_HERMES_PYTHON="$(command -v python3)"',
         `_HERMES_BOUNDARY_VALIDATOR=${JSON.stringify(VALIDATOR)}`,
         `HERMES_DIR=${JSON.stringify(hermesDir)}`,
@@ -64,6 +69,44 @@ function runStartEnvValidation(hermesDir: string) {
       encoding: "utf-8",
       timeout: 5000,
       env: { HOME: os.tmpdir(), PATH: process.env.PATH ?? "" },
+    });
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+}
+
+function runRuntimeEnvValidation(envOverrides: Record<string, string>) {
+  const source = fs.readFileSync(START_SCRIPT, "utf-8");
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-env-check-"));
+  const script = path.join(runDir, "run.sh");
+  try {
+    fs.writeFileSync(
+      script,
+      [
+        "#!/usr/bin/env bash",
+        "set -u",
+        // A harmless single-element no-op prefix. It must not be an empty array:
+        // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
+        // `set -u`, aborting the harness before the validator runs. It also must
+        // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
+        // `command` builtin execs the validator unchanged on every platform.
+        "_HERMES_BOUNDARY_TIMEOUT=(command)",
+        '_HERMES_PYTHON="$(command -v python3)"',
+        `_HERMES_BOUNDARY_VALIDATOR=${JSON.stringify(VALIDATOR)}`,
+        extractShellFunction(source, "validate_hermes_runtime_env_secret_boundary"),
+        "validate_hermes_runtime_env_secret_boundary",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    return spawnSync("bash", [script], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: {
+        HOME: os.tmpdir(),
+        PATH: process.env.PATH ?? "",
+        _HERMES_BOUNDARY_VALIDATOR: VALIDATOR,
+        ...envOverrides,
+      },
     });
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
@@ -384,5 +427,69 @@ wait "$child"
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Hermes env secret-boundary value-shape discriminator", () => {
+  it("accepts the same secret-shaped key once its value is an openshell resolver placeholder", () => {
+    // The reject path aborts on DEVTEST_API_TOKEN=<raw>. Pin the other side of
+    // the boundary: the identical secret-shaped key flips to accepted solely
+    // because the value is a resolver reference, so the discriminator is the
+    // value shape (raw vs. placeholder), not the key name.
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-shape-file-accept-"));
+    const hermes = path.join(root, ".hermes");
+    fs.mkdirSync(hermes, { recursive: true });
+    fs.writeFileSync(
+      path.join(hermes, ".env"),
+      "DEVTEST_API_TOKEN=openshell:resolve:env:DEVTEST_API_TOKEN\n",
+      { mode: 0o600 },
+    );
+    try {
+      const result = runStartEnvValidation(hermes);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stderr).not.toContain(rawToken);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a non-secret-shaped key carrying a raw value", () => {
+    // A key that does not match the secret pattern may hold a literal value;
+    // the boundary must not abort on ordinary config that merely looks opaque.
+    const rawValue = "SENTINEL_RAW_SECRET_VALUE";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-shape-file-nonsecret-"));
+    const hermes = path.join(root, ".hermes");
+    fs.mkdirSync(hermes, { recursive: true });
+    fs.writeFileSync(path.join(hermes, ".env"), `DEVTEST_ENDPOINT=${rawValue}\n`, { mode: 0o600 });
+    try {
+      const result = runStartEnvValidation(hermes);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts the same secret-shaped process env key once its value is a resolver placeholder", () => {
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
+    const result = runRuntimeEnvValidation({
+      DEVTEST_API_TOKEN: "openshell:resolve:env:DEVTEST_API_TOKEN",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stderr).not.toContain(rawToken);
+  });
+
+  it("accepts a non-secret-shaped process env key carrying a raw value", () => {
+    const rawValue = "SENTINEL_RAW_SECRET_VALUE";
+    const result = runRuntimeEnvValidation({
+      DEVTEST_ENDPOINT: rawValue,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
   });
 });

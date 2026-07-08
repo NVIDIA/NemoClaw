@@ -47,9 +47,6 @@ navigation:
               - page: "Quickstart with OpenClaw"
                 path: get-started/quickstart.mdx
                 slug: quickstart
-              - page: "Quickstart with LangChain Deep Agents Code"
-                path: get-started/quickstart-langchain-deepagents-code.mdx
-                slug: quickstart-langchain-deepagents-code
           - section: "Inference"
             slug: inference
             collapsed: open-by-default
@@ -199,6 +196,123 @@ navigation:
               - page: "License"
                 path: _build/agent-variants/resources/license.openclaw.generated.mdx
                 slug: license
+      - title: NemoClaw for Deep Agents
+        subtitle: Guide for LangChain Deep Agents Code
+        slug: deepagents
+        layout:
+          - page: "Home"
+            path: index.mdx
+            slug: home
+          - section: "About NemoClaw"
+            slug: about
+            collapsed: open-by-default
+            contents:
+              - page: "Overview"
+                path: _build/agent-variants/about/overview.deepagents.generated.mdx
+                slug: overview
+              - page: "Architecture Overview"
+                path: _build/agent-variants/about/how-it-works.deepagents.generated.mdx
+                slug: how-it-works
+              - page: "Ecosystem"
+                path: about/ecosystem-deepagents.mdx
+                slug: ecosystem
+              - page: "Release Notes"
+                path: _build/agent-variants/about/release-notes.deepagents.generated.mdx
+                slug: release-notes
+          - section: "Get Started"
+            slug: get-started
+            collapsed: open-by-default
+            contents:
+              - section: "Prerequisites"
+                path: _build/agent-variants/get-started/prerequisites.deepagents.generated.mdx
+                slug: prerequisites
+                contents:
+                  - page: "(Windows Only) Windows Prerequisites"
+                    path: _build/agent-variants/get-started/windows-preparation.deepagents.generated.mdx
+                    slug: windows-preparation
+              - page: "Quickstart with Deep Agents"
+                path: get-started/quickstart-langchain-deepagents-code.mdx
+                slug: quickstart
+          - section: "Inference"
+            slug: inference
+            collapsed: open-by-default
+            contents:
+              - page: "Inference Options"
+                path: _build/agent-variants/inference/inference-options.deepagents.generated.mdx
+                slug: inference-options
+              - page: "Model Capability Audit"
+                path: _build/agent-variants/inference/model-capability-audit.deepagents.generated.mdx
+                slug: model-capability-audit
+              - page: "Switch Inference Providers"
+                path: _build/agent-variants/inference/switch-inference-providers.deepagents.generated.mdx
+                slug: switch-inference-providers
+          - section: "Manage Sandboxes"
+            slug: manage-sandboxes
+            collapsed: open-by-default
+            contents:
+              - page: "Manage Sandbox Lifecycle"
+                path: _build/agent-variants/manage-sandboxes/lifecycle.deepagents.generated.mdx
+                slug: lifecycle
+              - page: "Set Up MCP Servers"
+                path: _build/agent-variants/deployment/set-up-mcp-bridge.deepagents.generated.mdx
+                slug: set-up-mcp-servers
+              - page: "Workspace Files"
+                path: _build/agent-variants/manage-sandboxes/workspace-files.deepagents.generated.mdx
+                slug: workspace-files
+              - page: "Backup and Restore"
+                path: _build/agent-variants/manage-sandboxes/backup-restore.deepagents.generated.mdx
+                slug: backup-restore
+          - section: "Security"
+            slug: security
+            collapsed: open-by-default
+            contents:
+              - page: "Security Best Practices"
+                path: _build/agent-variants/security/best-practices.deepagents.generated.mdx
+                slug: best-practices
+              - page: "Credential Storage"
+                path: _build/agent-variants/security/credential-storage.deepagents.generated.mdx
+                slug: credential-storage
+          - section: "Reference"
+            slug: reference
+            collapsed: open-by-default
+            contents:
+              - page: "Platform Support"
+                path: reference/platform-support.mdx
+                slug: platform-support
+              - page: "Architecture Details"
+                path: _build/agent-variants/reference/architecture.deepagents.generated.mdx
+                slug: architecture
+              - page: "CLI Commands Reference"
+                path: _build/agent-variants/reference/commands.deepagents.generated.mdx
+                slug: commands
+              - page: "CLI Selection Guide"
+                path: _build/agent-variants/reference/cli-selection-guide.deepagents.generated.mdx
+                slug: cli-selection-guide
+              - page: "Host Files and State"
+                path: _build/agent-variants/reference/host-files-and-state.deepagents.generated.mdx
+                slug: host-files-and-state
+              - page: "Network Policies"
+                path: _build/agent-variants/reference/network-policies.deepagents.generated.mdx
+                slug: network-policies
+              - page: "Troubleshooting"
+                path: _build/agent-variants/reference/troubleshooting.deepagents.generated.mdx
+                slug: troubleshooting
+          - section: "Resources"
+            slug: resources
+            collapsed: open-by-default
+            contents:
+              - page: "AI Agent Docs"
+                path: _build/agent-variants/resources/agent-skills.deepagents.generated.mdx
+                slug: agent-skills
+              - link: "Community Examples"
+                href: https://github.com/NVIDIA/nemoclaw-community
+              - link: "Report Vulnerabilities"
+                href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
+              - page: "License"
+                path: _build/agent-variants/resources/license.deepagents.generated.mdx
+                slug: license
+              - link: "Discord"
+                href: https://discord.gg/XFpfPv9Uvx
       - title: NemoClaw for Hermes
         subtitle: Guide for Hermes agents
         slug: hermes
@@ -330,7 +444,7 @@ navigation:
                 path: _build/agent-variants/reference/architecture.hermes.generated.mdx
                 slug: architecture
               - page: "CLI Commands Reference"
-                path: reference/commands-nemohermes.mdx
+                path: _build/agent-variants/reference/commands.hermes.generated.mdx
                 slug: commands
               - page: "CLI Selection Guide"
                 path: _build/agent-variants/reference/cli-selection-guide.hermes.generated.mdx

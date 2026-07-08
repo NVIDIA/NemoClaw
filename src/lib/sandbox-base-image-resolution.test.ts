@@ -351,7 +351,14 @@ describe("sandbox base-image warm resolution", () => {
       pinnedRemoteRef: REF,
     });
 
-    expect(resolved).toMatchObject({ ref: REF, source: "pinned" });
+    expect(resolved).toMatchObject({
+      ref: REF,
+      source: "pinned",
+      pinnedRemoteRef: REF,
+      metadata: expect.objectContaining({
+        pinnedRemoteRef: REF,
+      }),
+    });
     expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
       ignoreError: true,
       suppressOutput: true,

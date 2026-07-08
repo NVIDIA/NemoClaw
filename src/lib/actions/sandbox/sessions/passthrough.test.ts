@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const captureMock = vi.hoisted(() => vi.fn());
 const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() => vi.fn(async () => ({})));
+const getSandboxMock = vi.hoisted(() => vi.fn(() => null as { agent?: string } | null));
 
 vi.mock("../../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureMock,
@@ -15,11 +16,13 @@ vi.mock("../exec", async () => {
   return { ...actual, execSandbox: execMock };
 });
 vi.mock("../gateway-state", () => ({ ensureLiveSandboxOrExit: ensureLiveMock }));
+vi.mock("../../../state/registry", () => ({ getSandbox: getSandboxMock }));
 
 import { WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
 import {
   filterWarmupSessionsListJson,
   filterWarmupSessionsListText,
+  printSessionsPassthroughHelp,
   runSessionsPassthrough,
 } from "./passthrough";
 
@@ -172,6 +175,42 @@ describe("filterWarmupSessionsListText", () => {
   });
 });
 
+describe("printSessionsPassthroughHelp", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+  });
+
+  function capturedHelpText(): string {
+    return logSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
+  }
+
+  it("does not promise OpenClaw-only passthrough for the generic sessions command (#6247)", () => {
+    printSessionsPassthroughHelp();
+    const help = capturedHelpText();
+
+    expect(help).not.toMatch(/Pass-through to `openclaw sessions/i);
+    expect(help).toMatch(/openclaw/i);
+    expect(help).toMatch(/hermes sessions list/i);
+    // Warm-up filtering is documented as OpenClaw-specific, not universal.
+    expect(help).toMatch(/warm-up[^\n]*OpenClaw|OpenClaw[^\n]*warm-up/i);
+  });
+
+  it("scopes the list-verb help to per-agent binaries and OpenClaw-only filtering (#6247)", () => {
+    printSessionsPassthroughHelp("list");
+    const help = capturedHelpText();
+
+    expect(help).not.toMatch(/Pass-through to `openclaw sessions list/i);
+    expect(help).toMatch(/sessions list/);
+    expect(help).toMatch(/hermes/i);
+  });
+});
+
 describe("runSessionsPassthrough", () => {
   let stdoutSpy: ReturnType<typeof vi.spyOn>;
   let stderrSpy: ReturnType<typeof vi.spyOn>;
@@ -181,6 +220,8 @@ describe("runSessionsPassthrough", () => {
     captureMock.mockReset();
     execMock.mockClear();
     ensureLiveMock.mockClear();
+    getSandboxMock.mockReset();
+    getSandboxMock.mockReturnValue(null);
     stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -340,6 +381,66 @@ describe("runSessionsPassthrough", () => {
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("--agent"));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("--limit"));
+  });
+
+  it("routes the bare command to `hermes sessions list` and skips warm-up filtering (#6247)", async () => {
+    getSandboxMock.mockReturnValue({ agent: "hermes" });
+
+    await runSessionsPassthrough("hermes", { extraArgs: [] });
+
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions", "list"]);
+  });
+
+  it("uses openclaw binary for openclaw-agent sandboxes (#6247)", async () => {
+    getSandboxMock.mockReturnValue({ agent: "openclaw" });
+    captureMock.mockReturnValueOnce({ status: 0, output: "Sessions listed: 0\n" });
+
+    await runSessionsPassthrough("alpha", { extraArgs: [] });
+
+    expect(execMock).not.toHaveBeenCalled();
+    expect(captureMock).toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "alpha", "--", "openclaw", "sessions"],
+      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 * 1024 },
+    );
+  });
+
+  it("routes hermes `sessions list` with forwarded flags via execSandbox (#6247)", async () => {
+    getSandboxMock.mockReturnValue({ agent: "hermes" });
+
+    await runSessionsPassthrough("hermes", {
+      verb: "list",
+      extraArgs: ["--limit", "5"],
+    });
+
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions", "list", "--limit", "5"]);
+  });
+
+  it("defaults to the openclaw binary + filter path when the registry has no entry (#6247)", async () => {
+    getSandboxMock.mockReturnValue(null);
+    captureMock.mockReturnValueOnce({ status: 0, output: "Sessions listed: 0\n" });
+
+    await runSessionsPassthrough("alpha", { extraArgs: [] });
+
+    expect(execMock).not.toHaveBeenCalled();
+    expect(captureMock).toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "alpha", "--", "openclaw", "sessions"],
+      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 * 1024 },
+    );
+  });
+
+  it("defaults to the openclaw binary for an unknown agent value (#6247)", async () => {
+    getSandboxMock.mockReturnValue({ agent: "custom-future-agent" });
+    captureMock.mockReturnValueOnce({ status: 0, output: "Sessions listed: 0\n" });
+
+    await runSessionsPassthrough("alpha", { extraArgs: [] });
+
+    expect(execMock).not.toHaveBeenCalled();
+    expect(captureMock).toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "alpha", "--", "openclaw", "sessions"],
+      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 * 1024 },
+    );
   });
 
   it("prints captured output when OpenClaw exits non-zero", async () => {

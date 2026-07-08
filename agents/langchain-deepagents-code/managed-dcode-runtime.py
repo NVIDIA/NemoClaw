@@ -13,6 +13,7 @@ import json
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 from urllib.parse import urlparse, urlsplit
 
@@ -23,10 +24,24 @@ _MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
 _INFERENCE_BASE_URL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-inference-base-url"
 )
+_AUTO_APPROVAL_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-auto-approval"
+)
+_AUTO_APPROVAL_DISABLED = "disabled"
+_AUTO_APPROVAL_THREAD_OPT_IN = "thread-opt-in"
+_AUTO_APPROVAL_CONTENTS = {
+    b"disabled\n": _AUTO_APPROVAL_DISABLED,
+    b"thread-opt-in\n": _AUTO_APPROVAL_THREAD_OPT_IN,
+}
 _MANAGED_FILE_OWNER_UID = 0
 _CREDENTIAL_NAME = re.compile(
-    r"(?:^|_)(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIAL)$",
+    r"(?:^|[_-])(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIAL)$",
     re.IGNORECASE,
+)
+_CREDENTIAL_CAMEL_NAME = re.compile(
+    r"(?:[A-Za-z0-9](?:Token|Secret|Credential|Password|Passwd|Pass)|"
+    r"(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|"
+    r"[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key)$"
 )
 _CREDENTIAL_ENV_NAMES = {
     "LANGSMITH_RUNS_ENDPOINTS",
@@ -36,7 +51,19 @@ _CREDENTIAL_ENV_NAMES = {
     "OTEL_EXPORTER_OTLP_HEADERS",
     "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
 }
+# Python's \s also includes control separators that ECMAScript excludes, so
+# spell out the canonical whitespace set for cross-runtime parity.
+_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
+    r"[^\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029"
+    r"\u202f\u205f\u3000\ufeff'\"]"
+)
 _OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
+_UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
+_MANAGED_ADAPTER_PROVIDER = "openai"
+_NVIDIA_DISPLAY_PROVIDER_ALIASES = frozenset(
+    {"nvidia", "nvidia-prod", "nvidia-nim", "nvidia-router"}
+)
+_DISPLAY_PROVIDER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _MCP_SERVER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 _MCP_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 _MCP_DNS_NAME = re.compile(
@@ -104,7 +131,7 @@ _MANAGED_MCP_READY = False
 # Regression gate: test/langchain-deepagents-code-secret-pattern-parity.test.ts
 # fingerprints all canonical groups and runs one shared positive corpus through
 # both those groups and _contains_secret_shape; the Bash wrapper consumes the
-# same corpus in test/langchain-deepagents-code-image.test.ts.
+# same corpus in test/langchain-deepagents-code-image-credentials.test.ts.
 # Removal condition: delete this mirror only when the managed runtime can consume
 # the canonical patterns directly or upstream rejects these shapes before boot.
 _SECRET_PATTERNS = tuple(
@@ -124,7 +151,21 @@ _SECRET_PATTERNS = tuple(
             r"Bearer[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[A-Za-z0-9_.+/=-]{10,}",
             re.IGNORECASE,
         ),
-        (None, r"(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:\s]['\"]?[A-Za-z0-9_.+/=-]{10,}", re.IGNORECASE),
+        (
+            None,
+            rf"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{{1,128}}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)['\"]?(?:[ \t]{{0,32}}[=:][ \t]{{0,32}}|[ \t]{{1,32}})['\"]?{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
+            re.IGNORECASE,
+        ),
+        (
+            None,
+            rf"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{{1,128}}(?:Token|Secret|Credential)|[A-Za-z0-9]{{0,128}}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{{1,128}}(?:Password|Passwd|Pass))['\"]?(?:[ \t]{{0,32}}[=:][ \t]{{0,32}}|[ \t]{{1,32}})['\"]?{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
+            0,
+        ),
+        (
+            None,
+            rf"(?:^|[^A-Za-z0-9])KEY['\"]?(?:[ \t]{{0,32}}[=:][ \t]{{0,32}}|[ \t]{{1,32}})['\"]?{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
+            0,
+        ),
         (None, r"lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*", 0),
         (None, r"-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*-----END [^-\r\n]*PRIVATE KEY-----", 0),
     )
@@ -184,7 +225,11 @@ def _assert_safe_environment() -> None:
         if _is_managed_value(name, value):
             continue
         if _contains_secret_shape(value) or (
-            len(value) >= 10 and _CREDENTIAL_NAME.search(name)
+            len(value) >= 10
+            and (
+                _CREDENTIAL_NAME.search(name)
+                or _CREDENTIAL_CAMEL_NAME.search(name)
+            )
         ) or (
             bool(value) and name.upper() in _CREDENTIAL_ENV_NAMES
         ):
@@ -858,6 +903,93 @@ def managed_inference_base_url() -> str:
     return value
 
 
+def _disabled_auto_approval(reason: str) -> str:
+    if os.environ.get("NEMOCLAW_DEBUG") == "1":
+        print(
+            f"NemoClaw managed auto-approval disabled: {reason}",
+            file=sys.stderr,
+        )
+    return _AUTO_APPROVAL_DISABLED
+
+
+def managed_auto_approval_mode() -> str:
+    """Return the trusted managed auto-approval mode, failing closed."""
+    # The image build owns this file, but runtime must tolerate missing or
+    # malformed image state and fail closed. Keep this check until sandbox
+    # images are immutable end to end; direct-module tests pin rejected shapes.
+    path = _AUTO_APPROVAL_FILE
+    try:
+        if path.is_symlink():
+            return _disabled_auto_approval("capability path is a symlink")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+    except OSError:
+        return _disabled_auto_approval("capability file is missing or unreadable")
+
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != _MANAGED_FILE_OWNER_UID
+            or stat.S_IMODE(metadata.st_mode) != 0o444
+            or metadata.st_size not in {
+                len(content) for content in _AUTO_APPROVAL_CONTENTS
+            }
+        ):
+            return _disabled_auto_approval("capability metadata is unsafe")
+
+        chunks: list[bytes] = []
+        remaining = metadata.st_size
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                return _disabled_auto_approval("capability file was truncated")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            return _disabled_auto_approval("capability file changed while reading")
+    except OSError:
+        return _disabled_auto_approval("capability file read failed")
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            # Cleanup cannot weaken the fail-closed capability result.
+            pass
+
+    return _AUTO_APPROVAL_CONTENTS.get(b"".join(chunks)) or _disabled_auto_approval(
+        "capability contents are invalid"
+    )
+
+
+def managed_auto_approval_enabled() -> bool:
+    """Return whether thread-scoped auto-approval may be explicitly enabled."""
+    return managed_auto_approval_mode() == _AUTO_APPROVAL_THREAD_OPT_IN
+
+
+def managed_display_provider(adapter_provider: object) -> str:
+    """Return the provider label to show for the managed inference adapter.
+
+    Managed inference always routes through the OpenAI-compatible adapter, so
+    Deep Agents Code reports the wire provider (`openai`) in the status bar and
+    the model-identity system prompt. Substitute the onboard-selected upstream
+    provider so those surfaces match the launch page. Only the managed
+    ``openai`` adapter is relabeled; every other adapter is returned unchanged.
+    NVIDIA route aliases share the canonical ``nvidia`` display family.
+    """
+    adapter = adapter_provider if isinstance(adapter_provider, str) else ""
+    if adapter != _MANAGED_ADAPTER_PROVIDER:
+        return adapter
+
+    upstream = os.environ.get(_UPSTREAM_PROVIDER_ENV, "")
+    if _DISPLAY_PROVIDER_NAME.fullmatch(upstream) is None:
+        return adapter
+    if upstream in _NVIDIA_DISPLAY_PROVIDER_ALIASES:
+        return "nvidia"
+    return upstream
+
+
 def assert_safe_runtime() -> None:
     """Reject unmanaged runtime credentials before dcode bootstraps settings."""
     _assert_safe_environment()
@@ -866,6 +998,9 @@ def assert_safe_runtime() -> None:
     os.environ["OPENAI_BASE_URL"] = base_url
     os.environ["NEMOCLAW_INFERENCE_BASE_URL"] = base_url
     os.environ["LANGGRAPH_NO_VERSION_CHECK"] = "true"
+    # LangGraph CLI otherwise posts command analytics to a third-party
+    # Supabase collector. Managed sandboxes keep that optional egress closed.
+    os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
     os.environ["OTEL_ENABLED"] = "false"
     for name in (
         "OPENAI_PROXY",

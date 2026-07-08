@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isSafeModelId } from "../validation";
 import type {
   AgentDashboard,
   AgentDashboardKind,
@@ -261,7 +262,19 @@ export function readInference(record: ManifestRecord): AgentInference | undefine
     providerOptionList = providerOptions as string[];
   }
 
-  return { provider_type: providerType, provider_options: providerOptionList };
+  const defaultModel = inference.default_model;
+  if (
+    defaultModel !== undefined &&
+    (typeof defaultModel !== "string" || !isSafeModelId(defaultModel.trim()))
+  ) {
+    throw new Error("Agent manifest field 'inference.default_model' must be a safe model ID");
+  }
+
+  return {
+    provider_type: providerType,
+    provider_options: providerOptionList,
+    default_model: typeof defaultModel === "string" ? defaultModel.trim() : undefined,
+  };
 }
 
 export function readMcpCapability(record: ManifestRecord): AgentMcpCapability {

@@ -9,6 +9,8 @@ keywords: ["nemoclaw vs openshell", "which cli", "nemoclaw cli", "openshell cli"
 content:
   type: "reference"
 ---
+import { AgentOnly } from "../_components/AgentGuide";
+
 NemoClaw uses two host-side CLIs.
 Use `$$nemoclaw` for NemoClaw-managed workflows.
 Use `openshell` when you need a lower-level OpenShell operation that NemoClaw intentionally leaves available.
@@ -24,14 +26,17 @@ Run `$$nemoclaw onboard` afterward if you need to return to a NemoClaw-managed e
 
 ## Use `$$nemoclaw` For NemoClaw Workflows
 
-Use `$$nemoclaw` for operations where NemoClaw adds product-specific state, safety checks, backup behavior, credential handling, or OpenClaw configuration.
+Use `$$nemoclaw` for operations where NemoClaw adds product-specific state, safety checks, backup behavior, credential handling, or agent configuration.
 
 - Install, onboard, or recreate a NemoClaw sandbox:
 
   ```bash
   $$nemoclaw onboard
-  $$nemoclaw onboard --resume --recreate-sandbox
+  $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
   ```
+
+Use `--resume` only when you are recovering an interrupted onboarding session.
+For a completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you need NemoClaw to recreate it.
 
 - List, connect to, check, or delete NemoClaw-managed sandboxes:
 
@@ -66,15 +71,33 @@ Use `$$nemoclaw` for operations where NemoClaw adds product-specific state, safe
   $$nemoclaw my-assistant policy-remove pypi --yes
   ```
 
-- Manage NemoClaw messaging channels, credentials, diagnostics, and cleanup:
+- Manage NemoClaw credentials, diagnostics, and cleanup:
 
   ```bash
-  $$nemoclaw my-assistant channels add slack
   $$nemoclaw credentials list
   $$nemoclaw credentials reset nvidia-prod
   $$nemoclaw debug --sandbox my-assistant
   $$nemoclaw gc --dry-run
   ```
+
+<AgentOnly variant="openclaw">
+
+- Manage NemoClaw messaging channels:
+
+  ```bash
+  $$nemoclaw my-assistant channels add slack
+  ```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- Manage NemoClaw messaging channels:
+
+  ```bash
+  $$nemoclaw my-assistant channels add slack
+  ```
+
+</AgentOnly>
 
 ## Use `openshell` For OpenShell Operations
 
@@ -86,7 +109,7 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   openshell term
   ```
 
-- Manage dashboard or service port forwards:
+- Manage service port forwards:
 
   ```bash
   openshell forward start --background <port> <sandbox-name>
@@ -116,26 +139,16 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
   ```
 
-- Inspect or replace raw OpenShell policy:
+- Export the round-trippable OpenShell base policy through NemoClaw, then replace it through OpenShell:
 
   Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
 
   ```bash
-  # shellcheck shell=bash
-  # Source-of-truth review:
-  # invalidState: OpenShell 0.0.72 policy get --base emits metadata before the --- YAML header.
-  # sourceBoundary: OpenShell CLI output is owned by the separate OpenShell project.
-  # whyNotSourceFix: NemoClaw pins OpenShell but cannot change that upstream formatter here.
-  # regressionTest: test/policy-roundtrip-docs.test.ts validates this shared docs pattern.
-  # removalCondition: remove this pipeline after pinned OpenShell emits clean raw YAML.
-  tmp_policy=$(mktemp)
-  openshell policy get --base <sandbox-name> \
-    | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
-    > "$tmp_policy" \
-    && grep -q '^version:' "$tmp_policy" \
-    && grep -q '^network_policies:' "$tmp_policy" \
-    && mv "$tmp_policy" current-policy.yaml
+  $$nemoclaw <sandbox-name> policy-get > current-policy.yaml
   ```
+
+  NemoClaw strips the OpenShell metadata header and exits non-zero if it cannot validate the base policy.
+  Do not use `--raw` for a file that you plan to reapply.
 
   Edit or review `current-policy.yaml`, then apply it:
 
@@ -154,10 +167,10 @@ This section covers common decisions when using the NemoClaw CLI and the OpenShe
 ### First Setup or Full Recreate
 
 Use `$$nemoclaw onboard`.
-It starts the OpenShell gateway when needed, registers providers, builds the OpenClaw sandbox image, applies NemoClaw policy choices, and creates the sandbox.
+It starts the OpenShell gateway when needed, registers providers, builds the selected agent sandbox image, applies NemoClaw policy choices, and creates the sandbox.
 
 Avoid running `openshell gateway start --recreate` or `openshell sandbox create` directly for NemoClaw-managed sandboxes.
-Those commands do not update NemoClaw's registry, session metadata, workspace-preservation flow, or OpenClaw-specific configuration.
+Those commands do not update NemoClaw's registry, session metadata, workspace-preservation flow, or agent-specific configuration.
 
 ### Connect to the Sandbox
 
@@ -183,7 +196,7 @@ openshell sandbox exec -n my-assistant -- cat /tmp/gateway.log
 ### Check Health or Logs
 
 Use `$$nemoclaw <name> status` and `$$nemoclaw <name> logs` first.
-They combine NemoClaw registry data, OpenShell state, OpenClaw process health, inference health, policy details, and messaging-channel warnings for that sandbox.
+They combine NemoClaw registry data, OpenShell state, selected agent process health, inference health, policy details, and messaging-channel warnings for that sandbox.
 Use `$$nemoclaw status` only for the global all-sandbox and host-service overview.
 
 Use `openshell sandbox list`, `openshell sandbox get`, `openshell logs <name> -n 20`, or `openshell doctor check` when debugging lower-level OpenShell behavior.
@@ -198,6 +211,18 @@ Approved endpoints are session-scoped unless you also add them to the policy thr
 
 ### Change Models or Providers
 
+<AgentOnly variant="openclaw">
+
+Use the NemoClaw commands for model or provider inspection and switches so the OpenShell route and the running agent config stay consistent:
+
+```bash
+$$nemoclaw inference get
+$$nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
 Use the NemoClaw commands for model or provider inspection and switches so the OpenShell route and the running agent config stay consistent:
 
 ```bash
@@ -211,10 +236,21 @@ For Hermes sandboxes, use the alias; it updates the route and `/sandbox/.hermes/
 nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
 ```
 
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+For Deep Agents sandboxes, prefer a fresh recreate when you need to change the provider or model.
+The managed `dcode` configuration is written under `/sandbox/.deepagents` during onboarding, so the recreate path keeps the OpenShell route and the sandbox config aligned while the Deep Agents runtime switch path is still being hardened.
+
+```bash
+nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox
+```
+
+</AgentOnly>
 For a build-time agent setting change, rerun onboarding so the sandbox configuration is recreated consistently:
 
 ```bash
-$$nemoclaw onboard --resume --recreate-sandbox
+$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
 Verify either path with:
@@ -229,8 +265,8 @@ Use `$$nemoclaw <name> policy-add` or `policy-remove` for NemoClaw presets and c
 NemoClaw merges the new policy with the live policy and reapplies presets during rebuilds.
 
 Use `openshell policy update` for precise live endpoint or REST rule changes.
-Use `openshell policy get --base <name>` and `openshell policy set --policy <file> --wait <name>` only when you need to edit and replace the round-trippable base policy.
-Use `--full` only to inspect the effective policy, including provider-composed rules.
+Use `$$nemoclaw <name> policy-get` and `openshell policy set --policy <file> --wait <name>` only when you need to edit and replace the round-trippable base policy.
+Use `openshell policy get --full <name>` only to inspect the effective policy, including provider-composed rules.
 
 ### Move Workspace Files
 
@@ -240,8 +276,30 @@ Use `openshell sandbox upload` and `openshell sandbox download` for manual file 
 
 ## Related Topics
 
+<AgentOnly variant="openclaw">
+
 - [Commands](commands) for the full NemoClaw command reference.
 - [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle) for day-two operations.
 - [Switch Inference Models](../inference/switch-inference-providers) for inference route examples.
 - [Customize the Network Policy](../network-policy/customize-network-policy) for persistent network access changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests) for the OpenShell TUI approval flow.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- [Commands](commands) for the full NemoClaw command reference.
+- [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle) for day-two operations.
+- [Switch Inference Models](../inference/switch-inference-providers) for inference route examples.
+- [Customize the Network Policy](../network-policy/customize-network-policy) for persistent network access changes.
+- [Approve or Deny Network Requests](../network-policy/approve-network-requests) for the OpenShell TUI approval flow.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+- [Commands](commands) for the full NemoDeepAgents command reference.
+- [Network Policies](network-policies) for baseline policy and approval behavior.
+- [Workspace Files](../manage-sandboxes/workspace-files) for Deep Agents state and file transfer guidance.
+- [Backup and Restore](../manage-sandboxes/backup-restore) for snapshot and restore workflows.
+- [Inference Options](../inference/inference-options) for provider configuration details.
+
+</AgentOnly>

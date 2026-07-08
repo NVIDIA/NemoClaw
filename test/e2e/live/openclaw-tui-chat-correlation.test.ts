@@ -71,7 +71,7 @@ type ChatEventPayload = {
 type GatewayEvent = { event?: string; payload?: ChatEventPayload; ts?: number };
 type SentRun = {
   promptToken: string;
-  replyToken: string;
+  replyMarker: string;
   runId: string;
   message: string;
 };
@@ -87,7 +87,7 @@ type CompactChatEvent = {
   errorMessage?: string;
 };
 type UncorrelatedReply = {
-  replyToken: string;
+  replyMarker: string;
   expectedRunId: string;
   actualRunId?: string;
   state?: string;
@@ -97,7 +97,7 @@ type Issue2603Analysis = {
   chatEvents: CompactChatEvent[];
   emptyFinalsForSubmittedRuns: CompactChatEvent[];
   missingReplies: string[];
-  duplicateReplies: { replyToken: string; count: number }[];
+  duplicateReplies: { replyMarker: string; count: number }[];
   uncorrelatedReplies: UncorrelatedReply[];
   finalReplyOrder: string[];
   userTurnOrder: string[];
@@ -158,7 +158,9 @@ function analyzeIssue2603Trace({
   historyMessages,
 }: Issue2603Trace): Issue2603Analysis {
   const submittedRunIds = new Set(sentRuns.map((entry) => entry.runId));
-  const expectedRunByReplyToken = new Map(sentRuns.map((entry) => [entry.replyToken, entry.runId]));
+  const expectedRunByReplyMarker = new Map(
+    sentRuns.map((entry) => [entry.replyMarker, entry.runId]),
+  );
   const chatEvents = compactChatEvents(events);
 
   const emptyFinalsForSubmittedRuns = chatEvents.filter(
@@ -172,16 +174,16 @@ function analyzeIssue2603Trace({
   const uncorrelatedReplies: UncorrelatedReply[] = [];
   const visibleReplyCounts = new Map<string, number>();
   const finalReplyCounts = new Map<string, number>();
-  for (const [replyToken, expectedRunId] of expectedRunByReplyToken) {
+  for (const [replyMarker, expectedRunId] of expectedRunByReplyMarker) {
     for (const event of chatEvents) {
-      if (!containsReplyTokenAllowingWhitespace(event.text, replyToken)) continue;
-      visibleReplyCounts.set(replyToken, (visibleReplyCounts.get(replyToken) ?? 0) + 1);
+      if (!containsReplyTokenAllowingWhitespace(event.text, replyMarker)) continue;
+      visibleReplyCounts.set(replyMarker, (visibleReplyCounts.get(replyMarker) ?? 0) + 1);
       if (event.state === "final") {
-        finalReplyCounts.set(replyToken, (finalReplyCounts.get(replyToken) ?? 0) + 1);
+        finalReplyCounts.set(replyMarker, (finalReplyCounts.get(replyMarker) ?? 0) + 1);
       }
       if (event.runId !== expectedRunId) {
         uncorrelatedReplies.push({
-          replyToken,
+          replyMarker,
           expectedRunId,
           actualRunId: event.runId,
           state: event.state,
@@ -190,20 +192,20 @@ function analyzeIssue2603Trace({
     }
   }
   const missingReplies = sentRuns
-    .map((entry) => entry.replyToken)
-    .filter((replyToken) => !visibleReplyCounts.has(replyToken));
+    .map((entry) => entry.replyMarker)
+    .filter((replyMarker) => !visibleReplyCounts.has(replyMarker));
   const duplicateReplies = sentRuns
     .map((entry) => ({
-      replyToken: entry.replyToken,
-      count: finalReplyCounts.get(entry.replyToken) ?? 0,
+      replyMarker: entry.replyMarker,
+      count: finalReplyCounts.get(entry.replyMarker) ?? 0,
     }))
     .filter((entry) => entry.count > 1);
   const finalReplyOrder = chatEvents
     .filter((event) => event.state === "final")
     .flatMap((event) =>
       sentRuns
-        .filter((entry) => containsReplyTokenAllowingWhitespace(event.text, entry.replyToken))
-        .map((entry) => entry.replyToken),
+        .filter((entry) => containsReplyTokenAllowingWhitespace(event.text, entry.replyMarker))
+        .map((entry) => entry.replyMarker),
     );
 
   const userMessages = historyMessages
@@ -306,8 +308,8 @@ function compactReplyTokenText(value) {
   return String(value || "").replace(/\s+/g, "");
 }
 
-function sawAllReplies(replyTokens) {
-  return replyTokens.every((token) => events.some((event) => event.event === "chat" && compactReplyTokenText(textFromMessage(event.payload?.message)).includes(compactReplyTokenText(token))));
+function sawAllReplies(replyMarkers) {
+  return replyMarkers.every((marker) => events.some((event) => event.event === "chat" && compactReplyTokenText(textFromMessage(event.payload?.message)).includes(compactReplyTokenText(marker))));
 }
 
 ws.on("message", (data) => {
@@ -370,10 +372,10 @@ ws.on("open", async () => {
       ],
     ];
 
-    for (const [promptToken, replyToken, message] of messages) {
+    for (const [promptToken, replyMarker, message] of messages) {
       const idempotencyKey = randomUUID();
       const response = await request("chat.send", { sessionKey, message, deliver: false, timeoutMs: 90_000, idempotencyKey });
-      sentRuns.push({ promptToken, replyToken, message, runId: response.runId ?? idempotencyKey });
+      sentRuns.push({ promptToken, replyMarker, message, runId: response.runId ?? idempotencyKey });
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
 
@@ -505,9 +507,8 @@ test(
   async ({ artifacts, environment, host, onboard, sandbox, secrets }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "openclaw-tui-chat-correlation",
-      runner: "vitest",
       boundary: ["openclaw-gateway-websocket", "openclaw-tui-terminal-after-connected-idle"],
       issues: ["#2603", "#3145", "#6194"],
       ownerIssue: "#4347",
@@ -678,7 +679,7 @@ test(
     expect(analysis.missingReplies, failureSummary).toEqual([]);
     expect(analysis.duplicateReplies, failureSummary).toEqual([]);
     expect(analysis.finalReplyOrder, failureSummary).toEqual(
-      repro.sentRuns.map((entry) => entry.replyToken),
+      repro.sentRuns.map((entry) => entry.replyMarker),
     );
     expect(analysis.missingUserTurns, failureSummary).toEqual([]);
     expect(analysis.duplicateUserTurns, failureSummary).toEqual([]);

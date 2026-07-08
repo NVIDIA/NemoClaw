@@ -55,6 +55,19 @@ export function buildHermesConfig(
   };
   const apiMode = hermesApiMode(settings.inferenceApi);
   if (apiMode) modelConfig.api_mode = apiMode;
+  // context_length on the model block is Hermes' highest-priority context
+  // override — above live /v1/models discovery and its built-in model-metadata
+  // registry. Setting it stops NemotronH-family models from falling back to a
+  // small architecture default when the endpoint actually serves a larger
+  // max_model_len (#6177). Omit it (null) to let Hermes auto-detect. Hermes
+  // reads only `context_length`; `context_window` is silently ignored.
+  //
+  // No separate auxiliary/compression context key is written: Hermes derives
+  // its compression trigger (compression.threshold × context_length) from the
+  // main model's context_length, so setting it here is sufficient for the
+  // reported "Cannot compress further" failure — the auxiliary/curator model is
+  // configured via auxiliary.* and needs no dedicated context length here.
+  if (settings.contextWindow !== null) modelConfig.context_length = settings.contextWindow;
 
   // Surface the managed endpoint to Hermes' model picker. The inline `model:`
   // block above is enough for the gateway to ROUTE inference, but the picker

@@ -6,11 +6,16 @@
 
 set -euo pipefail
 unset BASH_ENV ENV
+while IFS= read -r _nemoclaw_auto_approval_env; do
+  unset "$_nemoclaw_auto_approval_env"
+done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
+unset _nemoclaw_auto_approval_env
 
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export LANGGRAPH_NO_VERSION_CHECK=true
+export LANGGRAPH_CLI_NO_ANALYTICS=1
 export OTEL_ENABLED=false
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_LANGSMITH_TRACING=false
@@ -136,6 +141,7 @@ prepare_runtime_env() {
     printf '%s\n' 'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"'
     printf '%s\n' 'export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1'
     printf '%s\n' 'export LANGGRAPH_NO_VERSION_CHECK=true'
+    printf '%s\n' 'export LANGGRAPH_CLI_NO_ANALYTICS=1'
     printf '%s\n' 'export OTEL_ENABLED=false'
     printf '%s\n' 'export DEEPAGENTS_CODE_AUTO_UPDATE=0'
     printf '%s\n' 'export DEEPAGENTS_CODE_LANGSMITH_TRACING=false'
@@ -176,7 +182,21 @@ prepare_runtime_env() {
   mv -f "$tmp" "$target"
 }
 
+prepare_observability_marker() {
+  local target=/tmp/nemoclaw-observability-enabled
+  local tmp
+  if [ "${NEMOCLAW_OBSERVABILITY:-}" != "1" ]; then
+    rm -f "$target"
+    return 0
+  fi
+  tmp="$(mktemp /tmp/nemoclaw-observability-enabled.XXXXXX)"
+  printf '%s\n' '1' >"$tmp"
+  chmod 444 "$tmp"
+  mv -f "$tmp" "$target"
+}
+
 prepare_runtime_env
+prepare_observability_marker
 
 # With no command, this invocation IS the sandbox's long-running entrypoint.
 # Deep Agents Code is a terminal-runtime agent invoked on demand via

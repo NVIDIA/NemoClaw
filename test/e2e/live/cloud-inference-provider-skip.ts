@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resultText } from "../fixtures/clients/command.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -36,10 +37,6 @@ export interface PreContractExternalProviderSkipEvidence {
   artifacts: ShellProbeResult["artifacts"];
   sourceBoundary: typeof PRE_CONTRACT_EXTERNAL_PROVIDER_SOURCE_BOUNDARY;
   removalCondition: typeof PRE_CONTRACT_EXTERNAL_PROVIDER_REMOVAL_CONDITION;
-}
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 function tailForEvidence(text: string, maxLength = 1600): string {

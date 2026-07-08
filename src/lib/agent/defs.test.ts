@@ -111,11 +111,12 @@ describe("agent definitions", () => {
       smoke_commands: [
         "dcode --version",
         "test -s /sandbox/.deepagents/config.toml && echo NEMOCLAW_DEEPAGENTS_CONFIG_OK",
+        'empty_prompt=; output="$(timeout 10 dcode -n "$empty_prompt" 2>&1)"; status=$?; [ "$status" -eq 2 ] && [ "$output" = "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ] && echo NEMOCLAW_DCODE_EMPTY_PROMPT_OK',
       ],
     });
     expect(deepAgentsCode.binary_path).toBe("/usr/local/bin/dcode");
     expect(deepAgentsCode.versionCommand).toBe("dcode --version");
-    expect(deepAgentsCode.expectedVersion).toBe("0.1.30");
+    expect(deepAgentsCode.expectedVersion).toBe("0.1.34");
     expect(deepAgentsCode.healthProbe).toBeNull();
     expect(deepAgentsCode.forwardPort).toBe(0);
     expect(deepAgentsCode.configPaths).toEqual({
@@ -125,6 +126,7 @@ describe("agent definitions", () => {
       format: "toml",
     });
     expect(deepAgentsCode.inference?.provider_type).toBe("openai_compatible");
+    expect(deepAgentsCode.inference?.default_model).toBe("nvidia/nemotron-3-ultra-550b-a55b");
     expect(deepAgentsCode.mcpCapability).toEqual({
       support: "bridge",
       adapter: "deepagents-config",
@@ -295,6 +297,24 @@ describe("agent definitions", () => {
     );
 
     expect(() => loadAgent(agentName)).toThrow(/inference\.provider_type/);
+  });
+
+  it.each([
+    "42",
+    '"bad model"',
+  ])("rejects invalid inference default models in manifests (%s)", (defaultModel) => {
+    const agentName = `invalid-inference-default-model-${String(Date.now())}-${defaultModel.length}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Inference Default",
+        "inference:",
+        `  default_model: ${defaultModel}`,
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/inference\.default_model/);
   });
 
   it("rejects invalid MCP bridge adapter declarations in manifests", () => {

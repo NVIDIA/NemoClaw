@@ -1,9 +1,33 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { describe, expect, it } from "vitest";
+const mocks = vi.hoisted(() => ({
+  executeGatewaySupervisorAction: vi.fn(),
+  isShieldsDown: vi.fn(),
+  runOpenshellProviderCommand: vi.fn(),
+  waitUntil: vi.fn(),
+}));
+
+vi.mock("../src/lib/actions/global", () => ({
+  runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
+}));
+
+vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
+  executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
+  executeSandboxCommand: vi.fn(),
+}));
+
+vi.mock("../src/lib/core/wait", () => ({
+  waitUntil: mocks.waitUntil,
+}));
+
+vi.mock("../src/lib/shields", () => ({
+  isShieldsDown: mocks.isShieldsDown,
+}));
+
+import { assertAgentMcpMutationRuntimeCapability } from "../src/lib/actions/sandbox/mcp-bridge-adapters";
 
 type ProbeResult = { status: number; stdout: string; stderr: string };
 type SupervisorResult = ProbeResult | null;
@@ -13,55 +37,47 @@ function runHermesProbe(
   shieldsDown = true,
   supervisorResults: SupervisorResult[] = [],
 ) {
-  const script = String.raw`
-const globalActions = require("./src/lib/actions/global.js");
-const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
-const wait = require("./src/lib/core/wait.js");
-const shields = require("./src/lib/shields/index.js");
-const results = ${JSON.stringify(results)};
-const supervisorResults = ${JSON.stringify(supervisorResults)};
-let calls = 0;
-let recoveryCalls = 0;
-const recoveryActions = [];
-globalActions.runOpenshellProviderCommand = () => results[calls++];
-processRecovery.executeGatewaySupervisorAction = (_sandbox, action, timeout) => {
-  recoveryActions.push({ action, timeout });
-  return supervisorResults[recoveryCalls++] ?? null;
-};
-wait.waitUntil = (condition, optionsOrTimeout) => {
-  const maxAttempts = typeof optionsOrTimeout === "object"
-    ? (optionsOrTimeout.maxAttempts ?? Number.POSITIVE_INFINITY)
-    : Number.POSITIVE_INFINITY;
-  let attempts = 0;
-  while (calls < results.length && attempts < maxAttempts) {
-    attempts += 1;
-    if (condition()) return true;
+  let calls = 0;
+  let recoveryCalls = 0;
+  const recoveryActions: Array<{ action: string; timeout: number }> = [];
+
+  mocks.runOpenshellProviderCommand.mockImplementation(() => results[calls++]);
+  mocks.executeGatewaySupervisorAction.mockImplementation(
+    (_sandbox: string, action: string, timeout: number) => {
+      recoveryActions.push({ action, timeout });
+      return supervisorResults[recoveryCalls++] ?? null;
+    },
+  );
+  mocks.waitUntil.mockImplementation(
+    (condition: () => boolean, optionsOrTimeout?: number | { maxAttempts?: number }): boolean => {
+      const maxAttempts =
+        typeof optionsOrTimeout === "object"
+          ? (optionsOrTimeout.maxAttempts ?? Number.POSITIVE_INFINITY)
+          : Number.POSITIVE_INFINITY;
+      let attempts = 0;
+      let ready = false;
+      while (!ready && calls < results.length && attempts < maxAttempts) {
+        attempts += 1;
+        ready = condition();
+      }
+      return ready;
+    },
+  );
+  mocks.isShieldsDown.mockReturnValue(shieldsDown);
+
+  let message = "";
+  try {
+    assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config");
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
   }
-  return false;
-};
-shields.isShieldsDown = () => ${JSON.stringify(shieldsDown)};
-const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
-let message = "";
-try {
-  adapters.assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config");
-} catch (error) {
-  message = error instanceof Error ? error.message : String(error);
+
+  return { calls, recoveryActions, message };
 }
-process.stdout.write(JSON.stringify({ calls, recoveryActions, message }));
-`;
-  const result = spawnSync(process.execPath, ["-e", script], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: process.env,
-    timeout: 30_000,
-  });
-  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  return JSON.parse(result.stdout) as {
-    calls: number;
-    recoveryActions: Array<{ action: string; timeout: number }>;
-    message: string;
-  };
-}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+});
 
 const starting: ProbeResult = {
   status: 1,

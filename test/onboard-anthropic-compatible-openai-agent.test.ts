@@ -71,6 +71,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     // The probe must exercise the same /v1 base OpenShell will call at
     // runtime (<OPENAI_BASE_URL> + /v1/chat/completions with /v1 dedup).
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(SURFACE_URL, MODEL, "hub-secret", {
+      pinnedAddresses: ["93.184.216.34"],
       skipResponsesProbe: true,
     });
     const createCommand = harness.commands.find(({ command }) =>
@@ -81,7 +82,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     expect(createCommand?.command).toContain(`--credential ${CREDENTIAL_ENV}`);
     expect(
       harness.commands.some(({ command }) =>
-        command.includes(`inference set --provider ${PROVIDER} --model ${MODEL}`),
+        command.includes(`inference set -g nemoclaw --provider ${PROVIDER} --model ${MODEL}`),
       ),
     ).toBe(true);
   });
@@ -101,9 +102,9 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     });
 
     // Plain delete succeeded (default status 0) — no force-detach recovery.
-    expect(harness.commands.some(({ command }) => command === `provider delete ${PROVIDER}`)).toBe(
-      true,
-    );
+    expect(
+      harness.commands.some(({ command }) => command === `provider delete -g nemoclaw ${PROVIDER}`),
+    ).toBe(true);
     expect(deleteGatewayProvider).not.toHaveBeenCalled();
     const createCommand = harness.commands.find(({ command }) =>
       command.startsWith("provider create"),

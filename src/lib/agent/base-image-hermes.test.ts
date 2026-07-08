@@ -66,6 +66,54 @@ describe("agent base image provisioning", () => {
         }),
       );
 
+      const platformDigest =
+        "sha256:c0c149ed03b3e8fcd3e395558b22e871cd27c9966ea6faf04c0d2b94d0a821b9";
+      const platformDigestRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${platformDigest}`;
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: platformDigestRef,
+        digest: platformDigest,
+        source: "pinned",
+        pinnedRemoteRef: trackedRef?.[1],
+        glibcVersion: "2.41",
+      });
+      expect(ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toEqual({
+        imageTag: platformDigestRef,
+        built: false,
+      });
+
+      const wrongNamespaceRef = `ghcr.io/nvidia/nemoclaw/other-hermes-base@${platformDigest}`;
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: wrongNamespaceRef,
+        digest: platformDigest,
+        source: "pinned",
+        pinnedRemoteRef: trackedRef?.[1],
+        glibcVersion: "2.41",
+      });
+      expect(() => ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toThrow(
+        "Hermes final image does not accept base image ref",
+      );
+
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: platformDigestRef,
+        digest: platformDigest,
+        source: "latest",
+        glibcVersion: "2.41",
+      });
+      expect(() => ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toThrow(
+        "Hermes final image does not accept base image ref",
+      );
+
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: platformDigestRef,
+        digest: platformDigest,
+        source: "pinned",
+        pinnedRemoteRef: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"2".repeat(64)}`,
+        glibcVersion: "2.41",
+      });
+      expect(() => ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toThrow(
+        "Hermes final image does not accept base image ref",
+      );
+
       const differentRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"0".repeat(64)}`;
       resolveSandboxBaseImageMock.mockReturnValue({
         ref: differentRef,

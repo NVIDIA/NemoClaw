@@ -4,7 +4,6 @@
 import fs from "node:fs";
 
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   applyFakePolicy,
   approveAndAssertPairing,
@@ -67,116 +66,114 @@ function assertSlackCapture(captureFile: string, expectedCode: string, expectedU
   ).toBe(true);
 }
 
-test.skipIf(!shouldRunLiveE2E())(
-  "OpenClaw Slack Socket Mode pairing request is shared with connect-shell approval",
-  { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    const env = pairingEnv({
-      sandboxName: SANDBOX_NAME,
-      apiKey,
-      channel: "slack",
-      slackBot: SLACK_BOT_TOKEN,
-      slackApp: SLACK_APP_TOKEN,
-    });
-    const redactions = pairingRedactions({
-      apiKey,
-      slackBot: SLACK_BOT_TOKEN,
-      slackApp: SLACK_APP_TOKEN,
-    });
+test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell approval", {
+  timeout: LIVE_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+  const env = pairingEnv({
+    sandboxName: SANDBOX_NAME,
+    apiKey,
+    channel: "slack",
+    slackBot: SLACK_BOT_TOKEN,
+    slackApp: SLACK_APP_TOKEN,
+  });
+  const redactions = pairingRedactions({
+    apiKey,
+    slackBot: SLACK_BOT_TOKEN,
+    slackApp: SLACK_APP_TOKEN,
+  });
 
-    await artifacts.writeJson("target.json", {
-      id: "openclaw-slack-pairing",
-      boundary:
-        "install.sh Slack OpenClaw sandbox + fake Slack REST/websocket token rewrite + runtime pairing request + connect-shell approval",
-      sandboxName: SANDBOX_NAME,
-      pairingUser: PAIRING_USER.slack,
-    });
+  await artifacts.target.declare({
+    id: "openclaw-slack-pairing",
+    boundary:
+      "install.sh Slack OpenClaw sandbox + fake Slack REST/websocket token rewrite + runtime pairing request + connect-shell approval",
+    sandboxName: SANDBOX_NAME,
+    pairingUser: PAIRING_USER.slack,
+  });
 
-    cleanup.add(`destroy Slack pairing sandbox ${SANDBOX_NAME}`, () =>
-      cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "cleanup-slack-pairing"),
-    );
-    await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-slack-pairing");
+  cleanup.add(`destroy Slack pairing sandbox ${SANDBOX_NAME}`, () =>
+    cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "cleanup-slack-pairing"),
+  );
+  await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-slack-pairing");
 
-    const docker = await dockerInfo(host, env);
-    expect(docker.exitCode, resultText(docker)).toBe(0);
+  const docker = await dockerInfo(host, env);
+  expect(docker.exitCode, resultText(docker)).toBe(0);
 
-    const install = await installSandboxOrSkipOnRateLimit(
-      host,
+  const install = await installSandboxOrSkipOnRateLimit(
+    host,
+    env,
+    redactions,
+    "install-slack-pairing",
+    skip,
+    "NVIDIA endpoint validation was rate-limited before Slack pairing assertions ran",
+  );
+  expectExitZero(install, "install.sh --non-interactive with Slack");
+  await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-slack-pairing");
+
+  for (const providerName of [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`]) {
+    const provider = await host.command("openshell", ["provider", "get", providerName], {
+      artifactName: `provider-get-${providerName}`,
       env,
-      redactions,
-      "install-slack-pairing",
-      skip,
-      "NVIDIA endpoint validation was rate-limited before Slack pairing assertions ran",
-    );
-    expectExitZero(install, "install.sh --non-interactive with Slack");
-    await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-slack-pairing");
-
-    for (const providerName of [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`]) {
-      const provider = await host.command("openshell", ["provider", "get", providerName], {
-        artifactName: `provider-get-${providerName}`,
-        env,
-        redactionValues: redactions,
-        timeoutMs: 60_000,
-      });
-      expectExitZero(provider, `${providerName} exists`);
-    }
-
-    await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "slack", redactions);
-    await assertSlackPresetPolicySemantics({
-      host,
-      sandboxName: SANDBOX_NAME,
-      env,
-      redactions,
+      redactionValues: redactions,
+      timeoutMs: 60_000,
     });
+    expectExitZero(provider, `${providerName} exists`);
+  }
 
-    const fakeSlack = await startFakeSlackApi(
-      host,
-      cleanup,
-      env,
-      SLACK_BOT_TOKEN,
-      SLACK_APP_TOKEN,
-      redactions,
-    );
-    await applyFakePolicy({
-      host,
-      sandboxName: SANDBOX_NAME,
-      api: fakeSlack,
-      protocol: "rest",
-      rewrite: "request-body-credential-rewrite",
-      env,
-      redactions,
-      artifactName: "apply-slack-rest-policy",
-    });
-    await applyFakePolicy({
-      host,
-      sandboxName: SANDBOX_NAME,
-      api: fakeSlack,
-      protocol: "websocket",
-      rewrite: "websocket-credential-rewrite",
-      env,
-      redactions,
-      artifactName: "apply-slack-websocket-policy",
-    });
+  await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "slack", redactions);
+  await assertSlackPresetPolicySemantics({
+    host,
+    sandboxName: SANDBOX_NAME,
+    env,
+    redactions,
+  });
 
-    const issue = await issuePairingRequest({
-      sandbox,
-      sandboxName: SANDBOX_NAME,
-      channel: "slack",
-      redactions,
-      fakeSlackPort: fakeSlack.port,
-    });
-    expectExitZero(issue, "Slack pairing request creation");
-    const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");
-    assertSlackCapture(fakeSlack.captureFile, code, PAIRING_USER.slack);
-    await writePairingArtifacts(artifacts, "slack", { code, user: PAIRING_USER.slack });
+  const fakeSlack = await startFakeSlackApi(
+    host,
+    cleanup,
+    env,
+    SLACK_BOT_TOKEN,
+    SLACK_APP_TOKEN,
+    redactions,
+  );
+  await applyFakePolicy({
+    host,
+    sandboxName: SANDBOX_NAME,
+    api: fakeSlack,
+    protocol: "rest",
+    rewrite: "request-body-credential-rewrite",
+    env,
+    redactions,
+    artifactName: "apply-slack-rest-policy",
+  });
+  await applyFakePolicy({
+    host,
+    sandboxName: SANDBOX_NAME,
+    api: fakeSlack,
+    protocol: "websocket",
+    rewrite: "websocket-credential-rewrite",
+    env,
+    redactions,
+    artifactName: "apply-slack-websocket-policy",
+  });
 
-    await approveAndAssertPairing({
-      sandbox,
-      sandboxName: SANDBOX_NAME,
-      channel: "slack",
-      code,
-      redactions,
-    });
-  },
-);
+  const issue = await issuePairingRequest({
+    sandbox,
+    sandboxName: SANDBOX_NAME,
+    channel: "slack",
+    redactions,
+    fakeSlackPort: fakeSlack.port,
+  });
+  expectExitZero(issue, "Slack pairing request creation");
+  const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");
+  assertSlackCapture(fakeSlack.captureFile, code, PAIRING_USER.slack);
+  await writePairingArtifacts(artifacts, "slack", { code, user: PAIRING_USER.slack });
+
+  await approveAndAssertPairing({
+    sandbox,
+    sandboxName: SANDBOX_NAME,
+    channel: "slack",
+    code,
+    redactions,
+  });
+});

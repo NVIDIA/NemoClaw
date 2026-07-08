@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession } from "../../../state/onboard-session";
+import { createSession, type Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
@@ -29,6 +29,7 @@ function dcodeRegistryEntry(
     name,
     agent: "langchain-deepagents-code",
     nemoclawVersion: "0.1.0",
+    observabilityEnabled: false,
     toolDisclosure: "progressive",
     webSearchEnabled: false,
     webSearchProvider: null,
@@ -48,6 +49,121 @@ function dcodeOptions(deps: ReturnType<typeof createDeps>["deps"]) {
 }
 
 describe("handleSandboxState live DCode selection", () => {
+  it("carries durable observability intent in the sandbox create intent", async () => {
+    const session = createSession({
+      observabilityEnabled: true,
+      observabilityRequestedExplicitly: true,
+    });
+    const { deps, calls } = createDeps({
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+      recreate: false,
+      toolDisclosure: "progressive",
+      observabilityEnabled: true,
+      observabilityRequestedExplicitly: true,
+      dcodeAutoApprovalMode: "disabled",
+    });
+  });
+
+  it("carries authoritative thread opt-in in the create intent (#6478)", async () => {
+    const session = createSession();
+    const { deps, calls } = createDeps();
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "langchain-deepagents-code" },
+      requestedDcodeAutoApprovalMode: "thread-opt-in",
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      dcodeAutoApprovalMode: "thread-opt-in",
+    });
+  });
+
+  it("recreates a ready DCode sandbox when the image-baked mode changes (#6478)", async () => {
+    const session = completedSession();
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name: string) => ({
+        ...dcodeRegistryEntry(name),
+        dcodeAutoApprovalMode: "disabled",
+      }),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...dcodeOptions(deps),
+      requestedDcodeAutoApprovalMode: "thread-opt-in",
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      recreate: true,
+      dcodeAutoApprovalMode: "thread-opt-in",
+    });
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] DCode auto-approval capability changed; recreating sandbox.",
+    );
+  });
+
+  it("repairs a not-ready DCode sandbox before recreating for mode drift (#6478)", async () => {
+    const session = completedSession();
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRegistryEntry: (name: string) => ({
+        ...dcodeRegistryEntry(name),
+        dcodeAutoApprovalMode: "disabled",
+      }),
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState({
+      ...dcodeOptions(deps),
+      requestedDcodeAutoApprovalMode: "thread-opt-in",
+    });
+
+    expect(calls.repairSandbox).toHaveBeenCalledWith("saved");
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
+      state: "sandbox",
+      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+    });
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      recreate: true,
+      dcodeAutoApprovalMode: "thread-opt-in",
+    });
+  });
+
+  it("rejects malformed recorded DCode auto-approval state (#6478)", async () => {
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: (name: string) => ({
+        ...dcodeRegistryEntry(name),
+        dcodeAutoApprovalMode: "always" as never,
+      }),
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps),
+        agent: { name: "langchain-deepagents-code" },
+        sandboxName: "saved",
+      }),
+    ).rejects.toThrow("exit 1");
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("mode is invalid"));
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["changed", { changed: true, unknown: false }],
     ["unreadable", { changed: false, unknown: true }],
@@ -70,6 +186,8 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
       recreate: true,
       toolDisclosure: "progressive",
+      observabilityEnabled: false,
+      dcodeAutoApprovalMode: "disabled",
     });
     expect(calls.removeSandbox).not.toHaveBeenCalled();
   });
@@ -88,6 +206,8 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
       recreate: true,
       toolDisclosure: "progressive",
+      observabilityEnabled: false,
+      dcodeAutoApprovalMode: "disabled",
     });
   });
 
@@ -141,18 +261,32 @@ describe("handleSandboxState live DCode selection", () => {
 
     expect(getDcodeSelectionDrift).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
+      pendingRouteReservation: undefined,
+    });
   });
 
-  it.each([
-    ["missing fields", {}],
-    ["stale", { provider: "old-provider", model: "old-model" }],
-  ])("backfills %s registry selection after verified live reuse (#6311)", async (_label, selection) => {
+  it("fails closed for missing registry selection before live reuse (#6311)", async () => {
     const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
       getDcodeSelectionDrift,
-      getSandboxRegistryEntry: (name) => dcodeRegistryEntry(name, selection),
+      getSandboxRegistryEntry: (name) => dcodeRegistryEntry(name, {}),
+    });
+
+    await expect(handleSandboxState(dcodeOptions(deps))).rejects.toThrow("exit 1");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("backfills stale registry selection after verified live reuse (#6311)", async () => {
+    const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getDcodeSelectionDrift,
+      getSandboxRegistryEntry: (name) =>
+        dcodeRegistryEntry(name, { provider: "old-provider", model: "old-model" }),
     });
 
     await handleSandboxState(dcodeOptions(deps));
@@ -162,8 +296,8 @@ describe("handleSandboxState live DCode selection", () => {
       provider: "provider",
       model: "model",
     });
-    expect(getDcodeSelectionDrift.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.updateSandbox.mock.invocationCallOrder[0],
-    );
+    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
+      pendingRouteReservation: undefined,
+    });
   });
 });

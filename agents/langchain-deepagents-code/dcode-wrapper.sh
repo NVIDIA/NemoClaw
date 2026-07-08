@@ -12,11 +12,16 @@ if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
 fi
 
 unset BASH_ENV ENV OPENAI_PROXY
+while IFS= read -r _nemoclaw_auto_approval_env; do
+  unset "$_nemoclaw_auto_approval_env"
+done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
+unset _nemoclaw_auto_approval_env
 
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export LANGGRAPH_NO_VERSION_CHECK=true
+export LANGGRAPH_CLI_NO_ANALYTICS=1
 export OTEL_ENABLED=false
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_LANGSMITH_TRACING=false
@@ -39,6 +44,49 @@ readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
 readonly OPENSHELL_TLS_KEY_PATH="/etc/openshell/tls/client/tls.key"
 readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
 readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"
+readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"
+readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=0
+
+managed_auto_approval_file_metadata() {
+  local file="$1"
+  local metadata
+  if metadata="$(stat -c '%u:%a:%s' "$file" 2>/dev/null)"; then
+    printf '%s' "$metadata"
+  else
+    stat -f '%u:%Lp:%z' "$file" 2>/dev/null
+  fi
+}
+
+read_managed_auto_approval_mode() {
+  local file="$MANAGED_DCODE_AUTO_APPROVAL_FILE"
+  local metadata
+  if [ ! -f "$file" ] || [ -L "$file" ] || [ ! -r "$file" ]; then
+    printf '%s' 'disabled'
+    return 0
+  fi
+  metadata="$(managed_auto_approval_file_metadata "$file")" || {
+    printf '%s' 'disabled'
+    return 0
+  }
+  case "$metadata" in
+    "${MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID}:444:9")
+      if cmp -s -- "$file" <(printf '%s\n' 'disabled'); then
+        printf '%s' 'disabled'
+        return 0
+      fi
+      ;;
+    "${MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID}:444:14")
+      if cmp -s -- "$file" <(printf '%s\n' 'thread-opt-in'); then
+        printf '%s' 'thread-opt-in'
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s' 'disabled'
+}
+
+MANAGED_DCODE_AUTO_APPROVAL_MODE="$(read_managed_auto_approval_mode)"
+readonly MANAGED_DCODE_AUTO_APPROVAL_MODE
 
 run_dcode() {
   unset PYTHONHOME PYTHONPATH
@@ -65,7 +113,7 @@ run_dcode() {
 #       raw or escaped bodies before mutable metadata can reach status output.
 #     * Name-context rejection fires case-insensitively when the variable name
 #       ends in a credential keyword (_KEY, _TOKEN, _SECRET, _PASSWORD,
-#       _CREDENTIAL, _PASS) and the value is at least 10 chars (mirroring
+#       _PASSWD, _PASS, _CREDENTIAL) and the value is at least 10 chars (mirroring
 #       CONTEXT_PATTERNS minimum length).
 #     * Managed messaging values (SLACK_BOT_TOKEN, SLACK_APP_TOKEN,
 #       TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN) are allowed only when the value
@@ -83,9 +131,9 @@ run_dcode() {
 # - Regression: test/langchain-deepagents-code-secret-pattern-parity.test.ts
 #   pins the canonical TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and
 #   SECRET_BLOCK_PATTERNS fingerprints (source + flags), while
-#   test/langchain-deepagents-code-image.test.ts feeds the shared positive
-#   corpus through this wrapper. Any canonical change trips the parity gate and
-#   forces this matcher (and its samples) to update.
+#   test/langchain-deepagents-code-image-credentials.test.ts feeds the shared
+#   positive corpus through this wrapper. Any canonical change trips the parity
+#   gate and forces this matcher (and its samples) to update.
 #   The live no-network acceptance clause is covered by
 #   test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh
 #   which exercises a real sandbox launch under `nemoclaw exec` and inspects
@@ -97,9 +145,11 @@ run_dcode() {
 has_context_secret_shape() {
   local upper
   upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
-  # The outer class accepts '=', ':', or whitespace; [:space:] is the nested
-  # POSIX character class understood by Bash's [[ string =~ regex ]] operator.
-  [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
+  # Keep horizontal separator whitespace bounded to mirror the canonical
+  # lookbehind and avoid an attacker-controlled scan over arbitrarily long runs.
+  [[ "$upper" =~ (^|[^A-Z0-9])([A-Z0-9]{1,128}_(KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
+    || [[ "$1" =~ (^|[^A-Za-z0-9])([A-Za-z0-9]{1,128}(Token|Secret|Credential)|[A-Za-z0-9]{0,128}([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(Password|Passwd|Pass))[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
+    || [[ "$1" =~ (^|[^A-Za-z0-9])KEY[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]]
 }
 
 has_bearer_secret_shape() {
@@ -118,23 +168,11 @@ has_bearer_secret_shape() {
 
 has_private_key_block_shape() {
   local value="$1"
+  local required_separator="${2-}"
   local begin_marker="-----BEGIN "
   local end_marker="-----END "
   case "$value" in
-    *"$begin_marker"*"PRIVATE KEY-----"*"$end_marker"*"PRIVATE KEY-----"*)
-      return 0
-      ;;
-  esac
-  return 1
-}
-
-has_multiline_private_key_block_shape() {
-  local value="$1"
-  local begin_marker="-----BEGIN "
-  local end_marker="-----END "
-  local newline=$'\n'
-  case "$value" in
-    *"$begin_marker"*"PRIVATE KEY-----"*"$newline"*"$end_marker"*"PRIVATE KEY-----"*)
+    *"$begin_marker"*"PRIVATE KEY-----"*"$required_separator"*"$end_marker"*"PRIVATE KEY-----"*)
       return 0
       ;;
   esac
@@ -283,7 +321,7 @@ has_credential_name_context() {
   local upper
   upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   case "$upper" in
-    KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASS | CREDENTIAL)
+    KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASSWD | PASS | CREDENTIAL)
       return 0
       ;;
     LANGSMITH_RUNS_ENDPOINTS | LANGCHAIN_RUNS_ENDPOINTS)
@@ -292,10 +330,14 @@ has_credential_name_context() {
     OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT | OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
       return 0
       ;;
-    *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASS | *_CREDENTIAL)
+    *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASSWD | *_PASS | *_CREDENTIAL | *-API-KEY | *-KEY | *-TOKEN | *-SECRET | *-PASSWORD | *-PASSWD | *-PASS | *-CREDENTIAL)
       return 0
       ;;
   esac
+  if [[ "$1" =~ [A-Za-z0-9](Token|Secret|Credential|Password|Passwd|Pass)$ ]] \
+    || [[ "$1" =~ ([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key$ ]]; then
+    return 0
+  fi
   return 1
 }
 
@@ -417,7 +459,7 @@ assert_no_secret_env_file() {
   # Scan the whole file before line parsing so raw multiline blocks cannot put
   # their begin and end markers on different physical dotenv lines.
   env_file_content="$(<"$env_file")"
-  if has_multiline_private_key_block_shape "$env_file_content"; then
+  if has_private_key_block_shape "$env_file_content" $'\n'; then
     refuse_secret_env "$env_file" "private-key block"
   fi
   while IFS= read -r line || [ -n "$line" ]; do
@@ -494,7 +536,7 @@ try:
 except Exception:
     sys.exit(1)
 # Schema pin: detection assumes a truthy top-level "credentials" key,
-# matching the auth.json shape in deepagents-code==0.1.30. Nested or
+# matching the auth.json shape in deepagents-code==0.1.34. Nested or
 # renamed shapes ({"auth":{...}}, {"state":{"credentials":...}}, top-level
 # list) are not detected. When bumping the upstream pin, re-review this
 # assumption against the new auth.json schema.
@@ -788,7 +830,9 @@ for arg in "$@"; do
       reject_managed_override "interpreter posture" "$arg"
       ;;
     -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve)
-      reject_managed_override "tool approval posture" "$arg"
+      if [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
+        reject_managed_override "tool approval posture" "$arg"
+      fi
       ;;
     --acp)
       reject_managed_override "ACP approval posture" "$arg"

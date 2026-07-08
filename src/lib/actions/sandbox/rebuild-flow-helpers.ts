@@ -265,6 +265,7 @@ export function backupSandboxStateForRebuild(
   log: (msg: string) => void,
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: (msg: string, code?: number) => never,
+  options?: { force?: boolean },
 ): sandboxState.RebuildManifest | null | undefined {
   if (staleRecovery) return null;
 
@@ -276,12 +277,24 @@ export function backupSandboxStateForRebuild(
   );
   const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
   if (!backup.success && !hasAnyBackup) {
+    if (options?.force) {
+      console.warn(
+        `  ${YW}⚠${R} Backup failed but --force was specified — skipping backup and rebuilding from registry metadata.`,
+      );
+      log(
+        "Force-skip: backup failed completely; continuing without backup as requested by --force",
+      );
+      return null;
+    }
     console.error("  Failed to back up sandbox state.");
     if (backup.error) console.error(`  Reason: ${backup.error}`);
     if (backup.failedDirs.length > 0) console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
     if (backup.failedFiles.length > 0)
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     console.error("  Aborting rebuild to prevent data loss.");
+    console.error(
+      `  Hint: use '${CLI_NAME} ${sandboxName} rebuild --force' to skip backup and rebuild from registry metadata.`,
+    );
     relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return undefined;

@@ -4,8 +4,8 @@
 import { Flags } from "@oclif/core";
 
 import { InferenceSetError, runInferenceSet } from "../../../lib/actions/inference-set";
-import { CLI_NAME } from "../../../lib/cli/branding";
 import { nonEmptyFlag } from "../../../lib/cli/flag-helpers";
+import { inferenceSetRequiredFlagsFailureLines } from "../../../lib/cli/inference-set-help";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 
@@ -53,7 +53,7 @@ export default class SandboxInferenceSetCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxInferenceSetCommand);
     if (!flags.provider || !flags.model) {
-      this.printOpenShellRedirect();
+      this.printRequiredFlags();
       return;
     }
     try {
@@ -75,18 +75,7 @@ export default class SandboxInferenceSetCommand extends NemoClawCommand {
     }
   }
 
-  private printOpenShellRedirect(): void {
-    this.failWithLines(
-      [
-        `  ${CLI_NAME} <name> inference set requires --provider and --model.`,
-        "",
-        "  To change only the OpenShell route, run:",
-        "  openshell inference set -g nemoclaw --model <model> --provider <provider>",
-        `  To also sync the sandbox config, pass --provider and --model to ${CLI_NAME} <name> inference set.`,
-        "",
-        `  Run '${CLI_NAME} help' for NemoClaw commands.`,
-      ],
-      1,
-    );
+  private printRequiredFlags(): void {
+    this.failWithLines(inferenceSetRequiredFlagsFailureLines("<name> inference set"));
   }
 }

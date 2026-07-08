@@ -32,6 +32,14 @@
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },
   {
+    "name": "NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES",
+    "reason": "Internal command-scoped installer capability containing the exact JSON-encoded sandbox names accepted through the public legacy managed-image confirmation. Passed only to the upgrade-sandboxes child; users must not set it."
+  },
+  {
+    "name": "NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS",
+    "reason": "Internal command-scoped installer sentinel that makes backup-all fail when any registered sandbox is skipped. Standalone backup behavior remains user-configurable through its documented public controls."
+  },
+  {
     "name": "NEMOCLAW_TEST_NO_SLEEP",
     "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
   },
