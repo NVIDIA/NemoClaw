@@ -243,28 +243,34 @@ describe("waitForPort", () => {
 
 describe("waitForHttp", () => {
   it("returns true when curl reaches the endpoint", () => {
-    const buildArgs = vi.spyOn(curlArgs, "buildValidatedCurlCommandArgs");
+    const buildValidatedCurlCommandArgs = curlArgs.buildValidatedCurlCommandArgs;
+    const buildArgs = vi
+      .spyOn(curlArgs, "buildValidatedCurlCommandArgs")
+      .mockImplementation(buildValidatedCurlCommandArgs);
     const spawnSync = vi.spyOn(childProcess, "spawnSync").mockReturnValue(spawnResult(0));
     const url = "http://127.0.0.1:8080/health";
+    const rawArgs = ["-sf", "--connect-timeout", "1", "--max-time", "1", url];
 
     expect(waitForHttp(url, 1)).toBe(true);
-    expect(buildArgs).toHaveBeenCalledWith([
-      "-sf",
-      "--connect-timeout",
-      "1",
-      "--max-time",
-      "1",
-      url,
-    ]);
+    expect(buildArgs).toHaveBeenCalledWith(rawArgs);
     expect(spawnSync.mock.calls[0]?.[0]).toBe("curl");
-    expect(spawnSync.mock.calls[0]?.[1]).toEqual([
-      "-sf",
-      "--connect-timeout",
-      "1",
-      "--max-time",
-      "1",
-      url,
-    ]);
+    expect(spawnSync.mock.calls[0]?.[1]).toBe(buildArgs.mock.results[0]?.value);
+  });
+
+  it("keeps redirects denied for the HTTP wait probe argument pattern", () => {
+    const url = "http://127.0.0.1:8080/health";
+
+    expect(() =>
+      curlArgs.buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "1",
+        "--max-time",
+        "1",
+        "--location",
+        url,
+      ]),
+    ).toThrow(/allowRedirects/);
   });
 
   it("returns false after an unsuccessful request reaches its deadline", () => {
