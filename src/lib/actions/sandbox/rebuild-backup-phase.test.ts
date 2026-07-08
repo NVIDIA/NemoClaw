@@ -4,6 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  normalizeRebuildObservabilityPolicyPresets,
+  normalizeRebuildTargetPolicyPresets,
   normalizeRebuildWebSearchPolicyPresets,
   runRebuildBackupPhase,
 } from "./rebuild-backup-phase";
@@ -83,5 +85,77 @@ describe("rebuild web-search policy normalization", () => {
 
     expect(result?.policyPresets).toEqual([]);
     expect(result?.sessionPolicyPresets).toEqual([]);
+  });
+
+  it("removes stale built-in observability egress from disabled and restricted rebuild targets", () => {
+    expect(
+      normalizeRebuildObservabilityPolicyPresets(["npm", "observability-otlp-local"], {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: false,
+        policyTier: "balanced",
+      }),
+    ).toEqual(["npm"]);
+    expect(
+      normalizeRebuildObservabilityPolicyPresets(["npm", "observability-otlp-local"], {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        policyTier: "restricted",
+      }),
+    ).toEqual(["npm"]);
+    expect(
+      normalizeRebuildObservabilityPolicyPresets(["npm"], {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        policyTier: "balanced",
+      }),
+    ).toEqual(["npm", "observability-otlp-local"]);
+  });
+
+  it("leaves a same-name custom observability policy for exact custom replay", () => {
+    expect(
+      normalizeRebuildObservabilityPolicyPresets(["npm", "observability-otlp-local"], {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: false,
+        policyTier: "restricted",
+        customPolicies: [{ name: "observability-otlp-local", content: "network_policies: {}" }],
+      }),
+    ).toEqual(["npm"]);
+  });
+
+  it("does not add built-in observability when a differently named custom policy owns its key", () => {
+    expect(
+      normalizeRebuildObservabilityPolicyPresets(["npm", "observability-otlp-local"], {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        policyTier: "balanced",
+        customPolicies: [
+          {
+            name: "corp-otel",
+            content:
+              "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: collector.corp.example\n",
+          },
+        ],
+      }),
+    ).toEqual(["npm"]);
+  });
+
+  it("keeps fresh agent-required additions while suppressing stale restricted observability", () => {
+    expect(
+      normalizeRebuildTargetPolicyPresets(
+        ["npm", "future-agent-required", "observability-otlp-local"],
+        {
+          name: "alpha",
+          agent: "langchain-deepagents-code",
+          observabilityEnabled: true,
+          policyTier: " Restricted ",
+        },
+        null,
+      ),
+    ).toEqual(["npm", "future-agent-required"]);
   });
 });

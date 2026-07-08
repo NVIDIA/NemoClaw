@@ -168,7 +168,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -198,7 +198,7 @@ For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `de
 #### `--resume` and `--fresh`
 
 NemoClaw records onboarding progress so interrupted runs can continue.
-Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, and custom Dockerfile path recorded by the original run.
+Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, and custom Dockerfile path recorded by the original run.
 Completed onboarding sessions are not resumable.
 Use `--resume` only for interrupted `in_progress` sessions, not to change provider, model, agent, or sandbox recreation settings after onboarding has completed.
 During resume, NemoClaw reruns preflight, gateway, provider, and sandbox repair checks even when the saved session has already reached a later nonterminal onboarding phase.
@@ -232,6 +232,47 @@ $$nemoclaw onboard --name my-assistant --recreate-sandbox --tool-disclosure dire
 
 Without an explicit flag or environment value, recreation preserves the recorded setting and only falls back to `progressive` for legacy state.
 Resuming an interrupted session with a different explicit setting fails with a conflict instead of changing behavior mid-session.
+
+<AgentOnly variant="deepagents">
+
+#### `--observability` and `--no-observability`
+
+Enable backend-neutral trace export for a LangChain Deep Agents Code sandbox.
+During initial onboarding, pass `--observability` with the Deep Agents alias.
+When you use the generic `nemoclaw` entry point, combine it with `--agent langchain-deepagents-code`.
+NemoClaw rejects the positive flag for OpenClaw and Hermes sandboxes.
+Use `--no-observability` when you need to clear a recorded Deep Agents Code choice before switching the resumed session to another agent.
+
+```bash
+$$nemoclaw onboard --observability
+nemoclaw onboard --agent langchain-deepagents-code --observability
+```
+
+The flag is off by default.
+When enabled, NemoClaw records the choice with the onboarding session and sandbox, adds the `observability-otlp-local` policy preset on supported policy tiers, and preserves the choice across resume and rebuild operations.
+An explicit `--observability` or `--no-observability` choice updates a resumed onboarding session.
+The Restricted tier suppresses automatic application of the preset.
+An operator can add it manually after reviewing the additional egress, but the next Restricted onboarding or rebuild reconciliation removes it.
+
+The explicit opt-in can export bounded prompts, responses, tool arguments, tool results, and operational metadata.
+Treat trace payloads as sensitive application data.
+The managed capture applies size, depth, item-count, recognized-key, and exception-text safeguards, but it does not detect secrets embedded in ordinary content values.
+Deep Agents Code sends OTLP/HTTP protobuf traces to the fixed local endpoint `http://host.openshell.internal:4318/v1/traces`.
+The OTLP library adds standard transport headers, but the sandbox cannot configure operator-supplied custom or authentication headers, a remote endpoint, backend credentials, or a backend.
+
+Changing this setting on an existing sandbox requires a new sandbox process so the startup environment matches the recorded choice.
+Use the transactional rebuild flags so NemoClaw backs up declared agent state, preserves managed MCP providers and adapter state, recreates the sandbox, and restores the backup.
+
+```bash
+$$nemoclaw my-dcode rebuild --observability --yes
+$$nemoclaw my-dcode rebuild --no-observability --yes
+```
+
+Removing the `observability-otlp-local` policy stops delivery immediately but does not clear the recorded opt-in.
+A later rebuild restores the preset on Balanced and Open tiers, while Restricted continues to suppress it.
+For the complete collector setup, privacy boundary, policy recovery, verification, and a host-side LangSmith exporter example, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#export-traces-through-a-local-collector).
+
+</AgentOnly>
 
 When Docker exposes the required identity metadata, NemoClaw records the base-image resolution on managed sandbox images.
 During a warm recreate or rebuild, it validates the local image identity and platform, plus the exact repository digest for a published image and any active OpenShell ABI requirement, before reusing it.
@@ -1988,9 +2029,9 @@ Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms th
 
 </AgentOnly>
 
-### `$$nemoclaw <name> sessions`
-
 <AgentOnly variant="openclaw">
+
+### `$$nemoclaw <name> sessions`
 
 List OpenClaw conversation sessions in the sandbox.
 With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent.
@@ -2004,6 +2045,8 @@ $$nemoclaw my-assistant sessions --all-agents --json
 </AgentOnly>
 <AgentOnly variant="hermes">
 
+### `$$nemoclaw <name> sessions`
+
 List Hermes conversation sessions in the sandbox.
 NemoClaw invokes `hermes sessions list` via `openshell sandbox exec`, forwards native Hermes flags such as `--source` and `--limit`, and streams the output unchanged.
 
@@ -2014,9 +2057,9 @@ $$nemoclaw my-assistant sessions --source cli --limit 20
 
 </AgentOnly>
 
-### `$$nemoclaw <name> sessions list`
-
 <AgentOnly variant="openclaw">
+
+### `$$nemoclaw <name> sessions list`
 
 Invoke `openclaw sessions list` inside the sandbox.
 NemoClaw forwards every flag the in-sandbox CLI accepts (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`) and filters the resulting default table or JSON so internal `nemoclaw-onboard-warmup-*` sessions are hidden.
@@ -2028,6 +2071,8 @@ $$nemoclaw my-assistant sessions list --agent work --json
 
 </AgentOnly>
 <AgentOnly variant="hermes">
+
+### `$$nemoclaw <name> sessions list`
 
 Invoke `hermes sessions list` inside the sandbox.
 NemoClaw forwards native Hermes flags such as `--source` and `--limit` and streams the output unchanged.
@@ -2216,11 +2261,12 @@ Policy presets applied to the old sandbox are reapplied to the new one so your e
 The replacement uses the recorded compatible-endpoint reasoning mode and web search selection instead of ambient shell values.
 The recorded sandbox GPU mode is preserved across rebuild.
 A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox.
+A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them.
 A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU.
 Auto-mode sandboxes remain auto.
 
 ```bash
-$$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>]
+$$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>] [--observability|--no-observability]
 ```
 
 | Flag | Description |
@@ -2228,6 +2274,7 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 | `--yes`, `-y`, `--force` | Skip the confirmation prompt |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
+| `--observability`, `--no-observability` | Enable or disable managed trace export for a LangChain Deep Agents Code sandbox during the transactional rebuild. This path preserves managed MCP providers and adapter state. |
 
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox.
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
@@ -2676,7 +2723,7 @@ The `$$nemoclaw setup` command is deprecated.
 Use `$$nemoclaw onboard` instead.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -2689,7 +2736,7 @@ The `$$nemoclaw setup-spark` command is deprecated.
 Use the standard installer and run `$$nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark
@@ -2767,9 +2814,9 @@ $$nemoclaw credentials reset nvidia-prod
 ### `$$nemoclaw gc`
 
 Remove orphaned sandbox Docker images from the host.
-Each `$$nemoclaw onboard` builds an `openshell/sandbox-from:<timestamp>` image (~765 MB).
+Sandbox creation can build images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository.
 The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain.
-This command lists all `openshell/sandbox-from:*` images, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
+This command lists images from both repositories, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
 
 ```bash
 $$nemoclaw gc [--dry-run] [--yes|-y|--force]
@@ -3182,6 +3229,26 @@ NEMOCLAW_TRACE_FILE=/tmp/nemoclaw-onboard-trace.json $$nemoclaw onboard
 
 Trace artifacts include onboard phase timing, sandbox and service readiness waits, policy application, inference validation probes, curl probe results, and sandbox build progress events.
 Secret-like metadata such as API keys, bearer tokens, cookies, and credentials is redacted before the file is written.
+
+<AgentOnly variant="deepagents">
+
+### Deep Agents Code OTLP Traces
+
+Pass `--observability` during Deep Agents onboarding to enable backend-neutral runtime traces for Deep Agents Code.
+This feature is separate from `NEMOCLAW_TRACE`, which records NemoClaw onboarding phases, and from the OpenClaw diagnostics plugin.
+
+The sandbox sends OTLP/HTTP protobuf requests only to `http://host.openshell.internal:4318/v1/traces`.
+The managed exporter uses standard OTLP transport headers but does not accept operator-supplied custom or authentication headers.
+A host operator must run the receiver on port `4318` and configure any Jaeger, Phoenix, LangSmith, or other backend exporter on the collector side.
+Changing the host collector's exporter does not require a sandbox rebuild or policy change.
+Collector and exporter failures are non-fatal to agent work.
+
+Native LangSmith tracing and ambient OTLP configuration remain disabled in the sandbox.
+The explicit opt-in can export bounded prompts, responses, tool arguments, tool results, and operational metadata, so operators must treat trace payloads as sensitive application data.
+The collector must enforce the operator's filtering and redaction requirements before remote forwarding because the local policy applies to the managed Python interpreter and does not provide authenticated tenant identity.
+For the complete receiver contract and a runnable LangSmith collector setup, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#export-traces-through-a-local-collector).
+
+</AgentOnly>
 
 <AgentOnly variant="openclaw">
 

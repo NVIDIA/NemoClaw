@@ -62,4 +62,16 @@ describe("authoritative rebuild resume config", () => {
       recorded: "invalid",
     });
   });
+
+  it("allows explicit observability changes to reach sandbox drift reconciliation", () => {
+    const session = {
+      sandboxName: "demo",
+      provider: "nvidia-prod",
+      model: "test-model",
+      observabilityEnabled: true,
+    };
+
+    expect(getResumeConfigConflicts(session, {})).toEqual([]);
+    expect(getResumeConfigConflicts(session, { observabilityEnabled: false })).toEqual([]);
+  });
 });

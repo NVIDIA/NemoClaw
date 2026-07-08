@@ -62,7 +62,7 @@ export function inspectGatewayPresetNames(
 }
 
 export function inspectPresetContentGatewayState(
-  options: GatewayInspectionOptions & { presetContent: string },
+  options: GatewayInspectionOptions & { presetContent: string; policyKey?: string },
 ): PresetContentGatewayState {
   const parsed = readParsedPolicy(options);
   if (!parsed) return null;
@@ -83,8 +83,12 @@ export function inspectPresetContentGatewayState(
     }
     const currentPolicies = current as Record<string, unknown>;
     const expectedPolicies = expected as Record<string, unknown>;
-    const expectedKeys = Object.keys(expectedPolicies);
+    const expectedKeys =
+      options.policyKey === undefined ? Object.keys(expectedPolicies) : [options.policyKey];
     if (expectedKeys.length === 0) return "drift";
+    if (options.policyKey !== undefined && !Object.hasOwn(expectedPolicies, options.policyKey)) {
+      return "drift";
+    }
     const presentKeys = expectedKeys.filter((key) => Object.hasOwn(currentPolicies, key));
     if (presentKeys.length === 0) return "absent";
     if (presentKeys.length !== expectedKeys.length) return "drift";

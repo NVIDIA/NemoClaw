@@ -44,6 +44,7 @@ describe("onboard command options", () => {
           "sandbox-gpu-device": "nvidia.com/gpu=0",
           agent: "dcode",
           "tool-disclosure": "direct",
+          observability: true,
           "control-ui-port": 18790,
           gpu: true,
           yes: true,
@@ -65,6 +66,7 @@ describe("onboard command options", () => {
       agent: "langchain-deepagents-code",
       agentsManifest: null,
       toolDisclosure: "direct",
+      observabilityEnabled: true,
       controlUiPort: 18790,
       gpu: true,
       noGpu: false,
@@ -87,12 +89,22 @@ describe("onboard command options", () => {
       agent: null,
       agentsManifest: null,
       toolDisclosure: null,
+      observabilityEnabled: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
       autoYes: false,
       noOllamaAutostart: false,
     });
+  });
+
+  it("maps --no-observability to an explicit disabled request", () => {
+    expect(
+      resolve(
+        { agent: "dcode", observability: false },
+        { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
+      ).observabilityEnabled,
+    ).toBe(false);
   });
 
   it("accepts the environment-based third-party notice acknowledgement", () => {
@@ -144,6 +156,31 @@ describe("onboard command options", () => {
     const listAgents = () => ["openclaw", "hermes", "langchain-deepagents-code"];
     expect(resolve({ agent: "dcode" }, { listAgents }).agent).toBe("langchain-deepagents-code");
     expect(resolve({ agent: "nemohermes" }, { listAgents }).agent).toBe("hermes");
+  });
+
+  it("rejects observability for an explicitly unsupported agent", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { agent: "hermes", observability: true },
+        {
+          listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain(
+      "--observability is supported only with --agent langchain-deepagents-code",
+    );
+  });
+
+  it("allows an explicit observability opt-out while selecting another agent", () => {
+    expect(
+      resolve(
+        { agent: "hermes", observability: false },
+        { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
+      ).observabilityEnabled,
+    ).toBe(false);
   });
 
   it("rejects unknown agents with the available aliases", () => {
