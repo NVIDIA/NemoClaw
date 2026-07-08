@@ -17,6 +17,7 @@ export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export LANGGRAPH_NO_VERSION_CHECK=true
+export LANGGRAPH_CLI_NO_ANALYTICS=1
 export OTEL_ENABLED=false
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_LANGSMITH_TRACING=false

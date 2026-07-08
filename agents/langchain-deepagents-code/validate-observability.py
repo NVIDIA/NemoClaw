@@ -52,6 +52,8 @@ _MAX_REQUEST_BODY_BYTES = 1_048_576
 _SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/-]+")
 
 _PROMPT_SECRET = "NEMOCLAW_PROMPT_SECRET"
+_CREDENTIAL_SHAPED_SECRET = "sk-EXAMPLE0000000000000000000000"
+_WIRE_PROMPT = f"{_PROMPT_SECRET}: {_CREDENTIAL_SHAPED_SECRET}"
 _MODEL_OUTPUT_SECRET = "NEMOCLAW_MODEL_OUTPUT_SECRET"
 _TOOL_ARGUMENT_SECRET = "NEMOCLAW_TOOL_ARGUMENT_SECRET"
 _TOOL_RESULT_SECRET = "NEMOCLAW_TOOL_RESULT_SECRET"
@@ -227,7 +229,7 @@ async def _exercise_async_boundaries(
         {"authorization": _PROMPT_SECRET},
         {
             "model": raw_names["model"],
-            "messages": [{"role": "user", "content": _PROMPT_SECRET}],
+            "messages": [{"role": "user", "content": _WIRE_PROMPT}],
             "model_settings": {"api_key": _DROPPED_REQUEST_SURFACE_SECRET},
             "response_format": {"schema": _DROPPED_REQUEST_SURFACE_SECRET},
             "tools": [{"description": _DROPPED_REQUEST_SURFACE_SECRET}],
@@ -237,7 +239,7 @@ async def _exercise_async_boundaries(
     async def successful_model(inner_request: Any) -> dict[str, str]:
         if inner_request.headers != {"authorization": _PROMPT_SECRET}:
             raise AssertionError("model telemetry changed execution headers")
-        if inner_request.content["messages"][0]["content"] != _PROMPT_SECRET:
+        if inner_request.content["messages"][0]["content"] != _WIRE_PROMPT:
             raise AssertionError("model telemetry changed the execution prompt")
         return {"content": _MODEL_OUTPUT_SECRET}
 
@@ -550,6 +552,156 @@ def _assert_capture_traversal_bounds(observability: ModuleType) -> None:
         raise AssertionError("projected model response did not record truncation")
 
 
+def _assert_secret_value_redaction(observability: ModuleType) -> None:
+    private_key_marker = "PRIVATE" + " KEY"
+    private_key_probe = (
+        f"-----BEGIN TEST {private_key_marker}-----\nopaque-private-key-material\n"
+        f"-----END TEST {private_key_marker}-----"
+    )
+    probes = (
+        (
+            "reported OpenAI-shaped token",
+            f"My key is {_CREDENTIAL_SHAPED_SECRET} - do not repeat.",
+            _CREDENTIAL_SHAPED_SECRET,
+        ),
+        (
+            "standalone provider key",
+            "nvapi-abcdefghijklmnop",
+            "nvapi-abcdefghijklmnop",
+        ),
+        (
+            "case-insensitive bearer token",
+            "Authorization: bEaReR\ufeffopaqueRandomSessionTokenZ1234567890",
+            "opaqueRandomSessionTokenZ1234567890",
+        ),
+        (
+            "case-insensitive key assignment",
+            "Api_Key=opaqueCredentialPayloadZ1234567890",
+            "opaqueCredentialPayloadZ1234567890",
+        ),
+        (
+            "private key block",
+            private_key_probe,
+            "opaque-private-key-material",
+        ),
+    )
+    for label, value, forbidden in probes:
+        encoded = repr(observability._bounded_capture({"content": value}))
+        if forbidden in encoded:
+            raise AssertionError(f"{label} survived capture redaction")
+        if observability._REDACTED_SECRET_VALUE not in encoded:
+            raise AssertionError(f"{label} was not replaced by the redaction marker")
+
+    benign_values = (
+        "sk-too-short",
+        "Bearer short",
+        "-----BEGIN PUBLIC KEY-----\nnot-private\n-----END PUBLIC KEY-----",
+    )
+    for value in benign_values:
+        if observability._bounded_capture(value) != value:
+            raise AssertionError(f"benign near-miss was redacted: {value!r}")
+
+    original_scrubber = observability._scrub_secret_values
+    scrubbed_lengths: list[int] = []
+
+    def recording_scrubber(
+        value: str, *, source_was_truncated: bool = False
+    ) -> str:
+        scrubbed_lengths.append(len(value))
+        return original_scrubber(
+            value, source_was_truncated=source_was_truncated
+        )
+
+    repeated_secret = f"{_CREDENTIAL_SHAPED_SECRET} " * 400
+    budget = observability._CaptureBudget()
+    observability._scrub_secret_values = recording_scrubber
+    try:
+        captured = observability._capture_jsonable(repeated_secret, budget=budget)
+    finally:
+        observability._scrub_secret_values = original_scrubber
+    if scrubbed_lengths != [observability._MAX_CAPTURE_STRING_CHARS]:
+        raise AssertionError(
+            "secret scrubbing did not run only on the bounded source segment"
+        )
+    expected_remaining = (
+        observability._MAX_CAPTURE_AGGREGATE_STRING_CHARS
+        - observability._MAX_CAPTURE_STRING_CHARS
+    )
+    if budget.remaining_string_chars != expected_remaining:
+        raise AssertionError("secret redaction changed source-character budget accounting")
+    truncated_chars = len(repeated_secret) - observability._MAX_CAPTURE_STRING_CHARS
+    if f"[truncated {truncated_chars} chars]" not in captured:
+        raise AssertionError("secret-heavy source did not retain its truncation marker")
+    if _CREDENTIAL_SHAPED_SECRET in captured:
+        raise AssertionError("bounded secret-heavy source retained a raw credential")
+
+    boundary_probes = (
+        ("provider prefix", _CREDENTIAL_SHAPED_SECRET),
+        ("AWS access key", "AK" + "IA" + "ABCDEFGHIJKLMNOP"),
+        (
+            "Telegram token",
+            "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678",
+        ),
+        (
+            "Discord token",
+            "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        ),
+        ("Bearer token", "Bearer ABCDEFGHIJ"),
+        ("key assignment", "Api_" + "Key" + "=" + "ABCDEFGHIJ"),
+    )
+    for label, credential in boundary_probes:
+        boundary_prefix = credential[:-3]
+        boundary_value = (
+            "x" * (observability._MAX_CAPTURE_STRING_CHARS - len(boundary_prefix))
+            + credential
+        )
+        boundary_capture = observability._bounded_capture(boundary_value)
+        if boundary_prefix in boundary_capture:
+            raise AssertionError(f"capture boundary retained a partial {label}")
+        if observability._REDACTED_SECRET_VALUE not in boundary_capture:
+            raise AssertionError(f"capture-boundary {label} lacks a redaction marker")
+
+    mapping_keys = (
+        "sk-AAAAAAAAAAAAAAAAAAAA",
+        "sk-BBBBBBBBBBBBBBBBBBBB",
+    )
+    mapping_capture = observability._bounded_capture(
+        {mapping_keys[0]: "first", mapping_keys[1]: "second"}
+    )
+    encoded_mapping = repr(mapping_capture)
+    if any(key in encoded_mapping for key in mapping_keys):
+        raise AssertionError("credential-shaped mapping key survived redaction")
+    if set(mapping_capture.values()) != {"first", "second"}:
+        raise AssertionError("redacted mapping-key collision dropped captured values")
+    if not all(
+        observability._REDACTED_SECRET_VALUE in key for key in mapping_capture
+    ):
+        raise AssertionError("credential-shaped mapping key lacks a redaction marker")
+
+    identifier = observability._safe_identifier(
+        f"tool-{mapping_keys[0]}", "unknown"
+    )
+    if mapping_keys[0] in identifier or "redacted-secret" not in identifier:
+        raise AssertionError("credential-shaped identifier survived redaction")
+    expanding_identifier_source = ("hf_aaaaaaaaaa-" * 9).rstrip("-")
+    expanding_identifier = observability._safe_identifier(
+        expanding_identifier_source, "unknown"
+    )
+    if len(expanding_identifier) > observability._MAX_SCOPE_NAME_CHARS:
+        raise AssertionError("redaction expansion exceeded the identifier bound")
+    if "hf_aaaaaaaaaa" in expanding_identifier:
+        raise AssertionError("expanded identifier retained a raw credential")
+
+    unterminated_private_key = (
+        "-----BEGIN TEST PRIVATE KEY-----\n" + "private-key-body" * 1_000
+    )
+    captured_private_key = observability._bounded_capture(unterminated_private_key)
+    if "private-key-body" in captured_private_key:
+        raise AssertionError("bounded private key prefix retained partial key material")
+    if observability._REDACTED_SECRET_VALUE not in captured_private_key:
+        raise AssertionError("bounded private key prefix lacks the redaction marker")
+
+
 def _exercise_graph(observability: ModuleType, raw_graph_name: str) -> None:
     callback = observability.new_metadata_only_callback_handler()
     callback.on_chain_start(
@@ -751,6 +903,11 @@ def _assert_wire_requests(
     for sentinel in captured_content:
         if sentinel.encode() not in bodies:
             raise AssertionError(f"expected captured content {sentinel} is absent from OTLP")
+    credential_bytes = _CREDENTIAL_SHAPED_SECRET.encode()
+    if credential_bytes in bodies or credential_bytes in header_values:
+        raise AssertionError("credential-shaped prompt content reached the OTLP request")
+    if observability._REDACTED_SECRET_VALUE.encode() not in bodies:
+        raise AssertionError("credential-shaped OTLP content lacks the redaction marker")
     relay_json_content = (
         observability._OUT_OF_RANGE_INTEGER,
         "before\ufffdafter",
@@ -887,6 +1044,7 @@ def main() -> None:
 
         _assert_callback_manager_boundary(observability)
         _assert_capture_traversal_bounds(observability)
+        _assert_secret_value_redaction(observability)
         middleware = observability.new_relay_middleware()
         asyncio.run(
             _exercise_async_boundaries(observability, middleware, raw_names)

@@ -26,6 +26,12 @@ export interface CurlProbeOptions {
   timeoutMs?: number;
   /** Absolute or cwd-relative curl config files created by trusted NemoClaw callers. */
   trustedConfigFiles?: readonly string[];
+  /**
+   * Connection capability returned by the endpoint SSRF preflight. A defined
+   * value, including `[]` for an approved no-DNS origin, requires direct
+   * connection with ambient proxies disabled.
+   */
+  pinnedAddresses?: readonly string[];
   spawnSyncImpl?: (
     command: string,
     args: readonly string[],
@@ -42,9 +48,34 @@ export interface StreamingProbeResult {
 const DEFAULT_CURL_PROCESS_TIMEOUT_MS = 30_000;
 const CURL_PROCESS_TIMEOUT_SLACK_MS = 5_000;
 
-function resolveCurlProbeSpawnEnv(opts: CurlProbeOptions): NodeJS.ProcessEnv {
-  if (opts.replaceEnv) return scrubCredentialEnv(opts.env ?? {});
-  return buildScrubbedCurlProbeEnv(opts.env ?? {});
+function resolveCurlProbeSpawnEnv(
+  args: readonly string[],
+  opts: CurlProbeOptions,
+): NodeJS.ProcessEnv {
+  const env = opts.replaceEnv
+    ? scrubCredentialEnv(opts.env ?? {})
+    : buildScrubbedCurlProbeEnv(opts.env ?? {});
+  const hasPreflightCapability = opts.pinnedAddresses !== undefined;
+  const hasResolvePin = args.some((arg) => arg === "--resolve" || arg.startsWith("--resolve="));
+  if (!hasPreflightCapability && !hasResolvePin) return env;
+
+  // A proxy defeats the preflight trust boundary: curl sends CONNECT host:port
+  // and delegates origin selection (and DNS for names) to the proxy. Every
+  // preflight-approved probe therefore bypasses all proxy env spellings,
+  // including approved no-pin loopback, managed-alias, and IP-literal origins.
+  for (const name of [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+  ]) {
+    delete env[name];
+  }
+  env.NO_PROXY = "*";
+  env.no_proxy = "*";
+  return env;
 }
 
 function validateTempPrefix(prefix: string): string {
@@ -236,7 +267,7 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout,
-        env: resolveCurlProbeSpawnEnv(opts),
+        env: resolveCurlProbeSpawnEnv(args, opts),
       },
     );
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
@@ -345,7 +376,7 @@ function runChatCompletionsStreamingProbeImpl(
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout,
-        env: resolveCurlProbeSpawnEnv(opts),
+        env: resolveCurlProbeSpawnEnv(args, opts),
       },
     );
 
@@ -487,7 +518,7 @@ function captureSseEventCounts(
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout,
-        env: resolveCurlProbeSpawnEnv(opts),
+        env: resolveCurlProbeSpawnEnv(args, opts),
       },
     );
 

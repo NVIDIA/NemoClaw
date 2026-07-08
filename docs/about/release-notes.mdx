@@ -16,6 +16,23 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.77
+
+NemoClaw v0.0.77 hardens LangChain Deep Agents Code packaging, tracing, and guided setup. The release publishes and validates the current Deep Agents sandbox base image, reduces telemetry credential exposure, reports the upstream provider selected during onboarding, and reuses a reviewed local credential form in starter prompts.
+
+- LangChain Deep Agents Code base-image handling now rejects stale published, cached, or overridden base images when the installed Deep Agents Code version does not match the managed manifest and dependency lock.
+  This prevents an obsolete base from reaching final-image construction silently.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart) and [Architecture Details](../reference/architecture).
+- The managed Deep Agents runtime disables LangGraph CLI analytics and reports the upstream provider selected during NemoClaw onboarding in the TUI status bar, launch banner, and model-identity prompt.
+  The runtime still uses the OpenAI-compatible adapter internally for inference routing.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart) and [NemoClaw Inference Options](../inference/inference-options).
+- Managed Deep Agents observability now applies a bounded, best-effort scrub pass to recognized credential-shaped values before OTLP trace export.
+  Treat exported traces as sensitive application data and keep collector-side filtering or redaction controls in place for unrecognized sensitive content.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), [Credential Storage](../security/credential-storage), and [Security Best Practices](../security/best-practices).
+- Starter prompts now reuse a checked-in local credential form with loopback-only submission, a restrictive content security policy, redacted confirmation output, and no external resources.
+  This gives coding agents one reviewed credential-capture path instead of asking them to generate credential forms or collect secrets in chat.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](../get-started/quickstart) and [Use NemoClaw Agent Prompts, Docs MCP Server, and Skills with Your AI Coding Agent](../resources/agent-skills).
+
 ## v0.0.76
 
 NemoClaw v0.0.76 adds opt-in OTLP observability and a dedicated documentation guide for LangChain Deep Agents Code, makes Nemotron 3 Ultra the managed NVIDIA Endpoints default for Deep Agents Code, contains shared-gateway inference-route conflicts, and improves upgrade recovery, MCP diagnostics, local inference, messaging, and day-two commands.
