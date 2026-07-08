@@ -1450,12 +1450,10 @@ export function restoreRecreatedSandboxState(
 ): RestoreResult {
   let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
   if (options.targetAgentType === "openclaw") {
+    const targetDir = loadAgent(options.targetAgentType).configPaths.dir;
     const discovery = options.freshOpenClawImagePluginInstalls
-      ? parseOpenClawImagePluginInstalls(
-          options.freshOpenClawImagePluginInstalls,
-          "/sandbox/.openclaw",
-        )
-      : discoverFreshOpenClawImagePluginInstalls(sandboxName, { getSshConfig, sshArgs });
+      ? parseOpenClawImagePluginInstalls(options.freshOpenClawImagePluginInstalls, targetDir)
+      : discoverFreshOpenClawImagePluginInstalls(sandboxName, { getSshConfig, sshArgs }, targetDir);
     if (!discovery.ok) {
       return {
         success: false,

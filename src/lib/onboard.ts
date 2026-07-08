@@ -2989,7 +2989,11 @@ async function createSandboxWithBaseImageResolution(
     },
     {
       discoverFreshOpenClawImagePluginInstalls: (name) =>
-        openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(name, sandboxState),
+        openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(
+          name,
+          sandboxState,
+          agent?.configPaths.dir,
+        ),
       restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
       getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
         getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {

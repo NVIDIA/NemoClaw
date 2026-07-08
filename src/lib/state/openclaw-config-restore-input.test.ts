@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildOpenClawConfigRestoreInput,
+  buildOpenClawConfigRestoreInputFromSandbox,
   shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input";
 
@@ -120,6 +121,29 @@ describe("buildOpenClawConfigRestoreInput", () => {
     expect(result).toMatchObject({
       ok: false,
       error: expect.stringContaining("missing explicit load paths"),
+    });
+  });
+});
+
+describe("buildOpenClawConfigRestoreInputFromSandbox", () => {
+  it("identifies incomplete previous image provenance before reading live state (#6108)", () => {
+    const result = buildOpenClawConfigRestoreInputFromSandbox({
+      backupContents: bufferJson({ plugins: { entries: {} } }),
+      dir: "/sandbox/.openclaw",
+      freshImagePluginInstalls: [],
+      previousImagePluginInstalls: [
+        {
+          id: "weather",
+          installPath: "/sandbox/.openclaw/extensions/weather",
+        },
+      ],
+      specPath: "openclaw.json",
+      sshArgs: [],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Previous OpenClaw image plugin provenance is incomplete",
     });
   });
 });

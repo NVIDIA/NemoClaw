@@ -146,7 +146,7 @@ export function buildOpenClawConfigRestoreInputFromSandbox({
     previousImagePluginInstalls !== undefined &&
     !hasCompleteOpenClawImagePluginProvenance(previousImagePluginInstalls, dir)
   ) {
-    return { ok: false, error: "OpenClaw image plugin provenance is incomplete" };
+    return { ok: false, error: "Previous OpenClaw image plugin provenance is incomplete" };
   }
   return buildOpenClawConfigRestoreInput(
     backupContents,

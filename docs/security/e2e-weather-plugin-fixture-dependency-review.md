@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # E2E Weather Plugin Fixture Dependency Review
 
 Review date: 2026-07-08
@@ -29,7 +32,8 @@ The release-matched `openclaw@2026.5.27` development graph currently has known a
 - The committed npm lockfile records registry integrity for the resolved dependency graph.
 - Every fixture install uses `npm ci --ignore-scripts`; the Docker build also uses `--no-audit --no-fund` and prunes development and peer dependencies before staging the plugin.
 - The image build fails if a private `node_modules/openclaw` remains, then verifies that OpenClaw creates the expected link to the stock global runtime.
-- The GitHub Actions job has read-only `contents` permission, uses full-SHA-pinned actions, and disables checkout credential persistence. Trusted runs use Docker Hub credentials only to pre-pull the digest-pinned builder image; the workflow then removes Docker auth, and the release-pinned fixture execution receives no repository secrets or Docker credential environment variables.
+- The GitHub Actions job has read-only `contents` permission, uses full-SHA-pinned actions, and disables checkout credential persistence.
+  Trusted runs use Docker Hub credentials only to pre-pull the digest-pinned builder image; the workflow then removes Docker auth, and the release-pinned fixture execution receives no repository secrets or Docker credential environment variables.
 - The historical NemoClaw `v0.0.71` exercise uses that tagged CLI's onboarding preflight as its OpenShell compatibility boundary instead of applying current-release capability markers to the older stack.
 - The lane is isolated to deterministic test data and uploads only its path-scoped E2E artifact directory.
 

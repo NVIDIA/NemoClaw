@@ -66,6 +66,11 @@ export function registerRebuildFlowRecoveryTests(): void {
         ["sandbox", "delete", "alpha"],
         expect.objectContaining({ ignoreError: true }),
       );
+      expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
+        "alpha",
+        recoveryManifest.backupPath,
+        { targetAgentType: "openclaw" },
+      );
     });
 
     it("rejects a mismatched prepared manifest before deleting the sandbox (#6114)", async () => {
