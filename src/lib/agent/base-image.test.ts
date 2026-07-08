@@ -80,8 +80,8 @@ describe("agent base image provisioning", () => {
     );
   });
 
-  it("rejects Deep Agents Code base images that drift from the manifest version (#6456)", () => {
-    withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
+  it("configures Deep Agents Code base-image validation from the manifest (#6456)", () => {
+    withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
       ensureAgentBaseImage(
         makeAgent({
           name: "langchain-deepagents-code",
@@ -91,47 +91,6 @@ describe("agent base image provisioning", () => {
           dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
         }),
       );
-      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
-        validateImage?: (imageRef: string) => boolean;
-      };
-
-      dockerCaptureMock.mockReturnValue("0.1.34");
-      expect(options.validateImage?.("dcode-base:current")).toBe(true);
-      expect(dockerCaptureMock).toHaveBeenLastCalledWith(
-        [
-          "run",
-          "--rm",
-          "--network",
-          "none",
-          "--cap-drop",
-          "ALL",
-          "--security-opt",
-          "no-new-privileges",
-          "--read-only",
-          "--entrypoint",
-          "/opt/venv/bin/python3",
-          "dcode-base:current",
-          "-I",
-          "-c",
-          'import importlib.metadata; print(importlib.metadata.version("deepagents-code"))',
-        ],
-        { ignoreError: true, timeout: 20_000 },
-      );
-
-      dockerCaptureMock.mockReturnValue("0.1.12");
-      expect(options.validateImage?.("dcode-base:stale")).toBe(false);
-
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-      dockerCaptureMock.mockReturnValue("");
-      expect(options.validateImage?.("dcode-base:unreadable")).toBe(false);
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "dcode-base:unreadable returned no Deep Agents Code version output",
-        ),
-      );
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("deepagents-code==0.1.34"));
-      warn.mockRestore();
-
       expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
         expect.objectContaining({
           inputPaths: [
