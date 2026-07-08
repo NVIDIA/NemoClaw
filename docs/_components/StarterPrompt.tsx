@@ -89,20 +89,29 @@ Instead, collect the required choices from me first, one clickable selection at 
 
 ## Handle Tokens Securely and Visually
 
-When you need an API key, bot token, app token, or other secret, prefer the checked-in NemoClaw local credential form instead of chat.
+When you need an API key, bot token, app token, or other secret, prefer the checked-in NemoClaw local credential helper and form instead of chat.
 
-- Ask permission before opening a local credential form.
-- Do not generate, rewrite, or redesign credential-form HTML. Use the repository form template from this URL exactly: https://raw.githubusercontent.com/NVIDIA/NemoClaw/c9aac7dc12bacdaa4d38af552b893021049ee836/docs/resources/local-credential-form.html
-- Fetch that template or use the local repo copy when available, verify its SHA-256 digest is \`cc746703ab514cf33d7131915f16e8dc19346b26a4d953c5125be81449d6e6f6\`, write the exact bytes into a private temporary directory, then serve it from a helper bound to \`127.0.0.1\` on a random local port.
-- Treat that immutable URL and digest as one reviewed trust boundary. Stop if verification fails; do not substitute a different URL, template, or digest.
-- Open the served loopback URL, not the raw GitHub URL, in your coding-agent UI's browser. Configure fields with query parameters such as \`?fields=NVIDIA_INFERENCE_API_KEY:secret\` or \`?fields=NEMOCLAW_ENDPOINT_URL:text,NEMOCLAW_MODEL:text,COMPATIBLE_API_KEY:secret\`.
-- Implement only the tiny loopback helper around the template: serve the HTML file, accept its \`POST /submit\` JSON payload, keep submitted values in memory, and expose no external network listener. When serving the HTML response, include the HTTP header \`Content-Security-Policy: frame-ancestors 'none'\` because browsers do not enforce that directive from a meta tag.
-- Use \`:secret\` fields for secret values and \`:text\` fields for non-secret IDs such as server IDs, allowlists, endpoint URLs, and sandbox names.
-- Keep submitted secrets only in memory long enough to run the approved command. Do not print them, write them to logs, commit them, or paste them into chat.
-- If you must write a temporary file for the helper, use a private temporary directory, restrict permissions when possible, and delete it immediately after use.
-- Show me a redacted summary before running commands, such as \`TELEGRAM_BOT_TOKEN=********\`, and ask permission to continue.
-- After the command finishes, shut down the local helper and delete the temporary HTML file.
-- If your environment cannot serve a loopback helper, use the local terminal, a secure secret prompt, or the local app prompt that needs the credential. Do not fall back to generated form HTML.
+- Before starting credential collection, determine the exact environment-variable names and exact command argv that will receive them. Explain the command in plain language, say that the form's final confirmation runs that already-approved command immediately, and ask my permission.
+- Do not generate, rewrite, or redesign the helper or form. Use this reviewed pair exactly:
+  - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/6546c085a76f1001ac89a5e47b8179067a3f617a/scripts/local-credential-helper.mts (SHA-256 \`fa93b22b0c14350b4ed768550124c5f015ed6d902a264266d38eacf95e6d203f\`)
+  - Form: https://raw.githubusercontent.com/NVIDIA/NemoClaw/6546c085a76f1001ac89a5e47b8179067a3f617a/docs/resources/local-credential-form.html (SHA-256 \`b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68\`)
+- Fetch both files, or use local repository copies when available, and verify both SHA-256 digests before use. Put fetched copies in a private temporary directory with access restricted to the current user.
+- Treat the two immutable URL and digest pairs as one reviewed trust boundary. Stop if either verification fails; do not substitute another URL, helper, form, or digest.
+- The helper requires Node.js 22.16 or newer. If that runtime is unavailable, use a secure local terminal prompt or local app prompt instead; never ask for the value in chat and never fall back to generated helper or form code.
+- Use the helper's repeated \`--field NAME:type\` arguments, followed by a literal \`--\` and the exact approved argv. For example:
+
+\`\`\`shell
+node --experimental-strip-types <private-dir>/local-credential-helper.mts --form <private-dir>/local-credential-form.html --field NVIDIA_INFERENCE_API_KEY:secret -- <approved-executable> <approved-args...>
+\`\`\`
+
+- Use \`:secret\` for every secret. Use \`:text\` only for non-secret IDs, allowlists, endpoint URLs, model names, and sandbox names. The helper must reject credential-looking \`:text\` fields and process-control environment names.
+- Keep real credentials out of argv. The helper supplies accepted values only through the child process environment and invokes the frozen argv without adding a shell.
+- Open only the one-time \`http://127.0.0.1\` URL printed by the helper in the coding-agent UI's browser. Do not paste that URL or its fragment capability into chat.
+- In the form, enter the values and choose **Preview Credentials**. Preview is local-only: it clears the inputs and shows a redacted summary without sending a request. Choose **Edit** to discard that snapshot and re-enter every value.
+- Choose **Confirm and Run Approved Command** only after the redacted summary matches the command I already approved. That click makes the form's sole credential-bearing request; the helper accepts at most one valid submission, closes its listener, and starts the exact approved argv.
+- If the form says the outcome is unknown, do not retry or resubmit. Inspect the coding-agent terminal to determine whether the command ran, then start a fresh helper session only if needed.
+- Keep submitted secrets only in memory long enough to start the approved command. Do not print them, write them to logs, commit them, or paste them into chat.
+- After the command finishes, delete any fetched helper and form copies and their private temporary directory.
 
 Use this provider mapping for non-interactive setup:
 
@@ -118,7 +127,7 @@ Use this provider mapping for non-interactive setup:
 | Local Ollama | \`ollama\` | Optional \`NEMOCLAW_MODEL\`; set \`NEMOCLAW_YES=1\` only if I approve model download |
 | Model Router | \`routed\` | \`NVIDIA_INFERENCE_API_KEY\` |
 
-When you have the approved values, run the installer with the environment variables on the \`bash\` side of the pipe, not before \`curl\`.
+For a credentialed \`curl | bash\` install, make the exact approved argv invoke \`bash -c\` with a script that copies each credential into a non-exported shell variable, unsets the exported credential before starting \`curl\`, and supplies it only in the environment assignments on the \`bash\` side of the pipe. Use variable references in that script, never real credential values in argv.
 Do not offer the Hermes Provider option for OpenClaw or Deep Agents.
 
 For example, for an approved Local Ollama setup:

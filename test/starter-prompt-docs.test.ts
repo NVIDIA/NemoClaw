@@ -25,8 +25,12 @@ const localCredentialFormSource = path.join(
   "resources",
   "local-credential-form.html",
 );
+const localCredentialHelperUrl =
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/6546c085a76f1001ac89a5e47b8179067a3f617a/scripts/local-credential-helper.mts";
+const localCredentialHelperSha256 =
+  "fa93b22b0c14350b4ed768550124c5f015ed6d902a264266d38eacf95e6d203f"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/c9aac7dc12bacdaa4d38af552b893021049ee836/docs/resources/local-credential-form.html";
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/6546c085a76f1001ac89a5e47b8179067a3f617a/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 =
   "b604a8c355ca9ec67ae1ad368537861e78cadfa1441a55da02c43df3313aee68"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormScriptCspHash = [
@@ -330,19 +334,28 @@ describe("starter prompt docs CTA", () => {
     );
   });
 
-  it("pins local credential capture to the checked-in form template (#5048)", () => {
+  it("pins local credential capture to the checked-in helper and form (#5048)", () => {
     const promptSource = fs.readFileSync(starterPromptSource, "utf8");
     const formSource = fs.readFileSync(localCredentialFormSource, "utf8");
 
+    expect(promptSource).toContain(localCredentialHelperUrl);
+    expect(promptSource).toContain(localCredentialHelperSha256);
     expect(promptSource).toContain(localCredentialFormUrl);
     expect(promptSource).toContain(localCredentialFormSha256);
     expect(createHash("sha256").update(formSource).digest("hex")).toBe(localCredentialFormSha256);
+    expect(localCredentialHelperUrl).toMatch(/\/[0-9a-f]{40}\//);
+    expect(localCredentialHelperUrl).not.toMatch(/\/(?:main|master)\//);
     expect(localCredentialFormUrl).toMatch(/\/[0-9a-f]{40}\//);
     expect(localCredentialFormUrl).not.toMatch(/\/(?:main|master)\//);
-    expect(promptSource).toContain("Do not generate, rewrite, or redesign credential-form HTML.");
-    expect(promptSource).toContain("immutable URL and digest as one reviewed trust boundary");
-    expect(promptSource).toContain("serve it from a helper bound to \\`127.0.0.1\\`");
-    expect(promptSource).toContain("?fields=NVIDIA_INFERENCE_API_KEY:secret");
+    expect(promptSource).toContain("Do not generate, rewrite, or redesign the helper or form.");
+    expect(promptSource).toContain(
+      "two immutable URL and digest pairs as one reviewed trust boundary",
+    );
+    expect(promptSource).toContain("exact environment-variable names and exact command argv");
+    expect(promptSource).toContain("--field NAME:type");
+    expect(promptSource).toContain("Confirm and Run Approved Command");
+    expect(promptSource).toContain("do not retry or resubmit");
+    expect(promptSource).toContain("unsets the exported credential before starting \\`curl\\`");
     expect(formSource).toContain("<title>NemoClaw Local Credential Form</title>");
     expect(formSource).toContain("Content-Security-Policy");
     expect(formSource).toContain("connect-src 'self';");
@@ -356,7 +369,6 @@ describe("starter prompt docs CTA", () => {
       `script-src ${sha256Source(extractTagContent(formSource, "script"))};`,
     );
     expect(cspMetaContent(formSource)).not.toContain("frame-ancestors");
-    expect(promptSource).toContain("Content-Security-Policy: frame-ancestors 'none'");
     expect(formSource).toContain('const LOCAL_SUBMIT_PATH = "/submit";');
     expect(formSource).toContain("fetch(LOCAL_SUBMIT_PATH");
     expect(formSource).not.toContain('params.get("submit")');
