@@ -575,10 +575,8 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
 
     expect(result.status === 0, result.stderr).toBe(allowed);
     expect(fs.existsSync(ranMarker)).toBe(allowed);
-    if (!allowed) {
-      expect(result.stderr).toContain("CONTEXT_SAMPLE");
-      expect(result.stderr).not.toContain(value);
-    }
+    expect(result.stderr.includes("CONTEXT_SAMPLE")).toBe(!allowed);
+    expect(result.stderr).not.toContain(value);
   });
 
   it("rejects credential-name-context env-file entries with opaque payloads", () => {
