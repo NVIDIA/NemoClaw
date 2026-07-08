@@ -14,7 +14,11 @@ import {
   parseMcpAddArgs,
   resolveCredentialEnv,
 } from "./mcp-bridge";
-import { assertMcpCredentialBoundaryRuntimeVersion } from "./mcp-bridge-validation";
+import {
+  assertMcpCredentialBoundaryRuntimeVersion,
+  MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
+  McpCredentialBoundaryRuntimeVersionError,
+} from "./mcp-bridge-validation";
 import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.72.json";
 
 function matchingOpenshellRuntime() {
@@ -28,13 +32,23 @@ function matchingOpenshellRuntime() {
   };
 }
 
+function captureRuntimeVersionError(validate: () => void) {
+  try {
+    validate();
+  } catch (error) {
+    expect(error).toBeInstanceOf(McpCredentialBoundaryRuntimeVersionError);
+    return error as McpCredentialBoundaryRuntimeVersionError;
+  }
+  throw new Error("expected runtime version validation to fail");
+}
+
 describe("MCP CLI input validation", () => {
   it("requires the runtime OpenShell version to match the credential boundary manifest", () => {
     expect(() =>
       assertMcpCredentialBoundaryRuntimeVersion(matchingOpenshellRuntime()),
     ).not.toThrow();
 
-    expect(() =>
+    const mismatch = () =>
       assertMcpCredentialBoundaryRuntimeVersion({
         ...matchingOpenshellRuntime(),
         runVersionCommand: () => ({
@@ -42,16 +56,55 @@ describe("MCP CLI input validation", () => {
           stdout: "openshell 0.0.73\n",
           stderr: "",
         }),
-      }),
-    ).toThrow(
+      });
+    const error = captureRuntimeVersionError(mismatch);
+    expect(error.message).toMatch(
       /expected 0\.0\.72, actual 0\.0\.73 \(version mismatch\)\. Install OpenShell 0\.0\.72, or point NEMOCLAW_OPENSHELL_BIN to that version, then retry\./,
+    );
+    expect(error).toMatchObject({
+      actualVersion: "0.0.73",
+      detail: "version mismatch",
+      reason: "version-mismatch",
+    });
+    expect(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION).toBe(
+      childVisibleCredentialManifest.openshellVersion,
     );
   });
 
   it("fails closed when the runtime OpenShell binary is missing", () => {
-    expect(() =>
+    const error = captureRuntimeVersionError(() =>
       assertMcpCredentialBoundaryRuntimeVersion({ resolveOpenshell: () => null }),
-    ).toThrow(/expected 0\.0\.72, actual <missing> \(openshell binary not found\)/);
+    );
+    expect(error.message).toMatch(
+      /expected 0\.0\.72, actual <missing> \(openshell binary not found\)/,
+    );
+    expect(error).toMatchObject({
+      actualVersion: "<missing>",
+      detail: "openshell binary not found",
+      reason: "binary-missing",
+    });
+  });
+
+  it("fails closed when openshell --version cannot be executed (#6426)", () => {
+    const error = captureRuntimeVersionError(() =>
+      assertMcpCredentialBoundaryRuntimeVersion({
+        ...matchingOpenshellRuntime(),
+        runVersionCommand: () => ({
+          error: Object.assign(new Error("credential-shaped-output-must-not-be-repeated"), {
+            code: "EACCES",
+          }),
+          status: null,
+          stdout: "",
+          stderr: "",
+        }),
+      }),
+    );
+    expect(error).toMatchObject({
+      actualVersion: "<unavailable>",
+      detail: "openshell --version failed",
+      reason: "probe-failed",
+    });
+    expect(String(error)).not.toContain("credential-shaped-output-must-not-be-repeated");
   });
 
   it("fails closed when openshell --version exits unsuccessfully", () => {
@@ -63,14 +116,16 @@ describe("MCP CLI input validation", () => {
         stderr: "credential-shaped-output-must-not-be-repeated",
       }),
     };
-    expect(() => assertMcpCredentialBoundaryRuntimeVersion(deps)).toThrow(
+    const error = captureRuntimeVersionError(() => assertMcpCredentialBoundaryRuntimeVersion(deps));
+    expect(error.message).toMatch(
       /expected 0\.0\.72, actual <unavailable> \(openshell --version exited with status 23\)/,
     );
-    try {
-      assertMcpCredentialBoundaryRuntimeVersion(deps);
-    } catch (error) {
-      expect(String(error)).not.toContain("credential-shaped-output-must-not-be-repeated");
-    }
+    expect(error).toMatchObject({
+      actualVersion: "<unavailable>",
+      detail: "openshell --version exited with status 23",
+      reason: "probe-nonzero",
+    });
+    expect(String(error)).not.toContain("credential-shaped-output-must-not-be-repeated");
   });
 
   it("fails closed without reflecting unparseable version output", () => {
@@ -82,15 +137,16 @@ describe("MCP CLI input validation", () => {
         stderr: "",
       }),
     };
-    try {
-      assertMcpCredentialBoundaryRuntimeVersion(deps);
-      throw new Error("expected runtime version validation to fail");
-    } catch (error) {
-      expect(String(error)).toMatch(
-        /expected 0\.0\.72, actual <unparseable> \(invalid openshell --version output\)/,
-      );
-      expect(String(error)).not.toContain("credential-shaped-output-must-not-be-repeated");
-    }
+    const error = captureRuntimeVersionError(() => assertMcpCredentialBoundaryRuntimeVersion(deps));
+    expect(error.message).toMatch(
+      /expected 0\.0\.72, actual <unparseable> \(invalid openshell --version output\)/,
+    );
+    expect(error).toMatchObject({
+      actualVersion: "<unparseable>",
+      detail: "invalid openshell --version output",
+      reason: "unparseable-output",
+    });
+    expect(String(error)).not.toContain("credential-shaped-output-must-not-be-repeated");
   });
 
   it("parses server, URL, and env references", () => {

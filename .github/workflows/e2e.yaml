@@ -715,7 +715,15 @@ jobs:
           set -euo pipefail
           bash scripts/install-openshell.sh
 
+      - id: mcp_runtime_compatibility
+        name: Classify OpenShell credential-boundary compatibility
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          npx tsx tools/e2e/mcp-bridge-runtime-compatibility.mts
+
       - name: Run MCP OpenShell provider live test
+        if: ${{ steps.mcp_runtime_compatibility.outputs.mode == 'full-lifecycle' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
