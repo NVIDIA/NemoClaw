@@ -21,6 +21,7 @@ const MAX_TRANSACTION_BYTES = 256 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const BACKUP_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/;
 
@@ -36,6 +37,7 @@ export interface RebuildTransactionIntentV1 {
   readonly source: {
     readonly agent: string | null;
     readonly registryFingerprint: string;
+    readonly legacyManagedImageRecoveryAuthorized: boolean;
   };
   readonly target: {
     readonly agent: string | null;
@@ -186,6 +188,14 @@ function nullableString(value: unknown, label: string, sandboxName: string): str
   return requiredString(value, label, sandboxName);
 }
 
+function nullableEnvName(value: unknown, label: string, sandboxName: string): string | null {
+  const candidate = nullableString(value, label, sandboxName);
+  if (candidate !== null && !ENV_NAME_PATTERN.test(candidate)) {
+    throw transactionError("CORRUPT", sandboxName, `${label} is not an environment variable name`);
+  }
+  return candidate;
+}
+
 function isExactIsoTimestamp(candidate: string): boolean {
   if (!ISO_TIMESTAMP_PATTERN.test(candidate)) return false;
   const milliseconds = Date.parse(candidate);
@@ -253,6 +263,13 @@ function normalizeIntent(value: unknown, sandboxName: string): RebuildTransactio
   if (typeof target.observabilityEnabled !== "boolean") {
     throw transactionError("CORRUPT", sandboxName, "intent.target.observabilityEnabled is invalid");
   }
+  if (typeof source.legacyManagedImageRecoveryAuthorized !== "boolean") {
+    throw transactionError(
+      "CORRUPT",
+      sandboxName,
+      "intent.source.legacyManagedImageRecoveryAuthorized is invalid",
+    );
+  }
   return {
     sandboxName,
     source: {
@@ -262,12 +279,13 @@ function normalizeIntent(value: unknown, sandboxName: string): RebuildTransactio
         "intent.source.registryFingerprint",
         sandboxName,
       ),
+      legacyManagedImageRecoveryAuthorized: source.legacyManagedImageRecoveryAuthorized,
     },
     target: {
       agent: nullableString(target.agent, "intent.target.agent", sandboxName),
       provider: requiredString(target.provider, "intent.target.provider", sandboxName),
       model: requiredString(target.model, "intent.target.model", sandboxName),
-      credentialEnv: nullableString(
+      credentialEnv: nullableEnvName(
         target.credentialEnv,
         "intent.target.credentialEnv",
         sandboxName,
