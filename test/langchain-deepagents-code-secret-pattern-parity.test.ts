@@ -76,7 +76,7 @@ describe("Deep Agents Code secret-pattern parity", () => {
       context: [
         "(?<=Bearer\\s+)[A-Za-z0-9_.+/=-]{10,}::gi",
         "(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::gi",
-        "(?<=(?:^|[^A-Za-z0-9])(?!replyToken[\"']?(?:[ \\t]{0,32}[=:]|[ \\t]{1,32}))(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::g",
+        "(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::g",
         "(?<=(?:^|[^A-Za-z0-9])KEY[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::g",
       ],
       block: [
@@ -134,7 +134,6 @@ describe("Deep Agents Code secret-pattern parity", () => {
       "passThrough=opaqueNonSecretPayload123",
       "publicKey=opaqueVerificationMaterial123",
       "customKey=opaqueNonSecretPayload123",
-      '{"replyToken":"reply-correlation-token-123"}',
       `${"a".repeat(129)}Secret=opaqueCredentialPayloadZ1234567890`,
     ]) {
       expect(matches(camelPattern, value), value.slice(0, 80)).toBe(false);
@@ -187,7 +186,7 @@ def environment_is_safe(name, value):
         return False
 try:
     runtime_name_safety = [
-        environment_is_safe("replyToken", "reply-correlation-token-123"),
+        environment_is_safe("replyToken", "opaqueCredentialPayloadZ1234567890"),
         environment_is_safe("replyToken", "sk-abcdefghijklmnopqrstuvwx"),
         environment_is_safe("ReplyToken", "opaqueCredentialPayloadZ1234567890"),
         environment_is_safe("foo\\nclientSecret", "opaqueCredentialPayloadZ1234567890"),
@@ -214,7 +213,7 @@ json.dump(
       values: CANONICAL_SECRET_POSITIVE_VECTORS.map(() => true),
       credential_names: Array.from({ length: 16 }, () => true),
       benign_names: Array.from({ length: 9 }, () => false),
-      runtime_name_safety: [true, false, false, false],
+      runtime_name_safety: [false, false, false, false],
     });
   });
 
@@ -241,6 +240,9 @@ boundary_value = (
 json.dump({
     "values": [observability._scrub_secret_values(value) for value in values],
     "boundary": observability._bounded_capture(boundary_value),
+    "reply_token": observability._scrub_secret_values(
+        'replyToken="opaqueCredentialPayloadZ1234567890"'
+    ),
 }, sys.stdout)
 `;
     const values = CANONICAL_SECRET_POSITIVE_VECTORS.map((vector) => vector.value);
@@ -248,7 +250,11 @@ json.dump({
       encoding: "utf8",
       input: JSON.stringify(values),
     });
-    const scrubbed = JSON.parse(output) as { values: string[]; boundary: string };
+    const scrubbed = JSON.parse(output) as {
+      values: string[];
+      boundary: string;
+      reply_token: string;
+    };
 
     for (const [index, value] of values.entries()) {
       expect(scrubbed.values[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).toContain(
@@ -260,6 +266,7 @@ json.dump({
     }
     expect(scrubbed.boundary).toContain("<redacted-secret>");
     expect(scrubbed.boundary).not.toContain("Api_Key=ABCDEFG");
+    expect(scrubbed.reply_token).toBe('replyToken="<redacted-secret>"');
   });
 
   it("preserves benign near-misses in managed observability (#6452)", () => {
@@ -287,7 +294,6 @@ json.dump([observability._scrub_secret_values(value) for value in values], sys.s
       "publicKey=opaqueVerificationMaterial123",
       "customKey=opaqueNonSecretPayload123",
       '{"key":"agent:main:main"}',
-      '{"replyToken":"reply-correlation-token-123"}',
       "-----BEGIN PUBLIC KEY-----\\nnot-private\\n-----END PUBLIC KEY-----",
     ];
     const output = execFileSync("python3", ["-I", "-c", probe, observabilityPath], {

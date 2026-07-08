@@ -187,8 +187,7 @@ _ANCHORED_SECRET_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"((?:^|[^A-Za-z0-9])(?!replyToken['\"]?"
-        r"(?:[ \t]{0,32}[=:]|[ \t]{1,32}))"
+        r"((?:^|[^A-Za-z0-9])"
         r"(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|"
         r"[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|"
         r"[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|"
@@ -239,8 +238,7 @@ _TRUNCATED_SECRET_PATTERNS = tuple(
             re.IGNORECASE,
         ),
         (
-            r"(?:^|[^A-Za-z0-9])(?!replyToken['\"]?"
-            r"(?:[ \t]{0,32}[=:]|[ \t]{1,32}))"
+            r"(?:^|[^A-Za-z0-9])"
             r"(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|"
             r"[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|"
             r"[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|"
@@ -309,8 +307,6 @@ def _bounded_string(
 def _redact_capture_key(key: Any) -> bool:
     if type(key) is not str:
         return True
-    if key == "replyToken":
-        return False
     segmented = _CAPTURE_KEY_ACRONYM_BOUNDARY.sub("_", key.strip())
     normalized = _CAPTURE_KEY_DELIMITER.sub(
         "_", _CAPTURE_KEY_CAMEL_BOUNDARY.sub("_", segmented)
