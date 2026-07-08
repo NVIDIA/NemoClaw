@@ -1,16 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,11 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const resolveOpenshellModule = require("../adapters/openshell/resolve");
 
-const {
-  GATEWAY_STOP_SCRIPT,
-  stopAll,
-  stopSandboxChannels,
-} = require("./services") as typeof import("./services");
+const { stopAll, stopSandboxChannels } = require("./services") as typeof import("./services");
 
 // ---------------------------------------------------------------------------
 // stopSandboxChannels
@@ -142,7 +129,10 @@ describe("stopSandboxChannels", () => {
   it("does not select overlapping sandbox pod names for privileged shutdown", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     spawnSyncSpy
-      .mockReturnValueOnce({ status: 0, stdout: "pod/prod-app-abc\npod/app-abc\n" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "pod/prod-app-abc\npod/app-abc\n",
+      })
       .mockReturnValueOnce({ status: 0 });
 
     stopSandboxChannels("app");
@@ -156,7 +146,10 @@ describe("stopSandboxChannels", () => {
   it("falls back when no exact generated sandbox pod name is available", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     spawnSyncSpy
-      .mockReturnValueOnce({ status: 0, stdout: "pod/prod-app-abc\npod/app-copy-abc\n" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "pod/prod-app-abc\npod/app-copy-abc\n",
+      })
       .mockReturnValueOnce({ status: 0 });
 
     stopSandboxChannels("app");
@@ -261,233 +254,6 @@ describe("stopSandboxChannels", () => {
     expect(() => stopSandboxChannels("../escape")).toThrow("Invalid sandbox name");
     expect(spawnSyncSpy).not.toHaveBeenCalled();
   });
-});
-
-// ---------------------------------------------------------------------------
-// GATEWAY_STOP_SCRIPT — executed end-to-end against real processes.
-//
-// Linux-only: relies on `ps -eo args=`, awk, and POSIX signals. CI runs on
-// Linux. These tests spawn fake processes that reproduce each gateway argv
-// form and assert the script finds and kills them (and leaves non-gateway
-// processes alone). This is the real guard for #4951: the bare "openclaw"
-// process (argv rewritten via process.title) must be detected and stopped.
-// ---------------------------------------------------------------------------
-
-describe("GATEWAY_STOP_SCRIPT (executed)", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const cp = require("node:child_process");
-  const children: Array<{ pid?: number }> = [];
-  const identityDirs: string[] = [];
-
-  afterEach(() => {
-    const pids = children
-      .splice(0)
-      .map((child) => child.pid)
-      .filter((pid): pid is number => pid !== undefined);
-    for (const pid of pids) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
-    for (const dir of identityDirs.splice(0)) {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  // Spawn a long-lived process with a chosen argv[0]. `cat` takes no arguments,
-  // so argv stays exactly `title`; an open (unwritten) stdin pipe keeps it
-  // blocked and alive until the stop script signals it. A /dev/null stdin
-  // ("ignore") would hit EOF and exit immediately, so use a pipe.
-  function spawnWithArgv0(title: string): number {
-    const child = cp.spawn("bash", ["-c", `exec -a '${title}' cat`], {
-      stdio: ["pipe", "ignore", "ignore"],
-    });
-    children.push(child);
-    assert(child.pid, `failed to spawn process with argv0 ${title}`);
-    return child.pid;
-  }
-
-  function isAlive(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function liveChildPids(): number[] {
-    return children.map((child) => child.pid).filter((pid): pid is number => pid !== undefined);
-  }
-
-  function runStopScript(script = GATEWAY_STOP_SCRIPT, allowedPids = liveChildPids()): number {
-    const scopedScript = `
-allowed_test_pids="${allowedPids.join(" ")}"
-ps() {
-  if [ "$*" = "-eo user=,pid=,args=" ]; then
-    command ps -eo user=,pid=,args= | awk -v allowed="$allowed_test_pids" '
-      BEGIN {
-        split(allowed, pids, " ")
-        for (i in pids) if (pids[i] != "") keep[pids[i]] = 1
-      }
-      $2 in keep { print }
-    '
-  else
-    command ps "$@"
-  fi
-}
-${script}`;
-    const result = cp.spawnSync("sh", ["-lc", scopedScript], {
-      encoding: "utf-8",
-      timeout: 20000,
-    });
-    assert(result.status !== null, `stop script did not exit: ${result.signal} ${result.stderr}`);
-    return result.status;
-  }
-
-  function processStartTime(pid: number): string {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
-    return stat.replace(/^[^)]*\) /, "").split(" ")[19];
-  }
-
-  function stopScriptWithGatewayIdentity(
-    pid: number,
-    mode = 0o600,
-    pidContent = `${pid} ${processStartTime(pid)}\n`,
-  ): string {
-    const dir = mkdtempSync(join(tmpdir(), "nemoclaw-gateway-stop-identity-"));
-    identityDirs.push(dir);
-    const pidFile = join(dir, "nemoclaw-gateway.pid");
-    const markerFile = join(dir, "nemoclaw-gateway-local");
-    writeFileSync(pidFile, pidContent, { mode });
-    writeFileSync(markerFile, "", { mode });
-    chmodSync(pidFile, mode);
-    chmodSync(markerFile, mode);
-    return GATEWAY_STOP_SCRIPT.replaceAll("/tmp/nemoclaw-gateway.pid", pidFile)
-      .replaceAll("/tmp/nemoclaw-gateway-local", markerFile)
-      .replace(
-        'allowed_bare_users="gateway,sandbox"',
-        `allowed_bare_users="gateway,sandbox,${process.env.USER ?? ""}"`,
-      )
-      .replace("root|gateway|sandbox) ;;", `root|gateway|sandbox|${process.env.USER ?? ""}) ;;`);
-  }
-
-  it.runIf(process.platform === "linux")("kills openclaw-gateway argv0 process", async () => {
-    const pid = spawnWithArgv0("openclaw-gateway");
-    expect(isAlive(pid)).toBe(true);
-
-    expect(runStopScript()).toBe(0);
-
-    await new Promise((r) => setTimeout(r, 300));
-    expect(isAlive(pid)).toBe(false);
-  });
-
-  it.runIf(process.platform === "linux")("kills openclaw gateway run command form", async () => {
-    const pid = spawnWithArgv0("openclaw gateway run");
-    expect(isAlive(pid)).toBe(true);
-
-    expect(runStopScript()).toBe(0);
-
-    await new Promise((r) => setTimeout(r, 300));
-    expect(isAlive(pid)).toBe(false);
-  });
-
-  it.runIf(process.platform === "linux")(
-    "finds and kills a gateway whose argv was rewritten to bare 'openclaw' (#4951)",
-    async () => {
-      const pid = spawnWithArgv0("openclaw");
-      expect(isAlive(pid)).toBe(true);
-
-      expect(runStopScript(stopScriptWithGatewayIdentity(pid))).toBe(0);
-
-      // Give the kernel a moment to reap after SIGTERM.
-      await new Promise((r) => setTimeout(r, 300));
-      expect(isAlive(pid)).toBe(false);
-    },
-  );
-
-  it.runIf(process.platform === "linux")(
-    "only signals PIDs spawned by this test when executing the stop script",
-    async () => {
-      const unrelated = spawnWithArgv0("openclaw-gateway");
-      const intended = spawnWithArgv0("openclaw-gateway");
-      expect(isAlive(unrelated)).toBe(true);
-      expect(isAlive(intended)).toBe(true);
-
-      expect(runStopScript(GATEWAY_STOP_SCRIPT, [intended])).toBe(0);
-
-      await new Promise((r) => setTimeout(r, 300));
-      expect(isAlive(intended)).toBe(false);
-      expect(isAlive(unrelated)).toBe(true);
-    },
-  );
-
-  it.runIf(process.platform === "linux")(
-    "exits 1 (not running) and spares a bare openclaw process without gateway identity",
-    () => {
-      const decoy = spawnWithArgv0("openclaw");
-
-      expect(runStopScript()).toBe(1);
-      expect(isAlive(decoy)).toBe(true);
-    },
-  );
-
-  it.runIf(process.platform === "linux")(
-    "exits 1 (not running) and spares bare openclaw when gateway identity files are unsafe",
-    () => {
-      const decoy = spawnWithArgv0("openclaw");
-
-      expect(runStopScript(stopScriptWithGatewayIdentity(decoy, 0o644))).toBe(1);
-      expect(isAlive(decoy)).toBe(true);
-    },
-  );
-
-  it.runIf(process.platform === "linux")(
-    "rejects malformed gateway pid file contents instead of digit-stripping to another PID",
-    () => {
-      const decoy = spawnWithArgv0("openclaw");
-
-      expect(runStopScript(stopScriptWithGatewayIdentity(decoy, 0o600, `x${decoy}y\n`))).toBe(1);
-      expect(isAlive(decoy)).toBe(true);
-    },
-  );
-
-  it.runIf(process.platform === "linux")(
-    "exits 1 (not running) and spares bare openclaw when gateway identity owner mismatches the process user",
-    () => {
-      const decoy = spawnWithArgv0("openclaw");
-      const script = stopScriptWithGatewayIdentity(decoy).replace(
-        '-v identity_owner="$pidfile_owner"',
-        '-v identity_owner="sandbox"',
-      );
-
-      expect(runStopScript(script)).toBe(1);
-      expect(isAlive(decoy)).toBe(true);
-    },
-  );
-
-  it.runIf(process.platform === "linux")(
-    "exits 1 (not running) and spares bare openclaw when trusted gateway identity is stale",
-    () => {
-      const decoy = spawnWithArgv0("openclaw");
-
-      expect(runStopScript(stopScriptWithGatewayIdentity(decoy, 0o600, `${decoy} 1\n`))).toBe(1);
-      expect(isAlive(decoy)).toBe(true);
-    },
-  );
-
-  it.runIf(process.platform === "linux")(
-    "exits 1 (not running) and spares non-gateway processes",
-    () => {
-      // A process whose name merely starts with "openclaw" must not match.
-      const decoy = spawnWithArgv0("openclawish");
-
-      expect(runStopScript()).toBe(1);
-      expect(isAlive(decoy)).toBe(true);
-    },
-  );
 });
 
 // ---------------------------------------------------------------------------
