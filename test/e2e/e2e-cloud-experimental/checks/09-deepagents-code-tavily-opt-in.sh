@@ -12,6 +12,7 @@ REPO="${REPO:-$(pwd)}"
 CLI="${NEMOCLAW_E2E_CLI:-${REPO}/bin/nemoclaw.js}"
 PROJECT_VENV="/sandbox/.nemoclaw-e2e-project-venv"
 PROJECT_PYTHON="${PROJECT_VENV}/bin/python3"
+OBSERVABILITY_MARKER_BEFORE="absent"
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -26,6 +27,14 @@ pass() {
 
 sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
+observability_marker_value() {
+  # Expansion is intentionally deferred to the sandbox shell.
+  # shellcheck disable=SC2016
+  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    sh -c 'marker=/tmp/nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
+    2>/dev/null
 }
 
 nemoclaw_cli() {
@@ -113,6 +122,51 @@ python_probe() {
   sandbox_exec "$remote_cmd"
 }
 
+restore_observability_state() {
+  local marker_after restore_output
+  [ "$OBSERVABILITY_MARKER_BEFORE" = "1" ] || return 0
+
+  marker_after="$(observability_marker_value || true)"
+  if [ "$marker_after" != "1" ]; then
+    if ! restore_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      /usr/bin/env NEMOCLAW_OBSERVABILITY=1 \
+      /usr/local/bin/nemoclaw-start /usr/bin/true 2>&1)"; then
+      fail_test "could not restore managed observability after policy-remove: $restore_output"
+      return 1
+    fi
+  fi
+
+  marker_after="$(observability_marker_value || true)"
+  if [ "$marker_after" = "1" ]; then
+    pass "managed observability state restores after policy-remove"
+  else
+    fail_test "managed observability marker was not restored after policy-remove"
+    return 1
+  fi
+}
+
+restore_tavily_denial() {
+  local cleanup_status=0 remove_output post_remove_probe_output
+  OBSERVABILITY_MARKER_BEFORE="$(observability_marker_value || true)"
+  if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
+    fail_test "policy-remove tavily failed after the opt-in proof: $remove_output"
+    cleanup_status=1
+  else
+    sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
+    post_remove_probe_output="$(python_probe "https://api.tavily.com/search" || true)"
+    if [[ "$post_remove_probe_output" == *"BLOCKED:"* &&
+      "$post_remove_probe_output" != *"REACHED:"* ]]; then
+      pass "managed Deep Agents Code python returns to the default Tavily denial"
+    else
+      fail_test "policy-remove did not restore the default Tavily denial: $post_remove_probe_output"
+      cleanup_status=1
+    fi
+  fi
+
+  restore_observability_state || cleanup_status=1
+  return "$cleanup_status"
+}
+
 PASSED=0
 FAILED=0
 
@@ -130,6 +184,28 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "probe-command-shape" ]; then
     esac
   }
   python_probe "https://api.tavily.com/search"
+  exit 0
+fi
+
+if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
+  OBSERVABILITY_MARKER_FIXTURE="$(mktemp)"
+  printf '%s\n' "1" >"$OBSERVABILITY_MARKER_FIXTURE"
+  trap 'rm -f "$OBSERVABILITY_MARKER_FIXTURE"' EXIT
+  observability_marker_value() {
+    cat "$OBSERVABILITY_MARKER_FIXTURE"
+  }
+  nemoclaw_cli() {
+    [[ "$*" == "$SANDBOX_NAME policy-remove tavily --yes" ]] || return 1
+    [ "${NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE:-ok}" = "ok" ] || return 1
+    printf '%s\n' "absent" >"$OBSERVABILITY_MARKER_FIXTURE"
+  }
+  openshell() {
+    [[ "$*" == "sandbox exec --name $SANDBOX_NAME -- /usr/bin/env NEMOCLAW_OBSERVABILITY=1 /usr/local/bin/nemoclaw-start /usr/bin/true" ]] || return 1
+    printf '%s\n' "1" >"$OBSERVABILITY_MARKER_FIXTURE"
+  }
+  NEMOCLAW_E2E_POLICY_SETTLE_SECONDS=0 restore_tavily_denial
+  [ "$(cat "$OBSERVABILITY_MARKER_FIXTURE")" = "1" ]
+  [ "$FAILED" -eq 0 ]
   exit 0
 fi
 
@@ -164,6 +240,7 @@ APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
+trap restore_tavily_denial EXIT
 pass "tavily policy preset applies"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
@@ -199,6 +276,10 @@ if echo "$PROJECT_OUT" | grep -Fxq "$PROJECT_PYTHON"; then
 else
   fail_test "project venv under /sandbox did not expose a usable python3 executable: $PROJECT_OUT"
 fi
+
+# Do not leak this check's durable opt-in into later sequential checks.
+restore_tavily_denial || true
+trap - EXIT
 
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ] || exit 1
