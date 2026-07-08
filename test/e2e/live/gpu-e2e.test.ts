@@ -234,7 +234,7 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   const restart = await host.command(
     "bash",
     [
-      "-lc",
+      "-c",
       `set -euo pipefail
 if sudo -n systemctl restart ollama 2>/dev/null; then
   restart_mode=system
