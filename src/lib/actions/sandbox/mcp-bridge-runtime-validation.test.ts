@@ -97,6 +97,28 @@ describe("MCP credential-boundary runtime validation", () => {
     expect(String(error)).not.toContain("credential-shaped-output-must-not-be-repeated");
   });
 
+  it("fails closed with a missing-binary detail when openshell exits ENOENT (#6426)", () => {
+    const error = captureRuntimeVersionError(() =>
+      assertMcpCredentialBoundaryRuntimeVersion({
+        ...matchingOpenshellRuntime(),
+        runVersionCommand: () => ({
+          error: Object.assign(new Error("credential-shaped-output-must-not-be-repeated"), {
+            code: "ENOENT",
+          }),
+          status: null,
+          stdout: "",
+          stderr: "",
+        }),
+      }),
+    );
+    expect(error).toMatchObject({
+      actualVersion: "<unavailable>",
+      detail: "openshell binary not found",
+      reason: "probe-failed",
+    });
+    expect(String(error)).not.toContain("credential-shaped-output-must-not-be-repeated");
+  });
+
   it("fails closed when openshell --version exits unsuccessfully (#6426)", () => {
     const deps = {
       ...matchingOpenshellRuntime(),
