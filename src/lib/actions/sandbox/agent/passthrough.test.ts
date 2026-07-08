@@ -7,7 +7,17 @@ const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() =>
   vi.fn(async () => ({ state: "present", output: "Phase: Ready" }) as { output?: string }),
 );
-const getSandboxMock = vi.hoisted(() => vi.fn(() => null as { agent?: string | null } | null));
+const getSandboxMock = vi.hoisted(() =>
+  vi.fn(
+    () =>
+      null as {
+        agent?: string | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+      } | null,
+  ),
+);
 const listAgentsMock = vi.hoisted(() =>
   vi.fn(() => ["custom-terminal", "hermes", "langchain-deepagents-code", "openclaw"]),
 );
@@ -110,6 +120,93 @@ describe("runAgentPassthrough", () => {
       ["openclaw", "agent", "--agent", "work", "--session-id", "s-1", "-m", "ping", "--json"],
       expect.objectContaining({ stderr: proc.stderr }),
     );
+  });
+
+  it("checks the persisted Ollama route before OpenClaw JSON dispatch", async () => {
+    const execJson = vi.fn(() => {
+      throw new Error("__exit:0");
+    });
+    const maybeWarmOllamaAfterDaemonRestart = vi.fn(() => ({
+      kind: "skipped" as const,
+      reason: "already-loaded" as const,
+    }));
+    getSandboxMock.mockReturnValueOnce({
+      agent: "openclaw",
+      provider: "ollama-local",
+      model: "qwen3.6:35b",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+    });
+    const { writes, proc } = makeProcMock();
+
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        {
+          extraArgs: ["--agent", "work", "--session-id", "s-1", "-m", "ping", "--json"],
+        },
+        { execJson, maybeWarmOllamaAfterDaemonRestart, process: proc },
+      ),
+    ).rejects.toThrow("__exit:0");
+
+    expect(maybeWarmOllamaAfterDaemonRestart).toHaveBeenCalledWith({
+      provider: "ollama-local",
+      model: "qwen3.6:35b",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+    });
+    expect(maybeWarmOllamaAfterDaemonRestart.mock.invocationCallOrder[0]).toBeLessThan(
+      execJson.mock.invocationCallOrder[0],
+    );
+    expect(writes.join("")).toContain("Ollama model 'qwen3.6:35b' is already loaded");
+  });
+
+  it("reports a timed-out Ollama warm-up and still dispatches to OpenClaw", async () => {
+    const maybeWarmOllamaAfterDaemonRestart = vi.fn(() => ({
+      kind: "warmed" as const,
+      ok: false as const,
+      timedOut: true,
+      reason: "timeout" as const,
+    }));
+    getSandboxMock.mockReturnValueOnce({
+      agent: "openclaw",
+      provider: "ollama-local",
+      model: "qwen3.6:35b",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+    });
+    const { writes, proc } = makeProcMock();
+
+    await runAgentPassthrough(
+      "alpha",
+      { extraArgs: ["--agent", "work", "-m", "ping"] },
+      { maybeWarmOllamaAfterDaemonRestart, process: proc },
+    );
+
+    const stderr = writes.join("");
+    expect(stderr).toContain("Checking Ollama model readiness after daemon restart");
+    expect(stderr).toContain("Ollama warm-up for 'qwen3.6:35b' timed out");
+    expect(stderr).toContain("continuing to OpenClaw dispatch");
+    expect(maybeWarmOllamaAfterDaemonRestart.mock.invocationCallOrder[0]).toBeLessThan(
+      execMock.mock.invocationCallOrder[0],
+    );
+    expect(execMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not run Ollama restart recovery for a non-Ollama route", async () => {
+    const maybeWarmOllamaAfterDaemonRestart = vi.fn();
+    getSandboxMock.mockReturnValueOnce({
+      agent: "openclaw",
+      provider: "vllm-local",
+      model: "meta/llama",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+    });
+
+    await runAgentPassthrough(
+      "alpha",
+      { extraArgs: ["--agent", "work", "-m", "ping"] },
+      { maybeWarmOllamaAfterDaemonRestart },
+    );
+
+    expect(maybeWarmOllamaAfterDaemonRestart).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledOnce();
   });
 
   it("keeps --json as a message value on the normal passthrough path", async () => {

@@ -99,6 +99,12 @@ import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
+import {
+  maybeWarmOllamaAfterDaemonRestart,
+  type OllamaRestartRecoveryFailureReason,
+  type OllamaRestartRecoveryResult,
+  type OllamaRestartRecoveryRoute,
+} from "./ollama-restart-recovery";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
 import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
@@ -134,6 +140,9 @@ export interface AgentPassthroughDeps {
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
   execJson?: typeof runAgentJsonPassthrough;
+  maybeWarmOllamaAfterDaemonRestart?: (
+    route: OllamaRestartRecoveryRoute,
+  ) => OllamaRestartRecoveryResult;
   getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreReadResult;
   process?: {
     exit(code: number): never;
@@ -144,7 +153,13 @@ export interface AgentPassthroughDeps {
 
 type RegistryReadResult =
   | { kind: "missing" }
-  | { kind: "agent"; agent: string | null }
+  | {
+      kind: "agent";
+      agent: string | null;
+      provider: string | null;
+      model: string | null;
+      endpointUrl: string | null;
+    }
   | { kind: "error"; message: string };
 type ResolvedRegistryReadResult = Exclude<RegistryReadResult, { kind: "error" }>;
 type TerminalCommandResult =
@@ -158,9 +173,71 @@ function readSandboxAgentFromRegistry(
   try {
     const sandbox = getSandbox(sandboxName);
     if (!sandbox) return { kind: "missing" };
-    return { kind: "agent", agent: sandbox.agent ?? null };
+    return {
+      kind: "agent",
+      agent: sandbox.agent ?? null,
+      provider: sandbox.provider ?? null,
+      model: sandbox.model ?? null,
+      endpointUrl: sandbox.endpointUrl ?? null,
+    };
   } catch (error) {
     return { kind: "error", message: (error as Error).message ?? String(error) };
+  }
+}
+
+function getOllamaRestartRecoveryRoute(
+  lookup: ResolvedRegistryReadResult,
+): OllamaRestartRecoveryRoute | null {
+  if (lookup.kind !== "agent" || lookup.provider !== "ollama-local") return null;
+  return {
+    provider: lookup.provider,
+    model: lookup.model,
+    endpointUrl: lookup.endpointUrl,
+  };
+}
+
+function describeOllamaWarmFailure(reason: OllamaRestartRecoveryFailureReason): string {
+  switch (reason) {
+    case "timeout":
+      return "timed out";
+    case "command-failed":
+      return "curl exited unsuccessfully";
+    case "ollama-error":
+      return "Ollama returned an error";
+    case "invalid-response":
+      return "Ollama returned an invalid response";
+    case "spawn-failed":
+      return "the warm-up process could not start";
+  }
+}
+
+function reportOllamaRestartRecovery(
+  route: OllamaRestartRecoveryRoute,
+  result: OllamaRestartRecoveryResult,
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+): void {
+  const model = String(route.model ?? "").trim() || "the registered model";
+  if (result.kind === "warmed") {
+    if (result.ok) {
+      proc.stderr.write(`  Ollama model '${model}' is loaded and ready.\n`);
+      return;
+    }
+    proc.stderr.write(
+      `  Ollama warm-up for '${model}' ${describeOllamaWarmFailure(result.reason)}; continuing to OpenClaw dispatch.\n`,
+    );
+    return;
+  }
+
+  if (result.reason === "already-loaded") {
+    proc.stderr.write(`  Ollama model '${model}' is already loaded.\n`);
+  } else if (result.reason === "unreachable") {
+    proc.stderr.write(
+      "  Ollama was unreachable during the restart check; continuing to OpenClaw dispatch.\n",
+    );
+  } else if (result.reason === "missing-model") {
+    proc.stderr.write(
+      "  No Ollama model is recorded for this sandbox; continuing to OpenClaw dispatch.\n",
+    );
   }
 }
 
@@ -425,6 +502,19 @@ export async function runAgentPassthrough(
     rejectNoTargetSelector(proc);
   }
   if (isOpenClawPassthroughCommand(command)) {
+    const route = getOllamaRestartRecoveryRoute(lookup);
+    if (route) {
+      const recoverOllama =
+        deps.maybeWarmOllamaAfterDaemonRestart ?? maybeWarmOllamaAfterDaemonRestart;
+      proc.stderr.write("  Checking Ollama model readiness after daemon restart...\n");
+      try {
+        reportOllamaRestartRecovery(route, recoverOllama(route), proc);
+      } catch {
+        proc.stderr.write(
+          "  Ollama restart recovery failed unexpectedly; continuing to OpenClaw dispatch.\n",
+        );
+      }
+    }
     maybeEmitShieldsRelockWarning(proc, sandboxName, deps.getRecentShieldsAutoRestore);
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
