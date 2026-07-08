@@ -39,7 +39,6 @@ export type RebuildSandboxEntry = registry.SandboxEntry & { agents?: unknown[] }
 
 export type RebuildLiveState = {
   staleRecovery: boolean;
-  staleRegistrySnapshot: ReturnType<typeof registry.load> | null;
 };
 
 export type RebuildAgentBaseImageOptions = {
@@ -118,7 +117,7 @@ export async function resolveRebuildLiveState(
 
   const liveNames = parseLiveSandboxNames(isLive.output || "");
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
-  if (liveNames.has(sandboxName)) return { staleRecovery: false, staleRegistrySnapshot: null };
+  if (liveNames.has(sandboxName)) return { staleRecovery: false };
 
   const reconciled = await getReconciledSandboxGatewayState(sandboxName);
   if (reconciled.state === "present") {
@@ -136,7 +135,7 @@ export async function resolveRebuildLiveState(
       return null;
     }
     log("Sandbox live on the healthy named gateway; using normal rebuild path");
-    return { staleRecovery: false, staleRegistrySnapshot: null };
+    return { staleRecovery: false };
   }
 
   if (reconciled.state === "missing") {
@@ -156,10 +155,7 @@ export async function resolveRebuildLiveState(
     log(
       "Stale-sandbox recovery: live sandbox missing on healthy named gateway; skipping backup/restore and recreating from registry metadata",
     );
-    return {
-      staleRecovery: true,
-      staleRegistrySnapshot: JSON.parse(JSON.stringify(registry.load())),
-    };
+    return { staleRecovery: true };
   }
 
   if (reconciled.state === "gateway_schema_mismatch") {

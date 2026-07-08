@@ -36,7 +36,6 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
-    expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
@@ -62,7 +61,6 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
-    expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(

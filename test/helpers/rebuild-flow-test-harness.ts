@@ -43,7 +43,7 @@ const registry = requireDist("../../state/registry.js");
 const sandboxState = requireDist("../../state/sandbox.js");
 const sandboxSession = requireDist("../../state/sandbox-session.js");
 const sandboxVersion = requireDist("../../sandbox/version.js");
-const destroy = requireDist("./destroy.js");
+const { RebuildTransactionStore } = requireDist("../../state/rebuild-transaction.js");
 const gatewayState = requireDist("./gateway-state.js");
 const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
@@ -65,6 +65,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const transactionStateDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "nemoclaw-rebuild-flow-transaction-"),
+  );
+  harnessTempDirs.push(transactionStateDir);
+  const transactionStore = new RebuildTransactionStore({ stateDir: transactionStateDir });
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
@@ -218,24 +223,16 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       currentDefaultSelectionRevision++;
       return true;
     });
-  let registryLoadCount = 0;
   vi.spyOn(registry, "load").mockImplementation(() => {
-    const isPreDeleteRead = registryLoadCount > 0;
-    registryLoadCount++;
-    const defaultSandbox = isPreDeleteRead ? preDeleteDefaultSandbox : initialDefaultSandbox;
-    const defaultSelectionRevision = isPreDeleteRead
-      ? preDeleteDefaultSelectionRevision
-      : initialDefaultSelectionRevision;
-    const selectedEntry = isPreDeleteRead ? preDeleteSandboxEntry : sandboxEntry;
     return {
       sandboxes: {
-        alpha: selectedEntry,
-        ...(defaultSandbox && defaultSandbox !== "alpha"
-          ? { [defaultSandbox]: { name: defaultSandbox } }
+        alpha: preDeleteSandboxEntry,
+        ...(preDeleteDefaultSandbox && preDeleteDefaultSandbox !== "alpha"
+          ? { [preDeleteDefaultSandbox]: { name: preDeleteDefaultSandbox } }
           : {}),
       },
-      defaultSandbox,
-      defaultSelectionRevision,
+      defaultSandbox: preDeleteDefaultSandbox,
+      defaultSelectionRevision: preDeleteDefaultSelectionRevision,
     };
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
@@ -340,36 +337,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       const argv = Array.isArray(args) ? args.map(String) : [];
       return overrides.runOpenshell ? overrides.runOpenshell(argv) : { status: 0, output: "" };
     });
-  const defaultRemovalReceipt = {
-    entry: preDeleteSandboxEntry,
-    wasDefault: preDeleteDefaultSandbox === "alpha",
-    fallbackDefault:
-      preDeleteDefaultSandbox && preDeleteDefaultSandbox !== "alpha"
-        ? preDeleteDefaultSandbox
-        : null,
-    postRemovalDefaultSelectionRevision:
-      preDeleteDefaultSelectionRevision + (preDeleteDefaultSandbox === "alpha" ? 1 : 0),
-  };
-  const removeSandboxRegistryEntryWithReceiptSpy = vi
-    .spyOn(destroy, "removeSandboxRegistryEntryWithReceipt")
-    .mockImplementation(() => {
-      const overridden = overrides.removeSandboxRegistryEntryWithReceipt?.();
-      const receipt =
-        overridden !== undefined
-          ? overridden
-          : overrides.removalReceipt === undefined
-            ? defaultRemovalReceipt
-            : overrides.removalReceipt;
-      if (receipt) {
-        currentRegistryEntryNames.delete(String(receipt.entry.name));
-        if (receipt.fallbackDefault) currentRegistryEntryNames.add(receipt.fallbackDefault);
-        currentDefaultSandbox = receipt.wasDefault
-          ? receipt.fallbackDefault
-          : currentDefaultSandbox;
-        currentDefaultSelectionRevision = receipt.postRemovalDefaultSelectionRevision;
-      }
-      return receipt;
-    });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi
@@ -454,8 +421,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   logSpy.mockClear();
   warnSpy.mockClear();
 
+  const rebuildSandbox: RebuildSandbox = (sandboxName, options, executionOptions) =>
+    requireDist(rebuildModulePath).rebuildSandbox(sandboxName, options, {
+      ...executionOptions,
+      transactionStore: executionOptions?.transactionStore ?? transactionStore,
+    });
   return {
-    rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
+    rebuildSandbox,
+    transactionStore,
     applyPresetSpy,
     backupSandboxStateSpy,
     errorSpy,
@@ -490,7 +463,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     prepareMcpBridgesForAbsentSandboxRebuildSpy,
     prepareMcpBridgesForRebuildSpy,
     reattachMcpProvidersAfterRebuildAbortSpy,
-    removeSandboxRegistryEntryWithReceiptSpy,
     restoreSandboxEntrySpy,
     restoreSandboxEntryIfMissingSpy,
     restoreMcpBridgesAfterRebuildSpy,

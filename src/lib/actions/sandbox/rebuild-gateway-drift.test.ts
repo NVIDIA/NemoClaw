@@ -194,11 +194,7 @@ describe("rebuild gateway drift preflight", () => {
 
     const result = await resolveRebuildLiveState("alpha", entry, behaviorLog, bail);
 
-    expect(result).toEqual({
-      staleRecovery: true,
-      staleRegistrySnapshot: registrySnapshot,
-    });
-    expect(result?.staleRegistrySnapshot).not.toBe(registrySnapshot);
+    expect(result).toEqual({ staleRecovery: true });
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledTimes(2);
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenNthCalledWith(1, {
       gatewayName,
@@ -217,7 +213,6 @@ describe("rebuild gateway drift preflight", () => {
     );
     expect(getNamedGatewayLifecycleStateSpy).toHaveBeenCalledWith(gatewayName);
     expect(recoverDockerDriverSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(registry.load).toHaveBeenCalledOnce();
     expect(logSpy.mock.calls.flat().join("\n")).toContain("absent from the live OpenShell gateway");
     expect(behaviorLog.mock.calls.flat().join("\n")).toContain("Stale-sandbox recovery");
   });

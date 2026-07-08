@@ -46,6 +46,5 @@ export function expectNoDcodeMutation(harness: RebuildFlowHarness): void {
     ["sandbox", "delete", "alpha"],
     expect.anything(),
   );
-  expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
   expect(harness.onboardSpy).not.toHaveBeenCalled();
 }

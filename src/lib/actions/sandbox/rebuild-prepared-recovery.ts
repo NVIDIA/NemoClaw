@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { RD as _RD, R } from "../../cli/terminal-style";
 import * as registry from "../../state/registry";
+import type { RebuildTransactionStore } from "../../state/rebuild-transaction";
 import * as sandboxState from "../../state/sandbox";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -15,6 +16,8 @@ export interface RebuildSandboxExecutionOptions {
   recoveryManifest?: sandboxState.RebuildManifest;
   /** Per-row capability granted only after explicit legacy managed-image confirmation. */
   allowLegacyManagedImageRecovery?: boolean;
+  /** Internal dependency seam for deterministic rebuild transaction tests. */
+  transactionStore?: RebuildTransactionStore;
 }
 
 function failPreparedRecoveryPreDelete(
@@ -65,14 +68,10 @@ export function revalidatePreparedRecoveryBeforeDelete(
   sandboxName: string,
   initialEntry: RebuildSandboxEntry,
   candidate: sandboxState.RebuildManifest | null,
-  registrySnapshot: registry.SandboxRegistry | null,
   allowLegacyManagedImageRecovery: boolean,
   bail: RebuildBail,
-): {
-  manifest: sandboxState.RebuildManifest | null;
-  registrySnapshot: registry.SandboxRegistry | null;
-} {
-  if (!candidate) return { manifest: null, registrySnapshot };
+): sandboxState.RebuildManifest | null {
+  if (!candidate) return null;
 
   const refreshedRegistrySnapshot = registry.load();
   const currentEntry = refreshedRegistrySnapshot.sandboxes[sandboxName];
@@ -124,8 +123,5 @@ export function revalidatePreparedRecoveryBeforeDelete(
     );
   }
 
-  return {
-    manifest: validation.manifest,
-    registrySnapshot: refreshedRegistrySnapshot,
-  };
+  return validation.manifest;
 }

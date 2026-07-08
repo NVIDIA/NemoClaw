@@ -212,7 +212,7 @@ describe("prepared rebuild recovery", () => {
     );
   });
 
-  it("uses the single refreshed registry snapshot for recreate rollback (#6114)", async () => {
+  it("keeps the refreshed registry row in place when recreate fails (#6114)", async () => {
     const harness = createRebuildFlowHarness({
       preDeleteDefaultSandbox: "beta",
       onboard: () => {
@@ -227,10 +227,7 @@ describe("prepared rebuild recovery", () => {
       }),
     ).rejects.toThrow("Recreate failed");
 
-    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-      {},
-    );
+    expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
   });
 
   it("rejects a latest-backup change immediately before deleting the sandbox (#6114)", async () => {
@@ -256,7 +253,7 @@ describe("prepared rebuild recovery", () => {
     );
   });
 
-  it("restores the registry entry when prepared-backup recreation fails (#6114)", async () => {
+  it("does not rewrite the preserved registry entry when prepared recovery fails (#6114)", async () => {
     const harness = createRebuildFlowHarness({
       onboard: () => {
         throw new Error("recreate failed");
@@ -272,10 +269,7 @@ describe("prepared rebuild recovery", () => {
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-      { defaultTransition: { from: null, to: "alpha", expectedRevision: 1 } },
-    );
+    expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
   });
 });

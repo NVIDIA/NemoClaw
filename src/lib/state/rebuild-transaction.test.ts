@@ -57,7 +57,7 @@ function intent(overrides: Partial<RebuildTransactionIntentV1> = {}): RebuildTra
 function preparedReceipts(): RebuildTransactionReceiptsV1 {
   return {
     backup: {
-      manifestTimestamp: "2026-07-08T00:00:00.000Z",
+      manifestTimestamp: "2026-07-08T00-00-00-000Z",
       manifestFingerprint: FP_A,
     },
   };
@@ -66,12 +66,6 @@ function preparedReceipts(): RebuildTransactionReceiptsV1 {
 function deletedReceipts(): RebuildTransactionReceiptsV1 {
   return {
     ...preparedReceipts(),
-    registryRemoval: {
-      entryFingerprint: FP_B,
-      wasDefault: true,
-      fallbackDefault: "another-sandbox",
-      postRemovalDefaultSelectionRevision: 4,
-    },
     oldSandboxDeletion: { observedAt: "2026-07-08T00:01:00.000Z" },
   };
 }
@@ -222,18 +216,59 @@ describe("RebuildTransactionStore", () => {
     expect(store.load(SANDBOX)).toEqual(first);
   });
 
+  it("starts a new transaction generation after the prior one completes", () => {
+    const { stateDir, store } = makeStore();
+    const replacement = advanceToReplacement(store);
+    store.complete(SANDBOX, replacement.revision);
+    const nextStore = new RebuildTransactionStore({
+      stateDir,
+      transactionId: () => "22222222-2222-4222-8222-222222222222",
+    });
+
+    const next = nextStore.create(intent(), preparedReceipts());
+
+    expect(next).toMatchObject({
+      transactionId: "22222222-2222-4222-8222-222222222222",
+      revision: 1,
+      status: "active",
+      phase: "prepared",
+    });
+    expect(nextStore.load(SANDBOX)).toEqual(next);
+  });
+
   it("makes completion idempotent without allowing a terminal record to become active", () => {
     const { store } = makeStore();
     const replacement = advanceToReplacement(store);
     const completed = store.complete(SANDBOX, replacement.revision);
 
-    expect(store.complete(SANDBOX, replacement.revision)).toEqual(completed);
+    expect(store.complete(SANDBOX, completed.revision)).toEqual(completed);
+    expectCode(() => store.complete(SANDBOX, replacement.revision), "REVISION_CONFLICT");
     expectCode(
       () =>
         store.transition(SANDBOX, completed.revision, "replacement_created", replacementReceipts()),
       "INVALID_TRANSITION",
     );
     expect(store.load(SANDBOX)).toEqual(completed);
+  });
+
+  it("persists a failure after deletion and clears it when replacement is observed", () => {
+    const { store } = makeStore();
+    const prepared = store.create(intent(), preparedReceipts());
+    const deleted = store.transition(SANDBOX, prepared.revision, "old_deleted", deletedReceipts());
+    const failed = store.recordFailure(SANDBOX, deleted.revision, {
+      code: "REPLACEMENT_RETRY_REQUIRED",
+      recordedAt: "2026-07-08T00:01:30.000Z",
+      retryable: true,
+    });
+
+    expect(store.load(SANDBOX)).toEqual(failed);
+    const replacement = store.transition(
+      SANDBOX,
+      failed.revision,
+      "replacement_created",
+      replacementReceipts(),
+    );
+    expect(replacement.failure).toBeNull();
   });
 
   it("rejects skipped, reversed, and prematurely completed transitions", () => {
@@ -326,19 +361,6 @@ describe("RebuildTransactionStore", () => {
     expectCode(() => store.load(SANDBOX), "CORRUPT");
   });
 
-  it("rejects an incomplete registry-removal receipt", () => {
-    const { stateDir, store } = makeStore();
-    const prepared = store.create(intent(), preparedReceipts());
-    store.transition(SANDBOX, prepared.revision, "old_deleted", deletedReceipts());
-    writeRawRecord(getRebuildTransactionPath(SANDBOX, stateDir), (record) => {
-      const receipts = record.receipts as Record<string, unknown>;
-      const removal = receipts.registryRemoval as Record<string, unknown>;
-      delete removal.wasDefault;
-    });
-
-    expectCode(() => store.load(SANDBOX), "CORRUPT");
-  });
-
   it("rejects invalid and traversal-shaped sandbox names before path construction", () => {
     const { stateDir, store } = makeStore();
     for (const name of ["../escape", "has/slash", "UPPER", "", "a".repeat(64)]) {
@@ -407,7 +429,6 @@ describe("RebuildTransactionStore", () => {
       phase: "prepared",
       receipts: {
         backup: true,
-        registryRemoval: false,
         oldSandboxDeletion: false,
         replacement: false,
       },

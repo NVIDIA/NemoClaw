@@ -270,7 +270,6 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
         targetGatewayPort: 8080,
       }),
     );
-    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).toHaveBeenCalledOnce();
     expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
   });
@@ -307,7 +306,6 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
-    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
@@ -342,18 +340,15 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
-    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
   it("preserves stale-recovery metadata when the real CLI recreate fails", {
     timeout: 90_000,
   }, () => {
-    // Stale recovery removes the registry entry before the recreate (the
-    // recreate re-adds it on success). Inject a sandbox-create failure so the
-    // recreate fails — the entry must be restored so the
-    // recommended `rebuild --yes` stays retryable instead of failing at
-    // dispatch with "not found in registry" (#4497).
+    // The registry row remains durable recovery intent while the sandbox is
+    // absent. Inject a sandbox-create failure and prove a retry can still
+    // resolve the same rebuild target (#4497).
     const fixture = createStaleFixture({ failSandboxCreate: true });
     const result = runRebuild(fixture);
     const output = (result.stderr || "") + (result.stdout || "");

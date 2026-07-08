@@ -7,9 +7,9 @@ import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
 import { redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
-import { removeSandboxRegistryEntryWithReceipt } from "./destroy";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import { maybePauseForRebuildInterruption } from "./rebuild-e2e-interruption";
 import { type RebuildSandboxEntry, warnUnpreservedUserManagedFiles } from "./rebuild-flow-helpers";
 import { prepareMcpBeforeBestEffortNimStop } from "./rebuild-mcp-order";
 import {
@@ -31,12 +31,9 @@ export interface RebuildDestroyPhaseInput {
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
+  oldSandboxAlreadyDeleted?: boolean;
   onDeleted: () => void;
 }
-
-export type RebuildDestroyPhaseResult = McpRebuildPreparation & {
-  removalReceipt: registry.SandboxRemovalReceipt | null;
-};
 
 /**
  * Detach owned MCP state, stop inference, and delete the old sandbox.
@@ -45,7 +42,7 @@ export type RebuildDestroyPhaseResult = McpRebuildPreparation & {
  */
 export async function runRebuildDestroyPhase(
   input: RebuildDestroyPhaseInput,
-): Promise<RebuildDestroyPhaseResult | null> {
+): Promise<McpRebuildPreparation | null> {
   const {
     sandboxName,
     staleRecovery,
@@ -54,6 +51,7 @@ export async function runRebuildDestroyPhase(
     bail,
     relockShieldsIfNeeded,
     validateAfterMcpPreparation,
+    oldSandboxAlreadyDeleted,
     onDeleted,
   } = input;
 
@@ -112,9 +110,14 @@ export async function runRebuildDestroyPhase(
     log,
   });
   if (!mcpPreparation) return null;
-  const rebuildMcpEntries = mcpPreparation.entries;
   const rebuildDetachedMcpProviderEntries = mcpPreparation.detachedProviderEntries;
   const rebuildScrubbedMcpAdapterEntries = mcpPreparation.scrubbedAdapterEntries;
+
+  if (oldSandboxAlreadyDeleted) {
+    onDeleted();
+    log("Rebuild journal confirms the old sandbox is already absent; skipping duplicate delete");
+    return mcpPreparation;
+  }
 
   log(`Running: openshell sandbox delete ${sandboxName}`);
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
@@ -147,22 +150,16 @@ export async function runRebuildDestroyPhase(
     );
     return null;
   }
+  maybePauseForRebuildInterruption("delete_unjournaled");
   onDeleted();
-  let removalReceipt: registry.SandboxRemovalReceipt | null = null;
-  if (rebuildMcpEntries.length === 0) {
-    removalReceipt = removeSandboxRegistryEntryWithReceipt(sandboxName);
-  } else {
-    // The registry entry is the durable MCP rebuild transaction. The inner
-    // onboard run observes that the sandbox is absent, carries the MCP state
-    // into the replacement registration, and never enters generic live
-    // recreation. Keeping it here closes every process-death window between
-    // successful delete and fresh registry registration.
-    log("Preserving MCP-bearing registry entry across sandbox recreation");
-  }
+  // The registry row is durable rebuild intent. The inner onboard run observes
+  // that the sandbox is absent and replaces the row only after creation. Keep
+  // it for every agent so process death cannot discard recovery metadata.
+  log("Preserving registry entry across sandbox recreation");
   log(
     `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
   );
   console.log(`  ${G}\u2713${R} Old sandbox deleted`);
 
-  return { ...mcpPreparation, removalReceipt };
+  return mcpPreparation;
 }

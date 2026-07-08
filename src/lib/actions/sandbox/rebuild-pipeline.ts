@@ -9,12 +9,14 @@ import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
+import { RebuildTransactionStore } from "../../state/rebuild-transaction";
 import * as registry from "../../state/registry";
 import { normalizeRebuildTargetPolicyPresets, runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
+import { maybePauseForRebuildInterruption } from "./rebuild-e2e-interruption";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
@@ -29,9 +31,13 @@ import {
 } from "./rebuild-prepared-recovery";
 import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
-import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import { runRebuildShieldsPhase } from "./rebuild-shields-phase";
+import {
+  fingerprintRebuildValue,
+  loadRebuildRecovery,
+  prepareRebuildTransaction,
+} from "./rebuild-transaction-coordinator";
 
 export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPlanForRebuild };
 
@@ -76,7 +82,13 @@ async function rebuildSandboxUnlocked(
   options: string[] | RebuildSandboxOptions,
   opts: RebuildSandboxExecutionOptions,
 ): Promise<void> {
-  const preflight = await runRebuildPreflightPhase(sandboxName, options, opts);
+  const transactionStore = opts.transactionStore ?? new RebuildTransactionStore();
+  const recovery = loadRebuildRecovery(transactionStore, sandboxName);
+  let transaction = recovery.transaction;
+  const preflight = await runRebuildPreflightPhase(sandboxName, options, {
+    ...opts,
+    recoveryManifest: recovery.recoveryManifest ?? opts.recoveryManifest,
+  });
   if (!preflight) return;
   const {
     sandboxEntry,
@@ -111,16 +123,6 @@ async function rebuildSandboxUnlocked(
   let recoveryManifest = validatedRecoveryManifest;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
-  let recoveryRegistrySnapshot = preparedBackupRecovery
-    ? JSON.parse(JSON.stringify(registry.load()))
-    : liveState.staleRegistrySnapshot;
-  const registryRollback = createRebuildRegistryRollback({
-    sandboxName,
-    preparedBackupRecovery,
-    staleRecovery,
-    getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
-    log,
-  });
   try {
     const shieldsPhase = runRebuildShieldsPhase(
       sandboxName,
@@ -137,16 +139,13 @@ async function rebuildSandboxUnlocked(
     let sandboxStillExists = true;
 
     try {
-      const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
+      recoveryManifest = revalidatePreparedRecoveryBeforeDelete(
         sandboxName,
         sandboxEntry,
         recoveryManifest,
-        recoveryRegistrySnapshot,
         opts.allowLegacyManagedImageRecovery === true,
         bail,
       );
-      recoveryManifest = preDeleteRecovery.manifest;
-      recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
 
       const backup = runRebuildBackupPhase({
         sandboxName,
@@ -194,6 +193,38 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
+      transaction = prepareRebuildTransaction({
+        store: transactionStore,
+        existing: transaction,
+        sandboxName,
+        sandboxEntry,
+        targetConfig,
+        recreateOptions,
+        backupManifest: backup.backupManifest,
+        imageIdentity: {
+          baseImage: baseImagePreflight.imageRef,
+          fromDockerfile,
+          recordedImage: sandboxEntry.imageTag ?? null,
+          nemoclawVersion: sandboxEntry.nemoclawVersion ?? null,
+        },
+      });
+      if (transaction?.phase === "old_deleted" && !staleRecovery) {
+        bail("A replacement sandbox exists while the rebuild transaction still owns recovery.");
+        return;
+      }
+      if (transaction?.phase === "prepared" && staleRecovery) {
+        transaction = transactionStore.transition(
+          sandboxName,
+          transaction.revision,
+          "old_deleted",
+          {
+            ...transaction.receipts,
+            oldSandboxDeletion: { observedAt: new Date().toISOString() },
+          },
+        );
+      }
+      if (transaction?.phase === "prepared") maybePauseForRebuildInterruption("prepared");
+
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
         sandboxEntry,
@@ -233,12 +264,23 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
+        oldSandboxAlreadyDeleted: transaction?.phase === "old_deleted",
         onDeleted: () => {
           sandboxStillExists = false;
+          if (transaction?.phase === "prepared") {
+            transaction = transactionStore.transition(
+              sandboxName,
+              transaction.revision,
+              "old_deleted",
+              {
+                ...transaction.receipts,
+                oldSandboxDeletion: { observedAt: new Date().toISOString() },
+              },
+            );
+          }
         },
       });
       if (!mcpPreparation) return;
-      registryRollback.recordRemoval(mcpPreparation.removalReceipt);
 
       const restoreDcodeGpuPatchNetwork = dcodePreflight.applyDockerGpuPatchNetwork();
       let recreated: boolean;
@@ -261,13 +303,35 @@ async function rebuildSandboxUnlocked(
           credentialEnv,
           baseImagePreflight,
           recoveryRecreate,
-          registryRollback,
           backupManifest: backup.backupManifest,
           mcpEntries: mcpPreparation.entries,
           rebuildShieldsWindow,
           relockShieldsIfNeeded,
           onCreated: () => {
             sandboxStillExists = true;
+            if (transaction?.phase === "old_deleted") {
+              transaction = transactionStore.transition(
+                sandboxName,
+                transaction.revision,
+                "replacement_created",
+                {
+                  ...transaction.receipts,
+                  replacement: {
+                    identityFingerprint: fingerprintRebuildValue(registry.getSandbox(sandboxName)),
+                    observedAt: new Date().toISOString(),
+                  },
+                },
+              );
+            }
+          },
+          onFailed: () => {
+            if (transaction?.phase === "old_deleted") {
+              transaction = transactionStore.recordFailure(sandboxName, transaction.revision, {
+                code: "REPLACEMENT_RETRY_REQUIRED",
+                recordedAt: new Date().toISOString(),
+                retryable: true,
+              });
+            }
           },
           log,
           bail,
@@ -322,6 +386,9 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
       });
+      if (transaction?.phase === "replacement_created") {
+        transactionStore.complete(sandboxName, transaction.revision);
+      }
     } finally {
       if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);
     }

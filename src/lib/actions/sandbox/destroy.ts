@@ -48,11 +48,6 @@ type RemoveSandboxRegistryEntryDeps = {
   removeSandbox?: typeof registry.removeSandbox;
 };
 
-type RemoveSandboxRegistryEntryWithReceiptDeps = {
-  removeImage?: (sandboxName: string) => void;
-  removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
-};
-
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
 
 export type CleanupSandboxServicesDeps = {
@@ -273,17 +268,6 @@ export function removeSandboxRegistryEntry(
   const removeSandbox = deps.removeSandbox ?? registry.removeSandbox;
   removeImage(sandboxName);
   return removeSandbox(sandboxName);
-}
-
-export function removeSandboxRegistryEntryWithReceipt(
-  sandboxName: string,
-  deps: RemoveSandboxRegistryEntryWithReceiptDeps = {},
-): registry.SandboxRemovalReceipt | null {
-  const removeImage = deps.removeImage ?? removeSandboxImage;
-  const removeSandboxWithReceipt =
-    deps.removeSandboxWithReceipt ?? registry.removeSandboxWithReceipt;
-  removeImage(sandboxName);
-  return removeSandboxWithReceipt(sandboxName);
 }
 
 function defaultDestroyWarn(message: string): void {

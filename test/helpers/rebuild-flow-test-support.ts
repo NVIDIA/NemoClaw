@@ -5,7 +5,7 @@ import { type MockInstance, vi } from "vitest";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
-import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
+import type { RebuildTransactionStore } from "../../src/lib/state/rebuild-transaction";
 
 export type RebuildSandbox =
   typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
@@ -86,12 +86,11 @@ export type RebuildFlowOverrides = {
   customImagePreflight?: RebuildImagePreflightResult;
   defaultSelectionRevision?: number;
   preDeleteDefaultSelectionRevision?: number;
-  removalReceipt?: SandboxRemovalReceipt | null;
-  removeSandboxRegistryEntryWithReceipt?: () => SandboxRemovalReceipt | null | void;
   clearShieldsState?: () => void;
 };
 export type RebuildFlowHarness = {
   rebuildSandbox: RebuildSandbox;
+  transactionStore: RebuildTransactionStore;
   applyPresetSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
   errorSpy: MockInstance;
@@ -120,7 +119,6 @@ export type RebuildFlowHarness = {
   prepareMcpBridgesForAbsentSandboxRebuildSpy: MockInstance;
   prepareMcpBridgesForRebuildSpy: MockInstance;
   reattachMcpProvidersAfterRebuildAbortSpy: MockInstance;
-  removeSandboxRegistryEntryWithReceiptSpy: MockInstance;
   restoreSandboxEntrySpy: MockInstance;
   restoreSandboxEntryIfMissingSpy: MockInstance;
   restoreMcpBridgesAfterRebuildSpy: MockInstance;

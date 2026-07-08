@@ -88,7 +88,6 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     credentialEnv: "NVIDIA_API_KEY",
     baseImagePreflight: { ok: true, imageRef: null, overrideEnvVar: null },
     recoveryRecreate: false,
-    registryRollback: { recordRemoval: vi.fn(), restoreForRetry: vi.fn() },
     backupManifest: null,
     mcpEntries: [],
     rebuildShieldsWindow: { relocked: false, wasLocked: false },
@@ -143,7 +142,6 @@ describe("runRebuildRecreatePhase observability handoff", () => {
     expect(onboardSession.loadSession()?.observabilityEnabled).toBe(true);
     expect(onboardSession.loadSession()?.observabilityRequestedExplicitly).toBe(true);
     expect(input.onCreated).toHaveBeenCalledOnce();
-    expect(input.registryRollback.restoreForRetry).not.toHaveBeenCalled();
     expect(input.bail).not.toHaveBeenCalled();
   });
 
@@ -199,15 +197,6 @@ describe("runRebuildRecreatePhase observability handoff", () => {
     });
     const input = makeInput({
       recoveryRecreate: true,
-      registryRollback: {
-        recordRemoval: vi.fn(),
-        restoreForRetry: vi.fn(() => {
-          checkpoints.push([
-            "rollback",
-            onboardSession.loadSession()?.observabilityEnabled === true,
-          ]);
-        }),
-      },
       relockShieldsIfNeeded: vi.fn(() => {
         checkpoints.push(["relock", onboardSession.loadSession()?.observabilityEnabled === true]);
         return true;
@@ -224,12 +213,10 @@ describe("runRebuildRecreatePhase observability handoff", () => {
 
     expect(checkpoints).toEqual([
       ["onboard", true],
-      ["rollback", true],
       ["relock", true],
       ["bail", true],
     ]);
     expect(onboardSession.loadSession()?.observabilityEnabled).toBe(true);
-    expect(input.registryRollback.restoreForRetry).toHaveBeenCalledOnce();
     expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(false);
     expect(input.onCreated).not.toHaveBeenCalled();
     expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 1);

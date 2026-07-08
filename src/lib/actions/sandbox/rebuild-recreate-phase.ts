@@ -28,7 +28,6 @@ import {
   restoreMcpRegistryForRebuildRetry,
 } from "./rebuild-mcp-phase";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
-import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { printRebuildShieldsRecovery, type RebuildShieldsWindow } from "./rebuild-shields";
 
@@ -50,12 +49,12 @@ export interface RebuildRecreatePhaseInput {
   credentialEnv: string | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   recoveryRecreate: boolean;
-  registryRollback: RebuildRegistryRollback;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
   rebuildShieldsWindow: RebuildShieldsWindow;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   onCreated: () => void;
+  onFailed?: () => void;
   log: RebuildLog;
   bail: RebuildBail;
 }
@@ -84,12 +83,12 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     credentialEnv: rebuildCredentialEnv,
     baseImagePreflight: rebuildBaseImagePreflight,
     recoveryRecreate,
-    registryRollback,
     backupManifest,
     mcpEntries: rebuildMcpEntries,
     rebuildShieldsWindow,
     relockShieldsIfNeeded,
     onCreated,
+    onFailed,
     log,
     bail,
   } = input;
@@ -205,24 +204,24 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
 
   if (!onboardFailed) onCreated();
   if (onboardFailed) {
+    onFailed?.();
     try {
       markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
     } catch {
       /* best effort */
     }
 
-    registryRollback.restoreForRetry();
     restoreMcpRegistryForRebuildRetry(recoveryRecreate, rebuildMcpEntries, sb, log);
 
     console.error("");
-    if (recoveryRecreate) {
-      console.error(`  ${_RD}Recovery recreate failed.${R}`);
-      console.error(
-        "  Your local registry entry has been preserved — you can retry once the issue above is fixed.",
-      );
-    } else {
-      console.error(`  ${_RD}Recreate failed after sandbox was destroyed.${R}`);
-    }
+    console.error(
+      recoveryRecreate
+        ? `  ${_RD}Recovery recreate failed.${R}`
+        : `  ${_RD}Recreate failed after sandbox was destroyed.${R}`,
+    );
+    console.error(
+      "  Your local registry entry has been preserved — you can retry once the issue above is fixed.",
+    );
     if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
     console.error("");
     console.error("  To recover manually:");

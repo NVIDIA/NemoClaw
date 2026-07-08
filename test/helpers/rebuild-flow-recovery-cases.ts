@@ -110,7 +110,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       );
     });
 
-    it("uses the refreshed registry snapshot for prepared-recovery rollback (#6114)", async () => {
+    it("keeps the prepared-recovery registry row in place when recreate fails (#6114)", async () => {
       const harness = createRebuildFlowHarness({
         defaultSandbox: "alpha",
         preDeleteDefaultSandbox: "beta",
@@ -126,10 +126,7 @@ export function registerRebuildFlowRecoveryTests(): void {
         }),
       ).rejects.toThrow("Recreate failed");
 
-      expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-        {},
-      );
+      expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
     });
 
     it("rejects a latest-backup change before prepared recovery deletion (#6114)", async () => {
@@ -155,111 +152,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       );
     });
 
-    it("restores the registry entry when prepared-backup recreation fails (#6114)", async () => {
-      const harness = createRebuildFlowHarness({
-        defaultSandbox: "alpha",
-        onboard: () => {
-          throw new Error("recreate failed");
-        },
-      });
-
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], {
-          throwOnError: true,
-          recoveryManifest: makePreparedRecoveryManifest(),
-        }),
-      ).rejects.toThrow("Recreate failed");
-
-      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-        {
-          defaultTransition: {
-            from: null,
-            to: "alpha",
-            expectedRevision: 11,
-          },
-        },
-      );
-      expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
-    });
-
-    it("preserves an explicit same-fallback default choice during prepared rollback", async () => {
-      let harness!: ReturnType<typeof createRebuildFlowHarness>;
-      harness = createRebuildFlowHarness({
-        defaultSandbox: "alpha",
-        defaultSelectionRevision: 10,
-        removalReceipt: {
-          entry: { name: "alpha", agentVersion: "0.1.0" },
-          wasDefault: true,
-          fallbackDefault: "beta",
-          postRemovalDefaultSelectionRevision: 11,
-        },
-        onboard: () => {
-          expect(harness.setDefault("beta")).toBe(true);
-          throw new Error("recreate failed after explicit default choice");
-        },
-      });
-
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], {
-          throwOnError: true,
-          recoveryManifest: makePreparedRecoveryManifest(),
-        }),
-      ).rejects.toThrow("Recreate failed");
-
-      expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "alpha" }),
-        {
-          defaultTransition: {
-            from: "beta",
-            to: "alpha",
-            expectedRevision: 11,
-          },
-        },
-      );
-      expect(harness.getDefaultSelectionState()).toEqual({
-        defaultSandbox: "beta",
-        defaultSelectionRevision: 12,
-      });
-    });
-
-    it("preserves replacement registry metadata after a custom removal receipt", async () => {
-      let harness!: ReturnType<typeof createRebuildFlowHarness>;
-      harness = createRebuildFlowHarness({
-        defaultSandbox: "alpha",
-        defaultSelectionRevision: 10,
-        removeSandboxRegistryEntryWithReceipt: () => ({
-          entry: { name: "alpha", model: "old-model" },
-          wasDefault: true,
-          fallbackDefault: "beta",
-          postRemovalDefaultSelectionRevision: 11,
-        }),
-        onboard: () => {
-          expect(harness.getDefaultSelectionState()).toEqual({
-            defaultSandbox: "beta",
-            defaultSelectionRevision: 11,
-          });
-          harness.registerSandboxEntry("alpha");
-          throw new Error("recreate failed after replacement registration");
-        },
-      });
-
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
-      ).rejects.toThrow("Recreate failed");
-
-      expect(harness.restoreSandboxEntryIfMissingSpy).toHaveReturnedWith(false);
-      expect(harness.getDefaultSelectionState()).toEqual({
-        defaultSandbox: "beta",
-        defaultSelectionRevision: 11,
-      });
-      expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "Recreate failed: kept the replacement registry metadata already present",
-      );
-    });
-
-    it("performs exactly one prepared-recovery rollback when MCP state is present", async () => {
+    it("preserves the registry row when prepared MCP recovery fails", async () => {
       const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
       const harness = createRebuildFlowHarness({
         defaultSandbox: "alpha",
@@ -285,9 +178,7 @@ export function registerRebuildFlowRecoveryTests(): void {
         ),
       ).rejects.toThrow("Recreate failed");
 
-      expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
-        [expect.objectContaining({ name: "alpha", toolDisclosure: "progressive" }), {}],
-      ]);
+      expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
       expect(harness.errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("rebuild --yes --tool-disclosure direct"),
       );
@@ -313,16 +204,7 @@ export function registerRebuildFlowRecoveryTests(): void {
         ),
       ).rejects.toThrow("Recreate failed");
 
-      expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "alpha", toolDisclosure: "progressive" }),
-        {
-          defaultTransition: {
-            from: null,
-            to: "alpha",
-            expectedRevision: 11,
-          },
-        },
-      );
+      expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
       expect(harness.errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("onboard --resume --tool-disclosure direct"),
       );
@@ -441,7 +323,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
-    it("does not reclaim the default sandbox when an MCP rebuild recreate fails", async () => {
+    it("does not rewrite the default sandbox when an MCP rebuild recreate fails", async () => {
       const mcpEntry = {
         server: "github",
         providerName: "nemoclaw-mcp-alpha-github",
@@ -461,7 +343,6 @@ export function registerRebuildFlowRecoveryTests(): void {
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).rejects.toThrow("Recreate failed");
 
-      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
         [expect.objectContaining({ name: "alpha" })],
       ]);

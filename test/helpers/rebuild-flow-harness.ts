@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
@@ -12,6 +14,7 @@ const requireDist = createRequire(
   path.join(process.cwd(), "src/lib/actions/sandbox/rebuild-flow-harness.ts"),
 );
 const rebuildModulePath = "./rebuild.js";
+const harnessTempDirs: string[] = [];
 
 // Warm the CommonJS source graph outside the first test's timeout. Each harness
 // still reloads the entry module after installing its dependency spies.
@@ -38,7 +41,7 @@ const registry = requireDist("../../state/registry.js");
 const sandboxState = requireDist("../../state/sandbox.js");
 const sandboxSession = requireDist("../../state/sandbox-session.js");
 const sandboxVersion = requireDist("../../sandbox/version.js");
-const destroy = requireDist("./destroy.js");
+const { RebuildTransactionStore } = requireDist("../../state/rebuild-transaction.js");
 const rebuildShields = requireDist("./rebuild-shields.js");
 const nim = requireDist("../../inference/nim.js");
 const policies = requireDist("../../policy/index.js");
@@ -142,7 +145,6 @@ export type RebuildFlowHarness = {
   preflightDcodeRouteSpy: MockInstance;
   prepareManagedDcodeRebuildImageSpy: MockInstance;
   removePresetSpy: MockInstance;
-  removeSandboxRegistryEntrySpy: MockInstance;
   registryUpdateSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
@@ -192,6 +194,7 @@ export function restoreRebuildFlowTestEnvironment(): void {
   vi.restoreAllMocks();
   delete require.cache[requireDist.resolve(rebuildModulePath)];
   restoreRebuildFlowEnv();
+  for (const dir of harnessTempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 }
 
 function createStep(status: string): RebuildFlowStep {
@@ -260,6 +263,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const transactionStateDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "nemoclaw-rebuild-flow-transaction-"),
+  );
+  harnessTempDirs.push(transactionStateDir);
+  const transactionStore = new RebuildTransactionStore({ stateDir: transactionStateDir });
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
@@ -355,17 +363,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         : sandboxEntry
     ) as never;
   });
-  let registryLoadCount = 0;
   vi.spyOn(registry, "load").mockImplementation(() => {
-    const isPreDeleteRead = registryLoadCount > 0;
-    registryLoadCount++;
     return {
-      defaultSandbox: isPreDeleteRead ? preDeleteDefaultSandbox : "alpha",
+      defaultSandbox: preDeleteDefaultSandbox,
       sandboxes: {
-        alpha:
-          isPreDeleteRead && overrides.preDeleteSandboxEntry
-            ? overrides.preDeleteSandboxEntry
-            : sandboxEntry,
+        alpha: overrides.preDeleteSandboxEntry ?? sandboxEntry,
       },
     };
   });
@@ -474,14 +476,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         }
       : { status: 0, output: "" };
   });
-  const removeSandboxRegistryEntrySpy = vi
-    .spyOn(destroy, "removeSandboxRegistryEntryWithReceipt")
-    .mockReturnValue({
-      entry: { name: "alpha", imageTag: "old-image" },
-      wasDefault: preDeleteDefaultSandbox === "alpha",
-      fallbackDefault: null,
-      postRemovalDefaultSelectionRevision: 1,
-    });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi
@@ -616,8 +610,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   logSpy.mockClear();
   warnSpy.mockClear();
 
+  const rebuildSandbox: RebuildSandbox = (sandboxName, options, executionOptions) =>
+    requireDist(rebuildModulePath).rebuildSandbox(sandboxName, options, {
+      ...executionOptions,
+      transactionStore: executionOptions?.transactionStore ?? transactionStore,
+    });
   return {
-    rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
+    rebuildSandbox,
     applyPresetSpy,
     applyPresetContentSpy,
     backupSandboxStateSpy,
@@ -635,7 +634,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     preflightDcodeRouteSpy,
     prepareManagedDcodeRebuildImageSpy,
     removePresetSpy,
-    removeSandboxRegistryEntrySpy,
     registryUpdateSpy,
     releaseOnboardLockSpy,
     relockSpy,

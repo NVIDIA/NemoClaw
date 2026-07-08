@@ -24,7 +24,6 @@ export function registerRebuildFlowLifecycleTests(): void {
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.onboardSpy).not.toHaveBeenCalled();
-      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(
         harness.runOpenshellSpy.mock.calls.some(
           ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
@@ -99,9 +98,8 @@ export function registerRebuildFlowLifecycleTests(): void {
         "/tmp/nemoclaw-rebuild-backup",
       );
       expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
-      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "Preserving MCP-bearing registry entry across sandbox recreation",
+        "Preserving registry entry across sandbox recreation",
       );
       expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
       expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
@@ -156,26 +154,6 @@ export function registerRebuildFlowLifecycleTests(): void {
       for (const [, update] of harness.registryUpdateSpy.mock.calls) {
         expect(update).not.toHaveProperty("toolDisclosure");
       }
-    });
-
-    it("relocks as absent when registry cleanup throws after confirmed delete", async () => {
-      const harness = createRebuildFlowHarness({
-        removeSandboxRegistryEntryWithReceipt: () => {
-          throw new Error("registry cleanup after delete failed");
-        },
-      });
-
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("registry cleanup after delete failed");
-
-      expect(harness.onboardSpy).not.toHaveBeenCalled();
-      expect(harness.relockSpy).toHaveBeenLastCalledWith(
-        "alpha",
-        expect.any(Object),
-        false,
-        "nemoclaw",
-      );
     });
 
     it("relocks as present when shields postwork throws after successful onboard", async () => {
