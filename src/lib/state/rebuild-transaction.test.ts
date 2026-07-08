@@ -25,11 +25,27 @@ import {
   REBUILD_TRANSACTION_DIRNAME,
   type RebuildTransactionIntentV1,
   type RebuildTransactionReceiptsV1,
+  RebuildTransactionStore,
 } from "./rebuild-transaction";
 
 afterEach(cleanupRebuildTransactionTests);
 
 describe("RebuildTransactionStore", () => {
+  it("secures a custom state root and rejects a symlinked root", () => {
+    const root = tempDir();
+    const stateDir = path.join(root, "state");
+    fs.mkdirSync(stateDir, { mode: 0o777 });
+
+    new RebuildTransactionStore({ stateDir });
+    expect(fs.statSync(stateDir).mode & 0o777).toBe(0o700);
+
+    fs.rmSync(stateDir, { recursive: true });
+    const attackerDir = path.join(root, "attacker");
+    fs.mkdirSync(attackerDir);
+    fs.symlinkSync(attackerDir, stateDir);
+    expect(() => new RebuildTransactionStore({ stateDir })).toThrow("untrusted");
+  });
+
   it("round-trips the versioned prepared record with secure paths and permissions", async () => {
     const { stateDir, store } = makeStore();
 

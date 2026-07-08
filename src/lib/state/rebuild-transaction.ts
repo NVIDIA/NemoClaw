@@ -137,6 +137,18 @@ function transactionFileStem(sandboxName: string): string {
   return crypto.createHash("sha256").update(sandboxName).digest("hex");
 }
 
+function ensureTransactionStateRoot(stateDir: string): void {
+  try {
+    const stat = fs.lstatSync(stateDir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`Refusing untrusted rebuild transaction state root: ${stateDir}`);
+    }
+  } catch (error) {
+    if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+  }
+  ensureConfigDir(stateDir);
+}
+
 export function getRebuildTransactionPath(
   sandboxName: string,
   stateDir = resolveNemoclawStateDir(),
@@ -621,6 +633,7 @@ export class RebuildTransactionStore {
 
   constructor(options: RebuildTransactionStoreOptions = {}) {
     this.stateDir = options.stateDir ?? resolveNemoclawStateDir();
+    ensureTransactionStateRoot(this.stateDir);
     this.now = options.now ?? (() => new Date());
     this.transactionId = options.transactionId ?? (() => crypto.randomUUID());
   }
