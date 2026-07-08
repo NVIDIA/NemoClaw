@@ -18,6 +18,7 @@ DCODE_CANONICAL_PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/us
 PROJECT_VENV="/sandbox/.nemoclaw-e2e-project-venv"
 PROJECT_PYTHON="${PROJECT_VENV}/bin/python3"
 PROJECT_PIP="${PROJECT_VENV}/bin/pip3"
+DCODE_MANAGED_EXEC="/usr/local/lib/nemoclaw/dcode-managed-exec"
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -94,13 +95,15 @@ PY
 python_probe() {
   local python_bin="$1"
   local url="$2"
+  local -a command_prefix=("${@:3}")
   local encoded remote_cmd
   if [ -n "${NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE+x}" ]; then
     printf '%s\n' "$NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE"
     return 0
   fi
   encoded="$(python_probe_source | base64 | tr -d '\n')"
-  remote_cmd="${python_bin@Q} -c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
+  printf -v remote_cmd '%q ' "${command_prefix[@]}" "$python_bin"
+  remote_cmd+="-c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
   sandbox_exec "$remote_cmd"
 }
 
@@ -123,8 +126,9 @@ expect_blocked() {
   local label="$2"
   local url="$3"
   local python_bin="${4:-python3}"
+  local -a command_prefix=("${@:5}")
   local output
-  output="$(python_probe "$python_bin" "$url" || true)"
+  output="$(python_probe "$python_bin" "$url" "${command_prefix[@]}" || true)"
   if echo "$output" | grep -q "BLOCKED:" && ! echo "$output" | grep -q "REACHED:"; then
     pass "${actor} cannot reach ${label} without explicit policy"
   elif echo "$output" | grep -q "REACHED:"; then
@@ -152,12 +156,13 @@ if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "probe-command-shape" ]; then
         return 1
         ;;
       *)
-        printf '%s\n' "NO_NEWLINE_IN_COMMAND"
+        printf 'SINGLE_LINE_COMMAND:%s\n' "$1"
         return 0
         ;;
     esac
   }
   python_probe "python3" "https://example.com/"
+  python_probe "/opt/venv/bin/python3" "https://example.com/" "$DCODE_MANAGED_EXEC"
   exit 0
 fi
 
@@ -189,6 +194,14 @@ fi
 expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"
 expect_reached "arbitrary Python" "PyPI" "https://pypi.org/"
 expect_blocked "arbitrary Python" "Tavily" "https://api.tavily.com/"
+# The public helper only reconstructs the trusted proxy environment; OpenShell
+# must still enforce Tavily denial on the final managed-Python executable.
+expect_blocked \
+  "direct managed-exec Python" \
+  "Tavily" \
+  "https://api.tavily.com/" \
+  "/opt/venv/bin/python3" \
+  "$DCODE_MANAGED_EXEC"
 expect_blocked "arbitrary Python" "LangSmith" "https://api.smith.langchain.com/"
 expect_blocked "arbitrary Python" "MCP hosts" "https://modelcontextprotocol.io/"
 expect_blocked "arbitrary Python" "unapproved hosts" "https://example.com/"
