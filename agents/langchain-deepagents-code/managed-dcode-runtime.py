@@ -25,6 +25,12 @@ _MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
 _INFERENCE_BASE_URL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-inference-base-url"
 )
+_MANAGED_PROXY_HOST_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-proxy-host"
+)
+_MANAGED_PROXY_PORT_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-proxy-port"
+)
 _MANAGED_FILE_OWNER_UID = 0
 _CREDENTIAL_NAME = re.compile(
     r"(?:^|_)(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIAL)$",
@@ -882,6 +888,7 @@ def managed_fetch_proxy_url() -> str | None:
     value = os.environ.get(_FETCH_URL_TRUSTED_PROXY_ENV)
     if value is None:
         return None
+    expected_proxy_url = _managed_fetch_proxy_url_from_files()
     if (
         not value
         or len(value) > 2048
@@ -908,10 +915,56 @@ def managed_fetch_proxy_url() -> str | None:
         or _MANAGED_PROXY_HOST.fullmatch(parsed.hostname) is None
     ):
         raise RuntimeError("managed fetch URL proxy is invalid")
+    if value != expected_proxy_url:
+        raise RuntimeError(
+            "managed fetch URL proxy does not match root-owned proxy"
+        )
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         if os.environ.get(name) != value:
             raise RuntimeError("managed fetch URL proxy does not match runtime proxy")
     return value
+
+
+def _read_managed_proxy_value(path: Path, label: str) -> str:
+    """Read one immutable proxy component from the managed image."""
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError(f"managed proxy {label} file is missing or unsafe")
+    try:
+        metadata = path.stat()
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"managed proxy {label} file is unreadable") from exc
+    if (
+        metadata.st_uid != _MANAGED_FILE_OWNER_UID
+        or stat.S_IMODE(metadata.st_mode) != 0o444
+    ):
+        raise RuntimeError(
+            f"managed proxy {label} file has unsafe ownership or mode"
+        )
+    value = raw.rstrip("\n")
+    if (
+        not value
+        or len(value) > 2048
+        or raw not in {value, f"{value}\n"}
+        or value != value.strip()
+        or any(ord(character) < 32 for character in value)
+    ):
+        raise RuntimeError(f"managed proxy {label} file has invalid contents")
+    return value
+
+
+def _managed_fetch_proxy_url_from_files() -> str:
+    """Derive the trusted proxy URL independently from root-owned files."""
+    host = _read_managed_proxy_value(_MANAGED_PROXY_HOST_FILE, "host")
+    port = _read_managed_proxy_value(_MANAGED_PROXY_PORT_FILE, "port")
+    if _MANAGED_PROXY_HOST.fullmatch(host) is None:
+        raise RuntimeError("managed proxy host file has invalid contents")
+    if (
+        re.fullmatch(r"[0-9]{1,5}", port) is None
+        or not 1 <= int(port, 10) <= 65535
+    ):
+        raise RuntimeError("managed proxy port file has invalid contents")
+    return f"http://{host}:{port}"
 
 
 def managed_fetch_with_redirects(

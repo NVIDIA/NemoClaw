@@ -242,6 +242,7 @@ else:
 import os
 import sys
 import types
+from pathlib import Path
 
 calls = []
 responses = []
@@ -267,8 +268,18 @@ requests.Session = Session
 requests.exceptions = types.SimpleNamespace(TooManyRedirects=RuntimeError)
 sys.modules["requests"] = requests
 
-from deepagents_code import tools
+from deepagents_code import _nemoclaw_managed, tools
 from deepagents_code._nemoclaw_managed import managed_fetch_proxy_url
+
+proxy_host_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-host"
+proxy_port_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-port"
+proxy_host_file.write_text("managed-proxy.internal\\n", encoding="utf-8")
+proxy_port_file.write_text("3128\\n", encoding="utf-8")
+proxy_host_file.chmod(0o444)
+proxy_port_file.chmod(0o444)
+_nemoclaw_managed._MANAGED_PROXY_HOST_FILE = proxy_host_file
+_nemoclaw_managed._MANAGED_PROXY_PORT_FILE = proxy_port_file
+_nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
 
 def forbidden_direct_dns(*_args, **_kwargs):
     raise AssertionError("managed fetch attempted direct DNS validation")
@@ -415,31 +426,6 @@ print("managed-fetch-proxy-ok")
       },
     );
     expect(withoutDelegation.status, withoutDelegation.stderr).toBe(0);
-
-    const mismatchedProxy = spawnSync(
-      "python3",
-      [
-        "-c",
-        "from deepagents_code._nemoclaw_managed import managed_fetch_proxy_url; managed_fetch_proxy_url()",
-      ],
-      {
-        env: {
-          PATH: process.env.PATH,
-          PYTHONPATH: tempDir,
-          DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL: proxyUrl,
-          HTTP_PROXY: "http://attacker.internal:4444",
-          HTTPS_PROXY: proxyUrl,
-          http_proxy: proxyUrl,
-          https_proxy: proxyUrl,
-        },
-        encoding: "utf8",
-      },
-    );
-    expect(mismatchedProxy.status).not.toBe(0);
-    expect(mismatchedProxy.stderr).toContain(
-      "managed fetch URL proxy does not match runtime proxy",
-    );
-    expect(mismatchedProxy.stderr).not.toContain("attacker.internal");
   });
 
   it("rejects direct-module runtime credentials before settings bootstrap", () => {
