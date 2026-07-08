@@ -102,6 +102,34 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(result)).toEqual(expect.arrayContaining(jobs));
   });
 
+  it.each([
+    {
+      file: "nemoclaw-blueprint/private-networks.yaml",
+      families: ["inference-policy", "credentials-security"],
+      jobs: ["inference-routing", "network-policy", "credential-sanitization", "security-posture"],
+    },
+    {
+      file: "nemoclaw/src/blueprint/private-networks.ts",
+      families: ["inference-policy", "credentials-security"],
+      jobs: ["inference-routing", "network-policy", "credential-sanitization", "security-posture"],
+    },
+    {
+      file: "src/lib/policy/managed-policy-binding.ts",
+      families: ["inference-policy", "credentials-security"],
+      jobs: ["inference-routing", "network-policy", "credential-sanitization", "security-posture"],
+    },
+    {
+      file: "src/lib/shields/verify-lock.ts",
+      families: ["credentials-security"],
+      jobs: ["credential-sanitization", "security-posture"],
+    },
+  ])("keeps the $file security boundary in the deterministic floor", ({ file, families, jobs }) => {
+    const result = plan(file);
+
+    expect(result.families.map((family) => family.id)).toEqual(expect.arrayContaining(families));
+    expect(riskPlanRequiredJobIds(result)).toEqual(expect.arrayContaining(jobs));
+  });
+
   it("caps automatic execution without dropping required evidence", () => {
     const result = plan(
       "src/lib/onboard.ts",
