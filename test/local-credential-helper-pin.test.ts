@@ -23,6 +23,7 @@ const VALID_ATOMS = [
   'name.startsWith("GIT_CONFIG_")',
   'name.startsWith("GIT_TRACE")',
   'name.startsWith("NPM_CONFIG_")',
+  'name.startsWith("OPENSHELL_")',
   'name.startsWith("PIP_")',
 ];
 const EXPECTED_RULES = [
@@ -34,6 +35,7 @@ const EXPECTED_RULES = [
   "prefix:GIT_TRACE",
   "prefix:LD_",
   "prefix:NPM_CONFIG_",
+  "prefix:OPENSHELL_",
   "prefix:PIP_",
 ];
 
@@ -54,6 +56,7 @@ const PARITY_PREFIXES = [
   "GIT_TRACE",
   "LD_",
   "NPM_CONFIG_",
+  "OPENSHELL_",
   "PIP_",
 ];
 
@@ -174,7 +177,8 @@ describe("local credential helper pin predicate parity", () => {
     { atom: VALID_ATOMS[5], label: "GIT_CONFIG_ prefix" },
     { atom: VALID_ATOMS[6], label: "GIT_TRACE prefix" },
     { atom: VALID_ATOMS[7], label: "NPM_CONFIG_ prefix" },
-    { atom: VALID_ATOMS[8], label: "PIP_ prefix" },
+    { atom: VALID_ATOMS[8], label: "OPENSHELL_ prefix" },
+    { atom: VALID_ATOMS[9], label: "PIP_ prefix" },
   ])("detects removal of the $label (#5048)", ({ atom }) => {
     const mutated = VALID_ATOMS.filter((candidate) => candidate !== atom).join(" || ");
 

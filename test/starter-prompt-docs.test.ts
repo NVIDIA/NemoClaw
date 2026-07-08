@@ -28,16 +28,16 @@ const localCredentialFormSource = path.join(
 const localCredentialHelperUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/f393bba599444c5b031b1ba372228bd007176055/scripts/local-credential-helper.mts";
 const localCredentialHelperSha256 =
-  "eb8f14939fbea3feb56bb6b90181ce7e59549c434d528bf7d371c8432597bbcc"; // gitleaks:allow -- checked-in SHA-256 fixture
+  "04cd84bf261635cd483669f198671636e38da423fbef059d7d052824879a5f85"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormUrl =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/f393bba599444c5b031b1ba372228bd007176055/docs/resources/local-credential-form.html";
 const localCredentialFormSha256 =
-  "47fba6db8b1203a1761fc7fd164196ad543aad9cdd9ba5a5a4657c67dbe266ea"; // gitleaks:allow -- checked-in SHA-256 fixture
+  "5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8"; // gitleaks:allow -- checked-in SHA-256 fixture
 const localCredentialFormScriptCspHash = [
-  "'sha256-+FpZq5OW",
-  "1xPb3W3TaGBnIC3M",
-  "nIL4tg1d+ZnMOwI6",
-  "Pko='",
+  "'sha256-i3cXmSMU",
+  "jTA5LqLSfFQpXe0B",
+  "BZRj4cM8t36dJMm3",
+  "YJw='",
 ].join("");
 const localCredentialFormStyleCspHash = [
   "'sha256-W4wSJyrm",
@@ -69,6 +69,63 @@ const localCredentialNetworkControlNames = [
   "SSLKEYLOGFILE",
   "SSL_CERT_DIR",
   "SSL_CERT_FILE",
+];
+const localCredentialConfigControlNames = [
+  "ALLUSERSPROFILE",
+  "APPDATA",
+  "CURL_HOME",
+  "DOCKER_CERT_PATH",
+  "DOCKER_CONFIG",
+  "DOCKER_CONTEXT",
+  "DOCKER_HOST",
+  "DOCKER_TLS_VERIFY",
+  "GCONV_PATH",
+  "GIT_COMMON_DIR",
+  "GIT_DIR",
+  "GLIBC_TUNABLES",
+  "HOME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "KUBECONFIG",
+  "LOCALAPPDATA",
+  "LOCPATH",
+  "NETRC",
+  "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL",
+  "NEMOCLAW_BOOTSTRAP_PAYLOAD",
+  "NEMOCLAW_INSTALL_REF",
+  "NEMOCLAW_INSTALL_TAG",
+  "NEMOCLAW_INSTALLER_STAGED",
+  "NEMOCLAW_INSTALLER_URL",
+  "NEMOCLAW_OPENSHELL_BIN",
+  "NEMOCLAW_OPENSHELL_CHANNEL",
+  "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
+  "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
+  "NEMOCLAW_REPO_ROOT",
+  "NEMOCLAW_SOURCE_ROOT",
+  "NVM_DIR",
+  "OLDPWD",
+  "OPENSSL_CONF",
+  "OPENSSL_CONF_INCLUDE",
+  "OPENSSL_ENGINES",
+  "OPENSSL_MODULES",
+  "PROGRAMDATA",
+  "PSMODULEPATH",
+  "PWD",
+  "PYTHONUSERBASE",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "USERPROFILE",
+  "VIRTUAL_ENV",
+  "XDG_BIN_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_DIRS",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_DIRS",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "XDG_STATE_HOME",
+  "ZDOTDIR",
 ];
 const starterPromptPages = [
   "docs/index.mdx",
@@ -377,11 +434,14 @@ describe("starter prompt docs CTA", () => {
     );
     expect(promptSource).toContain("exact environment-variable names and exact command argv");
     expect(promptSource).toContain("--field NAME:type");
+    expect(promptSource).toContain("--execution-profile isolated");
+    expect(promptSource).toContain("--execution-profile account-home --cwd");
     expect(promptSource).toContain("absolute native executable or interpreter path");
-    expect(promptSource).toContain("including proxy-routing and TLS-trust overrides");
-    expect(promptSource).toContain("ambient \\`NPM_CONFIG_*\\` and \\`PIP_*\\`");
-    expect(promptSource).toContain("package registry, or Python package index");
-    expect(promptSource).toContain("never put proxy credentials in argv");
+    expect(promptSource).toContain("including configuration roots, source/executable selectors");
+    expect(promptSource).toContain("\\`NPM_CONFIG_*\\` and \\`PIP_*\\`");
+    expect(promptSource).toContain("account home and the approved working directory");
+    expect(promptSource).toContain("\\`--disable\\` as the first argument");
+    expect(promptSource).toContain("Never put credentials in argv");
     expect(promptSource).toContain("<absolute-bash-path> -c");
     expect(promptSource).toContain("Confirm and Run Approved Command");
     expect(promptSource).toContain("do not retry or resubmit");
@@ -468,7 +528,11 @@ describe("starter prompt docs CTA", () => {
       ...localCredentialNetworkControlNames.map(
         (name) => `http://127.0.0.1:4123/local-credential-form.html?fields=${name}:text`,
       ),
+      ...localCredentialConfigControlNames.map(
+        (name) => `http://127.0.0.1:4123/local-credential-form.html?fields=${name}:text`,
+      ),
       "http://127.0.0.1:4123/local-credential-form.html?fields=NPM_CONFIG_REGISTRY:text",
+      "http://127.0.0.1:4123/local-credential-form.html?fields=OPENSHELL_DOCKER_SUPERVISOR_IMAGE:text",
       "http://127.0.0.1:4123/local-credential-form.html?fields=PIP_INDEX_URL:text",
       "http://127.0.0.1:4123/local-credential-form.html?fields=PUBLIC_ID:text&submit=/capture",
     ]) {

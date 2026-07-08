@@ -4,14 +4,26 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import { userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const EXPECTED_LOCAL_CREDENTIAL_FORM_SHA256 =
-  "47fba6db8b1203a1761fc7fd164196ad543aad9cdd9ba5a5a4657c67dbe266ea"; // gitleaks:allow -- checked-in SHA-256 integrity pin
+  "5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8"; // gitleaks:allow -- checked-in SHA-256 integrity pin
 
 export const LOCAL_CREDENTIAL_HELPER_HOST = "127.0.0.1";
 export const LOCAL_CREDENTIAL_FORM_PATH = "/local-credential-form.html";
@@ -36,6 +48,8 @@ export const CREDENTIAL_SHAPED_NAME_PATTERN =
 
 const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "ALL_PROXY",
+  "ALLUSERSPROFILE",
+  "APPDATA",
   "AWS_CA_BUNDLE",
   "BASHOPTS",
   "BASH_ENV",
@@ -43,11 +57,19 @@ const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "CLASSPATH",
   "COMSPEC",
   "CURL_CA_BUNDLE",
+  "CURL_HOME",
   "DENO_CERT",
+  "DOCKER_CERT_PATH",
+  "DOCKER_CONFIG",
+  "DOCKER_CONTEXT",
+  "DOCKER_HOST",
+  "DOCKER_TLS_VERIFY",
   "DOTNET_STARTUP_HOOKS",
   "ENV",
   "FTP_PROXY",
   "GIT_ASKPASS",
+  "GIT_COMMON_DIR",
+  "GIT_DIR",
   "GIT_EDITOR",
   "GIT_EXEC_PATH",
   "GIT_EXTERNAL_DIFF",
@@ -61,15 +83,23 @@ const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "GIT_SSL_CAPATH",
   "GIT_SSL_NO_VERIFY",
   "GLOBIGNORE",
+  "GCONV_PATH",
+  "GLIBC_TUNABLES",
   "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH",
   "GRPC_PROXY",
+  "HOME",
+  "HOMEDRIVE",
+  "HOMEPATH",
   "HTTP_PROXY",
   "HTTPS_PROXY",
   "IFS",
   "JAVA_TOOL_OPTIONS",
   "JDK_JAVA_OPTIONS",
+  "KUBECONFIG",
   "LESSCLOSE",
   "LESSOPEN",
+  "LOCALAPPDATA",
+  "LOCPATH",
   "MANPAGER",
   "NODE_EXTRA_CA_CERTS",
   "NODE_OPTIONS",
@@ -78,16 +108,39 @@ const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "NODE_USE_ENV_PROXY",
   "NODE_USE_SYSTEM_CA",
   "NO_PROXY",
+  "NETRC",
+  "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL",
+  "NEMOCLAW_BOOTSTRAP_PAYLOAD",
+  "NEMOCLAW_INSTALL_REF",
+  "NEMOCLAW_INSTALL_TAG",
+  "NEMOCLAW_INSTALLER_STAGED",
+  "NEMOCLAW_INSTALLER_URL",
+  "NEMOCLAW_OPENSHELL_BIN",
+  "NEMOCLAW_OPENSHELL_CHANNEL",
+  "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
+  "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
+  "NEMOCLAW_REPO_ROOT",
+  "NEMOCLAW_SOURCE_ROOT",
+  "NVM_DIR",
+  "OLDPWD",
+  "OPENSSL_CONF",
+  "OPENSSL_CONF_INCLUDE",
+  "OPENSSL_ENGINES",
+  "OPENSSL_MODULES",
   "PAGER",
   "PATH",
   "PATHEXT",
   "PERL5LIB",
   "PERL5OPT",
   "PS4",
+  "PWD",
+  "PSMODULEPATH",
+  "PROGRAMDATA",
   "PYTHONHOME",
   "PYTHONINSPECT",
   "PYTHONPATH",
   "PYTHONSTARTUP",
+  "PYTHONUSERBASE",
   "REQUESTS_CA_BUNDLE",
   "RUBYLIB",
   "RUBYOPT",
@@ -98,10 +151,25 @@ const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "SSLKEYLOGFILE",
   "SSL_CERT_DIR",
   "SSL_CERT_FILE",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "USERPROFILE",
+  "VIRTUAL_ENV",
+  "XDG_CACHE_HOME",
+  "XDG_BIN_HOME",
+  "XDG_CONFIG_DIRS",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_DIRS",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "XDG_STATE_HOME",
+  "ZDOTDIR",
   "_JAVA_OPTIONS",
 ]);
 
 export type CredentialFieldType = "secret" | "text";
+export type CredentialExecutionProfile = "account-home" | "isolated";
 
 export type CredentialField = Readonly<{
   name: string;
@@ -109,7 +177,9 @@ export type CredentialField = Readonly<{
 }>;
 
 export type LocalCredentialHelperCliOptions = Readonly<{
+  commandCwd?: string;
   commandArgv: readonly string[];
+  executionProfile: CredentialExecutionProfile;
   fields: readonly CredentialField[];
   formPath: string;
 }>;
@@ -157,8 +227,13 @@ export function isForbiddenChildEnvName(name: string): boolean {
     name.startsWith("GIT_CONFIG_") ||
     name.startsWith("GIT_TRACE") ||
     name.startsWith("NPM_CONFIG_") ||
+    name.startsWith("OPENSHELL_") ||
     name.startsWith("PIP_")
   );
+}
+
+function isForbiddenInheritedChildEnvName(name: string): boolean {
+  return name.startsWith("NEMOCLAW_") || isForbiddenChildEnvName(name);
 }
 
 export function sanitizeInheritedChildEnvironment(
@@ -172,10 +247,128 @@ export function sanitizeInheritedChildEnvironment(
         value !== undefined &&
         !approvedFieldNames.has(canonicalName) &&
         !isCredentialShapedName(canonicalName) &&
-        !isForbiddenChildEnvName(canonicalName)
+        !isForbiddenInheritedChildEnvName(canonicalName)
       );
     }),
   );
+}
+
+function createPrivateExecutionRoot(): string {
+  let root = "";
+  try {
+    root = mkdtempSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), ".credential-child-"),
+    );
+    chmodSync(root, 0o700);
+    for (const relativePath of [
+      ["appdata", "local"],
+      ["appdata", "roaming"],
+      ["cache"],
+      ["config"],
+      ["config-dirs"],
+      ["data"],
+      ["data-dirs"],
+      ["runtime"],
+      ["state"],
+      ["tmp"],
+    ]) {
+      mkdirSync(path.join(root, ...relativePath), { mode: 0o700, recursive: true });
+    }
+    return root;
+  } catch (error) {
+    if (root) rmSync(root, { force: true, recursive: true });
+    throw error;
+  }
+}
+
+function privateExecutionEnvironment(root: string): NodeJS.ProcessEnv {
+  return {
+    APPDATA: path.join(root, "appdata", "roaming"),
+    CURL_HOME: path.join(root, "config"),
+    HOME: root,
+    LOCALAPPDATA: path.join(root, "appdata", "local"),
+    PWD: root,
+    TEMP: path.join(root, "tmp"),
+    TMP: path.join(root, "tmp"),
+    TMPDIR: path.join(root, "tmp"),
+    USERPROFILE: root,
+    XDG_CACHE_HOME: path.join(root, "cache"),
+    XDG_CONFIG_DIRS: path.join(root, "config-dirs"),
+    XDG_CONFIG_HOME: path.join(root, "config"),
+    XDG_DATA_DIRS: path.join(root, "data-dirs"),
+    XDG_DATA_HOME: path.join(root, "data"),
+    XDG_RUNTIME_DIR: path.join(root, "runtime"),
+    XDG_STATE_HOME: path.join(root, "state"),
+  };
+}
+
+function accountHomeEnvironment(commandCwd: string): NodeJS.ProcessEnv & { HOME: string } {
+  const home = userInfo().homedir;
+  if (!home || !path.isAbsolute(home)) {
+    throw new Error(
+      "Could not resolve an absolute home directory from the operating system account",
+    );
+  }
+  const environment: NodeJS.ProcessEnv & { HOME: string } = {
+    HOME: home,
+    PWD: commandCwd,
+  };
+  if (process.platform !== "win32") return environment;
+  Object.assign(environment, {
+    APPDATA: path.join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
+    TEMP: path.join(home, "AppData", "Local", "Temp"),
+    TMP: path.join(home, "AppData", "Local", "Temp"),
+    TMPDIR: path.join(home, "AppData", "Local", "Temp"),
+    USERPROFILE: home,
+  });
+  if (/^[A-Za-z]:[\\/]/.test(home)) {
+    environment.HOMEDRIVE = home.slice(0, 2);
+    environment.HOMEPATH = home.slice(2) || "\\";
+  }
+  return environment;
+}
+
+type ExecutionContext = Readonly<{
+  cleanup?: () => void;
+  cwd: string;
+  environment: NodeJS.ProcessEnv;
+}>;
+
+function createExecutionContext(
+  profile: CredentialExecutionProfile,
+  commandCwd: string | undefined,
+): ExecutionContext {
+  if (profile !== "isolated" && profile !== "account-home") {
+    throw new Error("The execution profile must be isolated or account-home");
+  }
+  if (profile === "account-home") {
+    if (!commandCwd || !path.isAbsolute(commandCwd)) {
+      throw new Error("The account-home execution profile requires an absolute --cwd path");
+    }
+    let isDirectory = false;
+    try {
+      isDirectory = statSync(commandCwd).isDirectory();
+    } catch {
+      // Report one stable fail-closed error for missing and unreadable paths.
+    }
+    if (!isDirectory) {
+      throw new Error("The account-home execution profile --cwd path must be a directory");
+    }
+    return Object.freeze({
+      cwd: commandCwd,
+      environment: Object.freeze(accountHomeEnvironment(commandCwd)),
+    });
+  }
+  if (commandCwd !== undefined) {
+    throw new Error("The isolated execution profile does not accept --cwd");
+  }
+  const root = createPrivateExecutionRoot();
+  return Object.freeze({
+    cleanup: () => rmSync(root, { force: true, maxRetries: 2, recursive: true }),
+    cwd: root,
+    environment: Object.freeze(privateExecutionEnvironment(root)),
+  });
 }
 
 function validateApprovedCommandArgv(commandArgv: readonly string[]): void {
@@ -226,19 +419,42 @@ export function parseCliArguments(argv: readonly string[]): LocalCredentialHelpe
 
   let formPath = defaultFormPath();
   let formPathSeen = false;
+  let commandCwd: string | undefined;
+  let executionProfile: CredentialExecutionProfile | undefined;
   const fields: CredentialField[] = [];
   const fieldNames = new Set<string>();
+  const optionNames = new Set(["--cwd", "--execution-profile", "--field", "--form"]);
 
   for (let index = 0; index < optionArgs.length; index += 1) {
     const option = optionArgs[index];
-    if (option !== "--form" && option !== "--field") {
+    if (!optionNames.has(option)) {
       throw new Error(`Unknown option before --: ${option}`);
     }
     const value = optionArgs[index + 1];
-    if (value === undefined || value === "--form" || value === "--field") {
+    if (value === undefined || optionNames.has(value)) {
       throw new Error(`${option} requires a value`);
     }
     index += 1;
+
+    if (option === "--execution-profile") {
+      if (executionProfile !== undefined) {
+        throw new Error("--execution-profile may be specified only once");
+      }
+      if (value !== "isolated" && value !== "account-home") {
+        throw new Error("--execution-profile must be isolated or account-home");
+      }
+      executionProfile = value;
+      continue;
+    }
+
+    if (option === "--cwd") {
+      if (commandCwd !== undefined) throw new Error("--cwd may be specified only once");
+      if (!path.isAbsolute(value) || value.includes("\0")) {
+        throw new Error("--cwd must be an absolute path without NUL bytes");
+      }
+      commandCwd = value;
+      continue;
+    }
 
     if (option === "--form") {
       if (formPathSeen) throw new Error("--form may be specified only once");
@@ -264,9 +480,20 @@ export function parseCliArguments(argv: readonly string[]): LocalCredentialHelpe
   if (fields.length === 0) {
     throw new Error("At least one --field NAME:secret or --field NAME:text is required");
   }
+  if (executionProfile === undefined) {
+    throw new Error("--execution-profile isolated or --execution-profile account-home is required");
+  }
+  if (executionProfile === "account-home" && commandCwd === undefined) {
+    throw new Error("--execution-profile account-home requires an absolute --cwd path");
+  }
+  if (executionProfile === "isolated" && commandCwd !== undefined) {
+    throw new Error("--execution-profile isolated does not accept --cwd");
+  }
 
   return Object.freeze({
+    commandCwd,
     commandArgv: Object.freeze([...commandArgv]),
+    executionProfile,
     fields: Object.freeze([...fields]),
     formPath,
   });
@@ -535,7 +762,9 @@ function clearCredentialReferences(
 }
 
 export async function startLocalCredentialHelper(options: {
+  commandCwd?: string;
   commandArgv: readonly string[];
+  executionProfile: CredentialExecutionProfile;
   fields: readonly CredentialField[];
   formBytes: Buffer;
   timeoutMs?: number;
@@ -577,7 +806,6 @@ export async function startLocalCredentialHelper(options: {
   const completion = new Promise<number>((resolve) => {
     resolveCompletion = resolve;
   });
-
   const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES }, (request, response) => {
     void handleRequest(request, response).catch((error: unknown) => {
       request.resume();
@@ -592,6 +820,23 @@ export async function startLocalCredentialHelper(options: {
   server.headersTimeout = 10_000;
   server.keepAliveTimeout = 1_000;
   server.maxHeadersCount = 32;
+
+  const executionContext = createExecutionContext(options.executionProfile, options.commandCwd);
+  let executionContextCleaned = false;
+  const cleanupExecutionContext = (): void => {
+    if (executionContextCleaned || executionContext.cleanup === undefined) return;
+    executionContextCleaned = true;
+    try {
+      executionContext.cleanup();
+    } catch {
+      console.error("Warning: could not remove the private approved-command directory.");
+    }
+  };
+  process.once("exit", cleanupExecutionContext);
+  void completion.finally(() => {
+    process.off("exit", cleanupExecutionContext);
+    cleanupExecutionContext();
+  });
 
   const finishWithoutChild = (nextState: "expired" | "closed", message: string): void => {
     if (state !== "pending") return;
@@ -609,9 +854,14 @@ export async function startLocalCredentialHelper(options: {
   );
 
   const launchApprovedCommand = (values: Record<string, string>): void => {
-    const childEnv: NodeJS.ProcessEnv = { ...sanitizedAmbientEnv, ...values };
+    const childEnv: NodeJS.ProcessEnv = {
+      ...sanitizedAmbientEnv,
+      ...executionContext.environment,
+      ...values,
+    };
     try {
       child = spawn(commandArgv[0], commandArgv.slice(1), {
+        cwd: executionContext.cwd,
         env: childEnv,
         shell: false,
         stdio: "inherit",
@@ -775,7 +1025,9 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const options = parseCliArguments(argv);
   const formBytes = loadVerifiedCredentialForm(options.formPath);
   const session = await startLocalCredentialHelper({
+    commandCwd: options.commandCwd,
     commandArgv: options.commandArgv,
+    executionProfile: options.executionProfile,
     fields: options.fields,
     formBytes,
   });
