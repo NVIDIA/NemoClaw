@@ -44,6 +44,31 @@ nemoclaw_cli() {
   fi
 }
 
+TAVILY_POLICY_CLEANUP_REQUIRED=0
+POLICY_CLEANUP_TRACE=""
+POLICY_CLEANUP_FIXTURE_DIR=""
+POLICY_CLEANUP_EMIT_TRACE_ON_EXIT=0
+
+cleanup_tavily_policy() {
+  if [ "$TAVILY_POLICY_CLEANUP_REQUIRED" != "1" ]; then
+    return 0
+  fi
+  TAVILY_POLICY_CLEANUP_REQUIRED=0
+  nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes >/dev/null 2>&1 || true
+}
+
+cleanup_tavily_check() {
+  local exit_status=$?
+  cleanup_tavily_policy
+  if [ "$POLICY_CLEANUP_EMIT_TRACE_ON_EXIT" = "1" ] && [ -f "$POLICY_CLEANUP_TRACE" ]; then
+    cat "$POLICY_CLEANUP_TRACE" || true
+  fi
+  if [ -n "$POLICY_CLEANUP_FIXTURE_DIR" ]; then
+    rm -rf "$POLICY_CLEANUP_FIXTURE_DIR"
+  fi
+  return "$exit_status"
+}
+
 python_probe_source() {
   cat <<'PY'
 import json
@@ -141,16 +166,17 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "probe-command-shape" ]; then
   exit 0
 fi
 
-POLICY_CLEANUP_TRACE=""
-POLICY_CLEANUP_FIXTURE_DIR=""
-if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "policy-cleanup-order" ]; then
+if [[ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" =~ ^policy-cleanup-(order|on-probe-failure)$ ]]; then
   POLICY_CLEANUP_FIXTURE_DIR="$(mktemp -d)"
   POLICY_CLEANUP_TRACE="${POLICY_CLEANUP_FIXTURE_DIR}/trace"
   POLICY_CLEANUP_STATE="${POLICY_CLEANUP_FIXTURE_DIR}/policy-state"
   POLICY_CLEANUP_MARKER="${POLICY_CLEANUP_FIXTURE_DIR}/observability-marker"
+  if [ "$NEMOCLAW_E2E_TAVILY_SELF_TEST" = "policy-cleanup-on-probe-failure" ]; then
+    POLICY_CLEANUP_EMIT_TRACE_ON_EXIT=1
+  fi
   printf '%s\n' "baseline" >"$POLICY_CLEANUP_STATE"
   printf '%s\n' "1" >"$POLICY_CLEANUP_MARKER"
-  trap 'rm -rf "$POLICY_CLEANUP_FIXTURE_DIR"' EXIT
+  trap cleanup_tavily_check EXIT
 
   sandbox_exec() {
     # Match the literal command substitution sent to the sandbox.
@@ -191,7 +217,11 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "policy-cleanup-order" ]; then
     local python_bin="${2:-python3}"
     local state
     state="$(cat "$POLICY_CLEANUP_STATE")"
-    if [ "$python_bin" != "python3" ]; then
+    if [ "$NEMOCLAW_E2E_TAVILY_SELF_TEST" = "policy-cleanup-on-probe-failure" ] \
+      && [ "$python_bin" = "python3" ] && [ "$state" = "added" ]; then
+      printf '%s\n' "TRACE:probe-failure" >>"$POLICY_CLEANUP_TRACE"
+      return 23
+    elif [ "$python_bin" != "python3" ]; then
       printf '%s\n' "BLOCKED:fixture non-managed Python"
     elif [ "$state" = "added" ]; then
       printf '%s\n' "REACHED:403"
@@ -252,6 +282,8 @@ APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
+TAVILY_POLICY_CLEANUP_REQUIRED=1
+trap cleanup_tavily_check EXIT
 pass "tavily policy preset applies"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
@@ -298,6 +330,7 @@ REMOVE_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)" 
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
+TAVILY_POLICY_CLEANUP_REQUIRED=0
 pass "tavily policy preset removes after the opt-in proof"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
