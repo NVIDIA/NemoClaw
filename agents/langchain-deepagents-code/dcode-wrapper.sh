@@ -272,6 +272,8 @@ is_secret_shaped_value() {
 
 has_credential_name_context() {
   local upper
+  # Correlation metadata is safe by exact name; value-shape checks run first.
+  [ "$1" = "replyToken" ] && return 1
   upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   case "$upper" in
     KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASSWD | PASS | CREDENTIAL)

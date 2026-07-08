@@ -146,6 +146,7 @@ describe("Deep Agents Code secret-pattern parity", () => {
 import importlib.util
 import fcntl
 import json
+import os
 import sys
 
 sys.dont_write_bytecode = True
@@ -166,20 +167,40 @@ credential_names = [
     "pass", "passwd", "customPass", "customPasswd", "DBPass", "db_pass",
     "db_passwd", "db-pass", "db-passwd", "apiKey", "accessToken",
     "clientSecret", "myCredential", "customPassword", "privateKey",
+    "foo\\nclientSecret",
 ]
 benign_names = [
     "COMPASS", "BYPASS", "passengerCount", "passed", "passRate",
     "passCount", "passThrough", "publicKey", "customKey",
 ]
 is_credential_name = lambda name: bool(
-    managed._CREDENTIAL_NAME.search(name)
-    or managed._CREDENTIAL_CAMEL_NAME.search(name)
+    managed._CREDENTIAL_NAME.search(name) or managed._CREDENTIAL_CAMEL_NAME.search(name)
 )
+original_environment = os.environ.copy()
+def environment_is_safe(name, value):
+    os.environ.clear()
+    os.environ[name] = value
+    try:
+        managed._assert_safe_environment()
+        return True
+    except RuntimeError:
+        return False
+try:
+    runtime_name_safety = [
+        environment_is_safe("replyToken", "reply-correlation-token-123"),
+        environment_is_safe("replyToken", "sk-abcdefghijklmnopqrstuvwx"),
+        environment_is_safe("ReplyToken", "opaqueCredentialPayloadZ1234567890"),
+        environment_is_safe("foo\\nclientSecret", "opaqueCredentialPayloadZ1234567890"),
+    ]
+finally:
+    os.environ.clear()
+    os.environ.update(original_environment)
 json.dump(
     {
         "values": [managed._contains_secret_shape(value) for value in values],
         "credential_names": [is_credential_name(name) for name in credential_names],
         "benign_names": [is_credential_name(name) for name in benign_names],
+        "runtime_name_safety": runtime_name_safety,
     },
     sys.stdout,
 )
@@ -191,8 +212,9 @@ json.dump(
 
     expect(JSON.parse(output)).toEqual({
       values: CANONICAL_SECRET_POSITIVE_VECTORS.map(() => true),
-      credential_names: Array.from({ length: 15 }, () => true),
+      credential_names: Array.from({ length: 16 }, () => true),
       benign_names: Array.from({ length: 9 }, () => false),
+      runtime_name_safety: [true, false, false, false],
     });
   });
 
@@ -209,21 +231,35 @@ if spec is None or spec.loader is None:
 observability = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(observability)
 values = json.load(sys.stdin)
-json.dump([observability._scrub_secret_values(value) for value in values], sys.stdout)
+credential = "Api_" + "Key" + "=" + "ABCDEFGHIJ"
+boundary_prefix = credential[:-3]
+boundary_value = (
+    "x" * (observability._MAX_CAPTURE_STRING_CHARS - len(boundary_prefix) - 1)
+    + " "
+    + credential
+)
+json.dump({
+    "values": [observability._scrub_secret_values(value) for value in values],
+    "boundary": observability._bounded_capture(boundary_value),
+}, sys.stdout)
 `;
     const values = CANONICAL_SECRET_POSITIVE_VECTORS.map((vector) => vector.value);
     const output = execFileSync("python3", ["-I", "-c", probe, observabilityPath], {
       encoding: "utf8",
       input: JSON.stringify(values),
     });
-    const scrubbed = JSON.parse(output) as string[];
+    const scrubbed = JSON.parse(output) as { values: string[]; boundary: string };
 
     for (const [index, value] of values.entries()) {
-      expect(scrubbed[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).toContain(
+      expect(scrubbed.values[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).toContain(
         "<redacted-secret>",
       );
-      expect(scrubbed[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).not.toContain(value);
+      expect(scrubbed.values[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).not.toContain(
+        value,
+      );
     }
+    expect(scrubbed.boundary).toContain("<redacted-secret>");
+    expect(scrubbed.boundary).not.toContain("Api_Key=ABCDEFG");
   });
 
   it("preserves benign near-misses in managed observability (#6452)", () => {

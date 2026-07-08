@@ -671,6 +671,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
       passRate: "opaqueNonSecretPayload123",
       passCount: "opaqueNonSecretPayload123",
       passThrough: "opaqueNonSecretPayload123",
+      replyToken: "reply-correlation-token-123",
       tokenizer: "opaqueNonSecretPayload123",
       publicKey: "opaqueVerificationMaterial123",
       customKey: "opaqueNonSecretPayload123",
