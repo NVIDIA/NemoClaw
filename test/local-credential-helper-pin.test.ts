@@ -133,6 +133,12 @@ describe("local credential helper pin predicate parity", () => {
     expect(extractCredentialPattern(source, "fixture.ts")).toBe("/current_[A-Z]+/i");
   });
 
+  it("extracts executable source from case-insensitive HTML script tags (#5048)", () => {
+    const source = "<SCRIPT>const CREDENTIAL_SHAPED_NAME_PATTERN = /current_[A-Z]+/i;</SCRIPT>";
+
+    expect(extractCredentialPattern(source, "fixture.html")).toBe("/current_[A-Z]+/i");
+  });
+
   it.each([
     {
       decoy: '/* const BLOCKED_NAMES = new Set(["OLD"]); */',

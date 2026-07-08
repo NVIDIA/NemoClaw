@@ -104,7 +104,7 @@ function executableSourceFile(source: string, relativePath: string): ts.SourceFi
     const scriptKind = relativePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
     return ts.createSourceFile(relativePath, source, ts.ScriptTarget.Latest, true, scriptKind);
   }
-  const scripts = [...source.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  const scripts = [...source.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
   if (scripts.length !== 1 || scripts[0][1] === undefined) {
     throw new Error(`${relativePath}: expected exactly one inline script`);
   }
