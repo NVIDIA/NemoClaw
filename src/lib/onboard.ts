@@ -1481,8 +1481,6 @@ function attachGatewayMetadataIfNeeded({
 }
 
 // parsePolicyPresetEnv — see urlUtils import above
-// isSafeModelId — see validation import above
-
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 type PreflightOptions = import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightOptions;
