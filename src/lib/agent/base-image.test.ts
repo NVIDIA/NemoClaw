@@ -80,6 +80,48 @@ describe("agent base image provisioning", () => {
     );
   });
 
+  it("configures Deep Agents Code base-image validation from the manifest (#6456)", () => {
+    withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
+      ensureAgentBaseImage(
+        makeAgent({
+          name: "langchain-deepagents-code",
+          displayName: "LangChain Deep Agents Code",
+          expectedVersion: "0.1.34",
+          dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
+          dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
+        }),
+      );
+      expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inputPaths: [
+            "/test/root/agents/langchain-deepagents-code/manifest.yaml",
+            "/test/root/agents/langchain-deepagents-code/requirements.lock",
+          ],
+          validateImage: expect.any(Function),
+          validationDescription: "deepagents-code==0.1.34",
+        }),
+      );
+    });
+  });
+
+  it("fails closed when the Deep Agents Code manifest omits its base-image version", () => {
+    withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
+      expect(() =>
+        ensureAgentBaseImage(
+          makeAgent({
+            name: "langchain-deepagents-code",
+            displayName: "LangChain Deep Agents Code",
+            expectedVersion: null,
+            dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
+          }),
+        ),
+      ).toThrow(
+        "Agent 'langchain-deepagents-code' (LangChain Deep Agents Code) manifest is missing expected_version required for base-image validation",
+      );
+      expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("rebuilds an agent base image when rebuild flow forces local Dockerfile.base refresh", () => {
     withMockedDocker(
       ({

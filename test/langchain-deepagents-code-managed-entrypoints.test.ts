@@ -58,7 +58,7 @@ function makeWrapperFixture(tempDir: string): { wrapperPath: string; ranMarker: 
     .replace('/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"')
     .replace(
       "exec /opt/venv/bin/python3 -I -m deepagents_code",
-      `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s openai-proxy=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "\${OPENAI_PROXY-__unset__}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
+      `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
   fs.writeFileSync(envFile, "", "utf8");
   fs.writeFileSync(wrapperPath, fixture, { mode: 0o755 });
@@ -87,9 +87,14 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     }
     expect(dockerfile).toContain("dcode-inference-base-url");
     expect(dockerfile).toContain("LANGGRAPH_NO_VERSION_CHECK=true");
+    expect(dockerfile).toContain("LANGGRAPH_CLI_NO_ANALYTICS=1");
     expect(start).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
+    expect(start).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
     expect(wrapper).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
+    expect(wrapper).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
+    expect(patcher).toContain('os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
     expect(patcher).toContain('env["LANGGRAPH_NO_VERSION_CHECK"] = "true"');
+    expect(patcher).toContain('env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
   });
 
   it("does not serialize provider or optional-service secrets into the shell env file", () => {
@@ -106,12 +111,16 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     );
   });
 
-  it("overrides hostile tracing flags before the managed package starts", () => {
+  it("overrides hostile tracing and analytics flags before the managed package starts", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tracing-"));
     const { wrapperPath } = makeWrapperFixture(tempDir);
     const tracingEnv = Object.fromEntries(TRACING_ENABLE_ENV_NAMES.map((name) => [name, "true"]));
     const result = spawnSync("bash", [wrapperPath, "-n", "hi"], {
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...tracingEnv },
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        LANGGRAPH_CLI_NO_ANALYTICS: "0",
+        ...tracingEnv,
+      },
       encoding: "utf8",
     });
 
@@ -119,6 +128,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(result.stdout).toContain(
       "dcode-tracing=false,false,false,false,false,false,false,false,false",
     );
+    expect(result.stdout).toContain("analytics=1");
   });
 
   it.each([

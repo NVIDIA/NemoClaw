@@ -133,6 +133,7 @@ def create_deep_agent(*args, **kwargs):
 
 def _resolve_ptc_option(*args, **kwargs): return None
 def load_async_subagents(config_path=None): return []
+def build_model_identity_section(name, provider=None, context_limit=None, unsupported_modalities=frozenset()): return name
 
 def create_cli_agent(model, assistant_id, *args, **kwargs):
     del model, assistant_id, args
@@ -216,6 +217,16 @@ def should_run_onboarding(state_dir=None): return True
 
 class ApprovalMenu:
     def _handle_selection(self, option, *, reject_message=None): pass
+`,
+  "tui/widgets/status.py": `from __future__ import annotations
+
+class StatusBar:
+    def set_model(self, *, provider, model, effort=""): pass
+`,
+  "tui/widgets/welcome.py": `from __future__ import annotations
+
+class WelcomeBanner:
+    def update_model(self, *, provider, model): pass
 `,
   "client/launch/server.py": fs.readFileSync(
     path.join(repoRoot, "test", "fixtures", "langchain-deepagents-code", "server.py"),
