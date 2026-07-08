@@ -238,7 +238,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
   });
 
-  it("keeps Deep Agents Python egress probe command single-line for OpenShell exec", () => {
+  it("keeps Deep Agents Python egress probe commands single-line for OpenShell exec", () => {
     const result = spawnSync(
       "bash",
       [
@@ -257,7 +257,12 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("NO_NEWLINE_IN_COMMAND");
+    const commands = result.stdout.trim().split("\n");
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toMatch(/^SINGLE_LINE_COMMAND:python3 -c /);
+    expect(commands[1]).toMatch(
+      /^SINGLE_LINE_COMMAND:\/usr\/local\/lib\/nemoclaw\/dcode-managed-exec \/opt\/venv\/bin\/python3 -c /,
+    );
   });
 
   it("keeps Deep Agents secret-boundary probe command single-line for OpenShell exec", () => {
