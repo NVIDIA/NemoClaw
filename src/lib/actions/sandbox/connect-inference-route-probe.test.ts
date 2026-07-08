@@ -15,19 +15,25 @@ import {
 } from "./connect-inference-route-probe";
 
 describe("sandbox connect inference route probe argv", () => {
-  it("uses the dcode login-shell proxy contract without inherited proxy variables (#6191)", () => {
+  it("uses the managed DCode proxy boundary without a login shell (#6191)", () => {
     const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
       name: "langchain-deepagents-code",
     });
 
-    expect(args.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "deep-code", "--", "sh", "-c"]);
-    expect(args.at(-3)).toContain('bash -lc "$1" "$CA_BUNDLE"');
-    expect(args.at(-3)).toContain("-u HTTPS_PROXY");
-    expect(args.at(-3)).toContain("3>&1 1>/dev/null");
-    expect(args.at(-2)).toBe("nemoclaw-ca-capture");
-    expect(args.at(-1)).toContain("exec 1>&3 3>&-");
-    expect(args.at(-1)).toContain('CA_BUNDLE="$0"');
+    expect(args.slice(0, 8)).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "deep-code",
+      "--",
+      "/usr/local/bin/nemoclaw-start",
+      "/bin/sh",
+      "-c",
+    ]);
     expect(args.at(-1)).toContain("https://inference.local/v1/models");
+    expect(args).not.toContain("bash");
+    expect(args.join(" ")).not.toContain("3>&1");
+    expect(args.join(" ")).not.toContain("/tmp/nemoclaw-proxy-env.sh");
     expect(args.every((arg) => !/[\r\n]/.test(arg))).toBe(true);
   });
 
@@ -83,31 +89,38 @@ describe("sandbox connect inference route probe argv", () => {
   it.each([
     "OK 200",
     "BROKEN 503",
-  ])("isolates DCode login-shell startup output from a %s spoof (#6192)", (spoof) => {
+  ])("does not run a hostile DCode profile that writes %s to fd 3 (#6192)", (spoof) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
-    const caBundle = path.join(home, "openshell-ca.pem");
     const profileMarker = path.join(home, "profile-ran");
-    fs.writeFileSync(caBundle, "test CA boundary", "utf8");
-    fs.writeFileSync(
-      path.join(home, ".bash_profile"),
-      `printf '%s\\n' ${JSON.stringify(spoof)}; printf ran > ${JSON.stringify(profileMarker)}`,
-    );
-    const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
-      name: "langchain-deepagents-code",
-    });
-    const wrapper = String(args.at(-3)).replace("HOME=/sandbox", `HOME=${JSON.stringify(home)}`);
-    const trustedProbe = "exec 1>&3 3>&-; printf 'BROKEN 000'";
+    try {
+      const profile = path.join(home, ".bash_profile");
+      const launcher = path.join(home, "nemoclaw-start");
+      fs.writeFileSync(
+        profile,
+        `printf '%s' ${JSON.stringify(spoof)} >&3; printf ran > ${JSON.stringify(profileMarker)}; exit 0`,
+      );
+      fs.writeFileSync(launcher, '#!/bin/bash -p\nset -eu\nunset BASH_ENV ENV\nexec "$@"\n', {
+        mode: 0o755,
+      });
+      const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
+        name: "langchain-deepagents-code",
+      });
+      const command = args.slice(5);
+      command[0] = launcher;
+      command[command.length - 1] = "printf 'BROKEN 000'";
 
-    const result = spawnSync("sh", ["-c", wrapper, String(args.at(-2)), trustedProbe], {
-      encoding: "utf8",
-      env: { ...process.env, CURL_CA_BUNDLE: caBundle, SSL_CERT_FILE: "" },
-    });
+      const result = spawnSync(command[0], command.slice(1), {
+        encoding: "utf8",
+        env: { ...process.env, BASH_ENV: profile, ENV: profile, HOME: home },
+      });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("BROKEN 000");
-    expect(result.stdout).not.toContain(spoof);
-    expect(fs.readFileSync(profileMarker, "utf8")).toBe("ran");
-    fs.rmSync(home, { force: true, recursive: true });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("BROKEN 000");
+      expect(result.stdout).not.toContain(spoof);
+      expect(fs.existsSync(profileMarker)).toBe(false);
+    } finally {
+      fs.rmSync(home, { force: true, recursive: true });
+    }
   });
 });
 

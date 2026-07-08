@@ -52,11 +52,7 @@ describe("connectSandbox DCode probe preamble boundary", () => {
     expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
     expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
-      expect.any(Object),
-    );
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "did not return a trusted result",
     );

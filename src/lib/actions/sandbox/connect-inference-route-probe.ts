@@ -35,35 +35,17 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_VALIDATION,
   INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
 ].join("; ");
-const INFERENCE_ROUTE_PROBE_FROM_ARG0_SCRIPT = [
-  // The outer DCode wrapper suppresses login-shell startup stdout. Restore the
-  // capture descriptor only after profile loading completes so profile output
-  // cannot impersonate trusted route evidence.
-  "exec 1>&3 3>&-",
-  'CA_BUNDLE="$0"',
-  INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
-].join("; ");
-
-const PROXY_ENV_KEYS = [
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "NO_PROXY",
-  "no_proxy",
-  "ALL_PROXY",
-  "all_proxy",
-] as const;
-
-const DCODE_INFERENCE_ROUTE_PROBE_WRAPPER = [
-  INFERENCE_ROUTE_CA_FROM_ENV,
-  INFERENCE_ROUTE_CA_VALIDATION,
-  // bash -lc receives CA_BUNDLE as argv[0], so the inner script reads the
-  // exact OpenShell-injected CA path from $0 after the login shell loads. FD 3
-  // preserves the capture stream while startup stdout is discarded; the inner
-  // probe restores it before emitting its result.
-  `exec env ${PROXY_ENV_KEYS.map((key) => `-u ${key}`).join(" ")} HOME=/sandbox bash -lc "$1" "$CA_BUNDLE" 3>&1 1>/dev/null`,
-].join("; ");
+// Invalid state: a DCode login shell runs sandbox-user startup files before the
+// probe, so every inherited output descriptor is attacker-writable evidence.
+// Source boundary: the image-baked launcher reconstructs the managed proxy from
+// root-owned, mode-0444 files and execs a command without loading user profiles.
+// Source-fix constraint: raw OpenShell exec does not inherit the entrypoint's
+// trusted proxy contract, while a login shell cannot provide an output trust
+// boundary. Regression: hostile-profile tests assert that no startup file or
+// inherited descriptor can emit probe evidence. Removal condition: use a raw
+// probe only when OpenShell provides the same trusted proxy environment to every
+// sandbox exec process without shell startup.
+const DCODE_MANAGED_RUNTIME_LAUNCHER = "/usr/local/bin/nemoclaw-start";
 
 /**
  * Classify a route result that is already known not to be healthy.
@@ -81,15 +63,12 @@ export function buildSandboxInferenceRouteProbeArgs(
   const command =
     agent?.name === "langchain-deepagents-code"
       ? [
-          // Capture OpenShell's trusted CA before the login shell sources the
-          // DCode runtime environment. The login shell still reconstructs the
-          // proxy contract from /tmp/nemoclaw-proxy-env.sh after inherited
-          // proxy variables are cleared.
-          "sh",
+          // The trusted launcher ignores ambient proxy overrides and does not
+          // source sandbox-user startup files before executing this probe.
+          DCODE_MANAGED_RUNTIME_LAUNCHER,
+          "/bin/sh",
           "-c",
-          DCODE_INFERENCE_ROUTE_PROBE_WRAPPER,
-          "nemoclaw-ca-capture",
-          INFERENCE_ROUTE_PROBE_FROM_ARG0_SCRIPT,
+          INFERENCE_ROUTE_PROBE_SCRIPT,
         ]
       : ["sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT];
 
