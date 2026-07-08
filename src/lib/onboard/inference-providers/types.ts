@@ -135,26 +135,6 @@ export type RemoteProviderDeps = CommonDeps & {
       log: (message: string) => void;
     }): Promise<{ handled: true; result: SetupInferenceResult } | { handled: false }>;
   };
-  openrouterRuntimeOnboard: {
-    setupOpenRouterRuntimeInference(input: {
-      sandboxName: string | null;
-      provider: string;
-      model: string;
-      credentialEnv: string | null;
-      reuseGatewayCredentialWithoutLocalKey?: boolean;
-      isNonInteractive: () => boolean;
-      runOpenshell: RunOpenshell;
-      upsertProvider: UpsertProvider;
-      verifyInferenceRoute: VerifyInferenceRoute;
-      verifyOnboardInferenceSmoke: any;
-      hydrateCredentialEnv: (envName: string) => string | null;
-      updateSandbox: Registry["updateSandbox"];
-      exitProcess: CommonDeps["exitProcess"];
-      error: (message: string) => void;
-      log: (message: string) => void;
-      redact: (input: string) => string;
-    }): Promise<{ handled: true; result: SetupInferenceResult } | { handled: false }>;
-  };
 };
 
 // DNS lookup signature compatible with `dnsPromises.lookup(host, { all: true })`
