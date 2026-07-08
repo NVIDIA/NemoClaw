@@ -145,7 +145,6 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     expect(dotenvResult.stderr).not.toContain(value);
     expect(fs.existsSync(dotenvFixture.ranMarker)).toBe(false);
   });
-
   it("allows nemoclaw-managed messaging tokens whose values are intentionally credential-shaped", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
@@ -394,7 +393,6 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
       }
     },
   );
-
   it("allows launch when auth.json is absent (fresh sandbox)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-absent-"));
     const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
@@ -625,10 +623,31 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
   });
 
   it("rejects the wrapper credential-name policy with opaque payloads", () => {
-    const cases =
-      "KEY TOKEN SECRET PASSWORD PASSWD PASS CREDENTIAL API_KEY CUSTOM_PASSWD CUSTOM_PASS".split(
-        " ",
-      );
+    const cases = [
+      "KEY",
+      "TOKEN",
+      "SECRET",
+      "PASSWORD",
+      "PASSWD",
+      "PASS",
+      "CREDENTIAL",
+      "API_KEY",
+      "CUSTOM_PASSWD",
+      "CUSTOM_PASS",
+      "customPass",
+      "customPasswd",
+      "DBPass",
+      "db_pass",
+      "db_passwd",
+      "db-pass",
+      "db-passwd",
+      "apiKey",
+      "accessToken",
+      "clientSecret",
+      "myCredential",
+      "customPassword",
+      "privateKey",
+    ];
     const opaque = "opaqueCredentialPayloadZ1234567890";
     for (const name of cases) {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-exactctx-${name}-`));
@@ -647,12 +666,19 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     const result = runWrapper(wrapperPath, ["-n", "hi"], {
       BYPASS: "allowedValue123",
       COMPASS: "opaqueNonSecretPayload123",
+      passengerCount: "opaqueNonSecretPayload123",
+      passed: "opaqueNonSecretPayload123",
+      passRate: "opaqueNonSecretPayload123",
+      passCount: "opaqueNonSecretPayload123",
+      passThrough: "opaqueNonSecretPayload123",
+      tokenizer: "opaqueNonSecretPayload123",
+      publicKey: "opaqueVerificationMaterial123",
+      customKey: "opaqueNonSecretPayload123",
     });
 
     expect(result.status, result.stderr).toBe(0);
     expect(fs.existsSync(ranMarker)).toBe(true);
   });
-
   it.each([
     { label: "variable expansion", content: "MY_CRED=$OTHER_SECRET" },
     { label: "command substitution", content: "MY_CRED=$(whoami)" },
@@ -707,20 +733,20 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it("rejects the canonical positive secret corpus before dcode starts (#6195)", () => {
-    for (const { label, value } of CANONICAL_SECRET_POSITIVE_VECTORS) {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-parity-${label}-`));
-      try {
-        const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-        const varName = `NEMOCLAW_PARITY_${label.toUpperCase()}`;
-        const result = runWrapper(wrapperPath, ["-n", "hi"], { [varName]: value });
-        expect(result.status, `${label} via runtime env not rejected`).not.toBe(0);
-        expect(result.stderr).toContain(varName);
-        expect(result.stderr).not.toContain(value);
-        expect(fs.existsSync(ranMarker)).toBe(false);
-      } finally {
-        fs.rmSync(tempDir, { force: true, recursive: true });
-      }
+  it.each(
+    CANONICAL_SECRET_POSITIVE_VECTORS,
+  )("rejects canonical $label secrets before dcode starts (#6195)", ({ label, value }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-parity-${label}-`));
+    try {
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+      const varName = `NEMOCLAW_PARITY_${label.toUpperCase()}`;
+      const result = runWrapper(wrapperPath, ["-n", "hi"], { [varName]: value });
+      expect(result.status, `${label} via runtime env not rejected`).not.toBe(0);
+      expect(result.stderr).toContain(varName);
+      expect(result.stderr).not.toContain(value);
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
     }
   });
 });

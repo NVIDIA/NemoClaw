@@ -8,9 +8,6 @@ import { expect } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
-const WRAPPER_ENV_FILE = 'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"';
-const WRAPPER_EXEC = "exec /opt/venv/bin/python3 -I -m deepagents_code";
-type Replacement = readonly [search: string, replacement: string];
 
 export function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
@@ -23,12 +20,17 @@ const MANAGED_MCP_VALIDATOR_INVOCATION = [
   ')"',
 ].join("\n");
 
+const DEEPAGENTS_CODE_EXEC = "exec /opt/venv/bin/python3 -I -m deepagents_code";
+
 function stubManagedMcpValidator(source: string): string {
   expect(source).not.toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
   return source;
 }
 
-function mustReplaceOnce(source: string, replacements: readonly Replacement[]): string {
+function mustReplaceOnce(
+  source: string,
+  replacements: readonly (readonly [search: string, replacement: string])[],
+): string {
   return replacements.reduce((current, [search, replacement]) => {
     if (current.split(search).length !== 2) {
       throw new Error(`fixture drift: expected exactly one ${JSON.stringify(search)}`);
@@ -37,11 +39,22 @@ function mustReplaceOnce(source: string, replacements: readonly Replacement[]): 
   }, source);
 }
 
-function wrapperReplacements(envFile: string, execReplacement: string): readonly Replacement[] {
-  return [
-    [WRAPPER_ENV_FILE, `readonly DEEPAGENTS_ENV_FILE="${envFile}"`],
-    [WRAPPER_EXEC, execReplacement],
-  ];
+function materializeWrapperFixture(
+  tempDir: string,
+  envFile: string,
+  transform: (source: string) => string,
+): string {
+  const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
+  const source = mustReplaceOnce(stubManagedMcpValidator(readAgentFile("dcode-wrapper.sh")), [
+    [
+      'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
+      `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
+    ],
+  ]);
+  fs.writeFileSync(envFile, "", "utf8");
+  fs.writeFileSync(wrapperPath, transform(source), "utf8");
+  fs.chmodSync(wrapperPath, 0o755);
+  return wrapperPath;
 }
 
 export function makeWrapperFixture(
@@ -54,29 +67,27 @@ export function makeWrapperFixture(
   authFile: string;
   codexAuthFile: string;
 } {
-  const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const ranMarker = path.join(tempDir, "dcode-ran");
   const envFile = envFileOverride ?? path.join(tempDir, ".env");
   const authFile = path.join(tempDir, "auth.json");
   const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
-  const fixture = mustReplaceOnce(stubManagedMcpValidator(readAgentFile("dcode-wrapper.sh")), [
-    ...wrapperReplacements(
-      envFile,
-      `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
-    ),
-    [
-      'readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"',
-      `readonly DEEPAGENTS_AUTH_FILE="${authFile}"`,
-    ],
-    [
-      'readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"',
-      `readonly DEEPAGENTS_CODEX_AUTH_FILE="${codexAuthFile}"`,
-    ],
-    ['/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"'],
-  ]);
-  fs.writeFileSync(envFile, "", "utf8");
-  fs.writeFileSync(wrapperPath, fixture, "utf8");
-  fs.chmodSync(wrapperPath, 0o755);
+  const wrapperPath = materializeWrapperFixture(tempDir, envFile, (source) =>
+    mustReplaceOnce(source, [
+      [
+        'readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"',
+        `readonly DEEPAGENTS_AUTH_FILE="${authFile}"`,
+      ],
+      [
+        'readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"',
+        `readonly DEEPAGENTS_CODEX_AUTH_FILE="${codexAuthFile}"`,
+      ],
+      ['/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"'],
+      [
+        DEEPAGENTS_CODE_EXEC,
+        `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : ${DEEPAGENTS_CODE_EXEC}`,
+      ],
+    ]),
+  );
   return { wrapperPath, ranMarker, envFile, authFile, codexAuthFile };
 }
 
@@ -85,19 +96,16 @@ export function makeNetworkSimulatingFixture(tempDir: string): {
   networkLog: string;
   envFile: string;
 } {
-  const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const networkLog = path.join(tempDir, "network.log");
   const envFile = path.join(tempDir, ".env");
-  const fixture = mustReplaceOnce(
-    stubManagedMcpValidator(readAgentFile("dcode-wrapper.sh")),
-    wrapperReplacements(
-      envFile,
-      `printf 'NET:OPEN inference.local/v1/chat\\nNET:OPEN pypi.org/simple\\nNET:OPEN api.openai.com/v1\\n' > "${networkLog}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
-    ),
+  const wrapperPath = materializeWrapperFixture(tempDir, envFile, (source) =>
+    mustReplaceOnce(source, [
+      [
+        DEEPAGENTS_CODE_EXEC,
+        `printf 'NET:OPEN inference.local/v1/chat\\nNET:OPEN pypi.org/simple\\nNET:OPEN api.openai.com/v1\\n' > "${networkLog}"; exit 0; : ${DEEPAGENTS_CODE_EXEC}`,
+      ],
+    ]),
   );
-  fs.writeFileSync(envFile, "", "utf8");
-  fs.writeFileSync(wrapperPath, fixture, "utf8");
-  fs.chmodSync(wrapperPath, 0o755);
   return { wrapperPath, networkLog, envFile };
 }
 

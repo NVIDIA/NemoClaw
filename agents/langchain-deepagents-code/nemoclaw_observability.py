@@ -131,6 +131,12 @@ def _safe_identifier(value: Any, fallback: str) -> str:
 
 
 _REDACTED_SECRET_VALUE = "<redacted-secret>"
+# Python's \s also includes control separators that ECMAScript excludes, so
+# spell out the canonical whitespace set for cross-runtime parity.
+_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
+    r"[^\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029"
+    r"\u202f\u205f\u3000\ufeff'\"]"
+)
 # SECURITY -- Invalid state: Relay legitimately carries raw model and tool
 # content, but NemoClaw's managed exporter must not emit recognized credential
 # shapes from that content. This isolated Python package cannot import the
@@ -172,14 +178,29 @@ _ANCHORED_SECRET_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"((?:_KEY|API_KEY|SECRET|TOKEN|CREDENTIAL)[=: ]['\"]?)"
-        r"[A-Za-z0-9_.+/=-]{10,}",
+        r"((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_"
+        r"(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|"
+        r"(?:X[-_])?API[-_]KEY|"
+        r"TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)"
+        r"['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?)"
+        rf"{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
         re.IGNORECASE,
     ),
     re.compile(
-        r"((?:^|[^A-Za-z0-9])(?:PASSWORD|PASSWD|PASS)[=: ]['\"]?)"
-        r"[^\s'\"]{10,}",
-        re.IGNORECASE,
+        r"((?:^|[^A-Za-z0-9])(?!replyToken['\"]?"
+        r"(?:[ \t]{0,32}[=:]|[ \t]{1,32}))"
+        r"(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|"
+        r"[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|"
+        r"[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|"
+        r"[Aa]pp|[Rr]esolved)Key|"
+        r"[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))"
+        r"['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?)"
+        rf"{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
+    ),
+    re.compile(
+        r"((?:^|[^A-Za-z0-9])KEY['\"]?"
+        r"(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?)"
+        rf"{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}{{10,}}",
     ),
 )
 _ANCHORED_SECRET_REPLACEMENT = rf"\g<1>{_REDACTED_SECRET_VALUE}"
@@ -204,15 +225,36 @@ _TRUNCATED_SECRET_PATTERNS = tuple(
         ),
         (
             r"(?:Bearer[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029"
-            r"\u202f\u205f\u3000\ufeff]+|"
-            r"(?:_KEY|API_KEY|SECRET|TOKEN|CREDENTIAL)[=: ]['\"]?)"
+            r"\u202f\u205f\u3000\ufeff]+)"
             r"[A-Za-z0-9_.+/=-]*\Z",
             re.IGNORECASE,
         ),
         (
-            r"(?:^|[^A-Za-z0-9])(?:PASSWORD|PASSWD|PASS)[=: ]['\"]?"
-            r"[^\s'\"]*\Z",
+            r"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_"
+            r"(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|"
+            r"(?:X[-_])?API[-_]KEY|"
+            r"TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)"
+            r"['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?"
+            rf"{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}*\Z",
             re.IGNORECASE,
+        ),
+        (
+            r"(?:^|[^A-Za-z0-9])(?!replyToken['\"]?"
+            r"(?:[ \t]{0,32}[=:]|[ \t]{1,32}))"
+            r"(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|"
+            r"[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|"
+            r"[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|"
+            r"[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|"
+            r"[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))"
+            r"['\"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?"
+            rf"{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}*\Z",
+            0,
+        ),
+        (
+            r"(?:^|[^A-Za-z0-9])KEY['\"]?"
+            r"(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})['\"]?"
+            rf"{_ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR}*\Z",
+            0,
         ),
     )
 )
@@ -267,6 +309,8 @@ def _bounded_string(
 def _redact_capture_key(key: Any) -> bool:
     if type(key) is not str:
         return True
+    if key == "replyToken":
+        return False
     segmented = _CAPTURE_KEY_ACRONYM_BOUNDARY.sub("_", key.strip())
     normalized = _CAPTURE_KEY_DELIMITER.sub(
         "_", _CAPTURE_KEY_CAMEL_BOUNDARY.sub("_", segmented)
@@ -286,9 +330,7 @@ def _redact_capture_key(key: Any) -> bool:
                 "credential",
                 "credentials",
                 "header",
-                "pass",
                 "password",
-                "passwd",
                 "secret",
                 "token",
             }
@@ -297,6 +339,9 @@ def _redact_capture_key(key: Any) -> bool:
         or normalized.endswith("_api_key")
         or normalized.endswith("_access_key")
         or normalized.endswith("_headers")
+        or normalized in {"pass", "passwd"}
+        or normalized.endswith("_pass")
+        or normalized.endswith("_passwd")
         or normalized.endswith("_password")
         or normalized.endswith("_private_key")
         or normalized.endswith("_secret")

@@ -7,7 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+import {
+  CONTEXT_PATTERNS,
+  SECRET_BLOCK_PATTERNS,
+  TOKEN_PREFIX_PATTERNS,
+} from "../src/lib/security/secret-patterns.ts";
 
 const tuiStartupCheckPath = path.join(
   process.cwd(),
@@ -540,9 +544,25 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       [
         fingerprint(CONTEXT_PATTERNS[2]),
         {
-          name: "password_context",
-          sample: "PASSWORD=abcdefghijklmnopqrst",
-          rawSecret: "abcdefghijklmnopqrst",
+          name: "camel_secret_context",
+          sample: "clientSecret=opaqueCredentialPayloadZ1234567890",
+          rawSecret: "opaqueCredentialPayloadZ1234567890",
+        },
+      ],
+      [
+        fingerprint(CONTEXT_PATTERNS[3]),
+        {
+          name: "uppercase_key_context",
+          sample: "KEY=opaqueCredentialPayloadZ1234567890",
+          rawSecret: "opaqueCredentialPayloadZ1234567890",
+        },
+      ],
+      [
+        fingerprint(SECRET_BLOCK_PATTERNS[0]),
+        {
+          name: "private_key_block",
+          sample:
+            "-----BEGIN TEST PRIVATE KEY-----\nopaque-test-body\n-----END TEST PRIVATE KEY-----",
         },
       ],
     ]);
@@ -570,6 +590,11 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         rawSecret: "abcdefghijklmnopqrst",
       },
       {
+        name: "password_context",
+        sample: "PASSWORD=abcdefghijklmnopqrst",
+        rawSecret: "abcdefghijklmnopqrst",
+      },
+      {
         name: "credential_context",
         sample: "CREDENTIAL=abcdefghijklmnopqrst",
         rawSecret: "abcdefghijklmnopqrst",
@@ -579,9 +604,48 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         sample: "SERVICE_KEY=abcdefghijklmnopqrst",
         rawSecret: "abcdefghijklmnopqrst",
       },
+      {
+        name: "pass_punctuation_context",
+        sample: "CUSTOM_PASS=!OpaquePassword123",
+        rawSecret: "!OpaquePassword123",
+      },
+      {
+        name: "quoted_json_pass_context",
+        sample: '{"PASS":"opaqueCredentialPayloadZ1234567890"}',
+        rawSecret: "opaqueCredentialPayloadZ1234567890",
+      },
+      {
+        name: "spaced_pass_context",
+        sample: "PASS = opaqueCredentialPayloadZ1234567890",
+        rawSecret: "opaqueCredentialPayloadZ1234567890",
+      },
+      {
+        name: "generic_punctuation_context",
+        sample: "API_KEY=,OpaqueCredentialPayloadZ1234567890",
+        rawSecret: ",OpaqueCredentialPayloadZ1234567890",
+      },
+      {
+        name: "hyphenated_api_key_context",
+        sample: "X-Api-Key=opaqueCredentialPayloadZ1234567890",
+        rawSecret: "opaqueCredentialPayloadZ1234567890",
+      },
+      {
+        name: "python_extra_next_line_context",
+        sample: "API_KEY=12345\u00856789012345",
+        rawSecret: "12345\u00856789012345",
+      },
+      {
+        name: "python_extra_file_separator_context",
+        sample: "API_KEY=12345\u001c6789012345",
+        rawSecret: "12345\u001c6789012345",
+      },
     ];
 
-    const canonicalFingerprints = [...TOKEN_PREFIX_PATTERNS, ...CONTEXT_PATTERNS].map(fingerprint);
+    const canonicalFingerprints = [
+      ...TOKEN_PREFIX_PATTERNS,
+      ...CONTEXT_PATTERNS,
+      ...SECRET_BLOCK_PATTERNS,
+    ].map(fingerprint);
     expect([...canonicalSamples.keys()]).toEqual(canonicalFingerprints);
 
     for (const { name, sample, rawSecret } of [...canonicalSamples.values(), ...extraSamples]) {
@@ -594,7 +658,22 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     }
     expect(redactsSecret(langsmithPt)).toBe("[REDACTED_SECRET]");
     expect(redactsSecret(langsmithSk)).toBe("[REDACTED_SECRET]");
-    expect(detectsSecret("plain startup text")).toBe("clean");
+    for (const benign of [
+      "plain startup text",
+      "COMPASS=opaqueNonSecretPayload123",
+      "BYPASS=allowedValue123",
+      "TOPSECRET=opaqueNonSecretPayload123",
+      "SUBTOKEN=opaqueNonSecretPayload123",
+      "publicKey=opaqueVerificationMaterial123",
+      "customKey=opaqueNonSecretPayload123",
+      "public-key=opaqueVerificationMaterial123",
+      "custom-key=opaqueNonSecretPayload123",
+      '{"key":"agent:main:main"}',
+      '{"replyToken":"reply-correlation-token-123"}',
+    ]) {
+      expect(detectsSecret(benign), benign).toBe("clean");
+      expect(redactsSecret(benign), benign).toBe(benign);
+    }
   });
 
   it("removes raw TUI startup artifacts after writing the sanitized capture", () => {

@@ -23,7 +23,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { SECRET_PATTERNS } from "./secret-patterns";
+import { hasPassCredentialSegment, SECRET_PATTERNS } from "./secret-patterns";
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -168,6 +168,7 @@ export function isCredentialField(key: string): boolean {
   return (
     CREDENTIAL_FIELDS.has(key) ||
     CREDENTIAL_FIELD_PATTERN.test(key) ||
+    hasPassCredentialSegment(key) ||
     ENV_SECRET_FIELD_PATTERN.test(key) ||
     HEADER_CREDENTIAL_PATTERN.test(key) ||
     CREDENTIAL_HEADER_NAMES.has(key.toLowerCase())

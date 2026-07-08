@@ -73,6 +73,7 @@ export interface OnboardDashboardDeps {
     deps: {
       note: (msg: string) => void;
       buildControlUiUrls: (token: string | null, port: number) => string[];
+      effectiveDashboardPort?: number;
     },
   ): void;
 }
@@ -378,10 +379,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     sandboxName: string,
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number {
+    const chatUiUrl = process.env.CHAT_UI_URL;
     return ensureAgentDashboardForwardForAgent({
       sandboxName,
       agent,
       ensureDashboardForward,
+      chatUiUrl,
+      controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
     });
   }
 
@@ -480,6 +484,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       deps.printAgentDashboardUi(sandboxName, token, agent, {
         note: deps.note,
+        effectiveDashboardPort: chain.port,
         buildControlUiUrls: (tokenValue: string | null, port: number) => {
           const primary = buildControlUiUrls(tokenValue, port);
           const alternates = buildFallbackControlUiUrls(tokenValue, port, [

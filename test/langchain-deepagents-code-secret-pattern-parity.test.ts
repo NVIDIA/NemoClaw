@@ -75,8 +75,9 @@ describe("Deep Agents Code secret-pattern parity", () => {
       ],
       context: [
         "(?<=Bearer\\s+)[A-Za-z0-9_.+/=-]{10,}::gi",
-        "(?<=(?:_KEY|API_KEY|SECRET|TOKEN|CREDENTIAL)[=: ]['\"]?)[A-Za-z0-9_.+/=-]{10,}::gi",
-        "(?<=(?:^|[^A-Za-z0-9])(?:PASSWORD|PASSWD|PASS)[=: ]['\"]?)[^\\s'\"]{10,}::gi",
+        "(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::gi",
+        "(?<=(?:^|[^A-Za-z0-9])(?!replyToken[\"']?(?:[ \\t]{0,32}[=:]|[ \\t]{1,32}))(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::g",
+        "(?<=(?:^|[^A-Za-z0-9])KEY[\"']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32})[\"']?)[^\\s'\"]{10,}::g",
       ],
       block: [
         "-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\\s\\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----::g",
@@ -105,27 +106,94 @@ describe("Deep Agents Code secret-pattern parity", () => {
     }
   });
 
+  it("bounds assignment separators and rejects credential-word substrings (#6452)", () => {
+    const assignmentPattern = CONTEXT_PATTERNS[1];
+    for (const value of [
+      "COMPASS=opaqueNonSecretPayload123",
+      "BYPASS=allowedValue123",
+      "TOPSECRET=opaqueNonSecretPayload123",
+      "SUBTOKEN=opaqueNonSecretPayload123",
+      "public-key=opaqueVerificationMaterial123",
+      "custom-key=opaqueNonSecretPayload123",
+      '{"key":"agent:main:main"}',
+      `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
+      `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
+    ]) {
+      expect(matches(assignmentPattern, value), value.slice(0, 80)).toBe(false);
+    }
+    expect(
+      matches(assignmentPattern, `TOKEN${" ".repeat(32)}opaqueCredentialPayloadZ1234567890`),
+    ).toBe(true);
+
+    const camelPattern = CONTEXT_PATTERNS[2];
+    for (const value of [
+      "COMPASS=opaqueNonSecretPayload123",
+      "BYPASS=allowedValue123",
+      "passRate=opaqueNonSecretPayload123",
+      "passCount=opaqueNonSecretPayload123",
+      "passThrough=opaqueNonSecretPayload123",
+      "publicKey=opaqueVerificationMaterial123",
+      "customKey=opaqueNonSecretPayload123",
+      '{"replyToken":"reply-correlation-token-123"}',
+      `${"a".repeat(129)}Secret=opaqueCredentialPayloadZ1234567890`,
+    ]) {
+      expect(matches(camelPattern, value), value.slice(0, 80)).toBe(false);
+    }
+  });
+
   it("detects every shared positive vector in the managed Python runtime (#6195)", () => {
     const probe = `
 import importlib.util
+import fcntl
 import json
 import sys
 
 sys.dont_write_bytecode = True
+for name, value in {
+    "F_SEAL_WRITE": 1,
+    "F_SEAL_GROW": 2,
+    "F_SEAL_SHRINK": 4,
+    "F_SEAL_SEAL": 8,
+}.items():
+    setattr(fcntl, name, getattr(fcntl, name, value))
 spec = importlib.util.spec_from_file_location("_nemoclaw_managed_parity", sys.argv[1])
 if spec is None or spec.loader is None:
     raise RuntimeError("managed runtime module could not be loaded")
 managed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(managed)
 values = json.load(sys.stdin)
-json.dump([managed._contains_secret_shape(value) for value in values], sys.stdout)
+credential_names = [
+    "pass", "passwd", "customPass", "customPasswd", "DBPass", "db_pass",
+    "db_passwd", "db-pass", "db-passwd", "apiKey", "accessToken",
+    "clientSecret", "myCredential", "customPassword", "privateKey",
+]
+benign_names = [
+    "COMPASS", "BYPASS", "passengerCount", "passed", "passRate",
+    "passCount", "passThrough", "publicKey", "customKey",
+]
+is_credential_name = lambda name: bool(
+    managed._CREDENTIAL_NAME.search(name)
+    or managed._CREDENTIAL_CAMEL_NAME.search(name)
+)
+json.dump(
+    {
+        "values": [managed._contains_secret_shape(value) for value in values],
+        "credential_names": [is_credential_name(name) for name in credential_names],
+        "benign_names": [is_credential_name(name) for name in benign_names],
+    },
+    sys.stdout,
+)
 `;
     const output = execFileSync("python3", ["-I", "-c", probe, managedRuntimePath], {
       encoding: "utf8",
       input: JSON.stringify(CANONICAL_SECRET_POSITIVE_VECTORS.map((vector) => vector.value)),
     });
 
-    expect(JSON.parse(output)).toEqual(CANONICAL_SECRET_POSITIVE_VECTORS.map(() => true));
+    expect(JSON.parse(output)).toEqual({
+      values: CANONICAL_SECRET_POSITIVE_VECTORS.map(() => true),
+      credential_names: Array.from({ length: 15 }, () => true),
+      benign_names: Array.from({ length: 9 }, () => false),
+    });
   });
 
   it("scrubs every shared positive vector in managed observability (#6452)", () => {
@@ -178,6 +246,12 @@ json.dump([observability._scrub_secret_values(value) for value in values], sys.s
       "Bearer short",
       "COMPASS=opaqueNonSecretPayload123",
       "BYPASS=allowedValue123",
+      "TOPSECRET=opaqueNonSecretPayload123",
+      "SUBTOKEN=opaqueNonSecretPayload123",
+      "publicKey=opaqueVerificationMaterial123",
+      "customKey=opaqueNonSecretPayload123",
+      '{"key":"agent:main:main"}',
+      '{"replyToken":"reply-correlation-token-123"}',
       "-----BEGIN PUBLIC KEY-----\\nnot-private\\n-----END PUBLIC KEY-----",
     ];
     const output = execFileSync("python3", ["-I", "-c", probe, observabilityPath], {
