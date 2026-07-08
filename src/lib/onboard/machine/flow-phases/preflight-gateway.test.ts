@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
-import { advanceTo } from "../result";
 import type { OnboardFlowContext } from "../flow-context";
+import { advanceTo } from "../result";
 import { createGatewayPhase, createPreflightPhase } from "./preflight-gateway";
 
 function context(): OnboardFlowContext<null, { type: string }, { mode: string }> {
@@ -25,6 +25,7 @@ function context(): OnboardFlowContext<null, { type: string }, { mode: string }>
     hermesAuthMethod: null,
     hermesToolGateways: [],
     preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,

@@ -16,7 +16,12 @@ homepage: "https://github.com/NousResearch/hermes-agent"
 install_method: curl  # curl install.sh | bash
 binary_path: /usr/local/bin/hermes
 version_command: "hermes --version"
-expected_version: "2026.5.16"
+expected_version: "0.17.0"
+# Hermes reports semver from `hermes --version` (e.g. `0.17.0`) even though its
+# GitHub release cadence is calendar-based (`v2026.6.19`). Declaring the
+# scheme keeps the staleness check off the shape heuristic when a manifest
+# could otherwise straddle both schemes (#6049).
+version_scheme: semver
 gateway_command: "hermes gateway run"
 
 # ── Health probe ────────────────────────────────────────────────
@@ -90,6 +95,10 @@ state_files:
   - path: .hermes_history
   - path: runtime/state.db
     strategy: sqlite_backup
+user_managed_files:
+  # Relative to /sandbox, not config.dir. Hermes stores user-edited API-key
+  # values in /sandbox/.hermes/.env, and rebuild should warn before dropping it.
+  - .hermes/.env
 
 # ── Authentication ──────────────────────────────────────────────
 # Hermes does NOT have OpenClaw-style browser device pairing.
@@ -98,24 +107,6 @@ state_files:
 device_pairing: false
 web_auth_method: bearer_token
 web_auth_env: API_SERVER_KEY
-
-# ── Messaging platforms ─────────────────────────────────────────
-# Hermes natively supports 14 platforms. We enable the platforms with
-# OpenShell policy and NemoClaw config support. WeChat uses the iLink
-# gateway (host-side QR login during onboard); the in-sandbox Hermes
-# adapter reads WEIXIN_TOKEN + WEIXIN_ACCOUNT_ID per
-# https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin.
-# WhatsApp pairs in the sandbox via `hermes whatsapp`; the selected channel
-# bakes WHATSAPP_ENABLED/WHATSAPP_MODE into .env and preserves session state.
-messaging_platforms:
-  supported:
-    - telegram
-    - discord
-    - slack
-    - wechat
-    - whatsapp
-  # Future: signal, matrix, mattermost, email, etc.
-  # Each needs a network policy entry before enabling.
 
 # ── Inference ───────────────────────────────────────────────────
 # Hermes supports custom OpenAI-compatible endpoints natively via
@@ -128,6 +119,11 @@ inference:
   proxy_support: implicit  # via httpx (OpenAI SDK dep)
   provider_options:
     - hermesProvider
+
+# ── MCP server support ───────────────────────────────────────────
+mcp:
+  support: bridge
+  adapter: hermes-config
 
 # ── Phone-home hosts ───────────────────────────────────────────
 # Agent-specific egress endpoints needed for updates, auth, etc.

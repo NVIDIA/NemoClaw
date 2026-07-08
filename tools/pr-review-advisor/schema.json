@@ -158,7 +158,19 @@
   "$defs": {
     "finding": {
       "type": "object",
-      "required": ["severity", "category", "file", "line", "title", "description", "recommendation", "evidence"],
+      "required": [
+        "severity",
+        "category",
+        "file",
+        "line",
+        "title",
+        "description",
+        "impact",
+        "recommendation",
+        "verificationHint",
+        "missingRegressionTest",
+        "evidence"
+      ],
       "properties": {
         "severity": { "enum": ["blocker", "warning", "suggestion"] },
         "category": {
@@ -177,8 +189,24 @@
         "line": { "type": ["integer", "null"], "minimum": 1 },
         "title": { "type": "string" },
         "description": { "type": "string" },
+        "impact": { "type": "string" },
         "recommendation": { "type": "string" },
-        "evidence": { "type": "string" }
+        "verificationHint": { "type": "string" },
+        "missingRegressionTest": { "type": "string" },
+        "evidence": { "type": "string" },
+        "simplification": { "$ref": "#/$defs/simplification" }
+      },
+      "additionalProperties": false
+    },
+    "simplification": {
+      "type": "object",
+      "required": ["tag", "cut", "replacement", "estimatedNetLines", "safetyBoundary"],
+      "properties": {
+        "tag": { "enum": ["delete", "stdlib", "native", "yagni", "shrink"] },
+        "cut": { "type": "string" },
+        "replacement": { "type": "string" },
+        "estimatedNetLines": { "type": ["integer", "null"] },
+        "safetyBoundary": { "type": "string" }
       },
       "additionalProperties": false
     }

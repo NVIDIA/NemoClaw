@@ -21,7 +21,7 @@ import {
   waitForLocalAdapterHealth,
   writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
-} from "../../../dist/lib/inference/local-adapter-lifecycle";
+} from "./local-adapter-lifecycle";
 
 const tempDirs: string[] = [];
 const servers: http.Server[] = [];

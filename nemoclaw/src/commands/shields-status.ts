@@ -5,15 +5,14 @@
  * Slash command handler for `/nemoclaw shields`.
  *
  * Routes the optional sub-argument:
- *   - empty / `status` — reports the current shields state (read-only).
+ *   - empty / `status` — points to authoritative host-side status.
  *   - `up` / `down`    — returns host-only guidance pointing at the host CLI.
  *   - anything else    — returns an `Unknown argument` message with usage.
  *
- * Shields can only be lowered or raised from the host CLI (security invariant).
+ * Shields state is owned by the host CLI and is not projected into the plugin.
  */
 
 import type { PluginCommandResult } from "../index.js";
-import { loadState } from "../blueprint/state.js";
 
 const MAX_ARG_DISPLAY_LEN = 32;
 
@@ -38,7 +37,7 @@ export function slashShieldsStatus(arg?: string): PluginCommandResult {
         `nemoclaw <name> shields ${trimmed}`,
         "```",
         "",
-        "Inside the sandbox, `/nemoclaw shields` is read-only. Use `/nemoclaw shields` or `/nemoclaw shields status` to see the current state.",
+        "Inside the sandbox, `/nemoclaw shields` is read-only and cannot verify shields status.",
       ].join("\n"),
     };
   }
@@ -55,37 +54,11 @@ export function slashShieldsStatus(arg?: string): PluginCommandResult {
     };
   }
 
-  const state = loadState();
-
-  if (!state.shieldsDown) {
-    const lines = ["**Shields: UP**", "", "Sandbox policy is at normal security level."];
-
-    if (state.shieldsPolicySnapshotPath) {
-      lines.push("", `Last lowered: policy snapshot at ${state.shieldsPolicySnapshotPath}`);
-    }
-
-    return { text: lines.join("\n") };
-  }
-
-  const downSince = state.shieldsDownAt ? new Date(state.shieldsDownAt) : null;
-  const elapsed = downSince ? Math.floor((Date.now() - downSince.getTime()) / 1000) : 0;
-  const remaining =
-    state.shieldsDownTimeout != null ? Math.max(0, state.shieldsDownTimeout - elapsed) : null;
-
-  const lines = ["**Shields: DOWN**", "", `Since: ${state.shieldsDownAt ?? "unknown"}`];
-
-  if (remaining !== null) {
-    const mins = Math.floor(remaining / 60);
-    const secs = remaining % 60;
-    lines.push(`Timeout: ${String(mins)}m ${String(secs)}s remaining`);
-  }
-
-  lines.push(`Reason: ${state.shieldsDownReason ?? "not specified"}`);
-  lines.push(`Policy: ${state.shieldsDownPolicy ?? "permissive"}`);
-  lines.push(
-    "",
-    "**Warning:** Sandbox security is relaxed. Run `nemoclaw shields up` from the host when done.",
-  );
-
-  return { text: lines.join("\n") };
+  return {
+    text: [
+      "**Shields status unavailable inside the sandbox**",
+      "",
+      "This command cannot verify the host-side shields posture. Run `nemoclaw <name> shields status` from the host for authoritative status.",
+    ].join("\n"),
+  };
 }

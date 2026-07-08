@@ -3,6 +3,33 @@
 
 import type { ChannelManifest } from "../../manifest";
 
+// Compatibility boundary: Hermes' Slack adapter requires Bolt-shaped xoxb-/xapp-
+// placeholders in .env, while older OpenShell persisted bindings may still pass
+// generic openshell:resolve:env:SLACK_* runtime env values into startup. The
+// manifest owns these aliases, the reduced runtime plan carries them to the
+// Hermes entrypoint, and runtime-config-guard only applies them for active,
+// non-disabled Slack channels. The no-runtime-plan fallback is intentionally
+// limited to runtime-config-guard.py's LEGACY_PROVIDER_PLACEHOLDER_KEYS; new
+// channels must ship runtime-plan metadata instead of extending ambient fallback
+// behavior. Remove this normalization once all persisted Hermes legacy bindings
+// render manifest placeholders directly.
+const slackRuntimeEnvAliases = [
+  {
+    envKey: "SLACK_BOT_TOKEN",
+    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+    value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    message:
+      "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+  },
+  {
+    envKey: "SLACK_APP_TOKEN",
+    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+    value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    message:
+      "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+  },
+] as const;
+
 export const slackManifest = {
   schemaVersion: 1,
   id: "slack",
@@ -23,7 +50,6 @@ export const slackManifest = {
       prompt: {
         label: "Slack Bot Token",
         help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
-        placeholder: "xoxb-...",
       },
     },
     {
@@ -37,7 +63,6 @@ export const slackManifest = {
       prompt: {
         label: "Slack App Token (Socket Mode)",
         help: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
-        placeholder: "xapp-...",
       },
     },
     {
@@ -154,22 +179,7 @@ export const slackManifest = {
         configKeys: ["slack"],
         logPatterns: ["slack"],
       },
-      envAliases: [
-        {
-          envKey: "SLACK_BOT_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
-          value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-          message:
-            "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
-        },
-        {
-          envKey: "SLACK_APP_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
-          value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-          message:
-            "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
-        },
-      ],
+      envAliases: slackRuntimeEnvAliases,
       nodePreloads: [
         {
           module: "slack-channel-guard",
@@ -189,6 +199,9 @@ export const slackManifest = {
         },
       ],
     },
+    hermes: {
+      envAliases: slackRuntimeEnvAliases,
+    },
   },
   agentPackages: [
     {
@@ -197,25 +210,16 @@ export const slackManifest = {
       manager: "openclaw-plugin",
       spec: "npm:@openclaw/slack@{{openclaw.version}}",
       pin: true,
+      integrityByVersion: {
+        "2026.6.10":
+          "sha512-OOsMLjPcbWhQRM5XDwfdrACjJmKqavFtpuIlhHAXWrLrd/p7SyIVE9AoKS0yxOx6bqGDIMJ9+knzdViHMLgBdA==",
+      },
+      tarballUrlByVersion: {
+        "2026.6.10": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.6.10.tgz",
+      },
       required: true,
     },
   ],
-  state: {
-    persist: {
-      allowedIds: ["allowedUsers"],
-      slackConfig: ["allowedChannels"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.slack",
-        env: "SLACK_ALLOWED_USERS",
-      },
-      {
-        statePath: "slackConfig.allowedChannels",
-        env: "SLACK_ALLOWED_CHANNELS",
-      },
-    ],
-  },
   hooks: [
     {
       id: "slack-socket-mode-gateway-conflict",

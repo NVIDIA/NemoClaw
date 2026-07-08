@@ -8,7 +8,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { handleOllamaProbeFailure } from "../../../dist/lib/onboard/ollama-probe-failure";
+import { handleOllamaProbeFailure } from "./ollama-probe-failure";
 
 describe("handleOllamaProbeFailure (#4365)", () => {
   let originalProvider: string | undefined;

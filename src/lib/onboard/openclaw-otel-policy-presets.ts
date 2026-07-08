@@ -8,6 +8,11 @@ const LOCAL_OPENCLAW_OTEL_PORT = "4318";
 
 export const OPENCLAW_OTEL_LOCAL_POLICY_PRESET = "openclaw-diagnostics-otel-local";
 
+export const OPENCLAW_ONLY_POLICY_PRESETS = new Set<string>([
+  "openclaw-pricing",
+  OPENCLAW_OTEL_LOCAL_POLICY_PRESET,
+]);
+
 export function isOpenclawOtelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.NEMOCLAW_OPENCLAW_OTEL;
   return (

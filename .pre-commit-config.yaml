@@ -12,9 +12,10 @@
 # Usage:
 #   npx prek install
 #   npx prek run --all-files
+#   npx prek run --all-files --stage manual  # full CLI/plugin coverage
 #
-# CI / diff-only runs:
-#   npx prek run --from-ref <base> --to-ref HEAD
+# Diff-only fallback for automatic commit, commit-message, and push checks:
+#   npm run check:diff
 #
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
@@ -25,6 +26,11 @@
 #  20  — Project-level checks (vitest, coverage, ratchet)
 
 exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
+
+# Stage-less hooks run only while creating a commit. Hooks for later Git
+# lifecycle stages declare their own `stages` explicitly below.
+default_stages:
+  - pre-commit
 
 # Which git hook shims `prek install` writes (separate from each hook's `stages:`).
 # https://prek.j178.dev/configuration/#default_install_hook_types
@@ -42,9 +48,11 @@ repos:
     hooks:
       - id: trailing-whitespace
         exclude: ^skills/[^/]+/skill\.oms\.sig$
+        stages: [pre-commit]
         priority: 0
       - id: end-of-file-fixer
         exclude: ^skills/[^/]+/skill\.oms\.sig$
+        stages: [pre-commit]
         priority: 0
       - id: mixed-line-ending
         args: ["--fix=lf"]
@@ -71,7 +79,7 @@ repos:
         name: SPDX license headers (insert if missing)
         entry: bash scripts/check-spdx-headers.sh --fix
         language: system
-        files: ^(nemoclaw/src/.*\.ts|scripts/export-catalog-skills\.py|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        files: ^(nemoclaw/src/.*\.ts|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
         exclude: ^nemoclaw-blueprint/.*__init__\.py$
         pass_filenames: true
         priority: 4
@@ -81,9 +89,9 @@ repos:
     hooks:
       - id: platform-matrix-sync
         name: Sync platform matrix to docs
-        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add docs/get-started/prerequisites.mdx docs/inference/inference-options.mdx'
+        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add docs/get-started/prerequisites.mdx docs/inference/inference-options.mdx docs/reference/platform-support.mdx'
         language: system
-        files: ^(ci/platform-matrix\.json|docs/get-started/prerequisites\.mdx|docs/inference/inference-options\.mdx|scripts/generate-platform-docs\.py)$
+        files: ^(ci/platform-matrix\.json|docs/get-started/prerequisites\.mdx|docs/inference/inference-options\.mdx|docs/reference/platform-support\.mdx|scripts/generate-platform-docs\.py)$
         pass_filenames: false
         priority: 3
 
@@ -98,6 +106,7 @@ repos:
           - "2"
           - -ci
           - -bn
+        stages: [pre-commit]
         priority: 5
 
   - repo: local
@@ -129,6 +138,7 @@ repos:
         priority: 10
       - id: check-added-large-files
         args: ["--maxkb=2000"]
+        stages: [pre-commit]
         priority: 10
       - id: check-case-conflict
         priority: 10
@@ -141,8 +151,10 @@ repos:
       - id: detect-private-key
         priority: 10
       - id: check-executables-have-shebangs
+        stages: [pre-commit]
         priority: 10
       - id: check-shebang-scripts-are-executable
+        stages: [pre-commit]
         priority: 10
 
   - repo: local
@@ -159,7 +171,7 @@ repos:
         name: Repository checks
         entry: npm run checks
         language: system
-        files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.tsx?$|scripts/.*\.(cjs|js|mjs|ts|tsx)$|test/.*\.(cjs|js|mjs|ts|tsx)$|nemoclaw/src/.*\.tsx?$)
+        files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
         pass_filenames: false
         priority: 10
 
@@ -203,16 +215,6 @@ repos:
       - id: markdownlint-cli2
         priority: 10
 
-  - repo: local
-    hooks:
-      - id: docs-to-skills-dry-run
-        name: Verify docs-to-skills output
-        entry: python3 scripts/docs-to-skills.py docs/ .agents/skills/ skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
-        language: system
-        files: ^(docs/.*\.mdx?$|docs/conf\.py$|ci/platform-matrix\.json$|scripts/docs-to-skills\.py$|scripts/generate-platform-docs\.py$)
-        pass_filenames: false
-        priority: 10
-
   # ── commit-msg hooks ────────────────────────────────────────────────────────
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
     rev: v9.24.0
@@ -239,17 +241,16 @@ repos:
         entry: bash -c 'npm run build:cli && npx tsc -p jsconfig.json'
         language: system
         pass_filenames: false
-        files: ^(bin|test|scripts)/.*\.js$
+        files: ^(bin|test|scripts)/.*\.js$|^(jsconfig\.json|package(-lock)?\.json)$
         stages: [pre-push]
         priority: 10
 
       - id: tsc-cli
         name: TypeScript (CLI)
-        entry: npx tsc -p tsconfig.cli.json
+        entry: npm run typecheck:cli -- --incremental
         language: system
         pass_filenames: false
-        files: ^(bin|scripts|src|test|nemoclaw-blueprint/scripts)/.*\.(ts|tsx)$|^tsconfig\.cli\.json$
-        always_run: true
+        files: ^(agents/hermes|bin|scripts|src|test|tools|nemoclaw-blueprint/scripts)/.*\.(ts|tsx|mts|cts|json)$|^\.agents/skills/nemoclaw-maintainer-day/scripts/(check-gates|pra-gate|shared)\.ts$|^nemoclaw/src/(lib/subprocess-env|blueprint/private-networks)\.ts$|^(package(-lock)?\.json|tsconfig\.cli\.json|vitest\.config\.ts)$
         stages: [pre-push]
         priority: 10
 
@@ -278,25 +279,26 @@ repos:
         stages: [post-merge, post-checkout]
         priority: 10
 
-  # ── Priority 20: project-level checks (coverage + ratchet) ─────────────────
+  # ── Priority 20: project-level checks (full coverage is manual) ────────────
   - repo: local
     hooks:
       - id: test-cli
         name: Test (CLI)
-        entry: >-
-          bash -c 'node -e "require(\"node:fs\").rmSync(\"dist\", { recursive: true, force: true })" && npm run build:cli && npx tsx scripts/check-dist-sourcemaps.ts dist && npx vitest run --project cli --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="dist/lib/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
+        entry: npm run test:coverage:cli
         language: system
         pass_filenames: false
         files: ^(bin/|src/.*\.(ts|tsx|js|mjs|cjs)$|test/.*\.(ts|tsx|js|mjs|cjs)$)
         require_serial: true
+        stages: [manual]
         priority: 20
 
       - id: test-plugin
         name: Test (plugin)
-        entry: bash -c 'npx vitest run --project plugin --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/plugin --coverage.include="nemoclaw/src/**/*.ts" --coverage.exclude="**/*.test.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"'
+        entry: npm run test:coverage:plugin
         language: system
         pass_filenames: false
         files: ^nemoclaw/
+        stages: [manual]
         priority: 20
 
       - id: source-shape-test-budget
@@ -320,7 +322,7 @@ repos:
         entry: npx vitest run test/skills-frontmatter.test.ts
         language: system
         pass_filenames: false
-        files: ^(\.agents/skills/|docs/.*\.mdx?$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)
+        files: ^(\.agents/skills/|skills/|test/skills-frontmatter\.test\.ts$)
         priority: 20
 
 default_language_version:

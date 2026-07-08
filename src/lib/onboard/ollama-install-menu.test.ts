@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
+import { MIN_OLLAMA_VERSION } from "../inference/ollama-version";
 import {
   assertOllamaUpgradeApplied,
   resolveOllamaInstallMenuEntry,
   resolveRunningOllamaMenuEntry,
-} from "../../../dist/lib/onboard/ollama-install-menu";
-import { MIN_OLLAMA_VERSION } from "../../../dist/lib/inference/ollama-version";
+} from "./ollama-install-menu";
 
 const LINUX_NON_WSL = { platform: "linux" as const, isWsl: false };
 

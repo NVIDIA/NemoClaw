@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { findModelRouterPidForPort } from "./model-router-process";
 
 describe("findModelRouterPidForPort", () => {
-  it("returns the PID when a model-router proxy is found via proc scan (direct, #5169)", () => {
+  it("returns the PID when a model-router proxy is found via direct proc scan (#5169)", () => {
     const pid = findModelRouterPidForPort(4000, {
       readProcCommandLine: (p) =>
         p === 12345
@@ -17,7 +17,7 @@ describe("findModelRouterPidForPort", () => {
     expect(pid).toBe(12345);
   });
 
-  it("returns the PID when model-router is Python-interpreted (args[1], #5169)", () => {
+  it("returns the PID when model-router is Python-interpreted through args[1] (#5169)", () => {
     const pid = findModelRouterPidForPort(4000, {
       readProcCommandLine: (p) =>
         p === 12345

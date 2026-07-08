@@ -32,19 +32,36 @@ import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
+import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import {
   buildOpenClawConfigRestoreInputFromSandbox,
   shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input.js";
+import {
+  buildRestoreCleanupCommand,
+  buildRestoreTarArgs,
+  isAllowedStateSymlink,
+} from "./openclaw-managed-extensions.js";
+import {
+  discoverFreshOpenClawImagePluginInstalls,
+  hasCompleteOpenClawImagePluginProvenance,
+  type OpenClawImagePluginInstall,
+  parseOpenClawImagePluginInstalls,
+  planOpenClawPluginRestore,
+} from "./openclaw-plugin-restore.js";
 import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
+import { isSshTransportFailure } from "./ssh-transport.js";
+import type { StateFileRestorePolicy } from "./state-file-restore-policy.js";
 import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
+export const OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR =
+  "custom-image OpenClaw plugin provenance is missing or invalid";
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -59,6 +76,10 @@ export interface RebuildManifest {
   agentType: string;
   agentVersion: string | null;
   expectedVersion: string | null;
+  /** Fresh-image plugin baseline captured before user state was restored. */
+  openclawImagePluginInstalls?: OpenClawImagePluginInstall[];
+  /** The plugin baseline is authoritative and must be reconciled during recreation. */
+  reconcileOpenClawImagePluginProvenance?: boolean;
   stateDirs: string[];
   /** Directories verified as safe to restore. Absent on older manifests. */
   backedUpDirs?: string[];
@@ -120,6 +141,10 @@ export interface BackupResult {
   error?: string;
   backedUpFiles: string[];
   failedFiles: string[];
+  // Set when a failure stems from an SSH transport failure against a running
+  // sandbox (see isSshTransportFailure), as opposed to an audit rejection or
+  // a partial tar read error.
+  unreachable?: boolean;
 }
 
 export interface RestoreResult {
@@ -128,6 +153,24 @@ export interface RestoreResult {
   failedDirs: string[];
   restoredFiles: string[];
   failedFiles: string[];
+  /** A safe, user-actionable explanation for a restore precondition failure. */
+  error?: string;
+}
+
+export interface RestoreOptions {
+  /** Optional file-specific restore capability authorized by the caller. */
+  stateFileRestorePolicy?: StateFileRestorePolicy;
+}
+
+export interface RecreatedSandboxRestoreOptions extends RestoreOptions {
+  /** Agent in the newly created target image, not the backup manifest agent. */
+  targetAgentType: string;
+  /** Pre-captured baseline avoids a second remote read during onboarding finalization. */
+  freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+}
+
+interface InternalRestoreOptions extends RestoreOptions {
+  freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
 }
 
 export interface TarValidationResult {
@@ -172,13 +215,41 @@ function isCustomPolicyEntryArray(value: unknown): value is CustomPolicyEntry[] 
         typeof entry === "object" &&
         entry !== null &&
         typeof (entry as { name?: unknown }).name === "string" &&
-        typeof (entry as { content?: unknown }).content === "string",
+        typeof (entry as { content?: unknown }).content === "string" &&
+        ((entry as { pendingContent?: unknown }).pendingContent === undefined ||
+          typeof (entry as { pendingContent?: unknown }).pendingContent === "string"),
     )
+  );
+}
+
+function cloneOpenClawImagePluginInstalls(
+  installs: readonly OpenClawImagePluginInstall[],
+): OpenClawImagePluginInstall[] {
+  return installs.map((install) => ({
+    ...install,
+    ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
+  }));
+}
+
+export function hasAuthoritativeOpenClawImagePluginProvenance(value: {
+  agentType?: unknown;
+  dir?: unknown;
+  writableDir?: unknown;
+  openclawImagePluginInstalls?: unknown;
+  reconcileOpenClawImagePluginProvenance?: unknown;
+}): boolean {
+  const dir = typeof value.dir === "string" ? value.dir : value.writableDir;
+  return (
+    value.agentType === "openclaw" &&
+    typeof dir === "string" &&
+    value.reconcileOpenClawImagePluginProvenance === true &&
+    hasCompleteOpenClawImagePluginProvenance(value.openclawImagePluginInstalls, dir)
   );
 }
 
 function isRebuildManifest(value: unknown): value is RebuildManifest {
   if (!isRecord(value) || !isStateDirArray(value.stateDirs)) return false;
+  const dir = typeof value.dir === "string" ? value.dir : value.writableDir;
   return (
     typeof value.version === "number" &&
     typeof value.sandboxName === "string" &&
@@ -187,7 +258,13 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
     (value.backedUpDirs === undefined || isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
-    (typeof value.dir === "string" || typeof value.writableDir === "string") &&
+    typeof dir === "string" &&
+    (value.openclawImagePluginInstalls === undefined ||
+      parseOpenClawImagePluginInstalls(value.openclawImagePluginInstalls, dir).ok) &&
+    (value.reconcileOpenClawImagePluginProvenance === undefined ||
+      typeof value.reconcileOpenClawImagePluginProvenance === "boolean") &&
+    (value.reconcileOpenClawImagePluginProvenance !== true ||
+      hasAuthoritativeOpenClawImagePluginProvenance(value)) &&
     typeof value.backupPath === "string" &&
     (value.stateFiles === undefined ||
       (Array.isArray(value.stateFiles) && value.stateFiles.every(isStateFileSpec))) &&
@@ -325,13 +402,11 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
         if (stat.isSymbolicLink()) {
           const linkTarget = readlinkSync(fullPath);
 
-          // Whitelisted npm symlinks baked into the base image at build time
-          // (see AUDIT_SYMLINK_WHITELIST). Accepting them here matches the
-          // pre-backup audit so legitimate plugin installs in extensions/
-          // can survive a rebuild without tripping the post-extraction check.
-          // Match both the source path AND the link target — a whitelisted
-          // path with a tampered target falls through to the normal
-          // containment check.
+          // Allowed npm symlinks baked into managed or custom images. The
+          // shared matcher checks both source shape and exact target so the
+          // pre-backup and post-extraction audits enforce the same contract.
+          // A recognized path with a tampered target falls through to the
+          // normal containment check.
           const relFromDir = path.relative(dirPath, fullPath).split(path.sep).join("/");
           if (isAllowedStateSymlink(relFromDir, linkTarget)) {
             continue;
@@ -465,7 +540,7 @@ export function safeTarExtract(tarBuffer: Buffer, targetDir: string): SafeExtrac
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function getSshConfig(sandboxName: string): string | null {
+export function getSshConfig(sandboxName: string): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
@@ -477,13 +552,7 @@ function getSshConfig(sandboxName: string): string | null {
   return result.output;
 }
 
-function writeTempSshConfig(sshConfig: string): string {
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-state-${process.pid}-${Date.now()}.conf`);
-  writeFileSync(tmpFile, sshConfig, { mode: 0o600 });
-  return tmpFile;
-}
-
-function sshArgs(configFile: string, sandboxName: string): string[] {
+export function sshArgs(configFile: string, sandboxName: string): string[] {
   return [
     "-F",
     configFile,
@@ -565,47 +634,6 @@ function sanitizeBackupDirectory(dirPath: string): void {
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
 
-// Exact symlinks baked into OpenClaw messaging images at build time by
-// `openclaw plugins install`. Source paths are relative to the agent state-dir
-// root (e.g. for OpenClaw, /sandbox/.openclaw); targets are matched exactly
-// against the value of `readlink(source)`. Source-only matching is unsafe: a
-// compromised agent could repoint one of these to /etc/passwd and the audit
-// would still let it through.
-const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
-  [
-    "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
-    "../qrcode-terminal/bin/qrcode-terminal.js",
-  ],
-  ["extensions/openclaw-weixin/node_modules/openclaw", "/usr/local/lib/node_modules/openclaw"],
-]);
-
-const EXTENSION_NPM_BIN_RE = /^extensions\/[^/]+\/node_modules\/\.bin\/[^/]+$/;
-const OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS = ["nemoclaw", "openclaw-weixin"] as const;
-
-function isAllowedExtensionNpmBinSymlink(relPath: string, linkTarget: string): boolean {
-  const normalizedRelPath = relPath.split(path.sep).join("/");
-  if (!EXTENSION_NPM_BIN_RE.test(normalizedRelPath)) return false;
-  if (linkTarget.length === 0 || path.posix.isAbsolute(linkTarget)) return false;
-
-  const binDir = path.posix.dirname(normalizedRelPath);
-  const nodeModulesDir = path.posix.dirname(binDir);
-  const resolvedTarget = path.posix.normalize(path.posix.join(binDir, linkTarget));
-  const targetWithinNodeModules = path.posix.relative(nodeModulesDir, resolvedTarget);
-
-  return (
-    targetWithinNodeModules.length > 0 &&
-    !targetWithinNodeModules.startsWith("../") &&
-    !path.posix.isAbsolute(targetWithinNodeModules) &&
-    !targetWithinNodeModules.startsWith(".bin/")
-  );
-}
-
-function isAllowedStateSymlink(relPath: string, linkTarget: string): boolean {
-  const exactTarget = AUDIT_SYMLINK_WHITELIST.get(relPath.split(path.sep).join("/"));
-  if (exactTarget !== undefined) return exactTarget === linkTarget;
-  return isAllowedExtensionNpmBinSymlink(relPath, linkTarget);
-}
-
 function _log(msg: string): void {
   if (_verbose()) console.error(`  [sandbox-state ${new Date().toISOString()}] ${msg}`);
 }
@@ -673,71 +701,6 @@ function existingBackupDirs(backupPath: string, dirNames: string[]): string[] {
     }
   }
   return existing;
-}
-
-function shouldPreserveOpenClawManagedExtensions(
-  manifest: RebuildManifest,
-  dir: string,
-  localDirs: readonly string[],
-): boolean {
-  return (
-    localDirs.includes("extensions") &&
-    (manifest.agentType === "openclaw" || dir.replace(/\/+$/, "") === "/sandbox/.openclaw")
-  );
-}
-
-function buildRestoreTarArgs(
-  backupPath: string,
-  localDirs: readonly string[],
-  preserveManagedExtensions: boolean,
-): string[] {
-  const args = ["-cf", "-", "-C", backupPath];
-  if (preserveManagedExtensions) {
-    for (const extensionName of OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS) {
-      args.push("--exclude", `extensions/${extensionName}`);
-    }
-  }
-  args.push("--", ...localDirs);
-  return args;
-}
-
-function buildOpenClawExtensionsCleanupCommand(dir: string): string {
-  const extensionsDir = `${dir}/extensions`;
-  const quotedExtensionsDir = shellQuote(extensionsDir);
-  const validationCommands = OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS.map((extensionName) => {
-    const managedPath = `${extensionsDir}/${extensionName}`;
-    return (
-      `p=${shellQuote(managedPath)}; ` +
-      'if [ -e "$p" ] && { [ ! -d "$p" ] || [ -L "$p" ]; }; then ' +
-      'echo "refusing to preserve unsafe managed extension: $p" >&2; exit 20; fi'
-    );
-  }).join("; ");
-  const validateManagedPaths = `{ ${validationCommands}; }`;
-  const preservedNames = OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS.map(
-    (extensionName) => `! -name ${shellQuote(extensionName)}`,
-  ).join(" ");
-
-  return [
-    `mkdir -p -- ${quotedExtensionsDir}`,
-    validateManagedPaths,
-    `find ${quotedExtensionsDir} -mindepth 1 -maxdepth 1 ${preservedNames} -exec rm -rf -- {} +`,
-  ].join(" && ");
-}
-
-function buildRestoreCleanupCommand(
-  dir: string,
-  localDirs: readonly string[],
-  preserveManagedExtensions: boolean,
-): string {
-  const commands: string[] = [];
-  for (const dirName of localDirs) {
-    if (preserveManagedExtensions && dirName === "extensions") continue;
-    commands.push(`rm -rf -- ${shellQuote(`${dir}/${dirName}`)}`);
-  }
-  if (preserveManagedExtensions) {
-    commands.push(buildOpenClawExtensionsCleanupCommand(dir));
-  }
-  return commands.length > 0 ? commands.join(" && ") : ":";
 }
 
 function normalizeStateFileSpec(spec: AgentStateFile | StateFileSpec): StateFileSpec | null {
@@ -849,13 +812,25 @@ function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
   ].join("; ");
 }
 
+type StateFileBackupOutcome = "backed_up" | "missing" | "failed";
+
+interface StateFileBackupResult {
+  outcome: StateFileBackupOutcome;
+  // Set on "failed" when the SSH probe itself failed at the transport level
+  // (exit 255, signal-killed, spawn error). The caller (backupSandboxState)
+  // propagates this into BackupResult.unreachable so that
+  // NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 activates for state-file
+  // failures too, not only the initial dir probe. See #6188.
+  unreachable: boolean;
+}
+
 function backupStateFile(
   configFile: string,
   sandboxName: string,
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
-): "backed_up" | "missing" | "failed" {
+): StateFileBackupResult {
   const command = buildStateFileBackupCommand(dir, spec);
   _log(`Backing up state file ${spec.path} (${spec.strategy})`);
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
@@ -864,14 +839,14 @@ function backupStateFile(
     maxBuffer: 256 * 1024 * 1024,
   });
 
-  if (result.status === 2) return "missing";
+  if (result.status === 2) return { outcome: "missing", unreachable: false };
   if (result.status !== 0 || result.error || result.signal || !result.stdout) {
     const detail =
       (result.stderr?.toString() || "").trim() ||
       result.error?.message ||
       (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
     _log(`FAILED: state file backup ${spec.path}: ${detail.substring(0, 200)}`);
-    return "failed";
+    return { outcome: "failed", unreachable: isSshTransportFailure(result) };
   }
 
   const localPath = path.join(backupPath, spec.path);
@@ -881,7 +856,7 @@ function backupStateFile(
   rejectSymlinksOnPath(localPath);
   writeFileSync(localPath, result.stdout);
   chmodSync(localPath, 0o600);
-  return "backed_up";
+  return { outcome: "backed_up", unreachable: false };
 }
 
 export function buildStateFileRestoreCommand(
@@ -959,17 +934,19 @@ function buildStateFileRestoreInput(
   sandboxName: string,
   dir: string,
   spec: StateFileSpec,
-  backupPath: string,
+  backupContents: Buffer,
   mergeOpenClawConfig: boolean,
+  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
 ): Buffer | null {
-  const localPath = path.join(backupPath, spec.path);
-  const backupContents = readFileSync(localPath);
   if (!mergeOpenClawConfig) return backupContents;
 
   const result = buildOpenClawConfigRestoreInputFromSandbox({
     backupContents,
     dir,
+    freshImagePluginInstalls,
     log: _log,
+    previousImagePluginInstalls,
     specPath: spec.path,
     sshArgs: sshArgs(configFile, sandboxName),
   });
@@ -981,24 +958,34 @@ function buildStateFileRestoreInput(
 function restoreStateFile(
   configFile: string,
   sandboxName: string,
+  agentType: string | null | undefined,
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
   mergeOpenClawConfig = false,
+  stateFileRestorePolicy?: StateFileRestorePolicy,
+  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
 
-  const command = buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
+  const backupContents = readFileSync(localPath);
+  const plan = stateFileRestorePolicy?.(agentType, dir, spec, backupContents);
+  const command = plan?.command ?? buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
   _log(`Restoring state file ${spec.path} (${spec.strategy})`);
-  const input = buildStateFileRestoreInput(
-    configFile,
-    sandboxName,
-    dir,
-    spec,
-    backupPath,
-    mergeOpenClawConfig,
-  );
+  const input =
+    plan?.input ??
+    buildStateFileRestoreInput(
+      configFile,
+      sandboxName,
+      dir,
+      spec,
+      backupContents,
+      mergeOpenClawConfig,
+      freshImagePluginInstalls,
+      previousImagePluginInstalls,
+    );
   if (input === null) return false;
 
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
@@ -1023,6 +1010,12 @@ function restoreStateFile(
  * Back up all state directories from a running sandbox.
  * Uses the agent manifest to determine which directories contain state.
  */
+
+// isSshTransportFailure lives in ./ssh-transport now. Re-exported here for
+// backwards compatibility with callers that used to import it from this
+// module. Prefer importing directly from ./ssh-transport in new code.
+export { isSshTransportFailure };
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
@@ -1033,6 +1026,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   _log(
     `backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}], stateFiles=[${stateFiles.map((f) => f.path).join(",")}]`,
   );
+
+  const reconcileOpenClawImagePluginProvenance =
+    agentName === "openclaw" && Boolean(sb?.fromDockerfile);
+  let openclawImagePluginInstalls: OpenClawImagePluginInstall[] | undefined;
+  if (
+    agentName === "openclaw" &&
+    (reconcileOpenClawImagePluginProvenance || sb?.openclawImagePluginInstalls !== undefined)
+  ) {
+    const provenance = parseOpenClawImagePluginInstalls(sb?.openclawImagePluginInstalls, dir);
+    if (!provenance.ok) {
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        error: "registered OpenClaw image plugin provenance is missing or invalid",
+      };
+    }
+    openclawImagePluginInstalls = cloneOpenClawImagePluginInstalls(provenance.pluginInstalls);
+  }
 
   // Validate user-supplied name and check for conflicts BEFORE creating any
   // files on disk.
@@ -1098,6 +1112,10 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     agentType: agentName,
     agentVersion: sb?.agentVersion || null,
     expectedVersion: agent.expectedVersion,
+    ...(openclawImagePluginInstalls !== undefined ? { openclawImagePluginInstalls } : {}),
+    ...(reconcileOpenClawImagePluginProvenance
+      ? { reconcileOpenClawImagePluginProvenance: true }
+      : {}),
     stateDirs,
     stateFiles,
     dir,
@@ -1112,6 +1130,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const failedDirs: string[] = [];
   const backedUpFiles: string[] = [];
   const failedFiles: string[] = [];
+  let unreachable = false;
 
   if (stateDirs.length === 0 && stateFiles.length === 0) {
     _log("WARNING: Agent manifest declares no state_dirs or state_files — nothing to back up");
@@ -1124,6 +1143,10 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const sshConfig = getSshConfig(sandboxName);
   if (!sshConfig) {
     _log("FAILED: Could not get SSH config");
+    // For a sandbox the registry reported as running, an unreachable
+    // `openshell sandbox ssh-config` lookup is a transport-level failure —
+    // treat it the same as the initial dir probe and propagate `unreachable`
+    // so NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 can activate. (#6188)
     return {
       success: false,
       manifest,
@@ -1131,11 +1154,13 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       failedDirs: [...stateDirs],
       backedUpFiles,
       failedFiles: stateFiles.map((f) => f.path),
+      unreachable: true,
     };
   }
   _log(`SSH config obtained (${sshConfig.length} bytes)`);
 
-  const configFile = writeTempSshConfig(sshConfig);
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  const configFile = tempSshConfig.file;
   try {
     if (stateDirs.length > 0) {
       // Build tar command that only includes existing directories.
@@ -1172,6 +1197,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         );
         return {
           success: false,
+          unreachable: isSshTransportFailure(existResult),
           manifest,
           backedUpDirs,
           failedDirs: [...stateDirs],
@@ -1218,6 +1244,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           _log(`FAILED: Pre-backup audit command failed — ${detail}`);
           return {
             success: false,
+            unreachable: isSshTransportFailure(auditResult),
             manifest,
             backedUpDirs,
             failedDirs: [...existingDirs],
@@ -1250,7 +1277,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           }
           if (whitelisted.length > 0) {
             _log(
-              `Pre-backup audit whitelisted ${whitelisted.length} entries (base-image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
+              `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
             );
           }
           if (violations.length > 0) {
@@ -1285,6 +1312,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         _log(
           `SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
         );
+        if (isSshTransportFailure(result)) unreachable = true;
 
         // GNU tar exit codes: 0 = success, 1 = files changed during archive,
         // 2 = errors (e.g. permission denied) but archive still written to stdout.
@@ -1351,15 +1379,19 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
     for (const spec of stateFiles) {
       const result = backupStateFile(configFile, sandboxName, dir, spec, backupPath);
-      if (result === "backed_up") {
+      if (result.outcome === "backed_up") {
         backedUpFiles.push(spec.path);
-      } else if (result === "failed") {
+      } else if (result.outcome === "failed") {
         failedFiles.push(spec.path);
+        // Any transport-level failure at the state-file phase must promote to
+        // the sandbox-level unreachable flag so the skip flag can activate
+        // for state-file failures — not only the initial dir probe. (#6188)
+        if (result.unreachable) unreachable = true;
       }
     }
   } finally {
     try {
-      require("node:fs").unlinkSync(configFile);
+      tempSshConfig.cleanup();
     } catch {
       /* ignore */
     }
@@ -1389,6 +1421,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   return {
     success: failedDirs.length === 0 && failedFiles.length === 0,
+    unreachable,
     manifest,
     backedUpDirs,
     failedDirs,
@@ -1402,17 +1435,62 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 /**
  * Restore state directories into a sandbox from a prior backup.
  */
-export function restoreSandboxState(sandboxName: string, backupPath: string): RestoreResult {
+export function restoreSandboxState(
+  sandboxName: string,
+  backupPath: string,
+  options: RestoreOptions = {},
+): RestoreResult {
+  return restoreSandboxStateInternal(sandboxName, backupPath, options);
+}
+
+export function restoreRecreatedSandboxState(
+  sandboxName: string,
+  backupPath: string,
+  options: RecreatedSandboxRestoreOptions,
+): RestoreResult {
+  let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
+  if (options.targetAgentType === "openclaw") {
+    const targetDir = loadAgent(options.targetAgentType).configPaths.dir;
+    const discovery = options.freshOpenClawImagePluginInstalls
+      ? parseOpenClawImagePluginInstalls(options.freshOpenClawImagePluginInstalls, targetDir)
+      : discoverFreshOpenClawImagePluginInstalls(sandboxName, { getSshConfig, sshArgs }, targetDir);
+    if (!discovery.ok) {
+      return {
+        success: false,
+        restoredDirs: [],
+        failedDirs: ["extensions"],
+        restoredFiles: [],
+        failedFiles: [],
+        error: discovery.error,
+      };
+    }
+    freshOpenClawImagePluginInstalls = discovery.pluginInstalls;
+  }
+  return restoreSandboxStateInternal(sandboxName, backupPath, {
+    freshOpenClawImagePluginInstalls,
+    stateFileRestorePolicy: options.stateFileRestorePolicy,
+  });
+}
+
+function restoreSandboxStateInternal(
+  sandboxName: string,
+  backupPath: string,
+  options: InternalRestoreOptions,
+): RestoreResult {
   _log(`restoreSandboxState: sandbox=${sandboxName}, backupPath=${backupPath}`);
   const manifest = readManifest(backupPath);
   if (!manifest) {
     _log("FAILED: Could not read rebuild-manifest.json");
+    const provenanceError = hasInvalidMarkedOpenClawPluginProvenance(backupPath)
+      ? OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR
+      : undefined;
     return {
       success: false,
       restoredDirs: [],
       failedDirs: ["manifest"],
       restoredFiles: [],
       failedFiles: [],
+      ...(provenanceError ? { error: provenanceError } : {}),
     };
   }
 
@@ -1464,19 +1542,52 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     };
   }
 
-  const configFile = writeTempSshConfig(sshConfig);
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  const configFile = tempSshConfig.file;
+  const freshOpenClawImagePluginInstalls = options.freshOpenClawImagePluginInstalls;
+  const previousOpenClawImagePluginInstalls =
+    freshOpenClawImagePluginInstalls !== undefined
+      ? manifest.openclawImagePluginInstalls
+      : undefined;
   try {
+    const pluginRestorePlan = planOpenClawPluginRestore({
+      agentType: manifest.agentType,
+      dir,
+      localDirs,
+      freshImagePluginInstalls: freshOpenClawImagePluginInstalls,
+      previousImagePluginInstalls: previousOpenClawImagePluginInstalls,
+    });
+    if (!pluginRestorePlan.ok) {
+      return {
+        success: false,
+        restoredDirs,
+        failedDirs: [...localDirs],
+        restoredFiles,
+        failedFiles: localFiles.map((f) => f.path),
+        error:
+          manifest.reconcileOpenClawImagePluginProvenance === true
+            ? OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR
+            : pluginRestorePlan.error,
+      };
+    }
+    if (
+      freshOpenClawImagePluginInstalls !== undefined &&
+      pluginRestorePlan.preservedExtensionDirs.length > 0
+    ) {
+      _log(
+        `Fresh image-managed OpenClaw extensions: [${pluginRestorePlan.freshExtensionDirs.join(",")}]`,
+      );
+      _log(
+        `Previous image-managed OpenClaw extensions: [${pluginRestorePlan.previousExtensionDirs.join(",")}]`,
+      );
+    }
+
     if (localDirs.length > 0) {
       // Upload via tar pipe
       // NC-2227-04: Removed -h flag from restore as well — no symlink following.
-      const preserveManagedExtensions = shouldPreserveOpenClawManagedExtensions(
-        manifest,
-        dir,
-        localDirs,
-      );
       const tarResult = spawnSync(
         "tar",
-        buildRestoreTarArgs(backupPath, localDirs, preserveManagedExtensions),
+        buildRestoreTarArgs(backupPath, localDirs, pluginRestorePlan.archiveExcludedExtensionDirs),
         {
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 60000,
@@ -1499,7 +1610,12 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
       // image-managed extensions are preserved from the freshly built image and
       // excluded from the restore tar; only user/non-managed extension entries
       // are cleared and restored from the backup.
-      const rmCmd = buildRestoreCleanupCommand(dir, localDirs, preserveManagedExtensions);
+      const rmCmd = buildRestoreCleanupCommand(
+        dir,
+        localDirs,
+        pluginRestorePlan.preservedExtensionDirs,
+        new Set(pluginRestorePlan.requiredFreshExtensionDirs),
+      );
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
       const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
         stdio: ["ignore", "pipe", "pipe"],
@@ -1588,10 +1704,14 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
         restoreStateFile(
           configFile,
           sandboxName,
+          manifest.agentType,
           dir,
           spec,
           backupPath,
           shouldMergeOpenClawConfigStateFile(manifest.agentType, dir, spec),
+          options.stateFileRestorePolicy,
+          freshOpenClawImagePluginInstalls,
+          previousOpenClawImagePluginInstalls,
         )
       ) {
         restoredFiles.push(spec.path);
@@ -1601,7 +1721,7 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     }
   } finally {
     try {
-      require("node:fs").unlinkSync(configFile);
+      tempSshConfig.cleanup();
     } catch {
       /* ignore */
     }
@@ -1624,11 +1744,28 @@ function writeManifest(backupPath: string, manifest: RebuildManifest): void {
   chmodSync(manifestPath, 0o600);
 }
 
-function readManifest(backupPath: string): RebuildManifest | null {
+function readManifestPayload(backupPath: string): unknown | null {
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");
   if (!existsSync(manifestPath)) return null;
   try {
-    const parsed = parseJson<unknown>(readFileSync(manifestPath, "utf-8"));
+    return parseJson<unknown>(readFileSync(manifestPath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function hasInvalidMarkedOpenClawPluginProvenance(backupPath: string): boolean {
+  const parsed = readManifestPayload(backupPath);
+  return (
+    isRecord(parsed) &&
+    parsed.reconcileOpenClawImagePluginProvenance === true &&
+    !hasAuthoritativeOpenClawImagePluginProvenance(parsed)
+  );
+}
+
+function readManifest(backupPath: string): RebuildManifest | null {
+  try {
+    const parsed = readManifestPayload(backupPath);
     if (!isRebuildManifest(parsed)) return null;
     const manifest = parsed as RebuildManifest & { dir?: string; writableDir?: string };
     const dir = manifest.dir ?? manifest.writableDir;
@@ -1645,6 +1782,100 @@ function readManifest(backupPath: string): RebuildManifest | null {
 }
 
 // ── Listing ────────────────────────────────────────────────────────
+
+export type RebuildRecoveryManifestValidation =
+  | { ok: true; manifest: RebuildManifest }
+  | { ok: false; reason: string };
+
+/**
+ * Re-read and validate a prepared rebuild backup before a destructive recovery.
+ *
+ * `getLatestBackup()` validates the manifest schema. Recovery additionally pins
+ * the backup to the target sandbox's own timestamped directory and requires the
+ * persisted sandbox/agent identity to match the registry entry. This keeps an
+ * installer recovery from deleting a sandbox based on a renamed, copied, or
+ * otherwise mismatched manifest.
+ */
+export function validateRebuildRecoveryManifest(
+  sandboxName: string,
+  agentName: string | null | undefined,
+  candidate: RebuildManifest,
+): RebuildRecoveryManifestValidation {
+  const expectedAgent = String(agentName || "openclaw").trim() || "openclaw";
+  const sandboxBackupRoot = path.resolve(REBUILD_BACKUPS_DIR, sandboxName);
+  const expectedBackupPath = path.resolve(sandboxBackupRoot, candidate.timestamp);
+  const candidateBackupPath = path.resolve(candidate.backupPath);
+
+  if (
+    candidateBackupPath !== expectedBackupPath ||
+    path.dirname(candidateBackupPath) !== sandboxBackupRoot ||
+    path.basename(candidateBackupPath) !== candidate.timestamp
+  ) {
+    return {
+      ok: false,
+      reason: `backup path does not match '${sandboxName}' and timestamp '${candidate.timestamp}'`,
+    };
+  }
+
+  const persisted = readManifest(candidateBackupPath);
+  if (!persisted || persisted.version !== MANIFEST_VERSION) {
+    return { ok: false, reason: "latest backup manifest is missing, malformed, or unsupported" };
+  }
+  if (persisted.sandboxName !== sandboxName) {
+    return {
+      ok: false,
+      reason: `manifest sandbox '${persisted.sandboxName}' does not match '${sandboxName}'`,
+    };
+  }
+  if (persisted.agentType !== expectedAgent) {
+    return {
+      ok: false,
+      reason: `manifest agent '${persisted.agentType}' does not match registry agent '${expectedAgent}'`,
+    };
+  }
+  if (
+    persisted.timestamp !== candidate.timestamp ||
+    path.resolve(persisted.backupPath) !== candidateBackupPath
+  ) {
+    return { ok: false, reason: "persisted backup identity changed during validation" };
+  }
+
+  return { ok: true, manifest: persisted };
+}
+
+/**
+ * Confirm that a registry entry carries positive NemoClaw-managed image
+ * provenance. Managed images built by current releases receive a non-empty
+ * `nemoclawVersion` fingerprint, while custom images do not.
+ *
+ * `agentVersion` is not provenance: a live version probe can populate it for a
+ * legacy custom image, and backup then copies that value into the manifest.
+ * Pre-fingerprint entries therefore fail closed instead of inferring image
+ * ownership from matching agent versions.
+ */
+export function hasPositiveManagedImageEvidence(
+  sandbox: Pick<registry.SandboxEntry, "nemoclawVersion">,
+): boolean {
+  return typeof sandbox.nemoclawVersion === "string" && sandbox.nemoclawVersion.trim().length > 0;
+}
+
+/**
+ * Decide whether prepared recovery may recreate a sandbox with NemoClaw's
+ * managed image. Any recorded custom `--from` image fails closed. Otherwise,
+ * current rows must carry a managed-image fingerprint and a pre-fingerprint
+ * row may proceed only with per-row operator authorization.
+ */
+export function isManagedImageRecoveryAllowed(
+  sandbox: Pick<registry.SandboxEntry, "nemoclawVersion" | "fromDockerfile">,
+  allowLegacyManagedImageRecovery: boolean,
+): boolean {
+  const hasNoCustomImageEvidence =
+    sandbox.fromDockerfile === undefined || sandbox.fromDockerfile === null;
+  return (
+    hasNoCustomImageEvidence &&
+    (hasPositiveManagedImageEvidence(sandbox) || allowLegacyManagedImageRecovery)
+  );
+}
 
 /**
  * List available backups for a sandbox, newest first, each enriched with a

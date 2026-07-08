@@ -24,6 +24,16 @@ function extractStartScriptHeredoc(src, marker) {
   throw new Error(`Expected ${marker} heredoc in scripts/nemoclaw-start.sh`);
 }
 
+function extractShellFunction(source, name) {
+  const header = `${name}() {`;
+  const start = source.indexOf(header);
+  expect(start, `expected ${name} in nemoclaw-start.sh`).not.toBe(-1);
+  const body = source.slice(start + header.length);
+  const closing = body.match(/^}$/m);
+  expect(closing, `expected closing brace for ${name}`).not.toBeNull();
+  return `${name}() {${body.slice(0, closing?.index ?? 0)}\n}`;
+}
+
 describe("NVIDIA endpoint inference fix preload (#1193, #2051, #4063)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -49,7 +59,22 @@ describe("NVIDIA endpoint inference fix preload (#1193, #2051, #4063)", () => {
       "set -euo pipefail",
       'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
       "NODE_OPTIONS='--require /already-loaded.js'",
+      "NODE_USE_ENV_PROXY=0",
+      extractShellFunction(src, "node_options_has_require"),
+      extractShellFunction(src, "append_node_require_once"),
       block,
+      `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tempDir, "safety-net.js"))}`,
+      `_SANDBOX_SAFETY_NET_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
+      `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tempDir, "proxy-fix.js"))}`,
+      `_PROXY_FIX_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
+      `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tempDir, "ciao-guard.js"))}`,
+      `_CIAO_GUARD_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
+      `_WS_FIX_SCRIPT=${JSON.stringify(path.join(tempDir, "ws-fix.js"))}`,
+      `_WS_FIX_SOURCE=${JSON.stringify(path.join(tempDir, "missing-ws-source.js"))}`,
+      `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tempDir, "seccomp-guard.js"))}`,
+      `_SECCOMP_GUARD_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
+      extractShellFunction(src, "install_core_runtime_preloads"),
+      "install_core_runtime_preloads",
       "printf 'NODE_OPTIONS=%s\\n' \"$NODE_OPTIONS\"",
       "printf 'SCRIPT=%s\\n' \"$_NEMOTRON_FIX_SCRIPT\"",
     ].join("\n");

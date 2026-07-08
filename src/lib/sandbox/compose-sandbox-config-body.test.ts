@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-const { composeSandboxConfigBody } = require("../../../dist/lib/sandbox/config") as {
+const { composeSandboxConfigBody } = require("./config") as {
   composeSandboxConfigBody: (
     config: Record<string, unknown>,
     target: {

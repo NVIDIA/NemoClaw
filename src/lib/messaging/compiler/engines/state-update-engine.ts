@@ -4,21 +4,36 @@
 import type { ChannelManifest, SandboxMessagingStateUpdatePlan } from "../../manifest";
 
 export function planStateUpdates(manifest: ChannelManifest): SandboxMessagingStateUpdatePlan[] {
-  const persistUpdates = Object.entries(manifest.state.persist ?? {}).map(
+  const inputIdsByStateKey = new Map<string, string[]>();
+  const hydrationUpdates: SandboxMessagingStateUpdatePlan[] = [];
+
+  for (const input of manifest.inputs) {
+    if (input.kind !== "config" || !input.statePath) continue;
+
+    const stateKey = stateKeyFromPath(input.statePath);
+    inputIdsByStateKey.set(stateKey, [...(inputIdsByStateKey.get(stateKey) ?? []), input.id]);
+    if (input.envKey) {
+      hydrationUpdates.push({
+        channelId: manifest.id,
+        kind: "rebuild-hydration",
+        statePath: input.statePath,
+        env: input.envKey,
+      });
+    }
+  }
+
+  const persistUpdates: SandboxMessagingStateUpdatePlan[] = [...inputIdsByStateKey].map(
     ([stateKey, inputIds]) => ({
       channelId: manifest.id,
-      kind: "persist-inputs" as const,
+      kind: "persist-inputs",
       stateKey,
       inputIds,
     }),
   );
 
-  const hydrationUpdates = (manifest.state.rebuildHydration ?? []).map((hydration) => ({
-    channelId: manifest.id,
-    kind: "rebuild-hydration" as const,
-    statePath: hydration.statePath,
-    env: hydration.env,
-  }));
-
   return [...persistUpdates, ...hydrationUpdates];
+}
+
+function stateKeyFromPath(statePath: string): string {
+  return statePath.split(".", 1)[0] || statePath;
 }

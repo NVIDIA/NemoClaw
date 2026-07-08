@@ -142,7 +142,7 @@ export function translatePublicGlobalArgv(cmd: string, args: string[]): PublicTr
     return nativeArgv(route.commandId, inputTokens.slice(route.tokens.length));
   }
 
-  if (cmd === "tunnel" || cmd === "inference" || cmd === "credentials") {
+  if (cmd === "agents" || cmd === "tunnel" || cmd === "inference" || cmd === "credentials") {
     return nativeGlobalParentArgv(cmd, args);
   }
 

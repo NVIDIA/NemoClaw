@@ -126,7 +126,7 @@ function runEntryGuard(opts: {
   };
 }
 
-describe("install.sh entry-guard staging — #4414 curl|bash stdin self-stage", () => {
+describe("install.sh entry-guard staging for curl|bash stdin self-stage (#4414)", () => {
   it("stages to /tmp and would exec bash on the staged file when invoked via curl|bash", () => {
     // Pipe-mode invocation: BASH_SOURCE[0] empty. Without staging,
     // ensure_docker's sg(1) re-exec from #4419 has no file to point at

@@ -97,7 +97,10 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(r.out).toContain("$ nemoclaw sandbox gateway token <name> [--quiet|-q]");
-    expect(r.out).toContain("Print the OpenClaw gateway auth token");
+    expect(r.out).toContain("Print the sandbox agent's auth token to stdout");
+    expect(r.out).toContain("OpenClaw gateway");
+    expect(r.out).toContain("token, or a bearer_token agent");
+    expect(r.out).toContain("Hermes' API_SERVER_KEY");
   });
 
   it("doctor fails a present sandbox that is not Ready", testTimeoutOptions(15_000), () => {

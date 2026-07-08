@@ -5,11 +5,19 @@ import type { PublicCommandDisplayEntry } from "./command-display";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import { SANDBOX_AGENTS_DISPLAY_LAYOUT } from "./public-display-agents";
 import type { PublicDisplayLayout } from "./public-display-layout";
+import { SANDBOX_MCP_DISPLAY_LAYOUT } from "./public-display-mcp";
 import { SANDBOX_SESSIONS_DISPLAY_LAYOUT } from "./public-display-sessions";
 import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-metadata";
 
 const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
   ...SANDBOX_AGENTS_DISPLAY_LAYOUT,
+  "agents:list": [
+    {
+      group: "Getting Started",
+      order: 1.5,
+      description: "List available agent runtimes for onboard --agent",
+    },
+  ],
   ...SANDBOX_SESSIONS_DISPLAY_LAYOUT,
   "backup-all": [
     {
@@ -17,10 +25,18 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 40,
     },
   ],
-  "credentials:list": [
+  "credentials:add": [
     {
       group: "Credentials",
       order: 38,
+      description: "Register a provider credential with the OpenShell gateway",
+      flags: "<PROVIDER> --type <TYPE> [--credential ENV_NAME] [--config K=V] [--from-existing]",
+    },
+  ],
+  "credentials:list": [
+    {
+      group: "Credentials",
+      order: 38.5,
       description: "List stored credential keys",
     },
   ],
@@ -80,6 +96,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Getting Started",
       order: 0,
+      description: "Configure inference endpoint and credentials (--agent to choose runtime)",
     },
     {
       group: "Getting Started",
@@ -177,10 +194,11 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Messaging Channels",
       order: 25,
       usage: "nemoclaw <name> channels status",
-      description: "Channel-specific runtime diagnostics",
+      description: "Messaging channel status",
       flags: "[--channel <channel>] [--json]",
     },
   ],
+  ...SANDBOX_MCP_DISPLAY_LAYOUT,
   "sandbox:config:get": [
     {
       group: "Sandbox Management",
@@ -272,6 +290,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quiet|-q]",
     },
   ],
+  "sandbox:gateway:restart": [
+    {
+      group: "Sandbox Management",
+      order: 14.1,
+      flags: "[--quiet|-q]",
+    },
+  ],
   "sandbox:hosts:add": [
     {
       group: "Policy Presets",
@@ -292,11 +317,36 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "(--dry-run)",
     },
   ],
+  "sandbox:inference:get": [
+    {
+      group: "Services",
+      order: 36.1,
+      flags: "[--json]",
+      hidden: true,
+    },
+  ],
+  "sandbox:inference:set": [
+    {
+      group: "Services",
+      order: 37.1,
+      description: "Switch inference and sync the named agent config",
+      flags: "--provider <provider> --model <model> [--no-verify]",
+      hidden: true,
+    },
+  ],
   "sandbox:logs": [
     {
       group: "Sandbox Management",
       order: 6,
       flags: "[--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
+    },
+  ],
+  "sandbox:policy:get": [
+    {
+      group: "Policy Presets",
+      order: 16,
+      description: "Export round-trippable base policy YAML",
+      flags: "[--raw]",
     },
   ],
   "sandbox:policy:add": [
@@ -333,7 +383,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 13,
-      flags: "[--yes|-y|--force] [--verbose|-v]",
+      flags: "[--yes|-y|--force] [--verbose|-v] [--observability|--no-observability]",
     },
   ],
   "sandbox:recover": [
@@ -426,7 +476,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 4,
-      description: "Sandbox health + NIM status",
+      description: "One sandbox's health, gateway, inference, and NIM status",
     },
   ],
   setup: [
@@ -454,6 +504,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Services",
       order: 36,
+      description: "Global sandbox and host service status",
       flags: "[--json]",
     },
   ],
@@ -490,11 +541,19 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       description: "Run uninstall.sh (local only; no remote fallback)",
     },
   ],
+  use: [
+    {
+      group: "Sandbox Management",
+      order: 2.5,
+      usage: "nemoclaw use <name>",
+      flags: "[--json]",
+    },
+  ],
   update: [
     {
       group: "Upgrade",
       order: 40,
-      flags: "(--check, --yes|-y)",
+      flags: "(--check, --fresh, --yes|-y)",
     },
   ],
   "upgrade-sandboxes": [

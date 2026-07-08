@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, it } from "vitest";
 
-import { patchStagedDockerfile } from "../../../dist/lib/onboard/dockerfile-patch";
+import { patchStagedDockerfile } from "./dockerfile-patch";
 
 const BASE_DOCKERFILE = [
   "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
@@ -72,7 +72,7 @@ describe("patchStagedDockerfile :: NEMOCLAW_EXTRA_AGENTS_JSON", () => {
         workspace: "/sandbox/.openclaw/workspace-research",
         agentDir: "/sandbox/.openclaw/agents/research",
         tools: { profile: "minimal", allow: ["read"], deny: ["exec"] },
-        subagents: { maxSpawnDepth: 0 },
+        subagents: { allowAgents: ["analyst"] },
       },
     ];
     withExtraAgentsEnv(JSON.stringify(extras), () =>

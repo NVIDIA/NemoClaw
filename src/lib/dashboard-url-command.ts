@@ -8,6 +8,7 @@
  */
 
 import { DASHBOARD_PORT } from "./core/ports";
+import { buildSshForwardHintLines } from "./onboard/ssh-forward-hint";
 import type { SandboxEntry } from "./state/registry";
 
 type DashboardAuth = "url_token" | "session" | "none";
@@ -21,10 +22,16 @@ export interface DashboardUrlCommandDeps {
   getAccessUrl?: (port: number) => string | null;
   /** Resolve a registered agent's dashboard auth contract. */
   getAgentDashboardAuth?: (agentName: string) => DashboardAuth | null;
+  /** Resolve a registered agent's runtime kind and display name. */
+  getAgentRuntimeInfo?: (
+    agentName: string,
+  ) => { kind: "terminal" | "gateway"; displayName: string } | null;
   /** Optional stdout sink -- defaults to console.log. */
   log?: (message: string) => void;
   /** Optional stderr sink -- defaults to console.error. */
   error?: (message: string) => void;
+  /** Environment used to detect an SSH session for the port-forward hint. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface DashboardUrlCommandOptions {
@@ -93,6 +100,32 @@ function resolveAgentDashboardAuth(
   }
 }
 
+/**
+ * Detect a terminal-runtime agent (e.g. LangChain Deep Agents Code), which has
+ * no browser dashboard by design. Returns the display name when terminal so the
+ * caller can explain the absence instead of failing as if the sandbox were down.
+ */
+function resolveTerminalRuntime(
+  agentName: string | null,
+  deps: Pick<DashboardUrlCommandDeps, "getAgentRuntimeInfo">,
+): { displayName: string } | null {
+  if (!agentName || agentName === "openclaw") return null;
+  if (deps.getAgentRuntimeInfo) {
+    const info = deps.getAgentRuntimeInfo(agentName);
+    return info && info.kind === "terminal" ? { displayName: info.displayName } : null;
+  }
+  try {
+    const defs = require("./agent/defs") as typeof import("./agent/defs");
+    const def = defs.loadAgent(agentName);
+    if (defs.getAgentRuntimeKind(def) === "terminal") {
+      return { displayName: def.displayName ?? agentName };
+    }
+  } catch {
+    // Unresolvable agent -> not a known terminal runtime; fall through.
+  }
+  return null;
+}
+
 export function runDashboardUrlCommand(
   sandboxName: string,
   options: DashboardUrlCommandOptions,
@@ -100,6 +133,13 @@ export function runDashboardUrlCommand(
 ): void {
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
+
+  const printSshForwardHint = (port: number, accessUrl: string | null): void => {
+    const hint = buildSshForwardHintLines({ port, accessUrl, env: deps.env });
+    if (!hint) return;
+    log("");
+    for (const line of hint) log(line);
+  };
 
   let sandbox: Pick<SandboxEntry, "agent" | "dashboardPort"> | null = null;
   if (deps.getSandbox) {
@@ -111,6 +151,17 @@ export function runDashboardUrlCommand(
   }
 
   const agent = sandbox?.agent ?? null;
+
+  // Terminal-runtime sandboxes (e.g. Deep Agents Code) have no dashboard by
+  // design. Say so plainly instead of failing later with a token error that
+  // wrongly implies the sandbox is down or misconfigured (#5727).
+  const terminal = resolveTerminalRuntime(agent, deps);
+  if (terminal) {
+    dashboardUrlFail(
+      `  Sandbox '${sandboxName}' uses a terminal runtime (${terminal.displayName}) and does not have a dashboard.`,
+    );
+  }
+
   const dashboardAuth = resolveAgentDashboardAuth(agent, deps);
   if (agent && agent !== "openclaw" && !dashboardAuth) {
     dashboardUrlFail(
@@ -127,6 +178,7 @@ export function runDashboardUrlCommand(
     }
     log("  Dashboard URL:");
     log(`  ${url}`);
+    printSshForwardHint(port, accessUrl);
     return;
   }
 
@@ -154,5 +206,6 @@ export function runDashboardUrlCommand(
 
   log("  Dashboard URL:");
   log(`  ${url}`);
+  printSshForwardHint(port, accessUrl);
   error(SECURITY_WARNING);
 }

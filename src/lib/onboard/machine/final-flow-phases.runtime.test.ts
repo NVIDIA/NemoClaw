@@ -24,7 +24,9 @@ describe("final onboard flow runtime boundary", () => {
       recordStepComplete: recorders.recordStepComplete,
       recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
-    const compatibilityRecorder = vi.fn(recorders.recordStateResultWithStepCompatibility);
+    const compatibilityRecorder = vi.fn(
+      harness.boundary.recordCompatibleStateResult.bind(harness.boundary),
+    );
 
     await runFinalOnboardFlowSlice({
       context: context({ session: harness.getSession() }),
@@ -64,7 +66,9 @@ describe("final onboard flow runtime boundary", () => {
       recordStepComplete: recorders.recordStepComplete,
       recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
-    const compatibilityRecorder = vi.fn(recorders.recordStateResultWithStepCompatibility);
+    const compatibilityRecorder = vi.fn(
+      harness.boundary.recordCompatibleStateResult.bind(harness.boundary),
+    );
 
     await runFinalOnboardFlowSlice({
       context: context({ session: harness.getSession() }),
@@ -108,7 +112,9 @@ describe("final onboard flow runtime boundary", () => {
       recordStepComplete: recorders.recordStepComplete,
       recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
-    const compatibilityRecorder = vi.fn(recorders.recordStateResultWithStepCompatibility);
+    const compatibilityRecorder = vi.fn(
+      harness.boundary.recordCompatibleStateResult.bind(harness.boundary),
+    );
 
     await runFinalOnboardFlowSlice({
       context: context({ agent: { name: "hermes" }, session: harness.getSession() }),

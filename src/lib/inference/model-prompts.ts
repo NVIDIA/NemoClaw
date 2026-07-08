@@ -48,6 +48,8 @@ export interface ModelPromptOptions {
   backToSelection?: BackToSelection;
   /** Pre-fill this model ID as the default in interactive prompts. */
   defaultModelId?: string;
+  /** Candidate model ID to pre-fill for Other; validated before display. */
+  manualDefaultModelId?: string;
   /** Show only this many remote models in the first menu before offering Other. */
   topLevelModelLimit?: number;
   /** When true, Other opens the full model list before falling back to manual entry. */
@@ -170,9 +172,16 @@ export async function promptCloudModel(
     return deps.backToSelection;
   }
 
-  // If default is a custom (non-curated) model ID, pre-fill it in the manual prompt
+  // Preserve a custom configured model for Other even when the live catalog uses a different
+  // effective menu default. Callers that only provide defaultModelId retain the legacy behavior.
+  const manualDefaultModelId = options.manualDefaultModelId ?? defaultModelId;
+  const manualDefaultIsCurated = deps.cloudModelOptions.some(
+    (option) => option.id === manualDefaultModelId,
+  );
   const manualDefault =
-    defaultCuratedIdx < 0 && defaultModelId && isSafeModelId(defaultModelId) ? defaultModelId : "";
+    !manualDefaultIsCurated && manualDefaultModelId && isSafeModelId(manualDefaultModelId)
+      ? manualDefaultModelId
+      : "";
   const manualLabel = manualDefault
     ? `  NVIDIA Endpoints model id [${manualDefault}]: `
     : "  NVIDIA Endpoints model id: ";

@@ -7,11 +7,12 @@ import path from "node:path";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { DASHBOARD_PORT } from "../core/ports";
-import { buildChain, buildControlUiUrls } from "../dashboard/contract";
+import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
 import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
+import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
 import {
   createSandboxForwardStopper,
@@ -32,6 +33,11 @@ import {
   looksLikeForwardPortConflict,
   runDetachedForwardStartWithPortReleaseRetries,
 } from "./forward-start";
+import {
+  ensureMessagingHostForwardForSandbox,
+  resolveMessagingHostForwardForSandbox,
+} from "./messaging-host-forward";
+import { buildSshForwardHintLines } from "./ssh-forward-hint";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -53,6 +59,8 @@ export interface OnboardDashboardDeps {
   isWsl(): boolean;
   redact(value: unknown): string;
   sleep(seconds: number): void;
+  /** Environment used to detect an SSH session for the port-forward hint. */
+  env?: NodeJS.ProcessEnv;
   // Sandbox-registry lookup used by `ensureDashboardForward` for the
   // cross-gateway dashboard port view. Tests inject a stub so the allocator
   // never reads the runner's real `~/.nemoclaw/sandboxes.json`; production
@@ -65,6 +73,7 @@ export interface OnboardDashboardDeps {
     deps: {
       note: (msg: string) => void;
       buildControlUiUrls: (token: string | null, port: number) => string[];
+      effectiveDashboardPort?: number;
     },
   ): void;
 }
@@ -88,6 +97,7 @@ export interface OnboardDashboardHelpers {
   ): number;
   ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
+  fetchAgentWebAuthTokenFromSandbox(sandboxName: string, agent: AgentDefinition): string | null;
   getDashboardForwardPort(
     chatUiUrl?: string,
     options?: Parameters<typeof dashboardAccess.getDashboardForwardPort>[1],
@@ -160,6 +170,15 @@ function findOpenclawJsonPath(dir: string): string | null {
 
 function dashboardUrlForDisplay(url: string, deps: OnboardDashboardDeps): string {
   return dashboardAccess.dashboardUrlForDisplay(url, deps.redact);
+}
+
+function printWslFallback(fallbackDashboardUrls: string[], indent: string): void {
+  if (fallbackDashboardUrls.length === 0) return;
+  console.log("");
+  console.log(`${indent}Browser (WSL fallback, if 127.0.0.1 is unreachable from Windows):`);
+  for (const fallbackUrl of fallbackDashboardUrls) {
+    console.log(`${indent}  ${fallbackUrl}`);
+  }
 }
 
 export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): OnboardDashboardHelpers {
@@ -239,6 +258,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): number {
     const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
       normalizeDashboardForwardOptions(options);
+    const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
+    if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
     const stopForwardForSandbox = createSandboxForwardStopper({
       runOpenshell: deps.runOpenshell,
@@ -338,6 +359,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         );
       }
     }
+    if (fwdOk && rollbackSandboxOnFailure) {
+      ensureMessagingHostForwardForSandbox({
+        sandboxName,
+        ensureForward: ensureAgentFixedForward,
+        note: deps.note,
+        rollbackOnFailure: {
+          runOpenshell: deps.runOpenshell,
+          buildRollbackMessage: buildOrphanedSandboxRollbackMessage,
+          cliName: deps.cliName,
+          forwardPortsToStop: [actualPort],
+        },
+      });
+    }
     return actualPort;
   }
 
@@ -345,11 +379,33 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     sandboxName: string,
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number {
-    return ensureAgentDashboardForwardForAgent({ sandboxName, agent, ensureDashboardForward });
+    const chatUiUrl = process.env.CHAT_UI_URL;
+    return ensureAgentDashboardForwardForAgent({
+      sandboxName,
+      agent,
+      ensureDashboardForward,
+      chatUiUrl,
+      controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
+    });
   }
 
   function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
     return ensureFixedAgentForward(deps, sandboxName, port, label);
+  }
+
+  /**
+   * Read a bearer_token agent's web-auth token (e.g. Hermes' API_SERVER_KEY)
+   * from its in-sandbox .env. The .env is 0640 root:sandbox and the gateway
+   * group can read it, so we grep it via `sandbox exec` as the sandbox user
+   * rather than `sandbox download` (which may not have read access). Prints
+   * only the value, never the key name, and returns null when the agent has
+   * no bearer token or the value is absent.
+   */
+  function fetchAgentWebAuthTokenFromSandbox(
+    sandboxName: string,
+    agent: AgentDefinition,
+  ): string | null {
+    return fetchAgentWebAuthToken(deps.runCaptureOpenshell, sandboxName, agent);
   }
 
   function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
@@ -399,12 +455,18 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const chain = buildChain({
       chatUiUrl,
       isWsl: deps.isWsl(),
-      wslHostAddress: getWslHostAddress(),
+      wslHostAddress: getWslHostAddress({ isWsl: deps.isWsl(), runCapture: deps.runCapture }),
     });
     const dashboardBaseUrl = `${chain.accessUrl.replace(/\/$/, "")}/`;
     const dashboardUrl = dashboardUrlForDisplay(
       dashboardAccess.buildAuthenticatedDashboardUrl(dashboardBaseUrl, token),
       deps,
+    );
+    const fallbackDashboardUrls = chain.fallbackUrls.map((fallback) =>
+      dashboardUrlForDisplay(
+        dashboardAccess.buildAuthenticatedDashboardUrl(`${fallback.replace(/\/$/, "")}/`, token),
+        deps,
+      ),
     );
 
     console.log("");
@@ -422,8 +484,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       deps.printAgentDashboardUi(sandboxName, token, agent, {
         note: deps.note,
+        effectiveDashboardPort: chain.port,
         buildControlUiUrls: (tokenValue: string | null, port: number) => {
-          return buildControlUiUrls(tokenValue, port, chain.accessUrl);
+          const primary = buildControlUiUrls(tokenValue, port);
+          const alternates = buildFallbackControlUiUrls(tokenValue, port, [
+            chain.accessUrl,
+            ...chain.fallbackUrls,
+          ]);
+          return [...new Set([...primary, ...alternates])];
         },
       });
       console.log("");
@@ -434,6 +502,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       console.log("    Browser:");
       console.log(`      ${dashboardUrl}`);
+      printWslFallback(fallbackDashboardUrls, "    ");
       console.log("");
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);
@@ -447,10 +516,22 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       console.log("    Browser:");
       console.log(`      ${dashboardUrl}`);
+      printWslFallback(fallbackDashboardUrls, "    ");
       console.log("");
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);
       console.log("      then run: openclaw tui");
+    }
+    const sshForwardHint = buildSshForwardHintLines({
+      port: chain.port,
+      accessUrl: chain.accessUrl,
+      env: deps.env,
+    });
+    if (sshForwardHint) {
+      console.log("");
+      for (const line of sshForwardHint) {
+        console.log(line);
+      }
     }
     console.log("");
     console.log("  Manage later");
@@ -476,6 +557,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     ensureAgentDashboardForward,
     ensureAgentFixedForward,
     fetchGatewayAuthTokenFromSandbox,
+    fetchAgentWebAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,
     getWslHostAddress,

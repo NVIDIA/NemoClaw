@@ -170,8 +170,7 @@ describe("setupMessagingChannels selector fallback", () => {
 
     const result = await setupMessagingChannels(
       {
-        name: "openclaw",
-        messagingPlatforms: ["unsupported-channel"],
+        name: "custom-agent",
       } as unknown as Parameters<typeof setupMessagingChannels>[0],
       null,
       { isNonInteractive: () => false },

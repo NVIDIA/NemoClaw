@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
+// Import source directly so tests cannot pass against a stale build.
 import {
   classifyApplyFailure,
   classifySandboxCreateFailure,
@@ -14,7 +14,7 @@ import {
   shouldForceCompletionsApi,
   shouldSkipResponsesProbe,
   validateNvidiaApiKeyValue,
-} from "../../dist/lib/validation";
+} from "./validation";
 
 describe("classifyValidationFailure", () => {
   it("classifies curl failures as transport", () => {
@@ -59,7 +59,7 @@ describe("classifyValidationFailure", () => {
     });
   });
 
-  it("classifies 400 + expired key message as credential (#1942 — Gemini)", () => {
+  it("classifies a Gemini 400 with an expired-key message as a credential error (#1942)", () => {
     // Gemini returns HTTP 400 with this exact message when the API key has expired.
     // Must classify as "credential" so the onboard wizard prompts to re-enter the
     // key instead of looping back to provider selection.
@@ -74,7 +74,7 @@ describe("classifyValidationFailure", () => {
     });
   });
 
-  it("classifies 400 + API_KEY_INVALID message as credential (#1942 — Gemini)", () => {
+  it("classifies a Gemini 400 with API_KEY_INVALID as a credential error (#1942)", () => {
     // Gemini also uses "API_KEY_INVALID" as the status string for revoked keys.
     expect(
       classifyValidationFailure({
@@ -87,7 +87,7 @@ describe("classifyValidationFailure", () => {
     });
   });
 
-  it("classifies bare 'API key not valid' message as credential (#1942 — Gemini .message only)", () => {
+  it("classifies a bare Gemini 'API key not valid' .message as a credential error (#1942)", () => {
     // When the message field is extracted without the API_KEY_INVALID status
     // prefix, the bare wording must still classify as credential. Flagged by
     // CodeRabbit on #2132.
@@ -279,7 +279,7 @@ describe("classifySandboxCreateFailure", () => {
     expect(result.kind).toBe("image_upload_container_missing");
   });
 
-  it("does NOT classify an unrelated 404 as image_upload_container_missing (#3266 regression guard)", () => {
+  it("does not classify an unrelated 404 as image_upload_container_missing (#3266)", () => {
     // A generic 404 with no upload-tar phrase and no gateway container name
     // must not be mistaken for the ARM64 upload failure.
     expect(

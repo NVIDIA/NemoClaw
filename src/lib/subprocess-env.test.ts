@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { withLocalNoProxy } from "../../dist/lib/subprocess-env";
+import { withLocalNoProxy } from "./subprocess-env";
 
 const LOCAL_NO_PROXY =
   "localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local";
@@ -154,7 +154,7 @@ describe("buildSubprocessEnv NO_PROXY injection", () => {
     delete process.env.NO_PROXY;
     delete process.env.no_proxy;
 
-    const { buildSubprocessEnv } = await import("../../dist/lib/subprocess-env");
+    const { buildSubprocessEnv } = await import("./subprocess-env");
     const env = buildSubprocessEnv();
     expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);
     expect(env.no_proxy).toBe(LOCAL_NO_PROXY);
@@ -165,7 +165,7 @@ describe("buildSubprocessEnv NO_PROXY injection", () => {
     process.env.NO_PROXY = "corp.internal";
     process.env.no_proxy = "corp.internal";
 
-    const { buildSubprocessEnv } = await import("../../dist/lib/subprocess-env");
+    const { buildSubprocessEnv } = await import("./subprocess-env");
     const env = buildSubprocessEnv();
     expect(env.NO_PROXY).toBe(`corp.internal,${LOCAL_NO_PROXY}`);
     expect(env.no_proxy).toBe(`corp.internal,${LOCAL_NO_PROXY}`);
@@ -179,7 +179,7 @@ describe("buildSubprocessEnv NO_PROXY injection", () => {
     delete process.env.NO_PROXY;
     delete process.env.no_proxy;
 
-    const { buildSubprocessEnv } = await import("../../dist/lib/subprocess-env");
+    const { buildSubprocessEnv } = await import("./subprocess-env");
     const env = buildSubprocessEnv();
     expect(env.NO_PROXY).toBeUndefined();
     expect(env.no_proxy).toBeUndefined();
@@ -190,7 +190,7 @@ describe("buildSubprocessEnv NO_PROXY injection", () => {
     delete process.env.NO_PROXY;
     delete process.env.no_proxy;
 
-    const { buildSubprocessEnv } = await import("../../dist/lib/subprocess-env");
+    const { buildSubprocessEnv } = await import("./subprocess-env");
     const env = buildSubprocessEnv({ MY_TOKEN: "abc123" });
     expect(env.MY_TOKEN).toBe("abc123");
     expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);

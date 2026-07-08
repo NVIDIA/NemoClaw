@@ -9,14 +9,14 @@ keywords: ["nemoclaw ecosystem", "hermes agent", "nemohermes", "nemoclaw vs open
 content:
   type: "concept"
 ---
-NemoClaw provides onboarding, lifecycle management, and Hermes operations within OpenShell containers.
+NemoClaw provides onboarding, lifecycle management, and Hermes operations in OpenShell containers.
 Use the `nemohermes` CLI alias when you work from the Hermes agent guide; it is equivalent to `nemoclaw` with the Hermes agent pre-selected.
 
-This page describes how these projects form the ecosystem, where NemoClaw sits relative to [OpenShell](https://github.com/NVIDIA/OpenShell) and [Hermes](https://hermes-agent.nousresearch.com/docs/), and how to choose between NemoHermes and OpenShell alone.
+This page explains how these projects fit together, where NemoClaw sits relative to [OpenShell](https://github.com/NVIDIA/OpenShell) and [Hermes](https://hermes-agent.nousresearch.com/docs/), and when to choose NemoHermes or OpenShell directly.
 
 ## How the Stack Fits Together
 
-A NemoClaw for Hermes deployment combines three pieces with distinct scopes: Hermes, OpenShell, and NemoClaw.
+A NemoClaw deployment for Hermes combines three pieces with distinct scopes: Hermes, OpenShell, and NemoClaw.
 The following diagram shows how they fit together.
 
 ```mermaid
@@ -41,9 +41,9 @@ flowchart TB
 ```
 
 NemoClaw sits above OpenShell in the operator workflow.
-It drives OpenShell APIs and CLI to create and configure the sandbox that runs Hermes.
+It calls OpenShell APIs and CLI commands to create and configure the sandbox that runs Hermes.
 Models and endpoints sit behind OpenShell's inference routing.
-NemoClaw onboarding wires provider choice into that routing, including the Hermes Provider route when you onboard through `nemohermes`.
+NemoClaw onboarding connects your provider choice to that route, including the Hermes Provider route when you onboard through `nemohermes`.
 
 The following table shows the scope of each component in the stack.
 
@@ -60,8 +60,8 @@ The difference is who owns the integration work.
 
 | Path | What it means |
 |------|---------------|
-| **NemoClaw path** | You adopt the reference stack. NemoClaw's Hermes blueprint encodes a hardened image, default policies, and orchestration so `nemohermes onboard` can create a known-good Hermes-on-OpenShell setup with less custom glue. |
-| **OpenShell path** | You use OpenShell as the platform and supply your own container, Hermes install steps, policy YAML, provider setup, and any host bridges. OpenShell stays the sandbox and policy engine; nothing requires NemoClaw's blueprint or CLI. |
+| **NemoClaw path** | You adopt the reference stack. NemoClaw's Hermes blueprint encodes a hardened image, default policies, and orchestration so `nemohermes onboard` can create a tested Hermes-on-OpenShell setup with less custom integration work. |
+| **OpenShell path** | You use OpenShell as the platform and supply your own container, Hermes install steps, policy YAML, provider setup, and host bridges. OpenShell stays the sandbox and policy engine; nothing requires NemoClaw's blueprint or CLI. |
 
 ## What NemoClaw Adds Beyond Custom OpenShell
 
@@ -75,7 +75,7 @@ The following table compares custom OpenShell integration with `nemohermes onboa
 |---|---|---|
 | Sandbox isolation | Yes, when you apply OpenShell seccomp, Landlock, network namespace isolation, and no-new-privileges enforcement through your policy. | Yes. NemoClaw applies these through the blueprint and layers a Hermes-specific restrictive policy on top. |
 | Credential handling | You create OpenShell providers manually with `openshell provider create` and configure placeholder resolution at egress. | NemoClaw creates OpenShell providers during onboarding and filters sensitive host environment variables from the sandbox creation command to reduce accidental leakage through build args. |
-| Image hardening | Depends on your base image and install steps. | NemoClaw strips build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) from the runtime image to reduce attack surface. |
+| Image hardening | Depends on your base image and install steps. | NemoClaw removes build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) from the runtime image to reduce attack surface. |
 | Filesystem policy | You define read-only and read-write paths in policy YAML. | NemoClaw defines a targeted layout: system paths (`/usr`, `/lib`, `/etc`) are read-only; `/sandbox` and `/sandbox/.hermes` are writable for agent state and configuration. |
 | Inference setup | You configure OpenShell inference routing and Hermes `config.yaml` manually. | NemoClaw validates credentials from the host, configures the OpenShell route, and bakes model settings into `/sandbox/.hermes/config.yaml`. Hermes Provider onboarding is available through `nemohermes`. |
 | Channel messaging | OpenShell delivers channel tokens through its provider system and L7 proxy; you configure Hermes platform adapters manually. | NemoClaw automates supported channel setup during onboarding and bakes Hermes env/config with placeholder tokens that OpenShell resolves at egress. |
@@ -85,7 +85,7 @@ The following table compares custom OpenShell integration with `nemohermes onboa
 
 ## When to Use Which
 
-Use the following table to decide when to use NemoHermes versus OpenShell alone.
+Use the following table to choose NemoHermes or OpenShell.
 
 | Situation | Prefer |
 |-----------|--------|
@@ -96,7 +96,7 @@ Use the following table to decide when to use NemoHermes versus OpenShell alone.
 
 ## Related Topics
 
-- [Overview](overview) describes what NemoClaw is, including capabilities, benefits, and use cases.
+- [Overview](overview) defines NemoClaw's capabilities, benefits, and use cases.
 - [How It Works](how-it-works) describes how NemoClaw runs, the blueprint, sandbox creation, routing, and protection layers for Hermes.
 - [Architecture](../reference/architecture) shows the repository structure and technical diagrams.
 - [Quickstart with Hermes](../get-started/quickstart) installs NemoClaw and launches your first Hermes sandbox.

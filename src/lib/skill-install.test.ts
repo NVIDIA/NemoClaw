@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
+// Import source directly so tests cannot pass against a stale build.
 import {
   collectFiles,
   parseFrontmatter,
@@ -14,7 +14,7 @@ import {
   shellQuote,
   validateRelativePath,
   verifyInstall,
-} from "../../dist/lib/skill-install";
+} from "./skill-install";
 
 describe("parseFrontmatter", () => {
   it("extracts name from valid frontmatter", () => {

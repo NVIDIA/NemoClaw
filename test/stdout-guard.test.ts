@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { withStdoutRedirectedToStderr } from "../dist/lib/cli/stdout-guard.js";
+import { withStdoutRedirectedToStderr } from "../src/lib/cli/stdout-guard.js";
 
 describe("withStdoutRedirectedToStderr", () => {
   let restore: (() => void) | null = null;

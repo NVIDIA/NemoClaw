@@ -35,10 +35,9 @@ export class ChannelManifestRegistry {
   }
 
   listAvailable(ctx: ChannelManifestAvailabilityContext = {}): ChannelManifest[] {
-    const supportedChannelIds =
-      ctx.supportedChannelIds && ctx.supportedChannelIds.length > 0
-        ? new Set(ctx.supportedChannelIds)
-        : null;
+    const supportedChannelIds = Array.isArray(ctx.supportedChannelIds)
+      ? new Set(ctx.supportedChannelIds)
+      : null;
 
     return this.list().filter((manifest) => {
       if (ctx.agent && !manifest.supportedAgents.includes(ctx.agent)) {

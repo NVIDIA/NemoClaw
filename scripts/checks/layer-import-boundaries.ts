@@ -34,6 +34,12 @@ function isProductionTsFile(absPath: string): boolean {
 
 function* walk(dir: string): Generator<string> {
   if (!existsSync(dir)) return;
+  const rootStats = statSync(dir);
+  if (rootStats.isFile()) {
+    if (isProductionTsFile(dir)) yield dir;
+    return;
+  }
+  if (!rootStats.isDirectory()) return;
   for (const entry of readdirSync(dir)) {
     if (SKIP_DIRS.has(entry)) continue;
     const absPath = path.join(dir, entry);

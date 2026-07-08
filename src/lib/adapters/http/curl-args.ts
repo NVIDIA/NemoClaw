@@ -1,13 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isIP } from "node:net";
 import path from "node:path";
-
+import { isCredentialShapedName } from "../../security/credential-env";
 import { ROOT } from "../../state/paths";
 
 export interface CurlProbeArgOptions {
   cwd?: string;
   trustedConfigFiles?: readonly string[];
+  /**
+   * Permit redirect-following flags (`-L`, `-sfL`, `--location`) for this probe.
+   * Opt-in per call site because following redirects on a user-supplied URL
+   * widens the SSRF surface; only enable for probes against a fixed,
+   * hardcoded host.
+   */
+  allowRedirects?: boolean;
+  /** Public addresses approved by the endpoint SSRF preflight. */
+  pinnedAddresses?: readonly string[];
 }
 
 const CURL_CONFIG_OPTIONS = new Set(["--config", "-K"]);
@@ -41,18 +51,29 @@ const CURL_SAFE_FLAG_OPTIONS = new Set([
   "-sS",
   "-sf",
   "-f",
-  "-L",
-  "-sfL",
   "--fail",
   "--silent",
   "--show-error",
-  "--location",
   "--compressed",
   "--get",
 ]);
+// Redirect-following flags are NOT globally safe — they widen the SSRF
+// surface whenever a user-controlled URL is involved. Call sites that
+// genuinely need to follow redirects from a fixed, hardcoded host (e.g. the
+// Ollama manifest probe) must opt in via CurlProbeArgOptions.allowRedirects.
+const CURL_REDIRECT_FLAG_OPTIONS = new Set(["-L", "-sfL", "--location"]);
 const CURL_SAFE_VALUE_OPTIONS = new Set(["--connect-timeout", "--max-time", "-X", "--request"]);
 const CURL_FORBIDDEN_MULTI_TRANSFER_OPTIONS = new Set(["--next"]);
 const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-H", "-X"]);
+
+// Defence-in-depth: primary protection is routing all secrets through trusted
+// --config tmpfiles. This denylist refuses URLs whose query-parameter names
+// look credential-shaped, so a regression at the caller can never quietly
+// leak a secret into the curl argv element. The credential-shaped test is
+// shared with the curl probe environment scrubber (security/credential-env).
+function isCredentialShapedQueryParam(name: string): boolean {
+  return isCredentialShapedName(name);
+}
 
 function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (typeof rawUrl !== "string" || rawUrl.trim() === "") {
@@ -65,7 +86,32 @@ function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (url.username || url.password) {
     throw new Error("curl probe URL must not embed credentials");
   }
+  for (const param of url.searchParams.keys()) {
+    if (isCredentialShapedQueryParam(param)) {
+      throw new Error(
+        `curl probe URL must not embed credentials in the ${param} query parameter; route via --config`,
+      );
+    }
+  }
   return url.toString();
+}
+
+const CURL_FORBIDDEN_AUTH_HEADER_PREFIXES = [
+  "authorization:",
+  "proxy-authorization:",
+  "x-api-key:",
+  "x-goog-api-key:",
+];
+
+function assertHeaderCarriesNoSecret(option: string, value: string): void {
+  const lower = value.toLowerCase().trimStart();
+  for (const prefix of CURL_FORBIDDEN_AUTH_HEADER_PREFIXES) {
+    if (lower.startsWith(prefix)) {
+      throw new Error(
+        `curl probe ${option} must not carry credentials inline; route the header via --config`,
+      );
+    }
+  }
 }
 
 function splitCurlOptionArg(arg: string): { option: string; inlineValue?: string } {
@@ -118,12 +164,76 @@ function isTrustedCurlConfigPath(value: string, opts: CurlProbeArgOptions): bool
     .includes(candidate);
 }
 
+function normalizeHostname(hostname: string): string {
+  return (hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname)
+    .replace(/\.$/, "")
+    .toLowerCase();
+}
+
+function defaultUrlPort(url: URL): string {
+  return url.port || (url.protocol === "https:" ? "443" : "80");
+}
+
+function parseResolveAddresses(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((value) => (value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value));
+}
+
+function isPrivateResolveAddress(address: string): boolean {
+  // Keep the generic curl validator import-light: many command tests mock the
+  // runner module that private-networks uses only to locate its YAML. Load the
+  // canonical classifier only for the uncommon --resolve validation path.
+  const { isPrivateIp } =
+    require("../../private-networks") as typeof import("../../private-networks");
+  return isPrivateIp(address);
+}
+
+function assertResolveMatchesApprovedEndpoint(
+  value: string,
+  target: URL,
+  opts: CurlProbeArgOptions,
+): void {
+  const firstSeparator = value.indexOf(":");
+  const secondSeparator = value.indexOf(":", firstSeparator + 1);
+  if (firstSeparator <= 0 || secondSeparator <= firstSeparator + 1) {
+    throw new Error("curl probe --resolve must use host:port:address[,address] syntax");
+  }
+  const host = normalizeHostname(value.slice(0, firstSeparator));
+  const port = value.slice(firstSeparator + 1, secondSeparator);
+  const addresses = parseResolveAddresses(value.slice(secondSeparator + 1));
+  const approved = [...new Set(opts.pinnedAddresses ?? [])];
+  if (approved.length === 0) {
+    throw new Error("curl probe --resolve requires SSRF-preflight-approved pinnedAddresses");
+  }
+  if (host !== normalizeHostname(target.hostname) || port !== defaultUrlPort(target)) {
+    throw new Error("curl probe --resolve host and port must match the probe URL");
+  }
+  if (addresses.length === 0 || addresses.some((address) => isIP(address) === 0)) {
+    throw new Error("curl probe --resolve addresses must be numeric IP addresses");
+  }
+  if (addresses.some((address) => isPrivateResolveAddress(address))) {
+    throw new Error("curl probe --resolve must not map the destination to a private address");
+  }
+  const actualSet = new Set(addresses);
+  const approvedSet = new Set(approved);
+  if (
+    actualSet.size !== addresses.length ||
+    actualSet.size !== approvedSet.size ||
+    [...actualSet].some((address) => !approvedSet.has(address))
+  ) {
+    throw new Error("curl probe --resolve addresses must exactly match pinnedAddresses");
+  }
+}
+
 export function validateCurlProbeArgs(
   argv: string[],
   opts: CurlProbeArgOptions = {},
 ): { args: string[]; url: string } {
   const args = [...argv];
   const url = normalizeHttpProbeUrl(args.pop());
+  const parsedUrl = new URL(url);
+  let sawResolve = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const { option, inlineValue } = splitCurlOptionArg(arg);
@@ -153,6 +263,7 @@ export function validateCurlProbeArgs(
       if (curlHeaderValueReadsFromFile(value)) {
         throw new Error(`curl probe option must not read headers from a file: ${option}`);
       }
+      assertHeaderCarriesNoSecret(option, value);
       if (inlineValue === undefined) index += 1;
       continue;
     }
@@ -167,12 +278,30 @@ export function validateCurlProbeArgs(
       if (inlineValue === undefined) index += 1;
       continue;
     }
+    if (option === "--resolve") {
+      if (sawResolve) {
+        throw new Error("curl probe accepts only one --resolve mapping per transfer");
+      }
+      const value = getCurlOptionValue(args, index, option, inlineValue);
+      assertResolveMatchesApprovedEndpoint(value, parsedUrl, opts);
+      sawResolve = true;
+      if (inlineValue === undefined) index += 1;
+      continue;
+    }
     if (CURL_SAFE_VALUE_OPTIONS.has(option)) {
       getCurlOptionValue(args, index, option, inlineValue);
       if (inlineValue === undefined) index += 1;
       continue;
     }
     if (CURL_SAFE_FLAG_OPTIONS.has(option)) {
+      continue;
+    }
+    if (CURL_REDIRECT_FLAG_OPTIONS.has(option)) {
+      if (!opts.allowRedirects) {
+        throw new Error(
+          `curl probe option is not allowed without explicit allowRedirects opt-in: ${option}`,
+        );
+      }
       continue;
     }
     if (!arg.startsWith("-")) {
@@ -191,7 +320,7 @@ export function buildValidatedCurlCommandArgs(
   return [...args, url];
 }
 
-export type CurlProbeMode = "json" | "chat-stream" | "event-stream";
+export type CurlProbeMode = "json" | "chat-stream" | "event-stream" | "event-stream-with-status";
 
 export function buildCurlProbeSpawnArgs(
   args: string[],
@@ -201,7 +330,8 @@ export function buildCurlProbeSpawnArgs(
 ): string[] {
   const outputArgs =
     mode === "json" ? ["-o", bodyFile, "-w", "%{http_code}"] : ["-N", "-o", bodyFile];
-  const statusArgs = mode === "chat-stream" ? ["-w", "%{http_code}"] : [];
+  const statusArgs =
+    mode === "chat-stream" || mode === "event-stream-with-status" ? ["-w", "%{http_code}"] : [];
   // lgtm[js/file-access-to-http] URL/argv are validated; file-backed config paths must be explicitly trusted.
   return [...args, ...outputArgs, ...statusArgs, url];
 }

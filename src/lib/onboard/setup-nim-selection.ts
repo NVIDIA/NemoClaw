@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
+import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
+import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+
+export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+
 export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
 
 export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
@@ -11,8 +17,16 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   hermesAuthMethod: THermesAuthMethod | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning?: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
+  skipHostInferenceSmoke?: boolean;
+  /** Public addresses approved for the selected custom endpoint. */
+  endpointPinnedAddresses?: string[];
+  reuseGatewayCredentialWithoutLocalKey?: boolean;
+  nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
+  /** Attempt-wide shared-gateway guard, invoked after identity selection and before probes. */
+  assertRouteCompatible?: () => GatewayRouteDiscoveryConstraints;
 };
 
 export type CloudFallbackConfig = {
@@ -36,10 +50,37 @@ export function applyCloudFallbackSelection(
   state.preferredInferenceApi = null;
   state.nimContainer = null;
   state.allowToolsIncompatible = false;
+  state.skipHostInferenceSmoke = false;
+  state.reuseGatewayCredentialWithoutLocalKey = false;
+  delete state.endpointPinnedAddresses;
 }
 
 export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {
   state.nimContainer = null;
+}
+
+type CompatibleEndpointKind = "openai" | "anthropic";
+
+export async function resolveCompatibleEndpointInput(args: {
+  kind: CompatibleEndpointKind;
+  envUrl: string | null | undefined;
+  recoveredEndpointUrl: string | null | undefined;
+  nonInteractive: boolean;
+  prompt: (message: string) => Promise<string>;
+}): Promise<string> {
+  const envUrl = (args.envUrl || "").trim();
+  const recoveredUrl = (args.recoveredEndpointUrl || "").trim();
+  const defaultEndpointUrl = envUrl || recoveredUrl;
+  if (args.nonInteractive) return defaultEndpointUrl;
+  return (
+    (await args.prompt(
+      defaultEndpointUrl
+        ? `  ${args.kind === "openai" ? "OpenAI" : "Anthropic"}-compatible base URL [${defaultEndpointUrl}]: `
+        : args.kind === "openai"
+          ? "  OpenAI-compatible base URL (e.g., https://openrouter.ai): "
+          : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
+    )) || defaultEndpointUrl
+  );
 }
 
 type ProviderChoice = {
@@ -69,7 +110,7 @@ type ProbeOptions = {
 };
 
 type ValidationResult =
-  | { ok: true; api: string | null; retry?: never }
+  | { ok: true; api: string | null; retry?: never; pinnedAddresses?: string[] }
   | { ok: false; api?: string; retry?: "credential" | "retry" | "model" | "selection" | string };
 
 type RemoteModelValidationResult = "selected" | "retry-model" | "retry-selection";
@@ -92,6 +133,9 @@ type RemoteModelValidatorDeps = {
     model: string,
     credentialEnv: string,
     helpUrl: string | null,
+    options?: {
+      intendedApi?: "anthropic-messages" | "openai-completions";
+    },
   ) => Promise<ValidationResult>;
   validateAnthropicSelectionWithRetryMessage: (
     label: string,
@@ -113,6 +157,8 @@ type RemoteModelValidatorDeps = {
   shouldRequireResponsesToolCalling: (provider: string) => boolean;
   shouldSkipResponsesProbe: (provider: string) => boolean;
   getProbeAuthMode: (provider: string) => ProbeAuthMode;
+  configureCompatibleEndpointReasoning?: () => Promise<"true" | "false">;
+  log?: (message: string) => void;
 };
 
 type ValidateSelectedRemoteModelArgs = {
@@ -120,6 +166,7 @@ type ValidateSelectedRemoteModelArgs = {
   remoteConfig: RemoteProviderConfig;
   state: SetupNimSelectionState;
   selectedCredentialEnv: string;
+  intendedInferenceApi?: string | null;
 };
 
 function shouldRetryModel(validation: ValidationResult): boolean {
@@ -129,6 +176,13 @@ function shouldRetryModel(validation: ValidationResult): boolean {
       validation.retry === "retry" ||
       validation.retry === "model")
   );
+}
+
+function requireCustomAnthropicRuntimeApi(
+  value: string | null,
+): "anthropic-messages" | "openai-completions" {
+  if (value === "anthropic-messages" || value === "openai-completions") return value;
+  throw new Error(`Unsupported custom Anthropic runtime API: ${String(value)}`);
 }
 
 export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
@@ -142,12 +196,24 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
       remoteConfig,
       state,
       selectedCredentialEnv,
+      intendedInferenceApi = "anthropic-messages",
     }) => {
+      delete state.endpointPinnedAddresses;
       const selectedModel = deps.requireValue(
         deps.isBackToSelection(state.model) ? null : state.model,
         `Missing model for ${remoteConfig.label}`,
       );
       if (selected.key === "custom") {
+        // Reasoning mode is OpenAI-compatible only; Anthropic/native providers use other formats.
+        const reasoning = await deps.configureCompatibleEndpointReasoning?.();
+        if (reasoning) {
+          state.compatibleEndpointReasoning = reasoning;
+        }
+        if (reasoning === "true") {
+          (deps.log ?? console.log)(
+            "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
+          );
+        }
         const validation = await deps.validateCustomOpenAiLikeSelection(
           remoteConfig.label,
           state.endpointUrl || deps.OPENAI_ENDPOINT_URL,
@@ -156,6 +222,17 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           remoteConfig.helpUrl,
         );
         if (validation.ok) {
+          if (validation.pinnedAddresses)
+            state.endpointPinnedAddresses = validation.pinnedAddresses;
+          else delete state.endpointPinnedAddresses;
+          // Probe the endpoint's runtime max_model_len so a custom vLLM endpoint
+          // gets its real context window baked in instead of a small
+          // architecture default; an explicit override always wins (#6177).
+          await applyCompatibleEndpointContextWindow(
+            state.endpointUrl || deps.OPENAI_ENDPOINT_URL,
+            selectedModel,
+            { credentialEnv: selectedCredentialEnv },
+          );
           const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
           if (
             explicitApi &&
@@ -180,14 +257,19 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
       }
 
       if (selected.key === "anthropicCompatible") {
+        const intendedApi = requireCustomAnthropicRuntimeApi(intendedInferenceApi);
         const validation = await deps.validateCustomAnthropicSelection(
           remoteConfig.label,
           state.endpointUrl || deps.ANTHROPIC_ENDPOINT_URL,
           selectedModel,
           selectedCredentialEnv,
           remoteConfig.helpUrl,
+          { intendedApi },
         );
         if (validation.ok) {
+          if (validation.pinnedAddresses)
+            state.endpointPinnedAddresses = validation.pinnedAddresses;
+          else delete state.endpointPinnedAddresses;
           state.preferredInferenceApi = validation.api;
           return "selected";
         }

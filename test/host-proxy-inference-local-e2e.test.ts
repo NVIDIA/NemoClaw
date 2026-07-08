@@ -6,7 +6,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { buildSubprocessEnv } from "../dist/lib/subprocess-env";
+import { buildSubprocessEnv } from "../src/lib/subprocess-env";
 
 function runCurl(
   args: string[],

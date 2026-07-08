@@ -377,7 +377,7 @@ describe("MessagingSetupApplier", () => {
       enabled: true,
       groupPolicy: "open",
     });
-    expect(openclawConfig.channels.telegram.groups).toBeUndefined();
+    expect(openclawConfig.channels.telegram.groups).toEqual({ "*": { requireMention: true } });
     expect(result.appliedTargets).toEqual(["/sandbox/.openclaw/openclaw.json"]);
     expect(result.appliedHooks).toEqual([]);
     expect(result.unresolvedTemplateRefs).toEqual([]);

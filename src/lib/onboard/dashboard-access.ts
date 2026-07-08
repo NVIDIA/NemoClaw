@@ -144,12 +144,8 @@ export function getDashboardAccessInfo(
     }),
   );
 
-  const wslHostAddress = getWslHostAddress(options);
-  if (wslHostAddress) {
-    const wslUrl = buildAuthenticatedDashboardUrl(
-      `http://${wslHostAddress}:${chain.port}/`,
-      token ?? null,
-    );
+  for (const fallback of chain.fallbackUrls) {
+    const wslUrl = buildAuthenticatedDashboardUrl(`${fallback.replace(/\/$/, "")}/`, token ?? null);
     const existing = dashboardAccess.find((access) => access.url === wslUrl);
     if (existing) {
       existing.label = "WSL fallback";

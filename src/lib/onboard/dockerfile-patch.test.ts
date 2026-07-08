@@ -13,7 +13,7 @@ import {
   isValidProxyHost,
   isValidProxyPort,
   patchStagedDockerfile,
-} from "../../../dist/lib/onboard/dockerfile-patch";
+} from "./dockerfile-patch";
 
 const tmpRoots: string[] = [];
 
@@ -689,7 +689,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #1904: BASE_IMAGE must reference sandbox-base, not openshell-community", () => {
+  it("requires BASE_IMAGE to reference sandbox-base instead of openshell-community (#1904)", () => {
     // This is the exact bug that broke all e2e tests in PR #1937:
     // the code read a digest from blueprint.yaml (openshell-community registry)
     // and applied it to nemoclaw/sandbox-base (different registry).
@@ -823,7 +823,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #1409: bakes NEMOCLAW_PROXY_HOST/PORT env into the staged Dockerfile", () => {
+  it("bakes NEMOCLAW_PROXY_HOST/PORT env into the staged Dockerfile (#1409)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
@@ -873,7 +873,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #1409: leaves Dockerfile defaults when proxy env is unset", () => {
+  it("leaves Dockerfile defaults when proxy env is unset (#1409)", () => {
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-default-"),
     );
@@ -918,7 +918,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #2421: bakes NEMOCLAW_INFERENCE_INPUTS into the staged Dockerfile when env is set", () => {
+  it("bakes NEMOCLAW_INFERENCE_INPUTS into the staged Dockerfile when env is set (#2421)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-inputs-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
@@ -959,7 +959,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #2421: rejects malformed NEMOCLAW_INFERENCE_INPUTS and keeps default", () => {
+  it("rejects malformed NEMOCLAW_INFERENCE_INPUTS and keeps the default (#2421)", () => {
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-inputs-bad-"),
     );
@@ -1018,7 +1018,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #1409: rejects malformed NEMOCLAW_PROXY_HOST/PORT and keeps defaults", () => {
+  it("rejects malformed NEMOCLAW_PROXY_HOST/PORT and keeps defaults (#1409)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-bad-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
@@ -1070,7 +1070,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("#2281: bakes NEMOCLAW_AGENT_TIMEOUT env into the staged Dockerfile", () => {
+  it("bakes NEMOCLAW_AGENT_TIMEOUT env into the staged Dockerfile (#2281)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-timeout-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
@@ -1111,7 +1111,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("#2880: bakes NEMOCLAW_AGENT_HEARTBEAT_EVERY env into the staged Dockerfile", () => {
+  it("bakes NEMOCLAW_AGENT_HEARTBEAT_EVERY env into the staged Dockerfile (#2880)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-heartbeat-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     const baseDockerfile = [
@@ -1194,6 +1194,7 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
         "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -1212,6 +1213,7 @@ describe("dockerfile patch helpers", () => {
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
       assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave$/m);
       // Regression guard: the old secret-bearing build arg must not reappear.
       assert.doesNotMatch(patched, /NEMOCLAW_WEB_CONFIG_B64/);
     } finally {
@@ -1220,6 +1222,44 @@ describe("dockerfile patch helpers", () => {
       } else {
         process.env.BRAVE_API_KEY = priorBraveKey;
       }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile with Tavily as the selected web-search provider", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tavily-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-web",
+        "openai-api",
+        null,
+        { fetchEnabled: true, provider: "tavily" },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=tavily$/m);
+      assert.doesNotMatch(patched, /TAVILY_API_KEY/);
+    } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

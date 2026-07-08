@@ -33,7 +33,7 @@ async function makeHelpers(opts: { dockerDriverEnabled: boolean }) {
   // Import the compiled module: sandbox-registry-metadata.ts pulls in state/registry,
   // which transitively requires the JS-only `./platform` helper that vitest cannot
   // resolve from TS source. Same pattern as `vm-dns-monkeypatch.test.ts`.
-  const metadata = await import("../../../dist/lib/onboard/sandbox-registry-metadata");
+  const metadata = await import("./sandbox-registry-metadata");
   return metadata.createSandboxRegistryMetadataHelpers({
     isLinuxDockerDriverGatewayEnabled: () => opts.dockerDriverEnabled,
     getInstalledOpenshellVersion: () => "0.0.42",
@@ -76,7 +76,7 @@ describe("sandbox registry metadata", () => {
     process.env.HOME = tmpDir;
     vi.resetModules();
 
-    const metadata = await import("../../../dist/lib/onboard/sandbox-registry-metadata");
+    const metadata = await import("./sandbox-registry-metadata");
 
     const configDir = join(tmpDir, ".nemoclaw");
     const registryFile = join(configDir, "sandboxes.json");

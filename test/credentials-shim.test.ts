@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 
-type CredentialsShim = typeof import("../dist/lib/credentials/store.js") & {
+type CredentialsShim = typeof import("../src/lib/credentials/store.js") & {
   CREDS_DIR: string;
   CREDS_FILE: string;
 };

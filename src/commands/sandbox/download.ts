@@ -12,7 +12,7 @@ export default class SandboxDownloadCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Download a file or directory from the sandbox to the host";
   static description =
-    "Thin host-side wrapper around `openshell sandbox download`. Validates that the sandbox is alive, then forwards the source and destination verbatim to the OpenShell transport so its file-system semantics (single-file vs. directory copy, trailing-slash handling, overwrite behaviour) stay the same.";
+    "Thin host-side wrapper around `openshell sandbox download`. Validates that the sandbox is alive, forwards the sandbox source path verbatim, and resolves a relative host destination against the caller's working directory before handing it to the OpenShell transport. Absolute host destinations pass through unchanged, and OpenShell's file-system semantics (single-file vs. directory copy, trailing-slash handling, overwrite behaviour) stay the same.";
   static usage = ["<name> <sandbox-path> [host-dest]"];
   static examples = [
     "<%= config.bin %> sandbox download alpha /sandbox/.openclaw/workspace/SOUL.md ./",

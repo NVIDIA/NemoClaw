@@ -4,16 +4,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_VLLM_MODEL,
-  VLLM_EXTRA_ARGS_ENV,
-  VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
+  DEFAULT_VLLM_MODEL,
   modelsForPlatform,
   parseVllmExtraServeArgs,
   preflightVllmModelEnv,
   selectVllmModelFromEnv,
-} from "../../../dist/lib/inference/vllm-models";
+  VLLM_EXTRA_ARGS_ENV,
+  VLLM_MODELS,
+} from "./vllm-models";
 
 describe("vllm model registry", () => {
   it("returns null when NEMOCLAW_VLLM_MODEL is unset so the caller can fall back to the profile default", () => {
@@ -170,15 +170,36 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--no-disable-hybrid-kv-cache-manager");
     expect(cmd).toContain("--disable-uvicorn-access-log");
     expect(cmd).toContain("--max-cudagraph-capture-size 128");
-    expect(cmd).toContain(
-      `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
-    );
+    expect(cmd).toContain(`--speculative-config '{"method":"mtp","num_speculative_tokens":3}'`);
     expect(cmd).toContain("--max-model-len 1048576");
     expect(cmd).toContain("--max-num-batched-tokens 8192");
     expect(cmd).toContain("--max-num-seqs 16");
     expect(cmd).toContain("--prefix-cache-retention-interval auto");
     expect(cmd).toContain("pip install vllm[fastsafetensors]");
     expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
+  });
+
+  it("builds the Nemotron-3-Nano-4B FP8 serve command with auto tool-choice enabled (#6314)", () => {
+    // #6314: the generic-Linux managed-vLLM default (`GENERIC_LINUX_PROFILE.defaultModel`)
+    // used to omit `--enable-auto-tool-choice` and `--tool-call-parser`, so every agent
+    // request with `tool_choice: "auto"` failed HTTP 400 out of the box on generic Linux.
+    // The Spark and Station defaults already pinned their own tool-call parser; this
+    // asserts the same is true for the Nemotron-3-Nano-4B checkpoint that generic Linux
+    // resolves to, matching the vLLM launch example on the model card.
+    const nemotronNano = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
+    expect(nemotronNano).toBeDefined();
+    const cmd = buildVllmServeCommand(nemotronNano!);
+    expect(cmd).toContain("vllm serve nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
+    expect(cmd).toContain("--max-model-len 262144");
+    expect(cmd).toContain("--gpu-memory-utilization 0.7");
+    expect(cmd).toContain("--load-format fastsafetensors");
+    expect(cmd).toContain("--enable-auto-tool-choice");
+    expect(cmd).toContain("--tool-call-parser qwen3_coder");
+    // The tool-call flags must appear paired: the parser value comes as a single
+    // shell token immediately after `--tool-call-parser`, and each switch is listed
+    // only once.
+    expect(cmd.match(/--enable-auto-tool-choice/g)).toHaveLength(1);
+    expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
   });
 
   it("registers the Qwen3.6-35B NVFP4 checkpoint for DGX Spark", () => {
@@ -188,14 +209,14 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
-  it("builds the NVFP4 serve command with env exports, the fastsafetensors install, and additive model flags", () => {
+  it("builds the NVFP4 serve command from the DGX Spark model-card recipe", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
     const cmd = buildVllmServeCommand(qwen35b!);
-    // Env exports are prefixed before serve.
-    expect(cmd).toContain("export VLLM_USE_FLASHINFER_MOE_FP4=0");
-    expect(cmd).toContain("export VLLM_FP8_MOE_BACKEND=flashinfer_cutlass");
-    expect(cmd).toContain("export FLASHINFER_DISABLE_VERSION_CHECK=1");
-    expect(cmd).toContain("export CUTE_DSL_ARCH=sm_121a");
+    // The current NVIDIA model card no longer needs Spark-specific env exports.
+    expect(cmd).not.toContain("VLLM_USE_FLASHINFER_MOE_FP4");
+    expect(cmd).not.toContain("VLLM_FP8_MOE_BACKEND");
+    expect(cmd).not.toContain("FLASHINFER_DISABLE_VERSION_CHECK");
+    expect(cmd).not.toContain("CUTE_DSL_ARCH");
     // fastsafetensors is always installed and used.
     expect(cmd).toContain("pip install vllm[fastsafetensors]");
     expect(cmd).toContain("--load-format fastsafetensors");
@@ -206,18 +227,18 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--attention-backend flashinfer");
     expect(cmd).toContain("--moe-backend marlin");
     expect(cmd).toContain("--enable-auto-tool-choice");
-    expect(cmd).toContain("--tool-call-parser qwen3_coder");
+    expect(cmd).toContain("--tool-call-parser qwen3_xml");
     expect(cmd).toContain("--reasoning-parser qwen3");
-    expect(cmd).toContain("--max-model-len 131072");
+    expect(cmd).toContain("--max-model-len 262144");
     expect(cmd).toContain(
       `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
     );
-    // Single-node parallel flags stay shared; 0.7 utilization stays
-    // model-specific, not a stale 0.85 override.
-    expect(cmd).toContain("--gpu-memory-utilization 0.7");
+    // Single-node parallel flags stay shared; 0.4 utilization follows the
+    // current DGX Spark model-card recipe.
+    expect(cmd).toContain("--gpu-memory-utilization 0.4");
     expect(cmd).toContain("--pipeline-parallel-size 1");
     expect(cmd).toContain("--data-parallel-size 1");
-    expect(cmd).not.toContain("--gpu-memory-utilization 0.85");
+    expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
   });
 });
 

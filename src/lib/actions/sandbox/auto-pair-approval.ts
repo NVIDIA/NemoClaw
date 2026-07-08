@@ -17,18 +17,22 @@
  *     OpenClaw tool-scope approvals without ever opening an SSH `connect`.
  *
  * Both surfaces apply the SAME narrow allowlist as the startup watcher
- * (`scripts/lib/openclaw_device_approval_policy.py`): `openclaw-control-ui`
- * clients plus `webchat`/`cli` modes, restricted to operator.pairing/read/write
- * scopes. Unknown clients are ignored, never approved.
+ * (`scripts/lib/openclaw_device_approval_policy.py`): the explicit `cli`,
+ * `openclaw-cli`, and `openclaw-control-ui` client identities, restricted to
+ * operator.pairing/read/write scopes. A known mode alone is never sufficient;
+ * unknown clients are ignored, never approved.
  *
  * Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
- * semantics. In OpenClaw 2026.5.x, a gateway-pinned `devices approve` for a
- * scope-upgrade can request the upgraded scopes for its own connection and
- * return the pending-scope failure it is trying to resolve. The approval call
- * therefore strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env to use
- * OpenClaw's local pairing fallback; the list call stays gateway-pinned so it
- * inspects the live gateway. Remove this local fallback path when OpenClaw
- * approve can complete scope upgrades through the gateway using only
+ * semantics. In the reviewed OpenClaw 2026.6.10, a gateway-pinned
+ * `devices approve` for a scope-upgrade can request the upgraded scopes for
+ * its own connection and return the pending-scope failure it is trying to
+ * resolve. The sourced runtime environment makes the list call inspect the
+ * same live gateway through local loopback, while the approval call also
+ * strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env. The reviewed dist
+ * patch then forces OpenClaw's existing local-only stored-device-auth path for
+ * the exact bounded self-repair shape so a shared token reloaded from config
+ * cannot take precedence. Remove this compatibility path when OpenClaw can
+ * complete scope upgrades natively through device-token auth using
  * operator.pairing.
  */
 
@@ -147,7 +151,6 @@ try:
     exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
     approval_request_decision = policy_globals['approval_request_decision']
     gateway_approval_env = policy_globals['gateway_approval_env']
-    recover_failed_scope_approval = policy_globals.get('recover_failed_scope_approval')
 except Exception:
     sys.exit(0)
 
@@ -196,15 +199,6 @@ for device in pending:
         )
         if approve_proc.returncode == 0:
             approved_count += 1
-        elif callable(recover_failed_scope_approval):
-            recovered = recover_failed_scope_approval(
-                request_id,
-                os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
-                approve_proc.stderr or approve_proc.stdout or '',
-                device,
-            )
-            if recovered:
-                approved_count += 1
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         continue
 ${summaryLine}PYAPPROVE

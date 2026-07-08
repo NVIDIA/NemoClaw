@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildInferenceProviderMenu } from "../../../dist/lib/onboard/provider-menu";
+import { buildInferenceProviderMenu } from "./provider-menu";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: { label: "NVIDIA Endpoints" },

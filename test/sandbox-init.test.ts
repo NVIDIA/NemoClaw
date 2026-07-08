@@ -475,7 +475,7 @@ EOF
     // Default (no NEMOCLAW_REQUIRE_CAP_DROP): warns and CONTINUES even though
     // dangerous caps remain — preserving the zero-regression posture for
     // CAP_SETPCAP-less hosts. report_residual_capabilities still names them.
-    it("warns but does NOT refuse to start when CAP_SETPCAP is unavailable (issue #3280)", () => {
+    it("warns without refusing to start when CAP_SETPCAP is unavailable (#3280)", () => {
       const { stdout } = runWithLib(
         [
           "TMP=$(mktemp -d)",
@@ -675,37 +675,84 @@ EOF
   });
 
   describe("harden_resource_limits", () => {
-    // Shim `ulimit` (a bash builtin) by overriding it with a function inside the
-    // sourced body. The function records each invocation so we can assert both
-    // the nproc (#809) and nofile (#4527) caps are applied, soft-before-hard.
-    it("applies nproc and nofile soft+hard limits in order", () => {
+    it("sources the shared init without resolving a PATH-controlled dirname", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-path-"));
+      const fakeBin = join(workDir, "bin");
+      const marker = join(workDir, "dirname-called");
+      mkdirSync(fakeBin, { recursive: true });
+      writeFileSync(
+        join(fakeBin, "dirname"),
+        ["#!/usr/bin/env bash", `printf called > ${JSON.stringify(marker)}`, "exit 99"].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        const { stdout } = runWithLib('printf "INIT_OK\\n"', {
+          env: { PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+        });
+        expect(stdout).toBe("INIT_OK");
+        expect(existsSync(marker)).toBe(false);
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
+
+    it("bypasses shadowed ulimit functions for nproc and nofile enforcement and verification", () => {
+      const nprocLimit = process.platform === "darwin" ? 4000 : 4096;
       const { stdout } = runWithLib(
         [
-          // Override the ulimit builtin to record args and succeed.
-          "ulimit() { printf 'ulimit %s\\n' \"$*\"; return 0; }",
-          "harden_resource_limits",
+          `NEMOCLAW_SANDBOX_NPROC_LIMIT=${nprocLimit}`,
+          "ulimit() {",
+          '  case "$1:$#" in',
+          "    -Su:2 | -Hu:2 | -Sn:2 | -Hn:2) return 0 ;;",
+          "    -Su:1 | -Hu:1 | -Sn:1 | -Hn:1) printf '%s\\n' 999999; return 0 ;;",
+          "  esac",
+          "  return 0",
+          "}",
+          "harden_resource_limits --quiet",
+          "verify_resource_limits",
+          'printf "shadow=%s\\n" "$(type -t ulimit)"',
+          'printf "nproc=%s\\n" "$(builtin ulimit -u)"',
+          'printf "nofile=%s\\n" "$(builtin ulimit -n)"',
         ].join("\n"),
       );
-      const calls = stdout.split("\n").filter((line) => line.startsWith("ulimit "));
-      expect(calls).toEqual([
-        "ulimit -Su 512",
-        "ulimit -Hu 512",
-        "ulimit -Sn 65536",
-        "ulimit -Hn 65536",
-      ]);
+      expect(stdout).toContain("shadow=function");
+      expect(stdout).toContain(`nproc=${nprocLimit}`);
+      const nofile = Number(stdout.match(/nofile=(\d+)/)?.[1] ?? "NaN");
+      expect(nofile).toBeGreaterThan(0);
+      expect(nofile).toBeLessThanOrEqual(65536);
     });
 
     it("is best-effort: exits 0 and warns when ulimit fails", () => {
-      // Shim ulimit to always fail. The function must not abort (best-effort)
-      // and must emit a [SECURITY] warning for each of the four limits.
       const { stdout } = runWithLib(
-        ["ulimit() { return 1; }", "harden_resource_limits 2>&1", 'echo "HARDEN_OK"'].join("\n"),
+        [
+          "NEMOCLAW_SANDBOX_NPROC_LIMIT=not-a-limit",
+          "NEMOCLAW_SANDBOX_NOFILE_LIMIT=not-a-limit",
+          "harden_resource_limits 2>&1",
+          'echo "HARDEN_OK"',
+        ].join("\n"),
       );
       expect(stdout).toContain("HARDEN_OK");
       expect(stdout).toContain("Could not set soft nproc limit");
       expect(stdout).toContain("Could not set hard nproc limit");
       expect(stdout).toContain("Could not set soft nofile limit");
       expect(stdout).toContain("Could not set hard nofile limit");
+    });
+
+    it("verifies effective limits and emits diagnostics when a runtime leaves them unbounded", () => {
+      const { stdout } = runWithLib(
+        [
+          "NEMOCLAW_SANDBOX_NPROC_LIMIT=1",
+          "NEMOCLAW_SANDBOX_NOFILE_LIMIT=1",
+          "verify_resource_limits 2>&1 || echo VERIFY_FAILED",
+        ].join("\n"),
+      );
+      expect(stdout).not.toContain("Could not set");
+      expect(stdout).toContain("Effective soft nproc limit is");
+      expect(stdout).toContain("Effective hard nproc limit is");
+      expect(stdout).toContain("Effective soft nofile limit is");
+      expect(stdout).toContain("Effective hard nofile limit is");
+      expect(stdout).toContain("VERIFY_FAILED");
     });
   });
 
@@ -952,6 +999,10 @@ EOF
         join(libDir, "sandbox-init.sh"),
         "export NEMOCLAW_TEST_SANDBOX_INIT_LOADED=1\n",
       );
+      writeFileSync(
+        join(libDir, "gateway-supervisor.sh"),
+        "export NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED=1\n",
+      );
       const wrapperPath = join(scriptDir, "nemoclaw-start.sh");
       writeFileSync(
         wrapperPath,
@@ -959,14 +1010,14 @@ EOF
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           src.slice(start, end),
-          'printf "LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}"',
+          'printf "INIT_LOADED=%s SUPERVISOR_LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}" "${NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED:-0}"',
         ].join("\n"),
         { mode: 0o700 },
       );
 
       try {
         const result = execFileSync("bash", [wrapperPath], { encoding: "utf-8" }).trim();
-        expect(result).toBe("LOADED=1");
+        expect(result).toBe("INIT_LOADED=1 SUPERVISOR_LOADED=1");
       } finally {
         rmSync(workDir, { recursive: true, force: true });
       }

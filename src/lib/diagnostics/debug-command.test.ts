@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { runDebugCommandWithOptions } from "../../../dist/lib/diagnostics/debug-command";
+import { runDebugCommandWithOptions } from "./debug-command";
 
 describe("debug command", () => {
   it("runs parsed debug options and falls back to the default sandbox", () => {

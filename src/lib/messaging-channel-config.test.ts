@@ -22,29 +22,48 @@ describe("messaging channel config", () => {
       "SLACK_ALLOWED_USERS",
       "SLACK_ALLOWED_CHANNELS",
       "WHATSAPP_ALLOWED_IDS",
+      "TEAMS_ALLOWED_USERS",
+      "TEAMS_REQUIRE_MENTION",
+      "TELEGRAM_GROUP_POLICY",
       "WECHAT_ACCOUNT_ID",
       "WECHAT_BASE_URL",
       "WECHAT_USER_ID",
+      "MSTEAMS_APP_ID",
+      "MSTEAMS_TENANT_ID",
+      "MSTEAMS_PORT",
     ]);
   });
 
-  it("sanitizes persisted config and rejects malformed reply-mode values", () => {
+  it("sanitizes persisted config and rejects malformed choice values", () => {
     expect(
       sanitizeMessagingChannelConfig({
         TELEGRAM_ALLOWED_IDS: "  123,456  ",
         TELEGRAM_REQUIRE_MENTION: "yes",
+        TELEGRAM_GROUP_POLICY: "allowlist",
+        TELEGRAM_GROUP_POLICY_INVALID: "disabled",
         DISCORD_SERVER_ID: "1491590992753590594",
         DISCORD_REQUIRE_MENTION: "0",
         SLACK_ALLOWED_USERS: "  U01ABC2DEF3, U04GHI5JKL6  ",
         SLACK_ALLOWED_CHANNELS: "  C012AB3CD, C987ZY6XW  ",
+        TEAMS_ALLOWED_USERS: "  aad-one, aad-two  ",
+        TEAMS_REQUIRE_MENTION: "1",
+        MSTEAMS_APP_ID: "  teams-app  ",
+        MSTEAMS_TENANT_ID: "  teams-tenant  ",
+        MSTEAMS_PORT: "3978",
         NVIDIA_INFERENCE_API_KEY: "not-channel-config",
       }),
     ).toEqual({
       TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_GROUP_POLICY: "allowlist",
       DISCORD_SERVER_ID: "1491590992753590594",
       DISCORD_REQUIRE_MENTION: "0",
       SLACK_ALLOWED_USERS: "U01ABC2DEF3, U04GHI5JKL6",
       SLACK_ALLOWED_CHANNELS: "C012AB3CD, C987ZY6XW",
+      TEAMS_ALLOWED_USERS: "aad-one, aad-two",
+      TEAMS_REQUIRE_MENTION: "1",
+      MSTEAMS_APP_ID: "teams-app",
+      MSTEAMS_TENANT_ID: "teams-tenant",
+      MSTEAMS_PORT: "3978",
     });
   });
 
@@ -83,6 +102,16 @@ describe("messaging channel config", () => {
     expect(env.DISCORD_USER_ID).toBe("1005536447329222676");
   });
 
+  it("normalizes Teams port compatibility aliases to canonical channel config", () => {
+    expect(
+      readMessagingChannelConfigFromEnv({
+        TEAMS_PORT: "3979",
+      }),
+    ).toEqual({
+      MSTEAMS_PORT: "3979",
+    });
+  });
+
   it("hydrates missing env values but preserves explicit env overrides", () => {
     const env: NodeJS.ProcessEnv = {
       TELEGRAM_ALLOWED_IDS: "env-user",
@@ -93,6 +122,7 @@ describe("messaging channel config", () => {
         {
           TELEGRAM_ALLOWED_IDS: "stored-user",
           TELEGRAM_REQUIRE_MENTION: "1",
+          TELEGRAM_GROUP_POLICY: "nonsense",
           DISCORD_REQUIRE_MENTION: "maybe",
         },
         env,
@@ -103,6 +133,7 @@ describe("messaging channel config", () => {
     });
     expect(env.TELEGRAM_ALLOWED_IDS).toBe("env-user");
     expect(env.TELEGRAM_REQUIRE_MENTION).toBe("1");
+    expect(env.TELEGRAM_GROUP_POLICY).toBeUndefined();
     expect(env.DISCORD_REQUIRE_MENTION).toBeUndefined();
   });
 
@@ -121,10 +152,12 @@ describe("messaging channel config", () => {
         DISCORD_SERVER_ID: "1491590992753590594",
         DISCORD_REQUIRE_MENTION: "2",
         TELEGRAM_REQUIRE_MENTION: "0",
+        TELEGRAM_GROUP_POLICY: "disabled",
       }),
     ).toEqual({
       DISCORD_SERVER_ID: "1491590992753590594",
       TELEGRAM_REQUIRE_MENTION: "0",
+      TELEGRAM_GROUP_POLICY: "disabled",
     });
   });
 });

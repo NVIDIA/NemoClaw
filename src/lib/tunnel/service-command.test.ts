@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  resolveDefaultSandboxName,
-  runStartCommand,
-  runStopCommand,
-} from "../../../dist/lib/tunnel/service-command";
+import { resolveDefaultSandboxName, runStartCommand, runStopCommand } from "./service-command";
 
 describe("services command", () => {
   let savedEnv: Record<string, string | undefined>;
@@ -81,5 +77,15 @@ describe("services command", () => {
       stopAll,
     });
     expect(stopAll).toHaveBeenCalledWith({ sandboxName: undefined });
+  });
+
+  it("opts the legacy full-stop command into managed gateway release", () => {
+    const stopAll = vi.fn();
+    runStopCommand({
+      listSandboxes: () => ({ defaultSandbox: "alpha" }),
+      stopAll,
+      releaseGatewayPort: true,
+    });
+    expect(stopAll).toHaveBeenCalledWith({ sandboxName: "alpha", releaseGatewayPort: true });
   });
 });

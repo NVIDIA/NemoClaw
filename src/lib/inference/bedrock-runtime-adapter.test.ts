@@ -11,7 +11,7 @@ import {
   createBedrockRuntimeAdapterServer,
   createOpenAiChatCompletion,
   streamOpenAiChatCompletion,
-} from "../../../dist/lib/inference/bedrock-runtime-adapter";
+} from "./bedrock-runtime-adapter";
 
 const servers: http.Server[] = [];
 

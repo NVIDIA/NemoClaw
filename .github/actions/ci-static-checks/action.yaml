@@ -33,16 +33,15 @@ runs:
       shell: bash
       run: npm run validate:configs
 
+    - name: Typecheck scorecard analyzer
+      shell: bash
+      run: npm run typecheck:scorecard
+
+    # General TypeScript checks and version sync run in the build-typecheck job.
     - name: Run static hook checks
       shell: bash
       run: |
-        npx prek run --all-files --stage pre-push \
-          --skip tsc-plugin \
-          --skip tsc-js \
-          --skip tsc-cli \
-          --skip version-tag-sync \
-          --skip test-cli \
-          --skip test-plugin \
+        npx prek run --all-files --stage pre-commit \
           --skip source-shape-test-budget \
           --skip test-file-size-budget \
           --skip test-skills-yaml
@@ -55,7 +54,7 @@ runs:
       shell: bash
       run: npm run test-size:check
 
-    - name: Run skills YAML tests
+    - name: Run skill frontmatter tests
       shell: bash
       run: npx vitest run test/skills-frontmatter.test.ts
 

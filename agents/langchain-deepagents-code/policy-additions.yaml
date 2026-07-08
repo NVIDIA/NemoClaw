@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Sandbox policy additions for LangChain Deep Agents Code. Principle: deny by
+# default, allow the terminal harness, managed inference, and normal code-hosting
+# and package endpoints. OpenShell sees dcode network calls as Python, so
+# approved-host egress is intentionally process-wide for sandbox Python rather
+# than a dcode-only boundary.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /opt/venv
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+  read_write:
+    - /sandbox
+    - /sandbox/.deepagents
+    - /tmp
+    - /dev/null
+
+landlock:
+  # Deep Agents Code is a terminal coding harness, so filesystem policy must
+  # fail closed when Landlock cannot be applied. `strict` makes the OpenShell
+  # sandbox startup fail instead of silently degrading if the kernel or workspace
+  # mount cannot enforce these read-only system paths.
+  compatibility: strict
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
+    binaries:
+      - { path: /usr/local/bin/dcode }
+      - { path: /opt/venv/bin/python3* }
+      - { path: /opt/venv/lib/python3.13/** }
+
+  github:
+    name: github
+    endpoints:
+      - host: github.com
+        port: 443
+        access: full
+      - host: api.github.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/bin/git }
+      - { path: /usr/local/bin/dcode }
+      # OpenShell observes Python module traffic from dcode as the Python
+      # interpreter, not only as the /usr/local/bin/dcode shell wrapper. Keep
+      # this broad Python boundary limited to approved GitHub hosts; optional
+      # Tavily, LangSmith, MCP, and arbitrary hosts are intentionally absent.
+      - { path: /opt/venv/bin/python3* }
+
+  pypi:
+    name: pypi
+    endpoints:
+      - host: pypi.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: files.pythonhosted.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /opt/venv/bin/pip3 }
+      # pip and dcode package-install traffic execute through Python. This is
+      # intentionally process-wide only for the read-only PyPI hosts listed
+      # above, including project venvs under /sandbox; optional service egress
+      # must be added explicitly by policy.
+      - { path: /sandbox/**/bin/pip3 }
+      - { path: /opt/venv/bin/python3* }
+      - { path: /sandbox/**/bin/python3* }
+      - { path: /usr/local/bin/dcode }

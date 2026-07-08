@@ -16,6 +16,7 @@ import {
 
 export const DEFAULT_ADVISOR_PROVIDER = "openai";
 export const DEFAULT_ADVISOR_MODEL = "openai/openai/gpt-5.5";
+export const NEMOTRON_ULTRA_ADVISOR_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 export const ADVISOR_OPENAI_COMPATIBLE_BASE_URL = "https://inference-api.nvidia.com/v1";
 export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 
@@ -97,6 +98,22 @@ export function openAiAdvisorProviderConfig(credentialEnv: string): AdvisorProvi
         supportsUsageInStreaming: false,
         maxTokensField: "max_tokens",
       }),
+      advisorModel(
+        NEMOTRON_ULTRA_ADVISOR_MODEL,
+        "Nemotron 3 Ultra",
+        256000,
+        32768,
+        false,
+        ["text"],
+        {
+          supportsDeveloperRole: false,
+          supportsReasoningEffort: false,
+          supportsStore: false,
+          supportsStrictMode: false,
+          supportsUsageInStreaming: false,
+          maxTokensField: "max_tokens",
+        },
+      ),
     ],
     ["api" + "Key"]: credentialEnv,
   } as AdvisorProviderConfig;

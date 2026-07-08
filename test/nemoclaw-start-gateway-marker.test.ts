@@ -43,6 +43,15 @@ function extractShellFunctionFromSource(src, name) {
   throw new Error(`Expected closing brace for ${name} in scripts/nemoclaw-start.sh`);
 }
 
+function safeTmpHelpers(src: string): string {
+  const start = src.indexOf("_nemoclaw_safe_replace_tmp_file() {");
+  const end = src.indexOf("_START_LOG=", start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Expected safe temp helpers in scripts/nemoclaw-start.sh");
+  }
+  return src.slice(start, end);
+}
+
 describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)", () => {
   // #4503/#4710: the Docker HEALTHCHECK reports healthy on curl-exit-7 only
   // when the /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered
@@ -93,6 +102,7 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
         const script = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
+          safeTmpHelpers(src),
           markFn.replaceAll("/tmp/nemoclaw-gateway-local", markerPath),
           'nohup() { "$@"; }',
           // macOS runners still use Bash 3.2; keep the simulated prefix
@@ -191,6 +201,7 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
       const script = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
+        safeTmpHelpers(src),
         markFn.replaceAll("/tmp/nemoclaw-gateway-local", markerPath),
         'nohup() { "$@"; }',
         'OPENCLAW="$(command -v openclaw)"',
@@ -235,6 +246,7 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
       const script = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
+        safeTmpHelpers(src),
         fnSrc,
         "mark_in_container_gateway",
         "mark_in_container_gateway", // second call must be a no-op
@@ -242,8 +254,9 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
       const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       expect(fs.existsSync(markerPath)).toBe(true);
-      // file must be empty (`:` redirected to it, not appended)
+      // file must be empty, not appended to across idempotent calls
       expect(fs.statSync(markerPath).size).toBe(0);
+      expect((fs.statSync(markerPath).mode & 0o777).toString(8)).toBe("600");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

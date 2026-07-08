@@ -8,9 +8,9 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  stopHostGatewayProcesses,
   type HostGatewayProcessDeps,
   type RunResult,
+  stopHostGatewayProcesses,
 } from "./host-gateway-process";
 
 interface RunArgs {
@@ -196,7 +196,7 @@ describe("stopHostGatewayProcesses", () => {
     expect(result.stopped).toEqual([]);
     expect(warn).toHaveBeenCalledWith(
       "pgrep not found; could not scan for orphan host openshell-gateway processes. " +
-        "If port 8080 is still bound, run: sudo pkill -f openshell-gateway",
+        "Inspect any remaining listener and stop only the matching gateway process.",
     );
     expect(log).not.toHaveBeenCalledWith("No host openshell-gateway processes found");
   });
@@ -253,7 +253,7 @@ describe("stopHostGatewayProcesses", () => {
     expect(result.failed).toEqual([9999042]);
     expect(result.sudoRemediationPids).toEqual([9999042]);
     expect(warn).toHaveBeenCalledWith(
-      "Cannot stop root-owned host openshell-gateway process 9999042. Run: sudo pkill -f openshell-gateway",
+      "Cannot stop root-owned host openshell-gateway process 9999042. Run: sudo kill -9 9999042",
     );
   });
 

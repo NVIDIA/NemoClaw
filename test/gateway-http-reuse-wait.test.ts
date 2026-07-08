@@ -21,7 +21,7 @@ import { type AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const onboardModule = require("../dist/lib/onboard.js") as {
+const onboardModule = require("../src/lib/onboard.js") as {
   getGatewayReuseHealthWaitConfig: () => { count: number; interval: number };
   isDockerDriverGatewayHttpReady: (timeoutMs?: number, url?: string) => Promise<boolean>;
   isGatewayHttpReady: (timeoutMs?: number, url?: string) => Promise<boolean>;

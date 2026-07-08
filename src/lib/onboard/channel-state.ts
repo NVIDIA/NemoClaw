@@ -20,11 +20,11 @@ export function resolveDisabledChannels(
 ): string[] {
   const envPlan = (deps?.readMessagingPlanFromEnv ?? readMessagingPlanFromEnv)();
   if (envPlan?.sandboxName === sandboxName) {
-    return getDisabledChannelsFromPlan(envPlan) ?? [];
+    return getDisabledChannelsFromPlan(envPlan);
   }
   const session = (deps?.loadSession ?? onboardSession.loadSession)();
   if (session?.sandboxName === sandboxName && session.messagingPlan) {
-    return getDisabledChannelsFromPlan(session.messagingPlan) ?? [];
+    return getDisabledChannelsFromPlan(session.messagingPlan);
   }
   return (deps?.getRegistryDisabledChannels ?? registry.getDisabledChannels)(sandboxName);
 }

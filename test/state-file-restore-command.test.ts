@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const sandboxState = (await import(
-  pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js")).href
-)) as typeof import("../dist/lib/state/sandbox.js");
+  pathToFileURL(path.join(REPO_ROOT, "src", "lib", "state", "sandbox.ts")).href
+)) as typeof import("../src/lib/state/sandbox.js");
 
 const spec = { path: "openclaw.json", strategy: "copy" } as const;
 

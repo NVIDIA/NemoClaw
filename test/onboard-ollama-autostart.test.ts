@@ -7,11 +7,11 @@
 // the wizard resurrecting the daemon.
 
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, it } from "vitest";
 
 import { testTimeout } from "./helpers/timeouts";
 
@@ -67,18 +67,18 @@ function runOllamaAutostartScenario(opts: ScenarioOptions): WizardResult {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-autostart-"));
   const fakeBin = path.join(tmpDir, "bin");
   const scriptPath = path.join(tmpDir, "onboard-ollama-autostart-check.js");
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const credentialsPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
   );
-  const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-  const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
-  const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
+  const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+  const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
+  const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
   const localInferencePath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    path.join(repoRoot, "src", "lib", "inference", "local.ts"),
   );
   const proxyPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+    path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
   );
 
   fs.mkdirSync(fakeBin, { recursive: true });
@@ -346,8 +346,8 @@ process.exit = (code) => {
   return JSON.parse(lastBraceLine);
 }
 
-describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
-  it("Scenario A: stopped Ollama + flag set → no spawn, warning, falls back to DEFAULT_OLLAMA_MODEL", {
+describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
+  it("avoids spawning stopped Ollama, warns, and falls back to DEFAULT_OLLAMA_MODEL with the flag in scenario A", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -383,7 +383,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     // Hard-asserted against the architect contract, but the constant is the
     // single source of truth. Read it from the dist module the wizard uses.
     const { DEFAULT_OLLAMA_MODEL } = require(
-      path.join(import.meta.dirname, "..", "dist", "lib", "inference", "local.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "inference", "local.ts"),
     );
     assert.equal(payload.result!.model, DEFAULT_OLLAMA_MODEL);
     assert.equal(payload.result!.preferredInferenceApi, "openai-completions");
@@ -403,7 +403,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     );
   });
 
-  it("Scenario B: stopped Ollama + flag NOT set → existing spawn path preserved", {
+  it("preserves the existing spawn path for stopped Ollama without the flag in scenario B", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -436,7 +436,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     );
   });
 
-  it("Scenario C (flag unset): Ollama already running → behavior unchanged, no spawn, no warning", {
+  it("leaves running Ollama unchanged without spawning or warning when the flag is unset in scenario C", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -465,7 +465,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     assert.equal(payload.sentinelTripped, true);
   });
 
-  it("Scenario C (flag set): Ollama already running + flag set → no warning, no spawn", {
+  it("avoids warning or spawning when Ollama is running and the flag is set in scenario C", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -486,7 +486,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     assert.equal(payload.sentinelTripped, true);
   });
 
-  it("Scenario D: non-interactive + flag set → no process.exit, warning, model = DEFAULT_OLLAMA_MODEL", {
+  it("warns and selects DEFAULT_OLLAMA_MODEL without process.exit in non-interactive scenario D", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -518,7 +518,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     );
     assert.ok(payload.result, "non-interactive wizard should still produce a result");
     const { DEFAULT_OLLAMA_MODEL } = require(
-      path.join(import.meta.dirname, "..", "dist", "lib", "inference", "local.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "inference", "local.ts"),
     );
     assert.equal(payload.result!.model, DEFAULT_OLLAMA_MODEL);
     assert.equal(payload.result!.provider, "ollama-local");
@@ -526,7 +526,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     assert.equal(payload.sentinelTripped, false);
   });
 
-  it("Scenario G (#4365): pinned-provider runner crash exits instead of looping on Ollama model selection", {
+  it("exits instead of looping on Ollama model selection after a pinned-provider runner crash in scenario G (#4365)", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     // Reporter's second-step: Ollama responds, user reaches model selection,
@@ -565,7 +565,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     );
   });
 
-  it("Scenario H (#4365): pinned-provider runner crash also exits when NEMOCLAW_PROVIDER uses a casing variant", {
+  it("exits after a pinned-provider runner crash with a casing variant in scenario H (#4365)", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     // NEMOCLAW_PROVIDER=OLLAMA is accepted by getNonInteractiveProvider's
@@ -597,7 +597,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     );
   });
 
-  it("Scenario E: stopped Ollama + flag NOT set + NEMOCLAW_PROVIDER=ollama + waitForHttp timeout → process.exit, no selectionLoop re-entry", {
+  it("exits without re-entering selectionLoop after an Ollama waitForHttp timeout in scenario E", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     // Reporter scenario: provider pinned via env, gate not set, Ollama

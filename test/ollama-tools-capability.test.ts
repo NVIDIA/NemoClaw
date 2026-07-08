@@ -7,14 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const LOCAL_INFERENCE_PATH = path.join(REPO_ROOT, "dist", "lib", "inference", "local.js");
+const LOCAL_INFERENCE_PATH = path.join(REPO_ROOT, "src", "lib", "inference", "local.ts");
 const ONBOARD_OLLAMA_PROXY_PATH = path.join(
   REPO_ROOT,
-  "dist",
+  "src",
   "lib",
   "inference",
   "ollama",
-  "proxy.js",
+  "proxy.ts",
 );
 
 type CapturedCall = { argv: readonly string[]; opts?: Record<string, unknown> };
@@ -49,6 +49,20 @@ interface LocalInferenceModule {
 interface OnboardOllamaProxyModule {
   checkOllamaModelToolSupport: (
     model: string,
+    interaction?: {
+      isNonInteractive: () => boolean;
+      isAutoYes: () => boolean;
+      confirm: (question: string, defaultIsYes: boolean) => Promise<boolean>;
+    },
+  ) => Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }>;
+  prepareOllamaModel: (
+    model: string,
+    installedModels?: string[],
+    interaction?: {
+      isNonInteractive: () => boolean;
+      isAutoYes: () => boolean;
+      confirm: (question: string, defaultIsYes: boolean) => Promise<boolean>;
+    },
   ) => Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }>;
 }
 
@@ -209,11 +223,10 @@ describe("validateOllamaModel — tools-capable error mapping", () => {
 // onboard-ollama-proxy from the require cache between tests so it
 // re-binds to the patched local-inference function.
 //
-// Equally critical: onboard.js destructures `prompt` from credentials
-// at load time, so our credentials.prompt monkey-patch must be in
-// place BEFORE onboard.js is first required. We install one durable
-// proxy via shared state so re-creating per-test mocks doesn't hand
-// onboard a stale closure.
+// Equally critical: the proxy destructures `prompt` from credentials at
+// load time, so our credentials.prompt monkey-patch must be in place before
+// the proxy is first required. We install one durable proxy via shared state
+// so re-creating per-test mocks does not leave the module with a stale closure.
 // ─────────────────────────────────────────────────────────────────
 
 interface ProxyTestHarness {
@@ -249,7 +262,7 @@ function installSharedStubs(): void {
     _model: string,
   ) => SHARED.scriptedCaps;
 
-  const credentialsPath = path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js");
+  const credentialsPath = path.join(REPO_ROOT, "src", "lib", "credentials", "store.ts");
   const credentials = require(credentialsPath) as {
     prompt: (msg: string) => Promise<string>;
   };
@@ -334,7 +347,7 @@ describe("checkOllamaModelToolSupport", () => {
     }
   });
 
-  it("interactive yes → {ok:true, allowToolsIncompatible:true}", async () => {
+  it("allows a tools-incompatible model after interactive confirmation", async () => {
     const h = loadProxyWithStubs();
     h.setProbeResult({
       source: "api",
@@ -352,7 +365,7 @@ describe("checkOllamaModelToolSupport", () => {
     expect(h.promptCalls.length).toBeGreaterThan(0);
   });
 
-  it("interactive no → {ok:false} with 'choose a tools-capable model' message", async () => {
+  it("returns ok=false with guidance after interactive rejection", async () => {
     const h = loadProxyWithStubs();
     h.setProbeResult({
       source: "api",
@@ -366,7 +379,7 @@ describe("checkOllamaModelToolSupport", () => {
     expect(out.message!.toLowerCase()).toContain("tools-capable");
   });
 
-  it("non-interactive default → {ok:false} with stderr containing NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0", async () => {
+  it("returns ok=false with override guidance by default in non-interactive mode", async () => {
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     const h = loadProxyWithStubs();
     h.setProbeResult({
@@ -379,7 +392,7 @@ describe("checkOllamaModelToolSupport", () => {
     expect(h.errors.some((e) => e.includes("NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0"))).toBe(true);
   });
 
-  it("non-interactive + NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 → {ok:true, allowToolsIncompatible:true} after stderr warning", async () => {
+  it("allows a tools-incompatible model with NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 after warning", async () => {
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     process.env.NEMOCLAW_OLLAMA_REQUIRE_TOOLS = "0";
     const h = loadProxyWithStubs();
@@ -398,7 +411,7 @@ describe("checkOllamaModelToolSupport", () => {
     expect(matched).toBe(true);
   });
 
-  it("NEMOCLAW_YES=1 → {ok:true, allowToolsIncompatible:true} after note", async () => {
+  it("allows a tools-incompatible model with NEMOCLAW_YES=1 after a note", async () => {
     process.env.NEMOCLAW_YES = "1";
     const h = loadProxyWithStubs();
     h.setProbeResult({
@@ -414,7 +427,92 @@ describe("checkOllamaModelToolSupport", () => {
     expect(h.promptCalls.length).toBe(0);
   });
 
-  it("probe failed (capabilities unknown) → {ok:true} (graceful degradation)", async () => {
+  it("uses the caller's non-interactive state instead of rediscovering onboard globals", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const confirm = vi.fn(async () => true);
+
+    const out = await h.proxy.checkOllamaModelToolSupport("phi4", {
+      isNonInteractive: () => true,
+      isAutoYes: () => false,
+      confirm,
+    });
+
+    expect(out).toEqual({
+      ok: false,
+      message: "Tools-incompatible model in non-interactive mode.",
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(h.promptCalls.length).toBe(0);
+  });
+
+  it("uses the caller's auto-yes state without prompting", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const confirm = vi.fn(async () => false);
+
+    const out = await h.proxy.checkOllamaModelToolSupport("phi4", {
+      isNonInteractive: () => false,
+      isAutoYes: () => true,
+      confirm,
+    });
+
+    expect(out).toEqual({ ok: true, allowToolsIncompatible: true });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(h.promptCalls.length).toBe(0);
+  });
+
+  it("delegates interactive confirmation to the caller", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const confirm = vi.fn(async () => true);
+
+    const out = await h.proxy.checkOllamaModelToolSupport("phi4", {
+      isNonInteractive: () => false,
+      isAutoYes: () => false,
+      confirm,
+    });
+
+    expect(out).toEqual({ ok: true, allowToolsIncompatible: true });
+    expect(confirm).toHaveBeenCalledWith("  Use this model anyway?", false);
+    expect(h.promptCalls.length).toBe(0);
+  });
+
+  it("threads caller interaction through model preparation", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const confirm = vi.fn(async () => true);
+
+    const out = await h.proxy.prepareOllamaModel("phi4", ["phi4"], {
+      isNonInteractive: () => true,
+      isAutoYes: () => false,
+      confirm,
+    });
+
+    expect(out).toEqual({
+      ok: false,
+      message: "Tools-incompatible model in non-interactive mode.",
+    });
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("returns ok=true for graceful degradation after a capability probe failure", async () => {
     const h = loadProxyWithStubs();
     h.setProbeResult({
       source: "unknown",
@@ -567,8 +665,8 @@ describe("validateOllamaModel — no-tools override propagation (#4241)", () => 
 // validateOllamaModel does not know about the override and re-rejects.
 // ─────────────────────────────────────────────────────────────────
 
-describe("override propagation across checkOllamaModelToolSupport → validateOllamaModel (#4241)", () => {
-  it("user accepts override → later validateOllamaModel does NOT reject for the same tools-incompatible error", async () => {
+describe("override propagation from checkOllamaModelToolSupport to validateOllamaModel (#4241)", () => {
+  it("does not reject the same tools-incompatible error after the user accepts an override", async () => {
     const h = loadProxyWithStubs();
     h.setProbeResult({
       source: "api",
@@ -604,7 +702,7 @@ describe("override propagation across checkOllamaModelToolSupport → validateOl
     expect(result.ok).toBe(true);
   });
 
-  it("user declines override → both stages refuse and no later validation runs", async () => {
+  it("refuses both stages without later validation after the user declines an override", async () => {
     const h = loadProxyWithStubs();
     h.setProbeResult({
       source: "api",

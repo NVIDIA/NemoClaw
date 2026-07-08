@@ -30,6 +30,20 @@ An authorization context can be:
 
 Canonical labels, Issue Type, Project fields, public comments, release labels, closes, merges, and non-agent label deletion require an authorization context that explicitly allows that operation. Security-sensitive, destructive, release, merge, and public-comment writes require stricter authorization than ordinary triage labels.
 
+## Contributor PR Eligibility
+
+Contributor-owned PRs must satisfy the DCO declaration and GitHub commit verification before they are opened for review.
+This is a contributor self-serve requirement, not a maintainer repair step.
+
+- The PR description must include a valid `Signed-off-by:` declaration for the contributor.
+- Every commit must appear as `Verified` in GitHub.
+- Contributor agents must check both requirements before running `gh pr create`.
+- If the PR body would miss the DCO declaration or any commit is missing GitHub verification, the agent must stop and tell the contributor how to fix the issue instead of opening the PR.
+- If force-push is not allowed and a published branch already contains an unverified commit, the contributor must open a fresh branch and fresh PR with a clean compliant commit history.
+
+Maintainers should reject PRs that contain unverified commits or lack the DCO declaration.
+Do not merge, approve, or repair those PRs on behalf of the contributor.
+
 ## Issue Classification
 
 Native GitHub Issue Type is the canonical issue-kind field:

@@ -7,8 +7,12 @@ import YAML from "yaml";
 
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
-import { requiredMessagingChannelPolicyPresets } from "./messaging-policy-presets";
+import {
+  allMessagingChannelPolicyPresets,
+  requiredMessagingChannelPolicyPresets,
+} from "./messaging-policy-presets";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
+import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 export type InitialSandboxPolicy = {
@@ -203,6 +207,7 @@ export function prepareInitialSandboxCreatePolicy(
     dockerGpuPatch?: boolean;
     additionalPresets?: string[];
     agentName?: string | null;
+    policyTier?: string | null;
   } = {},
 ): InitialSandboxPolicy {
   const directGpuPolicy = options.directGpu
@@ -214,17 +219,39 @@ export function prepareInitialSandboxCreatePolicy(
   const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
   const buildCleanup = () =>
     cleanupFns.length > 0 ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean) : undefined;
-  const requestedCreateTimePresets = [
-    ...new Set([
-      ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
-      ...requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw"),
-      ...(options.additionalPresets || []),
-    ]),
-  ];
+  // Fail closed: the OpenClaw OTEL preset is added at create time only when the
+  // selected policy tier is known and is not Restricted. When the tier is null
+  // (interactive flow that selects later) the preset is deferred to the
+  // post-boot policy step, so a later Restricted selection cannot leave a
+  // transient host-local OTLP egress allowance during sandbox boot. The same
+  // suppression filter still runs so an explicit `policyTier: "restricted"`
+  // (non-interactive flow) drops openclaw-pricing from `additionalPresets`.
+  const tierKnown = typeof options.policyTier === "string" && options.policyTier.length > 0;
+  const otelCreateTimePresets =
+    tierKnown && options.policyTier !== "restricted"
+      ? requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw")
+      : [];
+  const isHermesPolicyFromPath = isHermesPolicyPath(basePolicyPath);
+  const isHermesPolicy = options.agentName === "hermes" || isHermesPolicyFromPath;
+  const policyAgent = options.agentName ?? (isHermesPolicyFromPath ? "hermes" : null);
+  const messagingCreateTimePresets = isHermesPolicy
+    ? allMessagingChannelPolicyPresets(activeMessagingChannels)
+    : requiredMessagingChannelPolicyPresets(activeMessagingChannels);
+  const requestedCreateTimePresets = filterSuppressedAgentRequiredPresets(
+    [
+      ...new Set([
+        ...messagingCreateTimePresets,
+        ...otelCreateTimePresets,
+        ...(options.additionalPresets || []),
+      ]),
+    ],
+    options.policyTier ?? null,
+    options.agentName ?? null,
+  );
   const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
 
   let basePolicy = fs.readFileSync(effectiveBasePolicyPath, "utf-8");
-  if (options.agentName === "hermes" || isHermesPolicyPath(basePolicyPath)) {
+  if (isHermesPolicy) {
     const filtered = filterHermesInactiveMessagingPolicies(basePolicy, activeMessagingChannels);
     if (filtered.changed) {
       const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
@@ -276,7 +303,9 @@ export function prepareInitialSandboxCreatePolicy(
     };
   }
 
-  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets);
+  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
+    agent: policyAgent,
+  });
   if (mergedPolicy.missingPresets.length > 0) {
     throw new Error(
       `Cannot prepare sandbox create policy; missing policy preset(s): ${mergedPolicy.missingPresets.join(", ")}`,

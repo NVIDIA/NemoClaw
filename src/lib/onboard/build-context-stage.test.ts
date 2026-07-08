@@ -6,9 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import { CUSTOM_BUILD_CONTEXT_WARN_BYTES } from "../../../dist/lib/onboard/custom-build-context";
-import { stageCreateSandboxBuildContext } from "../../../dist/lib/onboard/build-context-stage";
+import { stageCreateSandboxBuildContext } from "./build-context-stage";
+import { CUSTOM_BUILD_CONTEXT_WARN_BYTES } from "./custom-build-context";
 
 const tmpDirs: string[] = [];
 
@@ -54,6 +53,7 @@ describe("stageCreateSandboxBuildContext", () => {
       `  Docker build context: ${buildContextDir}`,
     ]);
     expect(fs.readFileSync(result.stagedDockerfile, "utf-8")).toBe("FROM scratch\n");
+    expect(result.origin).toBe("custom");
     expect(fs.existsSync(path.join(result.buildCtx, "extra.txt"))).toBe(true);
     expect(fs.existsSync(path.join(result.buildCtx, ".ssh"))).toBe(false);
     expect(result.cleanupBuildCtx()).toBe(true);
@@ -199,6 +199,7 @@ describe("stageCreateSandboxBuildContext", () => {
     });
 
     expect(agentResult.buildCtx).toBe(agentBuild.buildCtx);
+    expect(agentResult.origin).toBe("generated");
     expect(createAgentSandbox).toHaveBeenCalledWith({ name: "hermes" });
     expect(stageDefaultSandboxBuildContext).not.toHaveBeenCalled();
 
@@ -211,6 +212,7 @@ describe("stageCreateSandboxBuildContext", () => {
     });
 
     expect(defaultResult.buildCtx).toBe(defaultBuild.buildCtx);
+    expect(defaultResult.origin).toBe("generated");
     expect(stageDefaultSandboxBuildContext).toHaveBeenCalledWith("/repo");
   });
 });

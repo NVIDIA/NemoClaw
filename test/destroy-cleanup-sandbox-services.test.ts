@@ -10,9 +10,9 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import type { CleanupSandboxServicesDeps } from "../dist/lib/actions/sandbox/destroy.js";
-import { cleanupSandboxServices } from "../dist/lib/actions/sandbox/destroy.js";
-import { SANDBOX_PROVIDER_SUFFIXES } from "../dist/lib/onboard/sandbox-provider-cleanup.js";
+import type { CleanupSandboxServicesDeps } from "../src/lib/actions/sandbox/destroy.js";
+import { cleanupSandboxServices } from "../src/lib/actions/sandbox/destroy.js";
+import { SANDBOX_PROVIDER_SUFFIXES } from "../src/lib/onboard/sandbox-provider-cleanup.js";
 
 type SandboxLike = { provider?: string | null } | null;
 
@@ -97,5 +97,19 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(providerDeleteCalls.map((argv) => argv[2])).toEqual(
       SANDBOX_PROVIDER_SUFFIXES.map((suffix) => `regression-2717-${suffix}`),
     );
+  });
+
+  it("rejects traversal-shaped sandbox names before any cleanup side effect", () => {
+    const harness = buildDeps({ provider: "ollama-local" });
+
+    expect(() =>
+      cleanupSandboxServices("x/../../victim", { stopHostServices: true }, harness.deps),
+    ).toThrow("Invalid sandbox name");
+
+    expect(harness.deps.getSandbox).not.toHaveBeenCalled();
+    expect(harness.deps.stopAll).not.toHaveBeenCalled();
+    expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
+    expect(harness.deps.rmSync).not.toHaveBeenCalled();
+    expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
   });
 });

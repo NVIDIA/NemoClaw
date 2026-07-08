@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-type CredentialsModule = typeof import("../dist/lib/credentials/store.js");
+type CredentialsModule = typeof import("../src/lib/credentials/store.js");
 
 const tmpFixtures: string[] = [];
 
@@ -51,7 +51,7 @@ async function importCredentialsModule(home: string): Promise<CredentialsModule>
   vi.doUnmock("child_process");
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
-  const module = await import("../dist/lib/credentials/store.js");
+  const module = await import("../src/lib/credentials/store.js");
   const loaded = "default" in module ? module.default : module;
   return loaded as CredentialsModule;
 }

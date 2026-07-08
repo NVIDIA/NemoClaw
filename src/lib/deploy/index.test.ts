@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { validateName } from "../runner";
 import {
   buildDeployEnvLines,
   executeDeploy,
@@ -9,8 +10,7 @@ import {
   inferDeployProvider,
   isBrevInstanceFailed,
   isBrevInstanceReady,
-} from "../../../dist/lib/deploy";
-import { validateName } from "../../../dist/lib/runner";
+} from "./index";
 
 describe("inferDeployProvider", () => {
   it("prefers an explicit provider override", () => {
