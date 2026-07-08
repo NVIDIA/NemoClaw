@@ -330,6 +330,32 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     ]);
   });
 
+  it("removes Tavily when the first post-add probe exits early", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_TAVILY_SELF_TEST: "policy-cleanup-on-probe-failure",
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(23);
+    expect(result.stdout.split("\n").filter((line) => line.startsWith("TRACE:"))).toEqual([
+      "TRACE:opt-in-proof",
+      "TRACE:probe-failure",
+      "TRACE:policy-remove",
+    ]);
+  });
+
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
     const scriptPath = path.join(
       process.cwd(),
