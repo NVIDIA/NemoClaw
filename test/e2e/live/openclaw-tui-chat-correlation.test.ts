@@ -648,10 +648,12 @@ test(
       const approvalCaptureFile = join(captureDir, "openshell-approval-capture.log");
       const triggerCaptureFile = join(captureDir, "openshell-network-trigger.log");
       const ruleCaptureFile = join(captureDir, "openshell-pending-rule.log");
+      const policyCaptureFile = join(captureDir, "openshell-policy-retry.log");
       const approvalExpectScript = artifacts.pathFor("issue6194-openshell-approval.expect");
       precreateIssue6194Capture(approvalCaptureFile);
       precreateIssue6194Capture(triggerCaptureFile);
       precreateIssue6194Capture(ruleCaptureFile);
+      precreateIssue6194Capture(policyCaptureFile);
       writeFileSync(approvalExpectScript, buildIssue6194OpenShellApprovalExpectScript(), {
         mode: 0o700,
       });
@@ -663,6 +665,7 @@ test(
           NEMOCLAW_ISSUE_6194_CAPTURE: approvalCaptureFile,
           NEMOCLAW_ISSUE_6194_TRIGGER_CAPTURE: triggerCaptureFile,
           NEMOCLAW_ISSUE_6194_RULE_CAPTURE: ruleCaptureFile,
+          NEMOCLAW_ISSUE_6194_POLICY_CAPTURE: policyCaptureFile,
           NEMOCLAW_ISSUE_6194_NETWORK_ENDPOINT: ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
           NEMOCLAW_ISSUE_6194_NETWORK_HOST: ISSUE6194_NETWORK_APPROVAL_HOST,
           NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
@@ -673,11 +676,13 @@ test(
       const approvalCapture = readIssue6194Capture(approvalCaptureFile);
       const triggerCapture = readIssue6194Capture(triggerCaptureFile);
       const ruleCapture = readIssue6194Capture(ruleCaptureFile);
+      const policyCapture = readIssue6194Capture(policyCaptureFile);
       const redactedApprovalCapture = secrets.redact(approvalCapture.contents, [apiKey]);
       const redactedTriggerCapture = secrets.redact(triggerCapture.contents, [apiKey]);
       const redactedRuleCapture = secrets.redact(ruleCapture.contents, [apiKey]);
+      const redactedPolicyCapture = secrets.redact(policyCapture.contents, [apiKey]);
       const plainApprovalCapture = stripTerminalControl(redactedApprovalCapture);
-      const approvalCombined = `${resultText(approval)}\n${plainApprovalCapture}\n${redactedTriggerCapture}\n${redactedRuleCapture}`;
+      const approvalCombined = `${resultText(approval)}\n${plainApprovalCapture}\n${redactedTriggerCapture}\n${redactedRuleCapture}\n${redactedPolicyCapture}`;
       await artifacts.writeText(
         "issue6194-openshell-approval-capture.log",
         redactedApprovalCapture,
@@ -688,6 +693,7 @@ test(
       );
       await artifacts.writeText("issue6194-openshell-network-trigger.log", redactedTriggerCapture);
       await artifacts.writeText("issue6194-openshell-pending-rule.log", redactedRuleCapture);
+      await artifacts.writeText("issue6194-openshell-policy-retry.log", redactedPolicyCapture);
       await artifacts.writeJson("issue6194-approval-result.json", {
         id: "issue-6194-openshell-network-approval",
         expectExitCode: approval.exitCode,
@@ -696,6 +702,13 @@ test(
         triggerCaptureExists: triggerCapture.exists,
         ruleCaptureExists: ruleCapture.exists,
         ruleCaptureNonEmpty: redactedRuleCapture.length > 0,
+        policyCaptureExists: policyCapture.exists,
+        policyCaptureNonEmpty: redactedPolicyCapture.length > 0,
+        postApprovalEndpoint: ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
+        postApprovalExpectedHttpStatus: 401,
+        postApprovalHttpStatus401: redactedPolicyCapture.includes(
+          "ISSUE6194_POLICY_HTTP_STATUS=401",
+        ),
         pendingQueueEmpty: approvalCombined.includes("ISSUE6194_MARK pending_queue_empty"),
         requestTriggered: approvalCombined.includes("ISSUE6194_MARK network_request_triggered"),
         requestCompleted: approvalCombined.includes("ISSUE6194_MARK network_request_completed"),
@@ -704,6 +717,7 @@ test(
         endpointRendered: approvalCombined.includes("ISSUE6194_MARK network_rule_endpoint"),
         detailBinary: approvalCombined.includes("ISSUE6194_MARK network_rule_detail_binary"),
         approvalProcessed: approvalCombined.includes("ISSUE6194_MARK network_approval_processed"),
+        policyUpdated: approvalCombined.includes("ISSUE6194_MARK network_policy_updated"),
         cleanExit: approvalCombined.includes("ISSUE6194_MARK openshell_clean_exit"),
       });
 
@@ -711,6 +725,11 @@ test(
       expect(
         plainApprovalCapture.length,
         "OpenShell approval capture must not be empty",
+      ).toBeGreaterThan(0);
+      expect(policyCapture.exists, "post-approval policy retry capture must exist").toBe(true);
+      expect(
+        redactedPolicyCapture.length,
+        "post-approval policy retry capture must not be empty",
       ).toBeGreaterThan(0);
       expect(approval.exitCode, approvalCombined).toBe(0);
       expect(
@@ -727,6 +746,14 @@ test(
       expect(approvalCombined, "OpenShell approval input must be processed").toContain(
         "ISSUE6194_MARK network_approval_processed",
       );
+      expect(
+        redactedPolicyCapture,
+        "approved running policy must allow the exact post-approval Atlassian probe",
+      ).toContain("ISSUE6194_POLICY_HTTP_STATUS=401");
+      expect(
+        approvalCombined,
+        "post-approval probe must independently prove the running policy was updated",
+      ).toContain("ISSUE6194_MARK network_policy_updated");
       expect(approvalCombined, "OpenShell terminal must exit cleanly after approval").toContain(
         "ISSUE6194_MARK openshell_clean_exit",
       );

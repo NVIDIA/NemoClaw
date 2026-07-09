@@ -89,6 +89,7 @@ set sandbox $env(NEMOCLAW_ISSUE_6194_SANDBOX)
 set capture $env(NEMOCLAW_ISSUE_6194_CAPTURE)
 set triggerCapture $env(NEMOCLAW_ISSUE_6194_TRIGGER_CAPTURE)
 set ruleCapture $env(NEMOCLAW_ISSUE_6194_RULE_CAPTURE)
+set policyCapture $env(NEMOCLAW_ISSUE_6194_POLICY_CAPTURE)
 set networkEndpoint $env(NEMOCLAW_ISSUE_6194_NETWORK_ENDPOINT)
 set networkHost $env(NEMOCLAW_ISSUE_6194_NETWORK_HOST)
 log_file -noappend $capture
@@ -240,6 +241,33 @@ expect_exact_or_exit $termSpawn $networkHost network_rule_detail_endpoint 82 83
 expect_or_exit $termSpawn {\\[a\\][^\\r\\n]*Approve} network_rule_approve_action 84 85
 send -i $termSpawn -- "a"
 expect_or_exit $termSpawn {Approved[^\\r\\n]*'[^']+'[^\\r\\n]*policy v[0-9]+} network_approval_processed 86 87
+# The terminal acknowledgement only proves that the approval action was
+# accepted. Retry the exact documented Atlassian probe so the target also
+# proves that the running policy now permits the request. An unauthenticated
+# 401 is the expected success signal for this endpoint.
+spawn -noecho openshell sandbox exec --name $sandbox --no-tty --timeout 40 -- /usr/bin/curl -sS --connect-timeout 5 --max-time 30 -o /dev/null -w {ISSUE6194_POLICY_HTTP_STATUS=%{http_code}\\n} $networkEndpoint
+set policySpawn $spawn_id
+set policyOutput ""
+set savedTimeout $timeout
+set timeout 45
+expect {
+  -i $policySpawn
+  eof { set policyOutput $expect_out(buffer) }
+  timeout {
+    stop_spawn $policySpawn
+    stop_spawn $termSpawn
+    exit 88
+  }
+}
+set timeout $savedTimeout
+catch {wait -i $policySpawn} policyWait
+write_capture $policyCapture $policyOutput
+if {![regexp {ISSUE6194_POLICY_HTTP_STATUS=401(\\r?\\n|$)} $policyOutput]} {
+  puts "ISSUE6194_DIAGNOSTIC approved policy did not permit the exact endpoint: $policyOutput"
+  stop_spawn $termSpawn
+  exit 90
+}
+mark network_policy_updated
 send -i $termSpawn -- "q"
 expect {
   -i $termSpawn

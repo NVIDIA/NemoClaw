@@ -37,6 +37,9 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(declaration).toContain('"openshell-network-rule-terminal-approval"');
     expect(liveSource).toContain('artifactName: "issue6194-openshell-network-approval"');
     expect(liveSource).toContain('artifacts.writeJson("issue6194-approval-result.json"');
+    expect(liveSource).toContain('artifacts.writeText("issue6194-openshell-policy-retry.log"');
+    expect(liveSource).toContain("postApprovalEndpoint: ISSUE6194_NETWORK_APPROVAL_ENDPOINT");
+    expect(liveSource).toContain("postApprovalExpectedHttpStatus: 401");
     expect(liveSource).toContain('artifactName: "live-issue2603-repro"');
     expect(liveSource).toContain('artifacts.writeJson("issue2603-trace.json"');
   });
@@ -202,9 +205,30 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(script).toContain(
       "expect_or_exit $termSpawn {Approved[^\\r\\n]*'[^']+'[^\\r\\n]*policy v[0-9]+} network_approval_processed",
     );
+    expect(script).toContain(
+      "spawn -noecho openshell sandbox exec --name $sandbox --no-tty --timeout 40 -- /usr/bin/curl -sS --connect-timeout 5 --max-time 30 -o /dev/null -w {ISSUE6194_POLICY_HTTP_STATUS=%{http_code}\\n} $networkEndpoint",
+    );
+    expect(script).toContain("set policySpawn $spawn_id");
+    expect(script).toContain("expect {\n  -i $policySpawn\n");
+    expect(script).toContain("catch {wait -i $policySpawn} policyWait");
+    expect(script).toContain("write_capture $policyCapture $policyOutput");
+    expect(script).toContain("regexp {ISSUE6194_POLICY_HTTP_STATUS=401(\\r?\\n|$)} $policyOutput");
     expect(script).not.toContain("{Approved '[^']+'");
     expect(script).not.toContain('send -i $termSpawn -- "A"');
     expect(script).not.toContain('send -i $termSpawn -- "y"');
+
+    const approvalAcknowledged = script.indexOf("network_approval_processed");
+    const postApprovalRetry = script.indexOf("ISSUE6194_POLICY_HTTP_STATUS=%{http_code}");
+    const postApprovalCapture = script.indexOf("write_capture $policyCapture $policyOutput");
+    const postApprovalVerified = script.indexOf("mark network_policy_updated");
+    const postApprovalOrder = [
+      approvalAcknowledged,
+      postApprovalRetry,
+      postApprovalCapture,
+      postApprovalVerified,
+    ];
+    expect(postApprovalOrder.every((index) => index >= 0)).toBe(true);
+    expect([...postApprovalOrder].sort((a, b) => a - b)).toEqual(postApprovalOrder);
 
     const markers = [
       "sole_sandbox_verified",
@@ -223,6 +247,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "network_rule_detail_endpoint",
       "network_rule_approve_action",
       "network_approval_processed",
+      "network_policy_updated",
       "openshell_clean_exit",
     ];
     const order = markers.map((marker) => script.indexOf(marker));
@@ -232,9 +257,11 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
 
   it("binds multi-pattern waits to their intended Expect spawn (#6194)", () => {
     const script = buildIssue6194OpenShellApprovalExpectScript();
-    const spawnScopedWaits = script.match(/expect \{\n\s+-i \$(?:target|curlSpawn|termSpawn)\n/gu);
+    const spawnScopedWaits = script.match(
+      /expect \{\n\s+-i \$(?:target|curlSpawn|policySpawn|termSpawn)\n/gu,
+    );
 
-    expect(spawnScopedWaits).toHaveLength(5);
+    expect(spawnScopedWaits).toHaveLength(6);
     expect(script).not.toMatch(/\bexpect -i \$/u);
     expect(script).toContain("-nocase -ex $value { mark $markName }");
     expect(script).not.toContain("-nocase -exact");
@@ -304,6 +331,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       const approvalPrecreate = liveSource.indexOf(
         "precreateIssue6194Capture(approvalCaptureFile)",
       );
+      const policyPrecreate = liveSource.indexOf("precreateIssue6194Capture(policyCaptureFile)");
       const approvalCommand = liveSource.indexOf('host.command("expect", [approvalExpectScript]');
       const approvalResult = liveSource.indexOf(
         'artifacts.writeJson("issue6194-approval-result.json"',
@@ -326,7 +354,8 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       expect(tuiResult).toBeGreaterThan(tuiCommand);
       expect(tuiCaptureAssertion).toBeGreaterThan(tuiResult);
       expect(approvalPrecreate).toBeGreaterThan(tuiCaptureAssertion);
-      expect(approvalCommand).toBeGreaterThan(approvalPrecreate);
+      expect(policyPrecreate).toBeGreaterThan(approvalPrecreate);
+      expect(approvalCommand).toBeGreaterThan(policyPrecreate);
       expect(approvalResult).toBeGreaterThan(approvalCommand);
       expect(approvalCaptureAssertion).toBeGreaterThan(approvalResult);
       expect(websocketCommand).toBeGreaterThan(approvalCaptureAssertion);
