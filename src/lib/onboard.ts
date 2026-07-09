@@ -2962,7 +2962,6 @@ async function createSandboxWithBaseImageResolution(
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag =
     prebuild.imageRef ?? resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
-
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   finalizeCreatedSandbox(
     {
