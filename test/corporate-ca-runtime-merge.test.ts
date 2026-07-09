@@ -188,6 +188,53 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     expect(existsSync(merged)).toBe(false);
   });
 
+  it("bails without exporting when OpenClaw cannot make the merged bundle readable (#6210)", () => {
+    const dir = tmpDir("nemoclaw-corp-merge-chmod-openclaw-");
+    const openshell = join(dir, "openshell-ca.pem");
+    const corp = join(dir, "corporate-ca.pem");
+    const merged = join(dir, "merged-ca.pem");
+    writeFileSync(openshell, OPENSHELL_PEM);
+    writeFileSync(corp, CORPORATE_PEM);
+
+    const out = runShellLines(dir, [
+      "chmod() { return 1; }",
+      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+      mergeBlock(OPENCLAW_START, "# Git TLS CA bundle fix (NemoClaw#2270).", corp, merged),
+      'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
+      'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
+    ]);
+
+    expect(out).toContain(`SSL_CERT_FILE=${openshell}`);
+    expect(out).toContain("MERGED=\n");
+    expect(existsSync(merged)).toBe(false);
+  });
+
+  it("bails without exporting when Hermes cannot make the merged bundle readable (#6210)", () => {
+    const dir = tmpDir("nemoclaw-corp-merge-chmod-hermes-");
+    const openshell = join(dir, "openshell-ca.pem");
+    const corp = join(dir, "corporate-ca.pem");
+    const merged = join(dir, "merged-ca.pem");
+    writeFileSync(openshell, OPENSHELL_PEM);
+    writeFileSync(corp, CORPORATE_PEM);
+
+    const out = runShellLines(dir, [
+      "chmod() { return 1; }",
+      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+      mergeBlock(
+        HERMES_START,
+        "# OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA.",
+        corp,
+        merged,
+      ),
+      'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
+      'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
+    ]);
+
+    expect(out).toContain(`SSL_CERT_FILE=${openshell}`);
+    expect(out).toContain("MERGED=\n");
+    expect(existsSync(merged)).toBe(false);
+  });
+
   it("warns on stderr when the OpenClaw merge fails (#6210)", () => {
     const dir = tmpDir("nemoclaw-corp-merge-warn-openclaw-");
     const openshell = join(dir, "openshell-ca.pem");

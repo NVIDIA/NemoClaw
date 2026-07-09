@@ -48,6 +48,28 @@ MAhrfNQcxSkZH2lVY+TA2JO83v12nKXzaW1dC94SlsFf0tVSvM3QTeWVgijpr0q+
 J0N7VBg2CdK6jRjKLQOSOPq3ySCicHhVRI8hxIWotif7mK3jj6D8NRalwmlHgNM=
 -----END CERTIFICATE-----
 `;
+// A valid self-signed X.509 leaf with Basic Constraints CA:FALSE, matching the
+// normal Ubuntu ssl-cert-snakeoil.pem shape that must not be treated as a CA.
+const LEAF_PEM = `-----BEGIN CERTIFICATE-----
+MIIDGDCCAgCgAwIBAgIUBGGtRhzw0XS0RsxOgfTf7Q5hi78wDQYJKoZIhvcNAQEL
+BQAwHTEbMBkGA1UEAwwSTmVtb0NsYXcgVGVzdCBMZWFmMB4XDTI2MDcwOTIxMzA0
+OFoXDTM2MDcwNjIxMzA0OFowHTEbMBkGA1UEAwwSTmVtb0NsYXcgVGVzdCBMZWFm
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoDrg6PHhyTdrLLQ4+9EX
+Icw9eTXAzMVYlr5621HD8fZO/R+asZB1xzfUCYLQ1ubeDBShXhr/sJDJDNxmOwCY
+veU2IfKp2UQ3GBe6uzzUVq5icxXIr7OxR4ynnma4WRKyJR2dTX6QXHh+Oa04Wra8
+KR7U9TLvYDHvQtt5i8mVmz28n8jWdVWYKVMPc13Tc40hVennMO4c2bhfdlX1p0l+
+c1gscXJC+rVT9E1/U6zlDkPqmTy3M0aM6XDRLcYNXau7fX3ZukyQJJAR19hVaTcP
+AzficNDa4/LEX3FkgioDSXyB5vhaL1lnFRAU6+yBz/jfRJmr9FdkKSpHq1NDBXKf
+RwIDAQABo1AwTjAdBgNVHQ4EFgQUz5G5tVuiteFQjqBpJ9VVjktmeu0wHwYDVR0j
+BBgwFoAUz5G5tVuiteFQjqBpJ9VVjktmeu0wDAYDVR0TAQH/BAIwADANBgkqhkiG
+9w0BAQsFAAOCAQEAmfGOHg4dUJES4WXq/DAz1jiV5sPq+EhTAlrnuQpS13fprfYw
+T8lPVM4n56WhDnqyy3/5NHywioYwi51EuIIG4Vl11xj2lVZdjPr0k0qWeMGMVmrL
+4WArhisGTMC7mnYrNqijPImlwaEWmH3sO5Nhsu8qs3NH3RrX5VYDbxEbnH8YiNkf
+/4gq/sCMf22vDoumDdXJQRrYAQPLSgtbxwQzT1nVvLMNjIwO6Vh7qJv4jGt+hCME
+UPilgF7+CJ39Hd/NO+iZAvPuS470eWcdGK8i+akGqRIwHqlOSPeJsnLNKFFS/9tO
+90WmoSeA7GUsGkJLLoiaBAq8wTdNqbYodVmEBA==
+-----END CERTIFICATE-----
+`;
 // PEM-shaped but not a parseable certificate.
 const BAD_PEM = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n";
 // A private-key block that must never survive into the returned/baked bundle.
@@ -149,6 +171,16 @@ describe("validateCorporateCaFile", () => {
   it("rejects a bundle whose later block is not a parseable X.509 certificate", () => {
     const p = writeCa(tmpDir(), PEM + BAD_PEM);
     expect(() => validateCorporateCaFile(p)).toThrow(/not a valid X\.509 certificate/);
+  });
+
+  it("rejects a valid X.509 leaf certificate without CA basic constraints", () => {
+    const p = writeCa(tmpDir(), LEAF_PEM);
+    expect(() => validateCorporateCaFile(p)).toThrow(/not a CA/);
+  });
+
+  it("rejects a bundle whose later block is a leaf certificate", () => {
+    const p = writeCa(tmpDir(), PEM + LEAF_PEM);
+    expect(() => validateCorporateCaFile(p)).toThrow(/not a CA/);
   });
 
   it("returns only the certificate block, dropping an adjacent private key", () => {
@@ -455,6 +487,21 @@ describe("resolveCorporateCa env then host anchors (#6210)", () => {
           m.includes(CORPORATE_CA_ANCHOR_DIRS_ENV),
       ),
     ).toBe(true);
+  });
+
+  it("does not warn for a literal /etc/ssl/certs-style leaf cert such as ssl-cert-snakeoil.pem", () => {
+    const literalSslCertsDir = tmpDir();
+    writeAnchor(literalSslCertsDir, "ssl-cert-snakeoil.pem", LEAF_PEM);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const resolved = resolveCorporateCa(
+      {},
+      { hostAnchorDirs: [path.join(tmpDir(), "absent")], literalSslCertsDir },
+    );
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
+
+    expect(resolved).toBeNull();
+    expect(messages).toHaveLength(0);
   });
 
   it("does not warn for the merged /etc/ssl/certs ca-certificates output alone (#6210)", () => {

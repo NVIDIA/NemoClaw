@@ -1489,7 +1489,11 @@ merge_corporate_proxy_ca() {
     _nemoclaw_ca_merge_warn "append corporate CA"
     return 0
   }
-  chmod 0444 "$_tmp" 2>/dev/null || true
+  chmod 0444 "$_tmp" 2>/dev/null || {
+    rm -f "$_tmp"
+    _nemoclaw_ca_merge_warn "set merged bundle permissions (${_merged})"
+    return 0
+  }
   # Defense-in-depth for the predictable /tmp path (#6210): if a co-tenant
   # pre-planted a symlink at the target, drop it first so we rename into a fresh
   # regular file we own rather than through an attacker-controlled link.
