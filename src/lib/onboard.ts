@@ -332,9 +332,8 @@ const {
   rejectUnsupportedWindowsHostOllama,
   shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
-const {
-  waitForGatewayHealth,
-}: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
+const { waitForGatewayHealth }: typeof import("./onboard/gateway-health-wait") =
+  require("./onboard/gateway-health-wait");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
@@ -531,8 +530,11 @@ const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
-const { createFinalGatewayStartFailureHandler, reportLegacyGatewayStartResultFailure } =
-  require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
+const {
+  createFinalGatewayStartFailureHandler,
+  normalizeGatewayStartError,
+  reportLegacyGatewayStartResultFailure,
+} = require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
@@ -1903,7 +1905,7 @@ async function startGatewayWithOptions(
           return;
         }
 
-        throw new Error("Gateway failed to start");
+        throw new Error(`Gateway failed within ${healthWait.count * healthWait.interval}s.`);
       },
       {
         retries,
@@ -1919,11 +1921,9 @@ async function startGatewayWithOptions(
         },
       },
     );
-  } catch {
-    if (exitOnFailure) {
-      handleFinalGatewayStartFailure({ retries, dockerUnreachable });
-    }
-    throw new Error("Gateway failed to start");
+  } catch (error) {
+    if (exitOnFailure) handleFinalGatewayStartFailure({ retries, dockerUnreachable });
+    throw normalizeGatewayStartError(error);
   }
 
   console.log("  ✓ Gateway is healthy");
