@@ -41,7 +41,7 @@ tomllib = types.ModuleType("tomllib")
 tomllib.loads = loads
 tomllib.TOMLDecodeError = TOMLDecodeError
 tomli_w = types.ModuleType("tomli_w")
-tomli_w.dumps = lambda value: json.dumps(value, sort_keys=True)
+tomli_w.dumps = lambda value: json.dumps(value)
 sys.modules["tomllib"] = tomllib
 sys.modules["tomli_w"] = tomli_w
 
@@ -171,6 +171,27 @@ describe("key-allowlist state-file merge", () => {
       ui: { show_scrollbar: true, show_url_open_toast: false },
       threads: backup.threads,
     });
+  });
+
+  it("produces byte-identical, deterministically ordered output on repeated runs with the same inputs", () => {
+    const backup = {
+      models: { default: "openai:nvidia/old-model" },
+      update: { check: true, auto_update: true },
+      ui: { show_scrollbar: true, show_url_open_toast: false },
+      threads: { relative_time: false, sort_order: "created_at" },
+    };
+    const fresh = {
+      models: { default: "openai:nvidia/new-model" },
+      update: { check: false, auto_update: false },
+    };
+    const current = generatedCurrent(fresh);
+
+    const first = runMergeScript(JSON.stringify(backup), current, DCODE_OWNERSHIP);
+    const second = runMergeScript(JSON.stringify(backup), current, DCODE_OWNERSHIP);
+
+    expect(first.status).toBe(0);
+    expect(second.current).toBe(first.current);
+    expect(Object.keys(mergedJson(first.current))).toEqual(["models", "threads", "ui", "update"]);
   });
 
   it("drops free-form, executable, routing, and unknown backup data", () => {

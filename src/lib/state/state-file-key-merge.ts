@@ -163,9 +163,17 @@ def merge_user_keys(backup, current, user_keys):
     return merged
 
 
+def sorted_deep(value):
+    if isinstance(value, dict):
+        return {key: sorted_deep(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [sorted_deep(item) for item in value]
+    return value
+
+
 def render_merged_config(merged, header_lines):
     try:
-        rendered = tomli_w.dumps(merged)
+        rendered = tomli_w.dumps(sorted_deep(merged))
     except Exception:
         fail("merged config could not be serialized safely")
     if not isinstance(rendered, str):
