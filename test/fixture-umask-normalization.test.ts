@@ -7,6 +7,19 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
+import vitestConfig from "../vitest.config";
+
+const RUNTIME_CONFIG_GUARD = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "runtime-config-guard.py",
+);
+
+type ProjectEntry = { test?: { name?: string; setupFiles?: string[] } };
+const FIXTURE_UMASK_SETUP = "test/helpers/normalize-fixture-umask.ts";
+
 // Regression coverage for #6448. The shared setup file
 // test/helpers/normalize-fixture-umask.ts must force the conventional CI
 // file-creation umask (0o022) in every test worker, so Hermes/OpenClaw guard
@@ -59,4 +72,73 @@ it("propagates the safe umask to spawned fixture processes (#6448)", () => {
   expect(result.status, result.stderr).toBe(0);
   const mode = Number.parseInt(result.stdout.trim(), 10);
   expect(mode & 0o022).toBe(0);
+});
+
+it("does not weaken the guard: an explicitly group/world-writable config is still rejected (#6448)", () => {
+  // The normalization only affects how test fixtures are created; the production
+  // guard must still fail closed on an explicitly unsafe (0o666) runtime config
+  // path. This proves the harness change did not relax the security boundary.
+  const result = spawnSync(
+    "python3",
+    [
+      "-c",
+      String.raw`
+import importlib.util, os, sys, tempfile
+
+spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+
+d = tempfile.mkdtemp()
+os.chmod(d, 0o700)
+p = os.path.join(d, "config.yaml")
+open(p, "w", encoding="utf-8").write("model: test\n")
+os.chmod(p, 0o666)
+try:
+    guard._open_regular(p).close()
+except guard.UnsafePathError as exc:
+    sys.stdout.write("REJECTED:" + str(exc))
+else:
+    sys.stdout.write("ACCEPTED")
+`,
+      RUNTIME_CONFIG_GUARD,
+    ],
+    { encoding: "utf-8", timeout: 5000 },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain("REJECTED:");
+  expect(result.stdout).toContain("group/world-writable");
+});
+
+it("wires the fixture-umask setup into every intended project before other setup files (#6448)", () => {
+  // A config-contract guard: if a future edit drops or misorders the setup for a
+  // project, the permissive-umask failures would only resurface on hosts with a
+  // permissive ambient umask (CI at 0o022 would not catch it). Assert membership
+  // and ordering here instead.
+  const projects = (vitestConfig.test?.projects ?? []) as ProjectEntry[];
+  const setupFilesByName = new Map(
+    projects.map((project) => [project.test?.name, project.test?.setupFiles ?? []]),
+  );
+
+  // Every project `npm test` runs must pin the fixture umask first, before any
+  // fixture/source-loader setup file.
+  for (const name of [
+    "cli",
+    "integration",
+    "installer-integration",
+    "package-contract",
+    "plugin",
+    "e2e-support",
+  ]) {
+    const setupFiles = setupFilesByName.get(name);
+    expect(setupFiles, name).toContain(FIXTURE_UMASK_SETUP);
+    expect(setupFiles?.indexOf(FIXTURE_UMASK_SETUP), name).toBe(0);
+  }
+
+  // e2e-live intentionally keeps the caller's umask (it handles real credentials
+  // and sets its own strict `umask 077` inline); e2e-branch-validation defines no
+  // setupFiles. Neither has guard-fixture suites.
+  expect(setupFilesByName.get("e2e-live") ?? []).not.toContain(FIXTURE_UMASK_SETUP);
+  expect(setupFilesByName.get("e2e-branch-validation") ?? []).not.toContain(FIXTURE_UMASK_SETUP);
 });
