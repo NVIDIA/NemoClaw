@@ -982,7 +982,9 @@ describe("runSandboxSnapshot", () => {
     getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-    const [, createArgs = [], createEnv] = streamSandboxCreateMock.mock.calls[0] ?? [];
+    const createCall = streamSandboxCreateMock.mock.calls[0] ?? [];
+    const createArgs = createCall[1] as readonly string[];
+    const createEnv = createCall[2] as NodeJS.ProcessEnv | undefined;
     const createShellCommand = String(createArgs[1] ?? "");
     expect(createShellCommand).toContain(`'NEMOCLAW_OBSERVABILITY=${expectedValue}'`);
     expect(createEnv?.NEMOCLAW_OBSERVABILITY).toBeUndefined();
