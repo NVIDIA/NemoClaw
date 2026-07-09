@@ -223,15 +223,19 @@ describe("sandbox-create-stream", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
-  it("lets an explicit empty startup-output gate detach immediately on VM", async () => {
+  it.each([
+    ["explicit empty gate on VM", vmEnv, []],
+    ["explicit empty gate on Docker", dockerEnv, []],
+    ["default Docker gate", dockerEnv, undefined],
+  ])("detaches immediately for %s", async (_label, env, readyCheckOutputPatterns) => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
     const logLine = vi.fn();
-    const promise = streamSandboxCreate("echo create", vmEnv, {
+    const promise = streamSandboxCreate("echo create", env, {
       spawnImpl: () => child,
       readyCheck: () => true,
-      readyCheckOutputPatterns: [],
+      readyCheckOutputPatterns,
       pollIntervalMs: 5,
       heartbeatIntervalMs: 1_000,
       silentPhaseMs: 10_000,
@@ -250,6 +254,31 @@ describe("sandbox-create-stream", () => {
     expect(logLine).not.toHaveBeenCalledWith(
       "  Sandbox reported Ready; waiting for startup command output before detaching.",
     );
+  });
+
+  it("runs poll side effects only after a not-ready poll", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const onPoll = vi.fn();
+    let ready = false;
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
+      spawnImpl: () => child,
+      readyCheck: () => ready,
+      onPoll,
+      pollIntervalMs: 5,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine: vi.fn(),
+    });
+
+    await vi.advanceTimersByTimeAsync(6);
+    expect(onPoll).toHaveBeenCalledTimes(1);
+
+    ready = true;
+    await vi.advanceTimersByTimeAsync(6);
+    await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
+    expect(onPoll).toHaveBeenCalledTimes(1);
   });
 
   it("does not recover a non-zero close before required startup output appears", async () => {

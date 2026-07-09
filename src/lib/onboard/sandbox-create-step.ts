@@ -100,10 +100,9 @@ export async function runSandboxCreateStep(
   const createResult = await deps.streamCreate(createCommand, sandboxEnv, {
     readyCheck: () => {
       const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      if (deps.isSandboxReady(list, context.sandboxName)) return true;
-      dockerGpuCreatePatch.maybeApplyDuringCreate();
-      return false;
+      return deps.isSandboxReady(list, context.sandboxName);
     },
+    onPoll: () => dockerGpuCreatePatch.maybeApplyDuringCreate(),
     // Terminal agents do not emit the normal VM startup marker; [] keeps the
     // output-pattern gate open while undefined preserves driver defaults.
     readyCheckOutputPatterns: deps.isTerminalAgent(context.agent) ? [] : undefined,

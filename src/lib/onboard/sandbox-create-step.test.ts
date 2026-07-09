@@ -125,7 +125,7 @@ describe("runSandboxCreateStep", () => {
     });
   });
 
-  it("readyCheck detaches on Ready and otherwise applies the GPU patch during create", async () => {
+  it("separates readiness detection from GPU patch polling", async () => {
     const launch = makeLaunch();
     const patch = makePatch();
     const deps = makeDeps(
@@ -137,15 +137,16 @@ describe("runSandboxCreateStep", () => {
 
     await runSandboxCreateStep(makeContext(), deps);
     const streamOpts = (deps.streamCreate as unknown as { mock: { calls: unknown[][] } }).mock
-      .calls[0][2] as { readyCheck: () => boolean };
+      .calls[0][2] as { readyCheck: () => boolean; onPoll: () => void };
 
-    // Ready → true, no patch application.
     expect(streamOpts.readyCheck()).toBe(true);
     expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
 
-    // Not ready → apply patch during create, return false.
     (deps.isSandboxReady as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
     expect(streamOpts.readyCheck()).toBe(false);
+    expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+
+    streamOpts.onPoll();
     expect(patch.maybeApplyDuringCreate).toHaveBeenCalledTimes(1);
   });
 

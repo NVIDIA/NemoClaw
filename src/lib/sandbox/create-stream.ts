@@ -14,6 +14,7 @@ export interface StreamSandboxCreateResult {
 
 export interface StreamSandboxCreateOptions {
   readyCheck?: (() => boolean) | null;
+  onPoll?: (() => void) | null;
   failureCheck?: (() => string | null | undefined) | null;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
@@ -415,6 +416,12 @@ export function streamSandboxCreate(
             detachChild();
             sawProgress = true;
             finish(0, { forcedReady: true });
+            return;
+          }
+
+          try {
+            options.onPoll?.();
+          } catch {
             return;
           }
 
