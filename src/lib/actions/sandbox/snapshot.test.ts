@@ -140,7 +140,12 @@ const runOpenshellMock = vi.fn((args: string[]) => {
   return { status: 0, output: "" };
 });
 const streamSandboxCreateMock = vi.fn(
-  async (_command: string, _env: NodeJS.ProcessEnv, _options?: Record<string, unknown>) => ({
+  async (
+    _command: string,
+    _args: readonly string[],
+    _env: NodeJS.ProcessEnv,
+    _options?: Record<string, unknown>,
+  ) => ({
     status: 0,
     output: "",
     forcedReady: false,
@@ -984,9 +989,9 @@ describe("runSandboxSnapshot", () => {
     getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-    const [createCommandValue, createEnv] = streamSandboxCreateMock.mock.calls[0] ?? [];
-    const createCommand = String(createCommandValue ?? "");
-    expect(createCommand).toContain(`'NEMOCLAW_OBSERVABILITY=${expectedValue}'`);
+    const [, createArgs = [], createEnv] = streamSandboxCreateMock.mock.calls[0] ?? [];
+    const createShellCommand = String(createArgs[1] ?? "");
+    expect(createShellCommand).toContain(`'NEMOCLAW_OBSERVABILITY=${expectedValue}'`);
     expect(createEnv?.NEMOCLAW_OBSERVABILITY).toBeUndefined();
     expect(registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({
