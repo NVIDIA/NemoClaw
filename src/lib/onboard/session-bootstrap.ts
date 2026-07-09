@@ -25,7 +25,7 @@ export interface OnboardSessionBootstrapDeps {
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
   updateSession(mutator: (session: Session) => Session | void): Session;
-  repairResumeMachineSnapshot(session: Session): Session;
+  applySessionRecovery(session: Session): void;
   setOnboardBrandingAgent(agentName: string | null): void;
   getResumeConfigConflicts(
     session: Session | null,
@@ -168,7 +168,7 @@ async function prepareResumeSession(
   }
 
   deps.updateSession((current: Session) => {
-    deps.repairResumeMachineSnapshot(current);
+    deps.applySessionRecovery(current);
     if (typeof input.requestedObservabilityEnabled === "boolean") {
       current.observabilityEnabled = input.requestedObservabilityEnabled;
       current.observabilityRequestedExplicitly = true;
