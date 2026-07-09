@@ -12,6 +12,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
+  formatInferenceRouteDriftForDisplay,
   getCompatibleAnthropicOpenAiSurfaceBaseUrl,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
@@ -624,5 +625,23 @@ describe("sanitizeRouteValueForDisplay", () => {
       "nvidia/nemotron-3-super-120b-a12b",
     );
     expect(sanitizeRouteValueForDisplay("nvidia-prod")).toBe("nvidia-prod");
+  });
+});
+
+describe("formatInferenceRouteDriftForDisplay", () => {
+  it("shares one sanitized warning contract across status and connect", () => {
+    expect(
+      formatInferenceRouteDriftForDisplay(
+        { provider: "openai\u001b[2J", model: "gpt-5.2\n" },
+        { provider: "nvidia", model: "nvidia/nemotron" },
+        "for sandbox 'alpha'\r",
+      ),
+    ).toEqual({
+      liveProvider: "openai[2J",
+      liveModel: "gpt-5.2",
+      recordedRoute: "nvidia/nvidia/nemotron",
+      warning:
+        "gateway inference route (openai[2J/gpt-5.2) differs from the recorded route for sandbox 'alpha' (nvidia/nvidia/nemotron).",
+    });
   });
 });

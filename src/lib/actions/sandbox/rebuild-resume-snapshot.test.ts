@@ -10,7 +10,7 @@ import * as agentDefs from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
-import * as resumeRepair from "../../onboard/resume-machine-repair";
+import * as sessionRecovery from "../../onboard/session-recovery";
 import * as sandboxList from "../../openshell-sandbox-list";
 import * as sandboxVersion from "../../sandbox/version";
 import type { Session } from "../../state/onboard-session";
@@ -180,7 +180,7 @@ describe("rebuild resume snapshot repair", () => {
           observed.preRepairGatewayStatus = reopened.steps.gateway.status;
           observed.preRepairStatus = reopened.status;
           observed.preRepairResumable = reopened.resumable;
-          resumeRepair.repairResumeMachineSnapshot(reopened, "2026-06-01T00:01:00.000Z");
+          sessionRecovery.applySessionRecovery(reopened, "2026-06-01T00:01:00.000Z");
           observed.repairedMachineState = reopened.machine.state;
           observed.sandboxEnvInsideOnboard = process.env.NEMOCLAW_SANDBOX_NAME ?? null;
           throw new Error("stop-after-resume-repair-probe");

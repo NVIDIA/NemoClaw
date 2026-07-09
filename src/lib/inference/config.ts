@@ -402,3 +402,27 @@ export function planInferenceRouteReconcile(
 export function sanitizeRouteValueForDisplay(value: string | null | undefined): string {
   return (value ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 }
+
+export interface InferenceRouteDriftDisplay {
+  liveProvider: string;
+  liveModel: string;
+  recordedRoute: string;
+  warning: string;
+}
+
+export function formatInferenceRouteDriftForDisplay(
+  live: GatewayInference,
+  recorded: RecordedInferenceRoute,
+  recordedRouteOwner: string,
+): InferenceRouteDriftDisplay {
+  const liveProvider = sanitizeRouteValueForDisplay(live.provider);
+  const liveModel = sanitizeRouteValueForDisplay(live.model);
+  const recordedRoute = `${sanitizeRouteValueForDisplay(recorded.provider)}/${sanitizeRouteValueForDisplay(recorded.model)}`;
+  const owner = sanitizeRouteValueForDisplay(recordedRouteOwner);
+  return {
+    liveProvider,
+    liveModel,
+    recordedRoute,
+    warning: `gateway inference route (${liveProvider}/${liveModel}) differs from the recorded route ${owner} (${recordedRoute}).`,
+  };
+}

@@ -129,6 +129,30 @@ export class OnboardRuntime {
     return session;
   }
 
+  /**
+   * Attempts observer dispatch for a durable recovery receipt.
+   *
+   * The receipt stays on the snapshot until the next machine transition, so a
+   * process restart before that transition retries the same deterministic ID.
+   * Observer delivery remains best-effort by design.
+   */
+  async emitPendingSessionRecovery(): Promise<Session> {
+    const session = this.ensureSession();
+    const receipt = session.machine.recoveryReceipt;
+    if (!receipt) return session;
+    this.emit("state.repair.completed", session, {
+      state: receipt.entry,
+      metadata: {
+        reason: receipt.reason,
+        entry: receipt.entry,
+        receiptId: receipt.id,
+        appliedAt: receipt.appliedAt,
+        revision: receipt.revision,
+      },
+    });
+    return session;
+  }
+
   async markStepStarted(
     stepName: string,
     options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,

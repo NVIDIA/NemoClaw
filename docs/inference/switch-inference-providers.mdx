@@ -49,6 +49,7 @@ An OpenClaw native-Anthropic route and a Hermes OpenAI-frontend route therefore 
 NemoClaw checks stopped sandboxes because they depend on that route when restarted.
 If a registered same-gateway sandbox lacks durable provider or model metadata, or a custom route lacks durable endpoint or API-family metadata, NemoClaw fails closed until you remove and re-onboard that sandbox with complete route metadata.
 When a route conflicts, onboarding, runtime switching, and connect-time repair exit non-zero before changing the gateway and name the affected sandboxes.
+If the live gateway route still ends up differing from a sandbox's recorded route, for example after a direct `openshell inference set`, `$$nemoclaw <name> status` prints a warning naming both routes and the supported command to realign or adopt the live route.
 Align the routes, remove the conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
 </Warning>
 
