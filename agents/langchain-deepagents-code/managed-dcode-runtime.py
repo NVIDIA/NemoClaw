@@ -54,11 +54,27 @@ _CREDENTIAL_CAMEL_NAME = re.compile(
 _CREDENTIAL_ENV_NAMES = {
     "LANGSMITH_RUNS_ENDPOINTS",
     "LANGCHAIN_RUNS_ENDPOINTS",
-    "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
     "OTEL_EXPORTER_OTLP_HEADERS",
     "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
 }
+# OTLP endpoint variables carry the collector URL, not a credential. The
+# documented `--observability` flow sets one (e.g.
+# http://host.openshell.internal:4318), so a clean bare http(s) URL is allowed;
+# a value with userinfo or a structured key-bearing blob is still refused. The
+# `_HEADERS` variants stay in _CREDENTIAL_ENV_NAMES because they carry auth
+# material. Mirrors dcode-wrapper.sh is_otlp_endpoint_name (#6466).
+_OTLP_ENDPOINT_ENV_NAMES = {
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+}
+# The only OTLP collector a managed sandbox can reach: the observability egress
+# preset opens exactly this host. Restricting to it (exact match) refuses every
+# other host, userinfo, query, fragment, percent-encoding, control character,
+# non-ASCII byte, and malformed host/port by construction, and keeps trivial
+# parity with the Bash wrapper's is_safe_otlp_endpoint_url (#6538 review).
+_OTLP_MANAGED_ENDPOINT_HOST = "host.openshell.internal"
+_OTLP_ENDPOINT_PORT = re.compile(r"[1-9][0-9]{0,4}")
+_OTLP_ENDPOINT_PATH = re.compile(r"/[A-Za-z0-9._/-]*")
 # Python's \s also includes control separators that ECMAScript excludes, so
 # spell out the canonical whitespace set for cross-runtime parity.
 _ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
@@ -232,6 +248,36 @@ def _is_managed_value(name: str, value: str) -> bool:
     return False
 
 
+def _is_safe_otlp_endpoint_url(value: str) -> bool:
+    """Accept ONLY http(s)://host.openshell.internal[:port][/path].
+
+    The managed sandbox's observability egress reaches only that host, so an
+    exact-host allowlist refuses every other host, userinfo, query, fragment,
+    percent-encoding, control character, non-ASCII byte, malformed host/port,
+    and oversized input by construction. Mirrors the Bash wrapper's
+    is_safe_otlp_endpoint_url byte-for-byte (#6538 review). The optional path may
+    contain dot segments; that is intentional and safe because the path reaches
+    only the exact managed collector host and cannot traverse to another origin.
+    """
+    if len(value) > 2048:
+        return False
+    for scheme in ("http://", "https://"):
+        if value.startswith(scheme):
+            rest = value[len(scheme) :]
+            break
+    else:
+        return False
+    authority, sep, path = rest.partition("/")
+    if sep and not _OTLP_ENDPOINT_PATH.fullmatch("/" + path):
+        return False
+    host, colon, port = authority.partition(":")
+    if host != _OTLP_MANAGED_ENDPOINT_HOST:
+        return False
+    if colon and not (_OTLP_ENDPOINT_PORT.fullmatch(port) and int(port) <= 65535):
+        return False
+    return True
+
+
 def _assert_safe_environment() -> None:
     for name, value in os.environ.items():
         if _OPENSHELL_ENV_PLACEHOLDER_PREFIX in value:
@@ -251,6 +297,15 @@ def _assert_safe_environment() -> None:
             )
         ) or (
             bool(value) and name.upper() in _CREDENTIAL_ENV_NAMES
+        ):
+            raise RuntimeError(
+                f"runtime environment variable {name} contains a credential; "
+                "use NemoClaw credential handling"
+            )
+        if (
+            name.upper() in _OTLP_ENDPOINT_ENV_NAMES
+            and value
+            and not _is_safe_otlp_endpoint_url(value)
         ):
             raise RuntimeError(
                 f"runtime environment variable {name} contains a credential; "
