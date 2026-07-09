@@ -55,6 +55,45 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.currentModel).toBe("gpt-5.2");
   });
 
+  it("reads the sandbox's non-default gateway before computing drift (#6315)", async () => {
+    liveGatewayInference("openai", "gpt-5.2");
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({
+        gatewayPort: 9090,
+        provider: "nvidia",
+        model: "nvidia/nemotron",
+      }),
+    );
+
+    expect(capture).toHaveBeenCalledWith(["inference", "get", "-g", "nemoclaw-9090"]);
+    expect(snapshot.routeDrift).toEqual({
+      live: { provider: "openai", model: "gpt-5.2" },
+      recorded: { provider: "nvidia", model: "nvidia/nemotron" },
+    });
+    expect(snapshot.currentProvider).toBe("openai");
+    expect(snapshot.currentModel).toBe("gpt-5.2");
+  });
+
+  it("does not fall back to the default gateway for an invalid persisted binding (#6315)", async () => {
+    liveGatewayInference("openai", "gpt-5.2");
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({
+        gatewayPort: 0,
+        provider: "nvidia",
+        model: "nvidia/nemotron",
+      }),
+    );
+
+    expect(capture).not.toHaveBeenCalled();
+    expect(snapshot.routeDrift).toBeNull();
+    expect(snapshot.currentProvider).toBe("nvidia");
+    expect(snapshot.currentModel).toBe("nvidia/nemotron");
+  });
+
   it("reports no drift when the live route matches the recorded route (#6315)", async () => {
     liveGatewayInference("nvidia", "nvidia/nemotron");
 

@@ -23,9 +23,11 @@ import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { redact } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
+import { buildGatewayInferenceGetArgs } from "./connect-inference-gateway";
 import { classifyInferenceRouteFailureLabel } from "./connect-inference-route-probe";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
@@ -269,11 +271,13 @@ export async function collectSandboxStatusSnapshot(
   let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
   if (lookup.state === "present") {
     try {
-      liveResult = await (opts.deps?.captureOpenshellForStatusImpl ?? captureOpenshellForStatus)([
-        "inference",
-        "get",
-      ]);
+      const gatewayName = resolveSandboxGatewayName(sb);
+      liveResult = await (opts.deps?.captureOpenshellForStatusImpl ?? captureOpenshellForStatus)(
+        buildGatewayInferenceGetArgs(gatewayName),
+      );
     } catch {
+      // Invalid persisted gateway bindings and failed reads stay fail-closed:
+      // never substitute the selected/default gateway's inference route.
       liveResult = null;
     }
   }
