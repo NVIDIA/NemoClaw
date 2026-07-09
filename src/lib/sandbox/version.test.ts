@@ -84,8 +84,7 @@ function resetTestRegistry(): void {
 }
 
 afterAll(() => {
-  if (ORIGINAL_HOME === undefined) delete process.env.HOME;
-  else process.env.HOME = ORIGINAL_HOME;
+  process.env.HOME = ORIGINAL_HOME;
   rmSync(TEST_HOME, { recursive: true, force: true });
 });
 
