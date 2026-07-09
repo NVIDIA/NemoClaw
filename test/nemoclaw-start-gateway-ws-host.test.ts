@@ -188,12 +188,11 @@ describe("gateway websocket url host derivation", () => {
       expect(envFile).not.toContain("export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=");
 
       const sourced = spawnSync(
-        "bash",
+        "sh",
         [
-          "--noprofile",
-          "--norc",
           "-c",
           [
+            `. ${JSON.stringify(envFilePath)}`,
             `. ${JSON.stringify(envFilePath)}`,
             'printf "PUBLIC_URL=%s\\n" "${OPENCLAW_GATEWAY_URL-unset}"',
             'printf "PRIVATE_URL=%s\\n" "${NEMOCLAW_OPENCLAW_GATEWAY_URL-unset}"',
@@ -225,10 +224,8 @@ describe("gateway websocket url host derivation", () => {
       expect(sourced.stdout).toContain("PORT=18790");
 
       const explicitOverride = spawnSync(
-        "bash",
+        "sh",
         [
-          "--noprofile",
-          "--norc",
           "-c",
           `. ${JSON.stringify(envFilePath)}; printf "URL=%s INSECURE=%s\\n" "$OPENCLAW_GATEWAY_URL" "$OPENCLAW_ALLOW_INSECURE_PRIVATE_WS"`,
         ],
@@ -268,17 +265,14 @@ describe("gateway websocket url host derivation", () => {
       );
 
       const probe = spawnSync(
-        "bash",
+        "sh",
         [
-          "--noprofile",
-          "--norc",
           "-c",
           [
             "_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL=ws://attacker.invalid:18790",
-            "builtin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL",
+            "command readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL",
             `. ${JSON.stringify(envFilePath)} && echo SOURCE_STATUS=unexpected || echo SOURCE_STATUS=blocked`,
-            "if declare -F openclaw >/dev/null; then echo WHATSAPP_WRAPPER=installed; else echo WHATSAPP_WRAPPER=disabled; fi",
-            "if declare -F _nemoclaw_whatsapp_postpair_start >/dev/null; then echo TOKEN_HELPER=installed; else echo TOKEN_HELPER=disabled; fi",
+            "if command -v _nemoclaw_whatsapp_postpair_start >/dev/null; then echo TOKEN_HELPER=installed; else echo TOKEN_HELPER=disabled; fi",
             "openclaw channels login --channel whatsapp",
             'openclaw gateway call channels.start --params \'{"channel":"whatsapp"}\' --json',
           ].join("\n"),
@@ -296,7 +290,6 @@ describe("gateway websocket url host derivation", () => {
       );
       expect(probe.status, probe.stderr).toBe(0);
       expect(probe.stdout).toContain("SOURCE_STATUS=blocked");
-      expect(probe.stdout).toContain("WHATSAPP_WRAPPER=disabled");
       expect(probe.stdout).toContain("TOKEN_HELPER=disabled");
       expect(probe.stderr).toContain("gateway-token helpers were disabled");
 
@@ -306,6 +299,45 @@ describe("gateway websocket url host derivation", () => {
       expect(calls[1]).toContain("ARGS=gateway call channels.start");
       expect(calls[1]).toContain("TOKEN=unset");
       expect(calls.every((line) => !line.includes("ambient-gateway-token"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("strips the gateway token from caller-selected WhatsApp URLs in POSIX sh (#6413)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-whatsapp-sh-"));
+    try {
+      const envFilePath = writeRuntimeShellEnv(tmpDir);
+      const fakeBin = path.join(tmpDir, "bin");
+      const callLog = path.join(tmpDir, "openclaw-calls.log");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        [
+          "#!/bin/sh",
+          `printf 'URL=%s TOKEN=%s\\n' "\${OPENCLAW_GATEWAY_URL:-unset}" "\${OPENCLAW_GATEWAY_TOKEN:-unset}" > ${JSON.stringify(callLog)}`,
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const probe = spawnSync(
+        "sh",
+        ["-c", `. ${JSON.stringify(envFilePath)}; openclaw channels login --channel whatsapp`],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+            OPENCLAW_GATEWAY_URL: "wss://caller-selected.example.test:443",
+          },
+        },
+      );
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(fs.readFileSync(callLog, "utf-8")).toBe(
+        "URL=wss://caller-selected.example.test:443 TOKEN=unset\n",
+      );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

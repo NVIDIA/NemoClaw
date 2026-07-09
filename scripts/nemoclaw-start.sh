@@ -3270,17 +3270,19 @@ PROXYEOF
       # decide where a gateway token may be sent. Assign and verify the anchor
       # in one fail-closed gate while keeping repeated sourcing idempotent. If
       # the caller predeclared a conflicting readonly value, clear any ambient
-      # token and stop before token-bearing helpers are installed.
+      # token and stop before token-bearing helpers are installed. Use
+      # `command` instead of Bash-only `builtin`: login/profile hooks also
+      # source this generated file through POSIX sh.
       printf "if { [ \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" != '%s' ] &&\\n" "$_escaped_gateway_url"
-      printf "  ! builtin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL='%s' 2>/dev/null; } ||\\n" "$_escaped_gateway_url"
+      printf "  ! command readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL='%s' 2>/dev/null; } ||\\n" "$_escaped_gateway_url"
       printf "  [ \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" != '%s' ]; then\\n" "$_escaped_gateway_url"
-      printf "  if ! builtin unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null; then\\n"
+      printf "  if ! command unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null; then\\n"
       printf "    echo 'Error: NemoClaw rejected a conflicting gateway trust anchor, and the ambient gateway token could not be cleared.' >&2\\n"
       printf "    exit 1\\n"
       printf "  fi\\n"
       printf "  echo 'Error: NemoClaw rejected a conflicting gateway trust anchor; gateway-token helpers were disabled.' >&2\\n"
       printf "  return 1 2>/dev/null || exit 1\\n"
-      printf "fi\\nbuiltin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL\\n"
+      printf "fi\\ncommand readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL\\n"
       printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
       cat <<'GATEWAYURLENVEOF'
 # Equality identifies NemoClaw's inherited private-interface value. A different
@@ -3650,7 +3652,7 @@ openclaw() {
               # A non-trusted (caller-selected) target must not receive the
               # shared gateway token; strip it so the login there falls back to
               # device auth, matching the #6291 WhatsApp-login boundary.
-              [ "$_nemoclaw_whatsapp_url_is_trusted" = "1" ] || builtin unset OPENCLAW_GATEWAY_TOKEN
+              [ "$_nemoclaw_whatsapp_url_is_trusted" = "1" ] || command unset OPENCLAW_GATEWAY_TOKEN
               if [ -n "$_nemoclaw_connect_node_options" ]; then
                 OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
                   OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
