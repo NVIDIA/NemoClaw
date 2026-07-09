@@ -86,19 +86,52 @@ function isStructuredProxyPolicyDenialDetail(detail: string): boolean {
 //   CONNECT or forward-HTTP 403 JSON while the child tool receives opaque text.
 // - Source boundary/fix constraint: the payload is emitted by the external
 //   OpenShell proxy, so NemoClaw can only translate it after exec returns.
-// - Regression coverage: prefixed, unprefixed, malformed, and near-miss JSON
-//   payloads live in exec-policy-hint-detection.test.ts.
+//   curl may interleave that response body with its own stderr text, so extract
+//   one complete JSON object without trusting surrounding output.
+// - Regression coverage: prefixed, suffixed, unprefixed, malformed, and
+//   near-miss JSON payloads live in exec-policy-hint-detection.test.ts.
 // - Removal condition: delete this fallback when OpenShell provides a typed
 //   exec-denial result. Until then, require both the exact error code and the
 //   complete safely bounded CONNECT or forward-HTTP detail so unrelated JSON
 //   cannot match. The forward forms mirror OpenShell v0.0.72's endpoint, path,
 //   and L7 policy denial messages.
+function firstJsonObject(line: string): string | null {
+  const start = line.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let escaped = false;
+  let inString = false;
+  for (let index = start; index < line.length; index += 1) {
+    const character = line[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+    } else if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return line.slice(start, index + 1);
+    }
+  }
+  return null;
+}
+
 function isStructuredJsonPolicyDenial(line: string): boolean {
   if (line.length > MAX_STRUCTURED_PROXY_LINE_LENGTH) return false;
-  const jsonStart = line.indexOf("{");
-  if (jsonStart === -1) return false;
+  const jsonObject = firstJsonObject(line);
+  if (jsonObject === null) return false;
   try {
-    const parsed: unknown = JSON.parse(line.slice(jsonStart));
+    const parsed: unknown = JSON.parse(jsonObject);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
     const payload = parsed as Record<string, unknown>;
     const keys = Object.keys(payload);

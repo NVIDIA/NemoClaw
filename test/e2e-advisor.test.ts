@@ -11,6 +11,7 @@ import YAML from "yaml";
 import { readFreeStandingJobsInventory } from "../tools/e2e/workflow-boundary.mts";
 import {
   applyDeterministicRecommendations,
+  buildPromptTurn,
   buildSystemPrompt,
   requiresCloudOnboardE2e,
 } from "../tools/e2e-advisor/analyze.mts";
@@ -125,6 +126,62 @@ describe("E2E recommendation advisor prompt", () => {
     expect(once.noE2eReason).toBeNull();
     expect(once.confidence).toBe("medium");
     expect(twice.requiredTests).toHaveLength(1);
+  });
+
+  it("adds risk-plan jobs and domains exactly once when the model misses them", () => {
+    const baseResult = {
+      version: 1 as const,
+      baseRef: "main",
+      headRef: "feature",
+      changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"],
+      classifiedDomains: [],
+      requiredTests: [],
+      optionalTests: [
+        {
+          id: "model-alias",
+          reason: "model marked this optional",
+          workflow: "e2e.yaml",
+          job: "upgrade-stale-sandbox",
+        },
+      ],
+      newE2eRecommendations: [],
+      noE2eReason: "No E2E needed",
+      confidence: "low" as const,
+    };
+
+    const once = applyDeterministicRecommendations(baseResult);
+    const twice = applyDeterministicRecommendations(once);
+
+    expect(once.requiredTests.map((test) => test.id)).toEqual([
+      "state-backup-restore",
+      "upgrade-stale-sandbox",
+    ]);
+    expect(once.optionalTests).toEqual([]);
+    expect(once.classifiedDomains.map((domain) => domain.domain)).toContain("upgrade-rebuild");
+    expect(once.noE2eReason).toBeNull();
+    expect(once.confidence).toBe("medium");
+    expect(twice.requiredTests).toHaveLength(2);
+    expect(twice.classifiedDomains).toHaveLength(1);
+  });
+
+  it("injects the deterministic risk plan as trusted prompt context", () => {
+    const turn = buildPromptTurn({
+      baseRef: "origin/main",
+      headRef: "HEAD",
+      changedFiles: ["src/lib/messaging/applier/agent-config.ts"],
+      diff: "+change",
+      schema: { type: "object" },
+    });
+
+    expect(turn.syntheticToolResults?.map((result) => result.toolName)).toEqual([
+      "e2e_advisor_metadata",
+      "e2e_advisor_changed_files",
+      "e2e_advisor_risk_plan",
+      "e2e_advisor_git_diff",
+      "e2e_advisor_response_schema",
+    ]);
+    expect(turn.syntheticToolResults?.[2]?.content).toContain("messaging-lifecycle");
+    expect(turn.prompt).toContain("deterministic risk plan");
   });
 
   it("requires resume and repair E2E for onboarding machine compatibility changes", () => {

@@ -220,6 +220,39 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   requireStepWith(errors, dispatchCheckout, "path", "pr-workdir");
   requireStepWith(errors, dispatchCheckout, "persist-credentials", false);
 
+  const targetCheckout = requireStep(errors, steps, "Prepare target PR checkout");
+  requireRunContains(errors, targetCheckout, '[[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/');
+  requireRunContains(errors, targetCheckout, '[[ ! "$TARGET_PR" =~ ^[0-9]+$ ]]');
+  const targetBaseGuards = [
+    '-z "$TARGET_BASE"',
+    '"$TARGET_BASE" == -*',
+    '"$TARGET_BASE" == /*',
+    '"$TARGET_BASE" == *..*',
+    '"$TARGET_BASE" == *:*',
+    '"$TARGET_BASE" =~ [[:space:]]',
+    '! "$TARGET_BASE" =~ ^[A-Za-z0-9._/-]+$',
+  ];
+  for (const guard of targetBaseGuards) {
+    requireRunContains(errors, targetCheckout, guard);
+    requireRunOrders(
+      errors,
+      targetCheckout,
+      guard,
+      'git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"',
+    );
+  }
+  requireRunOrders(
+    errors,
+    targetCheckout,
+    '[[ ! "$TARGET_REPO" =~',
+    'git -C "$TARGET_DIR" remote add target',
+  );
+  requireRunOrders(
+    errors,
+    targetCheckout,
+    '[[ ! "$TARGET_PR" =~',
+    'git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head',
+  );
   const install = requireStep(errors, steps, "Install Pi SDK");
   requireRunContains(errors, install, "--ignore-scripts");
   requireRunContains(errors, install, "$ADVISOR_DIR/node_modules");

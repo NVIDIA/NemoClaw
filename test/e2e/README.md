@@ -10,6 +10,9 @@ before those targets run; local runners must provide it themselves.
 
 - `.github/workflows/e2e.yaml` is the scheduled and manually
   dispatchable live target workflow.
+- `.github/workflows/post-merge-e2e-risk-gate-shadow.yaml` is the trusted post-merge
+  controller that selects and dispatches a bounded exact-commit subset after
+  pushes to `main`.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
 - Platform workflows such as macOS, WSL, Ollama proxy, sandbox image, and
@@ -53,6 +56,42 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
+## Post-merge risk shadow
+
+Every push to the `main` branch of `NVIDIA/NemoClaw` starts a model-independent
+shadow controller. It builds the deterministic risk plan from the exact
+`github.event.before` and `github.event.after` range after confirming that its checkout
+matches the pushed commit. If the plan matches runtime regression families,
+the controller dispatches at most three `automaticJobs` through `e2e.yaml`.
+The workflow definition stays on `main`, while every E2E checkout uses the
+merged commit supplied through `checkout_sha`. GitHub returns the
+dispatched workflow's run ID directly, and the controller uses that ID as the
+sole child-run selector for waiting, evidence download, and completion.
+
+Before E2E preparation or selected jobs can use repository secrets,
+`e2e.yaml` verifies that the requested SHA equals the workflow's own current
+`main` commit, confirms that checked-out `HEAD` matches it, proves reachability,
+and accepts only selective job dispatch with valid plan and correlation
+metadata. If `main` advances before an older controller dispatches, that child
+fails closed and the controller records failure instead of running historical
+code with current secrets. The shadow-only Vitest
+reporter then writes a `risk-signal.json` for each selected job and matrix
+shard. Each signal binds the observed checkout SHA, expected SHA, plan hash,
+correlation ID, and pass, failure, skip, pending, and unhandled-error counts.
+The controller retains `post-merge-risk-plan-<sha>` for 14 days, while each
+signal travels in the selected job's existing E2E artifact.
+
+The controller reports `E2E / Post-merge Risk Gate (shadow)` on the merged
+commit. It reports success only when every expected shard produces a complete,
+unskipped pass and the three-job cap did not omit required jobs. Selected E2E
+workflow or test failures for the merged commit report failure. Missing, partial, skipped,
+ambiguous, or manual-expansion evidence reports neutral. A plan with no matched
+runtime risk reports success without dispatching live E2E. This shadow check runs
+after merge and is not a required PR check. It disables PR comments and the
+scheduled/manual scorecard, including scorecard Slack reporting.
+Controller or evidence-verification errors close an already-created check as
+neutral so incomplete evidence cannot appear successful.
+
 ## Onboard performance budget
 
 The scheduled/manual scorecard evaluates the trusted `cloud-onboard` timing
@@ -68,10 +107,12 @@ phase names. Cold image pulls, first-time model downloads, provider outages,
 and runner or network incidents can still affect the signal, so maintainers
 should inspect the timing table before acting on a warning.
 
-For PRs, E2E Advisor deterministically recommends the `cloud-onboard` target
-when changes affect onboard behavior, trace timing, scorecard analysis, budget
-configuration, or the unified E2E workflow. The scorecard remains the source
-of truth for advisory warm-system trend evaluation.
+For PRs, E2E Advisor builds a deterministic risk plan from the PR head commit
+and changed-file set. It recommends required jobs for known regression families
+and still requires `cloud-onboard` when changes affect onboard behavior, trace
+timing, scorecard analysis, budget configuration, or the unified E2E workflow.
+Model advice is additive and cannot downgrade the deterministic floor. The
+scorecard remains the source of truth for advisory warm-system trend evaluation.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span
