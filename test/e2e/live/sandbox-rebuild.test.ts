@@ -318,6 +318,17 @@ test(
     });
     const firstCompleted = readCompletedRebuildEvidence(SANDBOX_NAME, home);
     await artifacts.writeJson("phase-6-first-completed-tombstone.json", firstCompleted);
+    const firstReplacementContainers = await sandboxContainerIds(
+      host,
+      "phase-6-replacement-container-identity",
+    );
+    expect(firstReplacementContainers).toHaveLength(1);
+    await artifacts.writeJson("phase-6-replacement-identity.json", {
+      containerId: firstReplacementContainers[0],
+      gatewayName: firstCompleted.target.gatewayName,
+      imageFingerprint: firstCompleted.target.imageFingerprint,
+      transactionId: firstCompleted.transactionId,
+    });
 
     const updatedVersion = stateValidation.expectRegistryAgentVersionUpdated(
       SANDBOX_NAME,
