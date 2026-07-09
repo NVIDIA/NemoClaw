@@ -118,6 +118,14 @@ fi
 
 _PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
 _NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
+# Deep Agents Code 0.1.34 intentionally ignores environment proxies in
+# fetch_url so it can pin direct DNS results against rebinding. OpenShell's
+# sandbox instead requires all ordinary egress, including DNS resolution for a
+# destination, to stay behind its policy proxy. This explicit variable opts the
+# managed package patch into that trusted proxy boundary without teaching the
+# upstream tool to trust arbitrary ambient HTTP_PROXY values. It is derived
+# only from the root-owned image files validated above.
+export DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL="$_PROXY_URL"
 export HTTP_PROXY="$_PROXY_URL"
 export HTTPS_PROXY="$_PROXY_URL"
 export NO_PROXY="$_NO_PROXY_VAL"
@@ -154,6 +162,9 @@ prepare_runtime_env() {
     printf '%s\n' 'export LANGCHAIN_TRACING_V2=false'
     printf '%s\n' 'export DEEPAGENTS_CODE_OFFLINE=1'
     printf '%s\n' 'export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system'
+    # Intentionally omit the trusted proxy when unset: its absence signals
+    # unmanaged mode, where the upstream fetch transport remains authoritative.
+    write_export_if_set DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL
     # shellcheck disable=SC2016
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'
     # shellcheck disable=SC2016

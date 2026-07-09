@@ -2336,7 +2336,8 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 
 | Flag | Description |
 |------|-------------|
-| `--yes`, `-y`, `--force` | Skip the confirmation prompt |
+| `--yes`, `-y` | Skip the confirmation prompt. |
+| `--force` | Skip the confirmation prompt and, after a total backup failure, continue recreation without restoring prior sandbox state. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
@@ -2345,9 +2346,11 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox.
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
-The sandbox must be running for the backup step to succeed.
+The sandbox normally must be reachable for the backup step to succeed.
 If an archive command reports partial output while still producing usable data, `rebuild` keeps the captured backup entries and reports only the manifest-defined paths that could not be archived.
-If any required state path still cannot be backed up, `rebuild` exits before destroying the original sandbox.
+If backup fails before producing any usable entry, `rebuild` exits before destroying the original sandbox unless you explicitly pass `--force`.
+With `--force`, NemoClaw continues from the recorded registry metadata, recreates the sandbox without restoring the failed backup, and warns that prior sandbox state was not preserved.
+Use this recovery path only when losing uncommitted or otherwise unsnapshotted sandbox state is acceptable.
 Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy transaction.
 For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live.
 For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed.
@@ -2630,14 +2633,20 @@ $$nemoclaw tunnel start
 
 Stop host auxiliary services that `$$nemoclaw tunnel start` started (for example cloudflared).
 
-Use `$$nemoclaw <name> channels stop <channel>` when you only want to pause one bridge without stopping the gateway.
+Use `$$nemoclaw <name> channels stop <channel>` when you only want to pause one messaging bridge.
 
 ```bash
 $$nemoclaw tunnel stop
 ```
 
+The command asks NemoClaw to stop an in-sandbox gateway only when NemoClaw directly owns that process.
+Supervisor-owned agent runtime processes remain managed inside their sandbox.
+The command leaves agent-owned host forwards and the managed OpenShell gateway port available.
+
 `$$nemoclaw stop` remains as a deprecated legacy full stop.
-It stops the tunnel services and also releases the managed host gateway port.
+In addition to stopping tunnel services, it attempts to stop the selected agent's host forwards when the sandbox uses a manifest-resolved non-OpenClaw agent.
+It also attempts to safely release an unshared OpenShell gateway port whose ownership NemoClaw can verify.
+Shared gateways remain running, and ambiguous ownership fails closed without releasing the port.
 Use `$$nemoclaw tunnel stop` when the shared gateway should remain available.
 
 ### `$$nemoclaw tunnel status`
@@ -2665,8 +2674,11 @@ Deprecated legacy full stop.
 Use `$$nemoclaw tunnel stop` when the shared gateway should remain available.
 </Warning>
 
-This command stops tunnel services and also releases the managed host gateway port.
-It is retained for compatibility with full-stop automation; unlike `$$nemoclaw tunnel stop`, it intentionally tears down that host gateway.
+This command stops tunnel services and, for a manifest-resolved non-OpenClaw agent, attempts to stop the selected agent's host forwards.
+It attempts to release the managed OpenShell gateway port only when the gateway is unshared and ownership is safely resolved; otherwise it preserves the gateway.
+For manifest-resolved non-OpenClaw agents, it also requests cleanup of host-forwarding resources that `$$nemoclaw tunnel stop` leaves running.
+The command is retained for compatibility with full-stop automation.
+Supervisor-owned agent runtime processes remain managed inside their sandbox.
 
 </AgentOnly>
 
