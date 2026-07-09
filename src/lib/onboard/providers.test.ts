@@ -136,6 +136,26 @@ describe("onboard provider helpers", () => {
     ).toContain("OPENAI_BASE_URL=https://openrouter.ai/api/v1");
   });
 
+  it("registers MiniMax as a first-class OpenAI-compatible provider", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.minimax;
+
+    expect(provider).toMatchObject({
+      providerName: "minimax-api",
+      providerType: "openai",
+      credentialEnv: "MINIMAX_API_KEY",
+    });
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("minimax")).toBe(true);
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        "https://api.minimax.io/v1",
+      ),
+    ).toContain("OPENAI_BASE_URL=https://api.minimax.io/v1");
+  });
+
   it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {
     const provider = REMOTE_PROVIDER_CONFIG.anthropicCompatible;
 

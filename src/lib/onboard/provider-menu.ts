@@ -45,6 +45,7 @@ const BASE_REMOTE_PROVIDER_OPTIONS: readonly ProviderMenuChoice[] = [
   { key: "build", label: "NVIDIA Endpoints" },
   { key: "openrouter", label: "OpenRouter" },
   { key: "openai", label: "OpenAI" },
+  { key: "minimax", label: "MiniMax" },
   { key: "custom", label: "Other OpenAI-compatible endpoint" },
   { key: "anthropic", label: "Anthropic" },
   { key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" },

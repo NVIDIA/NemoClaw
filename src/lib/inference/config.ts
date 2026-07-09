@@ -159,6 +159,13 @@ export function getProviderSelectionConfig(
         credentialEnv: "OPENAI_API_KEY",
         providerLabel: "OpenAI",
       };
+    case "minimax-api":
+      return {
+        ...base,
+        model: model || "MiniMax-M3",
+        credentialEnv: "MINIMAX_API_KEY",
+        providerLabel: "MiniMax",
+      };
     case OPENROUTER_PROVIDER_NAME:
       return {
         ...base,

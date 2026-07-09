@@ -210,6 +210,16 @@ describe("inference selection config", () => {
       provider: "openrouter-api",
       providerLabel: "OpenRouter",
     });
+    expect(getProviderSelectionConfig("minimax-api", "MiniMax-M3")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "MiniMax-M3",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "MINIMAX_API_KEY",
+      provider: "minimax-api",
+      providerLabel: "MiniMax",
+    });
     expect(getProviderSelectionConfig("anthropic-prod", "claude-sonnet-4-6")).toEqual(
       expect.objectContaining({ model: "claude-sonnet-4-6", providerLabel: "Anthropic" }),
     );
@@ -263,6 +273,7 @@ describe("inference selection config", () => {
       "nvidia-prod",
       "nvidia-nim",
       "openai-api",
+      "minimax-api",
       "openrouter-api",
       "anthropic-prod",
       "compatible-anthropic-endpoint",
@@ -298,6 +309,7 @@ describe("inference selection config", () => {
 
   it("falls back to provider defaults when model is omitted", () => {
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
+    expect(getProviderSelectionConfig("minimax-api")?.model).toBe("MiniMax-M3");
     expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");

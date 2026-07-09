@@ -25,6 +25,7 @@ const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1";
+const MINIMAX_ENDPOINT_URL = "https://api.minimax.io/v1";
 const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
 const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
@@ -50,6 +51,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "build",
   "openrouter",
   "openai",
+  "minimax",
   "anthropic",
   "anthropicCompatible",
   "gemini",
@@ -65,7 +67,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, openai, minimax, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -106,6 +108,17 @@ const REMOTE_PROVIDER_CONFIG = {
     helpUrl: "https://platform.openai.com/api-keys",
     modelMode: "curated",
     defaultModel: "gpt-5.4",
+    skipVerify: true,
+  },
+  minimax: {
+    label: "MiniMax",
+    providerName: "minimax-api",
+    providerType: "openai",
+    credentialEnv: "MINIMAX_API_KEY",
+    endpointUrl: MINIMAX_ENDPOINT_URL,
+    helpUrl: "https://platform.minimax.io/docs/api-reference/api-overview",
+    modelMode: "curated",
+    defaultModel: "MiniMax-M3",
     skipVerify: true,
   },
   anthropic: {
