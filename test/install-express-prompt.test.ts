@@ -146,6 +146,19 @@ sys.exit(exit_code)
     );
   });
 
+  it("preserves an explicit NEMOCLAW_SANDBOX_NAME over the DGX Spark default (#6525)", () => {
+    const result = runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
+      NEMOCLAW_SANDBOX_NAME: "custom-spark",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(/Sandbox name: custom-spark/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=custom-spark/,
+    );
+  });
+
   it("detects Windows WSL as an express install platform", () => {
     const result = spawnSync(
       "bash",
