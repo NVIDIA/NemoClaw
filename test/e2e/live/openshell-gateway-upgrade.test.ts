@@ -17,6 +17,7 @@
 
 import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -35,6 +36,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   oldGatewayUpgradeInstallerArgs,
   upgradeGatewayCleanupScript,
+  validateLegacyGatewayUpgradeFixture,
 } from "./openshell-gateway-upgrade-helpers.ts";
 
 const INSTALL_OPENSHELL = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
@@ -47,12 +49,24 @@ const STATE_DIR = path.join(
 );
 const PID_FILE = path.join(STATE_DIR, "openshell-gateway.pid");
 const OLD_NEMOCLAW_REF = process.env.NEMOCLAW_OLD_NEMOCLAW_REF ?? "v0.0.36";
+const OLD_NEMOCLAW_COMMIT =
+  process.env.NEMOCLAW_OLD_NEMOCLAW_COMMIT ?? "3351fbdd4eb7d9b80ec471545083956327da2b10";
+const OLD_INSTALLER_SHA256 =
+  process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ??
+  "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f";
 const OLD_OPENSHELL_VERSION = process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? "0.0.36";
 const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.72";
 const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
 const OLD_OPENCLAW_VERSION = process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? "2026.4.24";
+const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgradeFixture({
+  nemoclawRef: OLD_NEMOCLAW_REF,
+  nemoclawCommit: OLD_NEMOCLAW_COMMIT,
+  installerSha256: OLD_INSTALLER_SHA256,
+  openclawVersion: OLD_OPENCLAW_VERSION,
+  sandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
+});
 const SURVIVOR_SANDBOX =
   process.env.NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME ??
   [
@@ -115,6 +129,15 @@ function escapeRegExpLiteral(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
 
+function expectFullGitSha(result: ShellProbeResult, label: string): string {
+  expectExitZero(result, label);
+  const sha = result.stdout.trim();
+  expect(sha, `${label} must produce a full git commit SHA:\n${resultText(result)}`).toMatch(
+    /^[0-9a-f]{40}$/,
+  );
+  return sha;
+}
+
 async function bash(
   host: HostCliClient,
   script: string,
@@ -135,6 +158,10 @@ async function bash(
   });
 }
 
+// The frozen release installers are the source of truth, but their embedded
+// Dockerfiles predate the fixture pins needed for a deterministic upgrade test.
+// Keep this adapter scoped to the v0.0.36/v0.0.55 lanes and retire it with
+// those historical lanes; changing the tagged release payloads is not viable.
 function patchOldInstallerFixture(installer: string): void {
   const needle = '  legacy_script="${source_root}/install.sh"\n';
   const hook =
@@ -154,7 +181,6 @@ import sys
 path = Path(sys.argv[1])
 version = sys.argv[2]
 text = path.read_text(encoding="utf-8")
-marker = "RUN set -eu; \\\n    MIN_VER=$(grep -m 1 'min_openclaw_version'"
 injection = (
     "# E2E old-upgrade fixture: force the historical OpenClaw before the old Dockerfile's version gate.\n"
     "RUN rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw \\\n"
@@ -162,9 +188,22 @@ injection = (
     "    && openclaw --version\n\n"
 )
 if injection not in text:
-    if marker not in text:
-        raise SystemExit(f"{path}: old OpenClaw version gate not found")
-    text = text.replace(marker, injection + marker, 1)
+    arg_markers = [
+        line for line in text.splitlines(keepends=True)
+        if line.startswith("ARG OPENCLAW_VERSION=")
+    ]
+    if len(arg_markers) == 1:
+        marker = arg_markers[0]
+        text = text.replace(marker, marker + "\n" + injection, 1)
+    elif len(arg_markers) > 1:
+        raise SystemExit(
+            f"{path}: found {len(arg_markers)} OpenClaw version ARGs; expected exactly one"
+        )
+    else:
+        marker = "RUN set -eu; \\\n    MIN_VER=$(grep -m 1 'min_openclaw_version'"
+        if marker not in text:
+            raise SystemExit(f"{path}: old OpenClaw version gate not found")
+        text = text.replace(marker, injection + marker, 1)
     path.write_text(text, encoding="utf-8")
 print(f"INFO: Forced OpenClaw {version} in old upgrade fixture Dockerfile", flush=True)
 NEMOCLAW_OLD_DOCKERFILE_PIN_PY
@@ -192,15 +231,17 @@ NEMOCLAW_OLD_PAYLOAD_PIN_PY
 
 function createOldDockerWrapper(artifacts: ArtifactSink): string {
   const wrapperDir = artifacts.pathFor("old-docker-wrapper");
+  const logFile = artifacts.pathFor("old-docker-wrapper.log");
+  const realDocker = process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker";
   fs.mkdirSync(wrapperDir, { recursive: true, mode: 0o700 });
   writeExecutable(
     path.join(wrapperDir, "docker"),
     `#!/usr/bin/env bash
 set -euo pipefail
-real_docker="\${NEMOCLAW_REAL_DOCKER:-/usr/bin/docker}"
-base_ref="\${NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:?}"
-old_openclaw="\${NEMOCLAW_OLD_OPENCLAW_VERSION:?}"
-log_file="\${NEMOCLAW_OLD_DOCKER_WRAPPER_LOG:?}"
+real_docker=${shellQuote(realDocker)}
+base_ref=${shellQuote(OLD_SANDBOX_BASE_IMAGE_REF)}
+old_openclaw=${shellQuote(OLD_OPENCLAW_VERSION)}
+log_file=${shellQuote(logFile)}
 base_tag="ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
 if [ "\${1:-}" = "pull" ]; then
   for arg in "$@"; do
@@ -364,24 +405,32 @@ async function installOldNemoclawAndClaw(
 
   const download = await bash(
     host,
-    `curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/${shellQuote(OLD_NEMOCLAW_REF)}/install.sh -o ${shellQuote(oldInstaller)}
-chmod 755 ${shellQuote(oldInstaller)}`,
+    `curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/${shellQuote(OLD_NEMOCLAW_COMMIT)}/install.sh -o ${shellQuote(oldInstaller)}`,
     { artifactName: "download-old-installer", timeoutMs: 90_000 },
   );
   expectExitZero(download, `download old ${OLD_NEMOCLAW_REF} installer`);
+  const downloadedInstallerSha256 = createHash("sha256")
+    .update(fs.readFileSync(oldInstaller))
+    .digest("hex");
+  expect(
+    downloadedInstallerSha256,
+    `downloaded ${OLD_NEMOCLAW_REF} installer must match its pinned SHA-256`,
+  ).toBe(OLD_INSTALLER_SHA256);
+  fs.chmodSync(oldInstaller, 0o755);
   patchOldInstallerFixture(oldInstaller);
 
   const installEnv = liveEnv({
     PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
     COMPATIBLE_API_KEY: "dummy",
     NEMOCLAW_REAL_DOCKER: process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker",
+    NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
     NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
     NEMOCLAW_OLD_OPENCLAW_VERSION: OLD_OPENCLAW_VERSION,
     NEMOCLAW_OLD_DOCKER_WRAPPER_LOG: oldDockerLog,
     NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
     NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
-    NEMOCLAW_INSTALL_REF: OLD_NEMOCLAW_REF,
-    NEMOCLAW_INSTALL_TAG: OLD_NEMOCLAW_REF,
+    NEMOCLAW_INSTALL_REF: OLD_NEMOCLAW_COMMIT,
+    NEMOCLAW_INSTALL_TAG: OLD_NEMOCLAW_COMMIT,
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
     NEMOCLAW_MODEL: "test-model",
@@ -407,6 +456,10 @@ chmod 755 ${shellQuote(oldInstaller)}`,
   );
 
   const oldLog = fs.readFileSync(oldInstallLog, "utf8");
+  const oldSandboxBasePinPrefix = `sha256:${OLD_SANDBOX_BASE_DIGEST}`.slice(0, 19);
+  expect(oldLog, `old fixture must pin sandbox base image ${OLD_SANDBOX_BASE_IMAGE_REF}`).toContain(
+    `Pinning base image to ${oldSandboxBasePinPrefix}`,
+  );
   const oldOpenClawVersionPattern = escapeRegExpLiteral(OLD_OPENCLAW_VERSION);
   const wrongOldOpenClaw = oldLog.match(
     new RegExp(
@@ -434,17 +487,12 @@ chmod 755 ${shellQuote(oldInstaller)}`,
 
   const sourceHead = await bash(
     host,
-    `if [ -d "$HOME/.nemoclaw/source/.git" ]; then git -C "$HOME/.nemoclaw/source" rev-parse HEAD; fi`,
+    `test -d "$HOME/.nemoclaw/source/.git"
+git -C "$HOME/.nemoclaw/source" rev-parse --verify HEAD`,
     { artifactName: "old-source-head", timeoutMs: 30_000 },
   );
-  const expectedHead = await bash(
-    host,
-    `git ls-remote https://github.com/NVIDIA/NemoClaw.git refs/tags/${shellQuote(OLD_NEMOCLAW_REF)} | awk '{print $1}'`,
-    { artifactName: "old-source-expected-head", timeoutMs: 60_000 },
-  );
-  expectExitZero(sourceHead, "read old source head");
-  expectExitZero(expectedHead, "read expected old tag head");
-  expect(sourceHead.stdout.trim()).toBe(expectedHead.stdout.trim());
+  const actualSourceHead = expectFullGitSha(sourceHead, "read old source head");
+  expect(actualSourceHead).toBe(OLD_NEMOCLAW_COMMIT);
 
   await waitForSurvivorReady(host, "old-install");
   const list = await bash(host, `nemoclaw list`, {
@@ -673,7 +721,7 @@ runLinuxOpenShellGatewayUpgrade(
       id: "openshell-gateway-upgrade",
       runner: "vitest",
       boundary: [
-        "real old install.sh fetched from v0.0.36",
+        `real old install.sh fetched from ${OLD_NEMOCLAW_REF}`,
         "real Docker/OpenShell gateway and OpenClaw sandbox",
         "exact-name confirmation for the known-managed legacy fixture",
         "current scripts/install.sh gateway upgrade path",
@@ -681,7 +729,11 @@ runLinuxOpenShellGatewayUpgrade(
         "NemoClaw registry and durable workspace restore",
       ],
       oldNemoclawRef: OLD_NEMOCLAW_REF,
+      oldNemoclawCommit: OLD_NEMOCLAW_COMMIT,
+      oldInstallerSha256: OLD_INSTALLER_SHA256,
       oldOpenShellVersion: OLD_OPENSHELL_VERSION,
+      oldOpenClawVersion: OLD_OPENCLAW_VERSION,
+      oldSandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
       currentOpenShellVersion: CURRENT_OPENSHELL_VERSION,
       survivorSandbox: SURVIVOR_SANDBOX,
     });

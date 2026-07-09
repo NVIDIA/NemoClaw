@@ -59,7 +59,7 @@ NemoClaw no longer vendors or overlays that source.
 - Native profile SHA-256: `c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `75ff7e7a5142cad4305126ccb1b8fc756306e82d4c559ddbc624012fb54ebfc4`
+- Adapter module SHA-256: `1cee6afafcbe545f5d095c94cb0ad81ff2a1512f84ad9d128a69a9b3d72b3def`
 - Adapter project metadata SHA-256: `7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
@@ -109,19 +109,77 @@ without consulting an index. Its `deepagents.harness_profiles` entry
 point runs after built-in profiles are registered, reads the reviewed canonical
 profile through one exact-version/hash-gated private registry lookup, and uses
 Deep Agents' public registration API to map it to the two exact `openai:` model
-keys used by NemoClaw's managed OpenAI-compatible `ChatOpenAI` route. The
+keys used by NemoClaw's managed OpenAI-compatible `ChatOpenAI` route. It layers
+one first-party middleware onto those aliases that rejects only a
+case-insensitive `[content]` value, with optional whitespace around the token
+and brackets, passed as the complete `execute` command;
+the canonical NVIDIA profile and unrelated models remain unchanged. The
 released SDK has no public profile getter or alias API. The adapter does not add
 a provider-wide OpenAI profile.
+
+### Managed Ultra compatibility workarounds
+
+Two localized behaviors close separate invalid states on the managed Ultra
+aliases. They are not a new provider profile and do not modify the reviewed
+canonical NVIDIA profile.
+
+The two managed model IDs remain language-local constants in the TypeScript
+config generator and the isolated Python image/plugin validators. Those
+components run on opposite sides of the offline wheel-install boundary, so a
+shared runtime data file would enlarge the installed trust surface solely to
+deduplicate two immutable strings. The focused profile-plugin suite extracts
+the identifiers from every production consumer and requires the exact sets to
+match, preventing drift without adding another mutable build artifact.
+
+For `force_nonempty_content`, the invalid state originates in the NVIDIA Ultra
+chat template/serving path: a Chat Completions response that combines reasoning
+and tool calls can otherwise carry empty assistant content. That response shape
+is outside NemoClaw; this repository owns only the generated DCode provider
+configuration, so `generate-config.ts` supplies the model-specific template
+argument at that request boundary. Fixing the serving template, model, or
+third-party client in this repository would require vendoring an upstream
+component and would violate the released-dependency boundary. The focused config
+tests prove both managed Ultra IDs receive the argument and unrelated models do
+not; the Deep Agents E2E verifies the installed request shape. Remove this
+argument only after a reviewed serving-template or client update produces
+nonempty assistant content for reasoning-plus-tool-call turns without it, and
+the live DCode Ultra E2E passes for both managed model IDs with the override
+deleted.
+
+For the `[content]` guard, the invalid state is a model-produced tool call whose
+complete `execute.command` is the placeholder, ignoring case and whitespace
+around the token and brackets. The released Deep Agents parser/profile can carry that
+argument to normal tool middleware, where an unrestricted execute backend would
+otherwise treat it as a shell command. The model/provider emission and the
+hash-locked `deepagents==0.7.0a6` canonical profile are upstream boundaries;
+NemoClaw owns the two managed aliases and the final middleware immediately before
+dispatch. The adapter therefore rejects only that observed complete argument and
+leaves concrete commands, other tools, the canonical NVIDIA profile, and
+unrelated models unchanged. Focused fixture tests plus the isolated image
+validator cover sync and async rejection, concrete and non-execute pass-through,
+and graph dispatch with shell restrictions disabled; the Deep Agents E2E repeats
+the installed guard contract. Remove the guard only after a reviewed model,
+serving-template, and Deep Agents update no longer emits or converts `[content]`
+into an execute call across native and repaired tool-call paths, and those tests
+plus the live DCode Ultra E2E pass with the middleware removed.
 
 The adapter verifies the exact DCode and Deep Agents versions plus the official
 native-profile and bootstrap source hashes. It also binds the imported Deep
 Agents package to the distribution that supplied the reviewed version.
-Registration is atomic, idempotent, and rejects missing canonical, partial, or
-conflicting alias state. The image validator runs under isolated Python,
-verifies the installed entry-point metadata and adapter source hash before the
-upstream source checks, checks both upstream files again after profile loading,
-resolves the complete native middleware for both aliases, compiles a graph,
-proves parser/native dispatch parity, and confirms an unrelated OpenAI model
+Registration uses the Deep Agents registry itself as its only idempotency
+source, serializes the multi-key transaction for concurrent plugin discovery
+within one Python interpreter, and rejects missing canonical, partial, or
+conflicting alias state. The Deep Agents registry is process-local, so separate
+agent processes have separate registries and cannot interleave writes; a
+filesystem lock would not protect shared state. Revisit that assumption if an
+upstream release moves the registry out of process. The image validator runs
+under isolated Python, verifies the installed entry-point metadata and adapter
+source hash before the upstream source checks, checks both upstream files again
+after profile loading,
+resolves the complete native middleware plus the managed guard for both aliases,
+proves the canonical middleware remains unchanged, compiles a graph, exercises
+sync and async placeholder rejection, proves concrete-command and parser/native
+dispatch parity through the actual graph, and confirms an unrelated OpenAI model
 receives no Ultra behavior. The Docker build separately imports the adapter,
 Deep Agents, and DCode under isolated Python immediately after installation;
 the validator then binds the installed module to its distribution and rechecks
@@ -134,7 +192,8 @@ the fake-Docker unit suite separately pins its diagnostic failure branches.
 
 The reviewed native-profile and bootstrap files stay byte-for-byte unchanged.
 Focused fixtures cover the reviewed version/hash, missing-source,
-missing-canonical, partial/conflicting, rollback, and idempotence states. The
+missing-canonical, partial/conflicting, rollback, idempotence, exact placeholder
+rejection, and unchanged concrete-command states. The
 deleted source-backport license path, `LICENSE.langchain-deepagents`, is not
 staged into the image, and image regression tests enforce that absence.
 

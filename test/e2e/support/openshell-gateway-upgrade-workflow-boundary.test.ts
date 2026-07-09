@@ -15,6 +15,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   oldGatewayUpgradeInstallerArgs,
   upgradeGatewayCleanupScript,
+  validateLegacyGatewayUpgradeFixture,
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade workflow boundary", () => {
@@ -63,6 +64,51 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
       "--non-interactive",
       "--yes-i-accept-third-party-software",
     ]);
+  });
+
+  it("rejects mutable or injectable historical fixture inputs before use (#6114)", () => {
+    const fixture = {
+      nemoclawRef: "v0.0.55",
+      nemoclawCommit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
+      installerSha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
+      openclawVersion: "2026.5.22",
+      sandboxBaseImageRef:
+        "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
+    };
+
+    expect(validateLegacyGatewayUpgradeFixture(fixture)).toEqual({
+      sandboxBaseDigest: "104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
+    });
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        nemoclawRef: "v0.0.55; echo injected",
+      }),
+    ).toThrow(/NEMOCLAW_OLD_NEMOCLAW_REF/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        nemoclawCommit: fixture.nemoclawCommit.toUpperCase(),
+      }),
+    ).toThrow(/NEMOCLAW_OLD_NEMOCLAW_COMMIT/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        installerSha256: fixture.installerSha256.toUpperCase(),
+      }),
+    ).toThrow(/NEMOCLAW_OLD_INSTALLER_SHA256/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        openclawVersion: '2026.5.22" && echo injected #',
+      }),
+    ).toThrow(/NEMOCLAW_OLD_OPENCLAW_VERSION/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        sandboxBaseImageRef: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+      }),
+    ).toThrow(/NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF/);
   });
 
   it("reclaims only the owned gateway volume namespace", () => {
