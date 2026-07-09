@@ -113,6 +113,45 @@ describe("destroySandbox flow", () => {
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
   });
 
+  it("honors the gateway cleanup environment override on macOS (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.stubEnv("NEMOCLAW_CLEANUP_GATEWAY", "1");
+    const harness = createDestroyHarness();
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+    );
+  });
+
+  it("honors the gateway preservation environment override on macOS (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.stubEnv("NEMOCLAW_CLEANUP_GATEWAY", "0");
+    const harness = createDestroyHarness();
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  });
+
+  it("cleans the final gateway when an interactive macOS user accepts (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const harness = createDestroyHarness({ promptResponses: ["yes", "yes"] });
+
+    await expect(harness.destroySandbox("alpha", {})).resolves.toBeUndefined();
+
+    expect(harness.promptSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("destroy the gateway"),
+    );
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+    );
+  });
+
   it("preserves the final gateway when an interactive user declines cleanup (#2166)", async () => {
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "");
     const harness = createDestroyHarness({ promptResponses: ["yes", ""] });

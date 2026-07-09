@@ -102,6 +102,9 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
   if (options.cleanupGateway === true) return true;
   if (options.cleanupGateway === false) return false;
   if (options.yes === true || options.force === true || isNonInteractive()) {
+    // macOS must release the leaked gateway listener after final destroy (#4662).
+    // Supported Windows runs use WSL2 (`linux`); unexpected `win32` hosts keep
+    // the conservative non-macOS gateway-preservation default.
     return process.platform === "darwin";
   }
   console.log(`  ${YW}This was the last sandbox.${R}`);
