@@ -346,8 +346,8 @@ For Local Ollama, onboarding loads the selected model first and uses Ollama's re
 For local vLLM, onboarding uses the runtime `max_model_len` value when the server reports one and `NEMOCLAW_CONTEXT_WINDOW` is unset.
 For an OpenAI-compatible endpoint (the **Other OpenAI-compatible endpoint** provider, including a self-hosted vLLM server), onboarding probes the endpoint's `/v1/models` response and uses its reported `max_model_len` when `NEMOCLAW_CONTEXT_WINDOW` is unset, so Hermes gets the endpoint's real context window instead of a small architecture default.
 Set `NEMOCLAW_CONTEXT_WINDOW` to override the probed value.
-The resolved window is written as `model.context_length` in the generated `config.yaml`; when it remains unset, Hermes auto-detects from the endpoint.
-Invalid values are ignored and leave `model.context_length` unset.
+When onboarding resolves a valid window from an explicit override or endpoint probe, NemoClaw writes it as `model.context_length` in the generated `config.yaml`.
+If neither path yields a valid value, `model.context_length` remains unset and Hermes auto-detects from the endpoint.
 
 ```bash
 export NEMOCLAW_CONTEXT_WINDOW=65536
@@ -454,7 +454,7 @@ The status output includes the active provider, model, and endpoint with the res
 - The host keeps provider credentials.
 - The sandbox continues to use `inference.local`.
 - `$$nemoclaw inference set` patches the selected running Hermes sandbox config and recomputes its config hash.
-- Use `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` for build-time settings such as context window, max tokens, reasoning mode, heartbeat cadence, or image contents.
+- Use `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` for build-time settings such as context window or image contents.
 - Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 
 </AgentOnly>
