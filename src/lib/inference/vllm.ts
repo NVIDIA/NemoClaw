@@ -405,11 +405,6 @@ function startContainer(
   model: VllmModelDef,
 ): { ok: boolean; reason?: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
-  // Idempotent: tear down any prior container by the same name first.
-  dockerForceRm(profile.containerName, {
-    ignoreError: true,
-    suppressOutput: true,
-  });
   const resolvedFlags = profile.buildDockerRunFlags
     ? profile.buildDockerRunFlags()
     : profile.dockerRunFlags;
@@ -425,6 +420,12 @@ function startContainer(
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
+  // Validate every launch input before replacing a potentially healthy
+  // existing container. Once validated, teardown keeps startup idempotent.
+  dockerForceRm(profile.containerName, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
   const result = dockerRunDetached(runArgs, {
     ignoreError: true,
     suppressOutput: true,

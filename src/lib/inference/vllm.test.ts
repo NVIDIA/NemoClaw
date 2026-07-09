@@ -457,6 +457,7 @@ describe("installVllm model resolution", () => {
     });
 
     expect(result).toEqual({ ok: false });
+    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
     expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining("vLLM docker run flags[1] must not be empty"),
