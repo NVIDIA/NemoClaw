@@ -3951,6 +3951,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3981,7 +3982,8 @@ jobs:
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
             npx vitest run --project e2e-live \
             test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default \
+            --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
         if: always()
