@@ -62,6 +62,9 @@ export const CORPORATE_CA_ANCHOR_DIRS_ENV = "NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS";
 /** Reported `sourceEnv` when a CA is discovered from host anchor source dirs. */
 export const CORPORATE_CA_HOST_ANCHOR_SOURCE = "host trust-store anchor source";
 
+/** Reported `sourceEnv` for direct standalone CA files under `/etc/ssl/certs`. */
+export const CORPORATE_CA_LITERAL_SSL_CERTS_SOURCE = "host /etc/ssl/certs standalone CA";
+
 /** Opt-out: set to a falsey token to disable corporate CA import entirely. */
 export const CORPORATE_CA_DISABLE_ENV = "NEMOCLAW_CORPORATE_CA_IMPORT";
 

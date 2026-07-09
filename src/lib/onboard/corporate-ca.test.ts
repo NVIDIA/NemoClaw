@@ -14,6 +14,7 @@ import {
   CORPORATE_CA_HOST_ANCHOR_DIRS,
   CORPORATE_CA_HOST_ANCHOR_SOURCE,
   CORPORATE_CA_LITERAL_SSL_CERTS_DIR,
+  CORPORATE_CA_LITERAL_SSL_CERTS_SOURCE,
   CorporateCaValidationError,
   encodeCorporateCaArg,
   isKnownMergedTrustStorePath,
@@ -466,9 +467,11 @@ describe("resolveCorporateCa env then host anchors (#6210)", () => {
     expect(resolveCorporateCa({ [CORPORATE_CA_ANCHOR_DIRS_ENV]: "" })).toBeNull();
   });
 
-  it("warns when only a literal /etc/ssl/certs-style directory has a standalone cert (#6210)", () => {
+  it("imports a standalone CA from a literal /etc/ssl/certs-style directory (#6210)", () => {
     const literalSslCertsDir = tmpDir();
-    const standaloneCert = writeAnchor(literalSslCertsDir, "corp-proxy-root.pem");
+    writeAnchor(literalSslCertsDir, "ca-certificates.crt");
+    writeAnchor(literalSslCertsDir, "ssl-cert-snakeoil.pem", LEAF_PEM);
+    writeAnchor(literalSslCertsDir, "corp-proxy-root.pem");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const resolved = resolveCorporateCa(
       {},
@@ -477,16 +480,10 @@ describe("resolveCorporateCa env then host anchors (#6210)", () => {
     const messages = errorSpy.mock.calls.map((call) => String(call[0]));
     errorSpy.mockRestore();
 
-    expect(resolved).toBeNull();
-    expect(
-      messages.some(
-        (m) =>
-          m.includes(literalSslCertsDir) &&
-          m.includes(standaloneCert) &&
-          m.includes(CORPORATE_CA_EXPLICIT_ENV) &&
-          m.includes(CORPORATE_CA_ANCHOR_DIRS_ENV),
-      ),
-    ).toBe(true);
+    expect(resolved?.sourceEnv).toBe(CORPORATE_CA_LITERAL_SSL_CERTS_SOURCE);
+    expect(resolved?.sourcePath).toBe(literalSslCertsDir);
+    expect(resolved?.pem.match(/-----BEGIN CERTIFICATE-----/g)).toHaveLength(1);
+    expect(messages).toHaveLength(0);
   });
 
   it("does not warn for a literal /etc/ssl/certs-style leaf cert such as ssl-cert-snakeoil.pem", () => {

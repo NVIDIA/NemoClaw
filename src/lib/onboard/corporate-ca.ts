@@ -17,8 +17,8 @@ import { resolveCorporateCaFromEnv } from "./corporate-ca-env";
 import {
   CORPORATE_CA_HOST_ANCHOR_DIRS,
   hostAnchorDirsFromEnv,
+  resolveCorporateCaFromLiteralSslCerts,
   resolveCorporateCaFromHostAnchors,
-  warnIfLiteralSslCertsOnlySource,
 } from "./corporate-ca-host-anchors";
 import {
   CORPORATE_CA_ANCHOR_DIRS_ENV,
@@ -30,6 +30,7 @@ import type { ResolvedCorporateCa } from "./corporate-ca-types";
 export { resolveCorporateCaFromEnv } from "./corporate-ca-env";
 export {
   CORPORATE_CA_HOST_ANCHOR_DIRS,
+  resolveCorporateCaFromLiteralSslCerts,
   resolveCorporateCaFromHostAnchors,
 } from "./corporate-ca-host-anchors";
 export {
@@ -38,6 +39,7 @@ export {
   CORPORATE_CA_EXPLICIT_ENV,
   CORPORATE_CA_FALLBACK_ENV_VARS,
   CORPORATE_CA_HOST_ANCHOR_SOURCE,
+  CORPORATE_CA_LITERAL_SSL_CERTS_SOURCE,
   CORPORATE_CA_LITERAL_SSL_CERTS_DIR,
   isKnownMergedTrustStorePath,
   KNOWN_MERGED_TRUST_STORE_PATHS,
@@ -65,9 +67,9 @@ export interface ResolveCorporateCaOptions {
  *   3. Host administrator-managed anchor directories, overridable via
  *      `NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS`.
  *
- * If automatic sources miss but a CA-looking file exists only in the literal
- * `/etc/ssl/certs` output directory, warn with explicit bundle guidance rather
- * than silently missing that host layout.
+ * If automatic anchor sources miss but direct regular CA files exist in the
+ * literal `/etc/ssl/certs` output directory, import only those validated
+ * standalone CA files while still excluding the merged OS trust bundle.
  */
 export function resolveCorporateCa(
   env: NodeJS.ProcessEnv = process.env,
@@ -89,7 +91,7 @@ export function resolveCorporateCa(
       ? CORPORATE_CA_LITERAL_SSL_CERTS_DIR
       : options.literalSslCertsDir;
   if (!hostScanningDisabledByEnv && literalSslCertsDir !== null) {
-    warnIfLiteralSslCertsOnlySource(literalSslCertsDir);
+    return resolveCorporateCaFromLiteralSslCerts(literalSslCertsDir);
   }
   return null;
 }

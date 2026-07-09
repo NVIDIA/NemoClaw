@@ -8,6 +8,7 @@ import {
   CORPORATE_CA_ANCHOR_DIRS_ENV,
   CORPORATE_CA_EXPLICIT_ENV,
   CORPORATE_CA_HOST_ANCHOR_SOURCE,
+  CORPORATE_CA_LITERAL_SSL_CERTS_SOURCE,
   isKnownMergedTrustStorePath,
   MAX_CORPORATE_CA_BYTES,
   MAX_CORPORATE_CA_CERTS,
@@ -108,26 +109,37 @@ function collectLiteralSslCertFiles(root: string): string[] {
     .slice(0, HOST_ANCHOR_MAX_FILES);
 }
 
-export function warnIfLiteralSslCertsOnlySource(root: string): void {
+export function resolveCorporateCaFromLiteralSslCerts(root: string): ResolvedCorporateCa | null {
   const candidates = collectLiteralSslCertFiles(root);
-  if (candidates.length === 0) return;
+  if (candidates.length === 0) return null;
 
-  const validCandidates: string[] = [];
+  const blocks: string[] = [];
   for (const candidate of candidates) {
     try {
-      validateCorporateCaFile(candidate);
-      validCandidates.push(candidate);
+      blocks.push(validateCorporateCaFile(candidate).trim());
     } catch {
       // Invalid standalone files, including normal leaf certs such as
       // ssl-cert-snakeoil.pem, are not actionable for the #6210 warning.
     }
   }
-  if (validCandidates.length === 0) return;
+  if (blocks.length === 0) return null;
 
-  const example = validCandidates[0];
-  warnCorporateCa(
-    `host ${root} contains standalone CA certificate file(s) such as ${example}, but NemoClaw does not import the merged/output trust directory automatically; set ${CORPORATE_CA_EXPLICIT_ENV} to the corporate root PEM, or set ${CORPORATE_CA_ANCHOR_DIRS_ENV} to the administrator anchor source directory`,
-  );
+  const pem = normalizeCertificateBlocks(blocks);
+  const certCount = pem.match(PEM_CERTIFICATE_RE_GLOBAL)?.length ?? 0;
+  if (certCount === 0 || certCount > MAX_CORPORATE_CA_CERTS) {
+    warnCorporateCa(
+      `host /etc/ssl/certs standalone CA candidates yield ${certCount} certificate(s) (max ${MAX_CORPORATE_CA_CERTS}); skipping to avoid a broad trust import`,
+    );
+    return null;
+  }
+  if (Buffer.byteLength(pem, "utf8") > MAX_CORPORATE_CA_BYTES) {
+    warnCorporateCa(
+      `host /etc/ssl/certs standalone CA candidates exceed ${MAX_CORPORATE_CA_BYTES} bytes; skipping`,
+    );
+    return null;
+  }
+
+  return { pem, sourcePath: root, sourceEnv: CORPORATE_CA_LITERAL_SSL_CERTS_SOURCE };
 }
 
 /**
