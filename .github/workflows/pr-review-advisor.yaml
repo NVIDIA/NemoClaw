@@ -159,6 +159,11 @@ jobs:
 
       - name: Install Pi SDK
         run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ripgrep
+          fi
+          rg --version
           PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
           npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-05-14T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
           rm -rf "$ADVISOR_DIR/node_modules"

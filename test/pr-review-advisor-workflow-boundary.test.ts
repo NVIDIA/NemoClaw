@@ -12,14 +12,24 @@ import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advi
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 function prepareTargetCheckoutScript(): string {
+  return workflowStepScript("Prepare target PR checkout");
+}
+
+function workflowStepScript(name: string): string {
   const workflow = YAML.parse(
     fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
   ) as { jobs?: { review?: { steps?: Array<{ name?: string; run?: string }> } } };
-  const step = workflow.jobs?.review?.steps?.find(
-    (candidate) => candidate.name === "Prepare target PR checkout",
-  );
+  const step = workflow.jobs?.review?.steps?.find((candidate) => candidate.name === name);
   expect(step?.run).toEqual(expect.any(String));
   return step!.run!;
+}
+
+function writeFakeCommand(binDir: string, name: string): void {
+  fs.writeFileSync(
+    path.join(binDir, name),
+    `#!/bin/bash\nprintf '${name} %s\\n' "$*" >> "$CALL_LOG"\n`,
+    { mode: 0o755 },
+  );
 }
 
 function runPrepareTargetCheckout(env: {
@@ -57,6 +67,59 @@ function runPrepareTargetCheckout(env: {
 }
 
 describe("PR review advisor workflow boundary", () => {
+  it("installs the grep dependency when the trusted runner lacks it", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-install-"));
+    const binDir = path.join(tmp, "bin");
+    const callLog = path.join(tmp, "calls.log");
+    const rgTemplate = path.join(tmp, "rg-template");
+    fs.mkdirSync(binDir);
+    for (const name of ["npm", "rm", "ln"]) writeFakeCommand(binDir, name);
+    fs.writeFileSync(rgTemplate, '#!/bin/bash\nprintf \'rg %s\\n\' "$*" >> "$CALL_LOG"\n', {
+      mode: 0o755,
+    });
+    fs.writeFileSync(
+      path.join(binDir, "sudo"),
+      `#!/bin/bash
+printf 'sudo %s\\n' "$*" >> "$CALL_LOG"
+if [[ "$*" == *"apt-get install"* ]]; then
+  /bin/cp "$RG_TEMPLATE" "$FAKE_BIN/rg"
+  /bin/chmod +x "$FAKE_BIN/rg"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync("/bin/bash", ["-c", workflowStepScript("Install Pi SDK")], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ADVISOR_DIR: path.join(tmp, "advisor"),
+          CALL_LOG: callLog,
+          FAKE_BIN: binDir,
+          PATH: binDir,
+          PI_SDK_VERSION: "test-version",
+          RG_TEMPLATE: rgTemplate,
+          RUNNER_TEMP: path.join(tmp, "runner"),
+        },
+      });
+      const calls = fs.readFileSync(callLog, "utf8").trim().split(/\r?\n/u);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual(
+        expect.arrayContaining([
+          "sudo apt-get update -qq",
+          "sudo apt-get install -y --no-install-recommends ripgrep",
+          "rg --version",
+          expect.stringMatching(/^npm install .*--ignore-scripts/u),
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the workflow inside the trusted-code boundary", () => {
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
   });
