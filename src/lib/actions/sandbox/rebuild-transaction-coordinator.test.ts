@@ -36,12 +36,12 @@ const input = {
 } as unknown as StartOrResumeRebuildTransactionInput;
 describe("RebuildTransactionCoordinator startOrResume", () => {
   it.each([
-    ["completed", false, "create"],
-    ["prepared", false, "refreshPrepared"],
-    ["prepared", true, "transition"],
-    ["old_deleted", true, null],
-    ["replacement_created", true, null],
-  ] as const)("owns %s generation and phase routing", async (phase, stale, operation) => {
+    ["completed", false, "create", "prepared"],
+    ["prepared", false, "refreshPrepared", "prepared"],
+    ["prepared", true, "transition", "old_deleted"],
+    ["old_deleted", true, null, "old_deleted"],
+    ["replacement_created", true, null, "replacement_created"],
+  ] as const)("owns %s generation and phase routing", async (phase, stale, operation, expected) => {
     const store = {
       create: vi.fn(async () => record("prepared")),
       refreshPrepared: vi.fn(async () => record("prepared")),
@@ -50,13 +50,7 @@ describe("RebuildTransactionCoordinator startOrResume", () => {
     const coordinator = new RebuildTransactionCoordinator(store, "alpha", record(phase));
     await coordinator.startOrResume({ ...input, staleRecovery: stale });
 
-    expect(coordinator.phase).toBe(
-      operation === "transition"
-        ? "old_deleted"
-        : operation === "create" || operation === "refreshPrepared"
-          ? "prepared"
-          : phase,
-    );
+    expect(coordinator.phase).toBe(expected);
     for (const name of ["create", "refreshPrepared", "transition"] as const) {
       expect(store[name]).toHaveBeenCalledTimes(name === operation ? 1 : 0);
     }

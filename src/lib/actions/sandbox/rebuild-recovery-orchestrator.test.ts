@@ -8,7 +8,10 @@ import type { Session } from "../../state/onboard-session";
 import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
 import type { SandboxEntry } from "../../state/registry";
 import { RebuildRecoveryOrchestrator } from "./rebuild-recovery-orchestrator";
-import type { RebuildTransactionCoordinator } from "./rebuild-transaction-coordinator";
+import type {
+  RebuildTransactionCoordinator,
+  StartOrResumeRebuildTransactionInput,
+} from "./rebuild-transaction-coordinator";
 
 const replacement = {
   name: "alpha",
@@ -101,9 +104,22 @@ describe("rebuild recovery receipt publication", () => {
       },
       log: vi.fn(),
     });
+    const startOrResumeInput = {
+      sandboxEntry: replacement,
+      registryRecovery: { entry: replacement, wasDefault: false, defaultSelectionRevision: 0 },
+      targetConfig: { resumeConfig: {}, durableConfig: {} },
+      recreateOptions: {},
+      backupManifest: { timestamp: "2026-07-08T00-00-00-000Z" },
+      baseImage: null,
+      fromDockerfile: null,
+      legacyManagedImageRecoveryAuthorized: false,
+      shieldsLocked: false,
+      staleRecovery: true,
+    } as unknown as StartOrResumeRebuildTransactionInput;
 
-    await orchestrator.prepare({} as Parameters<RebuildRecoveryOrchestrator["prepare"]>[0]);
+    await orchestrator.prepare(startOrResumeInput);
 
+    expect(transaction.startOrResume).toHaveBeenCalledWith(startOrResumeInput);
     expect(calls).toEqual(["start-or-resume", "replacement-receipt"]);
   });
 

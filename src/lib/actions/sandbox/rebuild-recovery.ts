@@ -154,6 +154,9 @@ export async function prepareRebuildRecoveryPreflight(input: {
   }
 
   input.log(`Durable rebuild recovery decision: ${decision.action}`);
+  // Source of truth: the durable journal; the registry is a mutable fallback.
+  // Remove this repair when the journal owns the complete recovery snapshot or
+  // registry updates become atomic with transaction publication (#6433).
   if (
     decision.action === "create" &&
     !registryEntry &&

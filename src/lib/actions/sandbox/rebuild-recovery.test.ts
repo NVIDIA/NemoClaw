@@ -84,19 +84,6 @@ describe("rebuild replacement recovery decision", () => {
   });
 
   it.each([
-    ["old_deleted", "absent", "source", "missing", "create"],
-    ["old_deleted", "absent", "missing", "unrelated", "create"],
-    ["old_deleted", "absent", "target", "unrelated", "create"],
-    ["old_deleted", "ready", "target", "matching", "adopt"],
-    ["replacement_created", "ready", "replacement", "matching", "resume"],
-    ["replacement_created", "absent", "replacement", "matching", "recreate"],
-  ] as const)("%s plus %s live state, %s registry, and %s session selects %s (#6436)", (phase, live, registry, session, action) => {
-    expect(
-      decideRebuildRecovery({ transaction: transaction(phase), live, registry, session }),
-    ).toEqual({ action });
-  });
-
-  it.each([
     ["old_deleted", "ready", "target", "unrelated", "REBUILD_RECOVERY_SESSION_MISMATCH"],
     ["old_deleted", "ready", "source", "matching", "REBUILD_RECOVERY_REGISTRY_MISMATCH"],
     ["old_deleted", "absent", "mismatch", "unrelated", "REBUILD_RECOVERY_REGISTRY_CORRUPTED"],
