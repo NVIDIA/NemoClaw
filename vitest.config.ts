@@ -34,10 +34,10 @@ const typedSourceTransform = {
   },
 };
 const sourceNodeOptions = sourceLoaderNodeOptions(process.env.NODE_OPTIONS);
-// Force the conventional CI file-creation umask (0o022) in every test worker so
-// Hermes/OpenClaw guard fixtures are never created group/world-writable on a
-// developer host with a permissive ambient umask (e.g. 0002 on Ubuntu 24.04).
-// See test/helpers/normalize-fixture-umask.ts (#6448).
+// Mask group/world write bits into every test worker's umask so Hermes/OpenClaw
+// guard fixtures are never created group/world-writable on a developer host with
+// a permissive ambient umask (e.g. 0002 on Ubuntu 24.04), without relaxing a
+// stricter caller umask. See test/helpers/normalize-fixture-umask.ts (#6448).
 const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
 const integrationProjectScheduling = resolveIntegrationProjectScheduling({
   isCi,
@@ -157,7 +157,11 @@ export default defineConfig({
           // Use setupFiles rather than NODE_OPTIONS so the hook stays in-process
           // and never leaks `--require` into the real CLI subprocesses under
           // test. Mirrors the `cli` project.
-          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
+          //
+          // Intentionally excludes the fixture-umask setup: live E2E has no
+          // guard-fixture suites and handles real credentials, so it must keep
+          // the caller's umask (and sets its own strict `umask 077` inline).
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
           // Live targets mutate host, Docker, gateway, and sandbox state. A
           // whole-test retry reuses that state and can hide the first failure

@@ -16,11 +16,15 @@
 // the tests before they reach their intended assertions (#6448).
 //
 // Child fixture processes (python3/bash spawned via spawnSync) inherit this
-// umask, so setting it once per worker makes every fixture file be created with
-// the same non group/world-writable modes CI already produces under its default
-// 0022 umask. We deliberately use 0o022 rather than a stricter value: it strips
-// only the group/world *write* bits the guard cares about while leaving read
-// bits untouched, so no test that depends on default read permissions changes
-// behavior. The production guard stays strict; only the test fixture creation
-// environment is normalized.
+// umask, so pinning it once per worker makes every fixture file be created with
+// the same deterministic modes CI produces.
+//
+// The value is exactly 0o022 — the conventional CI umask the fixture tests were
+// written against. Several tests assert those exact group-readable modes (for
+// example a Hermes .env at 0o640), so the baseline must be 0o022 rather than the
+// caller's ambient umask: a permissive caller (0o002) would create
+// group-writable fixtures the guard rejects, and a stricter caller (0o077) would
+// drop the group-read bit those assertions expect. This setup is intentionally
+// not applied to the live-E2E project, which handles real credentials and sets
+// its own strict `umask 077` inline where privacy matters.
 process.umask(0o022);
