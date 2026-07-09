@@ -3652,7 +3652,13 @@ openclaw() {
               # A non-trusted (caller-selected) target must not receive the
               # shared gateway token; strip it so the login there falls back to
               # device auth, matching the #6291 WhatsApp-login boundary.
-              [ "$_nemoclaw_whatsapp_url_is_trusted" = "1" ] || command unset OPENCLAW_GATEWAY_TOKEN
+              if [ "$_nemoclaw_whatsapp_url_is_trusted" != "1" ]; then
+                command unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null || :
+                if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+                  echo "Error: WhatsApp pairing refused the custom gateway because the ambient gateway token could not be cleared." >&2
+                  exit 1
+                fi
+              fi
               if [ -n "$_nemoclaw_connect_node_options" ]; then
                 OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
                   OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
