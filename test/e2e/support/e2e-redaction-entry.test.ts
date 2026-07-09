@@ -104,6 +104,15 @@ describe("fixture redaction entry point", () => {
     expect(out).not.toContain(canonical);
   });
 
+  it("keeps explicit sentinels stable without masking adjacent credential text", () => {
+    const explicit = "test-secret-aBcD";
+    const once = redactString(`TOKEN=${explicit}`, [explicit]);
+
+    expect(once).toBe("TOKEN=[REDACTED]");
+    expect(redactString(once)).toBe(once);
+    expect(redactString("TOKEN=prefix[REDACTED]suffix")).toBe("TOKEN=<REDACTED>");
+  });
+
   it("redacts a complete multi-segment LangSmith key without exposing its tail", () => {
     const canonical = `lsv2_sk_${"a".repeat(36)}_${"tail".repeat(3)}`;
 

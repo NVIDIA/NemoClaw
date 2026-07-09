@@ -1650,6 +1650,7 @@ The classifications are `blocked-by-policy`, `missing-approval`, `unsupported`, 
 Add a host alias to the sandbox pod template.
 Use this when a sandbox needs a stable LAN-only name, such as a local SearXNG or internal model endpoint, without dropping to `docker exec` and `kubectl patch`.
 Host alias commands use the legacy Kubernetes gateway `Sandbox` resource path.
+In that older topology, the `openshell-cluster-nemoclaw` container runs an embedded k3s cluster with a `sandboxes.agents.x-k8s.io` custom resource definition, and an `agent-sandbox-controller` reconciles each `Sandbox` resource into the agent pod.
 They are not supported on Docker-driver or VM-driver sandboxes because those drivers do not run the gateway cluster container that owns this resource.
 
 ```bash
@@ -3018,6 +3019,26 @@ the family.
 NemoClaw reads the following environment variables to configure service ports, onboarding behavior, and lifecycle defaults.
 Set them before running `$$nemoclaw onboard` or any command that starts services.
 All ports must be non-privileged integers between 1024 and 65535.
+
+### CLI Logging
+
+The centralized CLI logger writes its output to `stderr` and uses `info` verbosity by default.
+These controls affect leveled logger output; they do not suppress command results or command-specific output that has not migrated to the centralized logger.
+
+| Variable | Accepted values | Effect |
+|----------|-----------------|--------|
+| `NEMOCLAW_LOG_LEVEL` | `error`, `warn`, `info`, or `debug` (case-insensitive; surrounding whitespace is ignored) | Sets the logging threshold. A valid value takes precedence over `NEMOCLAW_DEBUG`. An invalid, blank, or unset value falls through to `NEMOCLAW_DEBUG`. |
+| `NEMOCLAW_DEBUG` | `1`, `true`, `y`, or `yes` (case-insensitive) | Enables `debug` logging when `NEMOCLAW_LOG_LEVEL` does not contain a valid value. |
+
+The environment precedence is `NEMOCLAW_LOG_LEVEL`, then `NEMOCLAW_DEBUG`, followed by the default `info` level.
+The `error` level prints errors only, `warn` also prints warnings, `info` also prints informational messages, and `debug` prints all levels with timestamps.
+Use these NemoClaw-specific variables instead of the generic `DEBUG` variable. `DEBUG` is not a NemoClaw logger control and can enable dependency diagnostics that include raw command arguments.
+
+Commands whose parser owns the base logging options also accept the hidden long-form `--debug` and `--quiet` flags, even though these options do not appear in command help.
+The flags are mutually exclusive.
+`--debug` overrides the environment-derived threshold and selects `debug`, while `--quiet` caps verbosity at `warn` without increasing an environment-derived `error` threshold.
+There is no global `-q` logging shorthand.
+Passthrough commands do not consume flags intended for the downstream command as host logging options, so use the environment variables when you need unambiguous host logging around a passthrough invocation.
 
 | Variable | Default | Service |
 |----------|---------|---------|

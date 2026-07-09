@@ -274,4 +274,25 @@ describe("prepareOnboardSession", () => {
     );
     expect(deps.exitProcess).toHaveBeenCalledTimes(1);
   });
+
+  it("allows interactive resume to prompt when no sandbox name was recorded", async () => {
+    const { deps } = createDeps(createSession({ sandboxName: null }));
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: false,
+        nonInteractive: false,
+      },
+      deps,
+    );
+
+    expect(result.session?.sandboxName).toBeNull();
+    expect(result.session?.status).toBe("in_progress");
+    expect(deps.error).not.toHaveBeenCalled();
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
 });

@@ -44,6 +44,20 @@ For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with the man
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+
+## OpenClaw Context Compaction
+
+For OpenClaw sandboxes that use NemoClaw's managed `inference.local` route, NemoClaw configures safeguard compaction unless the upstream provider is Local Ollama.
+Each automatic or explicitly requested compaction attempt is limited to 120 seconds and reports its progress to the user.
+After a successful attempt, OpenClaw rotates the active transcript while preserving the most recent turn.
+
+The safeguard bounds each attempt, but OpenClaw still owns the summarization behavior.
+NemoClaw does not guarantee that compaction succeeds or reduces the active context.
+This setting is generated when NemoClaw builds or recreates the sandbox image.
+
+</AgentOnly>
+
 ## Provider Status
 
 {/* provider-status:begin */}
