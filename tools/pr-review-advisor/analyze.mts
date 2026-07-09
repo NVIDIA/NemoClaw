@@ -1529,12 +1529,15 @@ async function collectOpenPrOverlaps(
 
 export function extractIssueRefs(text: string, prNumber: number): number[] {
   const numbers = new Set<number>();
-  const patterns = [
-    /(?:fixes|closes|resolves|refs?|references?|related(?:\s+issue)?|linked(?:\s+issue)?|follow[- ]?up(?:\s+to)?)\s+#(\d+)/gi,
-    /\(#(\d+)\)/g,
-    /issue[-_/](\d+)/gi,
-  ];
-  for (const pattern of patterns) {
+  const relationPattern =
+    /\b(?:fixes|closes|resolves|refs?|references?|related(?:\s+issue)?|linked(?:\s+issue)?|follow[- ]?up(?:\s+to)?)\s+(#\d+(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s*)#\d+)*)/giu;
+  for (const relation of text.matchAll(relationPattern)) {
+    for (const match of (relation[1] ?? "").matchAll(/#(\d+)/gu)) {
+      const number = Number.parseInt(match[1] || "", 10);
+      if (Number.isFinite(number) && number > 0 && number !== prNumber) numbers.add(number);
+    }
+  }
+  for (const pattern of [/\(#(\d+)\)/gu, /issue[-_/](\d+)/giu]) {
     for (const match of text.matchAll(pattern)) {
       const number = Number.parseInt(match[1] || "", 10);
       if (Number.isFinite(number) && number > 0 && number !== prNumber) numbers.add(number);

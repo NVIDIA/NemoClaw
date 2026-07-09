@@ -100,6 +100,7 @@ fi
           FAKE_BIN: binDir,
           PATH: binDir,
           PI_SDK_VERSION: "test-version",
+          RIPGREP_VERSION: "14.1.0-1",
           RG_TEMPLATE: rgTemplate,
           RUNNER_TEMP: path.join(tmp, "runner"),
         },
@@ -110,7 +111,7 @@ fi
       expect(calls).toEqual(
         expect.arrayContaining([
           "sudo apt-get update -qq",
-          "sudo apt-get install -y --no-install-recommends ripgrep",
+          "sudo apt-get install -y --no-install-recommends ripgrep=14.1.0-1",
           "rg --version",
           expect.stringMatching(/^npm install .*--ignore-scripts/u),
         ]),

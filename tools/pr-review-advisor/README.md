@@ -29,7 +29,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 1. Runs on internal `pull_request` events and `workflow_dispatch`.
 2. Checks out advisor implementation code from trusted `main` into `advisor/`.
 3. Checks out PR content into `pr-workdir/` as inert read-only analysis data.
-4. Ensures ripgrep is available for the repo-confined `grep` tool, then installs a pinned Pi SDK package with lifecycle scripts disabled.
+4. Ensures ripgrep is available for the repo-confined `grep` tool from a pinned package on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
 5. Builds the same deterministic regression risk plan used by E2E Advisor and injects it into the scope/risk, security/trust, and tests/regressions contexts.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for each configured model variant: the primary GPT-5.5 lane and the Nemotron Ultra lane.

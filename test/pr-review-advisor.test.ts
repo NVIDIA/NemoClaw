@@ -42,7 +42,6 @@ import {
   normalizeCommentOptions,
   readCommentArtifacts,
 } from "../tools/pr-review-advisor/comment.mts";
-import { createReviewFindingLedger } from "../tools/pr-review-advisor/review-ledger.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -465,6 +464,14 @@ describe("PR review advisor", () => {
         6547,
       ),
     ).toEqual([21, 22, 6194, 6258, 6446]);
+  });
+
+  it.each([
+    ["conjunction", "Follow-up to #6547 and #6446.", [6446, 6547]],
+    ["comma-separated list", "Refs #1, #2 and #3.", [1, 2, 3]],
+    ["Oxford-comma list", "References #4, #5, and #6.", [4, 5, 6]],
+  ])("recognizes every issue in a %s relation (#6446)", (_case, text, expected) => {
+    expect(extractIssueRefs(text as string, 6566)).toEqual(expected);
   });
 
   it("writes auditable deterministic context artifacts", () => {
