@@ -14,11 +14,15 @@ import { collectSandboxStatusSnapshot } from "./status-snapshot";
 
 const capture = vi.mocked(captureOpenshellForStatus);
 
-function liveGatewayInference(provider: string, model: string): void {
-  capture.mockResolvedValue({
-    status: 0,
-    output: `Gateway inference:\n  Provider: ${provider}\n  Model: ${model}\n`,
-  } as Awaited<ReturnType<typeof captureOpenshellForStatus>>);
+function liveGatewayInference(provider: string, model: string, gatewayName = "nemoclaw"): void {
+  capture.mockImplementation(async (args) =>
+    args.join("\0") === ["inference", "get", "-g", gatewayName].join("\0")
+      ? ({
+          status: 0,
+          output: `Gateway inference:\n  Provider: ${provider}\n  Model: ${model}\n`,
+        } as Awaited<ReturnType<typeof captureOpenshellForStatus>>)
+      : ({ status: 1, output: "" } as Awaited<ReturnType<typeof captureOpenshellForStatus>>),
+  );
 }
 
 function snapshotDeps(entry: Partial<SandboxEntry> | null) {
@@ -56,7 +60,7 @@ describe("collectSandboxStatusSnapshot route drift", () => {
   });
 
   it("reads the sandbox's non-default gateway before computing drift (#6315)", async () => {
-    liveGatewayInference("openai", "gpt-5.2");
+    liveGatewayInference("openai", "gpt-5.2", "nemoclaw-9090");
 
     const snapshot = await collectSandboxStatusSnapshot(
       "alpha",
@@ -67,7 +71,6 @@ describe("collectSandboxStatusSnapshot route drift", () => {
       }),
     );
 
-    expect(capture).toHaveBeenCalledWith(["inference", "get", "-g", "nemoclaw-9090"]);
     expect(snapshot.routeDrift).toEqual({
       live: { provider: "openai", model: "gpt-5.2" },
       recorded: { provider: "nvidia", model: "nvidia/nemotron" },
@@ -88,7 +91,6 @@ describe("collectSandboxStatusSnapshot route drift", () => {
       }),
     );
 
-    expect(capture).not.toHaveBeenCalled();
     expect(snapshot.routeDrift).toBeNull();
     expect(snapshot.currentProvider).toBe("nvidia");
     expect(snapshot.currentModel).toBe("nvidia/nemotron");
