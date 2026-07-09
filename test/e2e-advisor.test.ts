@@ -15,6 +15,7 @@ import {
   buildSystemPrompt,
   requiresCloudOnboardE2e,
 } from "../tools/e2e-advisor/analyze.mts";
+import { validateE2eAdvisorEventBoundary } from "../tools/e2e-advisor/workflow-boundary.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -57,6 +58,8 @@ function prepareTargetCheckoutScript(): string {
 }
 
 function runPrepareTargetCheckout(env: {
+  EXPECTED_HEAD_SHA?: string;
+  FAKE_HEAD_SHA?: string;
   TARGET_REPO: string;
   TARGET_PR: string;
   TARGET_BASE: string;
@@ -68,7 +71,7 @@ function runPrepareTargetCheckout(env: {
   fs.mkdirSync(binDir);
   fs.writeFileSync(
     path.join(binDir, "git"),
-    '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$FAKE_GIT_LOG"\n',
+    '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$FAKE_GIT_LOG"\nif [[ "$*" == *"rev-parse HEAD" ]]; then\n  printf \'%s\\n\' "$FAKE_HEAD_SHA"\nfi\n',
     { mode: 0o755 },
   );
   const result = spawnSync("bash", ["-c", prepareTargetCheckoutScript()], {
@@ -96,6 +99,10 @@ describe("E2E recommendation advisor prompt", () => {
       contents: "read",
       "pull-requests": "write",
     });
+  });
+
+  it("gates privileged fork events and isolates their concurrency", () => {
+    expect(validateE2eAdvisorEventBoundary()).toEqual([]);
   });
 
   it("requires cloud-onboard for timing-sensitive infrastructure changes", () => {
@@ -266,6 +273,24 @@ describe("E2E recommendation advisor prompt", () => {
       expect(valid.githubEnv).toBe("ADVISOR_WORKDIR=/tmp/e2e-advisor-target\nPR_NUMBER=5756\n");
     } finally {
       valid.cleanup();
+    }
+
+    const mismatchedHead = runPrepareTargetCheckout({
+      EXPECTED_HEAD_SHA: "a".repeat(40),
+      FAKE_HEAD_SHA: "b".repeat(40),
+      TARGET_REPO: "NVIDIA/NemoClaw",
+      TARGET_PR: "5756",
+      TARGET_BASE: "main",
+    });
+    try {
+      expect(mismatchedHead.status).toBe(1);
+      expect(mismatchedHead.stdout).toContain(
+        "Fetched pull ref does not match the triggering PR head SHA",
+      );
+      expect(mismatchedHead.gitCalls).toContain("-C /tmp/e2e-advisor-target rev-parse HEAD");
+      expect(mismatchedHead.githubEnv).toBe("");
+    } finally {
+      mismatchedHead.cleanup();
     }
   });
 

@@ -54,7 +54,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: e2e-advisor-${{ github.event.pull_request.number || github.ref }}
+  group: e2e-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
