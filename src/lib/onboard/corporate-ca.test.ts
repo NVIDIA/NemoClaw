@@ -244,7 +244,7 @@ describe("resolveCorporateCaFromEnv", () => {
     ).toBeNull();
   });
 
-  it("throws when the explicit env var points at a merged OS trust store (#6210 PRA-5)", () => {
+  it("throws when the explicit env var points at a merged OS trust store (#6210)", () => {
     expect(() =>
       resolveCorporateCaFromEnv({
         [CORPORATE_CA_EXPLICIT_ENV]: "/etc/ssl/certs/ca-certificates.crt",
@@ -252,7 +252,7 @@ describe("resolveCorporateCaFromEnv", () => {
     ).toThrow(CorporateCaValidationError);
   });
 
-  it("skips a fallback env var pointing at a merged OS trust store and warns (#6210 PRA-5)", () => {
+  it("skips a fallback env var pointing at a merged OS trust store and warns (#6210)", () => {
     const p = writeCa(tmpDir());
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const resolved = resolveCorporateCaFromEnv({
@@ -270,7 +270,7 @@ describe("resolveCorporateCaFromEnv", () => {
   });
 });
 
-describe("isKnownMergedTrustStorePath (#6210 PRA-5)", () => {
+describe("isKnownMergedTrustStorePath (#6210)", () => {
   it("matches every well-known merged OS trust-store path", () => {
     for (const p of KNOWN_MERGED_TRUST_STORE_PATHS) {
       expect(isKnownMergedTrustStorePath(p)).toBe(true);
