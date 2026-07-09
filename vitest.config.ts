@@ -34,6 +34,11 @@ const typedSourceTransform = {
   },
 };
 const sourceNodeOptions = sourceLoaderNodeOptions(process.env.NODE_OPTIONS);
+// Force the conventional CI file-creation umask (0o022) in every test worker so
+// Hermes/OpenClaw guard fixtures are never created group/world-writable on a
+// developer host with a permissive ambient umask (e.g. 0002 on Ubuntu 24.04).
+// See test/helpers/normalize-fixture-umask.ts (#6448).
+const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
 const integrationProjectScheduling = resolveIntegrationProjectScheduling({
   isCi,
   npmLifecycleEvent: process.env.npm_lifecycle_event,
@@ -58,7 +63,7 @@ export default defineConfig({
           name: "cli",
           alias: canonicalOpenShellPolicyAlias,
           testTimeout: testTimeout(),
-          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
+          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**"],
         },
@@ -71,7 +76,7 @@ export default defineConfig({
           // Source-backed process fixtures can exceed the unit-test budget
           // when several coverage shards transpile and spawn them concurrently.
           testTimeout: testTimeout(15_000),
-          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
+          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Coverage
           // stays serial because concurrent source-loader forks exhaust the
           // 7 GiB CI runner. The canonical local full suite instead runs this
@@ -99,6 +104,7 @@ export default defineConfig({
         test: {
           name: "installer-integration",
           alias: canonicalOpenShellPolicyAlias,
+          setupFiles: [fixtureUmaskSetup],
           include: [
             "test/install-express-prompt.test.ts",
             "test/install-build-dependency-preflight.test.ts",
@@ -115,6 +121,7 @@ export default defineConfig({
         test: {
           name: "package-contract",
           alias: canonicalOpenShellPolicyAlias,
+          setupFiles: [fixtureUmaskSetup],
           include: ["test/package-contract/**/*.test.ts"],
         },
       },
@@ -123,6 +130,7 @@ export default defineConfig({
         test: {
           name: "plugin",
           alias: canonicalOpenShellPolicyAlias,
+          setupFiles: [fixtureUmaskSetup],
           include: ["nemoclaw/src/**/*.test.ts"],
         },
       },
@@ -134,7 +142,7 @@ export default defineConfig({
           name: "e2e-support",
           alias: canonicalOpenShellPolicyAlias,
           testTimeout: testTimeout(),
-          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
+          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           include: ["test/e2e/support/**/*.test.ts"],
         },
       },
@@ -149,7 +157,7 @@ export default defineConfig({
           // Use setupFiles rather than NODE_OPTIONS so the hook stays in-process
           // and never leaks `--require` into the real CLI subprocesses under
           // test. Mirrors the `cli` project.
-          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
+          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
           // Live targets mutate host, Docker, gateway, and sandbox state. A
           // whole-test retry reuses that state and can hide the first failure
