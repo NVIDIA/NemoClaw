@@ -138,6 +138,87 @@ expect_blocked() {
   fi
 }
 
+fetch_url_probe_source() {
+  cat <<'PY'
+import os
+import sys
+
+from deepagents_code.tools import fetch_url
+
+DENIAL_MARKERS = (
+    'access denied',
+    'blocked by',
+    'connection forbidden',
+    'egress denied',
+    'network policy',
+    'operation not permitted',
+    'permission denied',
+    'policy denied',
+    'tunnel connection failed',
+)
+
+if not os.environ.get('DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL'):
+    print('FETCH_ERROR:managed fetch proxy delegation is absent')
+    raise SystemExit(0)
+
+result = fetch_url(sys.argv[1], timeout=8)
+status = result.get('status_code')
+content_length = result.get('content_length')
+if (
+    isinstance(status, int)
+    and 200 <= status < 300
+    and isinstance(content_length, int)
+    and content_length > 0
+):
+    print(f'FETCH_SUCCESS:{status}:{content_length}')
+else:
+    details = str(result.get('error', result))
+    lowered = details.lower()
+    if any(marker in lowered for marker in DENIAL_MARKERS):
+        print(f'FETCH_BLOCKED:{details}')
+    else:
+        print(f'FETCH_ERROR:{details}')
+PY
+}
+
+fetch_url_probe() {
+  local url="$1"
+  local encoded remote_cmd
+  if [ -n "${NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE+x}" ]; then
+    printf '%s\n' "$NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE"
+    return 0
+  fi
+  encoded="$(fetch_url_probe_source | base64 | tr -d '\n')"
+  remote_cmd=". /tmp/nemoclaw-proxy-env.sh && /opt/venv/bin/python3 -c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
+  sandbox_exec "$remote_cmd"
+}
+
+expect_fetch_reached() {
+  local label="$1"
+  local url="$2"
+  local output
+  output="$(fetch_url_probe "$url" || true)"
+  if echo "$output" | grep -Eq 'FETCH_SUCCESS:2[0-9]{2}:[1-9][0-9]*'; then
+    pass "Deep Agents fetch_url can reach approved ${label} host through the managed proxy"
+  else
+    fail_test "Deep Agents fetch_url could not reach approved ${label} host: $output"
+  fi
+}
+
+expect_fetch_blocked() {
+  local label="$1"
+  local url="$2"
+  local output
+  output="$(fetch_url_probe "$url" || true)"
+  if echo "$output" | grep -q "FETCH_BLOCKED:" && ! echo "$output" | grep -q "FETCH_SUCCESS:"; then
+    pass "Deep Agents fetch_url cannot reach ${label} without explicit policy"
+  elif echo "$output" | grep -q "FETCH_SUCCESS:"; then
+    fail_test "Deep Agents fetch_url reached ${label} unexpectedly: $output"
+  else
+    fail_test "Deep Agents fetch_url probe for ${label} lacked denial evidence: $output"
+  fi
+}
+
 PASSED=0
 FAILED=0
 
@@ -163,6 +244,37 @@ if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "probe-command-shape" ]; then
   }
   python_probe "python3" "https://example.com/"
   python_probe "/opt/venv/bin/python3" "https://example.com/" "$DCODE_MANAGED_EXEC"
+  exit 0
+fi
+
+if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "fetch-probe-command-shape" ]; then
+  sandbox_exec() {
+    case "$1" in
+      *$'\n'*)
+        printf '%s\n' "NEWLINE_IN_COMMAND"
+        return 1
+        ;;
+      *)
+        printf '%s\n' "NO_NEWLINE_IN_FETCH_COMMAND"
+        return 0
+        ;;
+    esac
+  }
+  fetch_url_probe "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md"
+  exit 0
+fi
+
+if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "fetch-success-classification" ]; then
+  expect_fetch_reached "fixture host" "https://approved.example/"
+  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+  [ "$FAILED" -eq 0 ] || exit 1
+  exit 0
+fi
+
+if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "fetch-blocked-classification" ]; then
+  expect_fetch_blocked "fixture host" "https://blocked.example/"
+  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+  [ "$FAILED" -eq 0 ] || exit 1
   exit 0
 fi
 
@@ -205,6 +317,17 @@ expect_blocked \
 expect_blocked "arbitrary Python" "LangSmith" "https://api.smith.langchain.com/"
 expect_blocked "arbitrary Python" "MCP hosts" "https://modelcontextprotocol.io/"
 expect_blocked "arbitrary Python" "unapproved hosts" "https://example.com/"
+
+# Exercise the actual Deep Agents fetch_url transport. Unlike urllib, upstream
+# fetch_url disables ambient proxies to pin direct DNS results; the managed
+# image patch must instead force the root-owned OpenShell proxy without honoring
+# NO_PROXY. The raw GitHub path covers the separate read-only policy endpoint.
+expect_fetch_reached \
+  "raw GitHub" \
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md"
+expect_fetch_blocked "unapproved hosts" "https://example.com/"
+expect_fetch_blocked "instance metadata" "https://169.254.169.254/latest/meta-data/"
+expect_fetch_blocked "sandbox loopback" "https://127.0.0.1/"
 
 # Exercise the writable-project-venv allowlist entries directly. The managed
 # /opt/venv Python creates the project venv, then the probes run through the

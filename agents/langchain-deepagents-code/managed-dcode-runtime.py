@@ -14,8 +14,10 @@ import os
 import re
 import stat
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import urlparse, urlsplit
+from typing import Any
+from urllib.parse import urljoin, urlparse, urlsplit
 
 _MANAGED_STATE_DIR = Path("/sandbox/.deepagents/.state")
 _AUTH_FILE = _MANAGED_STATE_DIR / "auth.json"
@@ -23,6 +25,12 @@ _CODEX_AUTH_FILE = _MANAGED_STATE_DIR / "chatgpt-auth.json"
 _MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
 _INFERENCE_BASE_URL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-inference-base-url"
+)
+_MANAGED_PROXY_HOST_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-proxy-host"
+)
+_MANAGED_PROXY_PORT_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-proxy-port"
 )
 _AUTO_APPROVAL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-auto-approval"
@@ -59,11 +67,22 @@ _ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
 )
 _OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 _UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
+_FETCH_URL_TRUSTED_PROXY_ENV = (
+    "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"
+)
+_MANAGED_FETCH_CA_BUNDLE_FILE = Path(
+    "/etc/openshell-tls/ca-bundle.pem"
+)
 _MANAGED_ADAPTER_PROVIDER = "openai"
 _NVIDIA_DISPLAY_PROVIDER_ALIASES = frozenset(
     {"nvidia", "nvidia-prod", "nvidia-nim", "nvidia-router"}
 )
 _DISPLAY_PROVIDER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+# Match the launchers' root-owned, image-baked proxy validator. Its deliberate
+# RFC 1123 deviation permits underscores only for controlled internal/container
+# aliases such as `proxy_name`; the cross-boundary cases in
+# test/langchain-deepagents-code-proxy-launcher.test.ts prevent validator drift.
+_MANAGED_PROXY_HOST = re.compile(r"[A-Za-z0-9._-]+")
 _MCP_SERVER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 _MCP_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 _MCP_DNS_NAME = re.compile(
@@ -903,6 +922,262 @@ def managed_inference_base_url() -> str:
     return value
 
 
+def managed_fetch_proxy_url() -> str | None:
+    """Return the explicit OpenShell proxy delegated to managed ``fetch_url``.
+
+    The variable is absent when this helper is imported outside the managed
+    launcher, in which case the upstream direct DNS-pinning transport remains
+    authoritative. When present, every conventional HTTP(S) proxy variable
+    must carry the same launcher-derived value. This prevents a mutable ambient
+    proxy or ``NO_PROXY`` rule from silently replacing the root-owned route.
+    """
+    value = os.environ.get(_FETCH_URL_TRUSTED_PROXY_ENV)
+    if value is None:
+        return None
+    expected_proxy_url = _managed_fetch_proxy_url_from_files()
+    if (
+        not value
+        or len(value) > 2048
+        or value != value.strip()
+        or any(ord(character) < 32 for character in value)
+    ):
+        raise RuntimeError("managed fetch URL proxy is invalid")
+    try:
+        parsed = urlparse(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("managed fetch URL proxy is invalid") from exc
+    if (
+        parsed.scheme != "http"
+        or not parsed.hostname
+        or port is None
+        or port < 1
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or _MANAGED_PROXY_HOST.fullmatch(parsed.hostname) is None
+    ):
+        raise RuntimeError("managed fetch URL proxy is invalid")
+    if value != expected_proxy_url:
+        raise RuntimeError(
+            "managed fetch URL proxy does not match root-owned proxy"
+        )
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        if os.environ.get(name) != value:
+            raise RuntimeError("managed fetch URL proxy does not match runtime proxy")
+    return value
+
+
+def _read_managed_proxy_value(path: Path, label: str) -> str:
+    """Read one immutable proxy component from the managed image."""
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError(f"managed proxy {label} file is missing or unsafe")
+    try:
+        metadata = path.stat()
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"managed proxy {label} file is unreadable") from exc
+    if (
+        metadata.st_uid != _MANAGED_FILE_OWNER_UID
+        or stat.S_IMODE(metadata.st_mode) != 0o444
+    ):
+        raise RuntimeError(
+            f"managed proxy {label} file has unsafe ownership or mode"
+        )
+    value = raw.rstrip("\n")
+    if (
+        not value
+        or len(value) > 2048
+        or raw not in {value, f"{value}\n"}
+        or value != value.strip()
+        or any(ord(character) < 32 for character in value)
+    ):
+        raise RuntimeError(f"managed proxy {label} file has invalid contents")
+    return value
+
+
+def _managed_fetch_proxy_url_from_files() -> str:
+    """Derive the trusted proxy URL independently from root-owned files."""
+    host = _read_managed_proxy_value(_MANAGED_PROXY_HOST_FILE, "host")
+    port = _read_managed_proxy_value(_MANAGED_PROXY_PORT_FILE, "port")
+    if _MANAGED_PROXY_HOST.fullmatch(host) is None:
+        raise RuntimeError("managed proxy host file has invalid contents")
+    if (
+        re.fullmatch(r"[0-9]{1,5}", port) is None
+        or not 1 <= int(port, 10) <= 65535
+    ):
+        raise RuntimeError("managed proxy port file has invalid contents")
+    return f"http://{host}:{port}"
+
+
+def _managed_fetch_ca_bundle() -> tuple[int, str]:
+    """Open and validate fixed OpenShell TLS trust without a pathname race."""
+    path = _MANAGED_FETCH_CA_BUNDLE_FILE
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:
+        raise RuntimeError("managed fetch CA bundle is invalid")
+    flags = os.O_RDONLY | no_follow | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        raise RuntimeError("managed fetch CA bundle is unavailable") from None
+    except OSError:
+        raise RuntimeError("managed fetch CA bundle is invalid") from None
+
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != _MANAGED_FILE_OWNER_UID
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+            or metadata.st_size <= 0
+        ):
+            raise RuntimeError("managed fetch CA bundle is invalid")
+        descriptor_path = next(
+            (
+                candidate
+                for root in ("/proc/self/fd", "/dev/fd")
+                if os.path.exists(candidate := f"{root}/{descriptor}")
+            ),
+            None,
+        )
+        if descriptor_path is None:
+            raise RuntimeError("managed fetch CA bundle is invalid")
+        return descriptor, descriptor_path
+    except OSError:
+        os.close(descriptor)
+        raise RuntimeError("managed fetch CA bundle is invalid") from None
+    except RuntimeError:
+        os.close(descriptor)
+        raise
+
+
+def _close_managed_fetch_ca_bundle(descriptor: int) -> None:
+    try:
+        os.close(descriptor)
+    except OSError:
+        # Closing the read-only trust snapshot cannot expand authority.
+        pass
+
+
+def _rewind_managed_fetch_ca_bundle(descriptor: int) -> None:
+    """Reset fd-backed trust before each synchronous transport read."""
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+    except OSError:
+        raise RuntimeError("managed fetch CA bundle is invalid") from None
+
+
+def managed_fetch_with_redirects(
+    url: str,
+    *,
+    timeout: int,
+    max_redirects: int,
+    original_fetch: Callable[..., Any],
+    validation_error: type[ValueError],
+) -> Any:
+    """Fetch through only the launcher-delegated OpenShell proxy.
+
+    Outside the managed launcher, preserve the pinned upstream transport. In
+    the managed image, avoid forbidden direct DNS while keeping requests'
+    ambient proxy discovery and ``NO_PROXY`` disabled. OpenShell's proxy then
+    remains the authoritative network-policy and SSRF boundary for every hop.
+    """
+    try:
+        proxy_url = managed_fetch_proxy_url()
+    except RuntimeError as exc:
+        # Keep runtime-integrity failures inside fetch_url's structured
+        # validation result instead of surfacing an opaque tool exception.
+        raise validation_error(str(exc)) from exc
+    if proxy_url is None:
+        return original_fetch(url, timeout=timeout)
+
+    try:
+        import requests
+    except ImportError:
+        # Keep an optional dependency failure inside fetch_url's structured
+        # validation result without exposing import paths or stack details.
+        raise validation_error(
+            "managed fetch transport dependency is unavailable"
+        ) from None
+    try:
+        ca_descriptor, ca_bundle = _managed_fetch_ca_bundle()
+    except RuntimeError as exc:
+        raise validation_error(str(exc)) from None
+
+    def validate_url(candidate: str) -> None:
+        try:
+            parsed = urlparse(candidate)
+            hostname = parsed.hostname
+            # Force malformed ports through the same structured validation path
+            # even though requests, rather than this helper, uses the value.
+            _ = parsed.port
+        except ValueError as exc:
+            raise validation_error("URL is malformed") from exc
+        if parsed.scheme not in {"http", "https"}:
+            raise validation_error(
+                f"URL scheme not allowed: {parsed.scheme!r} (must be http or https)"
+            )
+        if not hostname:
+            raise validation_error("URL is missing a hostname")
+        # RFC 3986 credentials are authority userinfo, exposed by username and
+        # password. An `@` or `:` after the authority is ordinary path data
+        # (including valid repository refs/files), never authentication;
+        # rejecting that shape would create false positives. These validation
+        # errors never echo the candidate URL, and the explicit OpenShell proxy
+        # remains the destination-policy and SSRF authority for every hop.
+        if parsed.username is not None or parsed.password is not None:
+            raise validation_error("URL credentials are not allowed")
+        try:
+            hostname.encode("idna").decode("ascii")
+        except UnicodeError:
+            raise validation_error("URL hostname is not valid IDNA") from None
+
+    current_url = url
+    proxies = {"http": proxy_url, "https": proxy_url}
+    try:
+        with requests.Session() as session:
+            # Disable every requests environment-derived session setting, including
+            # proxy/NO_PROXY, netrc, and CA-bundle discovery. Each request receives
+            # the sole root-verified proxy mapping explicitly below. The separately
+            # selected CA bundle establishes TLS transport trust only; it cannot
+            # choose a proxy or authorize a destination under OpenShell policy.
+            session.trust_env = False
+            for _hop in range(max_redirects + 1):
+                validate_url(current_url)
+                try:
+                    _rewind_managed_fetch_ca_bundle(ca_descriptor)
+                except RuntimeError as exc:
+                    raise validation_error(str(exc)) from None
+                response = session.get(
+                    current_url,
+                    timeout=timeout,
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
+                    allow_redirects=False,
+                    proxies=proxies,
+                    verify=ca_bundle,
+                )
+                if 300 <= response.status_code < 400:
+                    location = response.headers.get("Location")
+                    if not location:
+                        raise validation_error(
+                            f"Redirect response (status {response.status_code}) is missing a Location header"
+                        )
+                    current_url = urljoin(current_url, location)
+                    continue
+                response.raise_for_status()
+                return response
+
+        raise requests.exceptions.TooManyRedirects(
+            f"Exceeded {max_redirects} redirects"
+        )
+    finally:
+        _close_managed_fetch_ca_bundle(ca_descriptor)
+
+
 def _disabled_auto_approval(reason: str) -> str:
     if os.environ.get("NEMOCLAW_DEBUG") == "1":
         print(
@@ -994,6 +1269,7 @@ def assert_safe_runtime() -> None:
     """Reject unmanaged runtime credentials before dcode bootstraps settings."""
     _assert_safe_environment()
     _assert_safe_auth_state()
+    managed_fetch_proxy_url()
     base_url = managed_inference_base_url()
     os.environ["OPENAI_BASE_URL"] = base_url
     os.environ["NEMOCLAW_INFERENCE_BASE_URL"] = base_url

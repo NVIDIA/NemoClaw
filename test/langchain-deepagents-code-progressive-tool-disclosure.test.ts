@@ -91,6 +91,15 @@ def _parse_interpreter_ptc(raw): return raw
 def _preview_dotenv_environ(*, start_path=None): return {}
 def _tracing_enabled(): return False
 `,
+  "tools.py": `from __future__ import annotations
+
+_MAX_FETCH_REDIRECTS = 5
+
+class _UrlValidationError(ValueError): pass
+
+def _fetch_with_redirects(url, *, timeout):
+    return url, timeout
+`,
   "model_config.py": `from __future__ import annotations
 
 class ModelConfigError(RuntimeError): pass
