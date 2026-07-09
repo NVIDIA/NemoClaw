@@ -73,7 +73,7 @@ async function interruptAfterReplacementReceipt() {
 }
 
 describe("rebuild replacement recovery boundary", () => {
-  it("resumes a correlated replacement without creating or deleting again (#6436)", async () => {
+  it("replays restore without onboarding from an interrupted correlated replacement (#6436)", async () => {
     const { interrupted, transaction } = await interruptAfterReplacementReceipt();
     expect(transaction).toMatchObject({ status: "active", phase: "replacement_created" });
 
@@ -89,12 +89,14 @@ describe("rebuild replacement recovery boundary", () => {
     });
     resumed.runOpenshellSpy.mockClear();
     resumed.onboardSpy.mockClear();
+    resumed.restoreSandboxStateSpy.mockClear();
     await resumed.rebuildSandbox("alpha", ["--yes"], {
       throwOnError: true,
       transactionStore: interrupted.transactionStore,
     });
 
     expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(resumed.restoreSandboxStateSpy).toHaveBeenCalled();
     expect(resumed.onboardSpy, resumed.logSpy.mock.calls.flat().join("\n")).not.toHaveBeenCalled();
     expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],

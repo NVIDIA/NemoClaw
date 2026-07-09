@@ -160,6 +160,11 @@ describe("rebuild replacement recovery decision", () => {
       },
     } as RebuildTransactionRecordV1;
     expect(observeRebuildRegistry(receipted, target)).toBe("replacement");
+    const missingGateway = { ...target, gatewayName: undefined, gatewayPort: undefined };
+    expect(fingerprintRebuildReplacement(missingGateway)).not.toBe(
+      fingerprintRebuildReplacement(target),
+    );
+    expect(observeRebuildRegistry(receipted, missingGateway)).toBe("mismatch");
   });
 
   it("requires the same sandbox and transaction ID for session adoption (#6436)", () => {
