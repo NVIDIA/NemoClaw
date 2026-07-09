@@ -34,6 +34,7 @@ const inferenceInputCapability = require("./onboard/inference-input-capability")
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
 const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = require("./onboard/tool-disclosure-flow");
 const runtimeControlFlow: typeof import("./onboard/runtime-control-flow") = require("./onboard/runtime-control-flow");
+const dcodeAutoApprovalFlow: typeof import("./onboard/dcode-auto-approval") = require("./onboard/dcode-auto-approval");
 const observabilityPolicy: typeof import("./onboard/observability-policy-presets") = require("./onboard/observability-policy-presets");
 const observabilityCommandFlag: typeof import("./onboard/observability-command-flag") = require("./onboard/observability-command-flag");
 const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
@@ -209,6 +210,8 @@ const {
   OLLAMA_PROXY_PORT,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
+const { ollamaModelRefsMatch }: typeof import("./inference/ollama/model-discovery") =
+  require("./inference/ollama/model-discovery");
 const {
   resetOllamaHostCache,
   getLocalProviderBaseUrl,
@@ -230,6 +233,9 @@ const {
   getOllamaProxyToken,
   isProxyHealthy,
   persistAndProbeOllamaProxy,
+  prepareOllamaModel,
+  printOllamaExposureWarning,
+  promptOllamaModel,
   startOllamaAuthProxy,
 } = require("./inference/ollama/proxy");
 const {
@@ -538,7 +544,7 @@ const agentOnboard = require("./agent/onboard");
 const agentDefs = require("./agent/defs");
 
 const gatewayState: typeof import("./state/gateway") = require("./state/gateway");
-const notReadyRecreate: typeof import("./onboard/not-ready-recreate") = require("./onboard/not-ready-recreate");
+const openClawPluginRestore: typeof import("./state/openclaw-plugin-restore") = require("./state/openclaw-plugin-restore");
 const sandboxState: typeof import("./state/sandbox") = require("./state/sandbox");
 const validation: typeof import("./validation") = require("./validation");
 const urlUtils: typeof import("./core/url-utils") = require("./core/url-utils");
@@ -595,16 +601,14 @@ import {
   printMessagingProviderMissing,
   printSwapCreationFailed,
 } from "./onboard/preflight-messages";
-import {
-  backupSandboxBeforeRecreate,
-  shouldSkipPreRecreateBackup,
-} from "./onboard/sandbox-backup-on-recreate";
+import { shouldSkipPreRecreateBackup } from "./onboard/sandbox-backup-on-recreate";
 import {
   getResumeSandboxGpuOverrides,
   resolveSandboxGpuConfig,
   type SandboxGpuConfig,
   type SandboxGpuFlag,
 } from "./onboard/sandbox-gpu-mode";
+import { createSandboxRecreateProtection } from "./onboard/sandbox-recreate-protection";
 import type { SelectionDrift } from "./onboard/selection-drift";
 import { createSetupNimVllmHandler } from "./onboard/setup-nim-vllm";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
@@ -1059,12 +1063,6 @@ const nousModels: typeof import("./inference/nous-models") = require("./inferenc
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
   buildContext;
 // classifySandboxCreateFailure — see validation import above
-
-const {
-  promptOllamaModel,
-  printOllamaExposureWarning,
-  prepareOllamaModel,
-}: typeof import("./inference/ollama/proxy") = require("./inference/ollama/proxy");
 
 const {
   handleWindowsHostOllamaSelection,
@@ -2380,30 +2378,24 @@ async function createSandboxWithBaseImageResolution(
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
-  if (liveExists && isManagedDcodeAgent && !existingEntry) {
-    console.error(
-      `  Sandbox '${sandboxName}' is live but missing its NemoClaw registry record; refusing unverified DCode reuse or recreation.`,
-    );
-    console.error(
-      "  Choose a different sandbox name, or remove the orphan explicitly with OpenShell.",
-    );
-    process.exit(1);
-  }
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const dcodeAutoApprovalPlan = dcodeAutoApprovalFlow.prepareDcodeAutoApprovalCreatePlan({ sandboxName, liveExists, managedDcodeAgent: isManagedDcodeAgent, registryEntry: existingEntry, requestedMode: createIntent?.dcodeAutoApprovalMode }, { error: console.error, exitProcess: (code) => process.exit(code) });
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
   let pendingStateRestore: BackupResult | null = null;
-  let pendingStateRestoreBackupPath: string | null = null;
   let notReadyRecreateInProgress = false;
-
-  pendingStateRestoreBackupPath = notReadyRecreate.selectPreUpgradeBackupForCreate({
-    liveExists,
-    hasExistingRegistryEntry: existingEntry !== null,
+  const customOpenClawImage =
+    Boolean(fromDockerfile) && getRequestedSandboxAgentName(agent) === "openclaw";
+  const recreateProtection = createSandboxRecreateProtection({
     sandboxName,
+    sandboxEntry: existingEntry,
+    customOpenClawImage,
     note,
   });
+  let pendingStateRestoreBackupPath = recreateProtection.selectPreUpgradeBackup(liveExists);
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
@@ -2485,7 +2477,8 @@ async function createSandboxWithBaseImageResolution(
       !hermesToolGatewayDrift &&
       !hermesDashboardDrift &&
       !toolDisclosureMigrationNeeded &&
-      !observabilityDrift
+      !observabilityDrift &&
+      !dcodeAutoApprovalPlan.hasDrift
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -2551,7 +2544,7 @@ async function createSandboxWithBaseImageResolution(
           }
         } else {
           notReadyRecreateInProgress = true;
-          const outcome = notReadyRecreate.resolveNotReadyOutcome(sandboxName, note);
+          const outcome = recreateProtection.resolveNotReadyOutcome();
           if (outcome.kind === "blocked") {
             for (const hint of outcome.hints) console.error(hint);
             process.exit(1);
@@ -2610,7 +2603,7 @@ async function createSandboxWithBaseImageResolution(
       console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
       console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
       if (!shouldSkipPreRecreateBackup(process.env)) {
-        const result = backupSandboxBeforeRecreate({ sandboxName });
+        const result = recreateProtection.backup();
         if (!result.ok) {
           console.error(
             "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
@@ -2640,6 +2633,8 @@ async function createSandboxWithBaseImageResolution(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
     } else if (observabilityDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply observability settings.`);
+    } else if (dcodeAutoApprovalPlan.hasDrift) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to apply DCode auto-approval settings.`);
     } else if (toolDisclosureMigrationNote) {
       note(toolDisclosureMigrationNote);
     } else if (credentialRotation.changed) {
@@ -2657,7 +2652,7 @@ async function createSandboxWithBaseImageResolution(
         `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
       );
       console.error(
-        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}${explicitObservability ? ` ${explicitObservability}` : ""}\` so MCP providers and adapter state are preserved transactionally.`,
+        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}${explicitObservability ? ` ${explicitObservability}` : ""}${dcodeAutoApprovalPlan.rebuildFlag}\` so MCP providers and adapter state are preserved transactionally.`,
       );
       process.exit(1);
     }
@@ -2676,7 +2671,7 @@ async function createSandboxWithBaseImageResolution(
       !shouldSkipPreRecreateBackup(process.env)
     ) {
       note("  Backing up workspace state before recreating sandbox...");
-      const result = backupSandboxBeforeRecreate({ sandboxName });
+      const result = recreateProtection.backup();
       if (!result.ok) {
         console.error(
           "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
@@ -2807,6 +2802,7 @@ async function createSandboxWithBaseImageResolution(
     preferredInferenceApi,
     webSearchConfig,
     toolDisclosure: effectiveToolDisclosure,
+    ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
@@ -2972,27 +2968,27 @@ async function createSandboxWithBaseImageResolution(
     hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
   }
 
-  // Resolve registry metadata now, but publish it only after restored state is
-  // reconciled and the live agent selection is verified.
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag =
     prebuild.imageRef ?? resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
-  const inferenceSelection = sandboxRegistration.selection;
-
   finalizeCreatedSandbox(
     {
       sandboxName,
       restoreBackupPath,
       preUpgradeBackup: pendingStateRestoreBackupPath !== null,
+      targetAgentType: agent?.name ?? "openclaw",
+      discoverOpenClawImagePluginInstalls: customOpenClawImage,
       validateManagedDcode: isManagedDcodeAgent,
       provider,
       model,
       preferredInferenceApi,
     },
     {
-      restoreSandboxState: sandboxState.restoreSandboxState,
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      discoverFreshOpenClawImagePluginInstalls: (name) => openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(name, sandboxState, agent?.configPaths.dir),
+      restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
       getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
         getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
           runCaptureOpenshell,
@@ -3000,10 +2996,10 @@ async function createSandboxWithBaseImageResolution(
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
-      register: () =>
+      register: (openclawImagePluginInstalls) =>
         sandboxRegistration.registerCreatedSandbox({
           sandboxName,
-          inferenceSelection: inferenceSelection(
+          inferenceSelection: sandboxRegistration.selection(
             sandboxName,
             provider,
             model,
@@ -3013,9 +3009,11 @@ async function createSandboxWithBaseImageResolution(
           agent,
           agentVersionKnown: !fromDockerfile,
           imageTag: resolvedImageTag,
+          openclawImagePluginInstalls,
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
+          ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
           policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
@@ -3118,7 +3116,7 @@ async function selectAndValidateOllamaModel(
     }
     const selectedModel = requireValue(model, "Expected an Ollama model selection");
     onModelSelected?.(selectedModel);
-    if (!installedModels.includes(selectedModel)) {
+    if (!installedModels.some((listedModel) => ollamaModelRefsMatch(listedModel, selectedModel))) {
       const lookup = ollamaModelSize.getOllamaModelSize(selectedModel);
       const sizeLabel = ollamaModelSize.formatModelSize(lookup);
       if (isAutoYes()) {
@@ -4512,9 +4510,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         sandbox: {
           resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
+          requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
           authoritativePolicyTier:
             opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
-          controlUiPort: opts.controlUiPort || null,
+          controlUiPort: _preflightDashboardPort,
           rootDir: ROOT,
         },
         sandboxDeps: {
@@ -4690,6 +4689,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         verifyDeployment: async (name, chain) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =
             require("./verify-deployment");
+          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           return verifyDeploymentModule.verifyDeployment(name, chain, {
             executeSandboxCommand: (sandbox: string, script: string) =>
               executeSandboxCommandForVerification(sandbox, script),
@@ -4709,12 +4709,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               );
               return parseInt(result.trim(), 10) || 0;
             },
-            captureForwardList: () =>
-              runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
+            captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
             getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
-            providerExistsInGateway: (providerName: string) =>
-              providerExistsInGateway(providerName),
-          });
+            providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
+          }, { diagnoseCustomOpenClawRuntime: verifyDeploymentModule.shouldDiagnoseCustomOpenClawRuntime(liveFinalFlowContext.fromDockerfile, agent?.name) });
         },
         formatVerificationDiagnostics: (result) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =

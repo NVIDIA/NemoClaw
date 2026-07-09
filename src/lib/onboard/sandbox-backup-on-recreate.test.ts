@@ -41,6 +41,46 @@ describe("backupSandboxBeforeRecreate", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("State backed up"));
   });
 
+  it("rejects an unmarked custom OpenClaw backup before recreate deletion (#6108)", () => {
+    const errorLog = vi.fn();
+    const result = backupSandboxBeforeRecreate({
+      sandboxName: "my-assistant",
+      sandboxEntry: {
+        name: "my-assistant",
+        agent: "openclaw",
+        fromDockerfile: "/tmp/Dockerfile.custom",
+      },
+      backupImpl: () => makeBackup(),
+      log: vi.fn(),
+      errorLog,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failureKind).toBe("plugin-provenance");
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining("aborting recreate before delete"),
+    );
+  });
+
+  it("rejects an unmarked backup for an orphan custom OpenClaw target (#6108)", () => {
+    const errorLog = vi.fn();
+    const result = backupSandboxBeforeRecreate({
+      sandboxName: "orphan",
+      sandboxEntry: null,
+      requireOpenClawImagePluginProvenance: true,
+      backupImpl: () => makeBackup(),
+      log: vi.fn(),
+      errorLog,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failureKind).toBe("plugin-provenance");
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("new name"));
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_RECREATE_WITHOUT_BACKUP=1"),
+    );
+  });
+
   it("returns ok:false with failureKind=partial when some entries failed", () => {
     const backup = makeBackup({
       success: false,

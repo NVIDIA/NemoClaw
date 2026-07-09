@@ -4,6 +4,7 @@
 import { type Session, updateSession } from "../state/onboard-session";
 import { clearAgentScopedResumeState } from "./agent-resume-state";
 import { setOnboardBrandingAgent } from "./branding";
+import { isDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { stopTrackedModelRouterForAgentChange } from "./model-router-process";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
@@ -31,7 +32,10 @@ type SelectedAgentTransitionOverrides = Partial<Omit<SelectedAgentTransitionDeps
 export function applyOnboardRuntimeControlRequests(
   opts: Pick<
     OnboardOptions,
-    "toolDisclosure" | "observabilityEnabled" | "observabilityRequestedExplicitly"
+    | "toolDisclosure"
+    | "observabilityEnabled"
+    | "observabilityRequestedExplicitly"
+    | "dcodeAutoApprovalMode"
   >,
 ) {
   const observabilityIsExplicit = opts.observabilityRequestedExplicitly !== false;
@@ -41,6 +45,9 @@ export function applyOnboardRuntimeControlRequests(
       observabilityIsExplicit && typeof opts.observabilityEnabled === "boolean"
         ? opts.observabilityEnabled
         : null,
+    requestedDcodeAutoApprovalMode: isDcodeAutoApprovalMode(opts.dcodeAutoApprovalMode)
+      ? opts.dcodeAutoApprovalMode
+      : null,
   };
 }
 

@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
+import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { explicitObservabilityFlag } from "../../onboard/observability-command-flag";
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -73,15 +74,22 @@ export function printMcpRebuildRetryCommand(
   entries: McpRebuildPreparation["entries"],
   toolDisclosure?: ToolDisclosure,
   observability?: { enabled: boolean; requestedExplicitly: boolean },
+  dcodeAutoApproval?: {
+    mode: DcodeAutoApprovalMode;
+    requestedExplicitly: boolean;
+  },
 ): void {
   const observabilityFlag = observability
     ? explicitObservabilityFlag(observability.enabled, observability.requestedExplicitly)
     : null;
   const observabilityArg = observabilityFlag ? ` ${observabilityFlag}` : "";
+  const dcodeAutoApprovalArg = dcodeAutoApproval?.requestedExplicitly
+    ? ` --dcode-auto-approval ${dcodeAutoApproval.mode}`
+    : "";
   if (entries.length > 0) {
     const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
     console.error(
-      `    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes${disclosureArg}${observabilityArg}`,
+      `    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
     );
     console.error(
       `       This will recreate sandbox '${sandboxName}' and restore its MCP bridges.`,
@@ -89,7 +97,9 @@ export function printMcpRebuildRetryCommand(
     return;
   }
   const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
-  console.error(`    2. Run: ${CLI_NAME} onboard --resume${disclosureArg}${observabilityArg}`);
+  console.error(
+    `    2. Run: ${CLI_NAME} onboard --resume${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
+  );
   console.error(`       This will recreate sandbox '${sandboxName}'.`);
 }
 

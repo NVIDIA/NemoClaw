@@ -201,8 +201,10 @@ NODE
 )"
 [ "$registry_output" = "enabled" ] || fail "host registry does not record observability enabled"
 
+# Expansion is intentionally deferred to the sandbox shell.
+# shellcheck disable=SC2016
 marker_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  sh -c 'test -f /tmp/nemoclaw-observability-enabled && cat /tmp/nemoclaw-observability-enabled' \
+  sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; test -f "$marker" && ! test -L "$marker" && cat "$marker"' \
   2>&1)" || fail "managed observability marker is absent"
 [ "$marker_output" = "1" ] || fail "managed observability marker has an unexpected value"
 pass "host registry, live policy, and sandbox marker agree on enabled observability"

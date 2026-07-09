@@ -40,9 +40,13 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, sandbox, skip }) => {
   const installLog = artifacts.pathFor("phase-1-install-device-auth-health.log");
+  // The sandbox cannot reach runner loopback, so expose the fixture through
+  // OpenShell's host bridge while keeping readiness checks local to the runner.
   const inference = await startFakeOpenAiCompatibleServer({
     apiKey: INFERENCE_API_KEY,
+    host: "0.0.0.0",
     model: INFERENCE_MODEL,
+    publicHost: "host.openshell.internal",
     requireAuth: true,
   });
   cleanup.add("close device-auth compatible inference fixture", async () => {

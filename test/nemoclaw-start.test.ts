@@ -2703,10 +2703,6 @@ describe("seed_default_workspace_templates (#3240)", () => {
     const stepDownLog = path.join(tmpDir, "step-down.log");
     fs.mkdirSync(workspaceDir, { recursive: true });
     writeTemplates(templatesDir);
-    fs.mkdirSync(path.join(tmpDir, "openclaw", "docs", "reference"), { recursive: true });
-    fs.cpSync(templatesDir, path.join(tmpDir, "openclaw", "docs", "reference", "templates"), {
-      recursive: true,
-    });
     const configPath = path.join(tmpDir, "openclaw.json");
     fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { skipBootstrap: true } } }));
     const scriptPath = path.join(tmpDir, "seed-as-sandbox.sh");
@@ -2717,9 +2713,10 @@ describe("seed_default_workspace_templates (#3240)", () => {
     const seedAsSandbox = extractShellFunctionFromSource(
       src,
       "seed_default_workspace_templates_as_sandbox",
-    )
-      .replaceAll("/sandbox/.openclaw/workspace", workspaceDir)
-      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath);
+    ).replace(
+      "seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json",
+      `seed_default_workspace_templates ${JSON.stringify(workspaceDir)} ${JSON.stringify(templatesDir)} ${JSON.stringify(configPath)}`,
+    );
     fs.writeFileSync(
       scriptPath,
       [
@@ -2727,7 +2724,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
         "set -euo pipefail",
         `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$0" >"$STEP_DOWN_LOG"; exec "$@"' sandbox-step-down)`,
-        `seed_default_workspace_templates() { printf 'seeded\\n' > ${JSON.stringify(path.join(workspaceDir, "SOUL.md"))}; }`,
+        extractShellFunctionFromSource(src, "seed_default_workspace_templates"),
         runStepDown,
         seedAsSandbox,
         "seed_default_workspace_templates_as_sandbox",
@@ -2742,7 +2739,10 @@ describe("seed_default_workspace_templates (#3240)", () => {
       });
       expect(result.status, result.stderr || result.stdout).toBe(0);
       expect(fs.readFileSync(stepDownLog, "utf-8").trim()).toBe("sandbox-step-down");
+      expect(fs.existsSync(path.join(workspaceDir, "AGENTS.md"))).toBe(true);
       expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+      expect(fs.existsSync(path.join(workspaceDir, "BOOTSTRAP.md"))).toBe(false);
+      expect(result.stderr).toContain("seeded 6 default workspace template");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

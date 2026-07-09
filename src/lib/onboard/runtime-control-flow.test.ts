@@ -20,15 +20,18 @@ describe("onboard runtime control flow", () => {
       applyOnboardRuntimeControlRequests({
         toolDisclosure: "direct",
         observabilityEnabled: true,
+        dcodeAutoApprovalMode: "thread-opt-in",
       }),
     ).toEqual({
       requestedToolDisclosure: "direct",
       requestedObservabilityEnabled: true,
+      requestedDcodeAutoApprovalMode: "thread-opt-in",
     });
     delete process.env.NEMOCLAW_TOOL_DISCLOSURE;
     expect(applyOnboardRuntimeControlRequests({})).toEqual({
       requestedToolDisclosure: null,
       requestedObservabilityEnabled: null,
+      requestedDcodeAutoApprovalMode: null,
     });
   });
 
@@ -41,6 +44,7 @@ describe("onboard runtime control flow", () => {
     ).toEqual({
       requestedToolDisclosure: null,
       requestedObservabilityEnabled: null,
+      requestedDcodeAutoApprovalMode: null,
     });
   });
 

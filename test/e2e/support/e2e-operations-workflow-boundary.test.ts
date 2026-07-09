@@ -57,6 +57,21 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("keeps PR reporting and scorecards disabled for E2E risk shadow runs", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["report-to-pr"].if =
+      "${{ always() && github.event_name == 'workflow_dispatch' }}";
+    workflow.jobs.scorecard.if =
+      "${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "report-to-pr must run only for manual workflow dispatches",
+        "scorecard must run after scheduled and manual E2E executions",
+      ]),
+    );
+  });
+
   it("rejects restoration of scheduled issue routing or broad issue-write access", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.permissions = "write-all";

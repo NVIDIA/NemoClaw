@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../inference/web-search";
+import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
 import {
   mergeProviderModelSelectedContext,
   mergeSandboxCreatedContext,
@@ -35,6 +36,7 @@ export interface CoreOnboardFlowPhaseOptions<
   sandbox: {
     resumeAgentChanged: boolean;
     requestedObservabilityEnabled?: boolean | null;
+    requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
     authoritativePolicyTier?: string | null;
     controlUiPort: number | null;
     rootDir: string;
@@ -115,6 +117,7 @@ export function createCoreOnboardFlowPhases<
       authoritativePolicyTier: options.sandbox.authoritativePolicyTier,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
       requestedObservabilityEnabled: options.sandbox.requestedObservabilityEnabled,
+      requestedDcodeAutoApprovalMode: options.sandbox.requestedDcodeAutoApprovalMode,
       session: context.session,
       sandboxName: context.sandboxName,
       model: context.model,

@@ -548,7 +548,7 @@ console.log(
 );
 `;
 
-function parseInstalledSlackProof(stdout: string): InstalledSlackRuntimeProof {
+export function parseInstalledSlackProof(stdout: string, stderr = ""): InstalledSlackRuntimeProof {
   for (const line of stdout.trim().split(/\r?\n/u).reverse()) {
     try {
       const value = JSON.parse(line) as Partial<InstalledSlackRuntimeProof>;
@@ -569,7 +569,17 @@ function parseInstalledSlackProof(stdout: string): InstalledSlackRuntimeProof {
       // Module discovery can emit non-JSON diagnostics before the proof record.
     }
   }
-  throw new Error(`installed Slack runtime proof did not emit a valid result:\n${stdout}`);
+  const diagnostics = [
+    stdout.trim() ? `stdout:\n${stdout.trim()}` : "",
+    stderr.trim() ? `stderr:\n${stderr.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  throw new Error(
+    `installed Slack runtime proof did not emit a valid result:\n${
+      diagnostics || "stdout and stderr were empty"
+    }`,
+  );
 }
 
 export async function runInstalledSlackRuntimeProof(
@@ -589,5 +599,5 @@ export async function runInstalledSlackRuntimeProof(
     timeoutMs: 120_000,
   });
   expectExitZero(result, "installed OpenClaw Slack runtime proof");
-  return parseInstalledSlackProof(result.stdout);
+  return parseInstalledSlackProof(result.stdout, result.stderr);
 }
