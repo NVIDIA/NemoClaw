@@ -51,6 +51,9 @@ describe("onboard shared gateway route containment", () => {
       bedrockRuntimeOnboard: {
         setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
       },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
       redact: (value: string) => value,
       compactText: (value: string) => value,
       log: vi.fn(),
@@ -206,6 +209,12 @@ describe("onboard shared gateway route containment", () => {
         })),
       },
       hydrateCredentialEnv: vi.fn(() => "secret"),
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
       redact: (value: string) => value,
       compactText: (value: string) => value,
       log: vi.fn(),
