@@ -54,8 +54,9 @@ function parseJson<T>(text: string): T {
 // Agent-aware config resolution
 //
 // Each agent defines its own config layout in agents/*/manifest.yaml:
-//   - openclaw: /sandbox/.openclaw/openclaw.json  (JSON)
-//   - hermes:   /sandbox/.hermes/config.yaml      (YAML)
+//   - openclaw:                 /sandbox/.openclaw/openclaw.json    (JSON)
+//   - hermes:                   /sandbox/.hermes/config.yaml        (YAML)
+//   - langchain-deepagents-code: /sandbox/.deepagents/config.toml   (TOML)
 //
 // resolveAgentConfig() looks up the sandbox's agent from the registry,
 // loads the agent definition, and returns the paths and format needed
@@ -69,7 +70,7 @@ export interface AgentConfigTarget {
   configPath: string;
   /** Directory containing the config (for chown after cp) */
   configDir: string;
-  /** Config file format: "json" or "yaml" */
+  /** Config file format: "json", "yaml", or "toml" */
   format: string;
   /** Config file basename */
   configFile: string;
@@ -404,7 +405,12 @@ function classifyNewKeyGate(inputs: NewKeyGateInputs): NewKeyGate {
  * Parse a config file's raw text according to its format.
  */
 function parseConfig(raw: string, format: string): ConfigObject {
-  const parsed = format === "yaml" ? require("yaml").parse(raw) : JSON.parse(raw);
+  const parsed =
+    format === "yaml"
+      ? require("yaml").parse(raw)
+      : format === "toml"
+        ? require("smol-toml").parse(raw)
+        : JSON.parse(raw);
   if (!isConfigObject(parsed)) {
     throw new Error("Config is not an object.");
   }
@@ -413,11 +419,20 @@ function parseConfig(raw: string, format: string): ConfigObject {
 
 /**
  * Serialize a config object according to its format.
+ *
+ * Every format this switch handles must also be handled by parseConfig above:
+ * a parseable-but-not-serializable format would let `config set` read a
+ * sandbox config and then write it back in the wrong syntax.
  */
 function serializeConfig(config: ConfigObject, format: string): string {
   if (format === "yaml") {
     const YAML = require("yaml");
     return YAML.stringify(config);
+  }
+  if (format === "toml") {
+    const TOML = require("smol-toml");
+    // TOML files end with a trailing newline by convention; smol-toml omits it.
+    return `${TOML.stringify(config)}\n`;
   }
   return JSON.stringify(config, null, 2);
 }
