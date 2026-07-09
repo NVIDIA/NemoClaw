@@ -4,6 +4,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import Module from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import ts from "typescript";
@@ -47,7 +48,7 @@ fs.mkdirSync(cacheDir, { recursive: true });
 const cacheWaitMs = envInt("NEMOCLAW_SOURCE_REQUIRE_CACHE_WAIT_MS", 5_000);
 const cachePollMs = Math.max(1, envInt("NEMOCLAW_SOURCE_REQUIRE_CACHE_POLL_MS", 25));
 const cacheLockStaleMs = envInt("NEMOCLAW_SOURCE_REQUIRE_CACHE_LOCK_STALE_MS", 30_000);
-const statsPath = process.env.NEMOCLAW_SOURCE_REQUIRE_STATS;
+const statsPath = sourceRequireStatsPath(process.env.NEMOCLAW_SOURCE_REQUIRE_STATS);
 
 const stats = {
   cacheHits: 0,
@@ -68,6 +69,61 @@ function envInt(name: string, fallback: number): number {
   if (raw === undefined) return fallback;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!path.isAbsolute(relative) && !relative.startsWith(`..${path.sep}`) && relative !== "..")
+  );
+}
+
+function sourceRequireStatsPath(configuredPath: string | undefined): string | undefined {
+  if (!configuredPath) return undefined;
+  const resolved = path.resolve(configuredPath);
+  return [repoRoot, os.tmpdir()].some((root) => isWithin(path.resolve(root), resolved))
+    ? resolved
+    : undefined;
+}
+
+function openSourceRequireStats(statsPath: string): number | null {
+  const parent = path.dirname(statsPath);
+  let canonicalParent: string;
+  try {
+    canonicalParent = fs.realpathSync.native(parent);
+  } catch {
+    return null;
+  }
+  const canonicalPath = path.join(canonicalParent, path.basename(statsPath));
+  const withinAllowedRoot = [repoRoot, os.tmpdir()].some((root) => {
+    try {
+      return isWithin(fs.realpathSync.native(root), canonicalPath);
+    } catch {
+      return false;
+    }
+  });
+  if (!withinAllowedRoot) return null;
+
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(
+      statsPath,
+      fs.constants.O_APPEND |
+        fs.constants.O_CREAT |
+        fs.constants.O_WRONLY |
+        fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+  } catch {
+    return null;
+  }
+  const stat = fs.fstatSync(descriptor);
+  if (!stat.isFile() || stat.nlink !== 1) {
+    fs.closeSync(descriptor);
+    return null;
+  }
+  return descriptor;
 }
 
 function nowMs(): number {
@@ -326,6 +382,7 @@ function compileWithCache(filename: string, source: string, cachePath: string): 
 if (statsPath) {
   process.once("exit", () => {
     if (stats.files === 0) return;
+    let descriptor: number | null = null;
     try {
       const row = {
         ...stats,
@@ -335,10 +392,12 @@ if (statsPath) {
         pid: process.pid,
         rssMb: Math.round((process.memoryUsage().rss / 1024 / 1024) * 10) / 10,
       };
-      fs.mkdirSync(path.dirname(statsPath), { recursive: true });
-      fs.appendFileSync(statsPath, `${JSON.stringify(row)}\n`, { mode: 0o600 });
+      descriptor = openSourceRequireStats(statsPath);
+      if (descriptor !== null) fs.appendFileSync(descriptor, `${JSON.stringify(row)}\n`);
     } catch {
       // Diagnostics are best-effort and must not fail an otherwise successful test process.
+    } finally {
+      if (descriptor !== null) fs.closeSync(descriptor);
     }
   });
 }

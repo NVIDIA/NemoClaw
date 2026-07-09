@@ -10,8 +10,18 @@ const path = require("node:path");
 const ts = require("typescript");
 
 const sourceLoader = path.join(__dirname, "register-source-require.ts");
+const sourceLoaderCache = path.join(__dirname, "source-require-cache.ts");
+const bootstrapSources = new Set([sourceLoader, sourceLoaderCache]);
+const previousTypeScriptLoader = Module._extensions[".ts"];
 
 Module._extensions[".ts"] = (targetModule, filename) => {
+  if (!bootstrapSources.has(filename)) {
+    if (previousTypeScriptLoader) {
+      previousTypeScriptLoader(targetModule, filename);
+      return;
+    }
+    throw new Error(`Unexpected TypeScript bootstrap dependency: ${filename}`);
+  }
   const { outputText } = ts.transpileModule(fs.readFileSync(filename, "utf8"), {
     compilerOptions: {
       esModuleInterop: true,
