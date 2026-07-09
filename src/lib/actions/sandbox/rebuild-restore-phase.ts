@@ -189,14 +189,22 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     console.log("");
     console.log("  Restoring workspace state...");
     log(`Restoring from: ${backupManifest.backupPath} into sandbox: ${sandboxName}`);
-    const restore = sandboxState.restoreSandboxState(sandboxName, backupManifest.backupPath, {
-      applyManagedStateFileRestore,
-    });
+    const restore = sandboxState.restoreRecreatedSandboxState(
+      sandboxName,
+      backupManifest.backupPath,
+      {
+        targetAgentType: backupManifest.agentType,
+        applyManagedStateFileRestore,
+      },
+    );
     log(
-      `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}`,
+      `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
     );
     restoreSucceeded = restore.success;
     if (!restore.success) {
+      if (restore.error) {
+        console.error(`  Restore blocked: ${restore.error}`);
+      }
       console.error(`  Partial restore: ${restore.restoredDirs.join(", ") || "none"}`);
       console.error(`  Failed: ${restore.failedDirs.join(", ")}`);
       if (restore.failedFiles.length > 0) {

@@ -47,7 +47,7 @@ describe("prepared rebuild recovery", () => {
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       recoveryManifest.backupPath,
-      { applyManagedStateFileRestore: false },
+      { targetAgentType: "openclaw", applyManagedStateFileRestore: false },
     );
   });
 
@@ -88,7 +88,7 @@ describe("prepared rebuild recovery", () => {
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       recoveryManifest.backupPath,
-      { applyManagedStateFileRestore: false },
+      { targetAgentType: "openclaw", applyManagedStateFileRestore: false },
     );
   });
 

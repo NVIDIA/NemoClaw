@@ -69,6 +69,95 @@ describe("patchOpenClawInferenceConfig", () => {
     });
   });
 
+  it("updates the explicit main agents.list model without changing secondary defaults", () => {
+    const config: ConfigObject = {
+      agents: {
+        defaults: { model: { primary: "inference/nvidia/old-model" } },
+        list: [
+          { id: "main", default: true, model: "inference/nvidia/old-model" },
+          {
+            id: "research",
+            default: true,
+            model: "inference/nvidia/secondary-model",
+            workspace: "/sandbox/.openclaw/workspace-research",
+            agentDir: "/sandbox/.openclaw/agents/research",
+          },
+        ],
+      },
+      models: {
+        mode: "merge",
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "unused",
+            api: "openai-completions",
+            models: [
+              { id: "old-model", name: "inference/nvidia/old-model" },
+              { id: "secondary-model", name: "inference/nvidia/secondary-model" },
+            ],
+          },
+        },
+      },
+    };
+
+    patchOpenClawInferenceConfig(config, "nvidia-prod", "nvidia/new-model");
+
+    expect(config.agents).toEqual({
+      defaults: { model: { primary: "inference/nvidia/new-model" } },
+      list: [
+        { id: "main", default: true, model: "inference/nvidia/new-model" },
+        {
+          id: "research",
+          default: true,
+          model: "inference/nvidia/secondary-model",
+          workspace: "/sandbox/.openclaw/workspace-research",
+          agentDir: "/sandbox/.openclaw/agents/research",
+        },
+      ],
+    });
+    expect((config.models as ConfigObject).providers).toEqual({
+      inference: {
+        baseUrl: "https://inference.local/v1",
+        apiKey: "unused",
+        api: "openai-completions",
+        models: [{ id: "nvidia/new-model", name: "inference/nvidia/new-model" }],
+      },
+    });
+  });
+
+  it("falls back to the default agents.list model when no main entry exists", () => {
+    const config: ConfigObject = {
+      agents: {
+        defaults: { model: { primary: "inference/nvidia/old-model" } },
+        list: [
+          { id: "research", model: "inference/nvidia/secondary-model" },
+          { id: "primary", default: true, model: "inference/nvidia/old-model" },
+        ],
+      },
+      models: {
+        mode: "merge",
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "unused",
+            api: "openai-completions",
+            models: [{ id: "old-model", name: "inference/nvidia/old-model" }],
+          },
+        },
+      },
+    };
+
+    patchOpenClawInferenceConfig(config, "nvidia-prod", "nvidia/new-model");
+
+    expect(config.agents).toEqual({
+      defaults: { model: { primary: "inference/nvidia/new-model" } },
+      list: [
+        { id: "research", model: "inference/nvidia/secondary-model" },
+        { id: "primary", default: true, model: "inference/nvidia/new-model" },
+      ],
+    });
+  });
+
   it("is a no-op when OpenClaw already matches the requested route", () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },

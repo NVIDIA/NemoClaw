@@ -149,6 +149,35 @@ describe("connectSandbox route lifecycle", () => {
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
   });
 
+  it("does not claim repair ran when route inspection fails before repair (#6192)", async () => {
+    const harness = createConnectHarness({
+      registryEntry: {
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        provider: "nvidia-prod",
+      },
+    });
+    harness.captureOpenshellSpy
+      .mockReturnValueOnce({ status: 0, output: "alpha Ready" })
+      .mockImplementationOnce(() => {
+        throw new Error("gateway inference read failed");
+      });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("failed to verify or repair inference route");
+    expect(errorOutput).toContain("did not return a trusted result");
+    expect(errorOutput).toContain("route is not known healthy");
+    expect(errorOutput).not.toContain("after DNS and route repair");
+    expect(errorOutput).not.toContain("route is known to be broken");
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
+      ["inference", "get", "-g", "nemoclaw"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("stops before opening SSH when route repair and reset both fail", async () => {
     const harness = createConnectHarness({
       inferenceGetOutput:

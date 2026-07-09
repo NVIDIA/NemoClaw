@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Creates deterministic NemoClaw semver release tags on origin/main, handles release housekeeping, and drafts release notes. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, or preparing release announcements.
+description: Creates deterministic NemoClaw semver release tags on origin/main, handles release housekeeping, drafts release notes, and verifies the maintainer-published Announcement. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, publishing release announcements, or completing release communication.
 user_invocable: true
 ---
 
@@ -11,7 +11,7 @@ user_invocable: true
 
 Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
 
-The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag and `latest` are verified, automatically move remaining open issues/PRs from the released version label to the next patch label, then draft release notes for the maintainer to post.
+The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag and `latest` are verified, automatically move remaining open issues/PRs from the released version label to the next patch label, draft release notes, then verify the maintainer-published Announcement before final handoff.
 
 ## Hard Rules
 
@@ -24,6 +24,7 @@ The release is one annotated semver tag on an already-merged `origin/main` commi
 - Never push `latest` or `lkg` from this skill.
 - Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
 - Draft release notes locally. Do not create the GitHub Discussion; the maintainer does that.
+- Do not mark the announcement step complete until the maintainer provides a valid Discussion URL and the published Announcement is verified.
 - Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) for SSH, authentication, remote access, authorization, or permission failures.
 
 ## Workflow
@@ -38,7 +39,8 @@ Release Progress:
 - [ ] Step 4: Wait for workflow-managed latest
 - [ ] Step 5: Bump remaining open issues/PRs
 - [ ] Step 6: Generate release-note data and draft Markdown
-- [ ] Step 7: Hand off announcement steps
+- [ ] Step 7: Wait for maintainer-published Announcement
+- [ ] Step 8: Verify Announcement and hand off sharing
 ```
 
 ### Step 1: Generate Release Plan
@@ -163,15 +165,17 @@ This writes:
 
 If `notes-data.json` has `status: "partial"` or non-empty `pullRequestWarnings`, report the warnings and ask the maintainer whether to fetch/fill the missing PR metadata before drafting.
 
-Draft release notes from `notes-data.json` using the style from `nemoclaw-maintainer-release-notes`. Save only Markdown, outside the checkout root:
+Load and follow `nemoclaw-maintainer-release-notes`, then use its output as the draft. Save only Markdown, outside the checkout root:
 
 ```text
 <release-dir>/release-note-draft.md
 ```
 
+Before continuing to Step 7, verify the draft has exactly three lead paragraphs, categorized shipped changes, one what-changed-and-why-it-matters bullet with a visible `#NNNN` link for every included change, and thanks for external contributors only.
+
 Do not create or update a GitHub Discussion.
 
-### Step 7: Hand Off Announcement
+### Step 7: Wait for Maintainer-Published Announcement
 
 Return:
 
@@ -181,8 +185,20 @@ Return:
 - `cut-result.json`, `latest-result.json`, and `notes-data.json` paths,
 - Markdown draft path,
 - issue/PR housekeeping summary,
-- suggested discussion title: `NemoClaw <new-version> is out`,
-- reminder: maintainer creates the Announcement discussion and shares its link in external channels.
+- suggested discussion title: `NemoClaw <new-version> is out`.
+
+Ask the maintainer to publish the draft in the `Announcements` Discussion category and return the resulting Discussion URL. Do not create or update the Discussion. Keep Step 7 in progress until the maintainer provides the URL.
+
+### Step 8: Verify Announcement and Hand Off Sharing
+
+Before making any network request, reject the maintainer-provided URL unless it exactly matches `https://github.com/NVIDIA/NemoClaw/discussions/<positive-integer>` with no query string or fragment. Only then open it using a read-only GitHub or web capability and verify:
+
+- the title is `NemoClaw <new-version> is out`;
+- the category is `Announcements`;
+- the body preserves the draft's three lead paragraphs, category headings, every included PR link, comparison URL, and external contributor usernames; formatting-only edits are acceptable;
+- the comparison link targets `<previous-version>...<new-version>` and visible PR links target `github.com/NVIDIA/NemoClaw/pull/<number>`.
+
+If the Announcement is valid, return its URL with the release artifacts and mark the release workflow complete. Remind the maintainer to share that Discussion URL in the appropriate external channels. Do not create a duplicate Announcement.
 
 ## Recovery
 
@@ -193,3 +209,6 @@ Return:
 - `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
 - `lkg` changed: stop and escalate to a release admin.
 - Post-tag housekeeping fails: report the error and list items still carrying the released label. After the failure is fixed, rerun the same bump command; already-moved items no longer match the source label.
+- Announcement is not published yet: keep Step 7 in progress and return the draft path and suggested title; the tag and housekeeping remain complete.
+- Announcement title, category, body, or links are wrong: ask the maintainer to edit the existing Discussion, then verify the same URL again. Do not create a replacement. After three failed verification attempts for the same Discussion, stop and escalate to a release admin.
+- Announcement cannot be inspected: report the read failure and ask the maintainer to confirm access or provide a public URL; do not mark Step 8 complete.

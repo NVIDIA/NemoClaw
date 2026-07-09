@@ -119,8 +119,14 @@ describe("lifecycle option normalization", () => {
 
   it("preserves typed rebuild options and still accepts compatibility argv", () => {
     expect(
-      normalizeRebuildSandboxOptions({ toolDisclosure: "direct", verbose: true, yes: true }),
+      normalizeRebuildSandboxOptions({
+        dcodeAutoApprovalMode: "thread-opt-in",
+        toolDisclosure: "direct",
+        verbose: true,
+        yes: true,
+      }),
     ).toEqual({
+      dcodeAutoApprovalMode: "thread-opt-in",
       toolDisclosure: "direct",
       verbose: true,
       yes: true,
@@ -136,6 +142,13 @@ describe("lifecycle option normalization", () => {
     expect(normalizeRebuildSandboxOptions(["--tool-disclosure=direct"]).toolDisclosure).toBe(
       "direct",
     );
+    expect(
+      normalizeRebuildSandboxOptions(["--dcode-auto-approval", "thread-opt-in"])
+        .dcodeAutoApprovalMode,
+    ).toBe("thread-opt-in");
+    expect(
+      normalizeRebuildSandboxOptions(["--dcode-auto-approval=disabled"]).dcodeAutoApprovalMode,
+    ).toBe("disabled");
     expect(normalizeRebuildSandboxOptions(["--observability"]).observabilityEnabled).toBe(true);
     expect(normalizeRebuildSandboxOptions(["--no-observability"]).observabilityEnabled).toBe(false);
     expect(
@@ -154,6 +167,15 @@ describe("lifecycle option normalization", () => {
     );
     expect(() => normalizeRebuildSandboxOptions(["--tool-disclosure="])).toThrow(
       /progressive, direct/,
+    );
+    expect(() => normalizeRebuildSandboxOptions(["--dcode-auto-approval", "always"])).toThrow(
+      /disabled, thread-opt-in/,
+    );
+    expect(() => normalizeRebuildSandboxOptions(["--dcode-auto-approval"])).toThrow(
+      /disabled, thread-opt-in/,
+    );
+    expect(() => normalizeRebuildSandboxOptions(["--dcode-auto-approval="])).toThrow(
+      /disabled, thread-opt-in/,
     );
   });
 

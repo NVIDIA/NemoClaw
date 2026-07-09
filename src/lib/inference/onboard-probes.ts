@@ -33,6 +33,8 @@ const {
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
 const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
+const { isPrivateHostname, isLoopbackHostname } = require("../private-networks");
+const { buildResolvePinArgs } = require("./endpoint-ssrf-preflight");
 const {
   executeProbeWithHttpRetry,
   isProbeTimeout,
@@ -41,6 +43,13 @@ const {
   runChatCompletionsRetryLoop,
 } = require("./probe-retry");
 const { probeAnthropicEndpoint } = require("./probe-anthropic");
+const {
+  getValidationProbeCurlArgs,
+  getDeepSeekV4ProValidationProbeCurlArgs,
+  getKimiK26ValidationProbeCurlArgs,
+  getExtendedNvidiaEndpointValidationProbeCurlArgs,
+  getProbeProcessTimeoutMs,
+} = require("./probe-http-helpers");
 
 const {
   getCurlTimingArgs,
@@ -79,7 +88,6 @@ function openAiLikeFailureFromError(error) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-const ONBOARD_VALIDATION_TIMEOUT_ENV = "NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS";
 const EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS = new Set([
   "qwen/qwen3.5-397b-a17b",
   "deepseek-ai/deepseek-v4-flash",
@@ -224,61 +232,6 @@ function getProbeAuthMode(_provider) {
   return undefined;
 }
 
-// Per-validation-probe curl timing. Tighter than the default 60s in
-// getCurlTimingArgs() because validation must not hang the wizard for a
-// minute on a misbehaving model. See issue #1601 (Bug 3).
-function getValidationProbeCurlArgs(opts) {
-  const args = isWsl(opts)
-    ? ["--connect-timeout", "20", "--max-time", "30"]
-    : ["--connect-timeout", "10", "--max-time", "15"];
-  return withValidationMaxTimeOverride(args);
-}
-
-function getDeepSeekV4ProValidationProbeCurlArgs(opts) {
-  const args = isWsl(opts)
-    ? ["--connect-timeout", "30", "--max-time", "150"]
-    : ["--connect-timeout", "20", "--max-time", "120"];
-  return withValidationMaxTimeOverride(args);
-}
-
-function getKimiK26ValidationProbeCurlArgs(opts) {
-  const args = isWsl(opts)
-    ? ["--connect-timeout", "20", "--max-time", "90"]
-    : ["--connect-timeout", "10", "--max-time", "60"];
-  return withValidationMaxTimeOverride(args);
-}
-
-function getExtendedNvidiaEndpointValidationProbeCurlArgs(opts) {
-  const args = isWsl(opts)
-    ? ["--connect-timeout", "30", "--max-time", "300"]
-    : ["--connect-timeout", "10", "--max-time", "300"];
-  return withValidationMaxTimeOverride(args);
-}
-
-function getCurlMaxTimeSeconds(args) {
-  const maxTimeIndex = args.indexOf("--max-time");
-  if (maxTimeIndex === -1) return 30;
-  const value = Number(args[maxTimeIndex + 1]);
-  return Number.isFinite(value) && value > 0 ? value : 30;
-}
-
-function withValidationMaxTimeOverride(args) {
-  const raw = (process.env[ONBOARD_VALIDATION_TIMEOUT_ENV] || "").trim();
-  if (!raw) return args;
-  const overrideSeconds = Math.ceil(Number(raw));
-  if (!Number.isFinite(overrideSeconds) || overrideSeconds <= 0) return args;
-  if (overrideSeconds <= getCurlMaxTimeSeconds(args)) return args;
-  const maxTimeIndex = args.indexOf("--max-time");
-  if (maxTimeIndex === -1) return args;
-  const next = [...args];
-  next[maxTimeIndex + 1] = String(overrideSeconds);
-  return next;
-}
-
-function getProbeProcessTimeoutMs(args) {
-  return (getCurlMaxTimeSeconds(args) + 5) * 1000;
-}
-
 // ── Responses API probe ──────────────────────────────────────────
 
 function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
@@ -289,6 +242,7 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
     const result = runCurlProbe(
       [
         "-sS",
+        ...buildResolvePinArgs(`${baseUrl}/responses`, options.pinnedAddresses),
         ...getValidationProbeCurlArgs(),
         "-H",
         "Content-Type: application/json",
@@ -316,7 +270,10 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
         }),
         `${baseUrl}/responses`,
       ],
-      { trustedConfigFiles: authConfig.trustedConfigFiles },
+      {
+        trustedConfigFiles: authConfig.trustedConfigFiles,
+        pinnedAddresses: options.pinnedAddresses,
+      },
     );
 
     if (!result.ok) {
@@ -348,6 +305,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     const timingArgs = options.timingArgs ?? getChatCompletionsProbeTimingArgs(model);
     const args = [
       "-sS",
+      ...buildResolvePinArgs(`${baseUrl}/chat/completions`, options.pinnedAddresses),
       ...timingArgs,
       "-H",
       "Content-Type: application/json",
@@ -423,6 +381,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     const result = runCurlProbe(args, {
       timeoutMs: getProbeProcessTimeoutMs(args),
       trustedConfigFiles: authConfig.trustedConfigFiles,
+      pinnedAddresses: options.pinnedAddresses,
     });
 
     if (!result.ok) {
@@ -523,13 +482,15 @@ export function getChatCompletionsProbeCurlArgs(opts: {
   model: string;
   url: string;
   isWsl?: boolean;
+  pinnedAddresses?: readonly string[];
 }) {
-  const { credentialArgs, authHeader, model, url, isWsl: isWslOverride } = opts;
+  const { credentialArgs, authHeader, model, url, isWsl: isWslOverride, pinnedAddresses } = opts;
   const platformOptions = typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
   const timingArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
   const credSlice = credentialArgs ?? authHeader ?? [];
   return [
     "-sS",
+    ...buildResolvePinArgs(url, pinnedAddresses),
     ...timingArgs,
     "-H",
     "Content-Type: application/json",
@@ -546,14 +507,16 @@ function runChatCompletionsProbe({
   url,
   isWsl: isWslOverride,
   trustedConfigFiles,
+  pinnedAddresses,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
     credentialArgs,
     model,
     url,
     isWsl: isWslOverride,
+    pinnedAddresses,
   });
-  const probeOpts = { timeoutMs: getProbeProcessTimeoutMs(args) };
+  const probeOpts = { timeoutMs: getProbeProcessTimeoutMs(args), pinnedAddresses };
   if (trustedConfigFiles && trustedConfigFiles.length > 0) {
     probeOpts.trustedConfigFiles = trustedConfigFiles;
   }
@@ -580,6 +543,7 @@ function runDoubledTimeoutChatCompletionsRetry({
   const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
   const buildRetryArgs = () => [
     "-sS",
+    ...buildResolvePinArgs(`${baseUrl}/chat/completions`, options.pinnedAddresses),
     ...doubledArgs,
     "-H",
     "Content-Type: application/json",
@@ -593,12 +557,14 @@ function runDoubledTimeoutChatCompletionsRetry({
       ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
           authMode: options.authMode,
           timingArgs: doubledArgs,
+          pinnedAddresses: options.pinnedAddresses,
         })
       : (() => {
           const retryArgs = buildRetryArgs();
           return runCurlProbe(retryArgs, {
             timeoutMs: getProbeProcessTimeoutMs(retryArgs),
             trustedConfigFiles: authConfig.trustedConfigFiles,
+            pinnedAddresses: options.pinnedAddresses,
           });
         })();
   return runChatCompletionsRetryLoop(runRetryProbe);
@@ -634,7 +600,61 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     };
   }
 
+  // SSRF source boundary: reject a private/internal endpoint before any curl.
+  // The sandbox-internal alias is handled above, and host.docker.internal is
+  // gated by the allowHostDockerInternal check at the top of this function —
+  // both are trusted sandbox->host bridges, so exempt the already-permitted
+  // hijacked-docker-internal alias here. Loopback (127.0.0.0/8, ::1, localhost)
+  // is likewise exempt: this shared probe is the same one local inference uses
+  // to validate a locally-run Ollama/vLLM/NIM server on the probing host, and
+  // loopback only reaches that host — it is not a pivot to other internal
+  // infrastructure. Everything else that resolves to a private/reserved address
+  // (LAN ranges, link-local metadata) is attacker-reachable SSRF surface and is
+  // refused. Reuses the shared validators (defense-in-depth alongside
+  // DNS-pinning at the config-write boundary). See PR #6293 PRA-2.
+  //
+  // DNS-backed SSRF (a public name resolving to a private address) is closed
+  // one layer up, before this synchronous shared probe is reached: the only
+  // untrusted-endpoint caller path (validateCustomOpenAiLikeSelection /
+  // validateCustomAnthropicSelection) runs assertEndpointResolvesPublic — a
+  // resolver-based preflight that fails closed — before invoking this probe,
+  // and the independent /v1/models context curl resolves inline in
+  // applyCompatibleEndpointContextWindow. This function stays synchronous (it
+  // has many callers and no async boundary), so the resolve step is not
+  // duplicated here; the literal string check below remains as the local
+  // belt-and-suspenders layer. See PR #6293 PRA-3.
+  let probeHostname;
+  try {
+    probeHostname = new URL(String(endpointUrl)).hostname;
+  } catch {
+    probeHostname = "";
+  }
+  if (
+    probeHostname &&
+    isPrivateHostname(probeHostname) &&
+    !isLoopbackHostname(probeHostname) &&
+    !isHijackedDockerInternalUrl(endpointUrl)
+  ) {
+    return {
+      ok: false,
+      message: `Endpoint host "${probeHostname}" is a private/internal address and cannot be used as a remote inference endpoint. Use a routable public URL and retry onboard.`,
+      failures: [
+        {
+          name: "Private-address endpoint",
+          httpStatus: 0,
+          curlStatus: 0,
+          message: "endpoint resolves to a private/internal address",
+          body: "",
+        },
+      ],
+    };
+  }
+
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  // Pin every probe curl to the SSRF-preflight-validated address(es) the caller
+  // captured, so a second DNS lookup here cannot rebind the hostname to a
+  // private/internal address after the public preflight (TOCTOU — cv, #6293).
+  const pinnedAddresses = options.pinnedAddresses;
   let authConfig;
   try {
     authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
@@ -644,7 +664,10 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
             name: "Responses API with tool calling",
             api: "openai-responses",
             execute: () =>
-              probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
+              probeResponsesToolCalling(endpointUrl, model, apiKey, {
+                authMode: options.authMode,
+                pinnedAddresses,
+              }),
           }
         : {
             name: "Responses API",
@@ -653,6 +676,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               runCurlProbe(
                 [
                   "-sS",
+                  ...buildResolvePinArgs(`${baseUrl}/responses`, pinnedAddresses),
                   ...getValidationProbeCurlArgs(),
                   "-H",
                   "Content-Type: application/json",
@@ -664,7 +688,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
                   }),
                   `${baseUrl}/responses`,
                 ],
-                { trustedConfigFiles: authConfig.trustedConfigFiles },
+                { trustedConfigFiles: authConfig.trustedConfigFiles, pinnedAddresses },
               ),
           };
 
@@ -675,6 +699,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         options.requireChatCompletionsToolCalling === true
           ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
               authMode: options.authMode,
+              pinnedAddresses,
             })
           : runChatCompletionsProbe({
               credentialArgs: authConfig.args,
@@ -682,6 +707,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               url: `${baseUrl}/chat/completions`,
               isWsl: options.isWsl,
               trustedConfigFiles: authConfig.trustedConfigFiles,
+              pinnedAddresses,
             }),
     };
 
@@ -714,6 +740,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           const streamResult = runStreamingEventProbe(
             [
               "-sS",
+              ...buildResolvePinArgs(`${baseUrl}/responses`, pinnedAddresses),
               ...getValidationProbeCurlArgs(),
               "-H",
               "Content-Type: application/json",
@@ -726,7 +753,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               }),
               `${baseUrl}/responses`,
             ],
-            { trustedConfigFiles: authConfig.trustedConfigFiles },
+            { trustedConfigFiles: authConfig.trustedConfigFiles, pinnedAddresses },
           );
           if (!streamResult.ok && streamResult.missingEvents.length > 0) {
             // Backend responds but lacks required streaming events — fall back
@@ -924,6 +951,7 @@ export function verifyOnboardInferenceSmoke(options: any) {
   const probe = probeOpenAiLikeEndpoint(endpointUrl, options.model, apiKey, {
     authMode: getProbeAuthMode(options.provider),
     skipResponsesProbe: true,
+    pinnedAddresses: options.pinnedAddresses,
   });
 
   if (probe.ok) {

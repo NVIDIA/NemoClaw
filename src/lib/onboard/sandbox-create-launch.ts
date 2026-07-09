@@ -118,9 +118,12 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     if (sandboxName) {
       envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
     }
-    if (input.observabilityEnabled === true) {
-      envArgs.push(formatEnvAssignment("NEMOCLAW_OBSERVABILITY", "1"));
-    }
+    envArgs.push(
+      formatEnvAssignment(
+        "NEMOCLAW_OBSERVABILITY",
+        input.observabilityEnabled === true ? "1" : "0",
+      ),
+    );
   }
 
   appendExtraPlaceholderKeysEnvArg(envArgs, input.extraPlaceholderKeys, formatEnvAssignment);

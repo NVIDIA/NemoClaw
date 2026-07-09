@@ -14,6 +14,8 @@ import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persis
 import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-selection";
 import { filterSuppressedAgentRequiredPresets } from "../../onboard/policy-tier-suppression";
 import { parsePresetPolicyKeys } from "../../policy";
+import { hasCompleteOpenClawImagePluginProvenance } from "../../state/openclaw-plugin-restore";
+import { hasAuthoritativeOpenClawImagePluginProvenance } from "../../state/sandbox";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
@@ -29,6 +31,7 @@ export interface RebuildBackupPhaseInput {
   preparedRecoveryManifest: RebuildBackupManifest;
   messagingPlan: SandboxMessagingPlan | null;
   webSearchConfig: WebSearchConfig | null;
+  force?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
@@ -36,8 +39,21 @@ export interface RebuildBackupPhaseInput {
 
 export interface RebuildBackupPhaseResult {
   backupManifest: RebuildBackupManifest;
+  backupWasForceSkipped: boolean;
   policyPresets: string[];
   sessionPolicyPresets: string[] | null;
+}
+
+function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): never {
+  console.error(
+    "  Custom-image OpenClaw plugin provenance is missing or invalid; rebuild cannot safely distinguish image-owned plugins from user state.",
+  );
+  console.error("  The sandbox is untouched — no data was lost.");
+  console.error(
+    "  To preserve state, onboard the custom image under a new sandbox name and manually migrate only user-owned state.",
+  );
+  input.relockShieldsIfNeeded(!input.staleRecovery);
+  return input.bail("Custom-image OpenClaw plugin provenance is unavailable.");
 }
 
 /** Align built-in web-search egress with the durable provider selection. */
@@ -130,18 +146,54 @@ export function normalizeRebuildTargetPolicyPresets(
 
 export function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
+  backupStateForRebuild: typeof backupSandboxStateForRebuild = backupSandboxStateForRebuild,
 ): RebuildBackupPhaseResult | null {
+  const customOpenClaw =
+    Boolean(input.sandboxEntry.fromDockerfile) &&
+    (!input.sandboxEntry.agent || input.sandboxEntry.agent === "openclaw");
+  const preparedRecoveryManifest = input.preparedRecoveryManifest;
+  const hasPreparedRecovery = preparedRecoveryManifest !== null;
+  const preparedRecoveryIsAuthoritative =
+    preparedRecoveryManifest !== null &&
+    hasAuthoritativeOpenClawImagePluginProvenance(preparedRecoveryManifest);
+  const restoresCustomOpenClawState =
+    customOpenClaw && (!input.staleRecovery || hasPreparedRecovery);
+  if (
+    (hasPreparedRecovery &&
+      preparedRecoveryManifest?.reconcileOpenClawImagePluginProvenance === true &&
+      !preparedRecoveryIsAuthoritative) ||
+    (restoresCustomOpenClawState &&
+      !preparedRecoveryIsAuthoritative &&
+      (hasPreparedRecovery ||
+        !hasCompleteOpenClawImagePluginProvenance(
+          input.sandboxEntry.openclawImagePluginInstalls,
+          "/sandbox/.openclaw",
+        )))
+  ) {
+    return bailForUnsafeOpenClawPluginProvenance(input);
+  }
   const backupManifest =
-    input.preparedRecoveryManifest ??
-    backupSandboxStateForRebuild(
+    preparedRecoveryManifest ??
+    backupStateForRebuild(
       input.sandboxName,
       input.sandboxEntry,
       input.staleRecovery,
       input.log,
       input.relockShieldsIfNeeded,
       input.bail,
+      { force: input.force },
     );
   if (backupManifest === undefined) return null;
+  if (
+    backupManifest &&
+    (backupManifest.reconcileOpenClawImagePluginProvenance === true ||
+      restoresCustomOpenClawState) &&
+    !hasAuthoritativeOpenClawImagePluginProvenance(backupManifest)
+  ) {
+    return bailForUnsafeOpenClawPluginProvenance(input);
+  }
+  const backupWasForceSkipped =
+    input.force === true && !input.staleRecovery && backupManifest === null;
 
   const registryPolicyPresets = Array.isArray(input.sandboxEntry.policies)
     ? input.sandboxEntry.policies.filter(
@@ -173,5 +225,5 @@ export function runRebuildBackupPhase(
     true,
   ).policyPresets;
 
-  return { backupManifest, policyPresets, sessionPolicyPresets };
+  return { backupManifest, backupWasForceSkipped, policyPresets, sessionPolicyPresets };
 }

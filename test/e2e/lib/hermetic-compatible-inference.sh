@@ -10,31 +10,6 @@
 # shellcheck source=test/e2e/lib/openai-compatible-api-proof.sh
 . "$(dirname "${BASH_SOURCE[0]}")/openai-compatible-api-proof.sh"
 
-nemoclaw_e2e_host_ip_for_sandbox() {
-  local ip_addr
-  if command -v ip >/dev/null 2>&1; then
-    ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
-    if [ -n "$ip_addr" ]; then
-      echo "$ip_addr"
-      return
-    fi
-  fi
-
-  if command -v hostname >/dev/null 2>&1; then
-    for ip_addr in $(hostname -I 2>/dev/null); do
-      case "$ip_addr" in
-        127.* | ::1) ;;
-        *)
-          echo "$ip_addr"
-          return
-          ;;
-      esac
-    done
-  fi
-
-  echo "127.0.0.1"
-}
-
 nemoclaw_e2e_start_hermetic_compatible_inference() {
   local fake_key
   fake_key="${NEMOCLAW_E2E_COMPATIBLE_API_KEY:-e2e-compatible-key}"
@@ -44,7 +19,7 @@ nemoclaw_e2e_start_hermetic_compatible_inference() {
   export FAKE_OPENAI_PORT="${FAKE_OPENAI_PORT:-0}"
   export FAKE_OPENAI_HOST="${FAKE_OPENAI_HOST:-0.0.0.0}"
   export FAKE_OPENAI_READY_HOST="${FAKE_OPENAI_READY_HOST:-127.0.0.1}"
-  export FAKE_OPENAI_PUBLIC_HOST="${FAKE_OPENAI_PUBLIC_HOST:-$(nemoclaw_e2e_host_ip_for_sandbox)}"
+  export FAKE_OPENAI_PUBLIC_HOST="${FAKE_OPENAI_PUBLIC_HOST:-host.openshell.internal}"
   export FAKE_OPENAI_MODEL="${FAKE_OPENAI_MODEL:-${NEMOCLAW_E2E_COMPATIBLE_MODEL:-test-model}}"
   export FAKE_OPENAI_API_KEY="$fake_key"
   export FAKE_OPENAI_REQUIRE_AUTH=1

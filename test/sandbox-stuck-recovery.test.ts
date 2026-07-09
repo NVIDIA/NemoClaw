@@ -69,6 +69,11 @@ if (args[0] === "sandbox" && args[1] === "list") {
   process.exit(0);
 }
 
+if (args[0] === "sandbox" && args[1] === "exec") {
+  process.stdout.write("OK 200\\n");
+  process.exit(0);
+}
+
 if (args[0] === "policy" && args[1] === "get") {
   process.exit(1);
 }
