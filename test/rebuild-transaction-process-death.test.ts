@@ -145,11 +145,8 @@ describe("rebuild process-death recovery", () => {
       expect(events.filter((event) => event === "restore")).toHaveLength(
         phase === "state_restored" || phase === "required_verified" ? 2 : 1,
       );
-      if (phase === "state_restored") {
-        expect(events).toContain("onboard:interrupt");
-        expect(events).not.toContain("onboard:resume");
-        expect(events.filter((event) => event === "restore")).toHaveLength(2);
-      }
+      expect(events).toContain("onboard:interrupt");
+      expect(events).not.toContain("onboard:resume");
       expect(new RebuildTransactionStore({ stateDir }).load("alpha")).toMatchObject({
         status: "completed",
         phase: "completed",
