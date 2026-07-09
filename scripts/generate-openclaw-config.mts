@@ -1190,7 +1190,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const origins = unique([loopbackOrigin, chatOrigin, portlessOrigin].filter(Boolean) as string[]);
 
   const isRemote = !isLoopback(parsed.hostname || "");
-  const disableDeviceAuth = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1" || isRemote;
+  const explicitDeviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
+  const disableDeviceAuth = explicitDeviceAuthOptOut || isRemote;
   const allowInsecure = parsed.scheme === "http";
   const securityAuditSuppressions: JsonObject[] = [];
   if (allowInsecure && !isRemote) {
@@ -1205,9 +1206,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
       },
     );
   }
-  if (disableDeviceAuth) {
+  if (explicitDeviceAuthOptOut) {
     const reason =
-      "NemoClaw enables this compatibility setting for non-loopback or explicitly opted-out dashboards; use loopback access to retain device authentication.";
+      "NemoClaw applies this setting because NEMOCLAW_DISABLE_DEVICE_AUTH=1 explicitly opts out of device authentication.";
     securityAuditSuppressions.push(
       { checkId: "gateway.control_ui.device_auth_disabled", reason },
       {

@@ -35,39 +35,17 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
     ]);
   });
 
-  it("explains NemoClaw-managed device auth findings (#6024)", () => {
+  it("keeps remote device auth findings active (#6024)", () => {
     const config = buildSecurityAuditConfig("https://nemoclaw0-xxx.brevlab.com:18789");
-    expect(config.security.audit.suppressions).toEqual([
-      {
-        checkId: "gateway.control_ui.device_auth_disabled",
-        reason:
-          "NemoClaw enables this compatibility setting for non-loopback or explicitly opted-out dashboards; use loopback access to retain device authentication.",
-      },
-      {
-        checkId: "config.insecure_or_dangerous_flags",
-        detailIncludes: "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
-        reason:
-          "NemoClaw enables this compatibility setting for non-loopback or explicitly opted-out dashboards; use loopback access to retain device authentication.",
-      },
-    ]);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.security).toBeUndefined();
   });
 
-  it("keeps remote HTTP insecure auth active while explaining managed device auth (#6024)", () => {
+  it("keeps all remote HTTP security findings active (#6024)", () => {
     const config = buildSecurityAuditConfig("http://remote.example:18789");
     expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
-    expect(config.security.audit.suppressions).toEqual([
-      {
-        checkId: "gateway.control_ui.device_auth_disabled",
-        reason:
-          "NemoClaw enables this compatibility setting for non-loopback or explicitly opted-out dashboards; use loopback access to retain device authentication.",
-      },
-      {
-        checkId: "config.insecure_or_dangerous_flags",
-        detailIncludes: "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
-        reason:
-          "NemoClaw enables this compatibility setting for non-loopback or explicitly opted-out dashboards; use loopback access to retain device authentication.",
-      },
-    ]);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.security).toBeUndefined();
   });
 
   it("explains an explicit loopback device auth opt-out (#6024)", () => {
@@ -80,6 +58,9 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
     ]);
     expect(config.security.audit.suppressions[1].detailIncludes).toBe(
       "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+    );
+    expect(config.security.audit.suppressions[0].reason).toContain(
+      "NEMOCLAW_DISABLE_DEVICE_AUTH=1",
     );
   });
 

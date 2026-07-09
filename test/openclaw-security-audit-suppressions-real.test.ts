@@ -41,7 +41,7 @@ function reviewedOpenClawVersion(): string {
   return version;
 }
 
-function runOpenClawAudit(chatUiUrl: string): AuditResult {
+function runOpenClawAudit(chatUiUrl: string, overrides: Record<string, string> = {}): AuditResult {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-audit-"));
   const home = path.join(tmp, "home");
   const configDir = path.join(home, ".openclaw");
@@ -49,7 +49,7 @@ function runOpenClawAudit(chatUiUrl: string): AuditResult {
   fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(
     path.join(configDir, "openclaw.json"),
-    JSON.stringify(buildConfig({ ...BASE_ENV, CHAT_UI_URL: chatUiUrl })),
+    JSON.stringify(buildConfig({ ...BASE_ENV, CHAT_UI_URL: chatUiUrl, ...overrides })),
     { mode: 0o600 },
   );
 
@@ -130,10 +130,26 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
           findingForFlag(remote.findings, "gateway.controlUi.allowInsecureAuth=true"),
         ).toBeDefined();
         expect(
-          remote.suppressedFindings.some(
+          remote.findings.some(
             (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
           ),
         ).toBe(true);
+        expect(
+          findingForFlag(remote.findings, "gateway.controlUi.dangerouslyDisableDeviceAuth=true"),
+        ).toBeDefined();
+
+        const explicitOptOut = runOpenClawAudit("https://127.0.0.1:18789", {
+          NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+        });
+        expect(
+          explicitOptOut.suppressedFindings.find(
+            (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
+          ),
+        ).toMatchObject({
+          severity: "critical",
+          remediation: expect.any(String),
+          suppression: { reason: expect.stringContaining("NEMOCLAW_DISABLE_DEVICE_AUTH=1") },
+        });
       },
       OPENCLAW_AUDIT_TIMEOUT_MS,
     );

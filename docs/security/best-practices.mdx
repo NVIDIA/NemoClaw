@@ -683,8 +683,8 @@ The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS a
 | Risk if relaxed | Allowing insecure auth over HTTPS defeats the purpose of TLS, because authentication tokens transit in cleartext. |
 | Recommendation | Use `https://` for any deployment accessible beyond `localhost`. The default local URL (`http://127.0.0.1:18789`) correctly allows insecure auth for local development. |
 
-OpenClaw's security audit keeps NemoClaw-managed loopback `allowInsecureAuth` and compatibility-driven `dangerouslyDisableDeviceAuth` findings visible as accepted findings instead of counting them as unexplained active findings.
-For a non-loopback HTTP dashboard, the insecure-auth finding remains active until you switch `CHAT_UI_URL` to HTTPS.
+OpenClaw's security audit keeps NemoClaw-managed loopback `allowInsecureAuth` findings and explicit `NEMOCLAW_DISABLE_DEVICE_AUTH=1` opt-out findings visible as accepted findings instead of counting them as unexplained active findings.
+For a non-loopback dashboard, automatically disabled device-auth findings remain active; when that dashboard also uses HTTP, its insecure-auth findings remain active until you switch `CHAT_UI_URL` to HTTPS.
 The generated configuration uses exact audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
 The audit also reports that suppressions are active so you can review the accepted risk.
 These suppressions change audit reporting only.
