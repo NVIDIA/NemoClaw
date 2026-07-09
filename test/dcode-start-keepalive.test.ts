@@ -19,11 +19,18 @@ const START_SCRIPT = path.join(
 const RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
 const tempDirs: string[] = [];
 
-function makeStartFixture(): string {
+function makeStartFixture(
+  options: { rlimitsHelperContent?: (tempDir: string) => string } = {},
+): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-keepalive-"));
   const scriptPath = path.join(tempDir, "start.sh");
   const hostFile = path.join(tempDir, "trusted-proxy-host");
   const portFile = path.join(tempDir, "trusted-proxy-port");
+  const rlimitsHelper = path.join(tempDir, "sandbox-rlimits.sh");
+  if (options.rlimitsHelperContent) {
+    fs.writeFileSync(rlimitsHelper, options.rlimitsHelperContent(tempDir));
+    fs.chmodSync(rlimitsHelper, 0o444);
+  }
   const fixture = fs
     .readFileSync(START_SCRIPT, "utf8")
     .replace(
@@ -37,7 +44,9 @@ function makeStartFixture(): string {
     .replace(
       "readonly MANAGED_PROXY_OWNER_UID=0",
       `readonly MANAGED_PROXY_OWNER_UID=${process.getuid?.() ?? 0}`,
-    );
+    )
+    .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitsHelper)
+    .replace("../../scripts/lib/sandbox-rlimits.sh", "missing-dev-sandbox-rlimits.sh");
   fs.writeFileSync(hostFile, "10.200.0.1\n");
   fs.writeFileSync(portFile, "3128\n");
   fs.chmodSync(hostFile, 0o444);
@@ -87,5 +96,45 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("RAN_CMD");
+  });
+
+  it("hardens resource limits before managed proxy startup work", () => {
+    let rlimitsLog = "";
+    const scriptPath = makeStartFixture({
+      rlimitsHelperContent: (tempDir) => {
+        rlimitsLog = path.join(tempDir, "rlimits.log");
+        return [
+          "harden_resource_limits() {",
+          `  printf 'called=1\\n' > ${JSON.stringify(rlimitsLog)}`,
+          `  printf 'proxy_host=%s\\n' "\${PROXY_HOST-__unset__}" >> ${JSON.stringify(rlimitsLog)}`,
+          "}",
+        ].join("\n");
+      },
+    });
+
+    const result = spawnSync(scriptPath, ["printf", "RAN_CMD"], {
+      input: "",
+      timeout: 3000,
+      encoding: "utf-8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("RAN_CMD");
+    expect(result.stderr).not.toContain("resource limits were NOT hardened");
+    expect(fs.readFileSync(rlimitsLog, "utf8")).toBe("called=1\nproxy_host=__unset__\n");
+  });
+
+  it("logs a security diagnostic when the rlimits helper is missing", () => {
+    const result = spawnSync(makeStartFixture(), ["printf", "RAN_CMD"], {
+      input: "",
+      timeout: 3000,
+      encoding: "utf-8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("RAN_CMD");
+    expect(result.stderr).toContain(
+      "[SECURITY] sandbox-rlimits.sh not found; resource limits were NOT hardened",
+    );
   });
 });
