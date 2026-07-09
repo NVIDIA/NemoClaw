@@ -302,11 +302,14 @@ def _proc_pid_namespace_inode(proc_pid_fd: int) -> int | None:
 
 
 def _cmdline_is_nemoclaw_start(raw: bytes) -> bool:
-    arguments = tuple(argument for argument in raw.split(b"\0") if argument)
-    direct = len(arguments) == 1 and arguments[0] in NEMOCLAW_START_ARGV
+    normalized = raw.rstrip(b"\0")
+    arguments = tuple(normalized.split(b"\0")) if normalized else ()
+    # Docker appends CMD arguments after ENTRYPOINT. Authenticate the canonical
+    # startup script position while allowing those opaque trailing arguments.
+    direct = bool(arguments) and arguments[0] in NEMOCLAW_START_ARGV
     bash = (
-        len(arguments) == 2
-        and arguments[0].rsplit(b"/", 1)[-1] == b"bash"
+        len(arguments) >= 2
+        and arguments[0] in {b"bash", b"/bin/bash", b"/usr/bin/bash"}
         and arguments[1] in NEMOCLAW_START_ARGV
     )
     return direct or bash

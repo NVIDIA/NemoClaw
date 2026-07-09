@@ -140,8 +140,13 @@ def supervised_scenario(
 
 entrypoint = b"bash\0/usr/local/bin/nemoclaw-start\0"
 direct_entrypoint = b"/usr/local/bin/nemoclaw-start\0"
+entrypoint_with_command = b"bash\0/usr/local/bin/nemoclaw-start\0true\0"
+direct_entrypoint_with_command = b"/usr/local/bin/nemoclaw-start\0true\0"
 spoof = b"bash\0/tmp/nemoclaw-start-spoof\0"
 argv_spoof = b"python3\0/tmp/evil.py\0/usr/local/bin/nemoclaw-start\0"
+noncanonical_bash = b"/tmp/bash\0/usr/local/bin/nemoclaw-start\0"
+misplaced_start = b"bash\0/tmp/evil.sh\0/usr/local/bin/nemoclaw-start\0"
+empty_argument_spoof = b"bash\0\0/usr/local/bin/nemoclaw-start\0"
 proof = {
     "remapped": scenario([(412, "424242", entrypoint, "trusted")]),
     "stale": scenario([(412, "999999", entrypoint, "trusted")]),
@@ -164,6 +169,21 @@ proof.update({
     ]),
     "openshell_supervised_direct": supervised_scenario([
         (412, "424242", direct_entrypoint, 1000, 412, 1),
+    ]),
+    "openshell_supervised_command": supervised_scenario([
+        (412, "424242", entrypoint_with_command, 1000, 412, 1),
+    ]),
+    "openshell_supervised_direct_command": supervised_scenario([
+        (412, "424242", direct_entrypoint_with_command, 1000, 412, 1),
+    ]),
+    "openshell_noncanonical_bash": supervised_scenario([
+        (412, "424242", noncanonical_bash, 1000, 412, 1),
+    ]),
+    "openshell_misplaced_start": supervised_scenario([
+        (412, "424242", misplaced_start, 1000, 412, 1),
+    ]),
+    "openshell_empty_argument_spoof": supervised_scenario([
+        (412, "424242", empty_argument_spoof, 1000, 412, 1),
     ]),
     "openshell_landlock_all_namespaces_denied": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
@@ -214,6 +234,12 @@ proof.update({
     "openshell_wrong_required_child": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
     ], required_pid=413),
+    "openshell_nested_required_child": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ], required_pid=412),
+    "openshell_nested_wrong_required_child": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ], required_pid=413),
 })
 print(json.dumps(proof))
 `;
@@ -238,6 +264,11 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
     const {
       openshell_argv_spoof: _openshellArgvSpoof,
       openshell_nested_argv_spoof: _openshellNestedArgvSpoof,
+      openshell_supervised_command: _openshellSupervisedCommand,
+      openshell_supervised_direct_command: _openshellSupervisedDirectCommand,
+      openshell_noncanonical_bash: _openshellNoncanonicalBash,
+      openshell_misplaced_start: _openshellMisplacedStart,
+      openshell_empty_argument_spoof: _openshellEmptyArgumentSpoof,
       ...proof
     } = runIdentityHarness(guardPath);
     expect(proof).toEqual({
@@ -268,6 +299,8 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       openshell_duplicate: false,
       openshell_required_child: true,
       openshell_wrong_required_child: false,
+      openshell_nested_required_child: name === "OpenClaw",
+      openshell_nested_wrong_required_child: false,
     });
   });
 });
@@ -278,5 +311,10 @@ describe.each(GUARDS)("%s exact startup argv", (_name, guardPath) => {
 
     expect(proof.openshell_argv_spoof).toBe(false);
     expect(proof.openshell_nested_argv_spoof).toBe(false);
+    expect(proof.openshell_supervised_command).toBe(true);
+    expect(proof.openshell_supervised_direct_command).toBe(true);
+    expect(proof.openshell_noncanonical_bash).toBe(false);
+    expect(proof.openshell_misplaced_start).toBe(false);
+    expect(proof.openshell_empty_argument_spoof).toBe(false);
   });
 });
