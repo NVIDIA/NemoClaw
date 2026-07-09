@@ -275,6 +275,9 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.deepagents.generated.mdx
                 slug: credential-storage
+              - page: "OpenShell 0.0.72 Compatibility Review"
+                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.deepagents.generated.mdx
+                slug: openshell-0.0.72-compatibility-review
           - section: "Reference"
             slug: reference
             collapsed: open-by-default
