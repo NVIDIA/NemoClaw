@@ -102,6 +102,19 @@ describe("destroySandbox flow", () => {
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
   });
 
+  it("preserves the final gateway when an interactive user declines cleanup (#2166)", async () => {
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "");
+    const harness = createDestroyHarness({ promptResponses: ["yes", ""] });
+
+    await expect(harness.destroySandbox("alpha", {})).resolves.toBeUndefined();
+
+    expect(harness.promptSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("destroy the gateway"),
+    );
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  });
+
   it("honors an explicit gateway-preservation override on macOS (#4662)", async () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     const harness = createDestroyHarness();

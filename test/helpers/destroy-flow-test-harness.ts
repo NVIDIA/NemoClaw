@@ -25,6 +25,7 @@ export type DestroyHarness = {
   logSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
+  promptSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
@@ -43,6 +44,7 @@ type DestroyHarnessOptions = {
   finalizeMcpError?: string;
   mcpAddState?: "prepared";
   mcpServers?: string[];
+  promptResponses?: string[];
   registeredSandboxCount?: number;
   restoreMcpError?: string;
   sandboxPresent?: boolean;
@@ -116,7 +118,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const mcpBridge = requireDist("./mcp-bridge.js");
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
-  vi.spyOn(credentialStore, "prompt").mockResolvedValue("yes");
+  const promptSpy = vi.spyOn(credentialStore, "prompt").mockResolvedValue("yes");
+  for (const response of options.promptResponses ?? []) {
+    promptSpy.mockResolvedValueOnce(response);
+  }
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: true,
     sessions: [{ pid: 1 }],
@@ -291,6 +296,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     logSpy,
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
+    promptSpy,
     removeSandboxSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,
     runOpenshellSpy,
