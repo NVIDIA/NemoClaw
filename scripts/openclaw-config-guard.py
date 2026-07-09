@@ -912,7 +912,7 @@ def _pinned_process_matches_supervised_nonroot_start(
         second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
         pinned_after = os.fstat(proc_pid_fd)
         expected_namespace_inode = supervisor_identity[1]
-        namespace_matches = (
+        same_namespace_matches = (
             expected_namespace_inode is None
             and first_namespace_inode == second_namespace_inode
         ) or (
@@ -920,6 +920,31 @@ def _pinned_process_matches_supervised_nonroot_start(
             and first_namespace_inode == expected_namespace_inode
             and second_namespace_inode == expected_namespace_inode
         )
+        nested_namespace_matches = (
+            first_namespace_inode == second_namespace_inode
+            and (
+                expected_namespace_inode is None
+                or (
+                    first_namespace_inode is not None
+                    and first_namespace_inode != expected_namespace_inode
+                )
+            )
+        )
+        same_namespace_pid_matches = (
+            first_status is not None
+            and second_status is not None
+            and first_status[1][-1] == numeric_pid
+            and second_status[1][-1] == numeric_pid
+        )
+        nested_namespace_pid_matches = (
+            first_status is not None
+            and second_status is not None
+            and first_status[1][-1] == 1
+            and second_status[1][-1] == 1
+        )
+        topology_matches = (
+            same_namespace_matches and same_namespace_pid_matches
+        ) or (nested_namespace_matches and nested_namespace_pid_matches)
         return bool(
             first_start_time is not None
             and second_start_time is not None
@@ -930,11 +955,9 @@ def _pinned_process_matches_supervised_nonroot_start(
             and second_status is not None
             and first_status[0] == expected_effective_uid
             and second_status[0] == expected_effective_uid
-            and first_status[1][-1] == numeric_pid
-            and second_status[1][-1] == numeric_pid
             and _cmdline_is_nemoclaw_start(first_cmdline)
             and _cmdline_is_nemoclaw_start(second_cmdline)
-            and namespace_matches
+            and topology_matches
             and pinned_before.st_dev == pinned_after.st_dev
             and pinned_before.st_ino == pinned_after.st_ino
         )

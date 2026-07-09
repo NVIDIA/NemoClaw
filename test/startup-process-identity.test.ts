@@ -86,6 +86,9 @@ def supervised_scenario(
         namespace_path = os.path.join(root, "shared")
         with open(namespace_path, "wb") as stream:
             stream.write(b"shared")
+        nested_namespace_path = os.path.join(root, "nested")
+        with open(nested_namespace_path, "wb") as stream:
+            stream.write(b"nested")
         write_process(
             proc_root,
             1,
@@ -97,13 +100,13 @@ def supervised_scenario(
             parent_pid=0,
         )
         for process in processes:
-            pid, start_time, cmdline, effective_uid, inner_pid, parent_pid = process
+            pid, start_time, cmdline, effective_uid, inner_pid, parent_pid, *namespace = process
             write_process(
                 proc_root,
                 pid,
                 start_time,
                 cmdline,
-                namespace_path,
+                nested_namespace_path if namespace == ["nested"] else namespace_path,
                 effective_uid=effective_uid,
                 inner_pid=inner_pid,
                 parent_pid=parent_pid,
@@ -170,6 +173,15 @@ proof.update({
     "openshell_nested_child": supervised_scenario([
         (412, "424242", entrypoint, 1000, 1, 1),
     ]),
+    "openshell_nested_pid_namespace": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ]),
+    "openshell_nested_landlock_all_namespaces_denied": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ], namespace_access=False),
+    "openshell_nested_landlock_supervisor_namespace_denied": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ], namespace_access="child_only"),
     "openshell_non_direct_child": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 77),
     ]),
@@ -195,7 +207,7 @@ const GUARDS = [
   ["Hermes", path.resolve("agents/hermes/runtime-config-guard.py")],
 ] as const;
 
-describe.each(GUARDS)("%s startup process identity", (_name, guardPath) => {
+describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
   it("authenticates exactly one root namespace init and rejects stale or spoofed identities (#2426)", () => {
     const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath], {
       encoding: "utf-8",
@@ -218,6 +230,9 @@ describe.each(GUARDS)("%s startup process identity", (_name, guardPath) => {
       openshell_wrong_supervisor: false,
       openshell_root_child: false,
       openshell_nested_child: false,
+      openshell_nested_pid_namespace: name === "OpenClaw",
+      openshell_nested_landlock_all_namespaces_denied: name === "OpenClaw",
+      openshell_nested_landlock_supervisor_namespace_denied: name === "OpenClaw",
       openshell_non_direct_child: false,
       openshell_spoof: false,
       openshell_duplicate: false,
