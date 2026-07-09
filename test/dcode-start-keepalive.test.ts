@@ -30,7 +30,7 @@ function installDefaultRlimitHelper(
     helperPath,
     [
       `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }`,
-      `verify_resource_limits() { printf '%s\\n' verified >> ${JSON.stringify(markerPath)}; }`,
+      `verify_resource_limits_exact() { printf '%s\\n' verified >> ${JSON.stringify(markerPath)}; }`,
       "",
     ].join("\n"),
     { mode: 0o444 },
@@ -46,7 +46,8 @@ function installFailingVerificationRlimitHelper(
     helperPath,
     [
       `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }`,
-      "verify_resource_limits() { printf '%s\\n' 'fixture verification failed' >&2; return 1; }",
+      "verify_resource_limits() { :; }",
+      "verify_resource_limits_exact() { printf '%s\\n' 'fixture exact verification failed' >&2; return 1; }",
       "",
     ].join("\n"),
     { mode: 0o444 },
@@ -166,9 +167,9 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
-    expect(result.stderr).toContain("fixture verification failed");
+    expect(result.stderr).toContain("fixture exact verification failed");
     expect(result.stderr).toContain(
-      "[SECURITY] Effective sandbox resource limits remain above policy; refusing to start unhardened.",
+      "[SECURITY] Effective sandbox resource limits do not match policy; refusing to start unhardened.",
     );
     expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\n");
   });
@@ -185,7 +186,7 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
             `  printf 'called=1\\n' > ${JSON.stringify(rlimitsLog)}`,
             `  printf 'proxy_host=%s\\n' "\${PROXY_HOST-__unset__}" >> ${JSON.stringify(rlimitsLog)}`,
             "}",
-            "verify_resource_limits() {",
+            "verify_resource_limits_exact() {",
             `  printf 'verified=1\\n' >> ${JSON.stringify(rlimitsLog)}`,
             "}",
           ].join("\n"),

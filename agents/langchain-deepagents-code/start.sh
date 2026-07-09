@@ -48,8 +48,9 @@ fi
 # shellcheck disable=SC2119 # harden_resource_limits' optional $1 selects
 # quiet mode; it is not this entrypoint's own argument vector.
 harden_resource_limits
-if ! verify_resource_limits; then
-  printf '%s\n' '[SECURITY] Effective sandbox resource limits remain above policy; refusing to start unhardened.' >&2
+# shellcheck disable=SC2119 # optional $1 selects quiet mode, not entrypoint args.
+if ! verify_resource_limits_exact; then
+  printf '%s\n' '[SECURITY] Effective sandbox resource limits do not match policy; refusing to start unhardened.' >&2
   exit 1
 fi
 unset _NEMOCLAW_SANDBOX_RLIMITS

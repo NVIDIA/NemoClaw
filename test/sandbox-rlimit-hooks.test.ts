@@ -83,7 +83,7 @@ function rlimitShim(rlimitLib: string): string {
 }
 
 function dcodeRlimitShim(rlimitLib: string): string {
-  return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits --quiet || { printf "%s\\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }`;
+  return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits_exact --quiet || { printf "%s\\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }`;
 }
 
 type ProbeValues = Record<string, string | undefined>;
@@ -203,7 +203,11 @@ function expectDcodeRlimitHookWarnsWhenVerificationFails(
   fs.chmodSync(rlimitLib, 0o644);
   fs.writeFileSync(
     rlimitLib,
-    ["harden_resource_limits() { :; }", "verify_resource_limits() { return 1; }"].join("\n"),
+    [
+      "harden_resource_limits() { :; }",
+      "verify_resource_limits() { :; }",
+      "verify_resource_limits_exact() { return 1; }",
+    ].join("\n"),
   );
   const probe = ["set -euo pipefail", `source ${JSON.stringify(hookPath)}`, 'printf "OK\\n"'].join(
     "\n",
@@ -267,6 +271,43 @@ function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
   expect(values.ok).toBe("true");
   expect(Number(values.effective_nofile)).toBeLessThanOrEqual(Number(values.target_nofile));
   expect(Number(values.effective_nofile)).toBeLessThan(Number(values.current_nofile));
+}
+
+function expectExactRlimitVerifierRejectsLowerNofile(rlimitLib: string): void {
+  const probe = [
+    "set -e",
+    `. ${JSON.stringify(rlimitLib)}`,
+    "_nemoclaw_ulimit() {",
+    '  case "$1" in',
+    '    -Su | -Hu) printf "%s" 512 ;;',
+    '    -Sn) printf "%s" 1024 ;;',
+    '    -Hn) printf "%s" 65536 ;;',
+    "    *) return 1 ;;",
+    "  esac",
+    "}",
+    "set +e",
+    "verify_resource_limits --quiet",
+    'maximum_status="$?"',
+    'exact_output="$(verify_resource_limits_exact 2>&1)"',
+    'exact_status="$?"',
+    "set -e",
+    'printf "maximum_status=%s\\n" "$maximum_status"',
+    'printf "exact_status=%s\\n" "$exact_status"',
+    'printf "exact_output=%s\\n" "$exact_output"',
+  ].join("\n");
+  const result = spawnSync("sh", ["-c", probe], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stderr).toBe("");
+  const values = parseProbeOutput(result.stdout);
+  expect(values.maximum_status).toBe("0");
+  expect(values.exact_status).toBe("1");
+  expect(values.exact_output).toContain(
+    "Effective soft nofile limit is 1024; expected exactly 65536",
+  );
 }
 
 function expectRlimitLibRejectsUnboundedPosixShNoFile(rlimitLib: string): void {
@@ -354,6 +395,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     );
   });
 
+  it("distinguishes the exact DCode defaults from maximum-cap verification (#6545)", () => {
+    expectExactRlimitVerifierRejectsLowerNofile(SANDBOX_RLIMITS);
+  });
+
   it("rlimit helper enforces supported nofile limits under POSIX sh", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-posix-sh-rlimit-"));
     const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
@@ -404,7 +449,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     }
   });
 
-  it("Deep Agents Code base image enforces connect and login shell nproc <=4096 and nofile <=65536", () => {
+  it("Deep Agents Code base image selects exact verification for connect and login shells", () => {
     const dockerfile = fs.readFileSync(DCODE_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rlimit-hooks-"));
     const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");

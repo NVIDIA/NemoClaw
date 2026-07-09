@@ -12,7 +12,7 @@
 # are not acceptable. No real provider/proxy credentials may appear in
 # config.toml, .env, .mcp.json, /tmp/nemoclaw-proxy-env.sh, or output.
 # The sandbox entrypoint, direct managed launcher, and both login/interactive
-# shell paths must keep the documented nproc <=512 and nofile <=65536 contract.
+# shell paths must keep the documented nproc=512 and nofile=65536 contract.
 # Direct DNS/hosts resolution is intentionally not required: OpenShell's managed
 # proxy routes inference.local when the request follows the normalized path.
 # Keep these phases in one ordered acceptance check: the absent-DNS observation
@@ -98,7 +98,7 @@ dcode_entrypoint_rlimit_contract_command() {
   # Keep the generated command on one physical line and bind it to the unique
   # argv marker installed by start.sh's exec -a. OpenShell remains PID 1.
   # shellcheck disable=SC2016
-  printf '%s%s%s' 'set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_ENTRYPOINT_RLIMIT_FAIL:$1"; exit 1; }; proc_root=' "$quoted_proc_root" '; entrypoint_pid=""; for proc_dir in "$proc_root"/[0-9]*; do [ -d "$proc_dir" ] && [ -r "$proc_dir/cmdline" ] || continue; if ! cmdline="$(tr "\000" "\n" < "$proc_dir/cmdline" 2>/dev/null)"; then continue; fi; argc="$(printf "%s\n" "$cmdline" | awk "END { print NR }")"; [ "$argc" = 3 ] || continue; argv0="$(printf "%s\n" "$cmdline" | sed -n "1p")"; argv1="$(printf "%s\n" "$cmdline" | sed -n "2p")"; argv2="$(printf "%s\n" "$cmdline" | sed -n "3p")"; if [ "$argv0" = nemoclaw-dcode-entrypoint ] && [ "$argv1" = -f ] && [ "$argv2" = /dev/null ]; then [ -z "$entrypoint_pid" ] || contract_fail process-count; entrypoint_pid="${proc_dir##*/}"; fi; done; [ -n "$entrypoint_pid" ] || contract_fail process-count; limits="$proc_root/$entrypoint_pid/limits"; [ -r "$limits" ] || contract_fail limits; nproc_soft="$(awk "\$1 == \"Max\" && \$2 == \"processes\" { print \$3; exit }" "$limits")"; nproc_hard="$(awk "\$1 == \"Max\" && \$2 == \"processes\" { print \$4; exit }" "$limits")"; nofile_soft="$(awk "\$1 == \"Max\" && \$2 == \"open\" && \$3 == \"files\" { print \$4; exit }" "$limits")"; nofile_hard="$(awk "\$1 == \"Max\" && \$2 == \"open\" && \$3 == \"files\" { print \$5; exit }" "$limits")"; for value in "$nproc_soft" "$nproc_hard" "$nofile_soft" "$nofile_hard"; do case "$value" in "" | *[!0-9]*) contract_fail nonnumeric ;; esac; done; [ "$nproc_soft" -le 512 ] && [ "$nproc_hard" -le 512 ] || contract_fail nproc; [ "$nofile_soft" -le 65536 ] && [ "$nofile_hard" -le 65536 ] || contract_fail nofile; printf "%s\n" NEMOCLAW_DCODE_ENTRYPOINT_RLIMIT_OK'
+  printf '%s%s%s' 'set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_ENTRYPOINT_RLIMIT_FAIL:$1"; exit 1; }; proc_root=' "$quoted_proc_root" '; entrypoint_pid=""; for proc_dir in "$proc_root"/[0-9]*; do [ -d "$proc_dir" ] && [ -r "$proc_dir/cmdline" ] || continue; if ! cmdline="$(tr "\000" "\n" < "$proc_dir/cmdline" 2>/dev/null)"; then continue; fi; argc="$(printf "%s\n" "$cmdline" | awk "END { print NR }")"; [ "$argc" = 3 ] || continue; argv0="$(printf "%s\n" "$cmdline" | sed -n "1p")"; argv1="$(printf "%s\n" "$cmdline" | sed -n "2p")"; argv2="$(printf "%s\n" "$cmdline" | sed -n "3p")"; if [ "$argv0" = nemoclaw-dcode-entrypoint ] && [ "$argv1" = -f ] && [ "$argv2" = /dev/null ]; then [ -z "$entrypoint_pid" ] || contract_fail process-count; entrypoint_pid="${proc_dir##*/}"; fi; done; [ -n "$entrypoint_pid" ] || contract_fail process-count; limits="$proc_root/$entrypoint_pid/limits"; [ -r "$limits" ] || contract_fail limits; nproc_soft="$(awk "\$1 == \"Max\" && \$2 == \"processes\" { print \$3; exit }" "$limits")"; nproc_hard="$(awk "\$1 == \"Max\" && \$2 == \"processes\" { print \$4; exit }" "$limits")"; nofile_soft="$(awk "\$1 == \"Max\" && \$2 == \"open\" && \$3 == \"files\" { print \$4; exit }" "$limits")"; nofile_hard="$(awk "\$1 == \"Max\" && \$2 == \"open\" && \$3 == \"files\" { print \$5; exit }" "$limits")"; for value in "$nproc_soft" "$nproc_hard" "$nofile_soft" "$nofile_hard"; do case "$value" in "" | *[!0-9]*) contract_fail nonnumeric ;; esac; done; [ "$nproc_soft" = 512 ] && [ "$nproc_hard" = 512 ] || contract_fail nproc; [ "$nofile_soft" = 65536 ] && [ "$nofile_hard" = 65536 ] || contract_fail nofile; printf "%s\n" NEMOCLAW_DCODE_ENTRYPOINT_RLIMIT_OK'
 }
 
 sandbox_entrypoint_rlimit_contract() {
@@ -108,7 +108,7 @@ sandbox_entrypoint_rlimit_contract() {
 rlimit_shell_contract_command() {
   # Keep this command on one physical line: OpenShell rejects CR/LF in argv.
   # shellcheck disable=SC2016
-  printf '%s' 'set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_SHELL_RLIMIT_FAIL:$1"; exit 1; }; nproc_soft="$(ulimit -Su)"; nproc_hard="$(ulimit -Hu)"; nofile_soft="$(ulimit -Sn)"; nofile_hard="$(ulimit -Hn)"; for value in "$nproc_soft" "$nproc_hard" "$nofile_soft" "$nofile_hard"; do case "$value" in "" | *[!0-9]*) contract_fail nonnumeric ;; esac; done; [ "$nproc_soft" -le 512 ] && [ "$nproc_hard" -le 512 ] || contract_fail nproc; [ "$nofile_soft" -le 65536 ] && [ "$nofile_hard" -le 65536 ] || contract_fail nofile; set +e; ulimit -Su 513 >/dev/null 2>&1; raise_nproc="$?"; ulimit -Sn 65537 >/dev/null 2>&1; raise_nofile="$?"; set -e; [ "$raise_nproc" -ne 0 ] || contract_fail raise-nproc; [ "$raise_nofile" -ne 0 ] || contract_fail raise-nofile; printf "%s\n" NEMOCLAW_DCODE_SHELL_RLIMIT_OK'
+  printf '%s' 'set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_SHELL_RLIMIT_FAIL:$1"; exit 1; }; nproc_soft="$(ulimit -Su)"; nproc_hard="$(ulimit -Hu)"; nofile_soft="$(ulimit -Sn)"; nofile_hard="$(ulimit -Hn)"; for value in "$nproc_soft" "$nproc_hard" "$nofile_soft" "$nofile_hard"; do case "$value" in "" | *[!0-9]*) contract_fail nonnumeric ;; esac; done; [ "$nproc_soft" = 512 ] && [ "$nproc_hard" = 512 ] || contract_fail nproc; [ "$nofile_soft" = 65536 ] && [ "$nofile_hard" = 65536 ] || contract_fail nofile; set +e; ulimit -Su 513 >/dev/null 2>&1; raise_nproc="$?"; ulimit -Sn 65537 >/dev/null 2>&1; raise_nofile="$?"; set -e; [ "$raise_nproc" -ne 0 ] || contract_fail raise-nproc; [ "$raise_nofile" -ne 0 ] || contract_fail raise-nofile; printf "%s\n" NEMOCLAW_DCODE_SHELL_RLIMIT_OK'
 }
 
 sandbox_artifact_scan_command() {
@@ -243,7 +243,7 @@ main() {
 
   entrypoint_rlimit_output="$(sandbox_entrypoint_rlimit_contract || true)"
   if printf '%s\n' "$entrypoint_rlimit_output" | grep -Fxq "NEMOCLAW_DCODE_ENTRYPOINT_RLIMIT_OK"; then
-    pass "dcode entrypoint process tree enforces nproc <=512 and nofile <=65536"
+    pass "dcode entrypoint process tree enforces nproc=512 and nofile=65536"
   else
     entrypoint_rlimit_reason="$(printf '%s\n' "$entrypoint_rlimit_output" | sed -n 's/^NEMOCLAW_DCODE_ENTRYPOINT_RLIMIT_FAIL:\([a-z-]*\)$/\1/p' | tail -n1)"
     fail_test "dcode entrypoint process tree does not enforce resource limits (${entrypoint_rlimit_reason:-unknown contract mismatch})"

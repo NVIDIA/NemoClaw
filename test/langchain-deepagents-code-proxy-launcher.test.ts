@@ -52,7 +52,7 @@ function replaceManagedProxyFileConstants(source: string, tempDir: string): stri
   const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
   fs.writeFileSync(
     rlimitLib,
-    "harden_resource_limits() { :; }\nverify_resource_limits() { :; }\n",
+    "harden_resource_limits() { :; }\nverify_resource_limits_exact() { :; }\n",
     "utf8",
   );
   return source

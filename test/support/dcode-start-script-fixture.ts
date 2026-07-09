@@ -53,7 +53,7 @@ export function makeStartScriptFixture(tempDir: string): {
   fs.writeFileSync(portFile, "3128\n", "utf8");
   fs.writeFileSync(
     rlimitLib,
-    "harden_resource_limits() { :; }\nverify_resource_limits() { :; }\n",
+    "harden_resource_limits() { :; }\nverify_resource_limits_exact() { :; }\n",
     "utf8",
   );
   fs.chmodSync(hostFile, 0o444);

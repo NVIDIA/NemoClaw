@@ -79,12 +79,12 @@ COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && printf '%s\n' \
         '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-        '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits --quiet || { printf "%s\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }' \
+        '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits_exact --quiet || { printf "%s\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }' \
         > /etc/profile.d/nemoclaw-rlimits.sh \
     && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh \
     && { printf '%s\n' \
             '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits --quiet || { printf "%s\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }' \
+            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits_exact --quiet || { printf "%s\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }' \
             ''; \
          cat /etc/bash.bashrc; \
        } > /etc/bash.bashrc.new \

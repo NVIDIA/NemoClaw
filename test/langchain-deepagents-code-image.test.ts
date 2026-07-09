@@ -652,7 +652,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "NEMOCLAW_DCODE_SHELL_RLIMIT_OK",
       "ulimit -Su 513",
       "ulimit -Sn 65537",
-      "dcode entrypoint process tree enforces nproc <=512 and nofile <=65536",
+      "dcode entrypoint process tree enforces nproc=512 and nofile=65536",
       "dcode login shell enforces and cannot raise nproc/nofile limits",
       "dcode interactive/connect shell enforces and cannot raise nproc/nofile limits",
       "direct dcode launcher enforces and cannot raise nproc/nofile limits",
@@ -728,6 +728,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
       fs.writeFileSync(
         path.join(procRoot, "42", "limits"),
         limits.replace("Max processes 512 512", "Max processes unlimited unlimited"),
+        "utf8",
+      );
+      expect(() => runHeadlessCheckHelper("entrypoint-rlimits", { PROC_ROOT: procRoot })).toThrow();
+
+      fs.writeFileSync(
+        path.join(procRoot, "42", "limits"),
+        limits.replace("Max open files 65536 65536", "Max open files 1024 1024"),
         "utf8",
       );
       expect(() => runHeadlessCheckHelper("entrypoint-rlimits", { PROC_ROOT: procRoot })).toThrow();

@@ -32,8 +32,9 @@ fi
 . "$_NEMOCLAW_SANDBOX_RLIMITS"
 # shellcheck disable=SC2119 # optional $1 selects quiet mode, not launcher args.
 harden_resource_limits
-if ! verify_resource_limits; then
-  printf '%s\n' '[SECURITY] Effective sandbox resource limits remain above policy; refusing to launch dcode unhardened.' >&2
+# shellcheck disable=SC2119 # optional $1 selects quiet mode, not launcher args.
+if ! verify_resource_limits_exact; then
+  printf '%s\n' '[SECURITY] Effective sandbox resource limits do not match policy; refusing to launch dcode unhardened.' >&2
   exit 1
 fi
 unset _NEMOCLAW_SANDBOX_RLIMITS

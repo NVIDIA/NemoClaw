@@ -22,7 +22,7 @@ function installDefaultRlimitHelper(helperPath: string, markerPath: string): voi
     helperPath,
     [
       `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }`,
-      `verify_resource_limits() { printf '%s\\n' verified >> ${JSON.stringify(markerPath)}; }`,
+      `verify_resource_limits_exact() { printf '%s\\n' verified >> ${JSON.stringify(markerPath)}; }`,
       "",
     ].join("\n"),
   );
@@ -33,7 +33,8 @@ function installFailingVerificationRlimitHelper(helperPath: string, markerPath: 
     helperPath,
     [
       `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }`,
-      "verify_resource_limits() { printf '%s\\n' 'fixture verification failed' >&2; return 1; }",
+      "verify_resource_limits() { :; }",
+      "verify_resource_limits_exact() { printf '%s\\n' 'fixture exact verification failed' >&2; return 1; }",
       "",
     ].join("\n"),
   );
@@ -221,9 +222,9 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
 
       expect(result.status).not.toBe(0);
       expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
-      expect(result.stderr).toContain("fixture verification failed");
+      expect(result.stderr).toContain("fixture exact verification failed");
       expect(result.stderr).toContain(
-        "[SECURITY] Effective sandbox resource limits remain above policy; refusing to launch dcode unhardened.",
+        "[SECURITY] Effective sandbox resource limits do not match policy; refusing to launch dcode unhardened.",
       );
       expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\n");
       expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
