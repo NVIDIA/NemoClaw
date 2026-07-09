@@ -9,7 +9,7 @@ import {
   type InitialOnboardFlowContext,
   runInitialOnboardFlowSlice,
 } from "./initial-flow-phases";
-import { advanceTo } from "./result";
+import { advanceTo, type OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
@@ -68,6 +68,12 @@ function runtime(session: Session = createSession()): OnboardMachineRunnerRuntim
   return {
     session: async () => session,
     applyResult: async () => session,
+  };
+}
+
+function recordInvalidatedTargets(targets: string[]) {
+  return async (result: OnboardStateResult) => {
+    if (result.type === "transition") targets.push(result.next);
   };
 }
 
@@ -182,6 +188,7 @@ describe("initial onboard flow phases", () => {
       recordStateResult: async (result) => {
         if (result.type === "transition") recorded.push(result.next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(recorded).toEqual(["gateway", "provider_selection"]);
@@ -236,6 +243,7 @@ describe("initial onboard flow phases", () => {
           });
         }
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets([]),
     });
 
     expect(result.context.session).toBe(phaseSession);
@@ -392,6 +400,7 @@ describe("initial onboard flow phases", () => {
       recordStateResult: async (stateResult) => {
         if (stateResult.type === "transition") recorded.push(stateResult.next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(result.session.machine.state).toBe("provider_selection");
@@ -459,6 +468,7 @@ describe("initial onboard flow phases", () => {
       recordStateResult: async (stateResult) => {
         recorded.push((stateResult as ReturnType<typeof advanceTo>).next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(recorded).toEqual(["gateway", "provider_selection"]);

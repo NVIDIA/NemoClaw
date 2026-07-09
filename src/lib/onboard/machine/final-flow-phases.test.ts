@@ -76,6 +76,9 @@ describe("final onboard flow phases", () => {
           recorded.push(result.next);
         }
       },
+      recordInvalidatedStateResult: async (result) => {
+        if (result.type === "transition") recorded.push(result.next);
+      },
       afterPoliciesResultApplied: () => {
         order.push("disarm");
       },

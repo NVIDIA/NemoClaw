@@ -113,7 +113,26 @@ async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
     advanceTo("finalizing", { metadata: { state: "policies" } }),
   ];
   for (const result of results) {
-    await boundary.recordCompatibleStateResult(result);
+    const current = await boundary.getRuntime().session();
+    const sourceState =
+      result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
+    if (result.type === "transition" && current.machine.state === result.next) {
+      await boundary.recordInvalidatedStateResult(result, {
+        reason: "already_at_target",
+        currentState: current.machine.state,
+        sourceState,
+      });
+      continue;
+    }
+    if (result.type === "transition" && sourceState && current.machine.state !== sourceState) {
+      await boundary.recordInvalidatedStateResult(result, {
+        reason: "source_state_mismatch",
+        currentState: current.machine.state,
+        sourceState,
+      });
+      continue;
+    }
+    await boundary.recordStateResult(result);
   }
   await boundary.recordSessionComplete();
   return getSession();

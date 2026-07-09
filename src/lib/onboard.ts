@@ -4003,10 +4003,36 @@ const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboar
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
 const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
-const recordCompatibleStateResult =
-  onboardRuntimeBoundary.recordCompatibleStateResult.bind(onboardRuntimeBoundary);
+const recordInvalidatedStateResult =
+  onboardRuntimeBoundary.recordInvalidatedStateResult.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted =
   onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
+
+async function recordInitialPreflightTransition(resume: boolean): Promise<void> {
+  const result = advanceTo("preflight", { metadata: { state: "init" } });
+  if (!resume) {
+    await recordStateResult(result);
+    return;
+  }
+  const current = await onboardRuntimeBoundary.getRuntime().session();
+  if (current.machine.state === result.next) {
+    await recordInvalidatedStateResult(result, {
+      reason: "already_at_target",
+      currentState: current.machine.state,
+      sourceState: "init",
+    });
+    return;
+  }
+  if (current.machine.state !== "init") {
+    await recordInvalidatedStateResult(result, {
+      reason: "source_state_mismatch",
+      currentState: current.machine.state,
+      sourceState: "init",
+    });
+    return;
+  }
+  await recordStateResult(result);
+}
 
 /** Run only non-mutating fatal onboard gates while the rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
@@ -4230,9 +4256,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
-    await (resume ? recordCompatibleStateResult : recordStateResult)(
-      advanceTo("preflight", { metadata: { state: "init" } }),
-    );
+    await recordInitialPreflightTransition(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
     // safe name in that state.
@@ -4391,7 +4415,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [preflightPhase, gatewayPhase],
       resume,
-      recordStateResult: recordCompatibleStateResult,
+      recordStateResult,
+      recordInvalidatedStateResult,
     });
 
     const initialContext = initialFlowResult.context;
@@ -4572,7 +4597,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [providerInferencePhase, sandboxPhase],
       resume,
-      recordStateResult: recordCompatibleStateResult,
+      recordStateResult,
+      recordInvalidatedStateResult,
     });
     setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
     const coreContext = coreFlowResult.context;
@@ -4727,7 +4753,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
       resume,
-      recordStateResult: recordCompatibleStateResult,
+      recordStateResult,
+      recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {
         sandboxCancelRollback.disarm();
       },

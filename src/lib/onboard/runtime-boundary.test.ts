@@ -313,20 +313,23 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
-  it("emits diagnostics for explicit repaired resume compatibility results", async () => {
+  it("emits diagnostics for explicit repaired resume invalidated results", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
     });
+    const result = advanceTo("gateway", { metadata: { state: "preflight" } });
 
-    await boundary.recordCompatibleStateResult(
-      advanceTo("gateway", { metadata: { state: "preflight" } }),
-    );
+    await boundary.recordInvalidatedStateResult(result, {
+      reason: "source_state_mismatch",
+      currentState: "init",
+      sourceState: "preflight",
+    });
 
     expect(harness.events[0]).toMatchObject({
-      type: "state.result.skipped",
+      type: "state.result.invalidated",
       metadata: {
         reason: "source_state_mismatch",
         currentState: "init",
@@ -336,7 +339,7 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
-  it("emits diagnostics for explicit compatible replay of stale default results", async () => {
+  it("emits diagnostics for explicit invalidated replay of stale default results", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
@@ -345,7 +348,13 @@ describe("OnboardRuntimeBoundary", () => {
     });
 
     const result = advanceTo("preflight", { metadata: { state: "missing" } });
-    await expect(boundary.recordCompatibleStateResult(result)).resolves.toMatchObject({
+    await expect(
+      boundary.recordInvalidatedStateResult(result, {
+        reason: "source_state_mismatch",
+        currentState: "init",
+        sourceState: "missing",
+      }),
+    ).resolves.toMatchObject({
       machine: { state: "init" },
     });
   });
