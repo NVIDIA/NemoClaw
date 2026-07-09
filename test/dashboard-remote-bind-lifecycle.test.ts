@@ -219,8 +219,8 @@ describe("remote dashboard bind production lifecycle", () => {
       .spyOn(openshellRuntime, "runOpenshell")
       .mockImplementation((rawArgs: unknown) => {
         const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        if (args[0] === "forward" && args[1] === "stop") stopped = true;
-        if (args[0] === "forward" && args[1] === "start") started = true;
+        stopped ||= args[0] === "forward" && args[1] === "stop";
+        started ||= args[0] === "forward" && args[1] === "start";
         return { status: 0 } as never;
       });
 
