@@ -1015,7 +1015,12 @@ describe("pull request and main workflow contracts", () => {
     ]);
     expect(stepRuns(mainWorkflow.jobs["e2e-support"])).toEqual([
       "npm ci --ignore-scripts",
-      'npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD',
+      `if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+  echo "Skipping changed live E2E parity: main has no prior commit."
+  exit 0
+fi
+npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
+`,
       "npm run build:cli",
       "npx vitest run --project e2e-support",
     ]);

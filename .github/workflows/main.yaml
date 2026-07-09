@@ -173,7 +173,12 @@ jobs:
       - name: Validate changed live E2E mock parity
         env:
           BASE_SHA: ${{ github.event.before }}
-        run: npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
+        run: |
+          if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "Skipping changed live E2E parity: main has no prior commit."
+            exit 0
+          fi
+          npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
 
       - name: Build CLI artifacts for E2E support
         run: npm run build:cli

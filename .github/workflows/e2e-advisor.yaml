@@ -52,7 +52,6 @@ permissions:
   # by integration" despite `issues: write`. See the comment step below and
   # https://github.com/orgs/community/discussions/56632.
   pull-requests: write
-  issues: write
 
 concurrency:
   group: e2e-advisor-${{ github.event.pull_request.number || github.ref }}

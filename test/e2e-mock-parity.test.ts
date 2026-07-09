@@ -51,4 +51,14 @@ describe("changed live E2E mock parity", () => {
       }),
     ).toEqual([]);
   });
+
+  it("reports a non-string live-only reason as a validation error", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, liveOnlyReason: 42 as unknown as string }]),
+        changedFiles: [live],
+        fileExists: exists,
+      }),
+    ).toEqual([`${live}: liveOnlyReason must be a string`]);
+  });
 });

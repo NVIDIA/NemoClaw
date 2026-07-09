@@ -80,6 +80,10 @@ export function validateMockParity(options: {
       errors.push(`${entry.live}: fast must be an array of test paths`);
       continue;
     }
+    if (entry.liveOnlyReason !== undefined && typeof entry.liveOnlyReason !== "string") {
+      errors.push(`${entry.live}: liveOnlyReason must be a string`);
+      continue;
+    }
     const fast = entry.fast ?? [];
     const liveOnlyReason = entry.liveOnlyReason?.trim() ?? "";
     if (fast.length > 0 && liveOnlyReason) {

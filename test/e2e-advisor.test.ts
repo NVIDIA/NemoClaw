@@ -29,6 +29,7 @@ interface WorkflowJob {
 }
 
 interface Workflow {
+  permissions?: Record<string, string>;
   jobs?: Record<string, WorkflowJob | undefined>;
 }
 
@@ -89,6 +90,13 @@ function runPrepareTargetCheckout(env: {
 }
 
 describe("E2E recommendation advisor prompt", () => {
+  it("limits the trusted advisor token to PR-comment writes", () => {
+    expect(readAdvisorWorkflow().permissions).toEqual({
+      contents: "read",
+      "pull-requests": "write",
+    });
+  });
+
   it("requires cloud-onboard for timing-sensitive infrastructure changes", () => {
     for (const file of [
       "src/lib/onboard/command.ts",
