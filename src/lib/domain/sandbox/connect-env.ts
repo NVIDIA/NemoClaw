@@ -78,9 +78,8 @@ export function shouldPrepareHermesLightSkin(
 }
 
 export function buildSandboxConnectEnv(
-  agent: { name?: string } | null | undefined,
+  _agent: { name?: string } | null | undefined,
   env: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  void agent;
   return { ...env };
 }
