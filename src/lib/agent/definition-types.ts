@@ -43,12 +43,23 @@ export interface StateFileFreshHeader {
   value: string;
 }
 
-export interface StateFileRestoreOwnership {
-  merge: StateFileRestoreMerge;
-  userKeys?: readonly StateFileUserKey[];
+export interface StateFileKeyAllowlistRestoreOwnership {
+  merge: "key-allowlist";
+  userKeys: readonly StateFileUserKey[];
   requireFreshTables?: readonly string[];
   requireFreshHeaders?: readonly StateFileFreshHeader[];
 }
+
+export interface StateFileOpenClawRestoreOwnership {
+  merge: "openclaw-config";
+  userKeys?: never;
+  requireFreshTables?: never;
+  requireFreshHeaders?: never;
+}
+
+export type StateFileRestoreOwnership =
+  | StateFileKeyAllowlistRestoreOwnership
+  | StateFileOpenClawRestoreOwnership;
 
 export interface AgentStateFile {
   path: string;

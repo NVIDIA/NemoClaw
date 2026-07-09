@@ -56,6 +56,27 @@ function assertDottedKey(key: string, field: string): void {
   }
 }
 
+function dottedKeysOverlap(left: string, right: string): boolean {
+  const leftSegments = left.split(".");
+  const rightSegments = right.split(".");
+  const sharedLength = Math.min(leftSegments.length, rightSegments.length);
+  return leftSegments.slice(0, sharedLength).every((segment, index) => {
+    return segment === rightSegments[index];
+  });
+}
+
+function assertNonOverlappingDottedKeys(keys: readonly string[], field: string): void {
+  for (let left = 0; left < keys.length; left += 1) {
+    for (let right = left + 1; right < keys.length; right += 1) {
+      if (dottedKeysOverlap(keys[left] ?? "", keys[right] ?? "")) {
+        throw new Error(
+          `Agent manifest fields '${field}[${String(left)}]' and '${field}[${String(right)}]' must not duplicate or contain one another`,
+        );
+      }
+    }
+  }
+}
+
 function assertKnownFields(
   record: ManifestRecord,
   allowed: ReadonlySet<string>,
@@ -256,13 +277,29 @@ export function readStateFileRestore(
   const userKeys = userKeysValue.map((raw, keyIndex) =>
     readStateFileUserKey(raw, `${field}.user_keys[${String(keyIndex)}]`),
   );
+  assertNonOverlappingDottedKeys(
+    userKeys.map((entry) => entry.key),
+    `${field}.user_keys`,
+  );
   const ownership: StateFileRestoreOwnership = { merge: "key-allowlist", userKeys };
   const requireFreshTables = readStateFileDottedKeys(
     value,
     "require_fresh_tables",
     `${field}.require_fresh_tables`,
   );
-  if (requireFreshTables) ownership.requireFreshTables = requireFreshTables;
+  if (requireFreshTables) {
+    assertNonOverlappingDottedKeys(requireFreshTables, `${field}.require_fresh_tables`);
+    for (const [userIndex, userKey] of userKeys.entries()) {
+      for (const [freshIndex, freshTable] of requireFreshTables.entries()) {
+        if (dottedKeysOverlap(userKey.key, freshTable)) {
+          throw new Error(
+            `Agent manifest field '${field}.user_keys[${String(userIndex)}].key' must not overlap '${field}.require_fresh_tables[${String(freshIndex)}]'`,
+          );
+        }
+      }
+    }
+    ownership.requireFreshTables = requireFreshTables;
+  }
   const requireFreshHeaders = readStateFileFreshHeaders(value, `${field}.require_fresh_headers`);
   if (requireFreshHeaders) ownership.requireFreshHeaders = requireFreshHeaders;
   return ownership;

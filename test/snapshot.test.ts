@@ -273,6 +273,7 @@ describe("listBackups computes virtual versions", () => {
       stateDirs: ["workspace"],
       backedUpDirs: ["workspace"],
     });
+    writeAgentRegistry("test-sandbox", "openclaw");
     fs.writeFileSync(path.join(String(manifest.backupPath), "workspace"), "not a directory");
 
     const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));

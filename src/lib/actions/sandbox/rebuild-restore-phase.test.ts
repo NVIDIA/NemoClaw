@@ -46,7 +46,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [],
       reconcileManagedDcodeObservability: false,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log,
     });
 
@@ -57,6 +58,35 @@ describe("rebuild policy restore fidelity", () => {
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("error=could not read fresh OpenClaw plugin install registry"),
     );
+  });
+
+  it("forwards the recreated target identity and explicit custom-image capability", () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const restoreRecreatedSandboxState = vi
+      .spyOn(sandboxState, "restoreRecreatedSandboxState")
+      .mockReturnValue({
+        success: true,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      });
+
+    runRebuildRestorePhase({
+      sandboxName: "alpha",
+      targetAgentType: "langchain-deepagents-code",
+      targetImageIsCustom: true,
+      backupManifest: { agentType: "openclaw", backupPath: "/tmp/rebuild-backup" } as never,
+      policyPresets: [],
+      customPolicies: [],
+      reconcileManagedDcodeObservability: false,
+      log: vi.fn(),
+    });
+
+    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backup", {
+      targetAgentType: "langchain-deepagents-code",
+      allowCustomImageWholeStateFileRestore: true,
+    });
   });
 
   it("replays custom web-policy names from exact content instead of same-name built-ins", () => {
@@ -89,13 +119,13 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["npm", "brave", "tavily", "nous-web"],
       customPolicies,
       reconcileManagedDcodeObservability: false,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
     expect(restoreRecreatedSandboxState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backup", {
       targetAgentType: "openclaw",
-      applyManagedStateFileRestore: false,
     });
     expect(applyPreset).toHaveBeenCalledOnce();
     expect(applyPreset).toHaveBeenCalledWith("alpha", "npm");
@@ -135,7 +165,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies,
       reconcileManagedDcodeObservability: false,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -169,7 +200,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [genuineCustomPolicy, generatedMcpPolicy],
       reconcileManagedDcodeObservability: false,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -199,7 +231,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["npm"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -225,7 +258,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["npm"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -256,7 +290,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["npm", "bad", "throw"],
       customPolicies: [],
       reconcileManagedDcodeObservability: false,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -278,7 +313,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["observability-otlp-local"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -300,7 +336,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["observability-otlp-local"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -317,7 +354,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -343,7 +381,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -376,7 +415,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -411,7 +451,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["observability-otlp-local"],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -441,7 +482,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -470,7 +512,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -498,7 +541,8 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["observability-otlp-local"],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      applyManagedStateFileRestore: false,
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
       log: vi.fn(),
     });
 

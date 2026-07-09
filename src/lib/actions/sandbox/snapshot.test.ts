@@ -852,9 +852,7 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2", {
-      applyManagedStateFileRestore: false,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2");
     expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-preset");
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
     expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-custom");

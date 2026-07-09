@@ -98,7 +98,7 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
         "alpha",
         "/tmp/nemoclaw-rebuild-backup",
-        { targetAgentType: "openclaw", applyManagedStateFileRestore: false },
+        { targetAgentType: "openclaw" },
       );
       expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
       expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();

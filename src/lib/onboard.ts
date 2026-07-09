@@ -2970,6 +2970,7 @@ async function createSandboxWithBaseImageResolution(
       restoreBackupPath,
       preUpgradeBackup: pendingStateRestoreBackupPath !== null,
       targetAgentType: agent?.name ?? "openclaw",
+      customImage: Boolean(fromDockerfile),
       discoverOpenClawImagePluginInstalls: customOpenClawImage,
       validateManagedDcode: isManagedDcodeAgent,
       provider,
