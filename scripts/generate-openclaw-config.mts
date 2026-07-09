@@ -1190,9 +1190,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const origins = unique([loopbackOrigin, chatOrigin, portlessOrigin].filter(Boolean) as string[]);
 
   const isRemote = !isLoopback(parsed.hostname || "");
-  const hasRemoteDashboardExposure = isRemote || env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0";
+  const remoteBindOptIn = env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0";
+  const hasRemoteDashboardExposure = isRemote || remoteBindOptIn;
   const explicitDeviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
-  const disableDeviceAuth = explicitDeviceAuthOptOut || isRemote;
+  const disableDeviceAuth = explicitDeviceAuthOptOut || hasRemoteDashboardExposure;
   const allowInsecure = parsed.scheme === "http";
   const securityAuditSuppressions: JsonObject[] = [];
   if (allowInsecure && !hasRemoteDashboardExposure) {
@@ -1349,6 +1350,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
         allowInsecureAuth: allowInsecure,
         dangerouslyDisableDeviceAuth: disableDeviceAuth,
         allowedOrigins: origins,
+        ...(remoteBindOptIn && !isRemote ? { dangerouslyAllowHostHeaderOriginFallback: true } : {}),
       },
       trustedProxies: ["127.0.0.1", "::1"],
       auth: { token: "" },

@@ -13,7 +13,7 @@ import { buildCreatedSandboxRegistryEntry } from "../src/lib/onboard/sandbox-reg
 import { applyReusedSandboxDashboardState } from "../src/lib/onboard/sandbox-reuse";
 
 const requireSource = createRequire(import.meta.url);
-const { ensureSandboxPortForward } = requireSource(
+const { ensureSandboxPortForward, ensureSandboxPortForwardForPort } = requireSource(
   "../src/lib/actions/sandbox/forward-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/forward-recovery.js");
 
@@ -121,7 +121,7 @@ describe("remote dashboard bind production lifecycle", () => {
         sandboxGpuConfig: { mode: "0" } as never,
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        getSandbox: () => ({ name: "beta", dashboardRemoteBindPrepared: false }),
+        getSandbox: () => ({ name: "beta" }),
         ensureDashboardForward,
         hermesDashboardForwarding: {
           resolveStateForPort: () => ({ enabled: false, config: null }),
@@ -163,6 +163,75 @@ describe("remote dashboard bind production lifecycle", () => {
     expect(ensureSandboxPortForward("beta")).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
+      { ignoreError: true },
+    );
+  });
+
+  it("re-verifies remote-bind preparation immediately before opening the forward (#6024)", () => {
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
+    const registry = requireSource("../src/lib/state/registry.js");
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    vi.spyOn(registry, "getSandbox")
+      .mockReturnValueOnce({
+        name: "beta",
+        dashboardPort: 18789,
+        dashboardRemoteBindPrepared: true,
+      })
+      .mockReturnValueOnce({
+        name: "beta",
+        dashboardPort: 18789,
+        dashboardRemoteBindPrepared: true,
+      })
+      .mockReturnValue({ name: "beta", dashboardPort: 18789 });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(false);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({ status: 0, output: "" });
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0 } as never);
+
+    expect(ensureSandboxPortForward("beta")).toBe(false);
+    expect(
+      runOpenshell.mock.calls.some(
+        ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward" && rawArgs[1] === "start",
+      ),
+    ).toBe(false);
+  });
+
+  it("can force a loopback restart independently of remote-bind selection (#6024)", () => {
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
+    let stopped = false;
+    let started = false;
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(
+      () => !stopped || started,
+    );
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
+      status: 0,
+      output:
+        !stopped || started
+          ? "SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running"
+          : "",
+    }));
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        if (args[0] === "forward" && args[1] === "stop") stopped = true;
+        if (args[0] === "forward" && args[1] === "start") started = true;
+        return { status: 0 } as never;
+      });
+
+    expect(
+      ensureSandboxPortForwardForPort("beta", 18789, {
+        forwardTarget: "18789",
+        forceRestart: true,
+      }),
+    ).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "18789", "beta"],
       { ignoreError: true },
     );
   });

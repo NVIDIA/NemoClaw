@@ -685,7 +685,8 @@ The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS a
 
 OpenClaw's security audit keeps NemoClaw-managed loopback `allowInsecureAuth` findings and loopback-only explicit `NEMOCLAW_DISABLE_DEVICE_AUTH=1` opt-out findings visible as accepted findings instead of counting them as unexplained active findings.
 For audit reporting, NemoClaw treats either a non-loopback `CHAT_UI_URL` or an onboard-time `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` as remote dashboard exposure. Use the same bind setting on later `connect` calls. If the sandbox was created without that setting, NemoClaw refuses the remote forward until you recreate it with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox`; this keeps the generated audit state aligned with the host exposure state.
-In that state, it does not add the loopback-only audit suppressions, so any resulting device-auth and insecure-auth findings remain active.
+For an explicit remote bind with a loopback `CHAT_UI_URL`, NemoClaw disables device auth and enables OpenClaw's Host-header origin fallback because the browser's remote origin is not known at image-build time. Both settings expand access and must remain explicit; use HTTPS or an SSH local forward when possible.
+In that state, NemoClaw does not add the loopback-only audit suppressions, so the resulting device-auth, insecure-auth, and Host-header fallback findings remain active.
 The generated configuration uses exact audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
 The audit also reports that suppressions are active so you can review the accepted risk.
 These suppressions change audit reporting only.
@@ -698,7 +699,7 @@ openclaw security audit --json | jq '.suppressedFindings'
 ```
 
 Remove the underlying risky condition when dashboard compatibility no longer requires it.
-Revisit these suppressions when OpenClaw can distinguish intentional loopback development HTTP from remote exposure, or when NemoClaw adopts HTTPS by default for local dashboards.
+Remove these suppressions only after the pinned OpenClaw audit contract test proves that OpenClaw natively classifies intentional loopback development HTTP without them, or after NemoClaw onboarding defaults `CHAT_UI_URL` to `https://localhost` with a generated local certificate.
 
 ### Auto-Pair Client Allowlist
 

@@ -240,6 +240,18 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
           ).toBe(false);
           expect(remoteHttpsOnboard.suppressedFindings ?? []).toHaveLength(0);
 
+          const remoteBindOnboard = runOpenClawAudit(binary, "http://127.0.0.1:18789", {
+            NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
+          });
+          expect(managedAuthFindings(remoteBindOnboard.findings)).toHaveLength(4);
+          expect(
+            findingForFlag(
+              remoteBindOnboard.findings,
+              "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true",
+            ),
+          ).toBeDefined();
+          expect(remoteBindOnboard.suppressedFindings ?? []).toHaveLength(0);
+
           const explicitOptOut = runOpenClawAudit(binary, "https://127.0.0.1:18789", {
             NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
           });

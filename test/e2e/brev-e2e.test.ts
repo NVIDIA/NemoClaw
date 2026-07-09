@@ -892,6 +892,8 @@ function pollForSandboxReady(elapsed: () => string): void {
   // redirected descriptors lets the SSH session exit cleanly while retaining
   // least-privilege Docker socket ownership.
   console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
+  const remoteBindEnv =
+    TEST_SUITE === "dashboard-remote-bind" ? "NEMOCLAW_DASHBOARD_BIND=0.0.0.0 " : "";
   // Launch onboard in background. The SSH command may exit with code 255
   // (SSH error) because background processes keep file descriptors open.
   // That's fine — we just need the process to start; we'll poll for
@@ -901,7 +903,7 @@ function pollForSandboxReady(elapsed: () => string): void {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
-        `sg docker -c ${shellQuote("nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 &")}`,
+        `sg docker -c ${shellQuote(`${remoteBindEnv}nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 &`)}`,
         `sleep 2`,
         `echo "onboard launched"`,
       ].join(" && "),
@@ -1023,6 +1025,7 @@ function writeManualRegistry(elapsed: () => string): void {
           provider: null,
           gpuEnabled: false,
           policies: ["pypi", "npm"],
+          ...(TEST_SUITE === "dashboard-remote-bind" ? { dashboardRemoteBindPrepared: true } : {}),
         },
       },
     },

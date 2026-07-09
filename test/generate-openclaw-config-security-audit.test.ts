@@ -57,6 +57,8 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
       NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
     });
     expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback).toBe(true);
     expect(config.security).toBeUndefined();
   });
 

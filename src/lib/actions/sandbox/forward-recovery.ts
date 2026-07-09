@@ -72,12 +72,13 @@ export function ensureSandboxPortForward(sandboxName: string): boolean {
     );
     return false;
   }
-  return ensureSandboxPortForwardForPort(
-    sandboxName,
-    port,
-    remoteBindRequested ? `0.0.0.0:${port}` : String(port),
-    remoteBindRequested,
-  );
+  return ensureSandboxPortForwardForPort(sandboxName, port, {
+    forwardTarget: remoteBindRequested ? `0.0.0.0:${port}` : String(port),
+    forceRestart: remoteBindRequested,
+    beforeStart: remoteBindRequested
+      ? () => registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true
+      : undefined,
+  });
 }
 
 /**
@@ -116,9 +117,13 @@ export function isSandboxPortForwardHealthy(
 export function ensureSandboxPortForwardForPort(
   sandboxName: string,
   port: number,
-  forwardTarget = String(port),
-  forceRestart = false,
+  options: {
+    forwardTarget?: string;
+    forceRestart?: boolean;
+    beforeStart?: () => boolean;
+  } = {},
 ): boolean {
+  const { forwardTarget = String(port), forceRestart = false, beforeStart = () => true } = options;
   let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port);
   if (forwardHealth === true && !forceRestart) return true;
   if (forwardHealth === "occupied") return false;
@@ -173,6 +178,7 @@ export function ensureSandboxPortForwardForPort(
     if (stopState.health === "occupied" || !stopSettled || !stopState.portReleased) return false;
   }
 
+  if (!beforeStart()) return false;
   const startResult = runOpenshell(
     ["forward", "start", "--background", forwardTarget, sandboxName],
     {
