@@ -223,6 +223,35 @@ describe("sandbox-create-stream", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("lets an explicit empty startup-output gate detach immediately on VM", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", vmEnv, {
+      spawnImpl: () => child,
+      readyCheck: () => true,
+      readyCheckOutputPatterns: [],
+      pollIntervalMs: 5,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine,
+    });
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    await vi.advanceTimersByTimeAsync(6);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      forcedReady: true,
+      output: expect.stringContaining("Sandbox reported Ready before create stream exited"),
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(logLine).not.toHaveBeenCalledWith(
+      "  Sandbox reported Ready; waiting for startup command output before detaching.",
+    );
+  });
+
   it("does not recover a non-zero close before required startup output appears", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", vmEnv, {
