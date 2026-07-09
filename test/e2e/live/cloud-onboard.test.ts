@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import {
@@ -117,7 +117,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
 
   const install = await host.command(
     "bash",
-    ["-lc", `cd '${installCwd}' && curl -fsSL '${installUrl}' | bash`],
+    ["-lc", `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash`],
     {
       artifactName: "phase-1-public-install",
       env: env({
