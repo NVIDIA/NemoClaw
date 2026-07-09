@@ -53,20 +53,24 @@ const HOST_ANCHOR_MAX_DIRS = 1024;
 const LITERAL_SSL_CERTS_EXT_RE = /\.(?:pem|crt|cer)$/i;
 const LITERAL_SSL_CERTS_MERGED_BASENAMES = new Set(["ca-certificates.crt"]);
 
+interface CollectedCandidateFiles {
+  files: string[];
+  overLimit: boolean;
+}
+
 /**
  * Recursively collect anchor certificate files under a directory. Symlinked
  * files and directories are skipped because their Dirent is neither a regular
  * file nor directory, so the walk cannot follow a link out of the anchor tree.
  */
-function collectAnchorFiles(root: string, extensions: RegExp): string[] {
+function collectAnchorFiles(root: string, extensions: RegExp): CollectedCandidateFiles {
   const out: string[] = [];
   let dirsVisited = 0;
   const stack: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
-  while (
-    stack.length > 0 &&
-    out.length < HOST_ANCHOR_MAX_FILES &&
-    dirsVisited < HOST_ANCHOR_MAX_DIRS
-  ) {
+  while (stack.length > 0) {
+    if (dirsVisited >= HOST_ANCHOR_MAX_DIRS) {
+      return { files: out.sort(), overLimit: true };
+    }
     const current = stack.pop();
     if (current === undefined) break;
     dirsVisited += 1;
@@ -77,40 +81,54 @@ function collectAnchorFiles(root: string, extensions: RegExp): string[] {
       continue;
     }
     for (const entry of entries) {
-      if (out.length >= HOST_ANCHOR_MAX_FILES) break;
       const full = path.join(current.dir, entry.name);
       if (entry.isDirectory() && current.depth < HOST_ANCHOR_MAX_DEPTH) {
         stack.push({ dir: full, depth: current.depth + 1 });
       } else if (entry.isFile() && extensions.test(entry.name)) {
+        if (out.length >= HOST_ANCHOR_MAX_FILES) {
+          return { files: out.sort(), overLimit: true };
+        }
         out.push(full);
       }
     }
   }
-  return out.sort();
+  return { files: out.sort(), overLimit: false };
 }
 
-function collectLiteralSslCertFiles(root: string): string[] {
+function collectLiteralSslCertFiles(root: string): CollectedCandidateFiles {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(root, { withFileTypes: true });
   } catch {
-    return [];
+    return { files: [], overLimit: false };
   }
-  return entries
-    .filter(
-      (entry) =>
-        entry.isFile() &&
-        LITERAL_SSL_CERTS_EXT_RE.test(entry.name) &&
-        !LITERAL_SSL_CERTS_MERGED_BASENAMES.has(entry.name),
-    )
-    .map((entry) => path.join(root, entry.name))
-    .filter((file) => !isKnownMergedTrustStorePath(file))
-    .sort()
-    .slice(0, HOST_ANCHOR_MAX_FILES);
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (
+      !entry.isFile() ||
+      !LITERAL_SSL_CERTS_EXT_RE.test(entry.name) ||
+      LITERAL_SSL_CERTS_MERGED_BASENAMES.has(entry.name)
+    ) {
+      continue;
+    }
+    const file = path.join(root, entry.name);
+    if (isKnownMergedTrustStorePath(file)) continue;
+    if (files.length >= HOST_ANCHOR_MAX_FILES) {
+      return { files: files.sort(), overLimit: true };
+    }
+    files.push(file);
+  }
+  return { files: files.sort(), overLimit: false };
 }
 
 export function resolveCorporateCaFromLiteralSslCerts(root: string): ResolvedCorporateCa | null {
-  const candidates = collectLiteralSslCertFiles(root);
+  const { files: candidates, overLimit } = collectLiteralSslCertFiles(root);
+  if (overLimit) {
+    warnCorporateCa(
+      `host /etc/ssl/certs has more than ${HOST_ANCHOR_MAX_FILES} standalone CA candidate file(s); skipping to avoid a truncated trust import`,
+    );
+    return null;
+  }
   if (candidates.length === 0) return null;
 
   const blocks: string[] = [];
@@ -150,7 +168,13 @@ export function resolveCorporateCaFromHostAnchors(
   dirs: readonly string[] = CORPORATE_CA_HOST_ANCHOR_DIRS,
 ): ResolvedCorporateCa | null {
   for (const dir of dirs) {
-    const files = collectAnchorFiles(dir, anchorExtensionsFor(dir));
+    const { files, overLimit } = collectAnchorFiles(dir, anchorExtensionsFor(dir));
+    if (overLimit) {
+      warnCorporateCa(
+        `host trust-store anchor directory ${dir} exceeds scan caps (${HOST_ANCHOR_MAX_FILES} files or ${HOST_ANCHOR_MAX_DIRS} directories); skipping to avoid a truncated trust import`,
+      );
+      continue;
+    }
     const blocks: string[] = [];
     for (const file of files) {
       try {
