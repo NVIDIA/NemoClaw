@@ -84,7 +84,12 @@ export function adapterConfigHash(upstreamBaseUrl = OPENROUTER_ENDPOINT_URL): st
     .digest("hex");
 }
 
-export function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
+function normalizeHttpStatus(status: number): number {
+  return Number.isInteger(status) && status >= 100 && status <= 599 ? status : 500;
+}
+
+export function sendJson(res: http.ServerResponse, status: number, body: JsonObject): void {
+  res.statusCode = normalizeHttpStatus(status);
+  res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
 }
