@@ -167,7 +167,8 @@ function readLockSnapshot(lockPath: string): LockSnapshot | null {
   try {
     descriptor = fs.openSync(lockPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ELOOP") return null;
     throw error;
   }
 
@@ -372,7 +373,11 @@ function compileWithCache(filename: string, source: string, cachePath: string): 
 
   try {
     const outputText = transpileSource(source, filename);
-    writeAtomic(cachePath, outputText);
+    try {
+      writeAtomic(cachePath, outputText);
+    } catch {
+      // The compiled output is still valid when best-effort cache persistence fails.
+    }
     return outputText;
   } finally {
     fs.rmSync(lockPath, { force: true });
