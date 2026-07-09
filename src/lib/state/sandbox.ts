@@ -933,6 +933,7 @@ function loadStateFileRestoreOwnership(
   try {
     agent = loadAgent(agentType);
   } catch {
+    console.warn(`Could not load agent manifest for restore ownership lookup: ${agentType}`);
     return null;
   }
   for (const file of agent.stateFiles) {
