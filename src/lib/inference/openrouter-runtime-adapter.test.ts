@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OPENROUTER_DEFAULT_HEADERS } from "./openrouter";
 import { createOpenRouterRuntimeAdapterServer } from "./openrouter-runtime-adapter";
+import { OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES } from "./openrouter-runtime-adapter-forward";
 
 const servers: http.Server[] = [];
 
@@ -132,6 +133,33 @@ describe("OpenRouter Runtime adapter", () => {
       headers: { Authorization: "Bearer sk-or-test" },
     });
     expect(unsupported.status).toBe(404);
+    expect(upstreamHandler).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized request bodies before reaching upstream (#5826)", async () => {
+    const upstreamHandler = vi.fn((_req: http.IncomingMessage, res: http.ServerResponse) =>
+      res.end("unexpected"),
+    );
+    const upstream = http.createServer(upstreamHandler);
+    const upstreamBaseUrl = await listen(upstream);
+    const adapter = createOpenRouterRuntimeAdapterServer({
+      upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer sk-or-test",
+        "Content-Type": "application/json",
+      },
+      body: "x".repeat(OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES + 1),
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "request_too_large" },
+    });
     expect(upstreamHandler).not.toHaveBeenCalled();
   });
 });

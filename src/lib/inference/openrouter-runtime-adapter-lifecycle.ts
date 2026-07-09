@@ -5,7 +5,18 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 
-import { OPENROUTER_RUNTIME_ADAPTER_PORT } from "../core/ports";
+import {
+  BEDROCK_RUNTIME_ADAPTER_PORT,
+  DASHBOARD_PORT,
+  DASHBOARD_PORT_RANGE_END,
+  DASHBOARD_PORT_RANGE_START,
+  GATEWAY_PORT,
+  OLLAMA_PORT,
+  OLLAMA_PROXY_PORT,
+  OPENROUTER_RUNTIME_ADAPTER_PORT,
+  VLLM_PORT,
+  validateOpenRouterRuntimeAdapterPort,
+} from "../core/ports";
 import { run, runCapture } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 import {
@@ -178,7 +189,26 @@ function adapterRoute(): AdapterRoute {
   };
 }
 
+function validateAdapterPortConfiguration(): void {
+  validateOpenRouterRuntimeAdapterPort(
+    "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+    OPENROUTER_RUNTIME_ADAPTER_PORT,
+    {
+      dashboardPort: DASHBOARD_PORT,
+      dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
+      dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,
+      gatewayPort: GATEWAY_PORT,
+      vllmPort: VLLM_PORT,
+      ollamaPort: OLLAMA_PORT,
+      ollamaProxyPort: OLLAMA_PROXY_PORT,
+      bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+      openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
+    },
+  );
+}
+
 async function ensureOpenRouterRuntimeAdapterLocked(): Promise<AdapterRoute> {
+  validateAdapterPortConfiguration();
   const upstreamBaseUrl = OPENROUTER_ENDPOINT_URL;
   const configHash = adapterConfigHash(upstreamBaseUrl);
   const priorState = readLocalAdapterJsonFile(STATE_PATH);

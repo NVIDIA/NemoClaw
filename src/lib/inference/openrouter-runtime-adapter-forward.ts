@@ -8,6 +8,9 @@ import { compactText } from "../core/url-utils";
 import { OPENROUTER_DEFAULT_HEADERS } from "./openrouter";
 import { sendJson } from "./openrouter-runtime-adapter-common";
 
+export const OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES = 2 * 1024 * 1024;
+const OPENROUTER_RUNTIME_ADAPTER_BODY_TIMEOUT_MS = 30_000;
+
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "host",
@@ -19,6 +22,16 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
+
+class ForwardHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+  }
+}
 
 export function hasBearerAuthorization(actual: string | string[] | undefined): boolean {
   const header = Array.isArray(actual) ? actual[0] : actual;
@@ -58,19 +71,92 @@ function buildForwardResponseHeaders(source: http.IncomingHttpHeaders): http.Out
   return headers;
 }
 
-export function forwardOpenRouterRequest(options: {
+function readBoundedRequestBody(req: http.IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const contentLength = Number(req.headers["content-length"] || 0);
+    if (
+      Number.isFinite(contentLength) &&
+      contentLength > OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES
+    ) {
+      reject(new ForwardHttpError(413, "Request body is too large.", "request_too_large"));
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new ForwardHttpError(408, "Request body timed out.", "request_timeout"));
+      req.destroy();
+    }, OPENROUTER_RUNTIME_ADAPTER_BODY_TIMEOUT_MS);
+
+    req.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES) {
+        settled = true;
+        clearTimeout(timer);
+        reject(new ForwardHttpError(413, "Request body is too large.", "request_too_large"));
+        return;
+      }
+      chunks.push(Buffer.from(chunk));
+    });
+    req.on("end", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks));
+    });
+    req.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+function sendForwardError(res: http.ServerResponse, err: unknown): number {
+  const status = err instanceof ForwardHttpError ? err.status : 502;
+  const code = err instanceof ForwardHttpError ? err.code : "openrouter_runtime_error";
+  const message = err instanceof Error && err.message ? err.message : "OpenRouter request failed.";
+  if (!res.headersSent) {
+    sendJson(res, status, {
+      error: {
+        message: compactText(message),
+        type: code,
+        code,
+      },
+    });
+  } else {
+    res.destroy(err instanceof Error ? err : undefined);
+  }
+  return status;
+}
+
+export async function forwardOpenRouterRequest(options: {
   req: http.IncomingMessage;
   res: http.ServerResponse;
   upstreamBaseUrl: string;
 }): Promise<number> {
   const upstreamUrl = buildUpstreamUrl(options.upstreamBaseUrl, options.req.url);
   const transport = upstreamUrl.protocol === "http:" ? http : https;
+  let body: Buffer;
+  try {
+    body = await readBoundedRequestBody(options.req);
+  } catch (err) {
+    return sendForwardError(options.res, err);
+  }
   return new Promise((resolve) => {
+    const headers = buildForwardRequestHeaders(options.req);
+    headers["content-length"] = String(body.length);
     const upstreamReq = transport.request(
       upstreamUrl,
       {
         method: options.req.method,
-        headers: buildForwardRequestHeaders(options.req),
+        headers,
       },
       (upstreamRes) => {
         const status = upstreamRes.statusCode || 502;
@@ -80,24 +166,8 @@ export function forwardOpenRouterRequest(options: {
       },
     );
     upstreamReq.on("error", (err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!options.res.headersSent) {
-        sendJson(options.res, 502, {
-          error: {
-            message: compactText(message || "OpenRouter request failed."),
-            type: "openrouter_runtime_error",
-            code: "openrouter_runtime_error",
-          },
-        });
-      } else {
-        options.res.destroy(err instanceof Error ? err : undefined);
-      }
-      resolve(502);
+      resolve(sendForwardError(options.res, err));
     });
-    options.req.on("error", () => {
-      upstreamReq.destroy();
-      resolve(499);
-    });
-    options.req.pipe(upstreamReq);
+    upstreamReq.end(body);
   });
 }
