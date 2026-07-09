@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { restoreEnvBulk } from "../../../test/helpers/env-test-helpers.js";
 import type { OpenClawImagePluginInstall } from "./openclaw-plugin-restore.js";
 import { restoreRecreatedSandboxState } from "./sandbox.js";
 
@@ -90,10 +91,10 @@ function runRestoreScenario(options: {
       dir: OPENCLAW_DIR,
       backupPath,
       blueprintDigest: null,
+      ...(options.previousPluginInstalls !== undefined
+        ? { openclawImagePluginInstalls: options.previousPluginInstalls }
+        : {}),
     };
-    if (options.previousPluginInstalls !== undefined) {
-      manifest.openclawImagePluginInstalls = options.previousPluginInstalls;
-    }
     fs.writeFileSync(path.join(backupPath, "rebuild-manifest.json"), JSON.stringify(manifest));
 
     const openshell = path.join(binDir, "openshell");
@@ -183,10 +184,7 @@ process.exit(1);
       ),
     };
   } finally {
-    if (previousOpenshellBin === undefined) delete process.env.NEMOCLAW_OPENSHELL_BIN;
-    else process.env.NEMOCLAW_OPENSHELL_BIN = previousOpenshellBin;
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
+    restoreEnvBulk({ NEMOCLAW_OPENSHELL_BIN: previousOpenshellBin, PATH: previousPath });
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 }
