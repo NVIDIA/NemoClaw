@@ -2342,15 +2342,46 @@ function addSourceOfTruthFindings(
   return [...injected, ...findings.slice(0, originalSlots)];
 }
 
-function sanitizeTestDepth(
+export function sanitizeTestDepth(
   value: unknown,
   fallback: ReviewAdvisorResult["testDepth"],
 ): ReviewAdvisorResult["testDepth"] {
   const object = isRecord(value) ? value : {};
+  const requestedVerdict = enumValue(object.verdict, TEST_DEPTH_VERDICTS, fallback.verdict);
+  const verdictRank: Record<TestDepthVerdict, number> = {
+    unknown: 0,
+    unit_sufficient: 1,
+    mocks_recommended: 2,
+    runtime_validation_recommended: 3,
+  };
+  const enforceDeterministicFloor = verdictRank[fallback.verdict] >= verdictRank.mocks_recommended;
+  const verdict =
+    enforceDeterministicFloor && verdictRank[requestedVerdict] < verdictRank[fallback.verdict]
+      ? fallback.verdict
+      : requestedVerdict;
+  const requestedRationale = stringOrDefault(object.rationale, fallback.rationale);
+  const requestedTests = stringArray(object.suggestedTests);
+  const deterministicTests = enforceDeterministicFloor ? fallback.suggestedTests : [];
+  const deterministicUnique = deterministicTests
+    .filter((test, index, tests) => tests.indexOf(test) === index)
+    .slice(0, 20);
+  const requestedUnique = requestedTests
+    .filter((test) => !deterministicUnique.includes(test))
+    .filter((test, index, tests) => tests.indexOf(test) === index)
+    .slice(0, Math.max(0, 20 - deterministicUnique.length));
+  const suggestedTests = Array.from(
+    { length: Math.max(deterministicUnique.length, requestedUnique.length) },
+    (_value, index) => [deterministicUnique[index], requestedUnique[index]],
+  )
+    .flat()
+    .filter((test): test is string => Boolean(test))
+    .slice(0, 20);
   return {
-    verdict: enumValue(object.verdict, TEST_DEPTH_VERDICTS, fallback.verdict),
-    rationale: stringOrDefault(object.rationale, fallback.rationale),
-    suggestedTests: stringArray(object.suggestedTests).slice(0, 20),
+    verdict,
+    rationale: enforceDeterministicFloor
+      ? [...new Set([fallback.rationale, requestedRationale])].join(" ")
+      : requestedRationale,
+    suggestedTests,
   };
 }
 
