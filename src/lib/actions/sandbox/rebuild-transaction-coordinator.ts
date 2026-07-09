@@ -22,6 +22,13 @@ import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 
 export { fingerprintRebuildRegistryEntry, fingerprintRebuildValue };
 
+function fingerprintBackupManifest({
+  snapshotVersion: _snapshotVersion,
+  ...manifest
+}: sandboxState.RebuildManifest & { snapshotVersion?: number }): string {
+  return fingerprintRebuildValue(manifest);
+}
+
 export function loadRebuildRecovery(
   store: RebuildTransactionStore,
   sandboxName: string,
@@ -45,7 +52,7 @@ export function loadRebuildRecovery(
   if (
     !recoveryManifest ||
     recoveryManifest.timestamp !== transaction.receipts.backup.manifestTimestamp ||
-    fingerprintRebuildValue(recoveryManifest) !== transaction.receipts.backup.manifestFingerprint
+    fingerprintBackupManifest(recoveryManifest) !== transaction.receipts.backup.manifestFingerprint
   ) {
     throw new Error(
       `Rebuild transaction '${transaction.transactionId}' no longer matches the latest validated backup.`,
@@ -103,7 +110,7 @@ async function prepareRebuildTransaction(args: {
   const receipts = {
     backup: {
       manifestTimestamp: args.backupManifest.timestamp,
-      manifestFingerprint: fingerprintRebuildValue(args.backupManifest),
+      manifestFingerprint: fingerprintBackupManifest(args.backupManifest),
     },
   };
   if (!args.existing || args.existing.status === "completed") {

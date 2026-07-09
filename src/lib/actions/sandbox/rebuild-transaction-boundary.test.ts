@@ -167,7 +167,7 @@ describe("rebuild transaction boundary", () => {
     });
   });
 
-  it("resumes old-deleted recovery without duplicate delete or unrelated session config", async () => {
+  it("resumes old-deleted recovery from version-enriched backup without duplicate delete", async () => {
     const interrupted = createRebuildFlowHarness({
       staleRecovery: true,
       onboard: () => {
@@ -181,7 +181,10 @@ describe("rebuild transaction boundary", () => {
       }),
     ).rejects.toThrow("Recreate failed");
 
-    const resumed = createRebuildFlowHarness({ staleRecovery: true });
+    const resumed = createRebuildFlowHarness({
+      staleRecovery: true,
+      preDeleteLatestManifest: { ...makePreparedRecoveryManifest(), snapshotVersion: 1 },
+    });
     resumed.session.toolDisclosure = "direct";
     resumed.session.preferredInferenceApi = "stale-session-api";
     await resumed.rebuildSandbox("alpha", ["--yes"], {
