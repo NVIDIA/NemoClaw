@@ -330,7 +330,6 @@ describe("sandbox BuildKit prebuild", () => {
     expect(buildImage).toHaveBeenCalledWith(
       [
         "build",
-        "--progress=plain",
         "-t",
         "nemoclaw-sandbox-local:alpha-1234567890",
         "-f",
@@ -339,65 +338,13 @@ describe("sandbox BuildKit prebuild", () => {
       ],
       expect.objectContaining({
         env: expect.objectContaining({ DOCKER_BUILDKIT: "1" }),
-        onOutput: expect.any(Function),
-        stdio: "pipe",
+        stdio: "inherit",
       }),
     );
     expect(result).toEqual({
       createArgs: ["--from", "nemoclaw-sandbox-local:alpha-1234567890", "--name", "alpha"],
       imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
     });
-  });
-
-  it("formats local BuildKit output as plain stage lines", async () => {
-    const { buildCtx, createArgs } = createBuildContext();
-    const buildImage = vi.fn(async (_args, options) => {
-      options.onOutput(
-        [
-          '#0 building with "default" instance using docker driver',
-          "#1 [internal] load build definition from Dockerfile",
-          "#1 transferring dockerfile: 95.23kB done",
-          '#1 WARN: SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ARG "NEMOCLAW_PROVIDER_KEY") (line 819)',
-          "#1 DONE 0.0s",
-          "#2 [stage-2  1/61] FROM ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc123",
-          "#2 CACHED",
-          "#67 [stage-2 52/61] RUN openclaw doctor --fix --non-interactive",
-          "#67 0.942 OPENCLAW",
-          "#67 DONE 5.8s",
-          "",
-        ].join("\n"),
-      );
-      return 0;
-    });
-    const log = vi.fn();
-
-    await expect(
-      prebuildSandboxImageIfEligible({
-        buildCtx,
-        buildId: BUILD_ID,
-        origin: "generated",
-        createArgs,
-        sandboxName: "alpha",
-        dockerDriverGateway: true,
-        env: {},
-        buildImage,
-        log,
-      }),
-    ).resolves.toMatchObject({
-      imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
-    });
-
-    const lines = log.mock.calls.map((call) => call[0] as string);
-    expect(lines).toContain("  [internal] load build definition from Dockerfile");
-    expect(lines.some((line) => line.includes("WARN: SecretsUsedInArgOrEnv"))).toBe(true);
-    expect(lines).toContain(
-      "  [stage-2  1/61] FROM ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc123",
-    );
-    expect(lines).toContain("  [stage-2 52/61] RUN openclaw doctor --fix --non-interactive");
-    expect(lines.some((line) => line.includes("#0 building"))).toBe(false);
-    expect(lines.some((line) => line.includes("CACHED"))).toBe(false);
-    expect(lines.some((line) => line.includes("DONE"))).toBe(false);
-    expect(lines.some((line) => line.includes("OPENCLAW"))).toBe(false);
   });
 
   it.each([

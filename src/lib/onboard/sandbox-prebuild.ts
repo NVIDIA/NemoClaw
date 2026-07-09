@@ -23,12 +23,6 @@ const DOCKER_ENV_NAMES = [
   "DOCKER_CONTEXT",
   "DOCKER_TLS_VERIFY",
 ] as const;
-const BUILDKIT_STEP_RE = /^#(?<id>\d+)\s+(?<detail>\[[^\]]+\]\s+.+)$/;
-const BUILDKIT_STATUS_RE = /^#(?<id>\d+)\s+(?<status>DONE|CACHED)\b/;
-const BUILDKIT_STEP_OUTPUT_RE = /^#(?<id>\d+)\s+[\d.]+\s+/;
-const BUILDKIT_WARNING_RE = /^#\d+\s+(?<warning>WARN:\s+.+)$/;
-const BUILDKIT_ERROR_RE = /^#(?<id>\d+)\s+(?<error>ERROR:\s+.+)$/;
-const MAX_FAILURE_OUTPUT_LINES = 80;
 
 export interface SandboxPrebuildInput {
   buildCtx: string;
@@ -40,11 +34,7 @@ export interface SandboxPrebuildInput {
   env?: NodeJS.ProcessEnv;
   buildImage?: (
     args: readonly string[],
-    options: {
-      env: NodeJS.ProcessEnv;
-      onOutput: (chunk: Buffer | string) => void;
-      stdio: "pipe";
-    },
+    options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
   ) => Promise<number | null>;
   log?: (message: string) => void;
 }
@@ -135,77 +125,6 @@ export function resolveSandboxPrebuildEnabled(
   return !env.VITEST && env.NODE_ENV !== "test";
 }
 
-function trimDisplayLine(line: string): string {
-  const width = Math.max(60, Number(process.stdout.columns || 120));
-  const maxLen = Math.max(40, width - 4);
-  if (line.length <= maxLen) return line;
-  return `${line.slice(0, Math.max(0, maxLen - 3))}...`;
-}
-
-function createBuildKitStageLogger(log: (message: string) => void) {
-  const rawLines: string[] = [];
-  const printed = new Set<string>();
-  let pending = "";
-  let lastPrinted = "";
-
-  function print(line: string): void {
-    const display = trimDisplayLine(`  ${line}`);
-    if (display === lastPrinted) return;
-    log(display);
-    lastPrinted = display;
-  }
-
-  function recordLine(rawLine: string): void {
-    const line = rawLine.replace(/\r/g, "").trimEnd();
-    if (!line) return;
-    rawLines.push(line);
-
-    const step = line.match(BUILDKIT_STEP_RE);
-    if (step?.groups) {
-      const key = `${step.groups.id}:${step.groups.detail}`;
-      if (!printed.has(key)) {
-        printed.add(key);
-        print(step.groups.detail);
-      }
-      return;
-    }
-
-    const warning = line.match(BUILDKIT_WARNING_RE);
-    if (warning?.groups) {
-      print(warning.groups.warning);
-      return;
-    }
-
-    const error = line.match(BUILDKIT_ERROR_RE);
-    if (error?.groups) {
-      print(error.groups.error);
-      return;
-    }
-
-    if (BUILDKIT_STATUS_RE.test(line) || BUILDKIT_STEP_OUTPUT_RE.test(line)) {
-      return;
-    }
-  }
-
-  return {
-    onOutput(chunk: Buffer | string): void {
-      pending += chunk.toString();
-      const lines = pending.split("\n");
-      pending = lines.pop() ?? "";
-      for (const line of lines) recordLine(line);
-    },
-    flush(): void {
-      if (!pending) return;
-      const line = pending;
-      pending = "";
-      recordLine(line);
-    },
-    failureTail(): string[] {
-      return rawLines.slice(-MAX_FAILURE_OUTPUT_LINES);
-    },
-  };
-}
-
 export function sandboxLocalImageRef(sandboxName: string, buildId: string): string {
   const sanitize = (value: string) =>
     value
@@ -270,37 +189,22 @@ export async function prebuildSandboxImageIfEligible(
     input.buildImage ??
     ((args, options) =>
       new Promise<number | null>((resolve, reject) => {
-        const { onOutput, ...spawnOptions } = options;
-        const child = dockerSpawn(args, { ...spawnOptions, shell: false });
-        child.stdout?.on("data", onOutput);
-        child.stderr?.on("data", onOutput);
+        const child = dockerSpawn(args, { ...options, shell: false });
         child.once("error", reject);
         child.once("close", resolve);
       }));
   log("  Building sandbox image with BuildKit (skips the slower in-gateway builder)...");
 
   let status: number | null;
-  const buildOutput = createBuildKitStageLogger(log);
   try {
     status = await buildImage(
-      [
-        "build",
-        "--progress=plain",
-        "-t",
-        imageRef,
-        "-f",
-        trustedContext.dockerfile,
-        trustedContext.buildCtx,
-      ],
+      ["build", "-t", imageRef, "-f", trustedContext.dockerfile, trustedContext.buildCtx],
       {
         env: { ...dockerBuildSubprocessEnv(), DOCKER_BUILDKIT: "1" },
-        onOutput: buildOutput.onOutput,
-        stdio: "pipe",
+        stdio: "inherit",
       },
     );
-    buildOutput.flush();
   } catch (error) {
-    buildOutput.flush();
     const detail = error instanceof Error ? error.message : String(error);
     log(`  Local BuildKit build could not start (${detail}); using the gateway builder instead.`);
     return { createArgs, imageRef: null };
@@ -309,13 +213,6 @@ export async function prebuildSandboxImageIfEligible(
   if (status !== 0) {
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
     log(`  Local BuildKit build failed${detail}; using the gateway builder instead.`);
-    const tail = buildOutput.failureTail();
-    if (tail.length > 0) {
-      log("  Local BuildKit output (last lines):");
-      for (const line of tail) {
-        log(trimDisplayLine(`    ${line}`));
-      }
-    }
     return { createArgs, imageRef: null };
   }
 
