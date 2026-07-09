@@ -140,6 +140,9 @@ describe("rebuild replacement recovery decision", () => {
     expect(fingerprintRebuildReplacement({ ...target, agent: null })).not.toBe(
       fingerprintRebuildReplacement({ ...target, agent: "openclaw" }),
     );
+    expect(fingerprintRebuildReplacement({ ...target, agent: undefined })).toBe(
+      fingerprintRebuildReplacement({ ...target, agent: null }),
+    );
     expect(
       observeRebuildRegistry(
         {

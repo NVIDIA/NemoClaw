@@ -73,7 +73,7 @@ async function interruptAfterReplacementReceipt() {
 }
 
 describe("rebuild replacement recovery boundary", () => {
-  it("replays restore without onboarding from an interrupted correlated replacement (#6436)", async () => {
+  it("replays restore without onboarding after the state_restored interruption (#6436)", async () => {
     const { interrupted, transaction } = await interruptAfterReplacementReceipt();
     expect(transaction).toMatchObject({ status: "active", phase: "replacement_created" });
 

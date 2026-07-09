@@ -505,7 +505,8 @@ function syncDirectory(dirPath: string): void {
   // - Regression evidence: atomicity and torn-record validation are testable;
   //   physical power-loss persistence requires platform/storage fault injection.
   // - Removal condition: use F_FULLFSYNC when Node exposes it (or a native
-  //   adapter is adopted). Until then macOS power-loss durability is best-effort.
+  //   adapter is adopted); #6433 tracks this durability limitation. Until then
+  //   macOS power-loss durability is best-effort.
   // Linux ext4/xfs directory fsync commonly persists entries; other filesystems
   // and storage devices may provide weaker guarantees.
   const fd = fs.openSync(dirPath, fs.constants.O_RDONLY);
