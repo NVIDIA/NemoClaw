@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ArtifactSink } from "../artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
-import { artifactLabel, assertExitZero } from "../clients/command.ts";
+import { artifactLabel, assertExitZero, resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
 import {
@@ -132,10 +132,6 @@ function prependPath(pathEntry: string, currentPath?: string): string {
   return currentPath ? `${pathEntry}:${currentPath}` : pathEntry;
 }
 
-function resultText(result: ShellProbeResult): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 function redactExplicitValues(text: string, values: string[]): string {
   return values.reduce(
     (redacted, value) => (value ? redacted.split(value).join("[REDACTED]") : redacted),
@@ -233,7 +229,7 @@ export class OnboardingPhaseFixture {
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
-    const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+    const result = await this.host.nemoclaw([...ONBOARD_ARGS, "--observability"], {
       artifactName: "onboard-cloud-langchain-deepagents-code",
       env: commandEnv(sandboxName, {
         NEMOCLAW_AGENT: "langchain-deepagents-code",

@@ -96,6 +96,7 @@ export function createDeps(
 ) {
   let session = createSession();
   const calls = {
+    checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
     note: vi.fn(),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
       session = mutator(session) ?? session;
@@ -127,6 +128,17 @@ export function createDeps(
     exit: vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
     }),
+    withGatewayRouteMutationLock: vi.fn(),
+  };
+  const runWithGatewayRouteMutationLock = async <T>(
+    gatewayName: string,
+    operation: () => Promise<T> | T,
+  ): Promise<T> => {
+    if (overrides.withGatewayRouteMutationLock) {
+      return await overrides.withGatewayRouteMutationLock(gatewayName, operation);
+    }
+    calls.withGatewayRouteMutationLock(gatewayName, operation);
+    return await operation();
   };
   return {
     calls,
@@ -144,6 +156,10 @@ export function createDeps(
       getSandboxHermesToolGateways: () => [],
       getSandboxRegistryEntry: (name: string) => ({
         name,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
         webSearchEnabled: false,
         toolDisclosure: "progressive" as const,
         fromDockerfile: null,
@@ -180,6 +196,9 @@ export function createDeps(
       error: calls.error,
       exitProcess: calls.exit,
       ...overrides,
+      checkGatewayRouteCompatibility:
+        overrides.checkGatewayRouteCompatibility ?? calls.checkGatewayRouteCompatibility,
+      withGatewayRouteMutationLock: runWithGatewayRouteMutationLock,
     },
     getSession: () => session,
   };
@@ -207,6 +226,7 @@ export function baseOptions(
     resume: false,
     fresh: false,
     resumeAgentChanged: false,
+    gatewayName: "nemoclaw",
     session,
     sandboxName: null,
     model: "model",

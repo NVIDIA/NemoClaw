@@ -102,6 +102,7 @@ describe("runInferenceSet Hermes routing", () => {
       configChanged: true,
       sessionUpdated: true,
     });
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("keeps Hermes custom Anthropic switches off the managed Anthropic SSE frontend (#6289)", async () => {
@@ -185,6 +186,7 @@ describe("runInferenceSet Hermes routing", () => {
       providerKey: "inference",
       primaryModelRef: "inference/claude-sonnet-proxy",
     });
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("rejects inference set before mutating a legacy Anthropic provider (#6289)", async () => {
@@ -285,6 +287,8 @@ describe("runInferenceSet Hermes routing", () => {
         provider: "compatible-anthropic-endpoint",
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
         endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
       },
       defaultSandbox: "hermes",
       target: HERMES_TARGET,
@@ -325,8 +329,20 @@ describe("runInferenceSet Hermes routing", () => {
     const deps = createDeps({
       config,
       entries: [
-        { name: "alpha", agent: "openclaw" },
-        { name: "hermes-one", agent: "hermes" },
+        {
+          name: "alpha",
+          agent: "openclaw",
+          gatewayName: "nemoclaw-9090",
+          gatewayPort: 9090,
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+        },
+        {
+          name: "hermes-one",
+          agent: "hermes",
+          provider: "hermes-provider",
+          model: "z-ai/glm-5.1",
+        },
       ],
       defaultSandbox: "alpha",
       requestedAgent: "hermes",

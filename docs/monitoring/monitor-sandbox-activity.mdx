@@ -28,14 +28,14 @@ Run the status command to view sandbox state, gateway health, and the active inf
 $$nemoclaw <name> status
 ```
 
-For local Ollama and local vLLM routes, `$$nemoclaw <name> status` also probes the host-side health endpoint.
-The check catches a stopped local backend before you retry `inference.local` from inside the sandbox.
+`$$nemoclaw <name> status` probes `https://inference.local/v1/models` from inside the sandbox as the authoritative inference check.
+For local Ollama and local vLLM routes, it also prints labeled host-side backend diagnostics that help identify which hop failed.
 
 Review these output fields.
 
 - Sandbox details show the configured model, provider, GPU mode, and applied policy presets.
 - Gateway and process health show whether NemoClaw can reach the OpenShell gateway and whether the in-sandbox agent process is running.
-- Inference health for local Ollama and local vLLM shows `healthy` or `unreachable` with the probed local URL.
+- The main inference health line reflects the in-sandbox route the agent uses; labeled upstream, local-backend, and auth-proxy lines are diagnostic only.
 - NIM status shows whether a NIM container is running and healthy when that path is in use.
 
 Run `$$nemoclaw <name> status` on the host to check sandbox state.
@@ -122,8 +122,9 @@ hermes
 If the request fails, check these items.
 
 1. Run `$$nemoclaw <name> status` to confirm the active provider and endpoint.
-   For local Ollama and local vLLM, check the `Inference` line first.
-   If it shows `unreachable`, restart the local backend before retrying from inside the sandbox.
+   Check the main `Inference` line first.
+   If it shows `unhealthy`, `unreachable`, or `not probed`, inspect the labeled upstream, local-backend, and auth-proxy diagnostics to identify the failing hop.
+   Restart a local backend only when its own diagnostic fails.
 2. Run `$$nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
 3. Verify that the host can reach the inference endpoint.
 4. If the agent reports a context-overflow or token-limit error, clear the conversation with `/reset` (or start a fresh one with `/new`) in the TUI before retrying.

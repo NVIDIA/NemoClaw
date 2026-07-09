@@ -12,6 +12,8 @@ import {
 } from "../tool-disclosure";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
+import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
+import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
@@ -28,6 +30,7 @@ export interface OnboardCommandOptions {
   agent: string | null;
   agentsManifest: string | null;
   toolDisclosure: ToolDisclosure | null;
+  observabilityEnabled: boolean | null;
   controlUiPort: number | null;
   gpu: boolean;
   noGpu: boolean;
@@ -128,11 +131,26 @@ function resolveSandboxGpu(flags: OnboardFlags): "enable" | "disable" | null {
   return null;
 }
 
+function validateObservabilityAgent(
+  requested: boolean | undefined,
+  agent: string | null,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  if (
+    agent &&
+    managedSandboxFeatureIssue(DCODE_OBSERVABILITY_FEATURE, { agent, requested }) ===
+      "unsupported-request"
+  ) {
+    fail(deps, "  --observability is supported only with --agent langchain-deepagents-code.");
+  }
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
 ): OnboardCommandOptions {
   const agent = resolveAgent(flags.agent, deps);
+  validateObservabilityAgent(flags.observability, agent, deps);
   let toolDisclosure: ToolDisclosure | null;
   try {
     toolDisclosure = resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
@@ -153,6 +171,7 @@ export function resolveOnboardOptions(
     agent,
     agentsManifest: resolveAgentsManifest(flags.agents, agent, deps),
     toolDisclosure,
+    observabilityEnabled: typeof flags.observability === "boolean" ? flags.observability : null,
     controlUiPort: flags["control-ui-port"] ?? null,
     gpu: flags.gpu === true,
     noGpu: flags["no-gpu"] === true,

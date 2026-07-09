@@ -3,6 +3,7 @@
 
 import { loadAgent } from "../../agent/defs";
 import { webSearchProviderForConfig } from "../../inference/web-search";
+import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -80,6 +81,15 @@ function validateRebuildDurableConfig(
     );
     return false;
   }
+  if (durableConfig.dcodeAutoApprovalModeError) {
+    printRebuildPreflightFailure(
+      "recorded DCode auto-approval state is invalid.",
+      durableConfig.dcodeAutoApprovalModeError,
+      "Recorded DCode auto-approval state is invalid",
+      bail,
+    );
+    return false;
+  }
   if (durableConfig.fromDockerfileError) {
     printRebuildPreflightFailure(
       "recorded custom Dockerfile is invalid.",
@@ -113,6 +123,8 @@ export function prepareRebuildTargetConfig(
   log: (message: string) => void,
   bail: RebuildBail,
   requestedToolDisclosure?: ToolDisclosure,
+  allowLegacyManagedImageRecovery = false,
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode,
 ): RebuildTargetConfig | null {
   const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
   if (!resumeConfig) return null;
@@ -127,6 +139,8 @@ export function prepareRebuildTargetConfig(
       model: resumeConfig.model,
     },
     requestedToolDisclosure,
+    allowLegacyManagedImageRecovery,
+    requestedDcodeAutoApprovalMode,
   );
   if (!validateRebuildDurableConfig(durableConfig, resumeConfig, bail)) return null;
   if (isDcodeRebuildAgent(rebuildAgent) && durableConfig.fromDockerfile) {

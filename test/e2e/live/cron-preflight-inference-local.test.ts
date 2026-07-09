@@ -15,15 +15,14 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_MODEL,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cron-preflight";
 validateSandboxName(SANDBOX_NAME);
 const MODEL = process.env.NEMOCLAW_CRON_PREFLIGHT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
@@ -205,102 +204,99 @@ async function cleanupCronSandbox(sandbox: SandboxClient): Promise<void> {
   );
 }
 
-test.skipIf(!shouldRunLiveE2E())(
-  "cron preflight reaches managed inference.local provider without EAI_AGAIN",
-  { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    const hosted = requireHostedInferenceConfig(secrets, process.env, { model: MODEL });
-    const apiKey = hosted.apiKey;
+test("cron preflight reaches managed inference.local provider without EAI_AGAIN", {
+  timeout: LIVE_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  const hosted = requireHostedInferenceConfig(secrets, process.env, { model: MODEL });
+  const apiKey = hosted.apiKey;
 
-    await artifacts.writeJson("target.json", {
-      id: "cron-preflight-inference-local",
-      runner: "vitest",
-      boundary: "install.sh + in-sandbox OpenClaw cron preflight runtime helper",
-      sandboxName: SANDBOX_NAME,
-      model: MODEL,
-      contracts: [
-        "install.sh onboards a fresh OpenClaw sandbox against hosted inference",
-        "the onboarded OpenClaw config contains a managed provider routed through inference.local",
-        "preflightCronModelProvider runs from the in-sandbox OpenClaw dist",
-        "the cron preflight reports status=available",
-        "the preflight reason does not contain EAI_AGAIN or local endpoint unreachable text",
-      ],
-    });
+  await artifacts.target.declare({
+    id: "cron-preflight-inference-local",
+    boundary: "install.sh + in-sandbox OpenClaw cron preflight runtime helper",
+    sandboxName: SANDBOX_NAME,
+    model: MODEL,
+    contracts: [
+      "install.sh onboards a fresh OpenClaw sandbox against hosted inference",
+      "the onboarded OpenClaw config contains a managed provider routed through inference.local",
+      "preflightCronModelProvider runs from the in-sandbox OpenClaw dist",
+      "the cron preflight reports status=available",
+      "the preflight reason does not contain EAI_AGAIN or local endpoint unreachable text",
+    ],
+  });
 
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "phase-0-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    if (dockerInfo.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
-      }
-      skip(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
+  const dockerInfo = await host.command("docker", ["info"], {
+    artifactName: "phase-0-docker-info",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  if (dockerInfo.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
     }
+    skip(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
+  }
 
-    cleanup.add(`destroy cron preflight sandbox ${SANDBOX_NAME}`, async () => {
-      await bestEffort(() =>
-        host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
-          artifactName: "cleanup-nemoclaw-destroy-cron-preflight",
-          env: commandEnv(),
-          timeoutMs: 120_000,
-        }),
-      );
-      await cleanupCronSandbox(sandbox);
-    });
-
+  cleanup.add(`destroy cron preflight sandbox ${SANDBOX_NAME}`, async () => {
     await bestEffort(() =>
       host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "pre-cleanup-nemoclaw-destroy-cron-preflight",
+        artifactName: "cleanup-nemoclaw-destroy-cron-preflight",
         env: commandEnv(),
         timeoutMs: 120_000,
       }),
     );
     await cleanupCronSandbox(sandbox);
+  });
 
-    let install: ShellProbeResult | undefined;
-    for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
-      install = await host.command(
-        "bash",
-        ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
-        {
-          artifactName:
-            attempt === 1
-              ? "phase-1-install-cron-preflight"
-              : `phase-1-install-cron-preflight-attempt-${attempt}`,
-          cwd: REPO_ROOT,
-          env: commandEnv(hosted.env),
-          redactionValues: [apiKey],
-          timeoutMs: 20 * 60_000,
-        },
-      );
-      if (install.exitCode === 0) break;
-      if (isTransientProviderValidationFailure(install) && attempt < INSTALL_ATTEMPTS) {
-        await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt));
-        continue;
-      }
-      break;
-    }
-    expect(install, "install command must run").toBeDefined();
-    expect(install?.exitCode, resultText(install as ShellProbeResult)).toBe(0);
-
-    const probe = await host.nemoclaw([SANDBOX_NAME, "exec", "--", "sh", "-c", probeShell()], {
-      artifactName: "phase-2-cron-preflight-probe",
-      env: commandEnv(hosted.env),
-      redactionValues: [apiKey],
+  await bestEffort(() =>
+    host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
+      artifactName: "pre-cleanup-nemoclaw-destroy-cron-preflight",
+      env: commandEnv(),
       timeoutMs: 120_000,
-    });
-    const output = resultText(probe);
-    await artifacts.writeText("cron-preflight-probe-output.txt", output);
+    }),
+  );
+  await cleanupCronSandbox(sandbox);
 
-    const parsed = parseProbeJson(output);
-    expect(parsed, output).toBeDefined();
-    const reason = typeof parsed?.result?.reason === "string" ? parsed.result.reason : "";
-    expect(reason, output).not.toMatch(/EAI_AGAIN/i);
-    expect(reason, output).not.toMatch(/local provider endpoint is not reachable/i);
-    expect(probe.exitCode, output).toBe(0);
-    expect(parsed?.result?.status, output).toBe("available");
-    expect(parsed?.baseUrl, output).toBe("https://inference.local/v1");
-  },
-);
+  let install: ShellProbeResult | undefined;
+  for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
+    install = await host.command(
+      "bash",
+      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      {
+        artifactName:
+          attempt === 1
+            ? "phase-1-install-cron-preflight"
+            : `phase-1-install-cron-preflight-attempt-${attempt}`,
+        cwd: REPO_ROOT,
+        env: commandEnv(hosted.env),
+        redactionValues: [apiKey],
+        timeoutMs: 20 * 60_000,
+      },
+    );
+    if (install.exitCode === 0) break;
+    if (isTransientProviderValidationFailure(install) && attempt < INSTALL_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt));
+      continue;
+    }
+    break;
+  }
+  expect(install, "install command must run").toBeDefined();
+  expect(install?.exitCode, resultText(install as ShellProbeResult)).toBe(0);
+
+  const probe = await host.nemoclaw([SANDBOX_NAME, "exec", "--", "sh", "-c", probeShell()], {
+    artifactName: "phase-2-cron-preflight-probe",
+    env: commandEnv(hosted.env),
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
+  });
+  const output = resultText(probe);
+  await artifacts.writeText("cron-preflight-probe-output.txt", output);
+
+  const parsed = parseProbeJson(output);
+  expect(parsed, output).toBeDefined();
+  const reason = typeof parsed?.result?.reason === "string" ? parsed.result.reason : "";
+  expect(reason, output).not.toMatch(/EAI_AGAIN/i);
+  expect(reason, output).not.toMatch(/local provider endpoint is not reachable/i);
+  expect(probe.exitCode, output).toBe(0);
+  expect(parsed?.result?.status, output).toBe("available");
+  expect(parsed?.baseUrl, output).toBe("https://inference.local/v1");
+});

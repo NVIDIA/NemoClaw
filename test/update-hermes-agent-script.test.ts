@@ -309,4 +309,51 @@ fi
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
+
+  it("refuses installed copies with an independently pinned final workaround guard (#5254)", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-update-final-guard-"));
+    const installedDockerfile = path.join(
+      tmpHome,
+      ".nemoclaw",
+      "source",
+      "agents",
+      "hermes",
+      "Dockerfile.base",
+    );
+    const installedAgentDockerfile = path.join(path.dirname(installedDockerfile), "Dockerfile");
+    const staleGuardDockerfile = [
+      CURRENT_INSTALLED_DOCKERFILE,
+      "ARG HERMES_SEMVER=0.17.0",
+      'RUN if [ "$HERMES_SEMVER" != "0.17.0" ]; then exit 1; fi',
+      "",
+    ].join("\n");
+    fs.mkdirSync(path.dirname(installedDockerfile), { recursive: true });
+    fs.writeFileSync(installedDockerfile, CURRENT_INSTALLED_BASE);
+    fs.writeFileSync(installedAgentDockerfile, staleGuardDockerfile);
+
+    const run = spawnSync(
+      "bash",
+      [SCRIPT, "--tag", TARGET_TAG, "--check", "--update-installed-copies"],
+      {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpHome,
+          NEMOCLAW_SOURCE_ROOT: undefined,
+        },
+        timeout: 5000,
+      },
+    );
+
+    try {
+      expect(run.status).toBe(1);
+      expect(run.stdout).toContain("INVALID: installed copy");
+      expect(run.stdout).toContain("final Dockerfile #5254 guard");
+      expect(run.stdout).toContain("installed hermes --version");
+      expect(fs.readFileSync(installedDockerfile, "utf-8")).toBe(CURRENT_INSTALLED_BASE);
+      expect(fs.readFileSync(installedAgentDockerfile, "utf-8")).toBe(staleGuardDockerfile);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
 });

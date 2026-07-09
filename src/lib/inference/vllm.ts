@@ -9,12 +9,13 @@ import { dockerCapture, dockerPullWithProgressWatchdog, dockerSpawn } from "../a
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { runCapture, runShell } from "../runner";
+import { isSafeModelId } from "../validation";
 import { getGpuIndicesByName } from "./nim";
 import {
-  VLLM_EXTRA_ARGS_ENV,
-  VLLM_MODELS,
   buildVllmServeCommand,
   parseVllmExtraServeArgs,
+  VLLM_EXTRA_ARGS_ENV,
+  VLLM_MODELS,
   type VllmModelDef,
   type VllmPlatform,
 } from "./vllm-models";
@@ -226,6 +227,9 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
 
 export async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pulling vLLM image: ${profile.image}`);
+  // Docker can be quiet while finalizing large layers on every supported vLLM
+  // profile, so all profiles intentionally share the 15-minute stall default.
+  // The profile-specific maximum still bounds the complete pull operation.
   const result = await dockerPullWithProgressWatchdog(profile.image, {
     maxTimeoutMs: profile.pullTimeoutSec * 1000,
     logLine: emit,
@@ -493,6 +497,29 @@ interface InstallVllmOptions {
   hasImage: boolean;
   nonInteractive: boolean;
   promptFn: (q: string) => Promise<string>;
+  beforeInstall?: (modelId: string) => void;
+}
+
+export function resolveVllmServedModelId(modelId: string, extraServeArgs: string[]): string {
+  let override: string | null = null;
+  for (let index = 0; index < extraServeArgs.length; index += 1) {
+    const arg = extraServeArgs[index];
+    let values: string[] | null = null;
+    if (arg === "--served-model-name") {
+      values = [];
+      while (index + 1 < extraServeArgs.length && !extraServeArgs[index + 1].startsWith("-")) {
+        values.push(extraServeArgs[(index += 1)]);
+      }
+    } else if (arg.startsWith("--served-model-name=")) {
+      values = [arg.slice("--served-model-name=".length)];
+    }
+    if (!values) continue;
+    if (override || values.length !== 1 || !isSafeModelId(values[0])) {
+      throw new Error("--served-model-name must specify exactly one safe model ID");
+    }
+    override = values[0];
+  }
+  return override ?? modelId;
 }
 
 // Public entry point. Returns ok=false on any prereq, pull, run, or load
@@ -512,12 +539,15 @@ export async function installVllm(
   const { model, source: modelSource } = resolved;
 
   let extraServeArgs: string[];
+  let servedModelId: string;
   try {
     extraServeArgs = parseVllmExtraServeArgs();
+    servedModelId = resolveVllmServedModelId(model.id, extraServeArgs);
   } catch (err) {
     console.error(`  vLLM install failed: ${(err as Error).message}`);
     return { ok: false };
   }
+  opts.beforeInstall?.(servedModelId);
 
   console.log("");
   console.log(`  vLLM (${profile.name}):`);

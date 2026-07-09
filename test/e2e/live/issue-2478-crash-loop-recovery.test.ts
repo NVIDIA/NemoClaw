@@ -431,7 +431,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
   runtime,
   sandbox,
 }) => {
-  await artifacts.writeJson("target.json", {
+  await artifacts.target.declare({
     id: "issue-2478-crash-loop-recovery",
     issues: ["#2478", "#2701"],
     crashCycles: CRASH_CYCLES,

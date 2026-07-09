@@ -482,13 +482,17 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       baseImages.jobs["build-and-push-hermes"] as WorkflowJob,
       "Validate Hermes production Docker build args",
     );
+    expectBuildPushGuard(
+      baseImages.jobs["build-and-push-langchain-deepagents-code"] as WorkflowJob,
+      "Validate Deep Agents Code production Docker build args",
+    );
 
     const discoveredBuilds = [
       ...findProductionBuildGuardCoverage("pr-self-hosted", prSelfHosted),
       ...findProductionBuildGuardCoverage("sandbox-images-and-e2e", sandboxImages),
       ...findProductionBuildGuardCoverage("base-image", baseImages),
     ];
-    expect(discoveredBuilds.map(({ label }) => label)).toHaveLength(7);
+    expect(discoveredBuilds.map(({ label }) => label)).toHaveLength(8);
     expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
 
     const productionWorkflowContract = JSON.stringify({ prSelfHosted, sandboxImages, baseImages });

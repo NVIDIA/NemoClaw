@@ -109,6 +109,22 @@ describe("gateway provider metadata", () => {
     });
   });
 
+  it("scopes provider inspection to an explicit non-default gateway", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: COMPLETE_OUTPUT }));
+
+    expect(
+      readGatewayProviderMetadata("compatible-endpoint", runOpenshell, "nemoclaw-9090"),
+    ).toEqual(parseGatewayProviderMetadata(COMPLETE_OUTPUT));
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "get", "-g", "nemoclaw-9090", "compatible-endpoint"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  });
+
   it("accepts providers with no credential or config bindings", () => {
     expect(
       parseGatewayProviderMetadata(

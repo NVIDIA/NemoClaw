@@ -26,7 +26,12 @@ type SetupNimOllamaDeps = {
   selectAndValidateOllamaModel: (
     gpu: any,
     provider: string,
-    args: { requestedModel: string | null; recoveredModel: string | null },
+    args: {
+      requestedModel: string | null;
+      recoveredModel: string | null;
+      lockedModel?: string | null;
+    },
+    onModelSelected?: (model: string) => void,
   ) => Promise<
     | { outcome: "back-to-selection" }
     | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
@@ -83,11 +88,23 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     state: SetupNimSelectionState,
     requestedModel: string | null,
     recoveredModel: string | null,
+    lockedModel: string | null,
   ): Promise<SetupNimSelectionResult> {
-    const result = await deps.selectAndValidateOllamaModel(gpu, state.provider, {
-      requestedModel,
-      recoveredModel,
-    });
+    const constrainedModel = typeof state.model === "string" ? state.model : requestedModel;
+    const result = await deps.selectAndValidateOllamaModel(
+      gpu,
+      state.provider,
+      {
+        requestedModel: constrainedModel,
+        recoveredModel,
+        lockedModel,
+      },
+      (model) => {
+        state.model = model;
+        state.preferredInferenceApi = "openai-completions";
+        state.assertRouteCompatible?.();
+      },
+    );
     if (result.outcome === "back-to-selection") return "retry-selection";
     state.model = result.model;
     state.allowToolsIncompatible = result.allowToolsIncompatible;
@@ -110,11 +127,22 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     state.provider = "ollama-local";
     state.credentialEnv = null;
     state.endpointUrl = deps.getLocalProviderBaseUrl(state.provider);
+    state.preferredInferenceApi = "openai-completions";
     state.skipHostInferenceSmoke = false;
     if (!state.endpointUrl) {
       console.error("  Local Ollama base URL could not be determined.");
       deps.process.exit(1);
     }
+  }
+
+  function preflightOllamaRoute(
+    state: SetupNimSelectionState,
+    requestedModel: string | null,
+    recoveredModel: string | null,
+  ): string | null {
+    configureOllamaState(state);
+    state.model = requestedModel || recoveredModel;
+    return state.assertRouteCompatible?.().requiredModel ?? null;
   }
 
   function applyOllamaFallbackState(
@@ -143,6 +171,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
       return "retry-selection";
     }
+    const lockedModel = preflightOllamaRoute(state, requestedModel, null);
     const isInstall = selectedKey === "install-windows-ollama";
     const isSwitch = !isInstall && windowsOllamaReachable;
     const isRestart = !isInstall && !isSwitch && winOllamaLoopbackOnly;
@@ -192,8 +221,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       }
       console.log(`  ✓ Using Ollama on host.docker.internal:${deps.OLLAMA_PORT}`);
     }
-    configureOllamaState(state);
-    const result = await selectModel(gpu, state, requestedModel, null);
+    const result = await selectModel(gpu, state, requestedModel, null, lockedModel);
     if (result === "retry-selection") deps.resetOllamaHostCache();
     return result;
   }
@@ -208,6 +236,8 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
       return "retry-selection";
     }
+    const initialState = { ...state, hermesToolGateways: [...state.hermesToolGateways] };
+    const lockedModel = preflightOllamaRoute(state, requestedModel, recoveredModel);
     let ollamaReady = ollamaRunning;
     const overrideState = deps.ensureOllamaLoopbackSystemdOverride({
       isNonInteractive: deps.isNonInteractive,
@@ -236,13 +266,14 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
         // Fallback crosses a provider boundary, so write a complete safe state
         // rather than merging over stale cloud/NIM/Ollama selection fields.
         applyOllamaFallbackState(state, startup.result);
+        state.assertRouteCompatible?.();
         return "selected";
       case "ready":
         startProxyOrAnnounceDirect();
-        configureOllamaState(state);
-        return selectModel(gpu, state, requestedModel, recoveredModel);
+        return selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
       default: {
         const kind = (startup as { kind?: unknown }).kind;
+        Object.assign(state, initialState);
         console.error(`  Unknown Ollama startup outcome: ${String(kind)}`);
         deps.process.exit(1);
       }
@@ -259,6 +290,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
       return "retry-selection";
     }
+    const lockedModel = preflightOllamaRoute(state, requestedModel, recoveredModel);
     const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
     const installResult =
       deps.process.platform === "darwin"
@@ -276,8 +308,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       return "retry-selection";
     }
     startProxyOrAnnounceDirect();
-    configureOllamaState(state);
-    return selectModel(gpu, state, requestedModel, recoveredModel);
+    return selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
   }
 
   return {

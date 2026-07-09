@@ -58,7 +58,11 @@ async function preflightRebuildWebSearchCredential(
 }
 
 export type RebuildTargetRuntimePreflightResult =
-  | { ok: true; preparedImage: PreparedRebuildImage | null }
+  | {
+      ok: true;
+      preparedImage: PreparedRebuildImage | null;
+      requiresGatewayProviderReconfigure: boolean;
+    }
   | { ok: false };
 
 export async function preflightRebuildTargetRuntime(
@@ -67,7 +71,10 @@ export async function preflightRebuildTargetRuntime(
   recreateOptions: RebuildRecreateOnboardOpts,
   log: RebuildLog,
   bail: RebuildBail,
-  options: { skipImagePreflight?: boolean } = {},
+  options: {
+    allowMissingGatewayProviderWithHostCredential?: boolean;
+    skipImagePreflight?: boolean;
+  } = {},
 ): Promise<RebuildTargetRuntimePreflightResult> {
   const webSearchConfig = target.durableConfig.webSearchConfig;
   const webSearchProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
@@ -139,6 +146,7 @@ export async function preflightRebuildTargetRuntime(
   }
 
   let preparedImage: PreparedRebuildImage | null = null;
+  let requiresGatewayProviderReconfigure = false;
   if (!options.skipImagePreflight) {
     const customImage = await rebuildImagePreflight.preflightRebuildImage({
       agent: target.agentDefinition,
@@ -186,11 +194,22 @@ export async function preflightRebuildTargetRuntime(
         },
         log,
         bail,
+        {
+          allowMissingGatewayProviderWithHostCredential:
+            options.allowMissingGatewayProviderWithHostCredential,
+          onGatewayProviderReconfigureRequired: () => {
+            requiresGatewayProviderReconfigure = true;
+          },
+        },
       )
     ) {
       return { ok: false };
     }
-    const result: RebuildTargetRuntimePreflightResult = { ok: true, preparedImage };
+    const result: RebuildTargetRuntimePreflightResult = {
+      ok: true,
+      preparedImage,
+      requiresGatewayProviderReconfigure,
+    };
     preparedImage = null;
     return result;
   } finally {
@@ -203,10 +222,12 @@ export async function preflightAuthoritativeOnboardRuntime(
   resumeConfig: RebuildResumeConfig,
   recreateOptions: RebuildRecreateOnboardOpts,
   bail: RebuildBail,
+  options: { deferInferenceRouteUntilOnboard?: true } = {},
 ): Promise<boolean> {
   try {
     await rebuildOnboardDependencies.preflightAuthoritativeRebuildTarget({
       ...recreateOptions,
+      ...options,
       model: resumeConfig.model,
       provider: resumeConfig.provider,
       sandboxName,

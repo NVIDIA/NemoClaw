@@ -11,6 +11,7 @@ import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import type { RebuildVersionCheck } from "./rebuild-preflight-confirmation";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 
 export function checkRebuildGatewaySchemaPreflight(
@@ -30,6 +31,14 @@ export function checkRebuildGatewaySchemaPreflight(
     return false;
   }
   return true;
+}
+
+export async function runRebuildGatewayIntentPreflight<T>(options: {
+  checkGatewaySchema: () => boolean;
+  confirmIntent: () => Promise<T | null>;
+}): Promise<T | null> {
+  if (!options.checkGatewaySchema()) return null;
+  return options.confirmIntent();
 }
 
 export function getRebuildSandboxEntryOrBail(
@@ -76,6 +85,25 @@ export function acquireRebuildOnboardLock(sandboxName: string, bail: RebuildBail
   };
   process.once("exit", release);
   return release;
+}
+
+/**
+ * Derive the only registry transition rebuild itself can cause before locking.
+ * Keep the pre-confirmation entry intact except for a successful live probe's
+ * agent-version cache write, so every concurrent recreate/config change still
+ * fails the exact locked-entry comparison below.
+ */
+export function expectedRebuildEntryAfterVersionCheck(
+  confirmedEntry: RebuildSandboxEntry,
+  confirmedEntrySnapshot: string,
+  versionCheck: RebuildVersionCheck,
+): RebuildSandboxEntry {
+  if (versionCheck.detectionMethod !== "ssh-exec" || versionCheck.sandboxVersion === null) {
+    return confirmedEntry;
+  }
+  const expectedEntry = JSON.parse(confirmedEntrySnapshot) as RebuildSandboxEntry;
+  expectedEntry.agentVersion = versionCheck.sandboxVersion;
+  return expectedEntry;
 }
 
 export function assertRebuildEntryUnchanged(

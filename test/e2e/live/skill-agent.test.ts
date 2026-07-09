@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import {
   type SandboxClient,
   trustedSandboxShellScript,
@@ -12,7 +13,6 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   agentSectionContainsToken,
   isAgentVerificationFailClosed,
@@ -20,13 +20,12 @@ import {
   shouldSkipExternalAgentVerificationFailure,
   VERIFY_PHRASE,
 } from "../support/skill-agent-classifiers.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
 // Keep this as a direct live test: the the contract is skill fixture
 // injection into a real OpenClaw sandbox plus an agent turn that must read
 // hands off to this live target.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const ADD_SKILL_SCRIPT = path.join(
   REPO_ROOT,
   "test",
@@ -55,10 +54,6 @@ const RETRY_SLEEP_MS =
   Number.parseInt(process.env.E2E_SKILL_AGENT_RETRY_SLEEP_SEC ?? "15", 10) * 1_000;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
-
-function resultText(result: { stdout: string; stderr: string }): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -107,9 +102,7 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-const runSkillAgentTest = shouldRunLiveE2E() ? test : test.skip;
-
-runSkillAgentTest(
+test(
   "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     expect(
@@ -139,9 +132,8 @@ runSkillAgentTest(
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "skill-agent",
-      runner: "vitest",
       boundary: "direct-cli-onboard-sandbox-skill-and-agent-turn",
       contract: [
         "Docker is available before onboarding",
@@ -227,7 +219,7 @@ runSkillAgentTest(
     );
     const onboardText = resultText(onboard);
     if (onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText)) {
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "skill-agent",
         status: "skipped",
         reason: "external-provider-validation-unavailable-before-sandbox-skill-check",
@@ -293,7 +285,7 @@ runSkillAgentTest(
     if (!agentOk) {
       const fixturePresent = await verifySkillFixturePresent(sandbox, SANDBOX_NAME);
       if (shouldSkipExternalAgentVerificationFailure(lastAgentOutput, fixturePresent)) {
-        await artifacts.writeJson("target-result.json", {
+        await artifacts.target.complete({
           id: "skill-agent",
           status: "skipped",
           reason: "external-agent-verification-flake-after-fixture-present",
@@ -310,7 +302,7 @@ runSkillAgentTest(
       `Agent did not return ${VERIFY_PHRASE}; last exit ${lastExitCode}\n${lastAgentOutput.slice(-12_000)}`,
     ).toBe(true);
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "skill-agent",
       status: "passed",
       assertions: {

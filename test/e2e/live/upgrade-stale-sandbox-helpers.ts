@@ -10,10 +10,18 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import {
+  readJsonFileOrFallback,
+  restoreFile,
+  snapshotFile,
+  writeJsonFile,
+} from "../fixtures/file-state.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
-export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
+export { REPO_ROOT };
+
 const BLUEPRINT_RELPATH = path.join("nemoclaw-blueprint", "blueprint.yaml");
 const BLUEPRINT = path.join(REPO_ROOT, BLUEPRINT_RELPATH);
 const BASE_CONTEXT_SCRIPT_RELPATH = path.join("scripts", "lib", "sandbox-rlimits.sh");
@@ -34,11 +42,6 @@ export const OLD_BASE_TAG = `nemoclaw-old-base:${SANDBOX_NAME.toLowerCase().repl
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-
-interface FileSnapshot {
-  exists: boolean;
-  content?: string;
-}
 
 function assertSafeSandboxName(): void {
   if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
@@ -67,32 +70,6 @@ export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   } catch {
     // Cleanup must not mask the primary assertion failure.
   }
-}
-
-function readJsonFile<T>(file: string, fallback: T): T {
-  try {
-    return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJsonFile(file: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-function snapshotFile(file: string): FileSnapshot {
-  return fs.existsSync(file)
-    ? { exists: true, content: fs.readFileSync(file, "utf8") }
-    : { exists: false };
-}
-
-function restoreFile(file: string, snapshot: FileSnapshot): void {
-  snapshot.exists || fs.rmSync(file, { force: true });
-  if (!snapshot.exists) return;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, snapshot.content ?? "", "utf8");
 }
 
 function createOldBaseBuildContext(): string {
@@ -125,7 +102,7 @@ function createOldBaseBuildContext(): string {
 }
 
 export function writeStaleRegistryEntry(): void {
-  const session = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
+  const session = readJsonFileOrFallback<Record<string, unknown>>(SESSION_FILE, {});
   const envProvider =
     process.env.NEMOCLAW_PROVIDER === "custom"
       ? "compatible-endpoint"
@@ -139,7 +116,7 @@ export function writeStaleRegistryEntry(): void {
     process.env.NEMOCLAW_MODEL ||
     process.env.NEMOCLAW_COMPAT_MODEL ||
     "nvidia/nvidia/nemotron-3-ultra";
-  const registry = readJsonFile<{
+  const registry = readJsonFileOrFallback<{
     sandboxes?: Record<string, Record<string, unknown>>;
     defaultSandbox?: string;
   }>(REGISTRY_FILE, {});

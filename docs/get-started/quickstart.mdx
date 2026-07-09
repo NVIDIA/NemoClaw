@@ -24,7 +24,7 @@ Review the [Prerequisites](prerequisites) before following this guide.
 
 Copy the starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want the assistant to install NemoClaw with you.
 The prompt points your agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
-It also tells your agent to collect choices before launching interactive commands and to handle credentials outside the chat transcript.
+It also tells your agent to collect choices before launching interactive commands and to use the checked-in local credential helper and form after you approve the exact command that will receive the credentials.
 
 <StarterPromptButton />
 
@@ -70,7 +70,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
   bash
 ```
 
-The example above uses the NVIDIA Endpoints path. Set `NEMOCLAW_PROVIDER` and the matching API key variable for your chosen path (see the provider table above), and set `NEMOCLAW_SANDBOX_NAME` so the run does not depend on a default left behind by a previous, possibly interrupted, onboard session.
+The example above uses the NVIDIA Endpoints path. Set `NEMOCLAW_PROVIDER` and the matching API key variable for your chosen path (see [Choose an Inference Provider](#choose-an-inference-provider)), and set `NEMOCLAW_SANDBOX_NAME` so the run does not depend on a default left behind by a previous, possibly interrupted, onboard session.
 
 If a scripted installer rerun finds a failed onboarding session, choose whether to discard the saved state with `--fresh` or retry it with `nemoclaw onboard --resume`.
 For the recovery commands, refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed).
@@ -117,10 +117,15 @@ After the installer launches `nemoclaw onboard`, the wizard runs preflight check
 It prints a review summary before it registers the provider with OpenShell.
 After you confirm, NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, then applies the selected network policy tier and presets.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
-If registered sandboxes already exist, the installer runs `nemoclaw backup-all` when the installed CLI supports it, then runs `nemoclaw upgrade-sandboxes --auto` before generic onboarding.
-For a registered sandbox that is non-Ready after the host upgrade, the installer restores its validated latest backup only when the backup identity matches and its registry entry has a NemoClaw-managed image fingerprint.
-Pre-fingerprint and custom-image sandboxes are not recreated automatically because matching agent versions do not prove image provenance.
-If an automatic rebuild fails, or a non-Ready recovery is blocked or fails, the installer exits with a nonzero status and does not start generic onboarding.
+If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell, then requires a fresh backup of every registered sandbox before it changes the gateway.
+After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto` to rebuild stale sandboxes and restore validated backups for registered sandboxes that are not Ready.
+Successful recovery completes the existing-sandbox upgrade and skips generic onboarding, so the installer does not create an extra sandbox or ask for a new provider credential.
+For pre-fingerprint OpenClaw and Hermes registry entries, the installer asks you to confirm that every listed sandbox used a NemoClaw-managed image before it permits recovery onto the current managed image.
+In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
+Legacy managed-image confirmation never overrides recorded custom-image evidence.
+A custom OpenClaw sandbox can be recovered only when the selected validated backup independently carries complete authoritative image-plugin provenance; otherwise recovery stops before deletion.
+If any backup is skipped or fails, the installer exits with a nonzero status before it changes the gateway.
+If an automatic rebuild fails or a non-Ready recovery is blocked or fails, the installer exits with a nonzero status and does not start generic onboarding.
 
 The inference provider prompt presents a numbered list.
 
@@ -317,6 +322,23 @@ nemoclaw my-gpt-claw dashboard-url --quiet
 Open the dashboard URL in your browser.
 If the browser asks for authentication, run `nemoclaw my-gpt-claw dashboard-url --quiet` and open the returned URL.
 Treat the authenticated URL like a password.
+
+#### Open the Dashboard When You SSH'd into a Remote Host
+
+The dashboard URL binds to `127.0.0.1` on the machine that runs `nemoclaw`.
+If you SSH'd into a remote DGX Spark or GPU host, that loopback address is not reachable from your workstation browser until you forward the port.
+When NemoClaw detects an SSH session, the install summary and `dashboard-url` output add a copy-pastable `ssh -L` example:
+
+```text
+Remote access (SSH session detected):
+  On your workstation, run:
+    ssh -L 18790:127.0.0.1:18790 <user>@<host>
+  Then open the dashboard URL above in your local browser.
+```
+
+Run that `ssh -L` command in a second terminal on your workstation, then open the dashboard URL locally.
+The forwarded port matches the one NemoClaw printed, so substitute `18789` (or whichever port the summary shows) if it differs.
+For Brev tunnels or binding the dashboard to all interfaces instead of forwarding, see [Remote Dashboard Access](../deployment/deploy-to-remote-gpu#remote-dashboard-access).
 
 ### Chat with the Agent from the Terminal
 

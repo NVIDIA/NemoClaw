@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawn } from "../adapters/docker/exec";
+import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
@@ -14,7 +15,7 @@ import { buildSubprocessEnv } from "../subprocess-env";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
-const LOCAL_IMAGE_REPO = "nemoclaw-sandbox-local";
+const LOCAL_IMAGE_REPO = LOCAL_SANDBOX_IMAGE_REPO;
 const DOCKER_ENV_NAMES = [
   "DOCKER_API_VERSION",
   "DOCKER_CERT_PATH",

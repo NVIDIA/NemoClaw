@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { isValidProxyHost, isValidProxyPort } from "../src/lib/onboard/dockerfile-patch.ts";
+import { TRUSTED_FETCH_PROXY_ENV_NAME } from "./helpers/langchain-deepagents-code-headless.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const headlessCheckPath = path.join(
@@ -22,7 +23,12 @@ const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_p
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
 const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
 const DEFAULT_MANAGED_PROXY = { host: "10.200.0.1", port: "3128" } as const;
+const OBSERVABILITY_MARKER_NAME = ".nemoclaw-observability-enabled";
 const TEST_OWNER_UID = process.getuid?.() ?? 0;
+
+function observabilityMarkerPath(tempDir: string): string {
+  return path.join(tempDir, "persistent-dcode-state", OBSERVABILITY_MARKER_NAME);
+}
 
 function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
@@ -66,16 +72,21 @@ function makeLauncherProxyProbeFixture(
   const probePath = path.join(tempDir, "managed-dcode-probe.sh");
   const probe = [
     "#!/bin/bash -p",
-    "for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy OPENAI_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT; do",
+    `for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy OPENAI_PROXY ${TRUSTED_FETCH_PROXY_ENV_NAME} NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT NEMOCLAW_OBSERVABILITY; do`,
     '  printf \'LAUNCHER_%s=%s\\n\' "$name" "${!name-__unset__}"',
     "done",
     "",
   ].join("\n");
   const fixture = replaceManagedProxyFileConstants(
-    readAgentFile("dcode-launcher.sh").replace(
-      'readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"',
-      `readonly MANAGED_DCODE_WRAPPER="${probePath}"`,
-    ),
+    readAgentFile("dcode-launcher.sh")
+      .replace(
+        'readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"',
+        `readonly MANAGED_DCODE_WRAPPER="${probePath}"`,
+      )
+      .replace(
+        'readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.deepagents/.nemoclaw-observability-enabled"',
+        `readonly MANAGED_OBSERVABILITY_MARKER="${observabilityMarkerPath(tempDir)}"`,
+      ),
     tempDir,
   );
   fs.writeFileSync(probePath, probe, "utf8");
@@ -89,19 +100,24 @@ function makeLauncherProxyProbeFixture(
 function makeStartProxyProbeFixture(
   tempDir: string,
   managedProxy: { host: string; port: string } = DEFAULT_MANAGED_PROXY,
-): { envFile: string; scriptPath: string } {
-  const envFile = path.join(tempDir, "proxy-env.sh");
+): { envFile: string; ephemeralDir: string; markerFile: string; scriptPath: string } {
+  const ephemeralDir = path.join(tempDir, "ephemeral-tmp");
+  const envFile = path.join(ephemeralDir, "proxy-env.sh");
+  const markerFile = observabilityMarkerPath(tempDir);
+  const markerDir = path.dirname(markerFile);
   const scriptPath = path.join(tempDir, "start.sh");
+  fs.mkdirSync(ephemeralDir);
   const fixture = replaceManagedProxyFileConstants(readAgentFile("start.sh"), tempDir)
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
-      `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
-    );
+      `tmp="$(mktemp "${ephemeralDir}/nemoclaw-proxy-env.XXXXXX")"`,
+    )
+    .replace("local marker_dir=/sandbox/.deepagents", `local marker_dir="${markerDir}"`);
   fs.writeFileSync(scriptPath, fixture, "utf8");
   writeManagedProxyFiles(tempDir, managedProxy);
   fs.chmodSync(scriptPath, 0o755);
-  return { envFile, scriptPath };
+  return { envFile, ephemeralDir, markerFile, scriptPath };
 }
 
 function runLauncher(
@@ -123,6 +139,34 @@ function shellValidatorAccepts(source: string, name: string, value: string): boo
 }
 
 describe("Deep Agents Code direct-exec proxy launcher", () => {
+  it("preserves the empty-prompt failure through the installed launcher chain (#6440)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-empty-prompt-"));
+    try {
+      const launcherPath = path.join(tempDir, "dcode-launcher.sh");
+      const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
+      const launcher = replaceManagedProxyFileConstants(
+        readAgentFile("dcode-launcher.sh").replace(
+          'readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"',
+          `readonly MANAGED_DCODE_WRAPPER="${wrapperPath}"`,
+        ),
+        tempDir,
+      );
+      fs.writeFileSync(launcherPath, launcher, { mode: 0o755 });
+      fs.writeFileSync(wrapperPath, readAgentFile("dcode-wrapper.sh"), { mode: 0o755 });
+      writeManagedProxyFiles(tempDir, DEFAULT_MANAGED_PROXY);
+
+      const result = runLauncher(launcherPath, ["-n", ""], {});
+
+      expect(result.status).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        "NemoClaw: empty non-interactive prompt for -n; provide prompt text.\n",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("ignores hostile PATH and BASH_ENV before launcher and entrypoint normalization", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-shell-entry-"));
     const launcherPath = makeLauncherProxyProbeFixture(tempDir);
@@ -183,6 +227,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     for (const name of PROXY_URL_ENV_NAMES) {
       expect(lines).toContain(`LAUNCHER_${name}=${managedProxy}`);
     }
+    expect(lines).toContain(`LAUNCHER_${TRUSTED_FETCH_PROXY_ENV_NAME}=${managedProxy}`);
     for (const name of NO_PROXY_ENV_NAMES) {
       expect(lines).toContain(`LAUNCHER_${name}=${managedNoProxy}`);
     }
@@ -196,6 +241,110 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(output).not.toContain("corp-password");
     expect(output).not.toContain("all-proxy.example");
     expect(output).not.toContain("all-password");
+  });
+
+  it("recovers the exact observability bit after ephemeral runtime state resets", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-observability-"));
+    const launcherPath = makeLauncherProxyProbeFixture(tempDir);
+    const { ephemeralDir, markerFile, scriptPath } = makeStartProxyProbeFixture(tempDir);
+
+    const noncanonicalStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        NEMOCLAW_OBSERVABILITY: "true",
+      },
+      encoding: "utf8",
+    });
+    const noncanonicalLaunch = runLauncher(launcherPath, [], {
+      NEMOCLAW_OBSERVABILITY: "1",
+    });
+    expect(noncanonicalStart.status, noncanonicalStart.stderr).toBe(0);
+    expect(fs.existsSync(markerFile)).toBe(false);
+    expect(noncanonicalLaunch.status, noncanonicalLaunch.stderr).toBe(0);
+    expect(noncanonicalLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=__unset__");
+
+    const enabledStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        NEMOCLAW_OBSERVABILITY: "1",
+      },
+      encoding: "utf8",
+    });
+    expect(enabledStart.status, enabledStart.stderr).toBe(0);
+    expect(fs.readFileSync(markerFile, "utf8")).toBe("1\n");
+    expect(fs.statSync(markerFile).mode & 0o777).toBe(0o444);
+
+    const policyRestart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      encoding: "utf8",
+    });
+    expect(policyRestart.status, policyRestart.stderr).toBe(0);
+    const restartedLaunch = runLauncher(launcherPath, [], {});
+    expect(restartedLaunch.status, restartedLaunch.stderr).toBe(0);
+    expect(restartedLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=1");
+
+    fs.rmSync(ephemeralDir, { recursive: true, force: true });
+    expect(fs.existsSync(markerFile)).toBe(true);
+    const enabledLaunch = runLauncher(launcherPath, [], {});
+    expect(enabledLaunch.status, enabledLaunch.stderr).toBe(0);
+    expect(enabledLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=1");
+
+    fs.mkdirSync(ephemeralDir, { recursive: true });
+    const disabledStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        NEMOCLAW_OBSERVABILITY: "0",
+      },
+      encoding: "utf8",
+    });
+    expect(disabledStart.status, disabledStart.stderr).toBe(0);
+    expect(fs.existsSync(markerFile)).toBe(false);
+  });
+
+  it("ignores tampered, symlinked, and non-regular observability markers", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-observability-"));
+    const launcherPath = makeLauncherProxyProbeFixture(tempDir);
+    const { scriptPath } = makeStartProxyProbeFixture(tempDir);
+    const markerFile = observabilityMarkerPath(tempDir);
+    fs.mkdirSync(path.dirname(markerFile), { recursive: true });
+
+    fs.writeFileSync(markerFile, "true\n", { encoding: "utf8", mode: 0o644 });
+    const tamperedLaunch = runLauncher(launcherPath, [], {
+      NEMOCLAW_OBSERVABILITY: "1",
+    });
+    expect(tamperedLaunch.status, tamperedLaunch.stderr).toBe(0);
+    expect(tamperedLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=__unset__");
+
+    fs.rmSync(markerFile);
+    fs.mkdirSync(markerFile);
+    const nonRegularLaunch = runLauncher(launcherPath, [], {
+      NEMOCLAW_OBSERVABILITY: "1",
+    });
+    const nonRegularStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        NEMOCLAW_OBSERVABILITY: "1",
+      },
+      encoding: "utf8",
+    });
+    expect(nonRegularLaunch.status, nonRegularLaunch.stderr).toBe(0);
+    expect(nonRegularLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=__unset__");
+    expect(nonRegularStart.status).not.toBe(0);
+    expect(nonRegularStart.stderr).toContain("Unsafe managed observability marker target");
+
+    fs.rmSync(markerFile, { recursive: true });
+    const symlinkTarget = path.join(tempDir, "observability-symlink-target");
+    fs.writeFileSync(symlinkTarget, "1\n", "utf8");
+    fs.symlinkSync(symlinkTarget, markerFile);
+    const symlinkedLaunch = runLauncher(launcherPath, [], {});
+    const symlinkedStart = spawnSync("bash", [scriptPath, "/usr/bin/true"], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      encoding: "utf8",
+    });
+    expect(symlinkedLaunch.status, symlinkedLaunch.stderr).toBe(0);
+    expect(symlinkedLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=__unset__");
+    expect(symlinkedStart.status).not.toBe(0);
+    expect(symlinkedStart.stderr).toContain("Unsafe managed observability marker target");
   });
 
   it("pins validated proxy overrides into direct dcode execution paths (#6191)", () => {
@@ -217,6 +366,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"',
     );
     expect(launcher).toContain('export HTTPS_PROXY="$_PROXY_URL"');
+    expect(launcher).toContain('export DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL="$_PROXY_URL"');
     expect(launcher).toContain('export no_proxy="$_NO_PROXY_VAL"');
     expect(launcher).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
   });
@@ -232,6 +382,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
       all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
       OPENAI_PROXY: "http://openai-user:openai-password@attacker.example:8080",
+      DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL: "http://attacker-proxy.internal:4444",
       NEMOCLAW_PROXY_HOST: "attacker-proxy.internal",
       NEMOCLAW_PROXY_PORT: "4444",
     };
@@ -260,6 +411,12 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       "START_PROXY=http://trusted-proxy.internal:3129|localhost,127.0.0.1,::1,trusted-proxy.internal|__unset__|__unset__|__unset__|__unset__",
     );
     expect(envFileText).toContain("export HTTPS_PROXY=http://trusted-proxy.internal:3129");
+    expect(envFileText).toContain(
+      "export DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL=http://trusted-proxy.internal:3129",
+    );
+    expect(launcherResult.stdout).toContain(
+      "LAUNCHER_DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL=http://trusted-proxy.internal:3129",
+    );
     expect(envFileText).toContain(
       "export NO_PROXY=localhost\\,127.0.0.1\\,::1\\,trusted-proxy.internal",
     );

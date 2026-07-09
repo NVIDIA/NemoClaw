@@ -80,13 +80,27 @@ The watcher rejects blank or malformed overrides before it starts Fern.
 Fern `.mdx` pages are the canonical docs source.
 Fern publishes Markdown routes for AI agents from the same source pages.
 
+## Publishing Docs
+
+GitHub Actions publishes Fern docs from the same source files that `npm run docs` validates locally.
+
+Docs PRs get Fern previews when they change `docs/`, `fern/`, or docs build inputs.
+The preview workflow publishes to the staging Fern instance with a `pr-<number>` preview ID and posts the preview URL on the PR when `FERN_TOKEN` is available.
+
+After a docs PR merges, pushes to `main` publish the affected docs to the staging Fern instance.
+The staging publish job regenerates agent variants, validates Fern docs, publishes staging, and deletes the merged PR preview when it can map the merge commit back to a PR.
+
+Public docs publish automatically when a `v*.*.*` release tag is pushed.
+The public publish job runs in the `docs-public` environment, verifies that the tag commit is reachable from `origin/main`, regenerates agent variants, validates Fern docs, and publishes to the public Fern instance.
+If the tag does not point to a commit on `main`, the job stops before installing dependencies or running Fern.
+
 ## Agent Variant Generation
 
-Some Fern pages appear in both the OpenClaw and Hermes guide variants.
-The `scripts/sync-agent-variant-docs.ts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in both guide variants before Fern validates or publishes the site.
+Some Fern pages appear in the OpenClaw, Hermes, and Deep Agents guide variants.
+The `scripts/sync-agent-variant-docs.ts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in multiple guide variants before Fern validates or publishes the site.
 The source pages stay in their normal `docs/` locations, and generated pages are written under `docs/_build/agent-variants/`, which is ignored by Git.
 Navigation in `docs/index.yml` points Fern at generated pages for shared entries so Fern still renders normal fenced code blocks with copy buttons and syntax highlighting.
-OpenClaw-only or Hermes-only pages stay as source pages in navigation.
+OpenClaw-only, Hermes-only, or Deep Agents-only pages stay as source pages in navigation.
 
 When shared page content is the same except for the host CLI binary, write one source page and use `$$nemoclaw` as a build-time placeholder.
 Do not duplicate fenced code blocks or inline command examples only to switch between `nemoclaw` and `nemohermes`.
@@ -203,7 +217,7 @@ Remove them during review.
   ```
 
 - Use `$$nemoclaw` as a build-time placeholder for NemoClaw host CLI command examples in shared variant pages.
-  The docs build resolves it to `nemoclaw` for OpenClaw pages and `nemohermes` for Hermes pages before Fern renders code blocks.
+  The docs build resolves it to `nemoclaw` for OpenClaw pages, `nemohermes` for Hermes pages, and `nemo-deepagents` for Deep Agents pages before Fern renders code blocks.
   This preserves Fern's native fenced-code UI while keeping one source sample.
 - Do not write duplicate `<AgentOnly>` fenced code blocks when the only difference is `nemoclaw` versus `nemohermes`.
   Use `<AgentOnly>` blocks only when the surrounding content differs between the OpenClaw and Hermes variants.

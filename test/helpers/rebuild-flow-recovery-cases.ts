@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 import {
   makeActiveTeamsMessagingPlan,
@@ -31,6 +33,43 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
         "alpha",
         recoveryManifest.backupPath,
+        { targetAgentType: "openclaw" },
+      );
+    });
+
+    it("uses marked manifest provenance when the custom-image registry baseline is missing (#6108)", async () => {
+      const customDockerfile = path.join(process.cwd(), "Dockerfile");
+      const recoveryManifest = {
+        ...makePreparedRecoveryManifest(),
+        reconcileOpenClawImagePluginProvenance: true,
+        openclawImagePluginInstalls: [],
+      };
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          fromDockerfile: customDockerfile,
+          nemoclawVersion: null,
+          openclawImagePluginInstalls: undefined,
+        },
+        preDeleteLatestManifest: recoveryManifest,
+        managedImageEvidence: false,
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
+        "alpha",
+        recoveryManifest.backupPath,
+        { targetAgentType: "openclaw" },
       );
     });
 

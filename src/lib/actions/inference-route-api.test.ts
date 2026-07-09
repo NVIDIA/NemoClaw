@@ -7,6 +7,7 @@ import type { Session } from "../state/onboard-session";
 import {
   hermesApiMode,
   normalizeInferenceApi,
+  readOpenClawPrimaryRouteApi,
   resolveRuntimeInferenceApi,
 } from "./inference-route-api";
 
@@ -79,6 +80,17 @@ describe("normalizeInferenceApi", () => {
     expect(normalizeInferenceApi("openai-responses")).toBe("openai-responses");
     expect(normalizeInferenceApi("openai")).toBeNull();
     expect(normalizeInferenceApi(null)).toBeNull();
+  });
+});
+
+describe("readOpenClawPrimaryRouteApi", () => {
+  it("defaults an active legacy openai provider without api to OpenAI Completions", () => {
+    expect(
+      readOpenClawPrimaryRouteApi({
+        agents: { defaults: { model: { primary: "openai/gpt-4.1" } } },
+        models: { providers: { openai: { models: [{ id: "gpt-4.1" }] } } },
+      }),
+    ).toBe("openai-completions");
   });
 });
 

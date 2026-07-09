@@ -18,9 +18,9 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const TEST_SANDBOX_PREFIX = "e2e-tunnel-lifecycle";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 const LOCAL_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789";

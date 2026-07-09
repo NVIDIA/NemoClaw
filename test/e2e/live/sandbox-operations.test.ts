@@ -11,9 +11,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import {
+  assertExitZero as expectExitZero,
+  outputContainsSandbox,
+  resultText,
+} from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -29,23 +34,6 @@ const SANDBOX_A = "e2e-sbx-a";
 const SANDBOX_B = "e2e-sbx-b";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
-const liveTest = process.env.NEMOCLAW_RUN_LIVE_E2E === "1" ? test : test.skip;
-
-type ProcessResult = { exitCode: number | null; stdout: string; stderr: string };
-type CleanupRegistry = { add(name: string, run: () => Promise<void> | void): void };
-
-function resultText(result: ProcessResult): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
-function outputContainsSandbox(result: ProcessResult, sandboxName: string): boolean {
-  const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|\\s)${escaped}(\\s|$)`, "m").test(resultText(result));
-}
-
-function expectExitZero(result: ProcessResult, label: string): void {
-  expect(result.exitCode, `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
-}
 
 async function onboardSandbox(
   host: HostCliClient,
@@ -55,7 +43,7 @@ async function onboardSandbox(
   hosted: HostedInferenceConfig,
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
-  cleanup.add(`destroy sandbox ${sandboxName}`, () => host.cleanupSandbox(sandboxName));
+  cleanup.trackSandbox(host, sandboxName);
   const result = await host.nemoclaw(
     ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
     {
@@ -599,14 +587,13 @@ async function assertGatewayRecovery(
   return recoveryOutcome;
 }
 
-liveTest(
+test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
-  async ({ artifacts, cleanup, environment, host, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, docker, environment, host, sandbox, secrets }) => {
     const hosted = requireHostedInferenceConfig(secrets);
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "sandbox-operations",
-      runner: "vitest",
       boundary: "repo-cli-docker-openshell-sandbox",
       contracts: [
         "TC-SBX-01 list shows onboarded sandbox",
@@ -625,17 +612,7 @@ liveTest(
       ],
     });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-sandbox-operations",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for sandbox operations E2E: ${resultText(docker)}`);
-      }
-      skip("Docker is required for sandbox operations E2E");
-    }
+    await docker.requireDocker();
 
     await environment.assertReady(ENVIRONMENT);
     cleanup.add("remove shared NemoClaw gateway registration", () =>
@@ -669,7 +646,7 @@ liveTest(
 
     const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "sandbox-operations",
       status: "passed",
       gatewayRecovery,
