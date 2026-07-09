@@ -621,7 +621,17 @@ def _release_mutation_mutex(mutex: MutationMutex) -> None:
 
 
 def _cmdline_is_nemoclaw_start(raw: bytes) -> bool:
-    return any(argument in NEMOCLAW_START_ARGV for argument in raw.split(b"\0"))
+    normalized = raw.rstrip(b"\0")
+    arguments = tuple(normalized.split(b"\0")) if normalized else ()
+    # Docker appends CMD arguments after ENTRYPOINT. Authenticate the canonical
+    # startup script position while allowing those opaque trailing arguments.
+    direct = bool(arguments) and arguments[0] in NEMOCLAW_START_ARGV
+    bash = (
+        len(arguments) >= 2
+        and arguments[0] in {b"bash", b"/bin/bash", b"/usr/bin/bash"}
+        and arguments[1] in NEMOCLAW_START_ARGV
+    )
+    return direct or bash
 
 
 def _cmdline_is_openshell_supervisor(raw: bytes) -> bool:
@@ -912,7 +922,10 @@ def _pinned_process_matches_supervised_nonroot_start(
         second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
         pinned_after = os.fstat(proc_pid_fd)
         expected_namespace_inode = supervisor_identity[1]
-        namespace_matches = (
+        # A readable inode proves whether the child shares the supervisor's PID
+        # namespace. Landlock may hide one or both namespace links, so retain
+        # stable equality as the fail-closed evidence available in that case.
+        same_namespace_matches = (
             expected_namespace_inode is None
             and first_namespace_inode == second_namespace_inode
         ) or (
@@ -920,6 +933,35 @@ def _pinned_process_matches_supervised_nonroot_start(
             and first_namespace_inode == expected_namespace_inode
             and second_namespace_inode == expected_namespace_inode
         )
+        nested_namespace_matches = (
+            first_namespace_inode == second_namespace_inode
+            and (
+                expected_namespace_inode is None
+                or (
+                    first_namespace_inode is not None
+                    and first_namespace_inode != expected_namespace_inode
+                )
+            )
+        )
+        same_namespace_pid_matches = (
+            first_status is not None
+            and second_status is not None
+            and first_status[1][-1] == numeric_pid
+            and second_status[1][-1] == numeric_pid
+        )
+        nested_namespace_pid_matches = (
+            first_status is not None
+            and second_status is not None
+            and first_status[1][-1] == 1
+            and second_status[1][-1] == 1
+        )
+        # In a nested workload PID namespace, the direct child is kernel-owned
+        # PID 1 there even though procfs names it by its outer numeric PID.
+        # The remaining pinned start-time, UID, PPID, cmdline, and fd checks
+        # apply identically to both supported topologies below.
+        topology_matches = (
+            same_namespace_matches and same_namespace_pid_matches
+        ) or (nested_namespace_matches and nested_namespace_pid_matches)
         return bool(
             first_start_time is not None
             and second_start_time is not None
@@ -930,11 +972,10 @@ def _pinned_process_matches_supervised_nonroot_start(
             and second_status is not None
             and first_status[0] == expected_effective_uid
             and second_status[0] == expected_effective_uid
-            and first_status[1][-1] == numeric_pid
-            and second_status[1][-1] == numeric_pid
+            and first_cmdline == second_cmdline
             and _cmdline_is_nemoclaw_start(first_cmdline)
             and _cmdline_is_nemoclaw_start(second_cmdline)
-            and namespace_matches
+            and topology_matches
             and pinned_before.st_dev == pinned_after.st_dev
             and pinned_before.st_ino == pinned_after.st_ino
         )
@@ -1313,10 +1354,12 @@ def _validate_action_readiness(
             )
         ):
             # OpenShell is the container PID 1 and launches the configured
-            # image command as one non-root child in the same PID namespace.
-            # That degraded topology cannot publish root-owned readiness
-            # markers, so authenticate the stable supervisor/child pair while
-            # refusing any stale or malformed marker left by a strict startup.
+            # image command as one non-root child, either in the supervisor's
+            # PID namespace or as PID 1 in a nested workload PID namespace.
+            # When Landlock hides namespace inode links, the stable direct-child
+            # and NSpid evidence selects the same two topologies. They cannot
+            # publish root-owned readiness markers, so authenticate the stable
+            # supervisor/child pair while refusing stale or malformed markers.
             return
         if installed_current:
             raise GuardError(
