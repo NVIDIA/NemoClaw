@@ -310,6 +310,41 @@ describe("gateway websocket url host derivation", () => {
     }
   });
 
+  it("fails closed when shell dispatch cannot make the trust anchor readonly (#6413)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-mutable-anchor-"));
+    try {
+      const envFilePath = writeRuntimeShellEnv(tmpDir);
+
+      for (const shell of RUNTIME_ENV_SHELLS) {
+        const probe = spawnSync(
+          shell,
+          [
+            "-c",
+            [
+              "command() { :; }",
+              "_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL=ws://10.200.0.2:18790",
+              `. ${JSON.stringify(envFilePath)}`,
+            ].join("\n"),
+          ],
+          {
+            encoding: "utf-8",
+            timeout: 5000,
+            env: {
+              ...process.env,
+              OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+            },
+          },
+        );
+        expect(probe.status, `${shell}: ${probe.stderr}`).toBe(1);
+        expect(probe.stderr).toContain(
+          "gateway trust anchor did not become readonly, and the ambient gateway token could not be cleared",
+        );
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("strips the gateway token from caller-selected WhatsApp URLs in Bash and POSIX sh (#6413)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-whatsapp-sh-"));
     try {

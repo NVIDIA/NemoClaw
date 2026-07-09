@@ -3283,6 +3283,18 @@ PROXYEOF
       printf "  echo 'Error: NemoClaw rejected a conflicting gateway trust anchor; gateway-token helpers were disabled.' >&2\\n"
       printf "  return 1 2>/dev/null || exit 1\\n"
       printf "fi\\ncommand readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL\\n"
+      # Verify the shell actually enforced readonly state before installing
+      # token-bearing helpers. A caller-controlled `command` function can
+      # otherwise turn the portable builtin dispatch into a no-op.
+      printf "if ( _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL= ) 2>/dev/null; then\\n"
+      printf "  command unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null || :\\n"
+      printf "  if [ -n \"\${OPENCLAW_GATEWAY_TOKEN:-}\" ]; then\\n"
+      printf "    echo 'Error: NemoClaw gateway trust anchor did not become readonly, and the ambient gateway token could not be cleared.' >&2\\n"
+      printf "    exit 1\\n"
+      printf "  fi\\n"
+      printf "  echo 'Error: NemoClaw gateway trust anchor did not become readonly; gateway-token helpers were disabled.' >&2\\n"
+      printf "  return 1 2>/dev/null || exit 1\\n"
+      printf "fi\\n"
       printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
       cat <<'GATEWAYURLENVEOF'
 # Equality identifies NemoClaw's inherited private-interface value. A different
