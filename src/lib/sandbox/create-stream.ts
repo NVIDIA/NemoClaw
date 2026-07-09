@@ -90,14 +90,16 @@ export function streamSandboxCreate(
 export function streamSandboxCreate(
   command: string,
   argsOrEnv: readonly string[] | NodeJS.ProcessEnv = process.env,
-  envOrOptions: NodeJS.ProcessEnv | StreamSandboxCreateOptions = {},
+  envOrOptions: NodeJS.ProcessEnv | StreamSandboxCreateOptions | undefined = undefined,
   maybeOptions: StreamSandboxCreateOptions = {},
 ): Promise<StreamSandboxCreateResult> {
   const hasArgs = Array.isArray(argsOrEnv);
   const commandArgs = hasArgs ? argsOrEnv : ["-lc", command];
   const spawnCommand = hasArgs ? command : "bash";
-  const env = hasArgs ? (envOrOptions as NodeJS.ProcessEnv) : (argsOrEnv as NodeJS.ProcessEnv);
-  const options = hasArgs ? maybeOptions : (envOrOptions as StreamSandboxCreateOptions);
+  const env = hasArgs
+    ? ((envOrOptions ?? process.env) as NodeJS.ProcessEnv)
+    : (argsOrEnv as NodeJS.ProcessEnv);
+  const options = hasArgs ? maybeOptions : ((envOrOptions ?? {}) as StreamSandboxCreateOptions);
   if (options.onPoll && !options.failureCheck) {
     throw new Error(
       "streamSandboxCreate onPoll requires failureCheck (e.g., dockerGpuCreatePatch.createFailureMessage)",

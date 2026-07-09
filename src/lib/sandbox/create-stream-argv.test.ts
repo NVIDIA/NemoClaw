@@ -45,4 +45,21 @@ describe("sandbox-create-stream argv boundary", () => {
       expect.not.objectContaining({ shell: true }),
     );
   });
+
+  it("inherits process env when argv callers omit env", async () => {
+    const child = new FakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const promise = streamSandboxCreate("openshell", ["sandbox", "create"], undefined, {
+      spawnImpl,
+      logLine: vi.fn(),
+    });
+
+    child.emit("close", 0);
+    await expect(promise).resolves.toMatchObject({ status: 0 });
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "create"],
+      expect.objectContaining({ env: process.env }),
+    );
+  });
 });
