@@ -384,24 +384,17 @@ export function streamSandboxCreate(
             return;
           }
 
+          let pollFailure: string | null | undefined;
           try {
             options.onPoll?.();
           } catch (error) {
-            // Localized containment: onPoll bridges optional host-side create
-            // patching into the stream poll loop. Patch failures are observed
-            // here but the source of truth remains the dedicated failureCheck;
-            // keep the dedicated failureCheck active in this same tick so a
-            // patch-observed terminal failure is not delayed by another poll.
-            // Regression coverage: create-stream-ready-gate.test.ts verifies
-            // redacted trace emission, continued polling, and same-tick failure
-            // detection. Remove when onPoll becomes a typed result-returning
-            // dependency instead of an opportunistic side effect.
             emitTraceEvent("sandbox_create_poll_error", {
               message: redact(error instanceof Error ? error.message : String(error)),
             });
+            pollFailure = options.failureCheck?.() ?? "Sandbox create poll side effect failed.";
           }
 
-          const failure = options.failureCheck?.();
+          const failure = pollFailure ?? options.failureCheck?.();
           if (!failure) return;
           const detail = String(failure);
           lines.push(detail);

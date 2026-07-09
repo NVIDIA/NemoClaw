@@ -129,34 +129,38 @@ describe("sandbox-create-stream ready gate", () => {
     expect(onPoll).toHaveBeenCalledTimes(1);
   });
 
-  it("traces redacted poll side-effect errors and keeps polling", async () => {
+  it("aborts poll side-effect errors with a generic redacted failure", async () => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
     const traceEvent = vi.fn();
+    const logLine = vi.fn();
     const onPoll = vi.fn(() => {
       throw new Error("Authorization: Bearer secret-token");
     });
-    let ready = false;
     const promise = streamSandboxCreate(
       "echo create",
       dockerEnv,
       makePollingOptions(child, {
-        readyCheck: () => ready,
+        readyCheck: () => false,
         onPoll,
         failureCheck: () => null,
         traceEvent,
+        logLine,
       }),
     );
 
     await vi.advanceTimersByTimeAsync(6);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 1,
+      output: expect.stringContaining("Sandbox create poll side effect failed."),
+    });
     expect(traceEvent).toHaveBeenCalledWith("sandbox_create_poll_error", {
       message: "Authorization: Bearer secr********",
     });
-
-    ready = true;
-    await vi.advanceTimersByTimeAsync(6);
-    await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
+    expect(logLine).toHaveBeenCalledWith("  Sandbox create poll side effect failed.");
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("checks failure after a poll side-effect error in the same tick", async () => {
