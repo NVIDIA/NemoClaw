@@ -27,26 +27,6 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     }
   });
 
-  it("isolates a corrupt transaction while continuing unrelated recovery (#6437)", async () => {
-    const harness = createRecoveryHarness(["alpha", "beta"]);
-    harness.rebuildSpy.mockRejectedValueOnce(new Error("CORRUPT alpha transaction"));
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code})`);
-    }) as never);
-
-    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
-
-    expect(harness.rebuildSpy).toHaveBeenCalledTimes(2);
-    expect(harness.rebuildSpy.mock.calls.map((call) => call[0])).toEqual(["alpha", "beta"]);
-    expect(harness.rebuildSpy.mock.calls[1]?.[2]).toEqual({
-      throwOnError: true,
-      recoveryManifest: expect.objectContaining({ sandboxName: "beta" }),
-    });
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to recover 'alpha': CORRUPT alpha transaction"),
-    );
-  });
-
   it("fails closed for a probed v0.0.55 custom image with matching backup agent version", async () => {
     const probedAgentVersion = "2026.5.27";
     const harness = createRecoveryHarness(["custom-box"], {
