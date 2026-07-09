@@ -124,9 +124,10 @@ function registryEvidence(home: string) {
     fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
   ) as { defaultSandbox?: string | null };
   const policies = entry.policies;
-  if (!Array.isArray(policies) || !policies.every((policy) => typeof policy === "string")) {
-    throw new Error("registry policies must be a string array");
-  }
+  expect(
+    Array.isArray(policies) && policies.every((policy) => typeof policy === "string"),
+    "registry policies must be a string array",
+  ).toBe(true);
   return {
     agent: entry.agent ?? null,
     defaultSandbox: registry.defaultSandbox ?? null,
@@ -135,7 +136,7 @@ function registryEvidence(home: string) {
     agentVersion: entry.agentVersion,
     nemoclawVersion: entry.nemoclawVersion,
     observabilityEnabled: entry.observabilityEnabled === true,
-    policies: [...policies].sort(),
+    policies: [...(policies as string[])].sort(),
     toolDisclosure: entry.toolDisclosure,
   };
 }
