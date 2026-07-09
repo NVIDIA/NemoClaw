@@ -11,32 +11,12 @@ const quickstart = readFileSync(
 );
 
 function collectFencedBlocks(markdown: string, language: string): string[] {
-  const blocks: string[] = [];
-  const lines = markdown.split(/\r?\n/);
-  let current: string[] | null = null;
-  let currentLanguage = "";
-
-  for (const line of lines) {
-    const fenceStart = line.match(/^```([A-Za-z0-9_-]*)\s*$/);
-    if (!current && fenceStart) {
-      current = [];
-      currentLanguage = fenceStart[1] ?? "";
-      continue;
-    }
-
-    if (current && line === "```") {
-      if (currentLanguage === language) {
-        blocks.push(current.join("\n"));
-      }
-      current = null;
-      currentLanguage = "";
-      continue;
-    }
-
-    current?.push(line);
-  }
-
-  return blocks;
+  const escapedLanguage = language.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [
+    ...markdown.matchAll(
+      new RegExp(`^\\\`\\\`\\\`${escapedLanguage}\\n([\\s\\S]*?)\\n\\\`\\\`\\\`$`, "gm"),
+    ),
+  ].map((match) => match[1]);
 }
 
 function uniqueMatches(source: string, pattern: RegExp): string[] {
@@ -58,8 +38,9 @@ describe("OpenClaw quickstart docs", () => {
     expect(installBlock).toContain("NVIDIA_INFERENCE_API_KEY=<your-key>");
     expect(installBlock).toContain("NEMOCLAW_SANDBOX_NAME=my-gpt-claw");
 
-    expect(quickstart).toContain("provider table below");
+    expect(quickstart).toContain("[Choose an Inference Provider](#choose-an-inference-provider)");
     expect(quickstart).not.toContain("provider table above");
+    expect(quickstart).not.toContain("provider table below");
     expect(uniqueMatches(quickstart, /\bnemoclaw\s+(my-[a-z0-9-]+)\b/g)).toEqual(["my-gpt-claw"]);
     expect(uniqueMatches(quickstart, /\bSandbox(?: name)?:\s+(my-[a-z0-9-]+)\b/g)).toEqual([
       "my-gpt-claw",
