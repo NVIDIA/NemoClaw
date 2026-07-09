@@ -86,6 +86,93 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     }
   });
 
+  it("pins the OTLP endpoint accept/refuse contract on runtime and dotenv paths (#6466, #6538)", () => {
+    // The managed collector URL is not a credential and must pass; everything
+    // else refuses with the full contract. The #6538 review requires exact
+    // status 2, the variable name present, the rejected value absent (no echo),
+    // no run, across both endpoint names and both the runtime and dotenv paths.
+    const endpointNames = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"];
+    const acceptUrls = [
+      "http://host.openshell.internal:4318",
+      "http://host.openshell.internal:4318/v1/traces",
+      "http://host.openshell.internal",
+    ];
+    const rejectValues = [
+      "https://collector.example.com:4318", // non-managed host
+      "http://evil.host.openshell.internal:4318", // subdomain confusion
+      "http://host.openshell.internal.evil.com", // suffix confusion
+      "http://host.openshell.internal:0", // port 0
+      "http://host.openshell.internal:65536", // port out of range
+      "http://token@host.openshell.internal:4318", // userinfo
+      "http://host.openshell.internal:4318?x=sk%2Dabcdefghij", // percent-encoded token
+      "http://host.openshell.internal:4318?apikey=opaquevalue12345", // opaque query cred
+      "http://host.openshell.internal:4318#fragment", // fragment
+      "http://999.999.999.999:4318", // invalid IPv4
+      "http://héllo:4318", // non-ASCII host
+      '{"https://trace.example":"opaque-key-value"}', // structured blob
+      "http://", // hostless
+    ];
+
+    const mk = (tag: string) => makeWrapperFixture(fs.mkdtempSync(path.join(os.tmpdir(), tag)));
+    for (const name of endpointNames) {
+      for (const url of acceptUrls) {
+        const rt = mk("nemoclaw-dcode-otlp-ok-rt-");
+        expect(
+          runWrapper(rt.wrapperPath, ["-n", "hi"], { [name]: url }).status,
+          `rt ${name}=${url}`,
+        ).toBe(0);
+        expect(fs.existsSync(rt.ranMarker)).toBe(true);
+        const dv = mk("nemoclaw-dcode-otlp-ok-dv-");
+        fs.writeFileSync(dv.envFile, `${name}=${url}\n`, "utf8");
+        expect(runWrapper(dv.wrapperPath, ["-n", "hi"], {}).status, `dv ${name}=${url}`).toBe(0);
+        expect(fs.existsSync(dv.ranMarker)).toBe(true);
+      }
+
+      for (const value of rejectValues) {
+        const rt = mk("nemoclaw-dcode-otlp-bad-rt-");
+        const rtRes = runWrapper(rt.wrapperPath, ["-n", "hi"], { [name]: value });
+        expect(rtRes.status, `rt ${name}=${value}`).toBe(2);
+        expect(rtRes.stderr).toContain(name);
+        expect(rtRes.stderr).not.toContain(value);
+        expect(fs.existsSync(rt.ranMarker)).toBe(false);
+
+        const dv = mk("nemoclaw-dcode-otlp-bad-dv-");
+        fs.writeFileSync(dv.envFile, `${name}=${value}\n`, "utf8");
+        const dvRes = runWrapper(dv.wrapperPath, ["-n", "hi"], {});
+        expect(dvRes.status, `dv ${name}=${value}`).toBe(2);
+        expect(dvRes.stderr).toContain(name);
+        expect(dvRes.stderr).not.toContain(value);
+        expect(fs.existsSync(dv.ranMarker)).toBe(false);
+      }
+
+      // Empty value is treated as unset on both paths.
+      const ert = mk("nemoclaw-dcode-otlp-empty-rt-");
+      expect(
+        runWrapper(ert.wrapperPath, ["-n", "hi"], { [name]: "" }).status,
+        `rt ${name}=empty`,
+      ).toBe(0);
+      expect(fs.existsSync(ert.ranMarker)).toBe(true);
+      const edv = mk("nemoclaw-dcode-otlp-empty-dv-");
+      fs.writeFileSync(edv.envFile, `${name}=\n`, "utf8");
+      expect(runWrapper(edv.wrapperPath, ["-n", "hi"], {}).status, `dv ${name}=empty`).toBe(0);
+      expect(fs.existsSync(edv.ranMarker)).toBe(true);
+
+      // Control characters in a dotenv value fail closed before trim/unquote
+      // could strip a smuggled trailing TAB/VT/FF/ESC/CR (#6538).
+      for (const ctrl of ["\t", "\x0b", "\x0c", "\x1b", "\r"]) {
+        const dv = mk("nemoclaw-dcode-otlp-ctrl-");
+        fs.writeFileSync(
+          dv.envFile,
+          `${name}="http://host.openshell.internal:4318${ctrl}"\n`,
+          "utf8",
+        );
+        const res = runWrapper(dv.wrapperPath, ["-n", "hi"], {});
+        expect(res.status, `dv ${name} ctrl=${JSON.stringify(ctrl)}`).toBe(2);
+        expect(fs.existsSync(dv.ranMarker)).toBe(false);
+      }
+    }
+  });
+
   it("rejects mismatched, malformed, wrapped, and raw credential placeholders", () => {
     const invalidCases = [
       { name: "MODEL_NAME", value: "openshell:resolve:env:OTHER_NAME" },
