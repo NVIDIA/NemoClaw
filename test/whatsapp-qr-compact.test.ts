@@ -274,18 +274,27 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
 
 // Extract the sandbox-side `openclaw()` guard function from the single-quoted
 // heredoc so we can exercise the WhatsApp login branch without a live sandbox.
-function extractGuardFunction(src: string): string {
+function extractGuardFunction(src: string, trustedGatewayUrl: string): string {
   const begin = src.indexOf("# nemoclaw-configure-guard begin");
   const end = src.indexOf("# nemoclaw-configure-guard end");
   if (begin === -1 || end === -1 || end <= begin) {
     throw new Error("Expected nemoclaw-configure-guard markers in scripts/nemoclaw-start.sh");
   }
-  return src.slice(begin, end);
+  const guardSource = src.slice(begin, end);
+  const injectionStartMarker =
+    "GUARDENVEOF\n    # nemoclaw-trusted-gateway-literal-injection begin";
+  const injectionEndMarker =
+    "    # nemoclaw-trusted-gateway-literal-injection end\n    cat <<'GUARDENVEOF'\n";
+  const injectionStart = guardSource.indexOf(injectionStartMarker);
+  const injectionEnd = guardSource.indexOf(injectionEndMarker, injectionStart);
+  if (injectionStart === -1 || injectionEnd === -1) {
+    throw new Error("Expected the generated trusted gateway literal injection markers");
+  }
+  return `${guardSource.slice(0, injectionStart)}            _nemoclaw_whatsapp_trusted_url=${JSON.stringify(trustedGatewayUrl)}\n${guardSource.slice(injectionEnd + injectionEndMarker.length)}`;
 }
 
 describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const guard = extractGuardFunction(src);
 
   function runGuard(
     args: string[],
@@ -324,7 +333,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
 
       // The guard body hardcodes literal /tmp paths (single-quoted heredoc);
       // redirect them to temp files for the test.
-      const guardBody = guard
+      const guardBody = extractGuardFunction(src, opts.privateGatewayUrl ?? "")
         .replaceAll("/tmp/nemoclaw-whatsapp-qr-compact.js", preloadPath)
         .replaceAll("/tmp/nemoclaw-messaging-connect-preloads.list", connectPreloadsPath);
 

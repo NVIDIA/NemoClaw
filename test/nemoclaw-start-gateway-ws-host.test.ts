@@ -437,7 +437,7 @@ describe("gateway websocket url host derivation", () => {
     }
   });
 
-  it("refuses a caller-selected WhatsApp URL when a readonly token cannot be cleared (#6413)", () => {
+  it("strips a readonly token from caller-selected WhatsApp URLs without trusting exit (#6413)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-whatsapp-readonly-"));
     try {
       const envFilePath = writeRuntimeShellEnv(tmpDir);
@@ -462,6 +462,7 @@ describe("gateway websocket url host derivation", () => {
             [
               `. ${JSON.stringify(envFilePath)}`,
               "command readonly OPENCLAW_GATEWAY_TOKEN",
+              ...(shell === "bash" ? ["exit() { :; }"] : []),
               "openclaw channels login --channel whatsapp",
             ].join("\n"),
           ],
@@ -476,12 +477,117 @@ describe("gateway websocket url host derivation", () => {
             },
           },
         );
-        expect(probe.status, `${shell}: ${probe.stderr}`).toBe(1);
-        expect(probe.stderr).toContain(
-          "WhatsApp pairing refused the custom gateway because the ambient gateway token could not be cleared",
-        );
-        expect(fs.readFileSync(callLog, "utf-8"), shell).toBe("");
+        expect(probe.status, `${shell}: ${probe.stderr}`).toBe(0);
+        expect(fs.readFileSync(callLog, "utf-8"), shell).toBe("TOKEN=unset\n");
       }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when an imported bracket function breaks login parsing (#6413)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-whatsapp-bracket-"));
+    try {
+      const envFilePath = writeRuntimeShellEnv(tmpDir);
+      const fakeBin = path.join(tmpDir, "bin");
+      const callLog = path.join(tmpDir, "openclaw-calls.log");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        '#!/bin/sh\nprintf invoked > "$CALL_LOG"\n',
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(callLog, "");
+
+      const probe = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            `. ${JSON.stringify(envFilePath)}`,
+            "function [ { return 1; }",
+            "export OPENCLAW_GATEWAY_URL=wss://caller-selected.example.test:443",
+            "openclaw channels login --channel whatsapp",
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            CALL_LOG: callLog,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+          },
+        },
+      );
+      expect(probe.status, probe.stderr).toBe(1);
+      expect(probe.stderr).toContain(
+        "'openclaw channels login' is only supported inside the sandbox for WhatsApp",
+      );
+      expect(fs.readFileSync(callLog, "utf-8")).toBe("");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      scenario: "a selective bracket function poisons source-time comparisons",
+      setup: [
+        "_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL=wss://caller-selected.example.test:443",
+        'function [ { case "$1:$2:$3" in wss://caller-selected.example.test:443:!=:ws://10.200.0.2:18790) return 1 ;; esac; builtin [ "$@"; }',
+      ],
+    },
+    {
+      scenario: "a return function continues after a conflicting readonly anchor",
+      setup: [
+        "_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL=wss://caller-selected.example.test:443",
+        "readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL",
+        "function return { :; }",
+      ],
+    },
+  ])("strips the token when $scenario (#6413)", ({ setup }) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-source-poison-"));
+    try {
+      const envFilePath = writeRuntimeShellEnv(tmpDir);
+      const fakeBin = path.join(tmpDir, "bin");
+      const callLog = path.join(tmpDir, "openclaw-calls.log");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        [
+          "#!/bin/sh",
+          `printf 'URL=%s TOKEN=%s\\n' "\${OPENCLAW_GATEWAY_URL:-unset}" "\${OPENCLAW_GATEWAY_TOKEN:-unset}" > ${JSON.stringify(callLog)}`,
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const probe = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            ...setup,
+            `. ${JSON.stringify(envFilePath)}`,
+            "export OPENCLAW_GATEWAY_URL=wss://caller-selected.example.test:443",
+            "openclaw channels login --channel whatsapp",
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+          },
+        },
+      );
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(fs.readFileSync(callLog, "utf-8")).toBe(
+        "URL=wss://caller-selected.example.test:443 TOKEN=unset\n",
+      );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
