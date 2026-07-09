@@ -15,6 +15,7 @@ type OpenshellCaptureResult = {
 type SandboxRecord = {
   name: string;
   agent?: string | null;
+  fromDockerfile?: string | null;
   gatewayName?: string | null;
   imageTag?: string | null;
   openshellDriver?: string | null;
@@ -306,6 +307,32 @@ describe("runSandboxSnapshot restore", () => {
     expect(output).toContain("Using latest snapshot v4 name=stable");
     expect(output).toContain("Restoring snapshot into 'alpha'");
     expect(output).toContain("Restored 1 directories, 1 files");
+  });
+
+  it("applies managed state file restore for a managed DCode target but not a custom-image DCode target", async () => {
+    getLatestBackupMock.mockReturnValue({
+      snapshotVersion: 4,
+      name: "stable",
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "langchain-deepagents-code" });
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
+      applyManagedStateFileRestore: true,
+    });
+
+    getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      fromDockerfile: "/tmp/Dockerfile",
+    });
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
+      applyManagedStateFileRestore: false,
+    });
   });
 
   it("keeps active-timer restore, permission repair, and policy reconciliation serialized", async () => {
