@@ -157,3 +157,53 @@ describe("configGet output redaction and gateway omission (#config-get)", () => 
     expect(() => configGet("alpha", { key: "gateway.token" })).toThrow(/not found/i);
   });
 });
+
+describe("configGet TOML parsing for dcode agents (#6548)", () => {
+  const registryPath = require.resolve("../state/registry");
+  const agentDefsPath = require.resolve("../agent/defs");
+  const registry = require(registryPath) as { getSandbox: (name: string) => unknown };
+  const agentDefs = require(agentDefsPath) as { loadAgent: (name: string) => unknown };
+  const realGetSandbox = registry.getSandbox;
+  const realLoadAgent = agentDefs.loadAgent;
+  let capturedArgv: unknown[] = [];
+
+  beforeEach(() => {
+    // Make the sandbox resolve to the dcode agent, whose manifest declares
+    // `format: toml`, so readSandboxConfig takes the TOML read path.
+    registry.getSandbox = () => ({ agent: "langchain-deepagents-code" });
+    agentDefs.loadAgent = () => ({
+      configPaths: { dir: "/sandbox/.deepagents", configFile: "config.toml", format: "toml" },
+    });
+    // Stand in for the in-sandbox `tomllib -> JSON` conversion: record the argv
+    // the read used and return the JSON a real tomllib dump would produce.
+    capturedArgv = [];
+    client.captureOpenshellCommand = (...args: unknown[]) => {
+      capturedArgv = args[1] as unknown[];
+      const json = JSON.stringify({
+        models: { default: "openai:nvidia/meta/llama-3.1-8b-instruct" },
+        update: { check: false },
+      });
+      return { status: 0, signal: null, stdout: json, output: json, stderr: "" };
+    };
+  });
+
+  afterEach(() => {
+    registry.getSandbox = realGetSandbox;
+    agentDefs.loadAgent = realLoadAgent;
+    client.captureOpenshellCommand = realCapture;
+    delete require.cache[configModulePath];
+  });
+
+  it("parses a dcode TOML config via in-sandbox tomllib instead of JSON.parse", () => {
+    const configGet = loadConfigGet();
+    const out = captureStdout(() => configGet("dcode-sb"));
+
+    const parsed = JSON.parse(out) as { models: { default: string } };
+    expect(parsed.models.default).toBe("openai:nvidia/meta/llama-3.1-8b-instruct");
+    // The read must go through the sandbox's tomllib, not `cat` — handing raw
+    // TOML (with its `# ...` comment header) to JSON.parse is the #6548 failure.
+    expect(capturedArgv).toContain("/opt/venv/bin/python3");
+    expect(capturedArgv.some((a) => typeof a === "string" && a.includes("tomllib"))).toBe(true);
+    expect(capturedArgv).not.toContain("cat");
+  });
+});

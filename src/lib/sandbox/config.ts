@@ -419,6 +419,14 @@ function serializeConfig(config: ConfigObject, format: string): string {
     const YAML = require("yaml");
     return YAML.stringify(config);
   }
+  if (format === "toml") {
+    // `config get` now reads TOML (via the sandbox tomllib), but writing TOML
+    // back is not wired yet. Refuse rather than serialize JSON into a `.toml`
+    // file, which would corrupt the agent config. #6548.
+    throw new Error(
+      "config set is not yet supported for TOML-format agents (e.g. langchain-deepagents-code).",
+    );
+  }
   return JSON.stringify(config, null, 2);
 }
 
@@ -453,21 +461,42 @@ function parseCliConfigValue(rawValue: string): ConfigValue {
  * Read the agent's config from a running sandbox.
  * Resolves the correct config path based on the agent type.
  */
+// dcode declares `format: toml`, but there is no host-side TOML parser (adding a
+// dependency is out of scope). The sandbox image ships Python's stdlib `tomllib`
+// (3.11+), so parse the config inside the sandbox and emit JSON, keeping the
+// host parse a single JSON path. The one-liner has no newline, so it satisfies
+// OpenShell exec's argv contract (which rejects `\r`/`\n`); `-I` matches the
+// isolated interpreter the dcode restore path already uses. openclaw/hermes
+// (yaml/json) stay on `cat`. #6548.
+const TOML_TO_JSON_PY =
+  'import json,sys,tomllib; json.dump(tomllib.load(open(sys.argv[1],"rb")), sys.stdout)';
+
 function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): ConfigObject {
   const binary = getOpenshellBinary();
+  const readArgv =
+    target.format === "toml"
+      ? [
+          "sandbox",
+          "exec",
+          "--name",
+          sandboxName,
+          "--",
+          "/opt/venv/bin/python3",
+          "-I",
+          "-c",
+          TOML_TO_JSON_PY,
+          target.configPath,
+        ]
+      : ["sandbox", "exec", "--name", sandboxName, "--", "cat", target.configPath];
   let raw: string;
   try {
-    const result = captureOpenshellCommand(
-      binary,
-      ["sandbox", "exec", "--name", sandboxName, "--", "cat", target.configPath],
-      {
-        ignoreError: true,
-        includeStreams: true,
-        maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
-        errorLine: console.error,
-        exit: (code: number) => process.exit(code),
-      },
-    );
+    const result = captureOpenshellCommand(binary, readArgv, {
+      ignoreError: true,
+      includeStreams: true,
+      maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+      errorLine: console.error,
+      exit: (code: number) => process.exit(code),
+    });
     if (result.error || result.signal || result.status !== 0) {
       const detail = result.error?.message || result.stderr?.trim() || result.output;
       configFail(
@@ -489,7 +518,9 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
   }
 
   try {
-    const config = parseConfig(raw, target.format);
+    // A `toml` config was already converted to JSON in-sandbox above.
+    const parseFormat = target.format === "toml" ? "json" : target.format;
+    const config = parseConfig(raw, parseFormat);
     Object.defineProperty(config, CONFIG_SOURCE_SHA256, {
       configurable: false,
       enumerable: false,
@@ -909,6 +940,14 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   if (opts.restart && target.agentName !== "openclaw" && target.agentName !== "hermes") {
     configFail(
       `  --restart is supported only for OpenClaw and Hermes; '${target.agentName}' config was not changed.`,
+    );
+  }
+  // config get reads TOML (via the sandbox tomllib), but writing TOML back is
+  // not wired yet. Refuse cleanly up front rather than reading, mutating, and
+  // failing in serializeConfig (which would surface as an uncaught error). #6548
+  if (target.format === "toml") {
+    configFail(
+      `  config set is not yet supported for TOML-format agents (e.g. '${target.agentName}'). Only 'config get' is available for this agent.`,
     );
   }
   if (target.agentName === "openclaw" || target.agentName === "hermes") {
