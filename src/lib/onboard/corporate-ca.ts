@@ -97,14 +97,15 @@ const DEFAULT_HOST_ANCHOR_SPECS = [
 
 /**
  * Host trust-store anchor directories scanned as a last resort (#6210
- * acceptance path). These hold ONLY locally-added anchors: the distro's ~140
- * public roots live elsewhere and are compiled into the merged
- * `/etc/ssl/certs/ca-certificates.crt` output — which we deliberately do NOT
- * scan. Reading the anchor sources lets us import exactly the corporate root the
- * reporter installed on the DGX Station host without baking broad, unrelated OS
- * trust into the image. Discovery is bounded by {@link MAX_CORPORATE_CA_CERTS} /
- * {@link MAX_CORPORATE_CA_BYTES}; a directory that would exceed those caps is
- * skipped rather than truncated.
+ * acceptance path). The issue's "host `/etc/ssl/certs/`" acceptance is narrowed
+ * here to administrator-managed anchor **source** directories only. These hold
+ * locally-added anchors: the distro's ~140 public roots live elsewhere and are
+ * compiled into the merged `/etc/ssl/certs/ca-certificates.crt` output — which
+ * we deliberately do NOT scan. Reading the anchor sources lets us import exactly
+ * the corporate root the reporter installed on the DGX Station host without
+ * baking broad, unrelated OS trust into the image. Discovery is bounded by
+ * {@link MAX_CORPORATE_CA_CERTS} / {@link MAX_CORPORATE_CA_BYTES}; a directory
+ * that would exceed those caps is skipped rather than truncated.
  */
 export const CORPORATE_CA_HOST_ANCHOR_DIRS = DEFAULT_HOST_ANCHOR_SPECS.map(
   (spec) => spec.dir,
@@ -118,8 +119,8 @@ export const CORPORATE_CA_HOST_ANCHOR_DIRS = DEFAULT_HOST_ANCHOR_SPECS.map(
  */
 export const CORPORATE_CA_ANCHOR_DIRS_ENV = "NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS";
 
-/** Reported `sourceEnv` when a CA is discovered from the host anchor dirs. */
-export const CORPORATE_CA_HOST_ANCHOR_SOURCE = "host trust store";
+/** Reported `sourceEnv` when a CA is discovered from host anchor source dirs. */
+export const CORPORATE_CA_HOST_ANCHOR_SOURCE = "host trust-store anchor source";
 
 /**
  * Recognized extensions for a directory not in {@link DEFAULT_HOST_ANCHOR_SPECS}

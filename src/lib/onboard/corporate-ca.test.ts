@@ -11,6 +11,7 @@ import {
   CORPORATE_CA_ANCHOR_DIRS_ENV,
   CORPORATE_CA_DISABLE_ENV,
   CORPORATE_CA_EXPLICIT_ENV,
+  CORPORATE_CA_HOST_ANCHOR_DIRS,
   CORPORATE_CA_HOST_ANCHOR_SOURCE,
   CorporateCaValidationError,
   encodeCorporateCaArg,
@@ -288,6 +289,13 @@ describe("isKnownMergedTrustStorePath (#6210)", () => {
 });
 
 describe("resolveCorporateCaFromHostAnchors host trust-store path (#6210)", () => {
+  it("narrows /etc/ssl/certs detection to anchor-source dirs, not merged output (#6210)", () => {
+    expect(CORPORATE_CA_HOST_ANCHOR_DIRS).toContain("/usr/local/share/ca-certificates");
+    expect(CORPORATE_CA_HOST_ANCHOR_DIRS).not.toContain("/etc/ssl/certs");
+    expect(CORPORATE_CA_HOST_ANCHOR_DIRS).not.toContain("/etc/ssl/certs/ca-certificates.crt");
+    expect(isKnownMergedTrustStorePath("/etc/ssl/certs/ca-certificates.crt")).toBe(true);
+  });
+
   it("discovers a corporate root installed in a host anchor directory", () => {
     const anchorDir = tmpDir();
     writeAnchor(anchorDir, "corp-proxy-root.crt");
