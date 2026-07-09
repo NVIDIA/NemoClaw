@@ -41,9 +41,32 @@ describe("showSandboxStatus flow", () => {
       "Warning: gateway inference route (openai/gpt-5.2) differs from the recorded route for this sandbox (nvidia/nvidia/nemotron).",
     );
     expect(output).toContain(
-      "'nemoclaw alpha connect' realigns the gateway to nvidia/nvidia/nemotron",
+      "nemoclaw 'alpha' connect realigns the gateway to nvidia/nvidia/nemotron",
     );
-    expect(output).toContain("inference set --provider openai --model gpt-5.2 --sandbox alpha");
+    expect(output).toContain(
+      "inference set --provider 'openai' --model 'gpt-5.2' --sandbox 'alpha'",
+    );
+  });
+
+  it("shell-quotes hostile route values in drift recovery commands (#6315)", async () => {
+    const sandboxName = "alpha's box";
+    const harness = createStatusFlowHarness({
+      currentProvider: "openai; touch /tmp/pwn",
+      currentModel: "$(id) model",
+      routeDrift: {
+        live: { provider: "openai; touch /tmp/pwn", model: "$(id) model" },
+        recorded: { provider: "nvidia", model: "nvidia/nemotron" },
+      },
+      sandboxEntry: { name: sandboxName },
+    });
+
+    await expect(harness.showSandboxStatus(sandboxName)).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("nemoclaw 'alpha'\\''s box' connect realigns the gateway");
+    expect(output).toContain(
+      "nemoclaw inference set --provider 'openai; touch /tmp/pwn' --model '$(id) model' --sandbox 'alpha'\\''s box'",
+    );
   });
 
   it("prints no route drift warning when the live route matches the recorded route (#6315)", async () => {

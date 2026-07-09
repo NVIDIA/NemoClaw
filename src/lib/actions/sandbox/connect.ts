@@ -17,6 +17,7 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { spawnExitCode } from "../../core/process-exit";
+import { shellQuote } from "../../core/shell-quote";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import {
   formatInferenceRouteDriftForDisplay,
@@ -746,7 +747,7 @@ function ensureSandboxInferenceRouteUnlocked(
             `${liveProvider}/${liveModel}, set it the supported way:${R}`,
         );
         console.error(
-          `    ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
+          `    ${CLI_NAME} inference set --provider ${shellQuote(liveProvider)} --model ${shellQuote(liveModel)} --sandbox ${shellQuote(sandboxName)}`,
         );
       } else if (!quiet) {
         // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.

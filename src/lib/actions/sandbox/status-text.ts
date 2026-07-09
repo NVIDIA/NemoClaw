@@ -5,6 +5,7 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
+import { shellQuote } from "../../core/shell-quote";
 import { formatInferenceRouteDriftForDisplay } from "../../inference/config";
 import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
@@ -266,10 +267,10 @@ function printInferenceRouteDrift(
   const { liveProvider, liveModel, recordedRoute } = display;
   console.log(`    ${YW}Warning: ${display.warning}${R}`);
   console.log(
-    `    ${YW}'${CLI_NAME} ${sandboxName} connect' realigns the gateway to ${recordedRoute}; to adopt the live route instead:${R}`,
+    `    ${YW}${CLI_NAME} ${shellQuote(sandboxName)} connect realigns the gateway to ${recordedRoute}; to adopt the live route instead:${R}`,
   );
   console.log(
-    `      ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
+    `      ${CLI_NAME} inference set --provider ${shellQuote(liveProvider)} --model ${shellQuote(liveModel)} --sandbox ${shellQuote(sandboxName)}`,
   );
 }
 
