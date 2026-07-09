@@ -58,35 +58,55 @@ The keys, tool names, and result limits are not interchangeable.
 | Hermes | `tools.tool_search.enabled: "on"` with `search_default_limit` and `max_search_limit` | 5 | 20 |
 | Deep Agents Code | NemoClaw `ProgressiveToolDisclosureMiddleware` and the `search_tools` model tool | Up to 20 | 20 |
 
+#### OpenClaw Behavior
+
 For OpenClaw, `mode: "tools"` selects its structured bridge instead of the JavaScript-based `tool_search_code` bridge.
 A model-specific `toolSearch: false` override still disables Tool Search entirely.
+
+#### Hermes Behavior
+
 For Hermes, `enabled: "on"` activates its native bridge whenever the session has at least one deferrable MCP or non-core plugin tool, even when that catalog is small; Hermes core tools remain directly visible.
+
+#### Deep Agents Code Behavior
+
 For Deep Agents Code, the middleware activates only after at least one MCP tool loads successfully.
 It initially exposes `search_tools` and the core filesystem, shell, user-input, and todo tools.
+
 Each search returns up to 20 name-sorted tools whose names or descriptions match case-insensitively, and the graph thread retains up to 64 discovered named tools.
 Search output is limited to 8 KiB, individual descriptions to 256 characters, individual name UTF-8 and stable-JSON representations to 120 bytes, individual named schemas to 16 KiB, and the discovered schemas visible in one model request to 128 KiB.
+
 Named tools that exceed the name or schema limits are not discoverable, while core tools remain visible.
 When a broad query exceeds a result or state limit, `search_tools` reports omitted matches so the model can refine its query.
+
 Provider-native definitions without a callable name remain visible because the middleware cannot search or checkpoint them by name.
 Main-agent and local-subagent discoveries use separate middleware instances.
 
 All three agents keep their full executor registry and route final calls through their normal execution, policy, approval, and hook paths.
 Progressive disclosure is a model-context optimization, not an authorization boundary.
 
+#### Use Direct Disclosure
+
 Use `nemoclaw onboard --tool-disclosure direct` (or `NEMOCLAW_TOOL_DISCLOSURE=direct`) to present all registered tools directly.
 For an existing sandbox with managed MCP servers, use `nemoclaw <name> rebuild --tool-disclosure direct`; the transactional rebuild preserves MCP providers and adapter state while changing the mode.
+
 An explicit `direct` selection is authoritative; model-specific safety settings may disable progressive search for a model, but cannot re-enable it over that selection.
 
 ### Nemotron Managed Inference
 
 NemoClaw's generated OpenClaw default uses structured Tool Search, exposing `tool_search`, `tool_describe`, and `tool_call` instead of the JavaScript-based `tool_search_code` helper.
-The managed Nemotron Super and Ultra routes retain model-specific `toolSearch: false` safeguards because their code-mode failures are documented and no live structured-search trajectory has cleared the replacement.
+
+The managed Nemotron Super and Ultra routes retain model-specific `toolSearch: false` safeguards because their code-mode failures are documented.
+No live structured-search trajectory has cleared the replacement.
+
 In the model-specific manifest contract, `false` disables Tool Search entirely while `true` selects OpenClaw's default code mode; neither boolean selects structured mode.
+
 These routes therefore keep direct structured tool calling until search, describe, call, and final tool execution are verified through a real model trajectory.
 
 ## Recommended Fix
 
 For persistent NemoClaw use, start vLLM with auto tool choice and the parser that matches your model family, then rerun onboarding and select **Local vLLM [experimental]** or **Other OpenAI-compatible endpoint**.
+
+### Configure vLLM
 
 For Hermes 3 style models, a known-good vLLM command shape is:
 
@@ -127,6 +147,8 @@ services:
       --max-model-len 32768
       --api-key ${VLLM_API_KEY}
 ```
+
+### Onboard Against vLLM
 
 Then onboard against that endpoint:
 
@@ -189,6 +211,6 @@ If JSON still appears as text, confirm that you started vLLM with both `--enable
 
 ## Next Steps
 
-- [Use a Local Inference Server](use-local-inference)
+- [Set Up Self-Hosted Inference Servers](local-compatible-inference-setup)
 - [Inference Options](inference-options)
 - [Switch Inference Models](switch-inference-providers)

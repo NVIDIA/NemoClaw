@@ -24,9 +24,11 @@ status: published
 ---
 
 NemoClaw can bake a multi-agent OpenClaw layout into a sandbox image from a single checked-in manifest.
-Supply the manifest at onboard time with `--agents <path>` and NemoClaw embeds the resulting `agents.list` entries, per-agent overrides, and `agents.defaults.subagents` block into `openclaw.json` during the image build.
+Supply the manifest at onboard time with `--agents <path>`.
+During the image build, NemoClaw embeds the resulting `agents.list` entries, per-agent overrides, and `agents.defaults.subagents` block into `openclaw.json`.
 
-The schema mirrors OpenClaw's own `agents.list[]` field names, so the same keys from [OpenClaw's sub-agents reference](https://docs.openclaw.ai/tools/subagents) appear verbatim in the manifest.
+The schema mirrors OpenClaw's `agents.list[]` field names.
+The manifest uses the same keys that appear in [OpenClaw's sub-agents reference](https://docs.openclaw.ai/tools/subagents).
 
 ## When to Use This
 
@@ -44,10 +46,13 @@ For a single primary agent on the configured inference route, no manifest is req
 nemoclaw onboard --agents ./agents.yaml --name my-assistant
 ```
 
-NemoClaw reads the manifest on the host, sets `NEMOCLAW_EXTRA_AGENTS_JSON` for the Dockerfile patcher, and the build-time validator in `scripts/generate-openclaw-config.mts` is the single source of truth for structured errors.
+NemoClaw reads the manifest on the host and sets `NEMOCLAW_EXTRA_AGENTS_JSON` for the Dockerfile patcher.
+The build-time validator in `scripts/generate-openclaw-config.mts` is the single source of truth for structured errors.
 A malformed manifest fails the image build with a clear error message.
 
-## Manifest Shape
+## Define the Manifest
+
+Define the primary and secondary agents in a checked-in YAML manifest.
 
 ```yaml
 defaults:
@@ -87,8 +92,10 @@ agents:                        # required when secondary agents are needed
 | `main.subagents` | Sub-agent delegation policy for `main`. Same shape as a secondary agent's `subagents` block. | `agents.list[id=main].subagents` |
 | `agents[]` | Secondary agents to append after `main` in `agents.list`. | `agents.list[]` |
 
-The `main` agent is always written first into `agents.list` with `default: true`.
-Operators cannot set `default: true` on a secondary agent and cannot rename the primary slot.
+### Primary Agent
+
+NemoClaw always writes the `main` agent first into `agents.list` with `default: true`.
+You cannot set `default: true` on a secondary agent or rename the primary slot.
 
 ### Per-Agent Fields
 
@@ -102,9 +109,10 @@ Operators cannot set `default: true` on a secondary agent and cannot rename the 
 | `model` | no | `provider/model` reference. The provider must match the onboard provider; cross-provider manifests are not supported. |
 | `subagents` | no | OpenClaw-native sub-agent delegation policy. Refer to the section below. |
 
-### Sub-Agent Delegation Block
+### Configure Sub-Agent Delegation
 
-Both `main.subagents` and `agents[].subagents` use the same shape, which mirrors OpenClaw's [`agents.list[].subagents`](https://docs.openclaw.ai/gateway/config-agents).
+Both `main.subagents` and `agents[].subagents` use the same shape.
+That shape mirrors OpenClaw's [`agents.list[].subagents`](https://docs.openclaw.ai/gateway/config-agents).
 
 | Field | Type | Purpose |
 |---|---|---|
@@ -117,14 +125,16 @@ Both `main.subagents` and `agents[].subagents` use the same shape, which mirrors
 OpenClaw only honors `maxSpawnDepth` on `agents.defaults.subagents`, so the manifest exposes it only under the top-level `defaults` block.
 Do not set `maxSpawnDepth` per agent.
 
-### Multi-Model Sandboxes
+## Configure Multiple Models
 
-When a secondary agent declares its own `model` (or `subagents.model`), NemoClaw widens the baked `models.providers[<onboard-provider>].models[]` array with one entry per unique `provider/model` reference.
+When a secondary agent declares its own `model` or `subagents.model`, NemoClaw adds each unique `provider/model` reference to the baked `models.providers[<onboard-provider>].models[]` array.
 The base `contextWindow`, `maxTokens`, `reasoning`, and `input` settings from the onboard route apply to each appended entry.
 Per-model overrides beyond these defaults are out of scope for v1.
 Edit the generated `openclaw.json` in place if you need finer control.
 
-## Manager-Worker Example
+## Create a Manager-Worker Layout
+
+Use the following manifest to let `main` delegate log-reading tasks to a dedicated secondary agent.
 
 ```yaml
 defaults:
@@ -144,7 +154,7 @@ agents:
       allow: [read]
 ```
 
-What this produces in the baked `openclaw.json`:
+This manifest produces the following baked `openclaw.json` configuration:
 
 - `agents.list[0]` is `main` with `default: true`, the operator-supplied `tools`/`subagents` merged in.
 - `agents.list[1]` is `logs-reader` at the canonical workspace/agentDir paths.
@@ -155,23 +165,31 @@ What this produces in the baked `openclaw.json`:
 ## Iterating
 
 Edit `agents.yaml`, re-run `nemoclaw onboard --agents ./agents.yaml --recreate-sandbox`.
-Workspaces under `/sandbox/.openclaw/workspace-<id>` are preserved across rebuilds because the runtime startup script provisions them on first boot rather than baking their contents.
+Workspaces under `/sandbox/.openclaw/workspace-<id>` are preserved across rebuilds.
+The runtime startup script provisions them on first boot rather than baking their contents.
 
-For ad-hoc per-agent edits inside an existing sandbox (no rebuild), use the in-sandbox CLI: `nemoclaw <name> agents add|delete|list`.
-The manifest path is for fixed, checked-in layouts; the CLI passthrough is for interactive work.
+For ad-hoc per-agent edits inside an existing sandbox without a rebuild, use the in-sandbox CLI, `nemoclaw <name> agents add|delete|list`.
+
+Use the manifest for fixed, checked-in layouts.
+Use the CLI passthrough for interactive work.
 
 ## Apply to an Existing Sandbox
 
-`nemoclaw <name> agents apply -f <agents.yaml>` reconciles the live sandbox roster against the manifest **without a rebuild**.
-The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and drives `openclaw agents add|delete` per item.
-Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides require a sandbox rebuild and are reported as warnings the verb prints before exit; rerun `nemoclaw onboard --agents <file> --recreate-sandbox` to bake those.
+`nemoclaw <name> agents apply -f <agents.yaml>` reconciles the live sandbox roster against the manifest without a rebuild.
+The command lists current agents with `openclaw agents list --json`.
+It compares the current roster with the manifest and runs `openclaw agents add|delete` for each difference.
+
+Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides require a sandbox rebuild.
+The command reports those unsupported live changes as warnings before it exits.
+Re-run `nemoclaw onboard --agents <file> --recreate-sandbox` to bake them.
 
 ```bash
 nemoclaw my-assistant agents apply -f ./agents.yaml --yes
 ```
 
 The `--yes` and `--non-interactive` flags are required for scripted use.
-`--yes` confirms the printed roster diff, and `--non-interactive` makes the verb fail fast when `--yes` is absent rather than waiting for an interactive prompt that scripted callers cannot deliver.
+The `--yes` flag confirms the printed roster diff.
+The `--non-interactive` flag makes the command fail fast when `--yes` is absent rather than waiting for an interactive prompt that a script cannot answer.
 
 ## Next Steps
 
