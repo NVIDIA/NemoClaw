@@ -4,8 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
-import { reconcileRebuildRecovery } from "./rebuild-recovery-plan";
-import { prepareRebuildRecoveryPreflight } from "./rebuild-recovery-preflight";
+import { prepareRebuildRecoveryPreflight } from "./rebuild-recovery";
 
 function deletedTransaction(): RebuildTransactionRecordV1 {
   return {
@@ -19,33 +18,43 @@ function deletedTransaction(): RebuildTransactionRecordV1 {
 }
 
 describe("rebuild recovery plan orchestration", () => {
-  it("does not observe or mutate state without a recoverable transaction", () => {
+  it("does not observe or mutate state without a recoverable transaction", async () => {
     const readRegistryEntry = vi.fn();
-    const result = reconcileRebuildRecovery({
+    const result = await prepareRebuildRecoveryPreflight({
       transaction: null,
-      live: "ready",
+      resolveLiveState: async () => ({ staleRecovery: false, observation: "ready" }),
       readRegistryEntry,
       readSession: vi.fn(),
       restoreRegistry: vi.fn(),
+      log: vi.fn(),
+      bail: (message) => {
+        throw new Error(message);
+      },
     });
 
-    expect(result).toEqual({ ok: true, plan: null });
+    expect(result).toEqual({
+      liveState: { staleRecovery: false, observation: "ready" },
+      plan: null,
+    });
     expect(readRegistryEntry).not.toHaveBeenCalled();
   });
 
-  it("restores source metadata only for an absent old-deleted replacement", () => {
+  it("restores source metadata only for an absent old-deleted replacement", async () => {
     const restoreRegistry = vi.fn(() => true);
-    const result = reconcileRebuildRecovery({
+    const result = await prepareRebuildRecoveryPreflight({
       transaction: deletedTransaction(),
-      live: "absent",
+      resolveLiveState: async () => ({ staleRecovery: true, observation: "absent" }),
       readRegistryEntry: () => null,
       readSession: () => null,
       restoreRegistry,
+      log: vi.fn(),
+      bail: (message) => {
+        throw new Error(message);
+      },
     });
 
     expect(result).toMatchObject({
-      ok: true,
-      plan: { action: "create", replacementAlreadyPresent: false, registryRestored: true },
+      plan: "create",
     });
     expect(restoreRegistry).toHaveBeenCalledOnce();
   });

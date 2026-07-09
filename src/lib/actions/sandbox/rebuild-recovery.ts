@@ -7,8 +7,14 @@ import {
   matchesRebuildTargetRegistry,
 } from "../../rebuild-correlation";
 import type { Session } from "../../state/onboard-session";
-import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
+import type {
+  RebuildRegistryRecoveryV1,
+  RebuildTransactionRecordV1,
+} from "../../state/rebuild-transaction";
 import type { SandboxEntry } from "../../state/registry";
+import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import type { RebuildLiveState } from "./rebuild-flow-helpers";
+import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 
 export type RebuildObservedLiveState = "absent" | "not_ready" | "ready" | "unknown_present";
 export type RebuildRecoveryAction = "adopt" | "create" | "recreate" | "resume";
@@ -110,4 +116,50 @@ export function decideRebuildRecovery(input: {
   }
 
   return { action: "create" };
+}
+
+/** Collect recovery evidence and apply only journal-owned registry restoration. */
+export async function prepareRebuildRecoveryPreflight(input: {
+  transaction: RebuildTransactionRecordV1 | null;
+  resolveLiveState: () => Promise<RebuildLiveState | null>;
+  readRegistryEntry: () => SandboxEntry | null;
+  readSession: () => Session | null;
+  restoreRegistry: (recovery: RebuildRegistryRecoveryV1) => boolean;
+  log: RebuildLog;
+  bail: RebuildBail;
+}) {
+  const liveState = await input.resolveLiveState();
+  if (!liveState) return null;
+  const transaction = input.transaction;
+  if (!transaction || !["old_deleted", "replacement_created"].includes(transaction.phase)) {
+    return { liveState, plan: null };
+  }
+
+  const registryEntry = input.readRegistryEntry();
+  const decision = decideRebuildRecovery({
+    transaction,
+    live: liveState.observation,
+    registry: observeRebuildRegistry(transaction, registryEntry),
+    session: observeRebuildSession(transaction, input.readSession(), registryEntry),
+  });
+  if (decision.action === "refuse") {
+    input.log("Durable rebuild recovery decision: refuse");
+    printRebuildPreflightFailure(
+      `the observed replacement cannot be proven to belong to rebuild transaction '${transaction.transactionId}' (${decision.code}).`,
+      "Inspect the live sandbox, registry row, onboarding session, and validated backup; no recovery side effect was attempted.",
+      "Rebuild replacement recovery failed",
+      input.bail,
+    );
+    return null;
+  }
+
+  input.log(`Durable rebuild recovery decision: ${decision.action}`);
+  if (
+    decision.action === "create" &&
+    !registryEntry &&
+    input.restoreRegistry(transaction.intent.source.registryRecovery)
+  ) {
+    input.log("Restored missing registry recovery metadata from the rebuild journal");
+  }
+  return { liveState, plan: decision.action };
 }

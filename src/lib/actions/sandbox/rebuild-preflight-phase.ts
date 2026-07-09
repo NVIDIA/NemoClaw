@@ -55,8 +55,7 @@ import {
   validatePreparedRecoveryManifest,
 } from "./rebuild-prepared-recovery";
 import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
-import type { RebuildRecoveryPlan } from "./rebuild-recovery-plan";
-import { prepareRebuildRecoveryPreflight } from "./rebuild-recovery-preflight";
+import { prepareRebuildRecoveryPreflight, type RebuildRecoveryAction } from "./rebuild-recovery";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 import {
   fingerprintRebuildRegistryEntry,
@@ -65,7 +64,7 @@ import {
 
 export interface RebuildPreflightPhaseResult {
   transaction: RebuildTransactionRecordV1 | null;
-  recoveryPlan: RebuildRecoveryPlan | null;
+  recoveryPlan: RebuildRecoveryAction | null;
   registryRecovery: RebuildRegistryRecoveryV1;
   sandboxEntry: RebuildSandboxEntry;
   rebuildAgent: string | null;
@@ -226,7 +225,8 @@ export async function runRebuildPreflightPhase(
         bail,
       });
       if (!recoveryPreflight) return null;
-      const { liveState, plan: recoveryPlan, replacementAlreadyPresent } = recoveryPreflight;
+      const { liveState, plan: recoveryPlan } = recoveryPreflight;
+      const replacementAlreadyPresent = ["adopt", "resume"].includes(recoveryPlan ?? "");
       const lockedRegistry = registry.load();
       const lockedRegistryEntry = lockedRegistry.sandboxes[sandboxName];
       if (!lockedRegistryEntry) {

@@ -19,14 +19,13 @@ import {
   type FingerprintedPreparedBuildContext,
   verifyPreparedBuildContext,
 } from "./rebuild-prepared-image-context";
-import { observeRebuildSession } from "./rebuild-recovery";
-import type { RebuildRecoveryPlan } from "./rebuild-recovery-plan";
+import { observeRebuildSession, type RebuildRecoveryAction } from "./rebuild-recovery";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 import type { RebuildTransactionCoordinator } from "./rebuild-transaction-coordinator";
 
 export interface RebuildRecoveryOrchestratorOptions {
-  plan: RebuildRecoveryPlan | null;
+  plan: RebuildRecoveryAction | null;
   transaction: RebuildTransactionCoordinator;
   recoveredTransaction: RebuildTransactionRecordV1 | null;
   sandboxName: string;
@@ -52,11 +51,11 @@ export interface PrepareRebuildRecoveryTransactionInput {
 /** Owns recovery-specific transaction preparation and receipt publication. */
 export class RebuildRecoveryOrchestrator {
   constructor(private readonly options: RebuildRecoveryOrchestratorOptions) {
-    if (options.plan) options.log(`Durable rebuild recovery selected '${options.plan.action}'`);
+    if (options.plan) options.log(`Durable rebuild recovery selected '${options.plan}'`);
   }
 
   get replacementAlreadyPresent(): boolean {
-    return this.options.plan?.replacementAlreadyPresent === true;
+    return this.options.plan === "adopt" || this.options.plan === "resume";
   }
 
   async revalidateReplacementBeforeDelete(input: {
@@ -114,17 +113,17 @@ export class RebuildRecoveryOrchestrator {
       });
     }
     await transaction.reconcileObservedDeletion(input.staleRecovery);
-    if (this.options.plan?.action === "adopt") {
+    if (this.options.plan === "adopt") {
       await transaction.markReplacementCreated(this.requireCorrelatedReplacement());
     }
   }
 
   async publishCreatedReplacement(): Promise<void> {
     const replacement =
-      this.options.plan?.action === "recreate"
+      this.options.plan === "recreate"
         ? this.requireCorrelatedReplacement()
         : this.requireReplacement();
-    await (this.options.plan?.action === "recreate"
+    await (this.options.plan === "recreate"
       ? this.options.transaction.markReplacementRecreated(replacement)
       : this.options.transaction.markReplacementCreated(replacement));
   }

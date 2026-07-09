@@ -68,7 +68,7 @@ function makeOrchestrator(entry: SandboxEntry) {
     markReplacementRecreated: vi.fn(),
   } as unknown as RebuildTransactionCoordinator;
   const orchestrator = new RebuildRecoveryOrchestrator({
-    plan: { action: "recreate", replacementAlreadyPresent: false, registryRestored: false },
+    plan: "recreate",
     transaction,
     recoveredTransaction: record,
     sandboxName: "alpha",
