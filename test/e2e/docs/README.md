@@ -84,6 +84,12 @@ boundary. Retry a full target by starting a fresh workflow run and runner.
 
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
+When adding or changing a live test, update `test/e2e/mock-parity.json` with
+the fast PR-collected test that covers its mockable contract. If the behavior
+cannot be reproduced without real infrastructure, record a concise
+`liveOnlyReason` instead. The PR and `main` `e2e-support` lanes enforce this
+changed-file policy without requiring an immediate backfill of untouched tests.
+
 ## Repository Layout
 
 ```text
@@ -92,6 +98,7 @@ test/e2e/
   fixtures/              # Vitest fixtures, clients, redaction, artifacts, cleanup
   live/                  # Opt-in live E2E target tests
   manifests/             # Product-facing NemoClawInstance desired state
+  mock-parity.json        # Changed live-test to fast-test parity decisions
   registry/              # Typed registry, matrix helpers, expected states
   support/               # Fast fixture/support and metadata tests
 ```

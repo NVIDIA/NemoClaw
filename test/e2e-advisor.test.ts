@@ -254,7 +254,7 @@ describe("E2E recommendation advisor prompt", () => {
         "-C /tmp/e2e-advisor-target fetch --no-tags target pull/5756/head:refs/remotes/target/pr-5756",
         "-C /tmp/e2e-advisor-target checkout --detach refs/remotes/target/pr-5756",
       ]);
-      expect(valid.githubEnv).toBe("ADVISOR_WORKDIR=/tmp/e2e-advisor-target\n");
+      expect(valid.githubEnv).toBe("ADVISOR_WORKDIR=/tmp/e2e-advisor-target\nPR_NUMBER=5756\n");
     } finally {
       valid.cleanup();
     }
