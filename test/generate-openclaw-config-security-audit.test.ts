@@ -62,4 +62,9 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
       "config.insecure_or_dangerous_flags",
     ]);
   });
+
+  it("omits audit suppressions for a loopback HTTPS dashboard (#6024)", () => {
+    const config = buildSecurityAuditConfig("https://127.0.0.1:18789");
+    expect(config.security).toBeUndefined();
+  });
 });
