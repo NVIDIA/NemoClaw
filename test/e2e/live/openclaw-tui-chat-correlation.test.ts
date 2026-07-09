@@ -30,8 +30,10 @@ import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 import { stripTerminalControl } from "../support/issue-4434-tui-capture.ts";
 import {
+  buildIssue6194OpenShellApprovalExpectScript,
   buildIssue6194TuiExpectScript,
   ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
+  ISSUE6194_NETWORK_APPROVAL_HOST,
   ISSUE6194_TUI_SESSION_PREFIX,
   ISSUE6194_TUI_TIMEOUT_SEC,
 } from "./issue-6194-tui-expect.ts";
@@ -523,7 +525,9 @@ test(
     // bad release in PR CI would prove the old bug, not the proposed guard.
     // This target provisions the current branch and validates the bundled
     // OpenClaw build before exercising the same post-connected-idle terminal
-    // paths so future changes cannot reintroduce #6194.
+    // paths so future changes cannot reintroduce #6194. OpenShell's separate
+    // terminal UI owns network-rule approvals; this OpenClaw TUI flow must not
+    // rely on a hosted model choosing a network tool that may not exist.
     //
     // Every sandbox.* call must pass `env: buildAvailabilityProbeEnv()`:
     // ShellProbe.run spawns with an empty env when none is provided,
@@ -560,7 +564,6 @@ test(
           ...sandboxAccessEnv(),
           NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
           NEMOCLAW_ISSUE_6194_CAPTURE: captureFile,
-          NEMOCLAW_ISSUE_6194_NETWORK_ENDPOINT: ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
           NEMOCLAW_ISSUE_6194_SESSION: tuiSession,
           NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
         },
@@ -600,11 +603,6 @@ test(
         connectedIdleAfterChat: combined.includes("ISSUE6194_MARK connected_idle_after_chat"),
         slashStatusOutput: combined.includes("ISSUE6194_MARK slash_status_output"),
         connectedIdleAfterStatus: combined.includes("ISSUE6194_MARK connected_idle_after_status"),
-        networkApprovalPrompt: combined.includes("ISSUE6194_MARK network_approval_prompt"),
-        networkApprovalProcessed: combined.includes("ISSUE6194_MARK network_approval_processed"),
-        connectedIdleAfterNetworkApproval: combined.includes(
-          "ISSUE6194_MARK connected_idle_after_network_approval",
-        ),
         cleanExit: combined.includes("ISSUE6194_MARK clean_exit"),
       });
 
@@ -629,18 +627,86 @@ test(
       expect(combined, "TUI must return to connected idle after /nemoclaw status").toContain(
         "ISSUE6194_MARK connected_idle_after_status",
       );
-      expect(
-        combined,
-        "post-idle network request must present the sandbox approval prompt",
-      ).toContain("ISSUE6194_MARK network_approval_prompt");
-      expect(combined, "post-idle network approval input must be processed").toContain(
-        "ISSUE6194_MARK network_approval_processed",
-      );
-      expect(combined, "TUI must return to connected idle after network approval input").toContain(
-        "ISSUE6194_MARK connected_idle_after_network_approval",
-      );
       expect(combined, "post-idle Ctrl+C must close the TUI session").toContain(
         "ISSUE6194_MARK clean_exit",
+      );
+
+      // OpenShell's terminal UI owns network-rule approval. Exercise that
+      // boundary separately with a direct sandbox curl so hosted models that
+      // expose no network tools cannot make this assertion nondeterministic.
+      const approvalCaptureFile = join(captureDir, "openshell-approval-capture.log");
+      const triggerCaptureFile = join(captureDir, "openshell-network-trigger.log");
+      const ruleCaptureFile = join(captureDir, "openshell-pending-rule.log");
+      const approvalExpectScript = artifacts.pathFor("issue6194-openshell-approval.expect");
+      writeFileSync(triggerCaptureFile, "", { mode: 0o600 });
+      writeFileSync(ruleCaptureFile, "", { mode: 0o600 });
+      writeFileSync(approvalExpectScript, buildIssue6194OpenShellApprovalExpectScript(), {
+        mode: 0o700,
+      });
+      const approval = await host.command("expect", [approvalExpectScript], {
+        artifactName: "issue6194-openshell-network-approval",
+        env: {
+          ...sandboxAccessEnv(),
+          NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
+          NEMOCLAW_ISSUE_6194_CAPTURE: approvalCaptureFile,
+          NEMOCLAW_ISSUE_6194_TRIGGER_CAPTURE: triggerCaptureFile,
+          NEMOCLAW_ISSUE_6194_RULE_CAPTURE: ruleCaptureFile,
+          NEMOCLAW_ISSUE_6194_NETWORK_ENDPOINT: ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
+          NEMOCLAW_ISSUE_6194_NETWORK_HOST: ISSUE6194_NETWORK_APPROVAL_HOST,
+          NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
+        },
+        redactionValues: [apiKey],
+        timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
+      });
+      const rawApprovalCapture = readFileSync(approvalCaptureFile, "utf8");
+      const rawTriggerCapture = readFileSync(triggerCaptureFile, "utf8");
+      const rawRuleCapture = readFileSync(ruleCaptureFile, "utf8");
+      const redactedApprovalCapture = secrets.redact(rawApprovalCapture, [apiKey]);
+      const redactedTriggerCapture = secrets.redact(rawTriggerCapture, [apiKey]);
+      const redactedRuleCapture = secrets.redact(rawRuleCapture, [apiKey]);
+      const plainApprovalCapture = stripTerminalControl(redactedApprovalCapture);
+      const approvalCombined = `${resultText(approval)}\n${plainApprovalCapture}\n${redactedTriggerCapture}\n${redactedRuleCapture}`;
+      await artifacts.writeText(
+        "issue6194-openshell-approval-capture.log",
+        redactedApprovalCapture,
+      );
+      await artifacts.writeText(
+        "issue6194-openshell-approval-capture.plain.log",
+        plainApprovalCapture,
+      );
+      await artifacts.writeText("issue6194-openshell-network-trigger.log", redactedTriggerCapture);
+      await artifacts.writeText("issue6194-openshell-pending-rule.log", redactedRuleCapture);
+      await artifacts.writeJson("issue6194-approval-result.json", {
+        id: "issue-6194-openshell-network-approval",
+        expectExitCode: approval.exitCode,
+        pendingQueueEmpty: approvalCombined.includes("ISSUE6194_MARK pending_queue_empty"),
+        requestTriggered: approvalCombined.includes("ISSUE6194_MARK network_request_triggered"),
+        requestCompleted: approvalCombined.includes("ISSUE6194_MARK network_request_completed"),
+        singletonRule: approvalCombined.includes("ISSUE6194_MARK network_rule_singleton"),
+        rulesFocused: approvalCombined.includes("ISSUE6194_MARK network_rules_focused"),
+        endpointRendered: approvalCombined.includes("ISSUE6194_MARK network_rule_endpoint"),
+        detailBinary: approvalCombined.includes("ISSUE6194_MARK network_rule_detail_binary"),
+        approvalProcessed: approvalCombined.includes("ISSUE6194_MARK network_approval_processed"),
+        cleanExit: approvalCombined.includes("ISSUE6194_MARK openshell_clean_exit"),
+      });
+
+      expect(approval.exitCode, approvalCombined).toBe(0);
+      expect(
+        approvalCombined,
+        "direct curl must create exactly one matching pending rule",
+      ).toContain("ISSUE6194_MARK network_rule_singleton");
+      expect(approvalCombined, "OpenShell must render the exact blocked endpoint").toContain(
+        "ISSUE6194_MARK network_rule_detail_endpoint",
+      );
+      expect(
+        approvalCombined,
+        "OpenShell must attribute the rule to the direct curl binary",
+      ).toContain("ISSUE6194_MARK network_rule_detail_binary");
+      expect(approvalCombined, "OpenShell approval input must be processed").toContain(
+        "ISSUE6194_MARK network_approval_processed",
+      );
+      expect(approvalCombined, "OpenShell terminal must exit cleanly after approval").toContain(
+        "ISSUE6194_MARK openshell_clean_exit",
       );
     } finally {
       rmSync(captureDir, { recursive: true, force: true });
