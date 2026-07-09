@@ -198,8 +198,9 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     );
     expect(script).toContain('send -i $termSpawn -- "a"');
     expect(script).toContain(
-      "expect_or_exit $termSpawn {Approved '[^']+'[^\\r\\n]*policy v[0-9]+} network_approval_processed",
+      "expect_or_exit $termSpawn {Approved[^\\r\\n]*'[^']+'[^\\r\\n]*policy v[0-9]+} network_approval_processed",
     );
+    expect(script).not.toContain("{Approved '[^']+'");
     expect(script).not.toContain('send -i $termSpawn -- "A"');
     expect(script).not.toContain('send -i $termSpawn -- "y"');
 

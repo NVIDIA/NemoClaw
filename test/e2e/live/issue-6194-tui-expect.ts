@@ -239,7 +239,7 @@ expect_or_exit $termSpawn {Binary:[^\\r\\n]*/usr/bin/curl} network_rule_detail_b
 expect_exact_or_exit $termSpawn $networkHost network_rule_detail_endpoint 82 83
 expect_or_exit $termSpawn {\\[a\\][^\\r\\n]*Approve} network_rule_approve_action 84 85
 send -i $termSpawn -- "a"
-expect_or_exit $termSpawn {Approved '[^']+'[^\\r\\n]*policy v[0-9]+} network_approval_processed 86 87
+expect_or_exit $termSpawn {Approved[^\\r\\n]*'[^']+'[^\\r\\n]*policy v[0-9]+} network_approval_processed 86 87
 send -i $termSpawn -- "q"
 expect {
   -i $termSpawn
