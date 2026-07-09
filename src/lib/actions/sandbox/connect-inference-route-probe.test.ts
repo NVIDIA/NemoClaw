@@ -26,7 +26,7 @@ describe("sandbox connect inference route probe argv", () => {
       "--name",
       "deep-code",
       "--",
-      "/usr/local/bin/nemoclaw-start",
+      "/usr/local/lib/nemoclaw/dcode-managed-exec",
       "/bin/sh",
       "-c",
     ]);

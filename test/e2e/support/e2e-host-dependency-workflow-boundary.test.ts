@@ -25,6 +25,15 @@ function readWorkflow(): Workflow {
   return YAML.parse(fs.readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
 }
 
+function throwMissingStep(stepName: string): never {
+  throw new Error(`${stepName} step is missing`);
+}
+
+function requireStepIndex(steps: WorkflowStep[], stepName: string): number {
+  const index = steps.findIndex((step) => step.name === stepName);
+  return index >= 0 ? index : throwMissingStep(stepName);
+}
+
 describe("inline E2E host dependency boundary", () => {
   it.each([
     {
@@ -38,6 +47,12 @@ describe("inline E2E host dependency boundary", () => {
       stepName: "Install network-policy host dependencies",
       expected:
         "network-policy host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
+    },
+    {
+      jobName: "cloud-onboard",
+      stepName: "Install cloud-onboard DCode TUI host dependencies",
+      expected:
+        "cloud-onboard host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
     },
     {
       jobName: "issue-4434-tui-unreachable-inference",
@@ -70,17 +85,38 @@ describe("inline E2E host dependency boundary", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-host-dependency-order-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow();
-    const steps = workflow.jobs["openclaw-tui-chat-correlation"]?.steps ?? [];
-    const installIndex = steps.findIndex(
-      (step) => step.name === "Install OpenClaw TUI host dependencies",
-    );
-    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    const steps = workflow.jobs["openclaw-tui-chat-correlation"].steps;
+    const installIndex = requireStepIndex(steps, "Install OpenClaw TUI host dependencies");
+    const prepareIndex = requireStepIndex(steps, "Prepare E2E workspace");
     [steps[installIndex], steps[prepareIndex]] = [steps[prepareIndex]!, steps[installIndex]!];
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
         "openclaw-tui-chat-correlation host dependencies must be installed before workspace prep",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps cloud-onboard host dependencies before workspace preparation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-host-order-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow();
+    const steps = workflow.jobs["cloud-onboard"].steps;
+    const installIndex = requireStepIndex(
+      steps,
+      "Install cloud-onboard DCode TUI host dependencies",
+    );
+    const install = steps.splice(installIndex, 1)[0]!;
+    const prepareIndex = requireStepIndex(steps, "Prepare E2E workspace");
+    steps.splice(prepareIndex + 1, 0, install);
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        "cloud-onboard DCode TUI host dependencies must precede workspace prep",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -903,12 +903,7 @@ function validateOpenclawTuiChatCorrelationHostDependencies(
     "Install OpenClaw TUI host dependencies",
     ["expect"],
   );
-  const install = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install OpenClaw TUI host dependencies",
-  );
+  const install = requireJobStep(errors, jobName, steps, "Install OpenClaw TUI host dependencies");
   const prepare = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
   if (install && prepare && steps.indexOf(install) >= steps.indexOf(prepare)) {
     errors.push(`${jobName} host dependencies must be installed before workspace prep`);
@@ -3819,6 +3814,33 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     if (line.trim() === "e2e-artifacts/live/${{ matrix.id }}/") {
       errors.push("artifact upload path must not list the whole matrix artifact directory");
     }
+  }
+
+  const cloudOnboardSteps = asSteps(asRecord(jobs["cloud-onboard"]).steps);
+  validateInlineHostDependencyInstall(
+    errors,
+    "cloud-onboard",
+    cloudOnboardSteps,
+    "Install cloud-onboard DCode TUI host dependencies",
+    ["expect"],
+  );
+  const cloudOnboardHostDependencies = requireStep(
+    errors,
+    cloudOnboardSteps,
+    "Install cloud-onboard DCode TUI host dependencies",
+  );
+  const cloudOnboardPrepareWorkspace = requireStep(
+    errors,
+    cloudOnboardSteps,
+    "Prepare E2E workspace",
+  );
+  if (
+    cloudOnboardHostDependencies &&
+    cloudOnboardPrepareWorkspace &&
+    cloudOnboardSteps.indexOf(cloudOnboardHostDependencies) >=
+      cloudOnboardSteps.indexOf(cloudOnboardPrepareWorkspace)
+  ) {
+    errors.push("cloud-onboard DCode TUI host dependencies must precede workspace prep");
   }
 
   validateOpenShellVersionPinJob(errors, jobs);
