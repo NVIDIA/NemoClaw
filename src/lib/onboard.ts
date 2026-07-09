@@ -484,9 +484,6 @@ const {
   createInitialOnboardFlowPhases,
   runInitialOnboardFlowSlice,
 }: typeof import("./onboard/machine/initial-flow-phases") = require("./onboard/machine/initial-flow-phases");
-const {
-  advanceTo,
-}: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
 const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
   require("./onboard/skipped-step-message");
 const policies: typeof import("./policy") = require("./policy");
@@ -4005,34 +4002,10 @@ const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
 const recordInvalidatedStateResult =
   onboardRuntimeBoundary.recordInvalidatedStateResult.bind(onboardRuntimeBoundary);
+const recordInitialPreflightTransition =
+  onboardRuntimeBoundary.recordInitialPreflightTransition.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted =
   onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
-
-async function recordInitialPreflightTransition(resume: boolean): Promise<void> {
-  const result = advanceTo("preflight", { metadata: { state: "init" } });
-  if (!resume) {
-    await recordStateResult(result);
-    return;
-  }
-  const current = await onboardRuntimeBoundary.getRuntime().session();
-  if (current.machine.state === result.next) {
-    await recordInvalidatedStateResult(result, {
-      reason: "already_at_target",
-      currentState: current.machine.state,
-      sourceState: "init",
-    });
-    return;
-  }
-  if (current.machine.state !== "init") {
-    await recordInvalidatedStateResult(result, {
-      reason: "source_state_mismatch",
-      currentState: current.machine.state,
-      sourceState: "init",
-    });
-    return;
-  }
-  await recordStateResult(result);
-}
 
 /** Run only non-mutating fatal onboard gates while the rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
