@@ -342,4 +342,56 @@ describe("execSandbox multi-line guard (#5980)", () => {
       "echo line1; echo line2",
     ]);
   });
+
+  it("routes usage-error exits through the injected exit seam without terminating the process", async () => {
+    let exitCode = Number.NaN;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const run = vi.fn(() => ({ status: 0 }));
+
+    await execSandbox(
+      "alpha",
+      ["bash", "-lc", "printf 'a\nb'"],
+      {},
+      {
+        run,
+        resolveBinary: () => "openshell",
+        exit: (code) => {
+          exitCode = code;
+        },
+      },
+    );
+
+    expect(exitCode).toBe(2);
+    expect(run).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "contains a newline or carriage return",
+    );
+  });
+
+  it("routes missing --workdir exits through the injected exit seam", async () => {
+    let exitCode = Number.NaN;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const run = vi.fn(() => ({ status: 0 }));
+    const probeWorkdir = vi.fn(() => ({ status: 1 }));
+
+    await execSandbox(
+      "alpha",
+      ["bash", "-lc", "echo ok"],
+      { workdir: "/no/such/dir" },
+      {
+        run,
+        resolveBinary: () => "openshell",
+        probeWorkdir,
+        exit: (code) => {
+          exitCode = code;
+        },
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(run).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      "error: --workdir: /no/such/dir does not exist inside the sandbox",
+    );
+  });
 });

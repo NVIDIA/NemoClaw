@@ -368,12 +368,15 @@ export function validateWorkdirOrFail(
   sandboxName: string,
   workdir: string,
   run: WorkdirProbeRunner = defaultWorkdirProbeRunner,
-): void {
+  exit: (code: number) => void = (code) => process.exit(code),
+): boolean {
   const outcome = evaluateWorkdirProbe(run(binary, buildWorkdirProbeArgs(sandboxName, workdir)));
   if (outcome === "missing") {
     console.error(workdirMissingMessage(workdir));
-    process.exit(1);
+    exit(1);
+    return false;
   }
+  return true;
 }
 
 function defaultResolveBinary(): string {
@@ -403,20 +406,26 @@ export async function execSandbox(
   deps: ExecSandboxDeps = {},
 ): Promise<void> {
   const { CLI_NAME } = require("../../cli/branding");
+  const exit = deps.exit ?? ((code: number) => process.exit(code));
   if (command.length === 0) {
     console.error(
       `  Usage: ${CLI_NAME} ${sandboxName} exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]`,
     );
-    process.exit(2);
+    exit(2);
+    return;
   }
   const multilineIndex = findMultilineExecArg(command);
   if (multilineIndex !== -1) {
     console.error(multilineExecMessage(CLI_NAME, sandboxName, command, multilineIndex));
-    process.exit(2);
+    exit(2);
+    return;
   }
   const binary = (deps.resolveBinary ?? defaultResolveBinary)();
-  if (options.workdir) {
-    validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
+  if (
+    options.workdir &&
+    !validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir, exit)
+  ) {
+    return;
   }
   const emitPolicyDenialHint = preparePolicyHint(CLI_NAME, sandboxName, deps.policyHint);
   const completion = await runSandboxExecCommand(
@@ -444,6 +453,5 @@ export async function execSandbox(
     console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
   }
   await emitPolicyDenialHint(completion);
-  const exit = deps.exit ?? ((code: number) => process.exit(code));
   exit(completion.code);
 }

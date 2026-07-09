@@ -52,6 +52,22 @@ describe("SandboxExecCommand oclif parse path", () => {
     }
   });
 
+  it("routes multiline usage errors through oclif exit-code handling", async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    execSandboxMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const deps = args[3] as { exit?: (code: number) => void } | undefined;
+      deps?.exit?.(2);
+    });
+
+    try {
+      await SandboxExecCommand.run(["alpha", "--", "bash", "-lc", "printf 'a\nb'"], rootDir);
+      expect(process.exitCode).toBe(2);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it("does not assign host meaning to logging flags after --", async () => {
     const configure = vi.spyOn(log, "configure").mockImplementation(() => undefined);
 
