@@ -232,6 +232,12 @@ describe("vllm model registry", () => {
     // breaks Deep Agents Code tool calls with HTTP 400.
     expect(cmd).toContain("--tool-call-parser qwen3_coder");
     expect(cmd).not.toContain("qwen3_xml");
+    // Exactly one tool-call parser is configured for the Spark recipe, so the
+    // #6457 regression (serving this checkpoint with qwen3_xml, which mis-parses
+    // its tool-call frames and fails Deep Agents Code with HTTP 400) cannot creep
+    // back in alongside qwen3_coder. Validated end-to-end on real DGX Spark (GB10):
+    // pre-fix 3/4 dcode runs hit HTTP 400, post-fix (qwen3_coder) 5/5 completed.
+    expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
     expect(cmd).toContain("--reasoning-parser qwen3");
     expect(cmd).toContain("--max-model-len 262144");
     expect(cmd).toContain(
@@ -243,22 +249,6 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--pipeline-parallel-size 1");
     expect(cmd).toContain("--data-parallel-size 1");
     expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
-  });
-
-  it("does not regress the Spark tool-call parser to qwen3_xml (#6457)", () => {
-    // #6457: served with `qwen3_xml`, this checkpoint's tool-call frames do not
-    // round-trip — vLLM logs `qwen3xml_tool_parser.py:303 Error when parsing XML
-    // elements: not well-formed` and emits truncated/extra-`}` arguments, so
-    // Deep Agents Code (`dcode -n`) tool calls fail with HTTP 400 and exit 1.
-    // Validated end-to-end on real DGX Spark (GB10): pre-fix 3/4 runs hit HTTP
-    // 400, post-fix (qwen3_coder) 5/5 runs completed with 0 parser errors.
-    const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
-    const cmd = buildVllmServeCommand(qwen35b!);
-    expect(cmd).toContain("--enable-auto-tool-choice");
-    expect(cmd).toContain("--tool-call-parser qwen3_coder");
-    expect(cmd).not.toContain("qwen3_xml");
-    // Exactly one tool-call parser is configured for the Spark recipe.
-    expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
   });
 });
 
