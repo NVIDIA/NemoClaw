@@ -82,6 +82,10 @@ function rlimitShim(rlimitLib: string): string {
   return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits --quiet || true`;
 }
 
+function dcodeRlimitShim(rlimitLib: string): string {
+  return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits --quiet || { printf "%s\\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }`;
+}
+
 type ProbeValues = Record<string, string | undefined>;
 
 function parseProbeOutput(stdout: string): ProbeValues {
@@ -190,6 +194,47 @@ function expectSystemRlimitHookIsSilentWhenVerificationFails(
   expect(result.status).toBe(0);
   expect(result.stdout).toBe("OK\n");
   expect(result.stderr).toBe("");
+}
+
+function expectDcodeRlimitHookWarnsWhenVerificationFails(
+  hookPath: string,
+  rlimitLib: string,
+): void {
+  fs.chmodSync(rlimitLib, 0o644);
+  fs.writeFileSync(
+    rlimitLib,
+    ["harden_resource_limits() { :; }", "verify_resource_limits() { return 1; }"].join("\n"),
+  );
+  const probe = ["set -euo pipefail", `source ${JSON.stringify(hookPath)}`, 'printf "OK\\n"'].join(
+    "\n",
+  );
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", probe], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toBe("OK\n");
+  expect(result.stderr).toContain(
+    "[SECURITY] Sandbox resource limits were NOT hardened for this shell.",
+  );
+}
+
+function expectDcodeRlimitHookWarnsWhenHelperIsMissing(hookPath: string, rlimitLib: string): void {
+  fs.rmSync(rlimitLib, { force: true });
+  const probe = ["set -euo pipefail", `source ${JSON.stringify(hookPath)}`, 'printf "OK\\n"'].join(
+    "\n",
+  );
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", probe], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toBe("OK\n");
+  expect(result.stderr).toContain(
+    "[SECURITY] Sandbox resource limits were NOT hardened for this shell.",
+  );
 }
 
 function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
@@ -365,7 +410,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
     const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
     const bashrc = path.join(tmp, "bash.bashrc");
-    const expectedRlimitShim = rlimitShim(rlimitLib);
+    const expectedRlimitShim = dcodeRlimitShim(rlimitLib);
 
     try {
       fs.mkdirSync(path.dirname(rlimitHook), { recursive: true });
@@ -388,7 +433,8 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expectSystemRlimitHookEnforcesLimits(rlimitHook);
       expectSystemRlimitHookEnforcesLimits(bashrc);
       expectSystemRlimitHookBypassesShadowedUlimit(rlimitHook);
-      expectSystemRlimitHookIsSilentWhenVerificationFails(rlimitHook, rlimitLib);
+      expectDcodeRlimitHookWarnsWhenVerificationFails(rlimitHook, rlimitLib);
+      expectDcodeRlimitHookWarnsWhenHelperIsMissing(rlimitHook, rlimitLib);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

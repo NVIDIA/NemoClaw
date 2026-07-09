@@ -19,13 +19,20 @@ const START_SCRIPT = path.join(
 const RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
 const tempDirs: string[] = [];
 
-function makeStartFixture(): string {
+function makeStartFixture(options: { includeRlimitHelper?: boolean } = {}): {
+  scriptPath: string;
+  rlimitMarker: string;
+} {
+  const { includeRlimitHelper = true } = options;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-keepalive-"));
   const scriptPath = path.join(tempDir, "start.sh");
+  const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
+  const rlimitMarker = path.join(tempDir, "rlimits-hardened");
   const hostFile = path.join(tempDir, "trusted-proxy-host");
   const portFile = path.join(tempDir, "trusted-proxy-port");
   const fixture = fs
     .readFileSync(START_SCRIPT, "utf8")
+    .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
       `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
@@ -40,12 +47,18 @@ function makeStartFixture(): string {
     );
   fs.writeFileSync(hostFile, "10.200.0.1\n");
   fs.writeFileSync(portFile, "3128\n");
+  if (includeRlimitHelper) {
+    fs.writeFileSync(
+      rlimitLib,
+      `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(rlimitMarker)}; }\n`,
+    );
+  }
   fs.chmodSync(hostFile, 0o444);
   fs.chmodSync(portFile, 0o444);
   fs.writeFileSync(scriptPath, fixture);
   fs.chmodSync(scriptPath, 0o755);
   tempDirs.push(tempDir);
-  return scriptPath;
+  return { scriptPath, rlimitMarker };
 }
 
 afterEach(() => {
@@ -66,7 +79,8 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     // contract — the image runs /usr/local/bin/nemoclaw-start directly, so a
     // broken shebang or execute bit would also be caught here.
     expect(fs.statSync(START_SCRIPT).mode & 0o111).not.toBe(0);
-    const result = spawnSync(makeStartFixture(), [], {
+    const { scriptPath, rlimitMarker } = makeStartFixture();
+    const result = spawnSync(scriptPath, [], {
       input: "",
       timeout: 3000,
       encoding: "utf-8",
@@ -77,15 +91,34 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(result.signal).toBe("SIGTERM");
     expect(result.status).toBeNull();
     expect(result.stdout).toContain("Setting up NemoClaw Deep Agents Code runtime...");
+    expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\n");
   });
 
   it("execs an explicitly supplied command instead of idling", () => {
-    const result = spawnSync(makeStartFixture(), ["printf", "RAN_CMD"], {
+    const { scriptPath, rlimitMarker } = makeStartFixture();
+    const result = spawnSync(scriptPath, ["printf", "RAN_CMD"], {
       input: "",
       timeout: 3000,
       encoding: "utf-8",
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("RAN_CMD");
+    expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\n");
+  });
+
+  it("refuses to launch when the required rlimit helper is missing (#6545)", () => {
+    const { scriptPath, rlimitMarker } = makeStartFixture({ includeRlimitHelper: false });
+    const result = spawnSync(scriptPath, ["printf", "SHOULD_NOT_RUN"], {
+      input: "",
+      timeout: 3000,
+      encoding: "utf-8",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
+    expect(result.stderr).toContain(
+      "[SECURITY] Required sandbox-rlimits.sh is missing; refusing to start unhardened.",
+    );
+    expect(fs.existsSync(rlimitMarker)).toBe(false);
   });
 });

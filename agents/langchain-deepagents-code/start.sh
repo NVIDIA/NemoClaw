@@ -39,15 +39,15 @@ _NEMOCLAW_SANDBOX_RLIMITS="/usr/local/lib/nemoclaw/sandbox-rlimits.sh"
 if [ ! -f "$_NEMOCLAW_SANDBOX_RLIMITS" ]; then
   _NEMOCLAW_SANDBOX_RLIMITS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/sandbox-rlimits.sh"
 fi
-if [ -f "$_NEMOCLAW_SANDBOX_RLIMITS" ]; then
-  # shellcheck source=scripts/lib/sandbox-rlimits.sh
-  . "$_NEMOCLAW_SANDBOX_RLIMITS"
-  # shellcheck disable=SC2119 # harden_resource_limits' optional $1 selects
-  # quiet mode; it is not this entrypoint's own argument vector.
-  harden_resource_limits
-else
-  echo "[SECURITY] sandbox-rlimits.sh not found; resource limits were NOT hardened" >&2
+if [ ! -f "$_NEMOCLAW_SANDBOX_RLIMITS" ]; then
+  printf '%s\n' '[SECURITY] Required sandbox-rlimits.sh is missing; refusing to start unhardened.' >&2
+  exit 1
 fi
+# shellcheck source=scripts/lib/sandbox-rlimits.sh
+. "$_NEMOCLAW_SANDBOX_RLIMITS"
+# shellcheck disable=SC2119 # harden_resource_limits' optional $1 selects
+# quiet mode; it is not this entrypoint's own argument vector.
+harden_resource_limits
 unset _NEMOCLAW_SANDBOX_RLIMITS
 
 # Invalid state: OpenShell's sandbox-create environment contains the host proxy
@@ -273,7 +273,7 @@ prepare_observability_marker
 # posture unreliable (#5717). Idle forever instead so the sandbox stays Ready.
 if [ "$#" -eq 0 ]; then
   printf '%s\n' 'Setting up NemoClaw Deep Agents Code runtime...'
-  exec tail -f /dev/null
+  exec -a nemoclaw-dcode-entrypoint tail -f /dev/null
 fi
 
 exec "$@"
