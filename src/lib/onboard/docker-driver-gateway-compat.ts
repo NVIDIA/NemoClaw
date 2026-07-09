@@ -6,7 +6,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { dockerForceRm } from "../adapters/docker";
+import { compareDottedVersions } from "../domain/maintenance/upgrade";
 import type { DockerDriverGatewayLaunch } from "./docker-driver-gateway-launch";
+
+// Canonical implementation moved to domain/maintenance/upgrade.ts (#6520);
+// re-exported here for existing consumers.
+export { compareDottedVersions };
 
 const DEFAULT_COMPAT_IMAGE =
   "ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54";
@@ -25,17 +30,6 @@ type ContainerizedGatewayLaunchOptions = {
   baseEnv: NodeJS.ProcessEnv;
   reason?: string;
 };
-
-export function compareDottedVersions(a: string, b: string): number {
-  const left = a.split(".").map((part) => Number.parseInt(part, 10) || 0);
-  const right = b.split(".").map((part) => Number.parseInt(part, 10) || 0);
-  const len = Math.max(left.length, right.length);
-  for (let i = 0; i < len; i += 1) {
-    const delta = (left[i] ?? 0) - (right[i] ?? 0);
-    if (delta !== 0) return delta;
-  }
-  return 0;
-}
 
 export function maxDottedVersion(versions: string[]): string | null {
   return versions.reduce<string | null>(

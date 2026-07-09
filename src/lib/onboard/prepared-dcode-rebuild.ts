@@ -11,6 +11,7 @@ import type {
   CreateSandboxBuildContextResult,
   PreparedSandboxBuildContext,
 } from "./build-context-stage";
+import { type DcodeAutoApprovalMode, normalizeDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import type {
   PrepareSandboxDockerfilePatchInput,
   SandboxDockerfilePatchResult,
@@ -27,6 +28,7 @@ type CreateAgentSandbox = CreateSandboxBuildContextInput["createAgentSandbox"];
 export interface PreparedDcodeRebuildHandoff {
   buildContext: PreparedSandboxBuildContext;
   gatewayName: string;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode;
 }
 
 export interface PreparedImageRebuildHandoff {
@@ -41,6 +43,7 @@ export interface PreparedDcodeRebuildOptions {
   onboardLockAlreadyHeld?: boolean;
   agent?: string | null;
   fromDockerfile?: string | null;
+  dcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
 }
@@ -138,6 +141,15 @@ export function createPreparedDcodeRebuildRuntime(
     (options.resume !== true || options.recreateSandbox !== true || options.agent !== DCODE_AGENT)
   ) {
     throw new Error("A prepared DCode rebuild can only be used by DCode resume recreation.");
+  }
+  if (
+    preparedDcode &&
+    preparedDcode.dcodeAutoApprovalMode !==
+      normalizeDcodeAutoApprovalMode(options.dcodeAutoApprovalMode)
+  ) {
+    throw new Error(
+      "Prepared DCode rebuild auto-approval mode does not match the authoritative onboard request.",
+    );
   }
   if (
     preparedImage &&

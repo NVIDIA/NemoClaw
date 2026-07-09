@@ -19,6 +19,7 @@ describe("snapshot credential scanner", () => {
   it("keeps required provider aliases in the shared credential inventory", () => {
     for (const name of [
       "NVIDIA_API_KEY",
+      "OPENROUTER_API_KEY",
       "GEMINI_API_KEY",
       "GOOGLE_API_KEY",
       "AWS_BEARER_TOKEN_BEDROCK",

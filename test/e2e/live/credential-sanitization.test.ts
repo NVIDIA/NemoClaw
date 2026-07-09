@@ -25,9 +25,8 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const BLUEPRINT_FILE = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-credential-sanitization-${process.pid}`;

@@ -7,7 +7,7 @@
  * step-level progress tracking and file-based locking.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -22,8 +22,12 @@ import {
   emitOnboardMachineEvent,
   machineStateFromOnboardSessionStep,
 } from "../onboard/machine/events";
-import { isOnboardMachineState } from "../onboard/machine/transitions";
-import type { OnboardMachineState } from "../onboard/machine/types";
+import {
+  assertValidOnboardMachineTransition,
+  isOnboardMachineState,
+  isTerminalOnboardMachineState,
+} from "../onboard/machine/transitions";
+import type { OnboardMachineState, OnboardNonTerminalMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
   assignSafeToolDisclosureUpdate,
@@ -32,7 +36,6 @@ import {
   type ToolDisclosure,
 } from "./onboard-session-tool-disclosure";
 import {
-  LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
   RECORD_ONLY_STEP_MUTATION_OPTIONS,
   type StepMutationOptions,
   shouldUpdateMachine,
@@ -82,11 +85,42 @@ export interface SessionMetadata {
   fromDockerfile: string | null;
 }
 
+export type SessionRecoveryReceiptReason =
+  | "failed_terminal_snapshot"
+  | "reopened_complete_snapshot";
+
+/**
+ * Durable, secret-free receipt for a terminal snapshot recovery.
+ *
+ * The receipt remains attached until the next machine snapshot replaces it.
+ * If the process stops after the repaired snapshot is saved but before the
+ * next transition, the next resume retries the same observer-dispatch ID.
+ */
+export interface SessionRecoveryReceipt {
+  id: string;
+  reason: SessionRecoveryReceiptReason;
+  entry: OnboardNonTerminalMachineState;
+  appliedAt: string;
+  revision: number;
+}
+
+export function createSessionRecoveryReceiptId(
+  sessionId: string,
+  revision: number,
+  reason: SessionRecoveryReceiptReason,
+  entry: OnboardNonTerminalMachineState,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify([sessionId, revision, reason, entry]))
+    .digest("hex");
+}
+
 export interface OnboardMachineSnapshot {
   version: typeof MACHINE_SNAPSHOT_VERSION;
   state: OnboardMachineState;
   stateEnteredAt: string | null;
   revision: number;
+  recoveryReceipt?: SessionRecoveryReceipt;
 }
 
 export interface Session {
@@ -115,6 +149,10 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   /** Selected preference, retained even when a model-specific safeguard downgrades it. */
   toolDisclosure: ToolDisclosure;
+  /** Enables credential-free OTLP trace export to NemoClaw's fixed local collector boundary. */
+  observabilityEnabled: boolean;
+  /** True when observability was explicitly enabled or disabled for this resumable run. */
+  observabilityRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
@@ -186,6 +224,7 @@ export interface SessionUpdates {
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
+  observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
@@ -214,6 +253,8 @@ export interface DebugSessionSummary {
   compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   toolDisclosure: ToolDisclosure;
+  observabilityEnabled: boolean;
+  observabilityRequestedExplicitly: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
@@ -265,6 +306,15 @@ function readPositiveInteger(value: SessionJsonValue | undefined): number | null
 
 function readNonNegativeInteger(value: SessionJsonValue | undefined): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function readCanonicalIsoTimestamp(value: SessionJsonValue | undefined): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    return new Date(value).toISOString() === value ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 function readStringArray(value: SessionJsonValue | undefined): string[] | null {
@@ -334,14 +384,57 @@ function parseStepState(value: SessionJsonValue | undefined): StepState | null {
   };
 }
 
-function parseMachineSnapshot(value: SessionJsonValue | undefined): OnboardMachineSnapshot | null {
+function parseSessionRecoveryReceipt(
+  value: SessionJsonValue | undefined,
+  snapshotState: OnboardMachineState,
+  snapshotStateEnteredAt: string | null,
+  snapshotRevision: number,
+  sessionId: string,
+): SessionRecoveryReceipt | null {
+  if (!isObject(value)) return null;
+  const id = readString(value.id);
+  const reason = readString(value.reason);
+  const entry = readString(value.entry);
+  const appliedAt = readCanonicalIsoTimestamp(value.appliedAt);
+  const revision = readNonNegativeInteger(value.revision);
+  if (!id || !/^[a-f0-9]{64}$/.test(id)) return null;
+  if (reason !== "failed_terminal_snapshot" && reason !== "reopened_complete_snapshot") {
+    return null;
+  }
+  if (!entry || !isOnboardMachineState(entry) || isTerminalOnboardMachineState(entry)) return null;
+  if (
+    entry !== snapshotState ||
+    !appliedAt ||
+    appliedAt !== snapshotStateEnteredAt ||
+    revision !== snapshotRevision ||
+    id !== createSessionRecoveryReceiptId(sessionId, revision, reason, entry)
+  ) {
+    return null;
+  }
+  return { id, reason, entry, appliedAt, revision };
+}
+
+function parseMachineSnapshot(
+  value: SessionJsonValue | undefined,
+  sessionId: string,
+): OnboardMachineSnapshot | null {
   if (!isObject(value) || value.version !== MACHINE_SNAPSHOT_VERSION) return null;
   if (!isOnboardMachineState(value.state)) return null;
+  const stateEnteredAt = readString(value.stateEnteredAt);
+  const revision = readNonNegativeInteger(value.revision) ?? 0;
+  const recoveryReceipt = parseSessionRecoveryReceipt(
+    value.recoveryReceipt,
+    value.state,
+    stateEnteredAt,
+    revision,
+    sessionId,
+  );
   return {
     version: MACHINE_SNAPSHOT_VERSION,
     state: value.state,
-    stateEnteredAt: readString(value.stateEnteredAt),
-    revision: readNonNegativeInteger(value.revision) ?? 0,
+    stateEnteredAt,
+    revision,
+    ...(recoveryReceipt ? { recoveryReceipt } : {}),
   };
 }
 
@@ -440,13 +533,14 @@ function transitionMachineSnapshot(
 export function createSession(overrides: Partial<Session> = {}): Session {
   const now = new Date().toISOString();
   const startedAt = overrides.startedAt ?? now;
+  const sessionId = overrides.sessionId ?? `${Date.now()}-${randomUUID()}`;
   const steps = {
     ...defaultSteps(),
     ...(overrides.steps ?? {}),
   };
   const session: Session = {
     version: SESSION_VERSION,
-    sessionId: overrides.sessionId ?? `${Date.now()}-${randomUUID()}`,
+    sessionId,
     resumable: true,
     status: "in_progress",
     mode: overrides.mode ?? "interactive",
@@ -469,6 +563,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
+    observabilityEnabled: overrides.observabilityEnabled === true,
+    observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
@@ -483,7 +579,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
     machine:
-      parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
+      parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined, sessionId) ??
       createMachineSnapshot("init", startedAt),
     steps,
   };
@@ -513,6 +609,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
+    observabilityEnabled: data.observabilityEnabled === true,
+    observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
@@ -537,7 +635,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     }
   }
 
-  normalized.machine = parseMachineSnapshot(data.machine) ?? inferMachineSnapshot(normalized);
+  normalized.machine =
+    parseMachineSnapshot(data.machine, normalized.sessionId) ?? inferMachineSnapshot(normalized);
   preserveInvalidSessionToolDisclosure(data, normalized);
 
   return normalized;
@@ -1010,6 +1109,9 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.webSearchConfig = null;
   }
   assignSafeToolDisclosureUpdate(safe, updates.toolDisclosure);
+  if (typeof updates.observabilityEnabled === "boolean") {
+    safe.observabilityEnabled = updates.observabilityEnabled;
+  }
   if (updates.hermesToolGateways === null) {
     safe.hermesToolGateways = null;
   } else if (Array.isArray(updates.hermesToolGateways)) {
@@ -1247,6 +1349,65 @@ export function markStepFailedRecordOnly(stepName: string, message: string | nul
   return markStepFailedWithOptions(stepName, message, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
+/**
+ * Single synchronous terminal-failure owner for process-exit / backstop paths.
+ *
+ * Records exactly one failed transition and one terminal event pair for an
+ * interrupted step, replacing the legacy step-mutation escape hatch on the
+ * process-exit path. It is idempotent by construction: if the durable machine
+ * is already terminal (an in-band failure or a prior backstop already recorded
+ * the terminal event pair) it no-ops rather than recording a second failure, so the
+ * failed transition is validated and never doubled. Performs no
+ * sandbox/provider/policy effects.
+ */
+export function finalizeIncompleteOnboardStep(
+  stepName: string,
+  message: string | null = null,
+): Session | null {
+  const existing = loadSession();
+  if (!existing) return null;
+  if (isTerminalOnboardMachineState(existing.machine.state)) return existing;
+
+  let emitted = false;
+  const updatedSession = updateSession((session) => {
+    const step = session.steps[stepName];
+    if (!step) return session;
+    if (isTerminalOnboardMachineState(session.machine.state)) return session;
+    const now = new Date().toISOString();
+    // Guard the terminality invariant: only a legal <non-terminal> -> failed
+    // transition may be recorded here.
+    assertValidOnboardMachineTransition(session.machine.state, "failed");
+    step.status = "failed";
+    step.completedAt = null;
+    step.error = redactSensitiveText(message);
+    session.failure = sanitizeFailure({ step: stepName, message, recordedAt: now });
+    session.status = "failed";
+    transitionMachineSnapshot(session, "failed", now);
+    emitted = true;
+    return session;
+  });
+  if (emitted) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "state.failed",
+        session: updatedSession,
+        step: stepName,
+        error: message,
+      }),
+    );
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "onboard.failed",
+        session: updatedSession,
+        state: "failed",
+        step: stepName,
+        error: message,
+      }),
+    );
+  }
+  return updatedSession;
+}
+
 export function completeSession(updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
   let wasComplete = false;
@@ -1304,6 +1465,8 @@ export function summarizeForDebug(
     compatibleEndpointReasoning: session.compatibleEndpointReasoning,
     nimContainer: session.nimContainer,
     toolDisclosure: session.toolDisclosure,
+    observabilityEnabled: session.observabilityEnabled,
+    observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,

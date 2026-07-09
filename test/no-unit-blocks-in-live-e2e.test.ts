@@ -36,14 +36,14 @@ describe("live E2E unit-block guard", () => {
     const source = [
       'test("live case", async ({ host }) => {});',
       'test("live case with module helpers", async () => {});',
-      'test.skipIf(!shouldRunLiveE2E())("gated live case", async ({ sandbox }) => {});',
+      'test.skipIf(process.platform !== "linux")("gated live case", async ({ sandbox }) => {});',
     ].join("\n");
     expect(linesFlagged(source)).toEqual([]);
   });
 
-  it("does not flag gated wrappers or the shouldRunLiveE2E ternary", () => {
+  it("does not flag platform-gated wrappers or test aliases", () => {
     const source = [
-      "const liveTest = shouldRunLiveE2E() ? test : test.skip;",
+      'const liveTest = process.platform === "linux" ? test : test.skip;',
       'liveTest("a gated live case", async ({ host }) => {});',
       'openClawTest("openclaw live case", async ({ sandbox }) => {});',
       'describe.sequential("live targets", () => {',

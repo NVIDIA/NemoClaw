@@ -542,6 +542,7 @@ onboardSession.loadSession = () => ({
 credentials.prompt = async () => "";
 credentials.ensureApiKey = async () => {};
 process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
 const { setupNim } = require(${onboardPath});
 
 (async () => {
@@ -552,6 +553,7 @@ const { setupNim } = require(${onboardPath});
     "NEMOCLAW_PROVIDER_KEY",
     "NVIDIA_INFERENCE_API_KEY",
     "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
     "ANTHROPIC_API_KEY",
     "GEMINI_API_KEY",
     "COMPATIBLE_ANTHROPIC_API_KEY",
@@ -666,6 +668,7 @@ const { setupNim } = require(${onboardPath});
     "NEMOCLAW_PROVIDER",
     "NEMOCLAW_PROVIDER_KEY",
     "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
     "ANTHROPIC_API_KEY",
     "GEMINI_API_KEY",
     "COMPATIBLE_API_KEY",

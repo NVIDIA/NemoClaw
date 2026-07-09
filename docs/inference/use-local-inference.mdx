@@ -86,11 +86,15 @@ NemoClaw lists installed models or offers starter models if you have not install
 On hosts where the larger starter models fit the currently available GPU memory, the starter list includes `qwen3.6:35b` and selects it by default.
 When another GPU workload is using most of the memory at onboard time, NemoClaw downgrades the menu to the largest model that still fits.
 It pulls the selected model, loads it into memory, and validates it before continuing.
+<AgentOnly variant="openclaw">
 When Ollama reports a loaded-model context length, NemoClaw uses that value for the `contextWindow` baked into `openclaw.json` unless you set `NEMOCLAW_CONTEXT_WINDOW` yourself.
 If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
 The validation also requires structured chat-completions tool calls.
 If the model leaks tool-call JSON as plain message text, onboarding stops so you can choose a model that returns tool calls in the expected response field.
 If a host-side validation probe times out, NemoClaw retries the Ollama tool-call validation with a larger timeout before failing the setup.
+Each Ollama-backed OpenClaw agent passthrough checks the registered route to see whether the selected model is still loaded.
+If the daemon is reachable but the model is unloaded, NemoClaw sends a bounded warm-up request before dispatching to OpenClaw.
+</AgentOnly>
 On WSL, if you choose the Windows-host Ollama path, NemoClaw uses `host.docker.internal:11434` and pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
 
 ### WSL with Windows-Host Ollama
@@ -159,8 +163,8 @@ NemoClaw configures the sandbox provider to use proxy port `11435` with the gene
 OpenShell's L7 proxy injects the token at egress, so the agent inside the sandbox never sees the token directly.
 
 All proxy endpoints require the Bearer token, including `GET /api/tags`.
-Internal health and reachability checks that run through the proxy treat any HTTP response, including `401`, as proof the proxy is alive.
-They fail only when nothing answers at all.
+The host-side proxy liveness diagnostic is an auxiliary check; it treats an HTTP response such as `401` as proof that the proxy answered.
+Separately, the authoritative `status` and `doctor` route probe runs from inside the sandbox and reports HTTP `200` through `499` (including `401` and `403`) as `healthy`, HTTP `500` through `599` as `unhealthy`, and an interim `100` through `199`, `000`, a transport failure, or an unavailable probe as `unreachable` or `not probed`.
 
 If Ollama is already running on a non-loopback address when you start onboard, the wizard restarts it on `127.0.0.1:11434`.
 The proxy becomes the only network path to the model server.
@@ -194,8 +198,10 @@ After a selected model fails validation, NemoClaw excludes that tag from the nex
 On Windows on Arm N1X systems with a Snapdragon X processor, NemoClaw treats the integrated GPU as compute-constrained even when its shared-memory total appears large enough for a bigger model.
 Automatic Ollama bootstrap selection omits `qwen3.6:35b` and `nemotron-3-nano:30b` and selects `qwen3.5:9b` instead.
 This is a model-selection safeguard only.
+<AgentOnly variant="openclaw">
 It does not make 30B or 35B models usable on N1X, add a general refusal for an explicitly selected large model, or resolve the OpenClaw `1006` disconnect, embedded fallback, and model-timeout behavior tracked in [issue #3707](https://github.com/NVIDIA/NemoClaw/issues/3707).
 When Ollama reports a loaded-model context length below `16384` and `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw raises the baked `contextWindow` to `16384` so the agent prompt and tool definitions fit better than the stock daemon default.
+</AgentOnly>
 If the initial Ollama validation probe times out during a cold load, NemoClaw retries once with a 300-second probe budget.
 This applies beyond DGX Spark, including tight-VRAM dGPU hosts where warm-up can spill from GPU to CPU.
 
@@ -213,8 +219,11 @@ Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt th
 ## Compatible Local Servers
 
 Use **Other OpenAI-compatible endpoint** for vLLM, TensorRT-LLM, llama.cpp, LocalAI, NIM, SGLang, or another server that implements `/v1/chat/completions`.
-For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default because some local backends accept `/v1/responses` but drop system prompts or tool definitions.
+For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default.
+<AgentOnly variant="openclaw">
+This avoids local backends that accept `/v1/responses` but drop system prompts or tool definitions.
 Set `NEMOCLAW_PREFERRED_API=openai-responses` only after you have verified that the backend streams the events OpenClaw requires.
+</AgentOnly>
 
 Use this path when you already have a local server for a raw model file, such as a GGUF model served by `llama-server`.
 The Ollama picker accepts Ollama model tags, not a filesystem path to a `.gguf` file.
@@ -259,6 +268,9 @@ Press **Enter** to accept the profile default, or choose a numbered model from t
 For scripted runs, set `NEMOCLAW_VLLM_MODEL=<slug>` to choose a registry model without prompting.
 If the host reboots and the `nemoclaw-vllm` container is stopped, NemoClaw restarts the managed vLLM container during recovery instead of requiring a fresh onboarding run.
 NIM uses the same chat-completions API path restriction as vLLM.
+On Linux arm64 DGX Spark and DGX Station hosts, the wizard warns that some NIM images may not publish a `linux/arm64` manifest.
+The warning is advisory, so selecting Local NVIDIA NIM still attempts to pull and start the chosen image.
+If the registry reports that no matching platform manifest exists, select NVIDIA Endpoints, managed vLLM, or another provider with an image for the host architecture.
 
 On Linux Docker-driver GPU sandboxes, NemoClaw keeps local inference on the OpenShell bridge route and verifies `https://inference.local/v1/models` from inside the sandbox runtime after the sandbox reaches ready.
 It treats only a 2xx response as success because that path includes the proxy authentication rewrite the agent uses.
@@ -275,8 +287,9 @@ $$nemoclaw <name> status
 ```
 
 The output shows the provider label (for example, "Local vLLM" or "Other OpenAI-compatible endpoint") and the active model.
-For Local Ollama, status also checks the authenticated proxy when a proxy token is available.
-If `Inference` is healthy but `Inference (auth proxy)` is not, rerun onboarding to repair the proxy path that sandbox requests use.
+The main `Inference` line checks `inference.local` from inside the sandbox, which is the path agent requests use.
+For Local Ollama, status can also print an `Inference (auth proxy)` host-side diagnostic when a proxy token is available.
+If that diagnostic fails, rerun onboarding to recreate the proxy token and restart the proxy, even if the authoritative route is still responding.
 
 ## Switch Models at Runtime
 

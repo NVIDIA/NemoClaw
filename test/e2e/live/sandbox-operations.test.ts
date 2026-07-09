@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   assertExitZero as expectExitZero,
   outputContainsSandbox,
@@ -33,9 +34,6 @@ const SANDBOX_A = "e2e-sbx-a";
 const SANDBOX_B = "e2e-sbx-b";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
-const liveTest = process.env.NEMOCLAW_RUN_LIVE_E2E === "1" ? test : test.skip;
-
-type CleanupRegistry = { add(name: string, run: () => Promise<void> | void): void };
 
 async function onboardSandbox(
   host: HostCliClient,
@@ -45,7 +43,7 @@ async function onboardSandbox(
   hosted: HostedInferenceConfig,
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
-  cleanup.add(`destroy sandbox ${sandboxName}`, () => host.cleanupSandbox(sandboxName));
+  cleanup.trackSandbox(host, sandboxName);
   const result = await host.nemoclaw(
     ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
     {
@@ -589,7 +587,7 @@ async function assertGatewayRecovery(
   return recoveryOutcome;
 }
 
-liveTest(
+test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   async ({ artifacts, cleanup, docker, environment, host, sandbox, secrets }) => {
     const hosted = requireHostedInferenceConfig(secrets);

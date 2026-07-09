@@ -54,7 +54,7 @@ installRebuildFlowTestHooks();
  * matches it, and whose fake `openshell sandbox list` returns EMPTY — modelling
  * the stale state where the live gateway no longer knows the sandbox.
  */
-function createStaleFixture() {
+function createStaleFixture({ failSandboxCreate = false }: { failSandboxCreate?: boolean } = {}) {
   const sandboxName = "my-assistant";
   const provider = "nvidia-prod";
   const credentialEnv = "NVIDIA_INFERENCE_API_KEY";
@@ -139,6 +139,7 @@ const requiredFeatures = "request-body-credential-rewrite websocket-credential-r
 if (a[0]==="-V" || a[0]==="--version")       { process.stdout.write("openshell 0.0.72\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="create" && ${JSON.stringify(failSandboxCreate)}) { process.stderr.write("injected sandbox create failure\\n"); process.exit(1); }
 if (a[0]==="sandbox" && a[1]==="get")        { process.stderr.write("Error:   × Not Found: sandbox not found\\n"); process.exit(1); }
 if (a[0]==="status")                         { ${healthyTargetStatus} }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway Info\\n\\nGateway: ${targetGatewayName}\\nGateway endpoint: https://127.0.0.1:${targetGatewayPort}/\\n"); process.exit(0); }
@@ -349,11 +350,11 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     timeout: 90_000,
   }, () => {
     // Stale recovery removes the registry entry before the recreate (the
-    // recreate re-adds it on success). The fixture's onboard --resume cannot
-    // complete, so the recreate fails — the entry must be restored so the
+    // recreate re-adds it on success). Inject a sandbox-create failure so the
+    // recreate fails — the entry must be restored so the
     // recommended `rebuild --yes` stays retryable instead of failing at
     // dispatch with "not found in registry" (#4497).
-    const fixture = createStaleFixture();
+    const fixture = createStaleFixture({ failSandboxCreate: true });
     const result = runRebuild(fixture);
     const output = (result.stderr || "") + (result.stdout || "");
 

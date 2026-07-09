@@ -11,8 +11,19 @@ vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
 }));
 
+const registeredEntry = (name: string, overrides: Record<string, unknown> = {}) => ({
+  name,
+  provider: "provider",
+  model: "model",
+  endpointUrl: null,
+  credentialEnv: null,
+  preferredInferenceApi: "openai-completions" as const,
+  gatewayName: "nemoclaw",
+  ...overrides,
+});
+
 describe("handleSandboxState tool disclosure", () => {
-  it("does not claim an unregistered live sandbox as a managed legacy migration", async () => {
+  it("fails closed without claiming an unregistered live sandbox as a managed migration", async () => {
     const session = createSession({ sandboxName: "saved", toolDisclosure: "progressive" });
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
@@ -20,11 +31,13 @@ describe("handleSandboxState tool disclosure", () => {
       getSandboxRegistryEntry: () => null,
     });
 
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "saved",
-    });
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+      }),
+    ).rejects.toThrow("exit 1");
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();
@@ -48,12 +61,12 @@ describe("handleSandboxState tool disclosure", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: (name) => ({
-        name,
-        nemoclawVersion: "0.1.0",
-        toolDisclosure: recorded,
-        fromDockerfile: null,
-      }),
+      getSandboxRegistryEntry: (name) =>
+        registeredEntry(name, {
+          nemoclawVersion: "0.1.0",
+          toolDisclosure: recorded,
+          fromDockerfile: null,
+        }),
     });
 
     await handleSandboxState({
@@ -78,11 +91,11 @@ describe("handleSandboxState tool disclosure", () => {
       updateSession: vi.fn(
         (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
       ),
-      getSandboxRegistryEntry: (name) => ({
-        name,
-        nemoclawVersion: "0.1.0",
-        toolDisclosure: recordedMode,
-      }),
+      getSandboxRegistryEntry: (name) =>
+        registeredEntry(name, {
+          nemoclawVersion: "0.1.0",
+          toolDisclosure: recordedMode,
+        }),
     });
 
     await handleSandboxState({
@@ -107,7 +120,7 @@ describe("handleSandboxState tool disclosure", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: requestedMode },
+      { recreate: true, toolDisclosure: requestedMode, observabilityEnabled: false },
     );
   });
 
@@ -116,11 +129,11 @@ describe("handleSandboxState tool disclosure", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: (name) => ({
-        name,
-        nemoclawVersion: null,
-        fromDockerfile: "/tmp/Dockerfile.custom",
-      }),
+      getSandboxRegistryEntry: (name) =>
+        registeredEntry(name, {
+          nemoclawVersion: null,
+          fromDockerfile: "/tmp/Dockerfile.custom",
+        }),
     });
 
     await handleSandboxState({
@@ -141,23 +154,23 @@ describe("handleSandboxState tool disclosure", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: (name) => ({
-        name,
-        nemoclawVersion: "0.1.0",
-        mcp: {
-          version: 1,
-          bridges: {
-            fake: {
-              server: "fake",
-              agent: "openclaw",
-              url: "https://mcp.example.test",
-              env: [],
-              policyName: "mcp-bridge-fake",
-              addedAt: "2026-07-03T00:00:00.000Z",
+      getSandboxRegistryEntry: (name) =>
+        registeredEntry(name, {
+          nemoclawVersion: "0.1.0",
+          mcp: {
+            version: 1,
+            bridges: {
+              fake: {
+                server: "fake",
+                agent: "openclaw",
+                url: "https://mcp.example.test",
+                env: [],
+                policyName: "mcp-bridge-fake",
+                addedAt: "2026-07-03T00:00:00.000Z",
+              },
             },
           },
-        },
-      }),
+        }),
     });
 
     await handleSandboxState({

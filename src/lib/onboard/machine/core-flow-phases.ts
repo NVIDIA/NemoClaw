@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../inference/web-search";
+import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
 import {
   mergeProviderModelSelectedContext,
   mergeSandboxCreatedContext,
@@ -25,6 +26,7 @@ export interface CoreOnboardFlowPhaseOptions<
   MessagingChannelConfig = unknown,
   ResourceProfile = unknown,
 > {
+  gatewayName: string;
   forceProviderSelection: boolean;
   forceInferenceSetup?: boolean;
   authoritativeResumeConfig?: boolean;
@@ -33,6 +35,9 @@ export interface CoreOnboardFlowPhaseOptions<
   providerDeps: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["deps"];
   sandbox: {
     resumeAgentChanged: boolean;
+    requestedObservabilityEnabled?: boolean | null;
+    requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
+    authoritativePolicyTier?: string | null;
     controlUiPort: number | null;
     rootDir: string;
   };
@@ -56,6 +61,7 @@ export function createCoreOnboardFlowPhases<
 ): [OnboardSequencePhase<Context>, OnboardSequencePhase<Context>] {
   const providerInferencePhase = createProviderInferencePhase<Context>(async (context) => {
     const providerInferenceResult = await handleProviderInferenceState({
+      gatewayName: options.gatewayName,
       resume: context.resume,
       fresh: context.fresh,
       session: context.session,
@@ -106,8 +112,12 @@ export function createCoreOnboardFlowPhases<
     const sandboxStateResult = await handleSandboxState({
       resume: context.resume,
       fresh: context.fresh,
+      gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
+      authoritativePolicyTier: options.sandbox.authoritativePolicyTier,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
+      requestedObservabilityEnabled: options.sandbox.requestedObservabilityEnabled,
+      requestedDcodeAutoApprovalMode: options.sandbox.requestedDcodeAutoApprovalMode,
       session: context.session,
       sandboxName: context.sandboxName,
       model: context.model,

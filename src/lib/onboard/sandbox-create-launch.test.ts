@@ -86,6 +86,7 @@ describe("prepareSandboxCreateLaunch", () => {
     expect(result.createCommand).toBe(
       `openshell sandbox create --from /tmp/build/Dockerfile --name demo -- ${result.sandboxStartupCommand.join(" ")} 2>&1`,
     );
+    expect(result.createArgv).toEqual(["bash", "-lc", result.createCommand]);
   });
 
   it("forwards only the allowlisted OpenClaw auto-pair runtime controls", () => {
@@ -169,8 +170,12 @@ describe("prepareSandboxCreateLaunch", () => {
     });
 
     expect(result.effectiveDashboardPort).toBe("0");
-    expect(result.envArgs).toEqual([]);
-    expect(result.sandboxStartupCommand).toEqual(["env", "nemoclaw-start"]);
+    expect(result.envArgs).toEqual(["NEMOCLAW_OBSERVABILITY=0"]);
+    expect(result.sandboxStartupCommand).toEqual([
+      "env",
+      "NEMOCLAW_OBSERVABILITY=0",
+      "nemoclaw-start",
+    ]);
   });
 
   it("drops credential-bearing proxy URLs from Deep Agents Code sandbox create env", () => {
@@ -252,6 +257,7 @@ describe("prepareSandboxCreateLaunch", () => {
         getDashboardForwardPort: () => "19000",
         hermesDashboardState: disabledHermesDashboardState,
         openshellShellCommand: helpers.openshellShellCommand,
+        openshellArgv: helpers.openshellArgv,
         buildEnv: () => ({}),
       });
 
@@ -275,6 +281,7 @@ describe("prepareSandboxCreateLaunch", () => {
       expect(fs.existsSync(injectedFromPath)).toBe(false);
       expect(fs.existsSync(injectedUrlPath)).toBe(false);
       expect(fs.existsSync(injectedProxyPath)).toBe(false);
+      expect(result.createArgv).toEqual([fakeOpenshell, ...capturedArgs]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

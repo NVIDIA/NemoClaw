@@ -82,7 +82,10 @@ export class OnboardRuntimeBoundary {
   }
 
   async recordOnboardStarted(resumed: boolean): Promise<Session> {
-    return this.getRuntime().start({ resumed });
+    const runtime = this.getRuntime();
+    const session = await runtime.start({ resumed });
+    await runtime.emitPendingSessionRecovery();
+    return session;
   }
 
   async startRecordedStep(

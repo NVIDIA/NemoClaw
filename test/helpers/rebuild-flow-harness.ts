@@ -94,6 +94,8 @@ export type RebuildFlowOverrides = {
   sessionSandboxName?: string;
   sandboxListOutput?: string;
   backupPolicyPresets?: string[];
+  gatewayPresets?: string[];
+  verificationUnavailableAfterPresetRemoval?: boolean;
   preDeleteSandboxEntry?: Record<string, unknown>;
   preDeleteDefaultSandbox?: string | null;
   preDeleteLatestManifest?: Record<string, unknown> | null;
@@ -132,13 +134,14 @@ export type RebuildFlowHarness = {
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
-  markStepFailedSpy: MockInstance;
+  finalizeIncompleteOnboardStepSpy: MockInstance;
   openShieldsSpy: MockInstance;
   onboardSpy: MockInstance;
   preflightAuthoritativeRebuildTargetSpy: MockInstance;
   preflightMessagingConflictsSpy: MockInstance;
   preflightDcodeRouteSpy: MockInstance;
   prepareManagedDcodeRebuildImageSpy: MockInstance;
+  removePresetSpy: MockInstance;
   removeSandboxRegistryEntrySpy: MockInstance;
   registryUpdateSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
@@ -226,15 +229,18 @@ function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSe
 }
 
 function installTerminalStepFailureMock(
-  onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
+  onboardSession: { finalizeIncompleteOnboardStep: (...args: unknown[]) => unknown },
   session: RebuildFlowSession,
 ): MockInstance {
   return vi
-    .spyOn(onboardSession, "markStepFailed")
-    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
+    .spyOn(onboardSession, "finalizeIncompleteOnboardStep")
+    .mockImplementation((stepName: unknown, message: unknown) => {
+      if (session.machine.state === "failed" || session.machine.state === "complete") {
+        return session;
+      }
       const stepKey = String(stepName);
-      const step = session.steps[stepKey] ?? createStep("pending");
-      session.steps[stepKey] = step;
+      const step = session.steps[stepKey];
+      if (!step) return session;
       step.status = "failed";
       step.error = typeof message === "string" ? message : null;
       session.status = "failed";
@@ -243,10 +249,8 @@ function installTerminalStepFailureMock(
         message: typeof message === "string" ? message : null,
         recordedAt: "2026-06-01T00:02:00.000Z",
       };
-      const updateMachine =
-        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
-      session.machine.state = updateMachine ? "failed" : session.machine.state;
-      session.machine.revision += updateMachine ? 1 : 0;
+      session.machine.state = "failed";
+      session.machine.revision += 1;
       return session;
     });
 }
@@ -326,7 +330,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const releaseOnboardLockSpy = vi
     .spyOn(onboardSession, "releaseOnboardLock")
     .mockImplementation(() => undefined);
-  const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
+  const finalizeIncompleteOnboardStepSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
   const sandboxEntry = {
     name: "alpha",
@@ -430,6 +434,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     failedDirs: [],
     failedFiles: [],
     manifest: {
+      agentType: overrides.agentName ?? "openclaw",
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       timestamp: "2026-06-01T00:00:00.000Z",
       policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
@@ -450,16 +455,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(
     overrides.managedImageEvidence ?? true,
   );
-  const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
-    overrides.restoreSandboxState ??
-      (() => ({
-        success: true,
-        restoredDirs: ["workspace"],
-        restoredFiles: ["user.md"],
-        failedDirs: [],
-        failedFiles: [],
-      })),
-  );
+  const restoreSandboxStateSpy = vi
+    .spyOn(sandboxState, "restoreRecreatedSandboxState")
+    .mockImplementation(
+      overrides.restoreSandboxState ??
+        (() => ({
+          success: true,
+          restoredDirs: ["workspace"],
+          restoredFiles: ["user.md"],
+          failedDirs: [],
+          failedFiles: [],
+        })),
+    );
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
     return argv[0] === "provider" && argv[1] === "get"
@@ -496,15 +503,77 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         (options ?? {}) as Record<string, unknown>,
       );
     });
+  const livePolicyPresets = new Set(overrides.gatewayPresets ?? []);
+  const managedObservabilityPreset = "observability-otlp-local";
+  const managedObservabilityContent =
+    "network_policies:\n  observability-otlp-local:\n    name: observability-otlp-local\n";
+  let liveManagedObservabilityContent = livePolicyPresets.has(managedObservabilityPreset)
+    ? managedObservabilityContent
+    : null;
+  let policyRemovalObserved = false;
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
     .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
       const normalizedPresetName = String(presetName);
-      if (overrides.applyPreset) return overrides.applyPreset(normalizedPresetName);
-      if (normalizedPresetName === "throw") throw new Error("preset boom");
-      return normalizedPresetName === "npm";
+      let applied: boolean;
+      if (overrides.applyPreset) {
+        applied = overrides.applyPreset(normalizedPresetName);
+      } else if (normalizedPresetName === "throw") {
+        throw new Error("preset boom");
+      } else {
+        applied = normalizedPresetName === "npm";
+      }
+      if (applied) {
+        livePolicyPresets.add(normalizedPresetName);
+        if (normalizedPresetName === managedObservabilityPreset) {
+          liveManagedObservabilityContent = managedObservabilityContent;
+        }
+      }
+      return applied;
     });
-  const applyPresetContentSpy = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
+  const applyPresetContentSpy = vi
+    .spyOn(policies, "applyPresetContent")
+    .mockImplementation((_sandboxName: unknown, presetName: unknown, presetContent: unknown) => {
+      livePolicyPresets.add(String(presetName));
+      const content = String(presetContent);
+      if (policies.parsePresetPolicyKeys(content).includes(managedObservabilityPreset)) {
+        liveManagedObservabilityContent = content;
+      }
+      return true;
+    });
+  vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
+    (_sandboxName: unknown, presetName: unknown) =>
+      String(presetName) === managedObservabilityPreset ? managedObservabilityContent : null,
+  );
+  vi.spyOn(policies, "getPresetContentGatewayState").mockImplementation(
+    (_sandboxName: unknown, presetContent: unknown) => {
+      if (overrides.verificationUnavailableAfterPresetRemoval && policyRemovalObserved) return null;
+      const content = String(presetContent);
+      if (!policies.parsePresetPolicyKeys(content).includes(managedObservabilityPreset)) {
+        return "absent";
+      }
+      if (liveManagedObservabilityContent === null) return "absent";
+      return liveManagedObservabilityContent === content ? "match" : "drift";
+    },
+  );
+  vi.spyOn(policies, "getGatewayPresets").mockImplementation(() =>
+    overrides.verificationUnavailableAfterPresetRemoval && policyRemovalObserved
+      ? null
+      : [...livePolicyPresets],
+  );
+  const removePresetSpy = vi
+    .spyOn(policies, "removePreset")
+    .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
+      const removed = livePolicyPresets.delete(String(presetName));
+      if (
+        String(presetName) === managedObservabilityPreset &&
+        liveManagedObservabilityContent === managedObservabilityContent
+      ) {
+        liveManagedObservabilityContent = null;
+      }
+      if (removed) policyRemovalObserved = true;
+      return removed;
+    });
   const executeSandboxCommandSpy = vi
     .spyOn(processRecovery, "executeSandboxCommand")
     .mockImplementation(
@@ -562,13 +631,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
-    markStepFailedSpy,
+    finalizeIncompleteOnboardStepSpy,
     openShieldsSpy,
     onboardSpy,
     preflightAuthoritativeRebuildTargetSpy,
     preflightMessagingConflictsSpy,
     preflightDcodeRouteSpy,
     prepareManagedDcodeRebuildImageSpy,
+    removePresetSpy,
     removeSandboxRegistryEntrySpy,
     registryUpdateSpy,
     releaseOnboardLockSpy,

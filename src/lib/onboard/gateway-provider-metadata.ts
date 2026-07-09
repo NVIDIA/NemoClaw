@@ -153,10 +153,14 @@ export function parseGatewayProviderMetadata(output: string): GatewayProviderMet
 export function readGatewayProviderMetadata(
   name: string,
   runOpenshell: GatewayProviderRunner,
+  gatewayName?: string | null,
 ): GatewayProviderMetadata | null {
   if (!isSafeIdentifier(name, MAX_PROVIDER_NAME_LENGTH)) return null;
 
-  const result = runOpenshell(["provider", "get", name], {
+  const args = ["provider", "get"];
+  if (gatewayName) args.push("-g", gatewayName);
+  args.push(name);
+  const result = runOpenshell(args, {
     ignoreError: true,
     suppressOutput: true,
     stdio: ["ignore", "pipe", "pipe"],

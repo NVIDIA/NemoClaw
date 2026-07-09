@@ -6,11 +6,16 @@
 
 set -euo pipefail
 unset BASH_ENV ENV
+while IFS= read -r _nemoclaw_auto_approval_env; do
+  unset "$_nemoclaw_auto_approval_env"
+done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
+unset _nemoclaw_auto_approval_env
 
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export LANGGRAPH_NO_VERSION_CHECK=true
+export LANGGRAPH_CLI_NO_ANALYTICS=1
 export OTEL_ENABLED=false
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_LANGSMITH_TRACING=false
@@ -113,6 +118,14 @@ fi
 
 _PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
 _NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
+# Deep Agents Code 0.1.34 intentionally ignores environment proxies in
+# fetch_url so it can pin direct DNS results against rebinding. OpenShell's
+# sandbox instead requires all ordinary egress, including DNS resolution for a
+# destination, to stay behind its policy proxy. This explicit variable opts the
+# managed package patch into that trusted proxy boundary without teaching the
+# upstream tool to trust arbitrary ambient HTTP_PROXY values. It is derived
+# only from the root-owned image files validated above.
+export DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL="$_PROXY_URL"
 export HTTP_PROXY="$_PROXY_URL"
 export HTTPS_PROXY="$_PROXY_URL"
 export NO_PROXY="$_NO_PROXY_VAL"
@@ -136,6 +149,7 @@ prepare_runtime_env() {
     printf '%s\n' 'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"'
     printf '%s\n' 'export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1'
     printf '%s\n' 'export LANGGRAPH_NO_VERSION_CHECK=true'
+    printf '%s\n' 'export LANGGRAPH_CLI_NO_ANALYTICS=1'
     printf '%s\n' 'export OTEL_ENABLED=false'
     printf '%s\n' 'export DEEPAGENTS_CODE_AUTO_UPDATE=0'
     printf '%s\n' 'export DEEPAGENTS_CODE_LANGSMITH_TRACING=false'
@@ -148,6 +162,9 @@ prepare_runtime_env() {
     printf '%s\n' 'export LANGCHAIN_TRACING_V2=false'
     printf '%s\n' 'export DEEPAGENTS_CODE_OFFLINE=1'
     printf '%s\n' 'export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system'
+    # Intentionally omit the trusted proxy when unset: its absence signals
+    # unmanaged mode, where the upstream fetch transport remains authoritative.
+    write_export_if_set DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL
     # shellcheck disable=SC2016
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'
     # shellcheck disable=SC2016
@@ -176,7 +193,56 @@ prepare_runtime_env() {
   mv -f "$tmp" "$target"
 }
 
+prepare_observability_marker() {
+  local marker_dir=/sandbox/.deepagents
+  local target="${marker_dir}/.nemoclaw-observability-enabled"
+  local tmp
+
+  # OpenShell policy replacement can reset the sandbox's ephemeral /tmp while
+  # preserving its /sandbox workspace. Keep this credential-free convenience
+  # bit with the managed DCode state so independent exec/login shells retain
+  # the host-selected observability setting across policy updates. Reject a
+  # symlinked state directory before creating a same-directory temporary file;
+  # the marker remains non-authoritative and the network policy controls OTLP.
+  if [ -L "$marker_dir" ] || { [ -e "$marker_dir" ] && [ ! -d "$marker_dir" ]; }; then
+    printf '%s\n' 'Unsafe managed Deep Agents Code state directory.' >&2
+    return 1
+  fi
+  if [ -d "$marker_dir" ] \
+    && { [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; }; then
+    printf '%s\n' 'Unsafe managed observability marker target.' >&2
+    return 1
+  fi
+
+  # Policy replacement restarts the entrypoint without the sandbox-create
+  # environment. Absent therefore preserves the validated durable state;
+  # NemoClaw create/rebuild paths pass an explicit authoritative 1 or 0.
+  if [ -z "${NEMOCLAW_OBSERVABILITY+x}" ]; then
+    return 0
+  fi
+  if [ "$NEMOCLAW_OBSERVABILITY" != "1" ]; then
+    [ -d "$marker_dir" ] || return 0
+    rm -f "$target"
+    return 0
+  fi
+  mkdir -p "$marker_dir"
+  if [ -L "$marker_dir" ] || [ ! -d "$marker_dir" ]; then
+    printf '%s\n' 'Unsafe managed Deep Agents Code state directory.' >&2
+    return 1
+  fi
+  if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+    printf '%s\n' 'Unsafe managed observability marker target.' >&2
+    return 1
+  fi
+
+  tmp="$(mktemp "${target}.XXXXXX")"
+  printf '%s\n' '1' >"$tmp"
+  chmod 444 "$tmp"
+  mv -f "$tmp" "$target"
+}
+
 prepare_runtime_env
+prepare_observability_marker
 
 # With no command, this invocation IS the sandbox's long-running entrypoint.
 # Deep Agents Code is a terminal-runtime agent invoked on demand via

@@ -7,7 +7,6 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   latestRebuildBackupDir,
   listCredentialLeakPaths,
@@ -65,7 +64,7 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-test.skipIf(!shouldRunLiveE2E())(
+test(
   "sandbox-rebuild: rebuild preserves marker state and refreshes registry metadata",
   async ({
     artifacts,

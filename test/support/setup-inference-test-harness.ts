@@ -6,7 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { vi } from "vitest";
-import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
+import {
+  createGatewayScopedOpenshellRunner,
+  type SetupInference,
+  type SetupInferenceDeps,
+} from "../../src/lib/onboard/setup-inference.js";
 
 const onboardProviderHelpers = require("../../src/lib/onboard/providers") as {
   upsertProvider: (
@@ -17,6 +21,7 @@ const onboardProviderHelpers = require("../../src/lib/onboard/providers") as {
     env: Record<string, string | undefined>,
     runOpenshell: DirectRunOpenshell,
   ) => { ok: boolean; status?: number; message?: string };
+  providerExistsInGateway: (name: string, runOpenshell: DirectRunOpenshell) => boolean;
 };
 const localInferenceModule =
   require("../../src/lib/inference/local") as typeof import("../../src/lib/inference/local.js");
@@ -175,10 +180,16 @@ const setupCredentialBefore = process.env[credentialEnv] || null;
       /^provider (create|update) /.test(argv.join(" ")),
     );
     if (!providerCommand) throw new Error("Production setupInference did not mutate a provider");
-    const unscopedPatterns = [/^gateway select /, /^provider get /, /^inference set /];
-    const unscopedCommands = unscopedPatterns
-      .map((pattern) => commands.find(({ argv }) => pattern.test(argv.join(" "))))
-      .filter((command): command is ProductionOpenshellCommandRecord => command !== undefined);
+    const unscopedCommands = commands.filter(({ argv }) => {
+      if (argv[0] === "gateway" && argv[1] === "select") return true;
+      if (argv[0] !== "provider" && argv[0] !== "inference") return false;
+      return (
+        !argv.some(
+          (arg, index) =>
+            (arg === "-g" || arg === "--gateway") && typeof argv[index + 1] === "string",
+        ) && !argv.some((arg) => arg.startsWith("--gateway="))
+      );
+    });
     const containsSecret = ({ env }: ProductionOpenshellCommandRecord) =>
       Object.values(env).some((value) => value.includes(options.credentialValue));
     const credentialEvidence = {
@@ -271,6 +282,7 @@ export function createDirectSetupInferenceHarnessFactory(
       return directRunResult(options.runOpenshell?.(args, runOptions, commands));
     };
     const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: () => ({ ok: true }),
       step: () => {},
       getGatewayName: () => "nemoclaw",
       runOpenshell,
@@ -279,18 +291,24 @@ export function createDirectSetupInferenceHarnessFactory(
         type: string,
         credentialEnv: string,
         baseUrl: string | null,
-        env: Record<string, string | undefined> = {},
+        env: Record<string, string | undefined> | undefined,
+        gatewayName: string,
       ) =>
         onboardProviderHelpers.upsertProvider(
           name,
           type,
           credentialEnv,
           baseUrl,
-          env,
-          runOpenshell,
+          env ?? {},
+          createGatewayScopedOpenshellRunner(runOpenshell, gatewayName),
         ),
       verifyInferenceRoute,
       verifyOnboardInferenceSmoke,
+      providerExistsInGateway: (name: string, gatewayName: string) =>
+        onboardProviderHelpers.providerExistsInGateway(
+          name,
+          createGatewayScopedOpenshellRunner(runOpenshell, gatewayName),
+        ),
       isNonInteractive: () => false,
       updateSandbox,
       resolveHermesNousApiKey: () => process.env.NOUS_API_KEY || null,
@@ -300,6 +318,9 @@ export function createDirectSetupInferenceHarnessFactory(
       },
       hydrateCredentialEnv: (envName: string | null | undefined) =>
         envName ? process.env[envName] || null : null,
+      // Direct setup tests use documentation-only hostnames and intentionally
+      // bypass the selection phase that normally supplies validated pins.
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
       promptValidationRecovery: async () => "selection",
       validateLocalProvider: () => ({ ok: true }),
       getLocalProviderHealthCheck: () => null,

@@ -30,6 +30,7 @@
  * real sandbox image and is gated behind NEMOCLAW_RUN_DOCTOR_PERMS_DOCKER_E2E=1.
  */
 
+import assert from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -50,16 +51,28 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 /**
  * Extract the literal guard block emitted into /tmp/nemoclaw-proxy-env.sh — the
  * region between `# nemoclaw-configure-guard begin` and `# nemoclaw-configure-
- * guard end`. The block lives inside a single-quoted heredoc, so what the test
- * sources is byte-identical to what a connect shell sources at runtime.
+ * guard end`. Most of the block lives inside single-quoted heredocs, while the
+ * trusted gateway URL is generated between them. Materialize that generated
+ * line so the test sources the same shell a connect session receives.
  */
-function extractGuardBlock(src: string): string {
+function extractGuardBlock(src: string, trustedGatewayUrl = "ws://127.0.0.1:18789"): string {
   const begin = src.indexOf("# nemoclaw-configure-guard begin");
   const end = src.indexOf("# nemoclaw-configure-guard end");
   if (begin < 0 || end < 0 || end < begin) {
     throw new Error("Expected nemoclaw-configure-guard begin/end markers in nemoclaw-start.sh");
   }
-  return src.slice(begin, src.indexOf("\n", end) + 1);
+  const guardSource = src.slice(begin, src.indexOf("\n", end) + 1);
+  const injectionStartMarker =
+    "GUARDENVEOF\n    # nemoclaw-trusted-gateway-literal-injection begin";
+  const injectionEndMarker =
+    "    # nemoclaw-trusted-gateway-literal-injection end\n    cat <<'GUARDENVEOF'\n";
+  const injectionStart = guardSource.indexOf(injectionStartMarker);
+  const injectionEnd = guardSource.indexOf(injectionEndMarker, injectionStart);
+  assert(
+    injectionStart !== -1 && injectionEnd !== -1,
+    "Expected the generated trusted gateway literal injection markers",
+  );
+  return `${guardSource.slice(0, injectionStart)}            _nemoclaw_whatsapp_trusted_url=${JSON.stringify(trustedGatewayUrl)}\n${guardSource.slice(injectionEnd + injectionEndMarker.length)}`;
 }
 
 function modeBits(filePath: string): number {

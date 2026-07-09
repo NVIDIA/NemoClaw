@@ -10,6 +10,7 @@ import { RD as _RD, R } from "../../cli/terminal-style";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
 import type { WebSearchConfig } from "../../inference/web-search";
+import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   getResumeSandboxGpuOverrides,
@@ -48,6 +49,7 @@ export type PreparedDcodeReplacement = {
   readonly buildContext: PreparedDcodeRebuildImage;
   readonly gatewayName: string;
   readonly toolDisclosure: ToolDisclosure;
+  readonly dcodeAutoApprovalMode: DcodeAutoApprovalMode;
   dispose(): boolean;
   verify(): boolean;
 };
@@ -57,6 +59,7 @@ export type DcodeReplacementPreflightInput = {
   entry: RebuildSandboxEntry;
   resumeConfig: RebuildResumeConfig;
   toolDisclosure: ToolDisclosure;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode;
   skipLiveRoute: boolean;
   /** Authoritative persisted gateway port carried by the rebuild target. */
   gatewayPort?: number;
@@ -390,6 +393,7 @@ export async function prepareDcodeReplacementBeforeMutation(
         compatibleEndpointReasoning: resumeConfig.compatibleEndpointReasoning,
         webSearchConfig,
         toolDisclosure: input.toolDisclosure,
+        dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,
         sandboxGpuConfig,
         gatewayPort,
       }),
@@ -413,6 +417,7 @@ export async function prepareDcodeReplacementBeforeMutation(
       buildContext: preparedBuildContext,
       gatewayName: target.gatewayName,
       toolDisclosure: input.toolDisclosure,
+      dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,
       dispose: () => disposePreparation(preparedBuildContext, preparedBase),
       verify: () => verifyPreparedDcodeRebuildImage(preparedBuildContext) && preparedBase.verify(),
     };
@@ -435,6 +440,9 @@ export async function revalidateDcodeReplacementAtMutationEdge(
   }
   if (replacement.toolDisclosure !== input.toolDisclosure) {
     fail("the prepared DCode tool-disclosure mode changed before deletion", bail);
+  }
+  if (replacement.dcodeAutoApprovalMode !== input.dcodeAutoApprovalMode) {
+    fail("the prepared DCode auto-approval mode changed before deletion", bail);
   }
   if (!(await ensureDcodeRebuildTargetGatewaySelected(sandboxName, entry, log, bail))) {
     return false;

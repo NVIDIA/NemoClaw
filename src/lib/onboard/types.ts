@@ -56,6 +56,12 @@ export type ModelValidationResult = ModelValidationSuccess | ModelValidationFail
 export interface SandboxCreateIntent {
   readonly recreate: boolean;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
+  readonly observabilityEnabled: boolean;
+  /** Present only when the operator explicitly selected observability on or off. */
+  readonly observabilityRequestedExplicitly?: true;
+  readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
+  /** Internal authoritative rebuild tier used before replacement registration completes. */
+  readonly policyTier?: string | null;
 }
 
 export type OnboardOptions = {
@@ -85,6 +91,12 @@ export type OnboardOptions = {
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;
+  observabilityEnabled?: boolean | null;
+  /** Internal provenance for an authoritative observability value. */
+  observabilityRequestedExplicitly?: boolean;
+  dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode | null;
+  /** Internal authoritative rebuild tier; never exposed as an onboard CLI option. */
+  policyTier?: string | null;
   controlUiPort?: number | null;
   gpu?: boolean;
   noGpu?: boolean;

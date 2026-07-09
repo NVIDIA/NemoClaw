@@ -10,7 +10,6 @@ import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clie
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 import {
   classifyIssue4434AcceptanceFields,
@@ -18,6 +17,7 @@ import {
   hasFullIssue4434Diagnostics,
   stripTerminalControl,
 } from "../support/issue-4434-tui-capture.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // This remains a privileged opt-in live repro: it onboards a real cloud
 // OpenClaw sandbox, installs temporary DOCKER-USER DROP rules for the NVIDIA
@@ -29,7 +29,6 @@ import {
 // helpers. Keep the route provider/model assertion and direct `inference.local`
 // pre-block probe so a status result of "not probed" cannot weaken the precondition.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4434-tui-unreachable";
@@ -58,7 +57,7 @@ const ERROR_STATUS_RE = /\|\s*error\b/i;
 const HOSTED_INFERENCE_IS_GATEWAY_MANAGED = isGatewayManagedCompatibleInference();
 
 const runIssue4434LiveTest =
-  shouldRunLiveE2E() && process.env.NEMOCLAW_ISSUE_4434_LIVE === "1"
+  process.env.NEMOCLAW_ISSUE_4434_LIVE === "1"
     ? test.skipIf(HOSTED_INFERENCE_IS_GATEWAY_MANAGED)
     : test.skip;
 

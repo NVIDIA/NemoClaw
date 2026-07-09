@@ -4,6 +4,7 @@
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
+import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { createRebuildProviderReconfigureHandoff } from "../../onboard/rebuild-route-handoff";
 import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as registry from "../../state/registry";
@@ -50,6 +51,8 @@ export async function prepareRebuildTargetPreflights(args: {
   rebuildAgent: string | null;
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode;
+  requestedObservabilityEnabled?: boolean;
   allowLegacyManagedImageRecovery?: boolean;
   preparedBackupRecovery?: boolean;
   log: RebuildLog;
@@ -61,6 +64,8 @@ export async function prepareRebuildTargetPreflights(args: {
     rebuildAgent,
     autoYes,
     requestedToolDisclosure,
+    requestedDcodeAutoApprovalMode,
+    requestedObservabilityEnabled,
     allowLegacyManagedImageRecovery,
     preparedBackupRecovery,
     log,
@@ -78,6 +83,7 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
     requestedToolDisclosure,
     allowLegacyManagedImageRecovery,
+    requestedDcodeAutoApprovalMode,
   );
   if (!targetConfig) return null;
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;
@@ -98,6 +104,12 @@ export async function prepareRebuildTargetPreflights(args: {
   // session. Use that authoritative value for both preflight and inner onboard,
   // never the raw registry fallback used while constructing generic options.
   recreateOptions.toolDisclosure = durableConfig.toolDisclosure;
+  recreateOptions.dcodeAutoApprovalMode = durableConfig.dcodeAutoApprovalMode;
+  recreateOptions.dcodeAutoApprovalRequestedExplicitly =
+    requestedDcodeAutoApprovalMode !== undefined;
+  recreateOptions.observabilityEnabled =
+    requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
+  recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,

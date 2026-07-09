@@ -9,9 +9,16 @@ keywords: ["nemoclaw host files", "nemoclaw state directory", "nemoclaw sandboxe
 content:
   type: "reference"
 ---
+import { AgentOnly } from "../_components/AgentGuide";
+
 
 NemoClaw stores host-side configuration, credentials, registry metadata, transient install state, and local backups under `~/.nemoclaw/`.
 Use this page when you need to identify what a file does before deleting, backing up, or sharing diagnostics.
+
+<AgentOnly variant="deepagents">
+The `nemo-deepagents` alias uses the same host-side `~/.nemoclaw/` configuration, credential registry, sandbox registry, backup, and mount directories as the default NemoClaw CLI.
+Deep Agents-specific runtime state lives inside the sandbox under `/sandbox/.deepagents`, not in a separate host state root.
+</AgentOnly>
 
 <Warning>
 Do not paste `credentials.json`, provider tokens, bot tokens, proxy tokens, or debug archives containing them into chat or issue comments.
@@ -44,7 +51,25 @@ If you see `registry.json` in older tests, notes, or discussions, treat it as le
 
 `$$nemoclaw uninstall --yes` removes active NemoClaw runtime resources but preserves the user data needed for recovery by default.
 Preserved entries include `rebuild-backups/`, `backups/`, and `sandboxes.json`.
+Preserved `sandboxes.json` records are not automatically recoverable after reinstall, because uninstall removes the gateway registration, provider registrations, and Docker image they reference; uninstall warns about this at preserve time, and a later reinstall reports such records as not found on their recorded gateway with `$$nemoclaw <name> destroy` / `$$nemoclaw onboard` remediation.
 Interactive uninstall prompts before removing preserved state.
 For non-interactive runs, pass `--destroy-user-data` only when you accept losing local registry metadata and backups.
 
-For operational uninstall steps, refer to [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle#uninstall).
+For operational uninstall steps, refer to:
+
+<AgentOnly variant="openclaw">
+
+- [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle#uninstall).
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle#uninstall).
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+- [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle#uninstall) for the generic uninstall flow.
+- [Backup and Restore](../manage-sandboxes/backup-restore) before removing state you may need later.
+
+</AgentOnly>

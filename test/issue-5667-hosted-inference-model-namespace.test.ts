@@ -124,7 +124,7 @@ function writeFakeDeepAgentsCodeModule(tmpDir: string): string {
       'match = re.search(r\'^default = "openai:([^"]+)"\', text, re.MULTILINE)',
       "if not match:",
       '    raise SystemExit("missing default model")',
-      'print(f"App: v0.1.30 | Agent: agent (default) | Model: {match.group(1)}")',
+      'print(f"App: v0.1.34 | Agent: agent (default) | Model: {match.group(1)}")',
       'print("ARGS:" + " ".join(sys.argv[1:]))',
     ].join("\n"),
     "utf8",
@@ -347,7 +347,7 @@ const { setupNim } = require(${onboardPath});
       const dcodeOutput = `${dcodeResult.stdout}\n${dcodeResult.stderr}`;
       assert.equal(dcodeResult.status, 0, dcodeOutput);
       expect(dcodeOutput).toContain(
-        "App: v0.1.30 | Agent: agent (default) | Model: nvidia/nvidia/nemotron-3-ultra",
+        "App: v0.1.34 | Agent: agent (default) | Model: nvidia/nvidia/nemotron-3-ultra",
       );
       expect(dcodeOutput).toContain("ARGS:--sandbox none --no-mcp -n ping");
       expect(dcodeOutput).not.toContain("nvidia/nvidia/nvidia/");

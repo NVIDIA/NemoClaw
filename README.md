@@ -39,7 +39,7 @@ For Hermes, set `NEMOCLAW_AGENT=hermes` before running the installer, or use the
 |-------|-------|
 | OpenClaw (default) | [Quickstart with OpenClaw](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html) |
 | Hermes | [Quickstart with Hermes](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart-hermes.html) |
-| LangChain Deep Agents Code | [Quickstart with LangChain Deep Agents Code](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart-langchain-deepagents-code.html) |
+| LangChain Deep Agents Code | [Quickstart with LangChain Deep Agents Code](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.html) |
 
 ## Documentation
 

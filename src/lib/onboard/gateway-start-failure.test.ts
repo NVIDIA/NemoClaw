@@ -6,8 +6,27 @@ import { describe, expect, it, vi } from "vitest";
 import { classifyGatewayStartFailure } from "../validation";
 import {
   createFinalGatewayStartFailureHandler,
+  normalizeGatewayStartError,
   reportLegacyGatewayStartResultFailure,
 } from "./gateway-start-failure";
+
+describe("normalizeGatewayStartError", () => {
+  it("preserves the original deadline-aware Error instance (#3768)", () => {
+    const deadlineError = new Error("Gateway failed within 10s.");
+
+    expect(normalizeGatewayStartError(deadlineError)).toBe(deadlineError);
+  });
+
+  it.each([
+    ["string", "connection refused", "connection refused"],
+    ["number", 500, "500"],
+  ])("wraps a thrown %s without losing its message (#3768)", (_kind, thrown, message) => {
+    const normalized = normalizeGatewayStartError(thrown);
+
+    expect(normalized).toBeInstanceOf(Error);
+    expect(normalized.message).toBe(message);
+  });
+});
 
 describe("classifyGatewayStartFailure", () => {
   // Regression: NemoClaw #2347. When Colima is stopped on macOS, the

@@ -12,11 +12,16 @@ if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
 fi
 
 unset BASH_ENV ENV OPENAI_PROXY
+while IFS= read -r _nemoclaw_auto_approval_env; do
+  unset "$_nemoclaw_auto_approval_env"
+done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
+unset _nemoclaw_auto_approval_env
 
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export LANGGRAPH_NO_VERSION_CHECK=true
+export LANGGRAPH_CLI_NO_ANALYTICS=1
 export OTEL_ENABLED=false
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_LANGSMITH_TRACING=false
@@ -39,6 +44,49 @@ readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
 readonly OPENSHELL_TLS_KEY_PATH="/etc/openshell/tls/client/tls.key"
 readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
 readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"
+readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"
+readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=0
+
+managed_auto_approval_file_metadata() {
+  local file="$1"
+  local metadata
+  if metadata="$(stat -c '%u:%a:%s' "$file" 2>/dev/null)"; then
+    printf '%s' "$metadata"
+  else
+    stat -f '%u:%Lp:%z' "$file" 2>/dev/null
+  fi
+}
+
+read_managed_auto_approval_mode() {
+  local file="$MANAGED_DCODE_AUTO_APPROVAL_FILE"
+  local metadata
+  if [ ! -f "$file" ] || [ -L "$file" ] || [ ! -r "$file" ]; then
+    printf '%s' 'disabled'
+    return 0
+  fi
+  metadata="$(managed_auto_approval_file_metadata "$file")" || {
+    printf '%s' 'disabled'
+    return 0
+  }
+  case "$metadata" in
+    "${MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID}:444:9")
+      if cmp -s -- "$file" <(printf '%s\n' 'disabled'); then
+        printf '%s' 'disabled'
+        return 0
+      fi
+      ;;
+    "${MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID}:444:14")
+      if cmp -s -- "$file" <(printf '%s\n' 'thread-opt-in'); then
+        printf '%s' 'thread-opt-in'
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s' 'disabled'
+}
+
+MANAGED_DCODE_AUTO_APPROVAL_MODE="$(read_managed_auto_approval_mode)"
+readonly MANAGED_DCODE_AUTO_APPROVAL_MODE
 
 run_dcode() {
   unset PYTHONHOME PYTHONPATH
@@ -65,8 +113,16 @@ run_dcode() {
 #       raw or escaped bodies before mutable metadata can reach status output.
 #     * Name-context rejection fires case-insensitively when the variable name
 #       ends in a credential keyword (_KEY, _TOKEN, _SECRET, _PASSWORD,
-#       _CREDENTIAL, _PASS) and the value is at least 10 chars (mirroring
+#       _PASSWD, _PASS, _CREDENTIAL) and the value is at least 10 chars (mirroring
 #       CONTEXT_PATTERNS minimum length).
+#     * OTLP endpoint variables (OTEL_EXPORTER_OTLP_ENDPOINT and its _TRACES_
+#       variant) carry a collector URL, not a credential, so the documented
+#       `--observability` flow can set one. is_safe_otlp_endpoint_url accepts
+#       ONLY a strict scheme://host[:port][/path] ASCII URL and refuses userinfo,
+#       query, fragment, percent-encoding, controls, non-ASCII, and oversized
+#       inputs (a value that cannot smuggle a credential in any field); the
+#       is_secret_shaped_value scan still runs first. The `_HEADERS` variants
+#       remain under the name-context refusal because they do carry auth material.
 #     * Managed messaging values (SLACK_BOT_TOKEN, SLACK_APP_TOKEN,
 #       TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN) are allowed only when the value
 #       matches the platform-specific token shape AND does not embed a
@@ -83,9 +139,9 @@ run_dcode() {
 # - Regression: test/langchain-deepagents-code-secret-pattern-parity.test.ts
 #   pins the canonical TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and
 #   SECRET_BLOCK_PATTERNS fingerprints (source + flags), while
-#   test/langchain-deepagents-code-image.test.ts feeds the shared positive
-#   corpus through this wrapper. Any canonical change trips the parity gate and
-#   forces this matcher (and its samples) to update.
+#   test/langchain-deepagents-code-image-credentials.test.ts feeds the shared
+#   positive corpus through this wrapper. Any canonical change trips the parity
+#   gate and forces this matcher (and its samples) to update.
 #   The live no-network acceptance clause is covered by
 #   test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh
 #   which exercises a real sandbox launch under `nemoclaw exec` and inspects
@@ -97,9 +153,11 @@ run_dcode() {
 has_context_secret_shape() {
   local upper
   upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
-  # The outer class accepts '=', ':', or whitespace; [:space:] is the nested
-  # POSIX character class understood by Bash's [[ string =~ regex ]] operator.
-  [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
+  # Keep horizontal separator whitespace bounded to mirror the canonical
+  # lookbehind and avoid an attacker-controlled scan over arbitrarily long runs.
+  [[ "$upper" =~ (^|[^A-Z0-9])([A-Z0-9]{1,128}_(KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
+    || [[ "$1" =~ (^|[^A-Za-z0-9])([A-Za-z0-9]{1,128}(Token|Secret|Credential)|[A-Za-z0-9]{0,128}([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(Password|Passwd|Pass))[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
+    || [[ "$1" =~ (^|[^A-Za-z0-9])KEY[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]]
 }
 
 has_bearer_secret_shape() {
@@ -118,23 +176,11 @@ has_bearer_secret_shape() {
 
 has_private_key_block_shape() {
   local value="$1"
+  local required_separator="${2-}"
   local begin_marker="-----BEGIN "
   local end_marker="-----END "
   case "$value" in
-    *"$begin_marker"*"PRIVATE KEY-----"*"$end_marker"*"PRIVATE KEY-----"*)
-      return 0
-      ;;
-  esac
-  return 1
-}
-
-has_multiline_private_key_block_shape() {
-  local value="$1"
-  local begin_marker="-----BEGIN "
-  local end_marker="-----END "
-  local newline=$'\n'
-  case "$value" in
-    *"$begin_marker"*"PRIVATE KEY-----"*"$newline"*"$end_marker"*"PRIVATE KEY-----"*)
+    *"$begin_marker"*"PRIVATE KEY-----"*"$required_separator"*"$end_marker"*"PRIVATE KEY-----"*)
       return 0
       ;;
   esac
@@ -283,19 +329,23 @@ has_credential_name_context() {
   local upper
   upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   case "$upper" in
-    KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASS | CREDENTIAL)
+    KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASSWD | PASS | CREDENTIAL)
       return 0
       ;;
     LANGSMITH_RUNS_ENDPOINTS | LANGCHAIN_RUNS_ENDPOINTS)
       return 0
       ;;
-    OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT | OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
+    OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
       return 0
       ;;
-    *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASS | *_CREDENTIAL)
+    *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASSWD | *_PASS | *_CREDENTIAL | *-API-KEY | *-KEY | *-TOKEN | *-SECRET | *-PASSWORD | *-PASSWD | *-PASS | *-CREDENTIAL)
       return 0
       ;;
   esac
+  if [[ "$1" =~ [A-Za-z0-9](Token|Secret|Credential|Password|Passwd|Pass)$ ]] \
+    || [[ "$1" =~ ([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key$ ]]; then
+    return 0
+  fi
   return 1
 }
 
@@ -307,6 +357,69 @@ is_allowed_openshell_runtime_value() {
   local name="$1"
   local value="$2"
   [ "$name" = "OPENSHELL_TLS_KEY" ] && [ "$value" = "$OPENSHELL_TLS_KEY_PATH" ]
+}
+
+# OTLP endpoint variables carry the collector URL, not a credential. The
+# documented `--observability` flow sets one (e.g.
+# http://host.openshell.internal:4318), so a clean bare http(s) URL must be
+# accepted rather than refused on length like a credential-named var. The
+# `_HEADERS` variants (which do carry auth material) stay under the generic
+# name-context refusal; only the `_ENDPOINT` variants get this URL allowance.
+is_otlp_endpoint_name() {
+  case "$1" in
+    OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) return 0 ;;
+  esac
+  return 1
+}
+
+# The only OTLP collector a managed sandbox can reach: the `--observability`
+# egress preset opens exactly this host, and the runtime hardcodes it. Restricting
+# to it (exact match, so no subdomain/suffix confusion) sidesteps DNS/IPv4/port
+# validation drift between Bash and Python and refuses every unreachable or
+# credential-smuggling host by construction (#6538 review).
+readonly OTLP_MANAGED_ENDPOINT_HOST="host.openshell.internal"
+
+# Accept ONLY http(s)://host.openshell.internal[:port][/path], where port is a
+# 1..65535 decimal with no leading zero and path uses a strict ASCII charset.
+# Everything else — any other host, userinfo (@), query (?), fragment (#),
+# percent-encoding (%), C0 controls, DEL, non-ASCII, backslashes, whitespace,
+# malformed host/port, or oversized input — is refused. The value-shape scan
+# (is_secret_shaped_value) still runs first. LC_ALL=C forces byte-wise ASCII so
+# UTF-8 collation cannot fold non-ASCII into [A-Za-z0-9]; the managed Python
+# runtime's _is_safe_otlp_endpoint_url mirrors this logic byte-for-byte.
+# The optional path may contain dot segments; that is intentional and safe here
+# because the path is delivered verbatim only to the exact managed collector
+# host and cannot traverse to another origin, so there is nothing to smuggle to.
+is_safe_otlp_endpoint_url() {
+  local value="$1" rest authority host port
+  local LC_ALL=C
+  [ "${#value}" -le 2048 ] || return 1
+  case "$value" in
+    http://*) rest="${value#http://}" ;;
+    https://*) rest="${value#https://}" ;;
+    *) return 1 ;;
+  esac
+  authority="${rest%%/*}"
+  if [ "$authority" != "$rest" ]; then
+    [[ "/${rest#*/}" =~ ^/[A-Za-z0-9._/-]*$ ]] || return 1
+  fi
+  host="${authority%%:*}"
+  [ "$host" = "$OTLP_MANAGED_ENDPOINT_HOST" ] || return 1
+  if [ "$host" != "$authority" ]; then
+    port="${authority#*:}"
+    [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ] || return 1
+  fi
+  return 0
+}
+
+# True if the value carries any C0 control (0x01-0x1F) or DEL (0x7F). NUL cannot
+# reach here — Bash drops it from a variable at read time — so it is out of the
+# claimed boundary by construction. Used to fail closed on dotenv OTLP values
+# before the generic trim/unquote could silently strip a smuggled trailing
+# TAB/VT/FF/CR (#6538 review). LC_ALL=C makes [[:cntrl:]] a byte-wise ASCII class.
+has_control_char() {
+  local LC_ALL=C
+  [[ "$1" =~ [[:cntrl:]] ]]
 }
 
 is_dynamic_dotenv_value() {
@@ -403,6 +516,14 @@ assert_no_secret_runtime_env() {
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
+    if is_otlp_endpoint_name "$name"; then
+      # An empty value is treated as unset (matches the length check it
+      # replaces and the managed Python runtime), so only scan a set value.
+      if [ -n "$value" ] && ! is_safe_otlp_endpoint_url "$value"; then
+        refuse_secret_env "runtime environment variable" "$name"
+      fi
+      continue
+    fi
     if has_credential_name_context "$name" && [ ${#value} -ge 10 ] && ! is_allowed_openshell_runtime_value "$name" "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
@@ -413,11 +534,11 @@ assert_no_secret_env_file() {
   local env_file="$DEEPAGENTS_ENV_FILE"
   [ -r "$env_file" ] || return 0
   local -a lines=()
-  local env_file_content line key value
+  local env_file_content line key value raw_value
   # Scan the whole file before line parsing so raw multiline blocks cannot put
   # their begin and end markers on different physical dotenv lines.
   env_file_content="$(<"$env_file")"
-  if has_multiline_private_key_block_shape "$env_file_content"; then
+  if has_private_key_block_shape "$env_file_content" $'\n'; then
     refuse_secret_env "$env_file" "private-key block"
   fi
   while IFS= read -r line || [ -n "$line" ]; do
@@ -438,6 +559,10 @@ assert_no_secret_env_file() {
     key="${line%%=*}"
     [ "$key" != "$line" ] || continue
     value="${line#*=}"
+    # Preserve the value as written (still quoted, untrimmed) so the OTLP guard
+    # can fail closed on smuggled control characters before normalization strips
+    # them. The benign CRLF line terminator was already removed above.
+    raw_value="$value"
     key="$(trim_whitespace "$key")"
     value="$(trim_whitespace "$value")"
     case "$value" in
@@ -465,6 +590,17 @@ assert_no_secret_env_file() {
     fi
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "$env_file" "$key"
+    fi
+    if is_otlp_endpoint_name "$key"; then
+      # Fail closed on control characters carried in the raw dotenv value before
+      # the trim/unquote above could silently strip a trailing TAB/VT/FF/CR.
+      if has_control_char "$raw_value"; then
+        refuse_secret_env "$env_file" "$key"
+      fi
+      if [ -n "$value" ] && ! is_safe_otlp_endpoint_url "$value"; then
+        refuse_secret_env "$env_file" "$key"
+      fi
+      continue
     fi
     if has_credential_name_context "$key" && [ ${#value} -ge 10 ]; then
       refuse_secret_env "$env_file" "$key"
@@ -494,7 +630,7 @@ try:
 except Exception:
     sys.exit(1)
 # Schema pin: detection assumes a truthy top-level "credentials" key,
-# matching the auth.json shape in deepagents-code==0.1.30. Nested or
+# matching the auth.json shape in deepagents-code==0.1.34. Nested or
 # renamed shapes ({"auth":{...}}, {"state":{"credentials":...}}, top-level
 # list) are not detected. When bumping the upstream pin, re-review this
 # assumption against the new auth.json schema.
@@ -788,7 +924,9 @@ for arg in "$@"; do
       reject_managed_override "interpreter posture" "$arg"
       ;;
     -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve)
-      reject_managed_override "tool approval posture" "$arg"
+      if [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
+        reject_managed_override "tool approval posture" "$arg"
+      fi
       ;;
     --acp)
       reject_managed_override "ACP approval posture" "$arg"

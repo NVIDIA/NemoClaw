@@ -29,6 +29,7 @@ import {
 import {
   buildMcpDnsRebindingProbeScript,
   hostAddressForSandbox,
+  hostPrivateAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,
   type McpDnsRebindingAdapter,
   remapDnsRebindingHostname,
@@ -60,11 +61,7 @@ const COMPATIBLE_KEY = MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint;
 const COMPATIBLE_MODEL = "mock/mcp-bridge";
 const TOOL_CHALLENGE = "nemoclaw-authenticated-mcp-proof";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
-const liveTest = process.env.NEMOCLAW_RUN_LIVE_E2E === "1" ? test : test.skip;
-const liveAgentMatrixTest =
-  process.env.NEMOCLAW_RUN_LIVE_E2E === "1" && process.env.NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX === "1"
-    ? test
-    : test.skip;
+const liveAgentMatrixTest = process.env.NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX === "1" ? test : test.skip;
 
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
 type McpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
@@ -172,7 +169,6 @@ async function assertAdapterDnsRebindingDenied(
   options: {
     adapter: McpDnsRebindingAdapter;
     artifactPrefix: string;
-    hostAddress: string;
     sandboxName: string;
     secretPaths: string[];
   },
@@ -280,12 +276,13 @@ async function assertAdapterDnsRebindingDenied(
   // reachable runner address would receive the request. The pinned v0.0.72
   // implementation instead returns the one resolved-and-validated SocketAddr
   // list directly to connect; see the exact proxy.rs citation in the helper.
-  expect(options.hostAddress).not.toBe(REBIND_PUBLIC_IP);
+  const reboundAddress = await hostPrivateAddressForSandbox(host);
+  expect(reboundAddress).not.toBe(REBIND_PUBLIC_IP);
   await remapDnsRebindingHostname(
     host,
     options.sandboxName,
     hostsFixture,
-    options.hostAddress,
+    reboundAddress,
     `${options.artifactPrefix}-mcp-dns-rebinding-map-private-unpinned-after-add`,
   );
   const denial = await sandbox.execShell(
@@ -824,7 +821,7 @@ async function rebuildWithoutMcpHostSecret(
   expectExitZero(rebuild, `${artifactPrefix} rebuild without MCP host secret`);
 }
 
-liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, host, sandbox }) => {
+test("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, host, sandbox }) => {
   await artifacts.writeJson("scenario.json", {
     id: "mcp-bridge",
     sandbox: OPENCLAW_SANDBOX_NAME,
@@ -1027,7 +1024,6 @@ req.end(body);
   await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
     adapter: "mcporter",
     artifactPrefix: "openclaw",
-    hostAddress,
     sandboxName: OPENCLAW_SANDBOX_NAME,
     secretPaths: ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
   });
@@ -1265,7 +1261,6 @@ liveAgentMatrixTest(
     await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
       adapter: "hermes-config",
       artifactPrefix: "hermes",
-      hostAddress,
       sandboxName: HERMES_SANDBOX_NAME,
       secretPaths: ["/sandbox/.hermes"],
     });
@@ -1418,7 +1413,6 @@ liveAgentMatrixTest(
     await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
       adapter: "deepagents-config",
       artifactPrefix: "deepagents",
-      hostAddress,
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       secretPaths: ["/sandbox/.deepagents"],
     });

@@ -9,6 +9,7 @@ import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
 } from "../../domain/lifecycle/options";
+import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact } from "../../security/redact";
 import {
@@ -29,6 +30,8 @@ export function createRebuildCommandContext(
   bail: RebuildBail;
   log: RebuildLog;
   requestedToolDisclosure: ToolDisclosure | undefined;
+  requestedDcodeAutoApprovalMode: DcodeAutoApprovalMode | undefined;
+  requestedObservabilityEnabled: boolean | undefined;
   skipConfirm: boolean;
 } {
   const normalized = normalizeRebuildSandboxOptions(options);
@@ -39,12 +42,30 @@ export function createRebuildCommandContext(
           console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${redact(message)}${R}`)
       : () => {},
     requestedToolDisclosure: normalized.toolDisclosure,
+    requestedDcodeAutoApprovalMode: normalized.dcodeAutoApprovalMode,
+    requestedObservabilityEnabled: normalized.observabilityEnabled,
     skipConfirm: normalized.yes === true || normalized.force === true,
     bail: opts.throwOnError
       ? (message: string) => {
           throw new Error(message);
         }
-      : (_message: string, code = 1) => process.exit(code),
+      : // #6376: previously discarded `message` entirely, so any bail() call
+        // that raised an actionable reason (e.g. `Failed to preserve MCP
+        // bridges before rebuild: Sandbox 'X' has an incomplete MCP destroy
+        // transaction. Re-run the sandbox destroy command …`) exited 1 with
+        // no output at all — leaving the user with the last stage's spinner
+        // line and no diagnosis. Emit the reason on stderr before exit so
+        // `$?`-gated automation and interactive users see WHY rebuild
+        // aborted. The message can carry a wrapped lower-level error
+        // (`bail("...: " + error.message)`), so route it through the same
+        // `redact` boundary `log` already uses (line above) before surfacing —
+        // a bailed rebuild must not be the one path that leaks a URL/token.
+        // `console.error` inherits the rebuild-diagnostic formatting (leading
+        // two spaces).
+        (message: string, code = 1) => {
+          if (message) console.error(`  ${redact(message)}`);
+          process.exit(code);
+        },
   };
 }
 
@@ -73,7 +94,15 @@ export async function confirmSandboxRebuildIfNeeded(
   skipConfirm: boolean,
   activeSessionCount: number,
   prompt: typeof askPrompt = askPrompt,
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode,
 ): Promise<boolean> {
+  if (requestedDcodeAutoApprovalMode === "thread-opt-in") {
+    console.log(`  ${YW}Warning: Deep Agents Code thread auto-approval will be enabled.${R}`);
+    console.log(
+      "  Tool calls, including shell commands, may execute without further confirmation inside OpenShell.",
+    );
+    console.log("");
+  }
   if (skipConfirm) return true;
   if (activeSessionCount > 0) {
     const plural = activeSessionCount > 1 ? "sessions" : "session";
@@ -127,6 +156,7 @@ export async function confirmRebuildIntent(
   skipConfirm: boolean,
   activeSessionCount: number,
   bail: RebuildBail,
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode,
 ): Promise<RebuildVersionCheck | null> {
   const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
   console.log("");
@@ -138,7 +168,16 @@ export async function confirmRebuildIntent(
     console.log(`    Target:   ${agentName} v${versionCheck.expectedVersion}`);
   }
   console.log("");
-  if (!(await confirmSandboxRebuildIfNeeded(skipConfirm, activeSessionCount))) return null;
+  if (
+    !(await confirmSandboxRebuildIfNeeded(
+      skipConfirm,
+      activeSessionCount,
+      askPrompt,
+      requestedDcodeAutoApprovalMode,
+    ))
+  ) {
+    return null;
+  }
   await ensureRebuildUsageNoticeOrBail(bail);
   return versionCheck;
 }

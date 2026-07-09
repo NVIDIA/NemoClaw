@@ -16,13 +16,12 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-export { expectExitZero };
+export { CLI_ENTRYPOINT, expectExitZero, REPO_ROOT };
 
-export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-export const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 export const BASE_POLICY = path.join(
   REPO_ROOT,
   "nemoclaw-blueprint",

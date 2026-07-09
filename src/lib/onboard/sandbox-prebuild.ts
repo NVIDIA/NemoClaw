@@ -198,15 +198,7 @@ export async function prebuildSandboxImageIfEligible(
   let status: number | null;
   try {
     status = await buildImage(
-      [
-        "build",
-        "--progress=plain",
-        "-t",
-        imageRef,
-        "-f",
-        trustedContext.dockerfile,
-        trustedContext.buildCtx,
-      ],
+      ["build", "-t", imageRef, "-f", trustedContext.dockerfile, trustedContext.buildCtx],
       {
         env: { ...dockerBuildSubprocessEnv(), DOCKER_BUILDKIT: "1" },
         stdio: "inherit",

@@ -114,6 +114,28 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
+  it("registers OpenRouter with an OpenAI-compatible provider profile and aliases (#5826)", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.openrouter;
+
+    expect(provider).toMatchObject({
+      providerName: "openrouter-api",
+      providerType: "openai",
+      credentialEnv: "OPENROUTER_API_KEY",
+    });
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("openrouter")).toBe(true);
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES["open-router"]).toBe("openrouter");
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES.openrouterai).toBe("openrouter");
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        "https://openrouter.ai/api/v1",
+      ),
+    ).toContain("OPENAI_BASE_URL=https://openrouter.ai/api/v1");
+  });
+
   it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {
     const provider = REMOTE_PROVIDER_CONFIG.anthropicCompatible;
 

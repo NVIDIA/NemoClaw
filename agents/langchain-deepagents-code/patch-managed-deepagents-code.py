@@ -4,16 +4,20 @@
 
 # Source-of-truth review for this pinned third-party patch boundary:
 # invalidState: upstream entrypoints can independently enable credential stores,
-# ambient MCP discovery, update/install flows, or child-process config paths that
-# bypass NemoClaw's managed inference, policy, and integrity-bound MCP boundaries.
-# sourceBoundary: deepagents-code owns those Python entrypoints; NemoClaw owns the
-# sandbox image posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.30 has no single managed-runtime hook that can
+# ambient MCP discovery, update/install flows, first-run model selection,
+# optional LangGraph CLI analytics, or child-process config paths that bypass
+# NemoClaw's managed inference, policy, and integrity-bound MCP boundaries.
+# sourceBoundary: deepagents-code owns those Python entrypoints and child env;
+# langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
+# posture and therefore validates every patched symbol before build.
+# whyNotSourceFix: upstream 0.1.34 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
-# build on drift, and direct-module tests execute the patched start/restart paths.
+# build on drift, while hostile analytics values exercise patched entrypoints and
+# the server start/restart override paths.
 # removalCondition: replace these sites only when a pinned upstream release offers
-# equivalent discovery-free, credential-free, update-disabled managed MCP hooks.
+# equivalent discovery-free, credential-free, update-disabled, analytics-disabled
+# managed hooks before every LangGraph process starts.
 
 from __future__ import annotations
 
@@ -22,10 +26,12 @@ import importlib.metadata
 import importlib.util
 from pathlib import Path
 
-EXPECTED_DCODE_VERSION = "0.1.30"
+EXPECTED_DCODE_VERSION = "0.1.34"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
 TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
+OBSERVABILITY_PATCH_MARKER = "NemoClaw-managed backend-neutral observability."
 MIDDLEWARE_MODULE = "progressive_tool_disclosure.py"
+OBSERVABILITY_MODULE = "nemoclaw_observability.py"
 MANAGED_RUNTIME_SOURCE_PATH = Path(__file__).with_name("managed-dcode-runtime.py")
 
 MAIN_MARKER = "    args = parser.parse_args()\n"
@@ -37,6 +43,7 @@ os.environ["HOME"] = "/sandbox"
 os.environ["DEEPAGENTS_CODE_AUTO_UPDATE"] = "0"
 os.environ["DEEPAGENTS_CODE_NO_UPDATE_CHECK"] = "1"
 os.environ["LANGGRAPH_NO_VERSION_CHECK"] = "true"
+os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
 os.environ["OTEL_ENABLED"] = "false"
 os.environ["DEEPAGENTS_CODE_LANGSMITH_TRACING"] = "false"
 os.environ["DEEPAGENTS_CODE_LANGSMITH_TRACING_V2"] = "false"
@@ -61,6 +68,7 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     os.environ["DEEPAGENTS_CODE_AUTO_UPDATE"] = "0"
     os.environ["DEEPAGENTS_CODE_NO_UPDATE_CHECK"] = "1"
     os.environ["LANGGRAPH_NO_VERSION_CHECK"] = "true"
+    os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
     os.environ["OTEL_ENABLED"] = "false"
     os.environ["DEEPAGENTS_CODE_LANGSMITH_TRACING"] = "false"
     os.environ["DEEPAGENTS_CODE_LANGSMITH_TRACING_V2"] = "false"
@@ -76,6 +84,14 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     os.environ.pop("PYTHONHOME", None)
     os.environ.pop("PYTHONPATH", None)
     os.environ.pop("OPENAI_PROXY", None)
+
+    from deepagents_code._nemoclaw_managed import (
+        assert_safe_runtime as _nemoclaw_assert_safe_runtime,
+        managed_auto_approval_enabled as _nemoclaw_managed_auto_approval_enabled,
+        managed_mcp_config_path as _nemoclaw_managed_mcp_config_path,
+    )
+
+    nemoclaw_auto_approval_enabled = _nemoclaw_managed_auto_approval_enabled()
 
     blocked_command = getattr(args, "command", None)
     if blocked_command == "mcp":
@@ -100,7 +116,7 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         parser.error("--interpreter-tools is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "interpreter", None) is True:
         parser.error("--interpreter is disabled in NemoClaw-managed Deep Agents Code sandboxes")
-    if getattr(args, "auto_approve", False):
+    if getattr(args, "auto_approve", False) and not nemoclaw_auto_approval_enabled:
         parser.error("--auto-approve is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "acp", False):
         parser.error("--acp is disabled in NemoClaw-managed Deep Agents Code sandboxes")
@@ -113,11 +129,6 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.sandbox_snapshot_name = None
     if hasattr(args, "sandbox_setup"):
         args.sandbox_setup = None
-    from deepagents_code._nemoclaw_managed import (
-        assert_safe_runtime as _nemoclaw_assert_safe_runtime,
-        managed_mcp_config_path as _nemoclaw_managed_mcp_config_path,
-    )
-
     # Load only NemoClaw's dedicated projection. The helper canonicalizes it
     # into a process-local integrity-bound snapshot; user/project discovery is
     # disabled separately in the patched MCP loader.
@@ -135,7 +146,7 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.interpreter = False
     if hasattr(args, "interpreter_tools"):
         args.interpreter_tools = None
-    if hasattr(args, "auto_approve"):
+    if hasattr(args, "auto_approve") and not nemoclaw_auto_approval_enabled:
         args.auto_approve = False
     if hasattr(args, "rubric_model"):
         args.rubric_model = None
@@ -145,6 +156,17 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.startup_cmd = None
 
     _nemoclaw_assert_safe_runtime()
+    if (
+        getattr(args, "auto_approve", False)
+        and nemoclaw_auto_approval_enabled
+        and not getattr(args, "non_interactive_message", None)
+    ):
+        print(
+            "WARNING: Auto-approval is enabled for this thread. Tool calls, "
+            "including shell commands, may execute without further confirmation "
+            "inside the sandbox.",
+            file=sys.stderr,
+        )
 '''
 
 APP_PATCH = r'''
@@ -154,11 +176,33 @@ _NEMOCLAW_MANAGED_UI_MESSAGE = (
     "NemoClaw manages credentials, dependencies, updates, and MCP for this "
     "sandbox. Use NemoClaw policy/configuration on the host instead."
 )
+_NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE = (
+    "Auto-approval is disabled in NemoClaw-managed sandboxes."
+)
+_NEMOCLAW_AUTO_APPROVAL_WARNING = (
+    "Auto-approval is enabled for this thread. Tool calls, including shell "
+    "commands, may execute without further confirmation inside the sandbox."
+)
 _nemoclaw_original_handle_command = DeepAgentsApp._handle_command
+_nemoclaw_original_resume_thread = DeepAgentsApp._resume_thread
+_nemoclaw_original_restart_server_for_agent_swap = (
+    DeepAgentsApp._restart_server_for_agent_swap
+)
 _nemoclaw_original_switch_model = DeepAgentsApp._switch_model
+_nemoclaw_original_on_auto_approve_enabled = (
+    DeepAgentsApp._on_auto_approve_enabled
+)
+_nemoclaw_original_action_toggle_auto_approve = (
+    DeepAgentsApp.action_toggle_auto_approve
+)
 _nemoclaw_original_absolutize_launch_relative_path = (
     DeepAgentsApp._absolutize_launch_relative_path
 )
+
+
+async def _nemoclaw_run_thread_transition(self, operation, *args) -> None:
+    _nemoclaw_reset_thread_auto_approval(self)
+    await operation(self, *args)
 
 
 async def _nemoclaw_handle_command(self, command: str) -> None:
@@ -178,7 +222,26 @@ async def _nemoclaw_handle_command(self, command: str) -> None:
         await self._mount_message(UserMessage(command))
         await self._mount_message(AppMessage(_NEMOCLAW_MANAGED_UI_MESSAGE))
         return
-    await _nemoclaw_original_handle_command(self, command)
+    if normalized not in {"/clear", "/force-clear"}:
+        await _nemoclaw_original_handle_command(self, command)
+        return
+    await _nemoclaw_run_thread_transition(
+        self, _nemoclaw_original_handle_command, command
+    )
+
+
+async def _nemoclaw_resume_thread(self, thread_id: str) -> None:
+    await _nemoclaw_run_thread_transition(
+        self, _nemoclaw_original_resume_thread, thread_id
+    )
+
+
+async def _nemoclaw_restart_server_for_agent_swap(
+    self, agent_name: str
+) -> None:
+    await _nemoclaw_run_thread_transition(
+        self, _nemoclaw_original_restart_server_for_agent_swap, agent_name
+    )
 
 
 async def _nemoclaw_switch_model(
@@ -245,17 +308,55 @@ async def _nemoclaw_block_auto_update(self) -> None:
     self.notify(_NEMOCLAW_MANAGED_UI_MESSAGE, severity="warning", markup=False)
 
 
-async def _nemoclaw_block_auto_approve(self) -> None:
+def _nemoclaw_auto_approval_is_allowed() -> bool:
+    from deepagents_code._nemoclaw_managed import managed_auto_approval_enabled
+
+    return managed_auto_approval_enabled()
+
+
+def _nemoclaw_reset_thread_auto_approval(self) -> None:
     self._auto_approve = False
     if getattr(self, "_status_bar", None) is not None:
         self._status_bar.set_auto_approve(enabled=False)
     if getattr(self, "_session_state", None) is not None:
         self._session_state.auto_approve = False
+        self._session_state.approval_mode_key = None
+
+
+async def _nemoclaw_block_auto_approve(self) -> None:
+    _nemoclaw_reset_thread_auto_approval(self)
     self.notify(
-        "Auto-approval is disabled in NemoClaw-managed sandboxes.",
+        _NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE,
         severity="warning",
         markup=False,
     )
+
+
+def _nemoclaw_notify_auto_approval_warning(self) -> None:
+    self.notify(
+        _NEMOCLAW_AUTO_APPROVAL_WARNING,
+        severity="warning",
+        markup=False,
+    )
+
+
+async def _nemoclaw_on_auto_approve_enabled(self) -> None:
+    if not _nemoclaw_auto_approval_is_allowed():
+        await _nemoclaw_block_auto_approve(self)
+        return
+    await _nemoclaw_original_on_auto_approve_enabled(self)
+    if getattr(self, "_auto_approve", False):
+        _nemoclaw_notify_auto_approval_warning(self)
+
+
+async def _nemoclaw_action_toggle_auto_approve(self) -> None:
+    if not _nemoclaw_auto_approval_is_allowed():
+        await _nemoclaw_block_auto_approve(self)
+        return
+    was_enabled = bool(getattr(self, "_auto_approve", False))
+    await _nemoclaw_original_action_toggle_auto_approve(self)
+    if not was_enabled and getattr(self, "_auto_approve", False):
+        _nemoclaw_notify_auto_approval_warning(self)
 
 
 async def _nemoclaw_block_rubric_model(self, model_spec: str | None) -> None:
@@ -272,6 +373,29 @@ async def _nemoclaw_block_rubric_model(self, model_spec: str | None) -> None:
 
 async def _nemoclaw_skip_launch_tavily(self) -> None:
     return None
+
+
+async def _nemoclaw_skip_launch_model(
+    self,
+) -> "tuple[bool, tuple[str, str] | None]":
+    """Skip model picker during first-run; NemoClaw owns model configuration."""
+    return (False, None)
+
+
+def _nemoclaw_skip_launch_dependencies_prompt(self):
+    """Return a pre-resolved dependency result that skips the model picker.
+
+    The mount path pre-builds the model screen and passes it as
+    continue_screen to the name prompt, bypassing
+    _prompt_launch_dependencies_then_model. This override returns None
+    as the screen (so no model picker is pushed after the name prompt)
+    and a pre-resolved future with (False, None).
+    """
+    import asyncio
+    loop = asyncio.get_running_loop()
+    result_future = loop.create_future()
+    result_future.set_result((False, None))
+    return None, result_future
 
 
 async def _nemoclaw_block_model_auth(self, model_spec: str) -> bool:
@@ -301,6 +425,10 @@ def _nemoclaw_block_mcp_login(self, server_name: str) -> None:
 
 
 DeepAgentsApp._handle_command = _nemoclaw_handle_command
+DeepAgentsApp._resume_thread = _nemoclaw_resume_thread
+DeepAgentsApp._restart_server_for_agent_swap = (
+    _nemoclaw_restart_server_for_agent_swap
+)
 DeepAgentsApp._switch_model = _nemoclaw_switch_model
 DeepAgentsApp._absolutize_launch_relative_path = staticmethod(
     _nemoclaw_absolutize_launch_relative_path
@@ -311,10 +439,14 @@ DeepAgentsApp._handle_install_command = _nemoclaw_block_install_command
 DeepAgentsApp._install_extra = _nemoclaw_block_install_extra
 DeepAgentsApp._handle_install_package = _nemoclaw_block_install_package
 DeepAgentsApp._handle_auto_update_toggle = _nemoclaw_block_auto_update
-DeepAgentsApp._on_auto_approve_enabled = _nemoclaw_block_auto_approve
-DeepAgentsApp.action_toggle_auto_approve = _nemoclaw_block_auto_approve
+DeepAgentsApp._on_auto_approve_enabled = _nemoclaw_on_auto_approve_enabled
+DeepAgentsApp.action_toggle_auto_approve = (
+    _nemoclaw_action_toggle_auto_approve
+)
 DeepAgentsApp._set_rubric_model = _nemoclaw_block_rubric_model
 DeepAgentsApp._prompt_launch_tavily = _nemoclaw_skip_launch_tavily
+DeepAgentsApp._prompt_launch_dependencies_then_model = _nemoclaw_skip_launch_model
+DeepAgentsApp._build_launch_dependencies_prompt = _nemoclaw_skip_launch_dependencies_prompt
 DeepAgentsApp._prompt_model_auth_if_needed = _nemoclaw_block_model_auth
 DeepAgentsApp._show_auth_manager = _nemoclaw_block_auth_manager
 DeepAgentsApp._enter_service_api_key = _nemoclaw_block_service_key
@@ -348,7 +480,7 @@ def _preview_dotenv_environ(*, start_path=None) -> dict[str, str]:
 
 
 def _load_dotenv(*, start_path=None, refresh_loaded=False) -> bool:
-    """Disable project and global dotenv loading in the managed image."""
+    """Disable all dotenv loading so it cannot supply the trusted fetch proxy."""
     del start_path, refresh_loaded
     _dotenv_loaded_values.clear()
     return False
@@ -386,6 +518,34 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     }
 '''
 
+# Source-of-truth boundary: upstream Deep Agents Code 0.1.34 resolves and pins
+# destination DNS locally, then disables environment proxies. That is a sound
+# standalone SSRF defense but cannot operate in OpenShell's proxy-only network
+# namespace, where direct DNS and direct target connections are rejected. The
+# managed launcher supplies an explicit, root-owned proxy URL. `trust_env=False`
+# disables every Requests environment-derived session setting (proxy/NO_PROXY,
+# netrc, and CA discovery); each hop receives only the explicit proxy mapping
+# and separately validated fixed CA bundle. The proxy's network policy and SSRF
+# checks remain authoritative.
+TOOLS_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+_nemoclaw_original_fetch_with_redirects = _fetch_with_redirects
+
+
+def _fetch_with_redirects(url: str, *, timeout: int):
+    """Use only the launcher-delegated OpenShell proxy when configured."""
+    from deepagents_code._nemoclaw_managed import managed_fetch_with_redirects
+
+    return managed_fetch_with_redirects(
+        url,
+        timeout=timeout,
+        max_redirects=_MAX_FETCH_REDIRECTS,
+        original_fetch=_nemoclaw_original_fetch_with_redirects,
+        validation_error=_UrlValidationError,
+    )
+'''
+
 MODEL_CONFIG_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
@@ -398,17 +558,21 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.30 has no
-# supported managed progressive-disclosure middleware hook in its agent factory
-# API, and this repository cannot change that third-party package source.
-# Patcher/unit guards plus validate-progressive-tool-disclosure.py cover this
-# fail-closed integration. Remove it once upstream provides a supported hook
-# preserving managed MCP, credentials, approvals, executor, sandbox, and private
-# checkpoint-state boundaries.
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.34 cannot inject
+# managed progressive-disclosure or Relay middleware into both main and subagent
+# graphs, nor attach a metadata-only callback to the compiled graph. Without this
+# root-owned image patch, those graphs omit NemoClaw's runtime controls; this repo
+# cannot change the third-party package source. Patcher shape guards, direct-patch
+# tests, progressive-disclosure tests, and observability conformance tests fail
+# closed on upstream drift. Remove each injection once an upstream agent-factory
+# API can preserve the managed MCP, credential, approval, executor, sandbox,
+# private checkpoint-state, bounded model/tool content, and metadata-only graph
+# trace boundaries end to end.
 AGENT_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
 # NemoClaw-managed progressive tool disclosure.
+# NemoClaw-managed backend-neutral observability.
 from contextvars import ContextVar as _NemoClawContextVar
 
 _nemoclaw_original_create_cli_agent = create_cli_agent
@@ -416,20 +580,31 @@ _nemoclaw_original_create_deep_agent = globals().get("create_deep_agent")
 _nemoclaw_progressive_disclosure_active = _NemoClawContextVar(
     "nemoclaw_progressive_disclosure_active", default=False
 )
+_nemoclaw_observability_active = _NemoClawContextVar(
+    "nemoclaw_observability_active", default=False
+)
 
 
 def _nemoclaw_create_deep_agent(*args, **kwargs):
-    """Install distinct disclosure middleware in the main and local subagent graphs."""
+    """Install managed middleware in the main and local subagent graphs."""
     if _nemoclaw_original_create_deep_agent is None:
         raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
-    if not _nemoclaw_progressive_disclosure_active.get():
+    progressive_active = _nemoclaw_progressive_disclosure_active.get()
+    observability_active = _nemoclaw_observability_active.get()
+    if not progressive_active and not observability_active:
         return _nemoclaw_original_create_deep_agent(*args, **kwargs)
-    from deepagents_code.progressive_tool_disclosure import (
-        ProgressiveToolDisclosureMiddleware,
-    )
 
     middleware = list(kwargs.get("middleware") or ())
-    middleware.append(ProgressiveToolDisclosureMiddleware())
+    if progressive_active:
+        from deepagents_code.progressive_tool_disclosure import (
+            ProgressiveToolDisclosureMiddleware,
+        )
+
+        middleware.append(ProgressiveToolDisclosureMiddleware())
+    if observability_active:
+        from deepagents_code.nemoclaw_observability import new_relay_middleware
+
+        middleware.append(new_relay_middleware())
     kwargs["middleware"] = middleware
 
     subagents = kwargs.get("subagents")
@@ -438,7 +613,10 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
         for subagent in subagents:
             if isinstance(subagent, dict):
                 subagent_middleware = list(subagent.get("middleware") or ())
-                subagent_middleware.append(ProgressiveToolDisclosureMiddleware())
+                if progressive_active:
+                    subagent_middleware.append(ProgressiveToolDisclosureMiddleware())
+                if observability_active:
+                    subagent_middleware.append(new_relay_middleware())
                 subagent = {**subagent, "middleware": subagent_middleware}
             patched_subagents.append(subagent)
         kwargs["subagents"] = patched_subagents
@@ -451,7 +629,7 @@ if _nemoclaw_original_create_deep_agent is not None:
 
 
 def create_cli_agent(model, assistant_id, *args, **kwargs):
-    """Keep managed graph posture and progressively disclose loaded MCP tools."""
+    """Keep managed graph posture, disclosure, and observability boundaries."""
     kwargs["rubric_model"] = None
     kwargs["async_subagents"] = None
     from deepagents_code.progressive_tool_disclosure import (
@@ -474,13 +652,38 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
         progressive_active = False
     if progressive_active and _nemoclaw_original_create_deep_agent is None:
         raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
-    token = _nemoclaw_progressive_disclosure_active.set(progressive_active)
+    from deepagents_code.nemoclaw_observability import (
+        initialize_observability,
+        new_metadata_only_callback_manager,
+    )
+
+    observability_active = initialize_observability()
+    if observability_active and _nemoclaw_original_create_deep_agent is None:
+        raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
+    progressive_token = _nemoclaw_progressive_disclosure_active.set(
+        progressive_active
+    )
+    observability_token = _nemoclaw_observability_active.set(observability_active)
     try:
-        return _nemoclaw_original_create_cli_agent(
+        result = _nemoclaw_original_create_cli_agent(
             model, assistant_id, *args, **kwargs
         )
     finally:
-        _nemoclaw_progressive_disclosure_active.reset(token)
+        _nemoclaw_observability_active.reset(observability_token)
+        _nemoclaw_progressive_disclosure_active.reset(progressive_token)
+    if not observability_active:
+        return result
+    agent, backend = result
+    # Copy the graph, then replace callbacks directly. with_config would merge a
+    # pre-bound manager first and retain its handlers. Invocation safety then
+    # relies on pinned LangGraph 1.2.6 calling ensure_config(self.config,
+    # input_config); validate-observability.py locks that merge path.
+    agent = agent.with_config({})
+    agent.config = {
+        **agent.config,
+        "callbacks": new_metadata_only_callback_manager(),
+    }
+    return agent, backend
 
 
 def _resolve_ptc_option(*args, **kwargs):
@@ -493,6 +696,27 @@ def load_async_subagents(config_path=None):
     """Disable mutable remote subagents and their arbitrary HTTP headers."""
     del config_path
     return []
+
+
+_nemoclaw_original_build_model_identity_section = build_model_identity_section
+
+
+def build_model_identity_section(
+    name,
+    provider=None,
+    context_limit=None,
+    unsupported_modalities=frozenset(),
+):
+    """Report the onboard-selected upstream provider in the model identity."""
+    from deepagents_code._nemoclaw_managed import managed_display_provider
+
+    display_provider = managed_display_provider(provider) if provider else provider
+    return _nemoclaw_original_build_model_identity_section(
+        name,
+        provider=display_provider,
+        context_limit=context_limit,
+        unsupported_modalities=unsupported_modalities,
+    )
 '''
 
 SUBAGENTS_PATCH = r'''
@@ -556,16 +780,26 @@ async def _run_startup_command(command, console, *, quiet: bool) -> None:
 APPROVAL_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
+_NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE = (
+    "Auto-approval is disabled in NemoClaw-managed sandboxes."
+)
 _nemoclaw_original_approval_selection = ApprovalMenu._handle_selection
 
 
 def _nemoclaw_handle_approval_selection(
     self, option: int, *, reject_message: str | None = None
 ) -> None:
-    """Refuse the thread-wide auto-approval choice without approving this batch."""
+    """Gate the thread-wide auto-approval choice on the managed capability."""
     if option == 1:
+        from deepagents_code._nemoclaw_managed import managed_auto_approval_enabled
+
+        if managed_auto_approval_enabled():
+            _nemoclaw_original_approval_selection(
+                self, option, reject_message=reject_message
+            )
+            return
         self.app.notify(
-            "Auto-approval is disabled in NemoClaw-managed sandboxes.",
+            _NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE,
             severity="warning",
             markup=False,
         )
@@ -585,9 +819,10 @@ _nemoclaw_original_build_server_env = _build_server_env
 
 
 def _build_server_env() -> dict[str, str]:
-    """Keep the LangGraph API subprocess from starting a PyPI update thread."""
+    """Keep the LangGraph subprocess from starting update or analytics threads."""
     env = _nemoclaw_original_build_server_env()
     env["LANGGRAPH_NO_VERSION_CHECK"] = "true"
+    env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
     env["OTEL_ENABLED"] = "false"
     for name in (
         "OPENAI_PROXY",
@@ -638,7 +873,7 @@ MCP_CONFIG_LOAD_MARKER = '''    path = Path(config_path)
 
     try:
         with path.open(encoding="utf-8") as file_obj:
-            config = json.load(file_obj)
+            return json.load(file_obj)
 '''
 
 MCP_CONFIG_LOAD_PATCH = '''    from deepagents_code._nemoclaw_managed import (
@@ -649,13 +884,12 @@ MCP_CONFIG_LOAD_PATCH = '''    from deepagents_code._nemoclaw_managed import (
     try:
         managed_payload = managed_mcp_config_bytes(config_path)
         if managed_payload is not None:
-            config = json.loads(managed_payload)
-        else:
-            if not path.exists():
-                error_msg = f"MCP config file not found: {config_path}"
-                raise FileNotFoundError(error_msg)
-            with path.open(encoding="utf-8") as file_obj:
-                config = json.load(file_obj)
+            return json.loads(managed_payload)
+        if not path.exists():
+            error_msg = f"MCP config file not found: {config_path}"
+            raise FileNotFoundError(error_msg)
+        with path.open(encoding="utf-8") as file_obj:
+            return json.load(file_obj)
 '''
 
 MCP_EXPLICIT_CONFIG_MARKER = '''    if explicit_config_path:
@@ -690,6 +924,21 @@ SERVER_ENV_OVERRIDES_MARKER = '''        env.update(self._persistent_env_overrid
 
 SERVER_ENV_OVERRIDES_PATCH = '''        env.update(self._persistent_env_overrides)
         env.update(self._env_overrides)
+
+        # Reassert the managed child-process posture after both override
+        # layers so restarts cannot re-enable update checks, optional
+        # analytics, or unmanaged telemetry export.
+        env["LANGGRAPH_NO_VERSION_CHECK"] = "true"
+        env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
+        env["OTEL_ENABLED"] = "false"
+        for name in (
+            "OPENAI_PROXY",
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_HEADERS",
+            "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        ):
+            env.pop(name, None)
 
         # Revalidate and bind the exact managed MCP snapshot before creating
         # any launch artifacts. Initial start and restart share this path.
@@ -861,6 +1110,47 @@ def _nemoclaw_select_with_auth_check(self, model_spec: str, provider: str) -> No
 ModelSelectorScreen._select_with_auth_check = _nemoclaw_select_with_auth_check
 '''
 
+STATUS_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+_nemoclaw_original_status_bar_set_model = StatusBar.set_model
+
+
+def _nemoclaw_status_bar_set_model(self, *, provider, model, effort=""):
+    """Report the onboard-selected upstream provider in the status bar."""
+    from deepagents_code._nemoclaw_managed import managed_display_provider
+
+    _nemoclaw_original_status_bar_set_model(
+        self,
+        provider=managed_display_provider(provider),
+        model=model,
+        effort=effort,
+    )
+
+
+StatusBar.set_model = _nemoclaw_status_bar_set_model
+'''
+
+WELCOME_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+_nemoclaw_original_welcome_banner_update_model = WelcomeBanner.update_model
+
+
+def _nemoclaw_welcome_banner_update_model(self, *, provider, model):
+    """Report the onboard-selected upstream provider in the welcome banner."""
+    from deepagents_code._nemoclaw_managed import managed_display_provider
+
+    _nemoclaw_original_welcome_banner_update_model(
+        self,
+        provider=managed_display_provider(provider),
+        model=model,
+    )
+
+
+WelcomeBanner.update_model = _nemoclaw_welcome_banner_update_model
+'''
+
 
 def _top_level_functions(tree: ast.Module) -> set[str]:
     return {
@@ -868,6 +1158,20 @@ def _top_level_functions(tree: ast.Module) -> set[str]:
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+
+
+def _top_level_symbols(tree: ast.Module) -> set[str]:
+    symbols = _top_level_functions(tree)
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            symbols.add(node.name)
+        elif isinstance(node, ast.Assign):
+            symbols.update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            symbols.add(node.target.id)
+    return symbols
 
 
 def _class_methods(tree: ast.Module, class_name: str) -> set[str]:
@@ -887,6 +1191,12 @@ def _require_functions(path: Path, text: str, names: set[str]) -> ast.Module:
     if missing:
         raise RuntimeError(f"Required upstream functions missing in {path}: {sorted(missing)}")
     return tree
+
+
+def _require_symbols(path: Path, tree: ast.Module, names: set[str]) -> None:
+    missing = names - _top_level_symbols(tree)
+    if missing:
+        raise RuntimeError(f"Required upstream symbols missing in {path}: {sorted(missing)}")
 
 
 def _require_methods(
@@ -919,6 +1229,33 @@ def _package_root() -> Path:
     return Path(roots[0])
 
 
+def _load_managed_module(
+    root: Path,
+    module_name: str,
+    source_boundary_name: str,
+    installed_boundary_name: str | None = None,
+) -> tuple[Path, str]:
+    source_path = Path(__file__).with_name(module_name)
+    destination_path = root / module_name
+    if not source_path.is_file():
+        raise RuntimeError(
+            f"NemoClaw {source_boundary_name} source not found at {source_path}"
+        )
+    source = source_path.read_text(encoding="utf-8")
+    compile(source, str(destination_path), "exec")
+    if destination_path.exists() or destination_path.is_symlink():
+        if (
+            not destination_path.is_file()
+            or destination_path.is_symlink()
+            or destination_path.read_text(encoding="utf-8") != source
+        ):
+            raise RuntimeError(
+                "Refusing to overwrite unexpected "
+                f"{installed_boundary_name or source_boundary_name} at {destination_path}"
+            )
+    return destination_path, source
+
+
 def main() -> None:
     actual_version = importlib.metadata.version("deepagents-code")
     if actual_version != EXPECTED_DCODE_VERSION:
@@ -946,53 +1283,98 @@ def main() -> None:
         "app": root / "app.py",
         "auth_store": root / "auth_store.py",
         "config": root / "config.py",
+        "tools": root / "tools.py",
         "model_config": root / "model_config.py",
         "agent": root / "agent.py",
         "update_check": root / "update_check.py",
         "openai_codex": root / "integrations" / "openai_codex.py",
-        "auth_ui": root / "widgets" / "auth.py",
-        "codex_ui": root / "widgets" / "codex_auth.py",
-        "model_selector": root / "widgets" / "model_selector.py",
-        "approval": root / "widgets" / "approval.py",
-        "server": root / "server.py",
+        "auth_ui": root / "tui" / "widgets" / "auth.py",
+        "codex_ui": root / "tui" / "widgets" / "codex_auth.py",
+        "model_selector": root / "tui" / "widgets" / "model_selector.py",
+        "approval": root / "tui" / "widgets" / "approval.py",
+        "status": root / "tui" / "widgets" / "status.py",
+        "welcome": root / "tui" / "widgets" / "welcome.py",
+        "server": root / "client" / "launch" / "server.py",
         "server_config": root / "_server_config.py",
         "mcp_tools": root / "mcp_tools.py",
         "subagents": root / "subagents.py",
         "hooks": root / "hooks.py",
-        "non_interactive": root / "non_interactive.py",
+        "non_interactive": root / "client" / "non_interactive.py",
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
 
-    module_source_path = Path(__file__).with_name(MIDDLEWARE_MODULE)
-    module_destination_path = root / MIDDLEWARE_MODULE
-    if not module_source_path.is_file():
-        raise RuntimeError(
-            f"NemoClaw middleware source not found at {module_source_path}"
-        )
-    module_source = module_source_path.read_text(encoding="utf-8")
-    compile(module_source, str(module_destination_path), "exec")
-    if module_destination_path.exists() or module_destination_path.is_symlink():
-        if (
-            not module_destination_path.is_file()
-            or module_destination_path.is_symlink()
-            or module_destination_path.read_text(encoding="utf-8") != module_source
-        ):
-            raise RuntimeError(
-                f"Refusing to overwrite unexpected middleware at {module_destination_path}"
-            )
+    module_destination_path, module_source = _load_managed_module(
+        root, MIDDLEWARE_MODULE, "middleware"
+    )
+    observability_destination_path, observability_source = _load_managed_module(
+        root, OBSERVABILITY_MODULE, "observability", "observability module"
+    )
 
     marker_states = {PATCH_MARKER in text for text in texts.values()}
     helper_path = root / "_nemoclaw_managed.py"
     if marker_states == {True}:
-        if not helper_path.is_file() or PATCH_MARKER not in helper_path.read_text(
-            encoding="utf-8"
+        helper_source = (
+            helper_path.read_text(encoding="utf-8")
+            if helper_path.is_file() and not helper_path.is_symlink()
+            else ""
+        )
+        analytics_guard = 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'
+        auto_approval_guards = (
+            "def managed_auto_approval_mode() -> str:",
+            "def managed_auto_approval_enabled() -> bool:",
+        )
+        if (
+            PATCH_MARKER not in helper_source
+            or sum(
+                line.strip() == analytics_guard
+                for line in helper_source.splitlines()
+            )
+            != 1
+            or any(
+                sum(
+                    line.strip() == guard
+                    for line in helper_source.splitlines()
+                )
+                != 1
+                for guard in auto_approval_guards
+            )
         ):
-            raise RuntimeError("Managed package patch is partial: helper is missing")
+            raise RuntimeError(
+                "Managed package patch is partial: helper is missing or stale"
+            )
         if not module_destination_path.is_file():
             raise RuntimeError("Managed package patch is partial: middleware is missing")
-        if texts["agent"].count(AGENT_PATCH.lstrip()) != 1:
+        if not observability_destination_path.is_file():
             raise RuntimeError(
-                f"Managed package progressive-disclosure patch is incomplete in {paths['agent']}"
+                "Managed package patch is partial: observability module is missing"
+            )
+        for marker, boundary in (
+            (TOOL_DISCLOSURE_PATCH_MARKER, "progressive-disclosure"),
+            (OBSERVABILITY_PATCH_MARKER, "observability"),
+        ):
+            if texts["agent"].count(marker) != 1:
+                raise RuntimeError(
+                    f"Managed package {boundary} patch is partial in {paths['agent']}"
+                )
+        for name, patch in (
+            ("entrypoint", ENTRYPOINT_PATCH),
+            ("main", MAIN_PATCH),
+            ("tools", TOOLS_PATCH),
+            ("app", APP_PATCH),
+            ("approval", APPROVAL_PATCH),
+            ("agent", AGENT_PATCH),
+            ("status", STATUS_PATCH),
+            ("welcome", WELCOME_PATCH),
+            ("server", SERVER_PATCH),
+        ):
+            if texts[name].count(patch.lstrip()) != 1:
+                raise RuntimeError(
+                    f"Managed package {name} patch is incomplete in {paths[name]}"
+                )
+        if texts["server"].count(SERVER_ENV_OVERRIDES_PATCH.lstrip()) != 1:
+            raise RuntimeError(
+                "Managed package server override patch is incomplete in "
+                f"{paths['server']}"
             )
         return
     if marker_states != {False} or helper_path.exists():
@@ -1000,6 +1382,11 @@ def main() -> None:
     if TOOL_DISCLOSURE_PATCH_MARKER in texts["agent"]:
         raise RuntimeError(
             "Managed package progressive-disclosure patch is partial; "
+            "refusing mixed source state"
+        )
+    if OBSERVABILITY_PATCH_MARKER in texts["agent"]:
+        raise RuntimeError(
+            "Managed package observability patch is partial; "
             "refusing mixed source state"
         )
 
@@ -1015,9 +1402,13 @@ def main() -> None:
             "_handle_command",
             "_handle_install_command",
             "_handle_install_package",
+            "_restart_server_for_agent_swap",
+            "_resume_thread",
             "_handle_update_action",
             "_handle_update_command",
             "_install_extra",
+            "_prompt_launch_dependencies_then_model",
+            "_build_launch_dependencies_prompt",
             "_prompt_launch_tavily",
             "_prompt_model_auth_if_needed",
             "_show_auth_manager",
@@ -1043,6 +1434,12 @@ def main() -> None:
             "_tracing_enabled",
         },
     )
+    tools_tree = _require_functions(
+        paths["tools"], texts["tools"], {"_fetch_with_redirects"}
+    )
+    _require_symbols(
+        paths["tools"], tools_tree, {"_MAX_FETCH_REDIRECTS", "_UrlValidationError"}
+    )
     _require_methods(
         paths["model_config"],
         texts["model_config"],
@@ -1052,7 +1449,12 @@ def main() -> None:
     _require_functions(
         paths["agent"],
         texts["agent"],
-        {"create_cli_agent", "_resolve_ptc_option", "load_async_subagents"},
+        {
+            "create_cli_agent",
+            "_resolve_ptc_option",
+            "load_async_subagents",
+            "build_model_identity_section",
+        },
     )
     update_tree = _require_functions(
         paths["update_check"],
@@ -1095,6 +1497,18 @@ def main() -> None:
         texts["approval"],
         "ApprovalMenu",
         {"_handle_selection"},
+    )
+    _require_methods(
+        paths["status"],
+        texts["status"],
+        "StatusBar",
+        {"set_model"},
+    )
+    _require_methods(
+        paths["welcome"],
+        texts["welcome"],
+        "WelcomeBanner",
+        {"update_model"},
     )
     _require_functions(paths["server"], texts["server"], {"_build_server_env"})
     _require_functions(
@@ -1145,6 +1559,7 @@ def main() -> None:
         paths["auth_store"], texts["auth_store"], AUTH_STORE_PATCH
     )
     transformed["config"] = _append_patch(paths["config"], texts["config"], CONFIG_PATCH)
+    transformed["tools"] = _append_patch(paths["tools"], texts["tools"], TOOLS_PATCH)
     transformed["model_config"] = _append_patch(
         paths["model_config"], texts["model_config"], MODEL_CONFIG_PATCH
     )
@@ -1166,6 +1581,12 @@ def main() -> None:
     )
     transformed["approval"] = _append_patch(
         paths["approval"], texts["approval"], APPROVAL_PATCH
+    )
+    transformed["status"] = _append_patch(
+        paths["status"], texts["status"], STATUS_PATCH
+    )
+    transformed["welcome"] = _append_patch(
+        paths["welcome"], texts["welcome"], WELCOME_PATCH
     )
     if texts["server"].count(SERVER_POPEN_MARKER) != 1:
         raise RuntimeError(
@@ -1227,6 +1648,11 @@ def main() -> None:
     helper_path.write_text(managed_runtime_source, encoding="utf-8")
     if not module_destination_path.exists():
         module_destination_path.write_text(module_source, encoding="utf-8")
+    if not observability_destination_path.exists():
+        observability_destination_path.write_text(
+            observability_source,
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":

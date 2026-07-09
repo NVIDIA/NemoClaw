@@ -34,8 +34,8 @@ const CALLER_ALWAYS = "always()";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const EXPECTED_UPLOAD_JOB_COUNT = 73;
-const EXPECTED_DEFAULT_CALLER_COUNT = 62;
+const EXPECTED_UPLOAD_JOB_COUNT = 75;
+const EXPECTED_DEFAULT_CALLER_COUNT = 63;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -47,7 +47,7 @@ type WorkflowStep = WorkflowRecord & {
 
 type ExplicitUploadContract = {
   name: string;
-  path: string;
+  path?: string;
 };
 
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
@@ -120,6 +120,12 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-openclaw-inference-switch-${{ matrix.mode }}",
       path: "e2e-artifacts/live/openclaw-inference-switch/${{ matrix.mode }}/",
+    },
+  ],
+  [
+    "openshell-gateway-upgrade",
+    {
+      name: "e2e-openshell-gateway-upgrade-${{ matrix.legacy.id }}",
     },
   ],
   [

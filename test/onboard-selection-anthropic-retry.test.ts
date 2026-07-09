@@ -90,7 +90,7 @@ describe("onboard Anthropic credential retry UX", {
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "", "retry", "anthropic-good", ""];
+const answers = ["5", "", "retry", "anthropic-good", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -98,6 +98,7 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
+require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
 
 const { setupNim } = require(${onboardPath});
 
@@ -170,7 +171,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
+const answers = ["6", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -179,6 +180,7 @@ credentials.prompt = async (message) => {
 };
 runner.runCapture = () => "";
 
+require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
 const { setupNim } = require(${onboardPath});
 
 (async () => {

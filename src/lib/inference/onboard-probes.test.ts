@@ -18,8 +18,8 @@ const {
   getChatCompletionsProbeCurlArgs,
   getChatCompletionsProbePayload,
   getDeepSeekV4ProValidationProbeCurlArgs,
+  getProbeExtraHeaders,
   getKimiK26ValidationProbeCurlArgs,
-  getValidationProbeCurlArgs,
   hasChatCompletionsToolCall,
   hasChatCompletionsToolCallLeak,
   hasResponsesToolCall,
@@ -28,19 +28,18 @@ const {
   RETRIABLE_HTTP_PROBE_STATUSES,
 } = require("./onboard-probes");
 
-// Restore an env var to its pre-test value without branching at the call
-// site. Centralizing the conditional keeps test bodies linear and keeps the
-// codebase-growth-guardrails "if count" steady; see PR #5975 review.
-function restoreEnv(name: string, original: string | undefined): void {
-  if (original === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = original;
-  }
-}
-
 const FAKE_CONFIG_PATH = "/tmp/nemoclaw-test-credential.conf";
 const FAKE_CREDENTIAL_ARGS = ["--config", FAKE_CONFIG_PATH] as const;
+
+describe("OpenRouter probe headers", () => {
+  it("adds default OpenRouter headers only for the OpenRouter provider (#5826)", () => {
+    expect(getProbeExtraHeaders("openrouter-api")).toEqual([
+      "HTTP-Referer: https://www.nvidia.com/nemoclaw/",
+      "X-OpenRouter-Title: NVIDIA NemoClaw",
+    ]);
+    expect(getProbeExtraHeaders("openai-api")).toEqual([]);
+  });
+});
 
 describe("OpenAI-compatible inference probe response parsing", () => {
   it("detects tool-calling responses payloads conservatively", () => {
@@ -321,27 +320,6 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("allows onboard validation max-time to be raised from the environment", () => {
-    const original = process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS;
-    process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS = "300";
-    try {
-      expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
-        "--connect-timeout",
-        "10",
-        "--max-time",
-        "300",
-      ]);
-      expect(getKimiK26ValidationProbeCurlArgs({ isWsl: false })).toEqual([
-        "--connect-timeout",
-        "10",
-        "--max-time",
-        "300",
-      ]);
-    } finally {
-      restoreEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", original);
-    }
-  });
-
   it("uses an extended validation budget for slow NVIDIA Build models", () => {
     for (const model of ["qwen/qwen3.5-397b-a17b", "deepseek-ai/deepseek-v4-flash"]) {
       const args = getChatCompletionsProbeCurlArgs({
@@ -463,6 +441,54 @@ describe("OpenAI-compatible inference probes", () => {
       expect(result).toMatchObject({ ok: false });
       expect(result.message).toMatch(
         /cannot be validated.*structured Chat Completions tool calls/i,
+      );
+    });
+  });
+
+  describe("private-address SSRF guard (#6293)", () => {
+    it("rejects a non-loopback private LAN endpoint before issuing any probe (#6293)", () => {
+      const result = probeOpenAiLikeEndpoint(
+        "http://192.168.1.50:8000/v1",
+        "openai/model",
+        "dummy",
+        {
+          skipResponsesProbe: true,
+        },
+      );
+      expect(result).toMatchObject({ ok: false });
+      expect(result.message).toMatch(/private\/internal address/i);
+    });
+
+    it("rejects the link-local cloud-metadata endpoint before any probe (#6293)", () => {
+      const result = probeOpenAiLikeEndpoint("http://169.254.169.254/v1", "openai/model", "dummy", {
+        skipResponsesProbe: true,
+      });
+      expect(result).toMatchObject({ ok: false });
+      expect(result.message).toMatch(/private\/internal address/i);
+    });
+
+    it("allows a loopback endpoint so local inference validation can proceed (#6293)", () => {
+      const body = `if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`;
+      withFakeCurlProbe(
+        { script: makeFakeCurlScript(body), dirPrefix: "nemoclaw-loopback-probe-" },
+        () => {
+          const result = probeOpenAiLikeEndpoint(
+            "http://127.0.0.1:11434/v1",
+            "openai/model",
+            "dummy",
+            {
+              skipResponsesProbe: true,
+            },
+          );
+          expect(result).toMatchObject({ ok: true });
+        },
       );
     });
   });

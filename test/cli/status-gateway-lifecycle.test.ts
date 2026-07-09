@@ -98,8 +98,10 @@ describe("CLI status gateway lifecycle process contracts", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
-        "  echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
-        "  echo 'RUNNING'",
+        '  case "$*" in',
+        "    *inference.local/v1/models*) echo 'OK 200' ;;",
+        "    *) echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'; echo 'RUNNING' ;;",
+        "  esac",
         "  exit 0",
         "fi",
         "exit 0",
@@ -139,7 +141,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
     expect(result.out).not.toContain("not verified");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
     const sandboxGetIndex = calls.indexOf("sandbox get alpha");
-    const inferenceGetIndex = calls.indexOf("inference get");
+    const inferenceGetIndex = calls.indexOf("inference get -g nemoclaw");
     expect(sandboxGetIndex).toBeGreaterThanOrEqual(0);
     expect(inferenceGetIndex).toBeGreaterThan(sandboxGetIndex);
   });

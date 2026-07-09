@@ -5,16 +5,26 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
-import { dockerCapture, dockerPullWithProgressWatchdog, dockerSpawn } from "../adapters/docker";
+import os from "node:os";
+import path from "node:path";
+import {
+  dockerCapture,
+  dockerForceRm,
+  dockerPullWithProgressWatchdog,
+  dockerRunDetached,
+  dockerSpawn,
+  dockerStop,
+} from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
-import { runCapture, runShell } from "../runner";
+import { runCapture } from "../runner";
+import { isSafeModelId } from "../validation";
 import { getGpuIndicesByName } from "./nim";
 import {
-  VLLM_EXTRA_ARGS_ENV,
-  VLLM_MODELS,
   buildVllmServeCommand,
   parseVllmExtraServeArgs,
+  VLLM_EXTRA_ARGS_ENV,
+  VLLM_MODELS,
   type VllmModelDef,
   type VllmPlatform,
 } from "./vllm-models";
@@ -77,6 +87,27 @@ function qwen35bNvfp4Model(): VllmModelDef {
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
+const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
+
+function hostHfCacheDir(): string {
+  return path.join(os.homedir(), ".cache", "huggingface");
+}
+
+function hfCacheMount(): string {
+  return `${hostHfCacheDir()}:${HF_CACHE_CONTAINER_DIR}`;
+}
+
+function vllmDockerRunFlags(gpuFlag = "all"): string[] {
+  return [
+    "--gpus",
+    gpuFlag,
+    "--ipc=host",
+    "-v",
+    hfCacheMount(),
+    "-e",
+    `HF_HOME=${HF_CACHE_CONTAINER_DIR}`,
+  ];
+}
 
 function pickHfTokenEntry(
   env: NodeJS.ProcessEnv = process.env,
@@ -108,10 +139,9 @@ export function buildHfTokenDockerArgs(env: NodeJS.ProcessEnv = process.env): st
 /**
  * Companion to `buildHfTokenDockerArgs`: returns the `{ KEY: value }` map
  * that has to be merged into the subprocess env so docker can see the
- * token when `-e KEY` (key-only) tells it to forward by name. The CLI's
- * `runShell` strips non-allowlisted env names by default (see
- * subprocess-env.ts), so callers that go through that path must pass
- * this map via the runner's `env` option.
+ * token when `-e KEY` (key-only) tells it to forward by name. The CLI runner
+ * strips non-allowlisted env names by default (see subprocess-env.ts), so
+ * Docker callers must pass this map via the runner's `env` option.
  */
 export function buildHfTokenForwardEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -126,15 +156,7 @@ const SPARK_PROFILE: VllmProfile = {
   image: VLLM_IMAGES.ngc2605Post1,
   defaultModel: qwen35bNvfp4Model(),
   containerName: "nemoclaw-vllm",
-  dockerRunFlags: [
-    "--gpus",
-    "all",
-    "--ipc=host",
-    "-v",
-    `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
-    "-e",
-    "HF_HOME=/root/.cache/huggingface",
-  ],
+  dockerRunFlags: vllmDockerRunFlags(),
   pullTimeoutSec: 12 * 60 * 60,
   loadTimeoutSec: 1800,
 };
@@ -149,21 +171,15 @@ const STATION_PROFILE: VllmProfile = {
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
     const indices = getGpuIndicesByName(/GB300/i);
+    // Docker parses --gpus as CSV, so multi-device values must retain
+    // double quotes inside the argv token to keep the comma in one field.
     const gpuFlag =
       indices.length === 0
         ? "all"
         : indices.length === 1
           ? `device=${indices[0]}`
-          : `'"device=${indices.join(",")}"'`;
-    return [
-      "--gpus",
-      gpuFlag,
-      "--ipc=host",
-      "-v",
-      `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
-      "-e",
-      "HF_HOME=/root/.cache/huggingface",
-    ];
+          : `"device=${indices.join(",")}"`;
+    return vllmDockerRunFlags(gpuFlag);
   },
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
   loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
@@ -226,6 +242,9 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
 
 export async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pulling vLLM image: ${profile.image}`);
+  // Docker can be quiet while finalizing large layers on every supported vLLM
+  // profile, so all profiles intentionally share the 15-minute stall default.
+  // The profile-specific maximum still bounds the complete pull operation.
   const result = await dockerPullWithProgressWatchdog(profile.image, {
     maxTimeoutMs: profile.pullTimeoutSec * 1000,
     logLine: emit,
@@ -260,9 +279,9 @@ function downloadModel(
         "--entrypoint",
         "hf",
         "-v",
-        `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
+        hfCacheMount(),
         "-e",
-        "HF_HOME=/root/.cache/huggingface",
+        `HF_HOME=${HF_CACHE_CONTAINER_DIR}`,
         ...buildHfTokenDockerArgs(),
         profile.image,
         "download",
@@ -336,21 +355,51 @@ function downloadModel(
   });
 }
 
-// Build the `docker run` command for the long-lived vLLM inference container.
+function validateDockerArg(value: string, label: string): string {
+  if (value.length === 0) {
+    throw new Error(`${label} must not be empty`);
+  }
+  if (value.includes("\0")) {
+    throw new Error(`${label} must not contain NUL bytes`);
+  }
+  return value;
+}
+
+function validateDockerArgs(args: readonly string[], label: string): string[] {
+  return args.map((arg, index) => validateDockerArg(String(arg), `${label}[${String(index)}]`));
+}
+
+// Build the `docker run` argv for the long-lived vLLM inference container.
 // Exported for testing. `--restart unless-stopped` makes the container come
 // back after a host reboot or Docker daemon restart (#4886); without a restart
 // policy the container stays down after a reboot and `nemoclaw inference get`
 // fails until a full `nemoclaw onboard --fresh --gpu` recreates it.
-export function buildVllmRunCommand(
+export function buildVllmRunArgs(
   profile: VllmProfile,
   model: VllmModelDef,
-  runFlags: string,
-): string {
-  const extra = runFlags ? ` ${runFlags}` : "";
-  return (
-    `docker run -d --restart unless-stopped${extra} -p ${String(VLLM_PORT)}:8000 ` +
-    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`
+  runFlags: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const image = validateDockerArg(profile.image, "vLLM image");
+  const containerName = validateDockerArg(profile.containerName, "vLLM container name");
+  const safeRunFlags = validateDockerArgs(
+    [...runFlags, ...buildHfTokenDockerArgs(env)],
+    "vLLM docker run flags",
   );
+  return [
+    "--restart",
+    "unless-stopped",
+    ...safeRunFlags,
+    "-p",
+    `${String(VLLM_PORT)}:8000`,
+    "--name",
+    containerName,
+    "--entrypoint",
+    "/bin/bash",
+    image,
+    "-lc",
+    buildVllmServeCommand(model, env),
+  ];
 }
 
 function startContainer(
@@ -358,11 +407,6 @@ function startContainer(
   model: VllmModelDef,
 ): { ok: boolean; reason?: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
-  // Idempotent: tear down any prior container by the same name first.
-  runShell(`docker rm -f ${profile.containerName}`, {
-    ignoreError: true,
-    suppressOutput: true,
-  });
   const resolvedFlags = profile.buildDockerRunFlags
     ? profile.buildDockerRunFlags()
     : profile.dockerRunFlags;
@@ -372,10 +416,19 @@ function startContainer(
   // token from the docker subprocess env by default, so we have to put it
   // back via the `env:` option; the docker argv only carries `-e KEY` so
   // the value stays out of /proc/<pid>/cmdline.
-  const hfTokenFlags = buildHfTokenDockerArgs().join(" ");
-  const flags = [resolvedFlags.join(" "), hfTokenFlags].filter(Boolean).join(" ");
-  const cmd = buildVllmRunCommand(profile, model, flags);
-  const result = runShell(cmd, {
+  let runArgs: string[];
+  try {
+    runArgs = buildVllmRunArgs(profile, model, resolvedFlags);
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+  // Validate every launch input before replacing a potentially healthy
+  // existing container. Once validated, teardown keeps startup idempotent.
+  dockerForceRm(profile.containerName, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  const result = dockerRunDetached(runArgs, {
     ignoreError: true,
     suppressOutput: true,
     env: buildHfTokenForwardEnv(),
@@ -493,6 +546,29 @@ interface InstallVllmOptions {
   hasImage: boolean;
   nonInteractive: boolean;
   promptFn: (q: string) => Promise<string>;
+  beforeInstall?: (modelId: string) => void;
+}
+
+export function resolveVllmServedModelId(modelId: string, extraServeArgs: string[]): string {
+  let override: string | null = null;
+  for (let index = 0; index < extraServeArgs.length; index += 1) {
+    const arg = extraServeArgs[index];
+    let values: string[] | null = null;
+    if (arg === "--served-model-name") {
+      values = [];
+      while (index + 1 < extraServeArgs.length && !extraServeArgs[index + 1].startsWith("-")) {
+        values.push(extraServeArgs[(index += 1)]);
+      }
+    } else if (arg.startsWith("--served-model-name=")) {
+      values = [arg.slice("--served-model-name=".length)];
+    }
+    if (!values) continue;
+    if (override || values.length !== 1 || !isSafeModelId(values[0])) {
+      throw new Error("--served-model-name must specify exactly one safe model ID");
+    }
+    override = values[0];
+  }
+  return override ?? modelId;
 }
 
 // Public entry point. Returns ok=false on any prereq, pull, run, or load
@@ -512,12 +588,15 @@ export async function installVllm(
   const { model, source: modelSource } = resolved;
 
   let extraServeArgs: string[];
+  let servedModelId: string;
   try {
     extraServeArgs = parseVllmExtraServeArgs();
+    servedModelId = resolveVllmServedModelId(model.id, extraServeArgs);
   } catch (err) {
     console.error(`  vLLM install failed: ${(err as Error).message}`);
     return { ok: false };
   }
+  opts.beforeInstall?.(servedModelId);
 
   console.log("");
   console.log(`  vLLM (${profile.name}):`);
@@ -572,7 +651,7 @@ export async function installVllm(
   const ready = await waitForVllmReady(profile);
   if (!ready.ok) {
     printContainerLogTail(profile);
-    runShell(`docker stop ${profile.containerName}`, {
+    dockerStop(profile.containerName, {
       ignoreError: true,
       suppressOutput: true,
     });

@@ -27,6 +27,7 @@ export const PROXY_URL_ENV_NAMES = [
   "https_proxy",
 ] as const;
 export const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
+export const TRUSTED_FETCH_PROXY_ENV_NAME = "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" as const;
 const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
 export const TRACING_ENABLE_ENV_NAMES = [
   "DEEPAGENTS_CODE_LANGSMITH_TRACING",
@@ -38,6 +39,7 @@ export const TRACING_ENABLE_ENV_NAMES = [
   "LANGCHAIN_TRACING",
   "LANGCHAIN_TRACING_V2",
 ] as const;
+export const ANALYTICS_DISABLE_ENV_NAMES = ["LANGGRAPH_CLI_NO_ANALYTICS"] as const;
 
 export function makeStartScriptFixture(
   tempDir: string,
@@ -50,8 +52,10 @@ export function makeStartScriptFixture(
   const scriptPath = path.join(tempDir, "start.sh");
   const hostFile = path.join(tempDir, "trusted-proxy-host");
   const portFile = path.join(tempDir, "trusted-proxy-port");
+  const markerDir = path.join(tempDir, "persistent-dcode-state");
   expect(original).toContain("local target=/tmp/nemoclaw-proxy-env.sh");
   expect(original).toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
+  expect(original).toContain("local marker_dir=/sandbox/.deepagents");
   const fixture = original
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
@@ -69,11 +73,14 @@ export function makeStartScriptFixture(
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
       `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
-    );
+    )
+    .replace("local marker_dir=/sandbox/.deepagents", `local marker_dir="${markerDir}"`);
   expect(fixture).toContain(`local target="${envFile}"`);
   expect(fixture).toContain(`tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`);
   expect(fixture).not.toContain("local target=/tmp/nemoclaw-proxy-env.sh");
   expect(fixture).not.toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
+  expect(fixture).toContain(`local marker_dir="${markerDir}"`);
+  expect(fixture).not.toContain("local marker_dir=/sandbox/.deepagents");
   fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
   fs.writeFileSync(portFile, "3128\n", "utf8");
   fs.chmodSync(hostFile, 0o444);
@@ -134,9 +141,11 @@ export function runStartScriptProxyProbe(
   const probe = [
     ...[
       ...PROXY_URL_ENV_NAMES,
+      TRUSTED_FETCH_PROXY_ENV_NAME,
       ...NO_PROXY_ENV_NAMES,
       ...CLEARED_PROXY_ENV_NAMES,
       ...TRACING_ENABLE_ENV_NAMES,
+      ...ANALYTICS_DISABLE_ENV_NAMES,
     ].map((name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`),
     "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy",
     "export ALL_PROXY=socks5://persisted-user:persisted-password@persisted-all-proxy.example:1080",
@@ -144,9 +153,11 @@ export function runStartScriptProxyProbe(
     '. "$NEMOCLAW_TEST_PROXY_ENV"',
     ...[
       ...PROXY_URL_ENV_NAMES,
+      TRUSTED_FETCH_PROXY_ENV_NAME,
       ...NO_PROXY_ENV_NAMES,
       ...CLEARED_PROXY_ENV_NAMES,
       ...TRACING_ENABLE_ENV_NAMES,
+      ...ANALYTICS_DISABLE_ENV_NAMES,
     ].map((name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`),
   ].join("\n");
   const result = spawnSync("bash", [scriptPath, "bash", "-c", probe], {

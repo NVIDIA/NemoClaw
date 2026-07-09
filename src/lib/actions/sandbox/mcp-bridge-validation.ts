@@ -33,7 +33,31 @@ const OPENSHELL_VERSION_OUTPUT_RE =
   /^openshell\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
 const OPENSHELL_VERSION_PROBE_TIMEOUT_MS = 5_000;
 const OPENSHELL_VERSION_PROBE_MAX_BUFFER_BYTES = 16 * 1_024;
-const EXPECTED_OPENSHELL_VERSION = childVisibleCredentialManifest.openshellVersion;
+export const MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION =
+  childVisibleCredentialManifest.openshellVersion;
+
+export type McpCredentialBoundaryRuntimeVersionErrorReason =
+  | "binary-missing"
+  | "probe-failed"
+  | "probe-nonzero"
+  | "unparseable-output"
+  | "version-mismatch";
+
+/**
+ * Adds in-process classification metadata without changing the established
+ * McpBridgeError message, name, or generic exit code contract.
+ */
+export class McpCredentialBoundaryRuntimeVersionError extends McpBridgeError {
+  constructor(
+    readonly actualVersion: string,
+    readonly detail: string,
+    readonly reason: McpCredentialBoundaryRuntimeVersionErrorReason,
+  ) {
+    super(
+      `OpenShell credential boundary runtime version check failed: expected ${MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION}, actual ${actualVersion} (${detail}). Install OpenShell ${MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION}, or point NEMOCLAW_OPENSHELL_BIN to that version, then retry.`,
+    );
+  }
+}
 
 type OpenshellVersionCommandResult = Pick<
   SpawnSyncReturns<string>,
@@ -55,10 +79,12 @@ function runOpenshellVersionCommand(binary: string): OpenshellVersionCommandResu
   });
 }
 
-function credentialBoundaryVersionError(actual: string, detail: string): McpBridgeError {
-  return new McpBridgeError(
-    `OpenShell credential boundary runtime version check failed: expected ${EXPECTED_OPENSHELL_VERSION}, actual ${actual} (${detail}). Install OpenShell ${EXPECTED_OPENSHELL_VERSION}, or point NEMOCLAW_OPENSHELL_BIN to that version, then retry.`,
-  );
+function credentialBoundaryVersionError(
+  actual: string,
+  detail: string,
+  reason: McpCredentialBoundaryRuntimeVersionErrorReason,
+): McpCredentialBoundaryRuntimeVersionError {
+  return new McpCredentialBoundaryRuntimeVersionError(actual, detail, reason);
 }
 
 /**
@@ -75,29 +101,38 @@ export function assertMcpCredentialBoundaryRuntimeVersion(
 ): void {
   const binary = (deps.resolveOpenshell ?? resolveOpenshell)();
   if (!binary) {
-    throw credentialBoundaryVersionError("<missing>", "openshell binary not found");
+    throw credentialBoundaryVersionError(
+      "<missing>",
+      "openshell binary not found",
+      "binary-missing",
+    );
   }
 
   const result = (deps.runVersionCommand ?? runOpenshellVersionCommand)(binary);
   if (result.error) {
     const code = (result.error as NodeJS.ErrnoException).code;
     const detail = code === "ENOENT" ? "openshell binary not found" : "openshell --version failed";
-    throw credentialBoundaryVersionError("<unavailable>", detail);
+    throw credentialBoundaryVersionError("<unavailable>", detail, "probe-failed");
   }
   if (result.status !== 0) {
     throw credentialBoundaryVersionError(
       "<unavailable>",
       `openshell --version exited with status ${String(result.status)}`,
+      "probe-nonzero",
     );
   }
 
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
   const actualVersion = output.match(OPENSHELL_VERSION_OUTPUT_RE)?.[1];
   if (!actualVersion) {
-    throw credentialBoundaryVersionError("<unparseable>", "invalid openshell --version output");
+    throw credentialBoundaryVersionError(
+      "<unparseable>",
+      "invalid openshell --version output",
+      "unparseable-output",
+    );
   }
-  if (actualVersion !== EXPECTED_OPENSHELL_VERSION) {
-    throw credentialBoundaryVersionError(actualVersion, "version mismatch");
+  if (actualVersion !== MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION) {
+    throw credentialBoundaryVersionError(actualVersion, "version mismatch", "version-mismatch");
   }
 }
 

@@ -12,6 +12,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
+  formatInferenceRouteDriftForDisplay,
   getCompatibleAnthropicOpenAiSurfaceBaseUrl,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
@@ -22,11 +23,27 @@ import {
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   parseGatewayInference,
   planInferenceRouteReconcile,
+  resolveAgentDefaultCloudModel,
   resolveAgentInferenceApi,
   resolveAgentProviderInferenceApi,
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "./config";
+
+describe("resolveAgentDefaultCloudModel", () => {
+  it("uses the Deep Agents manifest default without changing shared agent defaults", () => {
+    expect(
+      resolveAgentDefaultCloudModel({
+        name: "langchain-deepagents-code",
+        inference: { default_model: "nvidia/nemotron-3-ultra-550b-a55b" },
+      }),
+    ).toBe("nvidia/nemotron-3-ultra-550b-a55b");
+
+    for (const agent of [null, { name: "openclaw" }, { name: "hermes" }]) {
+      expect(resolveAgentDefaultCloudModel(agent)).toBe(DEFAULT_CLOUD_MODEL);
+    }
+  });
+});
 
 describe("resolveAgentInferenceApi", () => {
   it("uses the managed OpenAI frontend for Hermes custom Anthropic routes (#6289)", () => {
@@ -82,7 +99,6 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS).toEqual([
       { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
       { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
-      { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
       { id: "minimaxai/minimax-m3", label: "Minimax M3" },
     ]);
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
@@ -120,9 +136,12 @@ describe("inference selection config", () => {
     expect(HERMES_PROVIDER_MODEL_OPTIONS.length).toBeGreaterThan(10);
   });
 
-  it("retires GLM 5.1 only from the NVIDIA Endpoints picker", () => {
-    expect(CLOUD_MODEL_OPTIONS.map((option) => option.id)).not.toContain("z-ai/glm-5.1");
-    expect(HERMES_PROVIDER_MODEL_OPTIONS).toContain("z-ai/glm-5.1");
+  it.each([
+    "z-ai/glm-5.1",
+    "moonshotai/kimi-k2.6",
+  ])("retires %s only from the NVIDIA Endpoints picker", (model) => {
+    expect(CLOUD_MODEL_OPTIONS.map((option) => option.id)).not.toContain(model);
+    expect(HERMES_PROVIDER_MODEL_OPTIONS).toContain(model);
   });
 
   it("maps ollama-local to the sandbox inference route and default model", () => {
@@ -181,6 +200,16 @@ describe("inference selection config", () => {
       provider: "openai-api",
       providerLabel: "OpenAI",
     });
+    expect(getProviderSelectionConfig("openrouter-api", "moonshotai/kimi-k2.6")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "moonshotai/kimi-k2.6",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "OPENROUTER_API_KEY",
+      provider: "openrouter-api",
+      providerLabel: "OpenRouter",
+    });
     expect(getProviderSelectionConfig("anthropic-prod", "claude-sonnet-4-6")).toEqual(
       expect.objectContaining({ model: "claude-sonnet-4-6", providerLabel: "Anthropic" }),
     );
@@ -234,6 +263,7 @@ describe("inference selection config", () => {
       "nvidia-prod",
       "nvidia-nim",
       "openai-api",
+      "openrouter-api",
       "anthropic-prod",
       "compatible-anthropic-endpoint",
       "gemini-api",
@@ -268,6 +298,7 @@ describe("inference selection config", () => {
 
   it("falls back to provider defaults when model is omitted", () => {
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
+    expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
@@ -349,6 +380,18 @@ describe("getSandboxInferenceConfig", () => {
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/deepseek-ai/DeepSeek-V4-Flash`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
+  });
+
+  it("maps OpenRouter to the managed inference provider with store disabled (#5826)", () => {
+    expect(getSandboxInferenceConfig("moonshotai/kimi-k2.6", "openrouter-api")).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
       inferenceBaseUrl: INFERENCE_ROUTE_URL,
       inferenceApi: "openai-completions",
       inferenceCompat: {
@@ -582,5 +625,23 @@ describe("sanitizeRouteValueForDisplay", () => {
       "nvidia/nemotron-3-super-120b-a12b",
     );
     expect(sanitizeRouteValueForDisplay("nvidia-prod")).toBe("nvidia-prod");
+  });
+});
+
+describe("formatInferenceRouteDriftForDisplay", () => {
+  it("shares one sanitized warning contract across status and connect", () => {
+    expect(
+      formatInferenceRouteDriftForDisplay(
+        { provider: "openai\u001b[2J", model: "gpt-5.2\n" },
+        { provider: "nvidia", model: "nvidia/nemotron" },
+        "for sandbox 'alpha'\r",
+      ),
+    ).toEqual({
+      liveProvider: "openai[2J",
+      liveModel: "gpt-5.2",
+      recordedRoute: "nvidia/nvidia/nemotron",
+      warning:
+        "gateway inference route (openai[2J/gpt-5.2) differs from the recorded route for sandbox 'alpha' (nvidia/nvidia/nemotron).",
+    });
   });
 });

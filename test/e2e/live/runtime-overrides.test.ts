@@ -5,17 +5,15 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // Docker-image/entrypoint boundary: build the NemoClaw sandbox image, start
 // short-lived containers through the real ENTRYPOINT, then read the patched
 // /sandbox/.openclaw/openclaw.json and .config-hash from inside the container.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const TEST_TIMEOUT_MS = 45 * 60 * 1000;
 const DOCKER_BUFFER_BYTES = 20 * 1024 * 1024;
 const DOCKER_REQUIRED_MESSAGE = "Docker is required for runtime override coverage";
-
-const runtimeOverridesTest = process.env.NEMOCLAW_RUN_LIVE_E2E === "1" ? test : test.skip;
 
 type CommandResult = {
   status: number | null;
@@ -42,6 +40,16 @@ type OpenClawConfig = {
   models: { providers: Record<string, ProviderConfig> };
   gateway: { controlUi: { allowedOrigins: string[] } };
   [key: string]: unknown;
+};
+
+const MANAGED_INFERENCE_SAFEGUARD_COMPACTION = {
+  mode: "safeguard",
+  timeoutSeconds: 120,
+  maxHistoryShare: 0.35,
+  recentTurnsPreserve: 1,
+  qualityGuard: { enabled: true, maxRetries: 0 },
+  notifyUser: true,
+  truncateAfterCompaction: true,
 };
 
 function commandResult(result: ReturnType<typeof spawnSync>): CommandResult {
@@ -199,6 +207,32 @@ function runConfigHashCheck(
   return result.stdout.trim();
 }
 
+function assertManagedInferenceCompactionRuntime(dockerLog: string[], image: string): void {
+  const result = runContainer(
+    dockerLog,
+    image,
+    "managed inference compaction runtime validation",
+    {},
+    String.raw`set -eu
+validation="$(openclaw config validate --json)"
+compaction="$(openclaw config get agents.defaults.compaction --json)"
+printf '{"validation":%s,"compaction":%s}\n' "$validation" "$compaction" >&3
+sleep 0.1`,
+  );
+  expect(result.status, spawnResultText(result)).toBe(0);
+
+  let proof: { validation?: { valid?: boolean }; compaction?: unknown };
+  try {
+    proof = JSON.parse(result.stdout.trim()) as typeof proof;
+  } catch (error) {
+    throw new Error(
+      `managed inference compaction proof did not emit valid JSON: ${(error as Error).message}\n${result.stdout}`,
+    );
+  }
+  expect(proof.validation?.valid).toBe(true);
+  expect(proof.compaction).toEqual(MANAGED_INFERENCE_SAFEGUARD_COMPACTION);
+}
+
 function runOverrideStderr(
   dockerLog: string[],
   image: string,
@@ -235,7 +269,7 @@ function buildImage(dockerLog: string[], image: string): void {
   expect(build.status, spawnResultText(build)).toBe(0);
 }
 
-runtimeOverridesTest(
+test(
   "runtime config overrides patch OpenClaw config through the Docker entrypoint",
   testTimeoutOptions(TEST_TIMEOUT_MS),
   async ({ artifacts, secrets, skip }) => {
@@ -250,6 +284,7 @@ runtimeOverridesTest(
         image,
         contract: [
           "baseline config hash validates",
+          "pinned OpenClaw accepts and loads managed inference safeguard compaction",
           "model/API/context/max-token/reasoning overrides patch openclaw.json",
           "CORS origin override extends gateway.controlUi.allowedOrigins",
           "combined overrides apply atomically",
@@ -279,6 +314,7 @@ runtimeOverridesTest(
       const baselineContextWindow = baselineFirstModel.contextWindow;
       const baselineOriginCount = allowedOrigins(baseline).length;
 
+      assertManagedInferenceCompactionRuntime(dockerLog, image);
       expect(runConfigHashCheck(dockerLog, image, "baseline")).toBe("OK");
 
       const overrideModel = "anthropic/claude-sonnet-4-6";

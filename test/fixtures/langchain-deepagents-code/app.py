@@ -86,6 +86,16 @@ class DeepAgentsApp:
     async def _prompt_launch_tavily(self):
         self.original_tavily = True
 
+    async def _prompt_launch_dependencies_then_model(self):
+        return (True, ("openai:gpt-4", "openai"))
+
+    def _build_launch_dependencies_prompt(self):
+        import asyncio
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        fut.set_result((True, ("openai:gpt-4", "openai")))
+        return object(), fut
+
     async def _prompt_model_auth_if_needed(self, model_spec):
         del model_spec
         return True

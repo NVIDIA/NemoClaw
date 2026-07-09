@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock heavy dependencies that pull in the full module graph
 vi.mock("../adapters/openshell/resolve.js", () => ({
@@ -63,26 +63,44 @@ vi.mock("child_process", async (importOriginal) => {
 import { spawnSync } from "child_process";
 import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
-import * as registry from "../state/registry.js";
-import { checkAgentVersion, formatStalenessWarning } from "./version.js";
+
+// state/registry captures the registry path at module scope, so HOME must be
+// redirected before it loads. Static ESM imports are hoisted above this
+// assignment, hence the dynamic imports below; reassigning HOME from
+// beforeEach() would be too late and every registerSandbox() would land in the
+// developer's real ~/.nemoclaw/sandboxes.json (#6553).
+const TEST_HOME = mkdtempSync(join(tmpdir(), "sandbox-ver-test-"));
+const ORIGINAL_HOME = process.env.HOME;
+process.env.HOME = TEST_HOME;
+
+const registry = await import("../state/registry.js");
+const { checkAgentVersion, formatStalenessWarning } = await import("./version.js");
+
+const TEST_REGISTRY_FILE = join(TEST_HOME, ".nemoclaw", "sandboxes.json");
+
+function resetTestRegistry(): void {
+  mkdirSync(dirname(TEST_REGISTRY_FILE), { recursive: true });
+  writeFileSync(TEST_REGISTRY_FILE, JSON.stringify({ sandboxes: {}, defaultSandbox: null }));
+}
+
+afterAll(() => {
+  process.env.HOME = ORIGINAL_HOME;
+  rmSync(TEST_HOME, { recursive: true, force: true });
+});
+
+describe("registry isolation", () => {
+  it("resolves the registry inside the test HOME, never the real one (#6553)", () => {
+    expect(registry.REGISTRY_FILE).toBe(TEST_REGISTRY_FILE);
+    expect(registry.REGISTRY_FILE.startsWith(TEST_HOME)).toBe(true);
+  });
+});
 
 describe("checkAgentVersion", () => {
-  let tmpDir: string;
-  const originalHome = process.env.HOME;
-
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "sandbox-ver-test-"));
-    process.env.HOME = tmpDir;
-    mkdirSync(join(tmpDir, ".nemoclaw"), { recursive: true });
-    writeFileSync(
-      join(tmpDir, ".nemoclaw", "sandboxes.json"),
-      JSON.stringify({ sandboxes: {}, defaultSandbox: null }),
-    );
+    resetTestRegistry();
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
-    rmSync(tmpDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
@@ -424,23 +442,9 @@ describe("checkAgentVersion", () => {
 });
 
 describe("formatStalenessWarning", () => {
-  let tmpDir: string;
-  const originalHome = process.env.HOME;
-
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "sandbox-warn-test-"));
-    process.env.HOME = tmpDir;
-    mkdirSync(join(tmpDir, ".nemoclaw"), { recursive: true });
-    writeFileSync(
-      join(tmpDir, ".nemoclaw", "sandboxes.json"),
-      JSON.stringify({ sandboxes: {}, defaultSandbox: null }),
-    );
+    resetTestRegistry();
     registry.registerSandbox({ name: "my-sb", agent: null });
-  });
-
-  afterEach(() => {
-    process.env.HOME = originalHome;
-    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("includes sandbox name, versions, and rebuild hint", () => {

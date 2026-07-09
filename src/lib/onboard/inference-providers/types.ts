@@ -65,6 +65,7 @@ export type VerifyOnboardInferenceSmoke = (input: {
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   forceOpenAiLike?: boolean;
+  pinnedAddresses?: readonly string[];
 }) => void;
 
 export type PromptValidationRecovery = (
@@ -249,6 +250,7 @@ export const REMOTE_PROVIDER_NAMES = [
   "nvidia-prod",
   "nvidia-nim",
   "openai-api",
+  "openrouter-api",
   "anthropic-prod",
   "compatible-anthropic-endpoint",
   "gemini-api",

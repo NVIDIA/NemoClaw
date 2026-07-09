@@ -148,8 +148,15 @@ openclaw channels login --channel whatsapp  # OpenClaw sandboxes
 hermes whatsapp                             # Hermes sandboxes
 ```
 
-For OpenClaw sandboxes, NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
-If pairing exits with a gateway close such as `1008`, rerun the login command one time and then check `nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
+<AgentOnly variant="openclaw">
+NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
+After a successful QR login, NemoClaw restarts the WhatsApp channel through a bounded call to the sandbox's generated private gateway URL so the new session takes effect without granting `operator.admin` to the pairing device.
+NemoClaw sends the gateway token only to that generated private URL.
+If you set a different `OPENCLAW_GATEWAY_URL`, the login can save credentials, but NemoClaw does not automatically restart the channel.
+Exit the sandbox and run `$$nemoclaw <sandbox> channels status --channel whatsapp` to confirm that it reconnects.
+If the bounded restart fails for another reason, the pairing remains saved and the same status command reports the channel state.
+If pairing exits with a gateway close such as `1008`, rerun the login command one time and then check `$$nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
+</AgentOnly>
 
 The sandbox generates and stores session credentials inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
@@ -380,12 +387,20 @@ Resolve the conflict, then rerun the operation.
 
 Use `channels stop` when you want to pause one bridge and keep the sandbox running.
 <AgentOnly variant="openclaw">
-Use `$$nemoclaw tunnel stop` or its deprecated alias `$$nemoclaw stop` when you want to stop host auxiliary services and also ask NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
+Use `$$nemoclaw tunnel stop` when you want to stop host auxiliary services and also ask NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
+The deprecated full `$$nemoclaw stop` command also attempts to safely release an unshared OpenShell gateway port whose ownership NemoClaw can verify.
 </AgentOnly>
 <AgentOnly variant="hermes">
-Use `$$nemoclaw tunnel stop` when you want to stop host auxiliary services and also ask NemoClaw to stop the Hermes gateway inside the selected sandbox.
+Use `$$nemoclaw tunnel stop` to stop host auxiliary services without stopping the supervisor-owned Hermes gateway, its agent-owned host forwards, or the managed OpenShell gateway port.
+The deprecated full `$$nemoclaw stop` command attempts to stop the host forwards and safely release an unshared OpenShell gateway port whose ownership NemoClaw can verify, while the Hermes gateway remains under sandbox supervision.
 </AgentOnly>
+Full stop preserves a shared gateway and fails closed without releasing its port when ownership is ambiguous.
+<AgentOnly variant="openclaw">
 Stopping the in-sandbox gateway stops Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams delivery for that sandbox until you restart the sandbox or gateway.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Use `channels stop` for an individual channel or stop the sandbox when you need to stop the supervisor-owned runtime.
+</AgentOnly>
 
 ## Confirm Delivery
 
@@ -407,7 +422,7 @@ Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a 
 The older `$$nemoclaw start` still works as a deprecated alias.
 </AgentOnly>
 <AgentOnly variant="hermes">
-`$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
+`$$nemoclaw tunnel stop` stops the tunnel but leaves the supervisor-owned in-sandbox gateway and agent-owned host forwards running for the selected or default sandbox.
 </AgentOnly>
 
 ```bash
