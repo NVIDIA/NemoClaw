@@ -32,13 +32,16 @@ describe("reconcileRegisteredExtraProviders", () => {
     const recorded = Object.freeze(
       Array.from({ length: 128 }, (_value, index) => `custom-provider-${index}`),
     );
+    const responses = new Map<string, ProbeResult>([
+      [
+        "custom-provider-127",
+        { status: 1, stderr: "Error: provider 'custom-provider-127' not found" },
+      ],
+    ]);
     const calls: Array<{ args: string[]; options: Record<string, unknown> | undefined }> = [];
     const runOpenshell = vi.fn((args: string[], options?: Record<string, unknown>): ProbeResult => {
       calls.push({ args, options });
-      if (args.at(-1) === "custom-provider-127") {
-        return { status: 1, stderr: "Error: provider 'custom-provider-127' not found" };
-      }
-      return { status: 0, stdout: "" };
+      return responses.get(args.at(-1) ?? "") ?? { status: 0, stdout: "" };
     });
 
     const reconciled = reconcileRegisteredExtraProviders("nemoclaw", {
@@ -82,18 +85,21 @@ describe("reconcileRegisteredExtraProviders", () => {
       "stale-provider",
       "indeterminate-provider",
     ]);
-    const runOpenshell = vi.fn((args: string[]): ProbeResult => {
-      const providerName = args.at(-1);
-      if (providerName === "stale-provider") {
-        return {
+    const responses = new Map<string, ProbeResult>([
+      [
+        "stale-provider",
+        {
           status: 1,
           stderr: Buffer.from("Error: provider 'stale-provider' not found\n"),
-        };
-      }
-      if (providerName === "indeterminate-provider") {
-        return { status: 1, stderr: "Error: provider 'some-other-provider' not found" };
-      }
-      return { status: 0 };
+        },
+      ],
+      [
+        "indeterminate-provider",
+        { status: 1, stderr: "Error: provider 'some-other-provider' not found" },
+      ],
+    ]);
+    const runOpenshell = vi.fn((args: string[]): ProbeResult => {
+      return responses.get(args.at(-1) ?? "") ?? { status: 0 };
     });
 
     const reconciled = reconcileRegisteredExtraProviders("nemoclaw", {
@@ -122,11 +128,12 @@ describe("reconcileRegisteredExtraProviders", () => {
   });
 
   it("compares captured names byte-for-byte while matching keywords case-insensitively (#6501)", () => {
+    const responses = new Map<string, ProbeResult>([
+      ["ProviderA", { status: 1, stderr: "Error: provider 'providera' not found" }],
+      ["ProviderB", { status: 1, stderr: "ERROR: PROVIDER 'ProviderB' NOT FOUND" }],
+    ]);
     const runOpenshell = vi.fn((args: string[]): ProbeResult => {
-      if (args.at(-1) === "ProviderA") {
-        return { status: 1, stderr: "Error: provider 'providera' not found" };
-      }
-      return { status: 1, stderr: "ERROR: PROVIDER 'ProviderB' NOT FOUND" };
+      return responses.get(args.at(-1) ?? "") ?? { status: 0 };
     });
 
     expect(
