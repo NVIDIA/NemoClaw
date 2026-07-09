@@ -2442,8 +2442,10 @@ NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` fr
 Sandboxes that match the current digest are left alone.
 NemoClaw also checks the build fingerprint recorded on each managed sandbox image.
 A sandbox needs upgrade when its agent version is stale, when its recorded NemoClaw image fingerprint differs from the running CLI, or both.
+When the target version is older than the recorded one (for example after reinstalling with an older `NEMOCLAW_INSTALL_TAG`), the stale listing marks the change with a `(downgrade)` suffix instead of framing it as a routine upgrade.
 Custom Dockerfile sandboxes are not classified by image drift because rebuilding them onto the default image would drop the custom image.
 Legacy sandboxes without a recorded fingerprint opt into this check after their next rebuild.
+A recorded sandbox that is not observed in any phase on its own recorded gateway is reported as not found there, with remediation guidance — this typically means its gateway registration or Docker image was removed (for example by `$$nemoclaw uninstall`, which preserves `sandboxes.json` but removes both).
 
 ```bash
 $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
@@ -2994,6 +2996,11 @@ Decision matrix:
 
 The preserved entries survive uninstall as inert files on disk.
 Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot restore` can use them.
+
+Preserving `sandboxes.json` does not make the recorded sandboxes recoverable on their own: uninstall removes the gateway registration, provider registrations, and Docker image those records depend on.
+Uninstall warns about this at preserve time.
+After reinstalling, the installer reports such records as not found on their recorded gateway instead of claiming they were recovered; run `$$nemoclaw <name> destroy` to clear a stranded record, then `$$nemoclaw onboard` to rebuild it.
+Pass `--destroy-user-data` at uninstall time if you prefer to purge the registry along with its dependencies.
 
 #### `$$nemoclaw uninstall` vs. the hosted `uninstall.sh`
 

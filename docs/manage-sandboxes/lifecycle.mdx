@@ -382,6 +382,7 @@ In a non-interactive run, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the 
 Legacy managed-image confirmation never overrides recorded custom-image evidence.
 A custom OpenClaw sandbox can be recovered only when the selected validated backup independently carries complete authoritative image-plugin provenance; otherwise recovery stops before deletion.
 The installer attempts every eligible recovery, exits with a nonzero status if any recovery fails, and skips generic onboarding after successful recovery.
+A third outcome exists: when a recorded sandbox is not observed in any phase on its own recorded gateway (typically because a prior uninstall removed the gateway and Docker image while preserving `sandboxes.json`), the recovery pass exits 0 but reports the sandbox as not found rather than recovered, and the installer finishes with `Installation completed with warnings` plus remediation guidance (`$$nemoclaw <name> destroy`, then `$$nemoclaw onboard`) instead of claiming success.
 For manual upgrade flows, create a snapshot first and then run the update or rebuild command you need:
 
 ```bash
@@ -421,6 +422,7 @@ For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY sh
 `--yes` stays non-destructive by design.
 It only acknowledges the global confirmation prompt and never purges preserved user data on its own.
 Full purge always requires an explicit `--destroy-user-data` or the matching env var, so existing automation using `--yes` retains its safe behaviour.
+Preserving `sandboxes.json` does not preserve the gateway registration, provider registrations, or Docker image its recorded sandboxes depend on; uninstall warns that those records cannot be recovered automatically on reinstall, and the remediation is `$$nemoclaw <name> destroy` followed by `$$nemoclaw onboard`.
 For a full host-side file reference, see [Host Files and State](../reference/host-files-and-state).
 Refer to the [Commands reference](../reference/commands#$$nemoclaw-uninstall) for the full preservation contract.
 </Note>

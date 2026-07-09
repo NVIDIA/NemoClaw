@@ -31,7 +31,7 @@
       "status": "tested",
       "prd_priority": "P0",
       "ci_tested": true,
-      "notes": "Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-compat.ts:11` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
+      "notes": "Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-compat.ts:16` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
     },
     {
       "name": "macOS (Apple Silicon)",
