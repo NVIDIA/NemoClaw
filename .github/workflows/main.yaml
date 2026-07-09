@@ -59,7 +59,7 @@ jobs:
 
   real-openclaw-dist-harness:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     env:
       # This required proof reads reviewed npm metadata/tarballs. Keep npm's
       # transient-registry retry policy explicit at the hard merge boundary.

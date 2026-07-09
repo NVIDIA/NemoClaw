@@ -13,6 +13,7 @@ import { buildConfig } from "../scripts/generate-openclaw-config.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const OPENCLAW_AUDIT_TIMEOUT_MS = 120_000;
+const OPENCLAW_AUDIT_SUITE_TIMEOUT_MS = OPENCLAW_AUDIT_TIMEOUT_MS * 7;
 const BASE_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "test-model",
   NEMOCLAW_PROVIDER_KEY: "test-provider",
@@ -31,7 +32,7 @@ interface AuditFinding {
 
 interface AuditResult {
   findings: AuditFinding[];
-  suppressedFindings: AuditFinding[];
+  suppressedFindings?: AuditFinding[];
 }
 
 interface ReviewedOpenClawPackage {
@@ -168,7 +169,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
         try {
           const binary = installReviewedOpenClaw(workspace);
           const loopback = runOpenClawAudit(binary, "http://127.0.0.1:18789");
-          const suppressedDirect = loopback.suppressedFindings.find(
+          const loopbackSuppressions = loopback.suppressedFindings ?? [];
+          const suppressedDirect = loopbackSuppressions.find(
             (finding) => finding.checkId === "gateway.control_ui.insecure_auth",
           );
           expect(suppressedDirect).toMatchObject({
@@ -177,7 +179,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
             suppression: { reason: expect.stringContaining("loopback HTTP CHAT_UI_URL") },
           });
           expect(
-            findingForFlag(loopback.suppressedFindings, "gateway.controlUi.allowInsecureAuth=true"),
+            findingForFlag(loopbackSuppressions, "gateway.controlUi.allowInsecureAuth=true"),
           ).toMatchObject({
             severity: "warn",
             remediation: expect.any(String),
@@ -216,11 +218,33 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
           expect(managedAuthFindings(remoteWithoutOptOut.findings)).toHaveLength(4);
           expect(remoteWithoutOptOut.suppressedFindings ?? []).toHaveLength(0);
 
+          const remoteHttpsOnboard = runOpenClawAudit(binary, "https://remote.example:18789", {
+            NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+          });
+          expect(managedAuthFindings(remoteHttpsOnboard.findings)).toHaveLength(2);
+          expect(
+            remoteHttpsOnboard.findings.some(
+              (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
+            ),
+          ).toBe(true);
+          expect(
+            findingForFlag(
+              remoteHttpsOnboard.findings,
+              "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+            ),
+          ).toBeDefined();
+          expect(
+            remoteHttpsOnboard.findings.some(
+              (finding) => finding.checkId === "gateway.control_ui.insecure_auth",
+            ),
+          ).toBe(false);
+          expect(remoteHttpsOnboard.suppressedFindings ?? []).toHaveLength(0);
+
           const explicitOptOut = runOpenClawAudit(binary, "https://127.0.0.1:18789", {
             NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
           });
           expect(
-            explicitOptOut.suppressedFindings.find(
+            explicitOptOut.suppressedFindings?.find(
               (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
             ),
           ).toMatchObject({
@@ -232,7 +256,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
           fs.rmSync(workspace, { recursive: true, force: true });
         }
       },
-      OPENCLAW_AUDIT_TIMEOUT_MS,
+      OPENCLAW_AUDIT_SUITE_TIMEOUT_MS,
     );
   },
 );
