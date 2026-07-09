@@ -373,6 +373,35 @@ describe("OnboardRuntimeBoundary", () => {
     expect(harness.events.at(-1)).toMatchObject({ state: "preflight" });
   });
 
+  it("invalidates the initial preflight transition when resume already stands at preflight (#6227)", async () => {
+    const harness = createRuntimeHarness({
+      machine: {
+        version: 1,
+        state: "preflight",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 3,
+      },
+    });
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordInitialPreflightTransition(true);
+
+    expect(harness.events.map((event) => event.type)).toEqual(["state.result.invalidated"]);
+    expect(harness.events[0]).toMatchObject({
+      type: "state.result.invalidated",
+      metadata: {
+        reason: "already_at_target",
+        currentState: "preflight",
+        sourceState: "init",
+        targetState: "preflight",
+      },
+    });
+  });
+
   it("invalidates the initial preflight transition when resume already advanced past init (#6227)", async () => {
     const harness = createRuntimeHarness({
       machine: {
