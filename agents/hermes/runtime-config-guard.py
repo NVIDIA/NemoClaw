@@ -302,7 +302,17 @@ def _proc_pid_namespace_inode(proc_pid_fd: int) -> int | None:
 
 
 def _cmdline_is_nemoclaw_start(raw: bytes) -> bool:
-    return any(argument in NEMOCLAW_START_ARGV for argument in raw.split(b"\0"))
+    normalized = raw.rstrip(b"\0")
+    arguments = tuple(normalized.split(b"\0")) if normalized else ()
+    # Docker appends CMD arguments after ENTRYPOINT. Authenticate the canonical
+    # startup script position while allowing those opaque trailing arguments.
+    direct = bool(arguments) and arguments[0] in NEMOCLAW_START_ARGV
+    bash = (
+        len(arguments) >= 2
+        and arguments[0] in {b"bash", b"/bin/bash", b"/usr/bin/bash"}
+        and arguments[1] in NEMOCLAW_START_ARGV
+    )
+    return direct or bash
 
 
 def _cmdline_is_openshell_supervisor(raw: bytes) -> bool:
@@ -635,6 +645,7 @@ def _pinned_process_matches_supervised_nonroot_start(
             and second_status[0] == expected_effective_uid
             and first_status[1][-1] == numeric_pid
             and second_status[1][-1] == numeric_pid
+            and first_cmdline == second_cmdline
             and _cmdline_is_nemoclaw_start(first_cmdline)
             and _cmdline_is_nemoclaw_start(second_cmdline)
             and namespace_matches
