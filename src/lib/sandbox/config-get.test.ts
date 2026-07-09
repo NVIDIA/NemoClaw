@@ -182,6 +182,13 @@ describe("configGet TOML parsing for dcode agents (#6548)", () => {
     "[update]",
     "check = false",
     "",
+    "[provider]",
+    'api_key = "nvapi-abcdefghijklmnopqrstuvwxyz0123456789"',
+    "",
+    "[gateway]",
+    'token = "nvapi-gateway000000000000000000000000000000"',
+    'url = "http://127.0.0.1:8080"',
+    "",
   ].join("\n");
 
   beforeEach(() => {
@@ -220,5 +227,26 @@ describe("configGet TOML parsing for dcode agents (#6548)", () => {
     expect(parsed.models.providers.openai.enabled).toBe(true);
     expect(parsed.models.providers.openai.models).toEqual(["nvidia/meta/llama-3.1-8b-instruct"]);
     expect(parsed.update.check).toBe(false);
+  });
+
+  it("redacts credentials and omits gateway auth after TOML parsing", () => {
+    const configGet = loadConfigGet();
+    const out = captureStdout(() => configGet("dcode-sb"));
+
+    expect(out).not.toContain("nvapi-abcdefghijklmnopqrstuvwxyz0123456789");
+    expect(out).not.toContain("nvapi-gateway000000000000000000000000000000");
+    expect(out).toContain("[STRIPPED_BY_MIGRATION]");
+    expect(JSON.parse(out)).not.toHaveProperty("gateway");
+  });
+
+  it("refuses config set before attempting to rewrite an image-baked TOML file", async () => {
+    delete require.cache[configModulePath];
+    const { configSet } = require(configModulePath) as {
+      configSet: (name: string, opts: { key: string; value: string }) => Promise<void>;
+    };
+
+    await expect(
+      configSet("dcode-sb", { key: "models.default", value: "openai:nvidia/new-model" }),
+    ).rejects.toThrow(/config set is not available.*baked into the sandbox image.*re-onboard/i);
   });
 });
