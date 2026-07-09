@@ -175,8 +175,14 @@ export function patchStagedDockerfile(
     `ARG CHAT_UI_URL=${sanitizeDockerArg(chatUiUrl)}`,
   );
   const dashboardBind = process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" ? "0.0.0.0" : "";
+  const dashboardBindArgPattern = /^ARG NEMOCLAW_DASHBOARD_BIND=.*$/m;
+  if (dashboardBind && !dashboardBindArgPattern.test(dockerfile)) {
+    throw new Error(
+      "Dockerfile is missing ARG NEMOCLAW_DASHBOARD_BIND; cannot prepare remote dashboard exposure.",
+    );
+  }
   dockerfile = dockerfile.replace(
-    /^ARG NEMOCLAW_DASHBOARD_BIND=.*$/m,
+    dashboardBindArgPattern,
     `ARG NEMOCLAW_DASHBOARD_BIND=${dashboardBind}`,
   );
   dockerfile = dockerfile.replace(

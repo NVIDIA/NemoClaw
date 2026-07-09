@@ -91,6 +91,24 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
+  it("refuses remote preparation when a custom Dockerfile lacks the bind contract (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-custom-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      ["ARG NEMOCLAW_MODEL=", "ARG CHAT_UI_URL=", "FROM scratch"].join("\n"),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/missing ARG NEMOCLAW_DASHBOARD_BIND/);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");
