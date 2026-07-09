@@ -192,48 +192,47 @@ def write_staged_and_replace(staged_path, current_path, current_metadata, payloa
     parent = os.path.dirname(staged_path)
     if parent != os.path.dirname(current_path):
         fail("config staging path must share the live config directory")
+    staged_name = os.path.basename(staged_path)
+    current_name = os.path.basename(current_path)
     try:
-        parent_metadata = os.lstat(parent)
+        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
         fail("config parent directory changed before atomic restore")
-    if not stat.S_ISDIR(parent_metadata.st_mode):
-        fail("config parent directory changed before atomic restore")
-    flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(staged_path, flags)
-    except OSError:
-        fail("config staging file is missing or unsafe")
-    try:
-        staged_metadata = os.fstat(fd)
-        if not stat.S_ISREG(staged_metadata.st_mode) or staged_metadata.st_nlink != 1:
-            fail("config staging file is not a single regular file")
-        written = 0
-        while written < len(payload):
-            written += os.write(fd, payload[written:])
-        os.fchmod(fd, 0o660)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+        flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(staged_name, flags, dir_fd=parent_fd)
+        except OSError:
+            fail("config staging file is missing or unsafe")
+        try:
+            staged_metadata = os.fstat(fd)
+            if not stat.S_ISREG(staged_metadata.st_mode) or staged_metadata.st_nlink != 1:
+                fail("config staging file is not a single regular file")
+            written = 0
+            while written < len(payload):
+                written += os.write(fd, payload[written:])
+            os.fchmod(fd, 0o660)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
-    try:
-        latest = os.lstat(current_path)
-    except OSError:
-        fail("current config changed before atomic restore")
-    if stat.S_ISLNK(latest.st_mode) or (
-        latest.st_dev,
-        latest.st_ino,
-    ) != (
-        current_metadata.st_dev,
-        current_metadata.st_ino,
-    ):
-        fail("current config changed before atomic restore")
+        try:
+            latest = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            fail("current config changed before atomic restore")
+        if stat.S_ISLNK(latest.st_mode) or (
+            latest.st_dev,
+            latest.st_ino,
+        ) != (
+            current_metadata.st_dev,
+            current_metadata.st_ino,
+        ):
+            fail("current config changed before atomic restore")
 
-    os.replace(staged_path, current_path)
-    directory_fd = os.open(os.path.dirname(current_path), os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
+        os.replace(staged_name, current_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.fsync(parent_fd)
     finally:
-        os.close(directory_fd)
+        os.close(parent_fd)
 
 
 def main():

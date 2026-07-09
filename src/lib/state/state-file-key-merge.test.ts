@@ -331,7 +331,9 @@ describe("key-allowlist state-file merge", () => {
     expect(command).toContain('"$backup_tmp" "$dst" "$staged_tmp"');
     expect(command).toContain("/sandbox/.deepagents/config.toml");
     expect(command).toContain("show_scrollbar");
-    expect(KEY_ALLOWLIST_MERGE_PYTHON).toContain("os.replace(staged_path, current_path)");
+    expect(KEY_ALLOWLIST_MERGE_PYTHON).toContain(
+      "os.replace(staged_name, current_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)",
+    );
 
     const custom = buildKeyAllowlistMergeRestoreCommand(
       "/sandbox/.custom",
