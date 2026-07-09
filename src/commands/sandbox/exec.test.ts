@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const execSandboxMock = vi.hoisted(() => vi.fn(async () => {}));
+const execSandboxMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
 vi.mock("../../lib/actions/sandbox/exec", () => ({
   execSandbox: execSandboxMock,
 }));
@@ -39,7 +39,8 @@ describe("SandboxExecCommand oclif parse path", () => {
   it("routes completion codes through oclif exit-code handling", async () => {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
-    execSandboxMock.mockImplementationOnce(async (_name, _cmd, _options, deps) => {
+    execSandboxMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const deps = args[3] as { exit?: (code: number) => void } | undefined;
       deps?.exit?.(42);
     });
 
