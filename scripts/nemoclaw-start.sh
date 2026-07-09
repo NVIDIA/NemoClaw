@@ -3276,7 +3276,8 @@ PROXYEOF
       printf "if { [ \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" != '%s' ] &&\\n" "$_escaped_gateway_url"
       printf "  ! command readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL='%s' 2>/dev/null; } ||\\n" "$_escaped_gateway_url"
       printf "  [ \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" != '%s' ]; then\\n" "$_escaped_gateway_url"
-      printf "  if ! command unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null; then\\n"
+      printf "  command unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null || :\\n"
+      printf "  if [ \"\${OPENCLAW_GATEWAY_TOKEN+x}\" = 'x' ]; then\\n"
       printf "    echo 'Error: NemoClaw rejected a conflicting gateway trust anchor, and the ambient gateway token could not be cleared.' >&2\\n"
       printf "    exit 1\\n"
       printf "  fi\\n"
@@ -3288,7 +3289,7 @@ PROXYEOF
       # otherwise turn the portable builtin dispatch into a no-op.
       printf "if ( _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL= ) 2>/dev/null; then\\n"
       printf "  command unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null || :\\n"
-      printf "  if [ -n \"\${OPENCLAW_GATEWAY_TOKEN:-}\" ]; then\\n"
+      printf "  if [ \"\${OPENCLAW_GATEWAY_TOKEN+x}\" = 'x' ]; then\\n"
       printf "    echo 'Error: NemoClaw gateway trust anchor did not become readonly, and the ambient gateway token could not be cleared.' >&2\\n"
       printf "    exit 1\\n"
       printf "  fi\\n"
@@ -3666,7 +3667,7 @@ openclaw() {
               # device auth, matching the #6291 WhatsApp-login boundary.
               if [ "$_nemoclaw_whatsapp_url_is_trusted" != "1" ]; then
                 command unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null || :
-                if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+                if [ "${OPENCLAW_GATEWAY_TOKEN+x}" = "x" ]; then
                   echo "Error: WhatsApp pairing refused the custom gateway because the ambient gateway token could not be cleared." >&2
                   exit 1
                 fi

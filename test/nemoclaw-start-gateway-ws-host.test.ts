@@ -310,6 +310,57 @@ describe("gateway websocket url host derivation", () => {
     }
   });
 
+  it("refuses a conflicting anchor when shadowed dispatch cannot clear the token (#6413)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-conflict-shadow-"));
+    try {
+      const envFilePath = writeRuntimeShellEnv(tmpDir);
+      const fakeBin = path.join(tmpDir, "bin");
+      const callLog = path.join(tmpDir, "openclaw-calls.log");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        '#!/bin/sh\nprintf invoked > "$CALL_LOG"\n',
+        {
+          mode: 0o755,
+        },
+      );
+
+      for (const shell of RUNTIME_ENV_SHELLS) {
+        fs.writeFileSync(callLog, "");
+        const probe = spawnSync(
+          shell,
+          [
+            "-c",
+            [
+              "_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL=ws://attacker.invalid:18790",
+              "readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL",
+              "command() { :; }",
+              `. ${JSON.stringify(envFilePath)}`,
+              "openclaw channels login --channel whatsapp",
+            ].join("\n"),
+          ],
+          {
+            encoding: "utf-8",
+            timeout: 5000,
+            env: {
+              ...process.env,
+              CALL_LOG: callLog,
+              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+              OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+            },
+          },
+        );
+        expect(probe.status, `${shell}: ${probe.stderr}`).toBe(1);
+        expect(probe.stderr).toContain(
+          "conflicting gateway trust anchor, and the ambient gateway token could not be cleared",
+        );
+        expect(fs.readFileSync(callLog, "utf-8"), shell).toBe("");
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when shell dispatch cannot make the trust anchor readonly (#6413)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-mutable-anchor-"));
     try {
