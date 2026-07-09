@@ -44,7 +44,7 @@ type GatewayEvent = {
 
 type SentRun = {
   promptToken: string;
-  replyToken: string;
+  replyMarker: string;
   runId: string;
   message: string;
 };
@@ -65,7 +65,7 @@ type CompactChatEvent = {
 };
 
 type UncorrelatedReply = {
-  replyToken: string;
+  replyMarker: string;
   expectedRunId: string;
   actualRunId?: string;
   state?: string;
@@ -82,7 +82,7 @@ type Issue2603Analysis = {
   conflictingSessionRunEvents: CompactChatEvent[];
   emptyFinalsForSubmittedRuns: CompactChatEvent[];
   missingReplies: string[];
-  duplicateReplies: { replyToken: string; count: number }[];
+  duplicateReplies: { replyMarker: string; count: number }[];
   uncorrelatedReplies: UncorrelatedReply[];
   missingUserTurns: DuplicateUserTurn[];
   duplicateUserTurns: DuplicateUserTurn[];
@@ -157,7 +157,9 @@ function analyzeIssue2603Trace({
   historyMessages,
 }: Issue2603Trace): Issue2603Analysis {
   const submittedRunIds = new Set(sentRuns.map((entry) => entry.runId));
-  const expectedRunByReplyToken = new Map(sentRuns.map((entry) => [entry.replyToken, entry.runId]));
+  const expectedRunByReplyMarker = new Map(
+    sentRuns.map((entry) => [entry.replyMarker, entry.runId]),
+  );
   const chatEvents = compactChatEvents(
     events.filter((event) => isOwnSessionChatEvent(event, sessionKey)),
   );
@@ -179,16 +181,16 @@ function analyzeIssue2603Trace({
   const uncorrelatedReplies: UncorrelatedReply[] = [];
   const visibleReplyCounts = new Map<string, number>();
   const finalReplyCounts = new Map<string, number>();
-  for (const [replyToken, expectedRunId] of expectedRunByReplyToken) {
+  for (const [replyMarker, expectedRunId] of expectedRunByReplyMarker) {
     for (const event of chatEvents) {
-      if (!containsReplyTokenAllowingWhitespace(event.text, replyToken)) continue;
-      visibleReplyCounts.set(replyToken, (visibleReplyCounts.get(replyToken) ?? 0) + 1);
+      if (!containsReplyTokenAllowingWhitespace(event.text, replyMarker)) continue;
+      visibleReplyCounts.set(replyMarker, (visibleReplyCounts.get(replyMarker) ?? 0) + 1);
       if (event.state === "final") {
-        finalReplyCounts.set(replyToken, (finalReplyCounts.get(replyToken) ?? 0) + 1);
+        finalReplyCounts.set(replyMarker, (finalReplyCounts.get(replyMarker) ?? 0) + 1);
       }
       if (event.runId !== expectedRunId) {
         uncorrelatedReplies.push({
-          replyToken,
+          replyMarker,
           expectedRunId,
           actualRunId: event.runId,
           state: event.state,
@@ -197,12 +199,12 @@ function analyzeIssue2603Trace({
     }
   }
   const missingReplies = sentRuns
-    .map((entry) => entry.replyToken)
-    .filter((replyToken) => !visibleReplyCounts.has(replyToken));
+    .map((entry) => entry.replyMarker)
+    .filter((replyMarker) => !visibleReplyCounts.has(replyMarker));
   const duplicateReplies = sentRuns
     .map((entry) => ({
-      replyToken: entry.replyToken,
-      count: finalReplyCounts.get(entry.replyToken) ?? 0,
+      replyMarker: entry.replyMarker,
+      count: finalReplyCounts.get(entry.replyMarker) ?? 0,
     }))
     .filter((entry) => entry.count > 1);
 
@@ -302,20 +304,20 @@ const capturedIssue2603Trace: Issue2603Trace = {
   sentRuns: [
     {
       promptToken: "A2603",
-      replyToken: "A2603-REPLY",
+      replyMarker: "A2603-REPLY",
       runId: "18f73be1-3410-46cb-8098-e881bf92c510",
       message:
         "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else.",
     },
     {
       promptToken: "B2603",
-      replyToken: "B2603-REPLY",
+      replyMarker: "B2603-REPLY",
       runId: "a32dc5a4-9b45-4109-9b17-2fcd35787d0c",
       message: "B2603: Second task. Reply exactly B2603-REPLY and nothing else.",
     },
     {
       promptToken: "C2603",
-      replyToken: "C2603-REPLY",
+      replyMarker: "C2603-REPLY",
       runId: "32e608a6-aeb4-4615-8416-d656f2bfa92f",
       message: "C2603: Third task. Reply exactly C2603-REPLY and nothing else.",
     },
@@ -480,8 +482,8 @@ function isOwnSessionChatEvent(event) {
   return typeof eventSessionKey !== "string" || eventSessionKey === sessionKey;
 }
 
-function sawAllReplies(replyTokens) {
-  return replyTokens.every((token) => events.some((event) => isOwnSessionChatEvent(event) && compactReplyTokenText(textFromMessage(event.payload?.message)).includes(compactReplyTokenText(token))));
+function sawAllReplies(replyMarkers) {
+  return replyMarkers.every((marker) => events.some((event) => isOwnSessionChatEvent(event) && compactReplyTokenText(textFromMessage(event.payload?.message)).includes(compactReplyTokenText(marker))));
 }
 
 ws.on("message", (data) => {
@@ -536,10 +538,10 @@ ws.on("open", async () => {
       ["C2603", "C2603-REPLY", "C2603: Third task. Reply exactly C2603-REPLY and nothing else. Do not use tools."],
     ];
 
-    for (const [promptToken, replyToken, message] of messages) {
+    for (const [promptToken, replyMarker, message] of messages) {
       const idempotencyKey = randomUUID();
       const response = await request("chat.send", { sessionKey, message, deliver: false, timeoutMs: 90_000, idempotencyKey });
-      sentRuns.push({ promptToken, replyToken, message, runId: response.runId ?? idempotencyKey });
+      sentRuns.push({ promptToken, replyMarker, message, runId: response.runId ?? idempotencyKey });
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
 
@@ -611,7 +613,7 @@ function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
   );
   const hasReplyTokenEvent = repro.sentRuns.some((entry) =>
     analysis.chatEvents.some((event) =>
-      containsReplyTokenAllowingWhitespace(event.text, entry.replyToken),
+      containsReplyTokenAllowingWhitespace(event.text, entry.replyMarker),
     ),
   );
   return (
@@ -673,13 +675,13 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
     ]);
     expect(analysis.uncorrelatedReplies).toEqual([
       {
-        replyToken: "B2603-REPLY",
+        replyMarker: "B2603-REPLY",
         expectedRunId: "a32dc5a4-9b45-4109-9b17-2fcd35787d0c",
         actualRunId: "507730cf-8055-424d-87fe-ee9221c34d74",
         state: "final",
       },
       {
-        replyToken: "C2603-REPLY",
+        replyMarker: "C2603-REPLY",
         expectedRunId: "32e608a6-aeb4-4615-8416-d656f2bfa92f",
         actualRunId: "5487775f-8d5e-4080-ae91-dcce701868a6",
         state: "final",
@@ -697,7 +699,7 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
       sentRuns: [
         {
           promptToken: "A2603",
-          replyToken: "A2603-REPLY",
+          replyMarker: "A2603-REPLY",
           runId: "split-reply-run",
           message: "A2603: Reply exactly A2603-REPLY and nothing else.",
         },
@@ -729,7 +731,7 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
       sentRuns: [
         {
           promptToken: "B2603",
-          replyToken: "B2603-REPLY",
+          replyMarker: "B2603-REPLY",
           runId: "a32dc5a4-9b45-4109-9b17-2fcd35787d0c",
           message: "B2603: Second task. Reply exactly B2603-REPLY and nothing else.",
         },
@@ -775,7 +777,7 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
       sentRuns: [
         {
           promptToken: "A2603",
-          replyToken: "A2603-REPLY",
+          replyMarker: "A2603-REPLY",
           runId: "run-a",
           message:
             "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else.",
@@ -878,7 +880,7 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
     expect(analysis.chatEvents).toHaveLength(1);
     expect(analysis.foreignSessionChatEvents).toHaveLength(2);
     expect(analysis.uncorrelatedReplies).toEqual([]);
-    expect(analysis.missingReplies).toEqual([runB.replyToken, runC.replyToken]);
+    expect(analysis.missingReplies).toEqual([runB.replyMarker, runC.replyMarker]);
   });
 
   it("keeps chat events without a sessionKey in correlation analysis (fail-open)", () => {
@@ -975,7 +977,7 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
       historyMessages: [],
     };
 
-    expect(runB.replyToken).toBe("B2603-REPLY");
+    expect(runB.replyMarker).toBe("B2603-REPLY");
     expect(analyzeIssue2603Trace(repro).chatEvents).toHaveLength(1);
     expect(looksLikeEventCaptureFailure(repro)).toBe(false);
   });

@@ -31,9 +31,11 @@ const preparedOptions: PreparedDcodeRebuildOptions = {
   resume: true,
   recreateSandbox: true,
   agent: dcodeAgent.name,
+  dcodeAutoApprovalMode: "disabled",
   preparedDcodeRebuild: {
     buildContext: preparedBuildContext,
     gatewayName: " nemoclaw ",
+    dcodeAutoApprovalMode: "disabled",
   },
 };
 const preparedImageBuildContext: PreparedSandboxBuildContext = {
@@ -165,6 +167,15 @@ describe("prepared DCode rebuild adapter", () => {
     const ordinaryEnv: NodeJS.ProcessEnv = { OPENSHELL_GATEWAY: "ambient" };
     createPreparedDcodeRebuildRuntime({}, "nemoclaw").applyGatewayEnv(ordinaryEnv);
     expect(ordinaryEnv.OPENSHELL_GATEWAY).toBeUndefined();
+  });
+
+  it("rejects a prepared handoff when its auto-approval mode changed (#6478)", () => {
+    expect(() =>
+      createPreparedDcodeRebuildRuntime(
+        { ...preparedOptions, dcodeAutoApprovalMode: "thread-opt-in" },
+        "nemoclaw",
+      ),
+    ).toThrow(/auto-approval mode does not match/);
   });
 
   it("rejects malformed or mismatched gateway names", () => {

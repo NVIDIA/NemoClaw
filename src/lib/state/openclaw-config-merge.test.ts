@@ -5,6 +5,22 @@ import { describe, expect, it } from "vitest";
 
 import { mergeOpenClawRestoredConfig } from "./openclaw-config-merge";
 
+const WEATHER_V1_PATH = "/sandbox/.openclaw/extensions/weather";
+const WEATHER_V2_PATH = "/sandbox/.openclaw/extensions/weather-v2";
+const USER_PLUGIN_PATH = "/sandbox/.openclaw/extensions/user-plugin";
+
+function pluginConfig(
+  entries: Record<string, unknown>,
+  installs: Record<string, unknown>,
+  paths: string[],
+) {
+  return { plugins: { entries, installs, load: { paths } } };
+}
+
+function imageInstall(id: string, installPath: string, loadPaths: string[] = []) {
+  return { id, installPath, loadPaths };
+}
+
 describe("mergeOpenClawRestoredConfig", () => {
   it("keeps rebuilt runtime-owned config while restoring durable backup-only settings", () => {
     const merged = mergeOpenClawRestoredConfig(
@@ -384,5 +400,251 @@ describe("mergeOpenClawRestoredConfig", () => {
     expect(merged.tools.customTool).toEqual({ enabled: true });
     expect(merged.plugins.entries.tavily).toBeUndefined();
     expect(merged.plugins.entries.customPlugin).toEqual({ enabled: true });
+  });
+
+  it("removes all prior image-owned config while preserving user-owned plugin state", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        channels: {
+          weather: { token: "stale-image-channel" },
+          "user-channel": { room: "keep" },
+        },
+        plugins: {
+          allow: ["weather", "user-plugin"],
+          deny: ["weather", "user-denied"],
+          entries: {
+            weather: { enabled: true, config: { revision: "v1" } },
+            "user-plugin": { enabled: true },
+          },
+          installs: {
+            weather: { installPath: WEATHER_V1_PATH },
+            "user-plugin": { installPath: USER_PLUGIN_PATH },
+          },
+          load: { paths: [WEATHER_V1_PATH, USER_PLUGIN_PATH] },
+          slots: { memory: "weather", contextEngine: "user-plugin" },
+        },
+      },
+      { channels: {}, plugins: { allow: [], deny: [], entries: {}, load: { paths: [] } } },
+      {
+        freshImagePluginInstalls: [],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH, [WEATHER_V1_PATH])],
+      },
+    );
+
+    expect(merged).toMatchObject({
+      channels: { "user-channel": { room: "keep" } },
+      plugins: {
+        allow: ["user-plugin"],
+        deny: ["user-denied"],
+        entries: { "user-plugin": { enabled: true } },
+        load: { paths: [USER_PLUGIN_PATH] },
+        slots: { contextEngine: "user-plugin" },
+      },
+    });
+    expect((merged as { channels: Record<string, unknown> }).channels.weather).toBeUndefined();
+    expect((merged as { plugins: Record<string, unknown> }).plugins.installs).toBeUndefined();
+  });
+
+  it("keeps only the fresh plugin when an image plugin is renamed", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      pluginConfig(
+        { weather: { enabled: true, config: { revision: "v1" } } },
+        { weather: { installPath: WEATHER_V1_PATH } },
+        [WEATHER_V1_PATH],
+      ),
+      pluginConfig(
+        { "weather-v2": { enabled: true, config: { revision: "v2" } } },
+        { "weather-v2": { installPath: WEATHER_V2_PATH } },
+        [WEATHER_V2_PATH],
+      ),
+      {
+        freshImagePluginInstalls: [imageInstall("weather-v2", WEATHER_V2_PATH, [WEATHER_V2_PATH])],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH, [WEATHER_V1_PATH])],
+      },
+    ) as { plugins: Record<string, unknown> };
+
+    expect(merged.plugins).toEqual({
+      entries: { "weather-v2": { enabled: true, config: { revision: "v2" } } },
+      load: { paths: [WEATHER_V2_PATH] },
+    });
+  });
+
+  it("preserves backup-only user plugins while removing a retired image plugin", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      pluginConfig(
+        {
+          weather: { enabled: true },
+          "user-plugin": { enabled: true, config: { owner: "user" } },
+        },
+        {
+          weather: { installPath: WEATHER_V1_PATH },
+          "user-plugin": { installPath: USER_PLUGIN_PATH },
+        },
+        [WEATHER_V1_PATH, USER_PLUGIN_PATH],
+      ),
+      pluginConfig({}, {}, []),
+      {
+        freshImagePluginInstalls: [],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH, [WEATHER_V1_PATH])],
+      },
+    ) as { plugins: Record<string, unknown> };
+
+    expect(merged.plugins).toEqual({
+      entries: { "user-plugin": { enabled: true, config: { owner: "user" } } },
+      load: { paths: [USER_PLUGIN_PATH] },
+    });
+  });
+
+  it("does not treat a non-linked install path as an owned load path", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      pluginConfig({ weather: { enabled: true } }, { weather: { installPath: WEATHER_V1_PATH } }, [
+        WEATHER_V1_PATH,
+      ]),
+      pluginConfig({}, {}, []),
+      {
+        freshImagePluginInstalls: [],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH)],
+      },
+    ) as { plugins: Record<string, unknown> };
+
+    expect(merged.plugins).toEqual({ entries: {}, load: { paths: [WEATHER_V1_PATH] } });
+  });
+
+  it("preserves retained allow and deny state when the fresh image omits those lists", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        channels: { weather: { token: "stale" } },
+        plugins: {
+          allow: ["weather", "user-plugin"],
+          deny: ["weather", "user-denied"],
+          entries: { weather: { enabled: false }, "user-plugin": { enabled: true } },
+          slots: { memory: "weather" },
+        },
+      },
+      { channels: {}, plugins: { entries: { weather: { enabled: true } } } },
+      {
+        freshImagePluginInstalls: [imageInstall("weather", WEATHER_V2_PATH)],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH)],
+      },
+    ) as { channels: Record<string, unknown>; plugins: Record<string, unknown> };
+
+    expect(merged.channels.weather).toBeUndefined();
+    expect(merged.plugins).toMatchObject({
+      allow: ["weather", "user-plugin"],
+      deny: ["weather", "user-denied"],
+      entries: { weather: { enabled: true }, "user-plugin": { enabled: true } },
+    });
+    expect(merged.plugins.slots).toBeUndefined();
+  });
+
+  it("lets an explicit fresh allowlist own prior image IDs while retaining user IDs", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      { plugins: { allow: ["weather", "user-plugin"], entries: {} } },
+      { plugins: { allow: ["weather"], entries: { weather: { enabled: true } } } },
+      {
+        freshImagePluginInstalls: [imageInstall("weather", WEATHER_V2_PATH)],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH)],
+      },
+    ) as { plugins: Record<string, unknown> };
+
+    expect(merged.plugins.allow).toEqual(["weather", "user-plugin"]);
+  });
+
+  it("lets a fresh allowlist override stale backup deny entries", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      { plugins: { deny: ["weather", "user-denied"], entries: {} } },
+      { plugins: { allow: ["weather"], entries: { weather: { enabled: true } } } },
+      {
+        freshImagePluginInstalls: [imageInstall("weather", WEATHER_V2_PATH)],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH)],
+      },
+    ) as { plugins: Record<string, unknown> };
+
+    expect(merged.plugins.allow).toEqual(["weather"]);
+    expect(merged.plugins.deny).toEqual(["user-denied"]);
+  });
+
+  it("lets a fresh denylist override stale backup allow entries", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      { plugins: { allow: ["weather", "user-plugin"], entries: {} } },
+      { plugins: { deny: ["weather"], entries: { weather: { enabled: true } } } },
+      {
+        freshImagePluginInstalls: [imageInstall("weather", WEATHER_V2_PATH)],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH)],
+      },
+    ) as { plugins: Record<string, unknown> };
+
+    expect(merged.plugins.allow).toEqual(["user-plugin"]);
+    expect(merged.plugins.deny).toEqual(["weather"]);
+  });
+
+  it("lets an explicit fresh denylist own prior image IDs while retaining user IDs", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      { plugins: { deny: ["weather", "user-denied"], entries: {} } },
+      { plugins: { deny: [], entries: { weather: { enabled: true } } } },
+      {
+        freshImagePluginInstalls: [imageInstall("weather", WEATHER_V2_PATH)],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH)],
+      },
+    ) as { plugins: Record<string, unknown> };
+
+    expect(merged.plugins.deny).toEqual(["user-denied"]);
+  });
+
+  it("does not merge stale same-ID channel fallback into the fresh image channel", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        channels: { weather: { enabled: false, token: "stale" } },
+        plugins: { entries: { weather: { enabled: false } } },
+      },
+      {
+        channels: { weather: { enabled: true } },
+        plugins: { entries: { weather: { enabled: true } } },
+      },
+      {
+        freshImagePluginInstalls: [imageInstall("weather", WEATHER_V2_PATH)],
+        previousImagePluginInstalls: [imageInstall("weather", WEATHER_V1_PATH)],
+      },
+    ) as { channels: Record<string, unknown> };
+
+    expect(merged.channels.weather).toEqual({ enabled: true });
+  });
+
+  it("keeps legacy backup-only plugins but drops transient install records", () => {
+    const backup = pluginConfig(
+      { weather: { enabled: true, config: { revision: "v1" } } },
+      { weather: { installPath: WEATHER_V1_PATH } },
+      [WEATHER_V1_PATH],
+    );
+
+    expect(mergeOpenClawRestoredConfig(backup, pluginConfig({}, {}, []))).toEqual({
+      plugins: {
+        entries: { weather: { enabled: true, config: { revision: "v1" } } },
+        load: { paths: [WEATHER_V1_PATH] },
+      },
+    });
+  });
+
+  it("fails closed when reconciliation receives incomplete or one-sided provenance", () => {
+    expect(() =>
+      mergeOpenClawRestoredConfig(pluginConfig({}, {}, []), pluginConfig({}, {}, []), {
+        previousImagePluginInstalls: [
+          { id: "weather", installPath: WEATHER_V1_PATH, loadPaths: undefined },
+        ],
+      }),
+    ).toThrow("Complete previous and fresh OpenClaw image plugin provenance is required");
+    expect(() =>
+      mergeOpenClawRestoredConfig(pluginConfig({}, {}, []), pluginConfig({}, {}, []), {
+        freshImagePluginInstalls: [],
+      }),
+    ).toThrow("Complete previous and fresh OpenClaw image plugin provenance is required");
+    expect(() =>
+      mergeOpenClawRestoredConfig(pluginConfig({}, {}, []), pluginConfig({}, {}, []), {
+        freshImagePluginInstalls: [],
+        previousImagePluginInstalls: [
+          { id: "weather", installPath: WEATHER_V1_PATH, loadPaths: undefined },
+        ],
+      }),
+    ).toThrow("missing explicit load paths");
   });
 });

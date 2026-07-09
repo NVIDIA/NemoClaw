@@ -20,6 +20,7 @@ type RegressionWorkflow = {
     {
       permissions?: Record<string, string>;
       steps?: WorkflowStep[];
+      "timeout-minutes"?: number;
     }
   >;
 };
@@ -71,7 +72,7 @@ describe("Regression E2E workflow contract", () => {
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   });
 
-  it("runs OpenClaw plugin runtime-deps EXDEV through a secret-free Vitest lane", () => {
+  it("runs the OpenClaw custom-plugin lifecycle and EXDEV guard in a secret-free lane", () => {
     const job = workflow.jobs?.["openclaw-plugin-runtime-exdev-e2e"];
     const steps = job?.steps ?? [];
     const runText = steps.map((step) => step.run ?? "").join("\n");
@@ -80,14 +81,19 @@ describe("Regression E2E workflow contract", () => {
     );
     const setupNodeStep = steps.find((step) => step.name === "Setup Node");
     const runVitestStep = steps.find(
-      (step) => step.name === "Run OpenClaw plugin runtime-deps EXDEV Vitest test",
+      (step) =>
+        step.name === "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV Vitest test",
     );
+    const serializedJob = JSON.stringify(job);
 
     expect(job?.permissions).toEqual({ contents: "read" });
+    expect(job?.["timeout-minutes"]).toBe(130);
     expect(checkoutStep?.uses).toMatch(FULL_SHA_ACTION);
     expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
     expect(setupNodeStep?.uses).toMatch(FULL_SHA_ACTION);
     expect(runVitestStep?.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(serializedJob).not.toContain("${{ secrets.");
+    expect(serializedJob).not.toMatch(/"secrets"\s*:\s*"inherit"/);
     for (const step of steps) {
       expect(
         step.env?.NVIDIA_INFERENCE_API_KEY,

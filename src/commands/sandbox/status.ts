@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getSandboxStatusReport, showSandboxStatus } from "../../lib/actions/sandbox/status";
+import {
+  getSandboxStatusReport,
+  isInferenceHealthFailing,
+  showSandboxStatus,
+} from "../../lib/actions/sandbox/status";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
 import { redactForLog } from "../../lib/security/redact";
@@ -33,6 +37,7 @@ export default class SandboxStatusCommand extends NemoClawCommand {
         report.gatewayState !== "present" ||
         report.rpcIssue ||
         report.failureLayer ||
+        isInferenceHealthFailing(report.inferenceHealth) ||
         report.terminalRuntimeHealth?.kind === "degraded"
       ) {
         process.exitCode = 1;
