@@ -14,6 +14,8 @@ import {
   CORPORATE_CA_HOST_ANCHOR_SOURCE,
   CorporateCaValidationError,
   encodeCorporateCaArg,
+  isKnownMergedTrustStorePath,
+  KNOWN_MERGED_TRUST_STORE_PATHS,
   MAX_CORPORATE_CA_BYTES,
   MAX_CORPORATE_CA_CERTS,
   resolveCorporateCa,
@@ -240,6 +242,48 @@ describe("resolveCorporateCaFromEnv", () => {
         [CORPORATE_CA_DISABLE_ENV]: "0",
       }),
     ).toBeNull();
+  });
+
+  it("throws when the explicit env var points at a merged OS trust store (#6210 PRA-5)", () => {
+    expect(() =>
+      resolveCorporateCaFromEnv({
+        [CORPORATE_CA_EXPLICIT_ENV]: "/etc/ssl/certs/ca-certificates.crt",
+      }),
+    ).toThrow(CorporateCaValidationError);
+  });
+
+  it("skips a fallback env var pointing at a merged OS trust store and warns (#6210 PRA-5)", () => {
+    const p = writeCa(tmpDir());
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const resolved = resolveCorporateCaFromEnv({
+      REQUESTS_CA_BUNDLE: "/etc/ssl/certs/ca-certificates.crt",
+      CURL_CA_BUNDLE: p,
+    });
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
+    // The merged-store fallback is skipped (never baked); the real corporate
+    // bundle from the next var wins.
+    expect(resolved?.sourceEnv).toBe("CURL_CA_BUNDLE");
+    expect(
+      messages.some((m) => m.includes("REQUESTS_CA_BUNDLE") && m.includes("merged OS trust store")),
+    ).toBe(true);
+  });
+});
+
+describe("isKnownMergedTrustStorePath (#6210 PRA-5)", () => {
+  it("matches every well-known merged OS trust-store path", () => {
+    for (const p of KNOWN_MERGED_TRUST_STORE_PATHS) {
+      expect(isKnownMergedTrustStorePath(p)).toBe(true);
+    }
+  });
+
+  it("normalizes a non-canonical path before matching", () => {
+    expect(isKnownMergedTrustStorePath("/etc/ssl/certs/../certs/ca-certificates.crt")).toBe(true);
+  });
+
+  it("does not match a dedicated corporate CA file", () => {
+    const p = writeCa(tmpDir());
+    expect(isKnownMergedTrustStorePath(p)).toBe(false);
   });
 });
 

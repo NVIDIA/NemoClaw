@@ -38,6 +38,45 @@ export const CORPORATE_CA_FALLBACK_ENV_VARS = [
 ] as const;
 
 /**
+ * Well-known merged OS trust-store files. These interleave the distro's ~140
+ * public roots with any locally-added corporate root, so importing one wholesale
+ * would widen sandbox trust far beyond the single corporate proxy CA #6210 is
+ * about (trust-bloat). A conventional CA env var (`SSL_CERT_FILE` especially)
+ * routinely points at one of these by default, so we reject it as a corporate-CA
+ * source: the explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` fails loudly (the operator
+ * must export just their corporate root), and a fallback env var is skipped with
+ * a warning. The safe automatic host path stays the administrator anchor *source*
+ * directories (see {@link resolveCorporateCaFromHostAnchors}), which hold only
+ * locally-added roots. (PR Review Advisor PRA-5.)
+ */
+export const KNOWN_MERGED_TRUST_STORE_PATHS: readonly string[] = [
+  "/etc/ssl/certs/ca-certificates.crt",
+  "/etc/ssl/cert.pem",
+  "/etc/ssl/ca-bundle.pem",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+  "/etc/pki/tls/certs/ca-bundle.trust.crt",
+  "/etc/pki/tls/cert.pem",
+  "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+];
+
+/**
+ * True when `candidate` resolves to a well-known merged OS trust store (see
+ * {@link KNOWN_MERGED_TRUST_STORE_PATHS}). Matches both the normalized path and,
+ * where resolvable, its symlink target, since several distros expose the merged
+ * bundle through a symlinked alias (e.g. `/etc/pki/tls/certs/ca-bundle.crt` →
+ * the extracted bundle).
+ */
+export function isKnownMergedTrustStorePath(candidate: string): boolean {
+  const normalized = path.resolve(candidate);
+  if (KNOWN_MERGED_TRUST_STORE_PATHS.includes(normalized)) return true;
+  try {
+    return KNOWN_MERGED_TRUST_STORE_PATHS.includes(fs.realpathSync(candidate));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Anchor-file extensions each host trust tool actually installs. Debian/Ubuntu
  * `update-ca-certificates` installs only `*.crt` from its anchor dir; RHEL/Fedora
  * `update-ca-trust` accepts `*.pem`/`*.crt`/`*.cer`. Matching per-directory keeps
@@ -271,8 +310,10 @@ function isDisabled(env: NodeJS.ProcessEnv): boolean {
  *
  * Returns `null` when no corporate CA env var is configured (or import is
  * disabled). Throws {@link CorporateCaValidationError} only when the *explicit*
- * `NEMOCLAW_CORPORATE_CA_BUNDLE` is set to an invalid path; an invalid fallback
- * env var is skipped (not fatal) but logs a warning so the operator can see it.
+ * `NEMOCLAW_CORPORATE_CA_BUNDLE` is set to an invalid path (or to a merged OS
+ * trust store — see {@link KNOWN_MERGED_TRUST_STORE_PATHS}); an invalid fallback
+ * env var, or one pointing at a merged trust store, is skipped (not fatal) but
+ * logs a warning so the operator can see it.
  * Does not touch the host trust store — see
  * {@link resolveCorporateCaFromHostAnchors} and {@link resolveCorporateCa}.
  */
@@ -284,6 +325,14 @@ export function resolveCorporateCaFromEnv(
   const explicit = env[CORPORATE_CA_EXPLICIT_ENV];
   if (explicit && explicit.trim()) {
     const sourcePath = explicit.trim();
+    // Even an explicit opt-in must not point at a merged OS trust store: baking
+    // ~140 public roots is trust-bloat, not a corporate-proxy CA. Fail loudly so
+    // the operator exports just their corporate root instead.
+    if (isKnownMergedTrustStorePath(sourcePath)) {
+      throw new CorporateCaValidationError(
+        `${CORPORATE_CA_EXPLICIT_ENV} points at a merged OS trust store (${sourcePath}); export only your corporate root (and intermediates) to a small PEM file instead`,
+      );
+    }
     // Explicit request: surface validation failures instead of silently
     // building an image that cannot verify external TLS.
     const pem = validateCorporateCaFile(sourcePath);
@@ -300,6 +349,17 @@ export function resolveCorporateCaFromEnv(
     const value = env[name];
     if (!value || !value.trim()) continue;
     const sourcePath = value.trim();
+    // A conventional CA env var routinely defaults to the merged OS trust store
+    // (e.g. `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`). Skip it rather
+    // than bake ~140 public roots as if they were the corporate proxy CA; the
+    // host-anchor scan still finds the locally-added corporate root, and the
+    // explicit env var remains the way to import a specific bundle.
+    if (isKnownMergedTrustStorePath(sourcePath)) {
+      warnCorporateCa(
+        `${name} points at a merged OS trust store (${sourcePath}); skipped to avoid a broad trust import — set ${CORPORATE_CA_EXPLICIT_ENV} to a small corporate-root PEM to import explicitly`,
+      );
+      continue;
+    }
     try {
       const pem = validateCorporateCaFile(sourcePath);
       return { pem, sourcePath, sourceEnv: name };
@@ -447,9 +507,11 @@ export interface ResolveCorporateCaOptions {
  * Resolve a corporate CA bundle for the sandbox image (#6210).
  *
  * Resolution order:
- *   1. Explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` (fail-loud when invalid).
+ *   1. Explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` (fail-loud when invalid or when it
+ *      points at a merged OS trust store — see {@link KNOWN_MERGED_TRUST_STORE_PATHS}).
  *   2. Conventional CA env vars (`REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
- *      `SSL_CERT_FILE`), skipped silently when invalid.
+ *      `SSL_CERT_FILE`), skipped with a warning when invalid or when they point
+ *      at a merged OS trust store.
  *   3. Host administrator-managed anchor directories (overridable/disablable
  *      via {@link CORPORATE_CA_ANCHOR_DIRS_ENV}), skipped silently.
  *
