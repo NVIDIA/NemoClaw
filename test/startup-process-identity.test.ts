@@ -101,6 +101,8 @@ def supervised_scenario(
         )
         for process in processes:
             pid, start_time, cmdline, effective_uid, inner_pid, parent_pid, *namespace = process
+            if namespace not in ([], ["nested"]):
+                raise AssertionError(f"unsupported namespace selector: {namespace!r}")
             write_process(
                 proc_root,
                 pid,
