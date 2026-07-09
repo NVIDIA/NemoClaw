@@ -34,51 +34,102 @@ interface AuditResult {
   suppressedFindings: AuditFinding[];
 }
 
-function reviewedOpenClawVersion(): string {
+interface ReviewedOpenClawPackage {
+  integrity: string;
+  tarball: string;
+  version: string;
+}
+
+function reviewedOpenClawPackage(): ReviewedOpenClawPackage {
   const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile"), "utf-8");
   const version = dockerfile.match(/^ARG OPENCLAW_VERSION=([^\s]+)/m)?.[1];
   assert.ok(version, "Dockerfile is missing ARG OPENCLAW_VERSION");
-  return version;
+  const pinKey = version.replaceAll(".", "_");
+  const integrity = dockerfile.match(
+    new RegExp(`^ARG OPENCLAW_${pinKey}_INTEGRITY=([^\\s]+)`, "m"),
+  )?.[1];
+  const tarball = dockerfile.match(
+    new RegExp(`^ARG OPENCLAW_${pinKey}_TARBALL=([^\\s]+)`, "m"),
+  )?.[1];
+  assert.ok(integrity, `Dockerfile is missing the OpenClaw ${version} integrity pin`);
+  assert.ok(tarball, `Dockerfile is missing the OpenClaw ${version} tarball pin`);
+  return { integrity, tarball, version };
 }
 
-function runOpenClawAudit(chatUiUrl: string, overrides: Record<string, string> = {}): AuditResult {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-audit-"));
-  const home = path.join(tmp, "home");
-  const configDir = path.join(home, ".openclaw");
-  const cache = process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_NPM_CACHE || path.join(tmp, "npm-cache");
-  fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(
-    path.join(configDir, "openclaw.json"),
-    JSON.stringify(buildConfig({ ...BASE_ENV, CHAT_UI_URL: chatUiUrl, ...overrides })),
-    { mode: 0o600 },
+function installReviewedOpenClaw(workspace: string): string {
+  const reviewed = reviewedOpenClawPackage();
+  const runtime = path.join(workspace, "runtime");
+  const childEnv: NodeJS.ProcessEnv = {
+    HOME: path.join(workspace, "npm-home"),
+    NPM_CONFIG_CACHE: path.join(workspace, "npm-cache"),
+    NPM_CONFIG_FETCH_RETRIES: "3",
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "10000",
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "60000",
+    PATH: process.env.PATH,
+  };
+  const packed = spawnSync(
+    "npm",
+    ["pack", reviewed.tarball, "--pack-destination", workspace, "--json"],
+    {
+      encoding: "utf-8",
+      env: childEnv,
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: OPENCLAW_AUDIT_TIMEOUT_MS,
+    },
   );
+  const packFailure = packed.error?.message || packed.stderr || packed.stdout || "empty output";
+  assert.equal(packed.error, undefined, `OpenClaw npm pack failed: ${packFailure}`);
+  assert.equal(packed.status, 0, `OpenClaw npm pack failed: ${packFailure}`);
+  assert.ok(packed.stdout.trim(), `OpenClaw npm pack failed: ${packFailure}`);
+  const packResult = JSON.parse(packed.stdout)[0] as { filename?: string; integrity?: string };
+  assert.equal(packResult.integrity, reviewed.integrity, "OpenClaw tarball integrity mismatch");
+  assert.ok(packResult.filename, "OpenClaw npm pack omitted the archive filename");
+  assert.equal(path.basename(packResult.filename), packResult.filename, "Unsafe npm pack filename");
+  const archive = path.resolve(workspace, packResult.filename);
+  assert.ok(
+    archive.startsWith(`${path.resolve(workspace)}${path.sep}`),
+    "OpenClaw archive escaped workspace",
+  );
+  const installed = spawnSync(
+    "npm",
+    ["install", "--prefix", runtime, "--ignore-scripts", "--no-audit", "--no-fund", archive],
+    {
+      encoding: "utf-8",
+      env: childEnv,
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: OPENCLAW_AUDIT_TIMEOUT_MS,
+    },
+  );
+  const installFailure =
+    installed.error?.message || installed.stderr || installed.stdout || "empty output";
+  assert.equal(installed.error, undefined, `OpenClaw install failed: ${installFailure}`);
+  assert.equal(installed.status, 0, `OpenClaw install failed: ${installFailure}`);
+  const binary = path.join(runtime, "node_modules", ".bin", "openclaw");
+  assert.ok(fs.existsSync(binary), "Reviewed OpenClaw install omitted its CLI binary");
+  return binary;
+}
 
+function runOpenClawAudit(
+  binary: string,
+  chatUiUrl: string,
+  overrides: Record<string, string> = {},
+): AuditResult {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-audit-"));
   try {
-    const version = reviewedOpenClawVersion();
-    const childEnv = Object.fromEntries(
-      Object.entries({ ...process.env, HOME: home, NPM_CONFIG_CACHE: cache }).filter(
-        ([key]) => !key.startsWith("VITEST") && key !== "NODE_ENV",
-      ),
+    const home = path.join(tmp, "home");
+    const configDir = path.join(home, ".openclaw");
+    fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(configDir, "openclaw.json"),
+      JSON.stringify(buildConfig({ ...BASE_ENV, CHAT_UI_URL: chatUiUrl, ...overrides })),
+      { mode: 0o600 },
     );
-    const audit = spawnSync(
-      "npm",
-      [
-        "exec",
-        "--yes",
-        `--package=openclaw@${version}`,
-        "--",
-        "openclaw",
-        "security",
-        "audit",
-        "--json",
-      ],
-      {
-        encoding: "utf-8",
-        env: childEnv,
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: OPENCLAW_AUDIT_TIMEOUT_MS,
-      },
-    );
+    const audit = spawnSync(binary, ["security", "audit", "--json"], {
+      encoding: "utf-8",
+      env: { HOME: home, PATH: process.env.PATH },
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: OPENCLAW_AUDIT_TIMEOUT_MS,
+    });
     const auditFailure = audit.error?.message || audit.stderr || audit.stdout || "empty output";
     assert.equal(audit.error, undefined, `OpenClaw audit failed: ${auditFailure}`);
     assert.equal(audit.status, 0, `OpenClaw audit failed: ${auditFailure}`);
@@ -102,54 +153,64 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
     it(
       "suppresses only exact managed findings while preserving active risks (#6024)",
       () => {
-        const loopback = runOpenClawAudit("http://127.0.0.1:18789");
-        const suppressedDirect = loopback.suppressedFindings.find(
-          (finding) => finding.checkId === "gateway.control_ui.insecure_auth",
-        );
-        expect(suppressedDirect).toMatchObject({
-          severity: "warn",
-          remediation: expect.stringContaining("HTTPS"),
-          suppression: { reason: expect.stringContaining("loopback HTTP CHAT_UI_URL") },
-        });
-        expect(
-          findingForFlag(loopback.suppressedFindings, "gateway.controlUi.allowInsecureAuth=true"),
-        ).toMatchObject({
-          severity: "warn",
-          remediation: expect.any(String),
-          suppression: { reason: expect.stringContaining("loopback HTTP CHAT_UI_URL") },
-        });
-        expect(
-          loopback.findings.some((finding) => finding.checkId === "gateway.loopback_no_auth"),
-        ).toBe(true);
+        const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-audit-suite-"));
+        try {
+          const binary = installReviewedOpenClaw(workspace);
+          const loopback = runOpenClawAudit(binary, "http://127.0.0.1:18789");
+          const suppressedDirect = loopback.suppressedFindings.find(
+            (finding) => finding.checkId === "gateway.control_ui.insecure_auth",
+          );
+          expect(suppressedDirect).toMatchObject({
+            severity: "warn",
+            remediation: expect.stringContaining("HTTPS"),
+            suppression: { reason: expect.stringContaining("loopback HTTP CHAT_UI_URL") },
+          });
+          expect(
+            findingForFlag(loopback.suppressedFindings, "gateway.controlUi.allowInsecureAuth=true"),
+          ).toMatchObject({
+            severity: "warn",
+            remediation: expect.any(String),
+            suppression: { reason: expect.stringContaining("loopback HTTP CHAT_UI_URL") },
+          });
+          expect(
+            loopback.findings.some((finding) => finding.checkId === "gateway.loopback_no_auth"),
+          ).toBe(true);
 
-        const remote = runOpenClawAudit("http://remote.example:18789");
-        expect(
-          remote.findings.some((finding) => finding.checkId === "gateway.control_ui.insecure_auth"),
-        ).toBe(true);
-        expect(
-          findingForFlag(remote.findings, "gateway.controlUi.allowInsecureAuth=true"),
-        ).toBeDefined();
-        expect(
-          remote.findings.some(
-            (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
-          ),
-        ).toBe(true);
-        expect(
-          findingForFlag(remote.findings, "gateway.controlUi.dangerouslyDisableDeviceAuth=true"),
-        ).toBeDefined();
+          const remote = runOpenClawAudit(binary, "http://remote.example:18789", {
+            NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+          });
+          expect(
+            remote.findings.some(
+              (finding) => finding.checkId === "gateway.control_ui.insecure_auth",
+            ),
+          ).toBe(true);
+          expect(
+            findingForFlag(remote.findings, "gateway.controlUi.allowInsecureAuth=true"),
+          ).toBeDefined();
+          expect(
+            remote.findings.some(
+              (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
+            ),
+          ).toBe(true);
+          expect(
+            findingForFlag(remote.findings, "gateway.controlUi.dangerouslyDisableDeviceAuth=true"),
+          ).toBeDefined();
 
-        const explicitOptOut = runOpenClawAudit("https://127.0.0.1:18789", {
-          NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
-        });
-        expect(
-          explicitOptOut.suppressedFindings.find(
-            (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
-          ),
-        ).toMatchObject({
-          severity: "critical",
-          remediation: expect.any(String),
-          suppression: { reason: expect.stringContaining("NEMOCLAW_DISABLE_DEVICE_AUTH=1") },
-        });
+          const explicitOptOut = runOpenClawAudit(binary, "https://127.0.0.1:18789", {
+            NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+          });
+          expect(
+            explicitOptOut.suppressedFindings.find(
+              (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
+            ),
+          ).toMatchObject({
+            severity: "critical",
+            remediation: expect.any(String),
+            suppression: { reason: expect.stringContaining("NEMOCLAW_DISABLE_DEVICE_AUTH=1") },
+          });
+        } finally {
+          fs.rmSync(workspace, { recursive: true, force: true });
+        }
       },
       OPENCLAW_AUDIT_TIMEOUT_MS,
     );

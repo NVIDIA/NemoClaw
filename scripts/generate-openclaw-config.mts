@@ -1206,7 +1206,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       },
     );
   }
-  if (explicitDeviceAuthOptOut) {
+  if (explicitDeviceAuthOptOut && !isRemote) {
     const reason =
       "NemoClaw applies this setting because NEMOCLAW_DISABLE_DEVICE_AUTH=1 explicitly opts out of device authentication.";
     securityAuditSuppressions.push(

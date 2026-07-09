@@ -36,13 +36,17 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
   });
 
   it("keeps remote device auth findings active (#6024)", () => {
-    const config = buildSecurityAuditConfig("https://nemoclaw0-xxx.brevlab.com:18789");
+    const config = buildSecurityAuditConfig("https://nemoclaw0-xxx.brevlab.com:18789", {
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+    });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
     expect(config.security).toBeUndefined();
   });
 
   it("keeps all remote HTTP security findings active (#6024)", () => {
-    const config = buildSecurityAuditConfig("http://remote.example:18789");
+    const config = buildSecurityAuditConfig("http://remote.example:18789", {
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+    });
     expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
     expect(config.security).toBeUndefined();
