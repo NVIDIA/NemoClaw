@@ -107,7 +107,8 @@ proc write_capture {path value} {
   close $handle
 }
 proc expect_or_exit {target pattern markName timeoutExit eofExit} {
-  expect -i $target {
+  expect {
+    -i $target
     -nocase -re $pattern { mark $markName }
     timeout {
       stop_spawn $target
@@ -120,8 +121,9 @@ proc expect_or_exit {target pattern markName timeoutExit eofExit} {
   }
 }
 proc expect_exact_or_exit {target value markName timeoutExit eofExit} {
-  expect -i $target {
-    -nocase -exact $value { mark $markName }
+  expect {
+    -i $target
+    -nocase -ex $value { mark $markName }
     timeout {
       stop_spawn $target
       exit $timeoutExit
@@ -185,7 +187,8 @@ set curlSpawn $spawn_id
 mark network_request_triggered
 set savedTimeout $timeout
 set timeout 45
-expect -i $curlSpawn {
+expect {
+  -i $curlSpawn
   eof { set triggerOutput $expect_out(buffer) }
   timeout {
     stop_spawn $curlSpawn
@@ -236,11 +239,13 @@ expect_or_exit $termSpawn {\\[a\\][^\\r\\n]*Approve} network_rule_approve_action
 send -i $termSpawn -- "a"
 expect_or_exit $termSpawn {Approved '[^']+'[^\\r\\n]*policy v[0-9]+} network_approval_processed 86 87
 send -i $termSpawn -- "q"
-expect -i $termSpawn {
+expect {
+  -i $termSpawn
   eof {}
   timeout {
     send -i $termSpawn "\\003"
-    expect -i $termSpawn {
+    expect {
+      -i $termSpawn
       eof {}
       timeout {
         stop_spawn $termSpawn

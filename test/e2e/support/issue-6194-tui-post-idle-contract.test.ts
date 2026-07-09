@@ -149,7 +149,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "spawn -noecho openshell sandbox exec --name $sandbox --no-tty --timeout 40 -- /usr/bin/curl -sS --connect-timeout 5 --max-time 30 -o /dev/null $networkEndpoint",
     );
     expect(script).toContain("set curlSpawn $spawn_id");
-    expect(script).toContain("expect -i $curlSpawn");
+    expect(script).toContain("expect {\n  -i $curlSpawn\n");
     expect(script).toContain("catch {wait -i $curlSpawn} curlWait");
     expect(script).toContain(
       "set chunkCount [regexp -all -line {^[[:space:]]*Chunk:} $pendingOutput]",
@@ -195,6 +195,16 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     const order = markers.map((marker) => script.indexOf(marker));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("binds multi-pattern waits to their intended Expect spawn (#6194)", () => {
+    const script = buildIssue6194OpenShellApprovalExpectScript();
+    const spawnScopedWaits = script.match(/expect \{\n\s+-i \$(?:target|curlSpawn|termSpawn)\n/gu);
+
+    expect(spawnScopedWaits).toHaveLength(5);
+    expect(script).not.toMatch(/\bexpect -i \$/u);
+    expect(script).toContain("-nocase -ex $value { mark $markName }");
+    expect(script).not.toContain("-nocase -exact");
   });
 
   it.each([
