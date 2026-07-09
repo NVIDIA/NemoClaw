@@ -114,7 +114,7 @@ export function streamSandboxCreate(
   const logLine = options.logLine ?? console.log;
   const traceEvent = options.traceEvent ?? (() => {});
   const lines: string[] = [];
-  let pending = "";
+  const pending = { stdout: "", stderr: "" };
   let lastPrintedLine = "";
   let sawProgress = false;
   const readyCheckOutputPatterns = getReadyCheckOutputPatterns(
@@ -313,24 +313,26 @@ export function streamSandboxCreate(
     return matchesAny(line, VISIBLE_PROGRESS_PATTERNS);
   }
 
-  function onChunk(chunk: Buffer | string) {
-    pending += chunk.toString();
-    const parts = pending.split("\n");
-    pending = parts.pop() ?? "";
+  function onChunk(stream: keyof typeof pending, chunk: Buffer | string) {
+    pending[stream] += chunk.toString();
+    const parts = pending[stream].split("\n");
+    pending[stream] = parts.pop() ?? "";
     parts.forEach(flushLine);
   }
 
-  function flushPendingLine() {
-    if (!pending) return;
-    const trailing = pending;
-    pending = "";
-    flushLine(trailing);
+  function flushPendingLines() {
+    for (const stream of ["stdout", "stderr"] as const) {
+      if (!pending[stream]) continue;
+      const trailing = pending[stream];
+      pending[stream] = "";
+      flushLine(trailing);
+    }
   }
 
   function finish(status: number, overrides: Partial<StreamSandboxCreateResult> = {}) {
     if (settled) return;
     settled = true;
-    flushPendingLine();
+    flushPendingLines();
     if (!buildTimingFinished && buildStartedAtMs !== null) {
       finishBuildTiming(status === 0 ? "completed" : "stopped");
     }
@@ -354,8 +356,8 @@ export function streamSandboxCreate(
     child.unref?.();
   }
 
-  child.stdout?.on("data", onChunk);
-  child.stderr?.on("data", onChunk);
+  child.stdout?.on("data", (chunk) => onChunk("stdout", chunk));
+  child.stderr?.on("data", (chunk) => onChunk("stderr", chunk));
 
   const readyTimer = options.readyCheck
     ? setInterval(() => {
@@ -469,7 +471,7 @@ export function streamSandboxCreate(
     child.on("close", (code) => {
       // One last ready-check: the sandbox may have become Ready between the
       // last poll tick and the stream exit (e.g. SSH 255 after "Created sandbox:").
-      flushPendingLine();
+      flushPendingLines();
       if (code && code !== 0 && options.readyCheck) {
         try {
           if (options.readyCheck() && readyCheckOutputMatched) {

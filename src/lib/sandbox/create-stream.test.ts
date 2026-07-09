@@ -272,6 +272,25 @@ describe("sandbox-create-stream", () => {
     });
   });
 
+  it("keeps interleaved stdout and stderr fragments on separate lines", async () => {
+    const child = new FakeChild();
+    const promise = streamSandboxCreate(
+      "echo create",
+      process.env,
+      makeDefaultStreamOptions(child),
+    );
+
+    child.stdout.emit("data", Buffer.from("stdout-partial"));
+    child.stderr.emit("data", Buffer.from("stderr-line\n"));
+    child.stdout.emit("data", Buffer.from("-complete\n"));
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      output: "stderr-line\nstdout-partial-complete",
+    });
+  });
+
   it("recovers when sandbox is ready at the moment the stream exits non-zero", async () => {
     const child = new FakeChild();
     const logLine = vi.fn();
