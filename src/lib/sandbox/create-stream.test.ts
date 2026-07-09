@@ -1,29 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { EventEmitter } from "node:events";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  type StreamableChildProcess,
-  type StreamableReadable,
-  streamSandboxCreate,
-} from "./create-stream";
-
-class FakeReadable extends EventEmitter implements StreamableReadable {
-  destroy(): void {}
-}
-
-class FakeChild extends EventEmitter implements StreamableChildProcess {
-  stdout = new FakeReadable();
-  stderr = new FakeReadable();
-  kill = vi.fn();
-  unref = vi.fn();
-}
-
-const dockerEnv = { ...process.env, OPENSHELL_DRIVERS: "docker" };
-const vmEnv = { ...process.env, OPENSHELL_DRIVERS: "vm" };
+import { streamSandboxCreate } from "./create-stream";
+import { dockerEnv, FakeChild, vmEnv } from "./create-stream-test-fixtures";
 
 describe("sandbox-create-stream", () => {
   afterEach(() => {
@@ -185,7 +166,7 @@ describe("sandbox-create-stream", () => {
     expect(child.unref).toHaveBeenCalled();
   });
 
-  it("does not detach on Ready until required startup output appears", async () => {
+  it("does not detach on Ready with default VM gate until required startup output appears", async () => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
@@ -279,6 +260,36 @@ describe("sandbox-create-stream", () => {
     await vi.advanceTimersByTimeAsync(6);
     await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
     expect(onPoll).toHaveBeenCalledTimes(1);
+  });
+
+  it("traces poll side-effect errors and keeps polling", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const traceEvent = vi.fn();
+    const onPoll = vi.fn(() => {
+      throw new Error("patch unavailable");
+    });
+    let ready = false;
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
+      spawnImpl: () => child,
+      readyCheck: () => ready,
+      onPoll,
+      traceEvent,
+      pollIntervalMs: 5,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine: vi.fn(),
+    });
+
+    await vi.advanceTimersByTimeAsync(6);
+    expect(traceEvent).toHaveBeenCalledWith("sandbox_create_poll_error", {
+      message: "patch unavailable",
+    });
+
+    ready = true;
+    await vi.advanceTimersByTimeAsync(6);
+    await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
   });
 
   it("does not recover a non-zero close before required startup output appears", async () => {

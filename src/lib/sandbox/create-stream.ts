@@ -421,7 +421,10 @@ export function streamSandboxCreate(
 
           try {
             options.onPoll?.();
-          } catch {
+          } catch (error) {
+            emitTraceEvent("sandbox_create_poll_error", {
+              message: error instanceof Error ? error.message : String(error),
+            });
             return;
           }
 
