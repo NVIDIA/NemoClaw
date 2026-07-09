@@ -181,12 +181,9 @@ export function runMergeBlock(
   openshellBundle: string,
   corporateCa: string,
   outDir: string,
+  endMarker = "# Git TLS CA bundle fix (NemoClaw#2270).",
 ): string {
-  const block = sliceBlock(
-    scriptPath,
-    "# Corporate proxy CA merge (NemoClaw#6210).",
-    "# Git TLS CA bundle fix (NemoClaw#2270).",
-  )
+  const block = sliceBlock(scriptPath, "# Corporate proxy CA merge (NemoClaw#6210).", endMarker)
     .replaceAll("/usr/local/share/nemoclaw/corporate-ca.pem", corporateCa)
     .replaceAll("/tmp/nemoclaw-ca-bundle.pem", path.join(outDir, "merged-ca.pem"));
   const wrapper = path.join(outDir, "merge.sh");
