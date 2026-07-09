@@ -11,6 +11,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const sdk = vi.hoisted(() => {
   type Listener = (event: unknown) => void;
   type TerminalResponse = "omit" | "fail-once" | "fail-twice" | "fail-then-success" | "success";
+  const terminalPlans: Record<TerminalResponse, { failureCount: number; succeeds: boolean }> = {
+    omit: { failureCount: 0, succeeds: false },
+    "fail-once": { failureCount: 1, succeeds: false },
+    "fail-twice": { failureCount: 2, succeeds: false },
+    "fail-then-success": { failureCount: 1, succeeds: true },
+    success: { failureCount: 0, succeeds: true },
+  };
   type MockTool = {
     name: string;
     execute: (
@@ -107,40 +114,29 @@ const sdk = vi.hoisted(() => {
         const terminalResponse = terminalTool
           ? (state.terminalResponses.shift() ?? "omit")
           : "omit";
+        const terminalPlan = terminalPlans[terminalResponse];
         await (contextTool && !state.omitContextTool
           ? executeContextTool(contextTool, emit)
           : Promise.resolve());
-        if (
-          terminalTool &&
-          (terminalResponse === "fail-once" || terminalResponse === "fail-twice")
-        ) {
-          failTerminalTool(terminalTool, emit);
-        }
-        if (terminalTool && terminalResponse === "fail-twice") {
-          failTerminalTool(terminalTool, emit);
-        }
-        if (terminalTool && terminalResponse === "fail-then-success") {
-          failTerminalTool(terminalTool, emit);
-        }
+        Array.from({ length: terminalTool ? terminalPlan.failureCount : 0 }).forEach(() =>
+          failTerminalTool(terminalTool as MockTool, emit),
+        );
         const isRepairPrompt = prompt.includes("Call `turn_action` now");
-        if (
+        const shouldEmitText =
           !state.omitAnalysis &&
           (!prompt.includes("Emit no prose before or after") ||
             (state.emitCommitProse && !isRepairPrompt) ||
-            (state.emitRepairProse && isRepairPrompt))
-        ) {
+            (state.emitRepairProse && isRepairPrompt));
+        shouldEmitText &&
           emit({
             type: "message_update",
             assistantMessageEvent: { type: "text_delta", delta: `analysis for ${prompt}` },
           });
-        }
-        if (
-          terminalTool &&
-          (terminalResponse === "success" || terminalResponse === "fail-then-success")
-        ) {
-          await executeTerminalTool(terminalTool, emit);
-        }
-        if (state.emitAnalysisError && !terminalTool) {
+        await (terminalTool && terminalPlan.succeeds
+          ? executeTerminalTool(terminalTool, emit)
+          : Promise.resolve());
+        state.emitAnalysisError &&
+          !terminalTool &&
           emit({
             type: "message_update",
             assistantMessageEvent: {
@@ -149,7 +145,6 @@ const sdk = vi.hoisted(() => {
               reason: "error",
             },
           });
-        }
         emit({ type: "agent_end" });
       },
       abort: vi.fn(async () => {}),
