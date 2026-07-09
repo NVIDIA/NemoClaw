@@ -23,11 +23,12 @@ function contextTurn(name: string, content: string): AdvisorPromptTurn {
 }
 
 const ledgerToolName = "pr_review_update_ledger";
-const finalMutationTools = {
+const atomicMutationTools = {
   activeToolNames: [ledgerToolName],
   requiredToolNames: [ledgerToolName],
   requireToolsBeforeText: [],
-  requireTextBeforeToolNames: [ledgerToolName],
+  requireAssistantText: false,
+  atomicTerminalToolName: ledgerToolName,
 };
 const analysisEvent: AdvisorTurnFlowEvent = { type: "text", text: "analysis" };
 const ledgerStart: AdvisorTurnFlowEvent = { type: "tool_start", toolName: ledgerToolName };
@@ -38,23 +39,33 @@ const ledgerSuccess: AdvisorTurnFlowEvent = {
 };
 const ledgerFailure: AdvisorTurnFlowEvent = { ...ledgerSuccess, isError: true };
 const invalidFinalMutationFlows: Array<[string, AdvisorTurnFlowEvent[], string]> = [
-  ["an omitted call", [analysisEvent], "observed 0 starts"],
-  [
-    "duplicate starts",
-    [analysisEvent, ledgerStart, ledgerStart, ledgerSuccess],
-    "observed 2 starts",
-  ],
-  ["an omitted completion", [analysisEvent, ledgerStart], "0 successful of 0 total"],
+  ["an omitted call", [], "observed 0 successful and 0 failed"],
+  ["an omitted completion", [ledgerStart], "observed 1 starts and 0 completions"],
   [
     "duplicate successful completions",
-    [analysisEvent, ledgerStart, ledgerSuccess, ledgerSuccess],
-    "2 successful of 2 total",
+    [ledgerStart, ledgerSuccess, ledgerStart, ledgerSuccess],
+    "observed 2 successful and 0 failed",
   ],
-  ["a failed completion", [analysisEvent, ledgerStart, ledgerFailure], "0 successful of 1 total"],
+  ["a failed completion", [ledgerStart, ledgerFailure], "0 successful and 1 failed"],
   [
-    "a failed duplicate completion",
-    [analysisEvent, ledgerStart, ledgerSuccess, ledgerFailure],
-    "1 successful of 2 total",
+    "prose before a successful commit",
+    [analysisEvent, ledgerStart, ledgerSuccess],
+    "emitted prose during atomic",
+  ],
+  [
+    "a read before a successful commit",
+    [
+      { type: "tool_start", toolName: "read" },
+      { type: "tool_end", toolName: "read", isError: false },
+      ledgerStart,
+      ledgerSuccess,
+    ],
+    "called unexpected tool read during atomic commit",
+  ],
+  [
+    "activity after a successful commit",
+    [ledgerStart, ledgerSuccess, analysisEvent],
+    "emitted activity after successful",
   ],
 ];
 
@@ -90,7 +101,6 @@ describe("advisor session context tool flow", () => {
       ...contextTurn("review", "{}"),
       activeToolNames: ["pr_review_update_ledger"],
       requiredToolNames: ["pr_review_update_ledger"],
-      requireTextBeforeToolNames: ["pr_review_update_ledger"],
     };
     const tools = resolveAdvisorTurnTools(
       turn,
@@ -127,18 +137,6 @@ describe("advisor session context tool flow", () => {
       ).join("; "),
     ).toContain("text before pr_review_context completed");
     expect(
-      advisorTurnFlowErrors(
-        "review",
-        [
-          { type: "tool_end", toolName: "pr_review_context", isError: false },
-          { type: "text", text: "analysis" },
-          { type: "tool_start", toolName: "pr_review_update_ledger" },
-          { type: "tool_start", toolName: "read" },
-        ],
-        tools,
-      ).join("; "),
-    ).toContain("called read after pr_review_update_ledger");
-    expect(
       missingRequiredAdvisorToolNames(tools.requiredToolNames, new Set(["pr_review_context"])),
     ).toEqual(["pr_review_update_ledger"]);
     expect(
@@ -149,11 +147,37 @@ describe("advisor session context tool flow", () => {
     ).toEqual([]);
   });
 
+  it("rejects an atomic commit configuration with context or extra tools (#6446)", () => {
+    const turn: AdvisorPromptTurn = {
+      ...contextTurn("invalid-atomic", "{}"),
+      activeToolNames: [ledgerToolName],
+      atomicTerminalToolName: ledgerToolName,
+    };
+
+    expect(() =>
+      resolveAdvisorTurnTools(
+        turn,
+        ["pr_review_context"],
+        new Set(["pr_review_context", ledgerToolName]),
+      ),
+    ).toThrow("atomic terminal tool must be the turn's only active and required tool");
+  });
+
   it.each(
     invalidFinalMutationFlows,
-  )("rejects %s for a final mutation tool (#6446)", (_case, events, expectedError) => {
-    expect(advisorTurnFlowErrors("review", events, finalMutationTools).join("; ")).toContain(
+  )("rejects %s for an atomic mutation tool (#6446)", (_case, events, expectedError) => {
+    expect(advisorTurnFlowErrors("review", events, atomicMutationTools).join("; ")).toContain(
       expectedError,
     );
+  });
+
+  it("accepts failed atomic attempts before one successful commit (#6446)", () => {
+    const errors = advisorTurnFlowErrors(
+      "review",
+      [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+      atomicMutationTools,
+    );
+
+    expect(errors).toEqual([]);
   });
 });
