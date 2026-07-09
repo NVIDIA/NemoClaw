@@ -18,12 +18,15 @@ For more detailed release notes, refer to the [NemoClaw GitHub announcements](ht
 
 ## v0.0.78
 
-NemoClaw v0.0.78 adds opt-in thread-scoped auto-approval for managed LangChain Deep Agents Code, authoritative agent-visible inference health, round-trippable policy export, and stronger recovery for local inference, custom images, managed MCP, remote dashboards, and credential capture.
+NemoClaw v0.0.78 adds opt-in thread-scoped auto-approval and policy-routed repository reads for managed LangChain Deep Agents Code, authoritative agent-visible inference health, round-trippable policy export, and stronger recovery for local inference, custom images, managed MCP, remote dashboards, and credential capture.
 
 - Managed LangChain Deep Agents Code sandboxes keep auto-approval disabled by default and can enable the `thread-opt-in` capability through a named transactional rebuild.
   Each thread must still opt in through the TUI or `dcode -y`, and approval state resets across process, thread, and agent transitions without bypassing OpenShell controls.
   Managed Nemotron 3 Ultra aliases now load through a version-pinned first-party profile plugin, preserve required nonempty tool-call content, and reject the observed literal `[content]` execute placeholder before shell dispatch.
   For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), [Security Best Practices](../security/best-practices), [Model Capability Audit](../inference/model-capability-audit), and [NemoClaw CLI Commands Reference](../reference/commands).
+- Managed LangChain Deep Agents Code `fetch_url` requests now use NemoClaw's policy proxy, allowing GitHub file links and repository source to resolve inside the sandbox while keeping initial and redirected destinations inside the managed egress boundary.
+  The baseline GitHub policy permits only GET and HEAD requests to `raw.githubusercontent.com` from the listed managed binaries.
+  For more information, refer to [Network Policies](../reference/network-policies).
 - `status`, `doctor`, and `connect` now treat the agent-visible `https://inference.local/v1/models` route as authoritative and return nonzero or fail closed when trusted evidence is unavailable.
   Deep Agents probes reject login-shell preambles and multiline contamination while preserving configured observability through a side-effect-free managed execution path.
   For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands), [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity), and [Troubleshooting](../reference/troubleshooting).
