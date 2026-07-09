@@ -253,6 +253,29 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
     expect(parsed.update.check).toBe(false);
   });
 
+  it("returns a TOML-origin leaf selected with --key", () => {
+    const configGet = loadConfigGet();
+    const out = captureStdout(() => configGet("dcode-sb", { key: "models.default" }));
+
+    expect(JSON.parse(out)).toBe("openai:nvidia/meta/llama-3.1-8b-instruct");
+  });
+
+  it("renders sanitized TOML-origin config as requested YAML", () => {
+    const configGet = loadConfigGet();
+    const out = captureStdout(() => configGet("dcode-sb", { format: "yaml" }));
+    const parsed = require("yaml").parse(out) as {
+      models: { default: string };
+      update: { check: boolean };
+      provider: { api_key: string };
+    };
+
+    expect(parsed.models.default).toBe("openai:nvidia/meta/llama-3.1-8b-instruct");
+    expect(parsed.update.check).toBe(false);
+    expect(parsed.provider.api_key).toBe("[STRIPPED_BY_MIGRATION]");
+    expect(parsed).not.toHaveProperty("gateway");
+    expect(out).not.toContain("nvapi-");
+  });
+
   it("redacts credentials and omits gateway auth after TOML parsing", () => {
     const configGet = loadConfigGet();
     const out = captureStdout(() => configGet("dcode-sb"));
