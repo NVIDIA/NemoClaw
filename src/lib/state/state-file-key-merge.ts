@@ -189,8 +189,15 @@ def render_merged_config(merged, header_lines):
 
 
 def write_staged_and_replace(staged_path, current_path, current_metadata, payload):
-    if os.path.dirname(staged_path) != os.path.dirname(current_path):
+    parent = os.path.dirname(staged_path)
+    if parent != os.path.dirname(current_path):
         fail("config staging path must share the live config directory")
+    try:
+        parent_metadata = os.lstat(parent)
+    except OSError:
+        fail("config parent directory changed before atomic restore")
+    if not stat.S_ISDIR(parent_metadata.st_mode):
+        fail("config parent directory changed before atomic restore")
     flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(staged_path, flags)
