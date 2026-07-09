@@ -3267,11 +3267,19 @@ PROXYEOF
       # OpenClaw CLI clients onto the explicit remote-gateway pairing path.
       # Keep a separate readonly anchor for token-bearing helpers. The exported
       # compatibility alias is intentionally caller-mutable, so it must never
-      # decide where a gateway token may be sent. The conditional assignment
-      # makes repeated sourcing idempotent; a conflicting preexisting readonly
-      # value fails closed instead of becoming the trust anchor.
-      printf "if [ \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" != '%s' ]; then\\n" "$_escaped_gateway_url"
-      printf "  _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL='%s'\\n" "$_escaped_gateway_url"
+      # decide where a gateway token may be sent. Assign and verify the anchor
+      # in one fail-closed gate while keeping repeated sourcing idempotent. If
+      # the caller predeclared a conflicting readonly value, clear any ambient
+      # token and stop before token-bearing helpers are installed.
+      printf "if { [ \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" != '%s' ] &&\\n" "$_escaped_gateway_url"
+      printf "  ! builtin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL='%s' 2>/dev/null; } ||\\n" "$_escaped_gateway_url"
+      printf "  [ \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" != '%s' ]; then\\n" "$_escaped_gateway_url"
+      printf "  if ! builtin unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null; then\\n"
+      printf "    echo 'Error: NemoClaw rejected a conflicting gateway trust anchor, and the ambient gateway token could not be cleared.' >&2\\n"
+      printf "    exit 1\\n"
+      printf "  fi\\n"
+      printf "  echo 'Error: NemoClaw rejected a conflicting gateway trust anchor; gateway-token helpers were disabled.' >&2\\n"
+      printf "  return 1 2>/dev/null || exit 1\\n"
       printf "fi\\nbuiltin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL\\n"
       printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
       cat <<'GATEWAYURLENVEOF'
@@ -3425,7 +3433,15 @@ _nemoclaw_whatsapp_postpair_start() {
       echo "[whatsapp] 'nemoclaw <sandbox> channels status --channel whatsapp' to confirm it reconnects." >&2
       return 0
       ;;
-    *) _nemoclaw_wa_params='{"channel":"whatsapp","accountId":"'"$_nemoclaw_wa_account"'"}' ;;
+    *)
+      if [ "${#_nemoclaw_wa_account}" -gt 128 ]; then
+        echo "[whatsapp] Credentials saved, but the account id exceeds 128 characters, so the" >&2
+        echo "[whatsapp] running gateway was not asked to restart the channel. Exit the sandbox and run" >&2
+        echo "[whatsapp] 'nemoclaw <sandbox> channels status --channel whatsapp' to confirm it reconnects." >&2
+        return 0
+      fi
+      _nemoclaw_wa_params='{"channel":"whatsapp","accountId":"'"$_nemoclaw_wa_account"'"}'
+      ;;
   esac
   _nemoclaw_wa_token="$(_nemoclaw_whatsapp_gateway_token)"
   if [ -z "$_nemoclaw_wa_token" ]; then

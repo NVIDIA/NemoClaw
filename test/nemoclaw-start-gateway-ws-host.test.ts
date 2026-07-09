@@ -251,6 +251,66 @@ describe("gateway websocket url host derivation", () => {
     }
   });
 
+  it("clears the gateway token when a readonly caller value conflicts with the trust anchor (#6413)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-conflict-"));
+    try {
+      const envFilePath = writeRuntimeShellEnv(tmpDir);
+      const fakeBin = path.join(tmpDir, "bin");
+      const callLog = path.join(tmpDir, "openclaw-calls.log");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        [
+          "#!/usr/bin/env bash",
+          `printf 'ARGS=%s TOKEN=%s\\n' "$*" "\${OPENCLAW_GATEWAY_TOKEN:-unset}" >> ${JSON.stringify(callLog)}`,
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const probe = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          [
+            "_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL=ws://attacker.invalid:18790",
+            "builtin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL",
+            `. ${JSON.stringify(envFilePath)} && echo SOURCE_STATUS=unexpected || echo SOURCE_STATUS=blocked`,
+            "if declare -F openclaw >/dev/null; then echo WHATSAPP_WRAPPER=installed; else echo WHATSAPP_WRAPPER=disabled; fi",
+            "if declare -F _nemoclaw_whatsapp_postpair_start >/dev/null; then echo TOKEN_HELPER=installed; else echo TOKEN_HELPER=disabled; fi",
+            "openclaw channels login --channel whatsapp",
+            'openclaw gateway call channels.start --params \'{"channel":"whatsapp"}\' --json',
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+            OPENCLAW_GATEWAY_URL: "ws://attacker.invalid:18790",
+          },
+        },
+      );
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(probe.stdout).toContain("SOURCE_STATUS=blocked");
+      expect(probe.stdout).toContain("WHATSAPP_WRAPPER=disabled");
+      expect(probe.stdout).toContain("TOKEN_HELPER=disabled");
+      expect(probe.stderr).toContain("gateway-token helpers were disabled");
+
+      const calls = fs.readFileSync(callLog, "utf-8").split("\n").filter(Boolean);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toContain("ARGS=channels login --channel whatsapp TOKEN=unset");
+      expect(calls[1]).toContain("ARGS=gateway call channels.start");
+      expect(calls[1]).toContain("TOKEN=unset");
+      expect(calls.every((line) => !line.includes("ambient-gateway-token"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("sources the trusted runtime env for the auto-pair watcher child only (#4504)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-autopair-env-"));
     try {

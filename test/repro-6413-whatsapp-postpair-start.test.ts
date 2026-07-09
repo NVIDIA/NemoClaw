@@ -216,6 +216,31 @@ describe("WhatsApp post-pair gateway channel start (#6413)", () => {
     expect(reconcile[0]).toContain('--params {"channel":"whatsapp","accountId":"biz.2"}');
   });
 
+  it("accepts a 128-character account id at the RPC boundary (#6413)", () => {
+    const accountId = "a".repeat(128);
+    const r = runLoginThroughGuard({
+      configuredToken: GATEWAY_TOKEN,
+      loginArgs: ["channels", "login", "--channel", "whatsapp", "--account", accountId],
+    });
+
+    expect(r.stdout).toContain("GUARD_EXIT=0");
+    const reconcile = gatewayCallLines(r.calls);
+    expect(reconcile).toHaveLength(1);
+    expect(reconcile[0]).toContain(`--params {"channel":"whatsapp","accountId":"${accountId}"}`);
+  });
+
+  it("refuses an account id longer than 128 characters (#6413)", () => {
+    const r = runLoginThroughGuard({
+      configuredToken: GATEWAY_TOKEN,
+      loginArgs: ["channels", "login", "--channel", "whatsapp", "--account", "a".repeat(129)],
+    });
+
+    expect(r.stdout).toContain("GUARD_EXIT=0");
+    expect(gatewayCallLines(r.calls)).toHaveLength(0);
+    expect(r.stderr).toContain("account id exceeds 128 characters");
+    expect(r.stderr).toContain("nemoclaw <sandbox> channels status --channel whatsapp");
+  });
+
   it("refuses to embed an unsafe account id in the RPC params", () => {
     const r = runLoginThroughGuard({
       configuredToken: GATEWAY_TOKEN,
