@@ -26,7 +26,10 @@ const MAX_NVIDIA_FEATURED_MODEL_LABEL_LENGTH = 160;
 const ANSI_ESCAPE_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UNSAFE_TERMINAL_TEXT_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu;
 
-interface NvidiaFeaturedModelOptions {
+export interface NvidiaFeaturedModelOptions {
+  catalogLabel?: string;
+  catalogUrl?: string;
+  retiredModelIds?: RetiredFeaturedModelIds;
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
   warn?: (message: string) => void;
 }
@@ -44,6 +47,8 @@ export type FeaturedModelOption = {
   id: string;
   label: string;
 };
+
+type RetiredFeaturedModelIds = ReadonlySet<string> | readonly string[];
 
 export type FeaturedModelFetchResult =
   | {
@@ -99,8 +104,21 @@ function normalizeFeaturedModelLabel(id: string, label: string): string {
   return sanitized;
 }
 
+function isRetiredFeaturedModelId(
+  idKey: string,
+  retiredModelIds: RetiredFeaturedModelIds,
+): boolean {
+  if ("has" in retiredModelIds) {
+    return retiredModelIds.has(idKey);
+  }
+  return retiredModelIds.some((id) => id.toLowerCase() === idKey);
+}
+
 /** Parses NVIDIA's featured-models catalog into safe onboarding menu options. */
-export function parseNvidiaFeaturedModels(body: string): FeaturedModelOption[] {
+export function parseNvidiaFeaturedModels(
+  body: string,
+  options: Pick<NvidiaFeaturedModelOptions, "retiredModelIds"> = {},
+): FeaturedModelOption[] {
   if (Buffer.byteLength(body, "utf8") > MAX_NVIDIA_FEATURED_CATALOG_BYTES) {
     throw new Error("Unexpected featured model catalog response: body exceeds 1 MiB");
   }
@@ -112,6 +130,7 @@ export function parseNvidiaFeaturedModels(body: string): FeaturedModelOption[] {
 
   const models: FeaturedModelOption[] = [];
   const seenIds = new Set<string>();
+  const retiredModelIds = options.retiredModelIds ?? RETIRED_NVIDIA_FEATURED_MODEL_IDS;
   for (const item of featuredModels) {
     const id = typeof item?.model === "string" ? normalizeFeaturedModelId(item.model) : "";
     const idKey = id.toLowerCase();
@@ -124,7 +143,7 @@ export function parseNvidiaFeaturedModels(body: string): FeaturedModelOption[] {
       id.length > MAX_NVIDIA_FEATURED_MODEL_ID_LENGTH ||
       !label ||
       !isSafeModelId(id) ||
-      RETIRED_NVIDIA_FEATURED_MODEL_IDS.has(idKey) ||
+      isRetiredFeaturedModelId(idKey, retiredModelIds) ||
       seenIds.has(idKey)
     ) {
       continue;
@@ -136,11 +155,12 @@ export function parseNvidiaFeaturedModels(body: string): FeaturedModelOption[] {
   return models;
 }
 
-/** Fetches NVIDIA's public featured-models catalog without credentials. */
+/** Fetches a public featured-models catalog without credentials. */
 export function fetchNvidiaFeaturedModels(
   options: NvidiaFeaturedModelOptions = {},
 ): FeaturedModelFetchResult {
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
+  const catalogUrl = options.catalogUrl?.trim() || NVIDIA_FEATURED_MODELS_URL;
   try {
     const result = runCurlProbeImpl([
       "-sS",
@@ -148,7 +168,7 @@ export function fetchNvidiaFeaturedModels(
       "5",
       "--max-time",
       "15",
-      NVIDIA_FEATURED_MODELS_URL,
+      catalogUrl,
     ]);
     if (!result.ok) {
       return {
@@ -159,7 +179,7 @@ export function fetchNvidiaFeaturedModels(
       };
     }
     try {
-      return { ok: true, models: parseNvidiaFeaturedModels(result.body) };
+      return { ok: true, models: parseNvidiaFeaturedModels(result.body, options) };
     } catch (error) {
       return {
         ok: false,
@@ -186,11 +206,12 @@ export function getNvidiaFeaturedModelOptions(
   if (result.ok && result.models.length > 0) {
     return result.models;
   }
+  const catalogLabel = options.catalogLabel?.trim() || "NVIDIA's featured model catalog";
   const detail = result.ok
     ? "catalog returned no safe model IDs"
     : `${sanitizeFeaturedCatalogText(result.message, 200) || "catalog request failed without details"}${result.httpStatus > 0 ? `; HTTP ${result.httpStatus}` : ""}`;
   (options.warn ?? console.warn)(
-    `  Warning: failed to load NVIDIA's featured model catalog; falling back to the bundled list (${detail}).`,
+    `  Warning: failed to load ${catalogLabel}; falling back to the bundled list (${detail}).`,
   );
   return CLOUD_MODEL_OPTIONS;
 }

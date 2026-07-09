@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession, type Session } from "../state/onboard-session";
+import { createSession, type Session, type SessionRecoveryReceipt } from "../state/onboard-session";
 import type { ResumeConfigConflict } from "./resume-config";
 import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
 
@@ -43,7 +43,7 @@ function createDeps(
       session = next;
       return next;
     }),
-    repairResumeMachineSnapshot: vi.fn((current: Session) => current),
+    applySessionRecovery: vi.fn(),
     setOnboardBrandingAgent: vi.fn(),
     getResumeConfigConflicts: vi.fn(() => []),
     recordResumeConflict: vi.fn(async () => undefined),
@@ -142,10 +142,45 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.mode).toBe("non-interactive");
     expect(result.session?.failure).toBeNull();
     expect(result.session?.status).toBe("in_progress");
+    expect(deps.applySessionRecovery).toHaveBeenCalledWith(initial);
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
-    expect(deps.repairResumeMachineSnapshot).toHaveBeenCalledWith(initial);
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
+  });
+
+  it("persists a recovered terminal snapshot receipt (#6227)", async () => {
+    const initial = createSession({ sandboxName: "demo", status: "failed" });
+    const receipt: SessionRecoveryReceipt = {
+      id: "a".repeat(64),
+      reason: "failed_terminal_snapshot",
+      entry: "gateway",
+      appliedAt: "2026-06-10T00:01:00.000Z",
+      revision: initial.machine.revision + 1,
+    };
+    const applySessionRecovery = vi.fn((current: Session) => {
+      current.machine = {
+        version: current.machine.version,
+        state: receipt.entry,
+        stateEnteredAt: receipt.appliedAt,
+        revision: receipt.revision,
+        recoveryReceipt: receipt,
+      };
+    });
+    const { deps } = createDeps(initial, { applySessionRecovery });
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: false,
+        nonInteractive: false,
+      },
+      deps,
+    );
+
+    expect(result.session?.machine.recoveryReceipt).toEqual(receipt);
   });
 
   it.each([
@@ -273,5 +308,26 @@ describe("prepareOnboardSession", () => {
       "  so no sandbox name was recorded. Re-run with --name <sandbox> (or set NEMOCLAW_SANDBOX_NAME).",
     );
     expect(deps.exitProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows interactive resume to prompt when no sandbox name was recorded", async () => {
+    const { deps } = createDeps(createSession({ sandboxName: null }));
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: false,
+        nonInteractive: false,
+      },
+      deps,
+    );
+
+    expect(result.session?.sandboxName).toBeNull();
+    expect(result.session?.status).toBe("in_progress");
+    expect(deps.error).not.toHaveBeenCalled();
+    expect(deps.exitProcess).not.toHaveBeenCalled();
   });
 });

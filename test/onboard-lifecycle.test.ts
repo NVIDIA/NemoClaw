@@ -53,7 +53,7 @@ function runOnboardEntrypoint<T>(
   return JSON.parse(line) as T;
 }
 
-function runLifecycleEntrypoint(mode: "fresh" | "resume"): LifecyclePayload {
+function runLifecycleEntrypoint(mode: "fresh" | "resume" | "recovery"): LifecyclePayload {
   const repoRoot = path.join(import.meta.dirname, "..");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-lifecycle-"));
   const scriptPath = path.join(tmpDir, `onboard-lifecycle-${mode}.cjs`);
@@ -99,9 +99,31 @@ if (${JSON.stringify(mode)} === "resume") {
     }),
   );
 }
+if (${JSON.stringify(mode)} === "recovery") {
+  const session = onboardModule.onboardSession.createSession({
+    mode: "non-interactive",
+    sandboxName: "resume-lifecycle",
+    status: "failed",
+    lastStepStarted: "gateway",
+    failure: {
+      step: "gateway",
+      message: "gateway failed",
+      recordedAt: "2026-05-27T00:00:00.000Z",
+    },
+    machine: {
+      version: 1,
+      state: "failed",
+      stateEnteredAt: "2026-05-27T00:00:00.000Z",
+      revision: 4,
+    },
+    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+  });
+  session.steps.gateway.status = "failed";
+  onboardModule.onboardSession.saveSession(session);
+}
 
 const options = {
-  resume: ${JSON.stringify(mode)} === "resume",
+  resume: ${JSON.stringify(mode)} !== "fresh",
   nonInteractive: true,
   acceptThirdPartySoftware: true,
   sandboxName: "fresh-lifecycle",
@@ -263,6 +285,23 @@ describe("onboard entrypoint lifecycle events", () => {
       },
     ]);
     assert.deepEqual(payload.events, [{ type: "onboard.resumed", state: "init", step: null }]);
+  });
+
+  it("emits recovery completion after onboard.resumed (#6227)", () => {
+    const payload = runLifecycleEntrypoint("recovery");
+
+    assert.deepEqual(payload.calls, [
+      {
+        resumed: true,
+        sessionBeforeExists: true,
+        mode: "non-interactive",
+        sandboxName: "resume-lifecycle",
+      },
+    ]);
+    assert.deepEqual(payload.events, [
+      { type: "onboard.resumed", state: "gateway", step: null },
+      { type: "state.repair.completed", state: "gateway", step: null },
+    ]);
   });
 
   it("emits one resume.conflict event for each resume mismatch before exiting", () => {

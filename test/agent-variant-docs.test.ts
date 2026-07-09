@@ -75,6 +75,29 @@ describe("agent variant docs", () => {
     expect(rendered).not.toContain("<AgentOnly");
   });
 
+  it("keeps adjacent list items together after variant filtering", () => {
+    const rendered = renderAgentVariantPage(
+      `---
+title: "Example"
+---
+## Prerequisites
+
+<AgentOnly variant="openclaw">
+- NemoClaw installed.
+</AgentOnly>
+<AgentOnly variant="hermes">
+- NemoHermes installed.
+</AgentOnly>
+- A local model server running.
+`,
+      "openclaw",
+    );
+
+    expect(rendered).toContain("- NemoClaw installed.\n- A local model server running.");
+    expect(rendered).not.toContain("- NemoClaw installed.\n\n- A local model server running.");
+    expect(rendered).not.toContain("NemoHermes installed.");
+  });
+
   it("rewrites relative imports but preserves Fern route links for generated build output", () => {
     const rendered = renderAgentVariantPage(
       `${source}\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n![Diagram](images/diagram.png)\n`,

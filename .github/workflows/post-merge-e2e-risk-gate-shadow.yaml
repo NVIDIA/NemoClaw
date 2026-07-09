@@ -1,0 +1,134 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Post-merge Risk Gate Shadow
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  # Required to dispatch the separate E2E workflow; no other Actions mutation is performed.
+  actions: write
+  checks: write
+  contents: read
+
+concurrency:
+  group: e2e-post-merge-risk-gate-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  shadow:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout trusted controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.after }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install trusted controller dependencies
+        run: npm ci --ignore-scripts
+
+      - id: workspace
+        name: Create private controller workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-e2e-risk-gate.XXXXXX")"
+          chmod 700 "$work_dir"
+          printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
+
+      - id: start
+        name: Build plan and dispatch exact-commit E2E
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e-advisor/post-merge-risk-gate.mts
+          --mode start
+          --base "${{ github.event.before }}"
+          --commit "${{ github.event.after }}"
+          --work-dir "${{ steps.workspace.outputs.work_dir }}"
+
+      - name: Upload post-merge risk plan
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: post-merge-risk-plan-${{ github.event.after }}
+          path: ${{ steps.workspace.outputs.work_dir }}/post-merge-risk-plan.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Close shadow check after controller startup failure
+        if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.dispatched != 'true' && steps.start.outputs.finalized != 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e-advisor/post-merge-risk-gate.mts
+          --mode abandon
+          --check-id "${{ steps.start.outputs.check_id }}"
+
+      - name: Propagate controller startup failure
+        if: ${{ steps.start.outcome == 'failure' }}
+        run: exit 1
+
+      - name: Wait for correlated E2E run
+        if: ${{ steps.start.outputs.dispatched == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.start.outputs.run_id }}
+        run: >-
+          timeout --signal=TERM --kill-after=30s 105m
+          gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status
+
+      - name: Download correlated E2E evidence
+        if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.start.outputs.run_id }}
+        run: >-
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY"
+          --dir "${{ steps.workspace.outputs.work_dir }}/evidence"
+
+      - id: finish
+        name: Complete exact-commit shadow check
+        if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e-advisor/post-merge-risk-gate.mts
+          --mode finish
+          --work-dir "${{ steps.workspace.outputs.work_dir }}"
+          --state-hash "${{ steps.start.outputs.state_hash }}"
+          --check-id "${{ steps.start.outputs.check_id }}"
+          --run-id "${{ steps.start.outputs.run_id }}"
+
+      - name: Close shadow check after completion failure
+        if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.dispatched == 'true' && steps.finish.outcome == 'failure' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e-advisor/post-merge-risk-gate.mts
+          --mode abandon
+          --check-id "${{ steps.start.outputs.check_id }}"
+
+      - name: Propagate shadow completion failure
+        if: ${{ steps.finish.outcome == 'failure' }}
+        run: exit 1
+
+      - name: Remove private controller workspace
+        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
+        run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"

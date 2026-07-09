@@ -16,6 +16,35 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.79
+
+NemoClaw v0.0.79 expands hosted and local inference options, improves operator diagnostics and shell integration, and hardens sandbox recovery, Deep Agents runtime limits, policy boundaries, and release validation.
+The release also refreshes quickstarts and variant rendering so OpenClaw, Hermes, and LangChain Deep Agents Code readers see only the agent-specific setup paths that apply to them.
+
+- OpenRouter is now a first-class onboarding provider for OpenClaw, Hermes, and LangChain Deep Agents Code.
+  NemoClaw validates `sk-or-` credentials, uses OpenRouter's OpenAI-compatible route through `https://inference.local/v1`, and keeps the OpenRouter catalog independent from NVIDIA Endpoints filtering.
+  For more information, refer to [NemoClaw Inference Options](../inference/inference-options), [Switch Inference Providers](../inference/switch-inference-providers), and [Platform Support and Launch Claims](../reference/platform-support).
+- Local and compatible inference setup is more resilient.
+  Managed vLLM starts with argv-safe Docker arguments, DGX Spark uses the Qwen3.6 `qwen3_coder` tool parser, OpenClaw bounds managed inference compaction, and onboarding uses calibrated provider-validation and gateway-readiness deadlines to avoid hanging or failing too early on slower hosts.
+  For more information, refer to [NemoClaw Inference Options](../inference/inference-options), [Use a Local Inference Server](../inference/use-local-inference), and [Troubleshooting](../reference/troubleshooting).
+- CLI and installer diagnostics are easier to act on.
+  The new `$$nemoclaw completion` command generates Bash, Zsh, and Fish completions, structured logging now supports `--debug` and `NEMOCLAW_LOG_LEVEL`, `status` warns when the live gateway route drifts from the recorded sandbox route, and gateway teardown now recommends and runs `openshell gateway remove` consistently across platforms.
+  Installer and uninstall flows also report preserved orphaned sandboxes more honestly, and DGX Spark express installs use the expected `my-assistant` sandbox name.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands), [Switch Inference Providers](../inference/switch-inference-providers), and [Host Files and State](../reference/host-files-and-state).
+- Runtime and configuration boundaries are tighter.
+  Managed LangChain Deep Agents Code enforces process and file-descriptor limits, accepted OTLP endpoint URLs no longer trip the secret guard, proxy environment exports stay POSIX-compatible, nested OpenShell PID namespaces are recognized by config guards, and TOML config reads and parsing fail closed instead of accepting ambiguous content.
+  Re-onboarding also removes stale registered extra providers so the sandbox state matches the selected provider set.
+  For more information, refer to [Security Best Practices](../security/best-practices), [Credential Storage](../security/credential-storage), [NemoClaw CLI Commands Reference](../reference/commands), and [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart).
+- Network policy and messaging behavior now preserve narrower boundaries.
+  Homebrew Git operations require the GitHub policy preset for Git egress, Gmail has a documented policy preset and integration example, custom URL-based MCP server allowlists are documented, WhatsApp post-pair gateway restarts no longer require `operator.admin`, and the overview hides messaging-channel guidance from Deep Agents pages where the channel flow is not supported.
+  For more information, refer to [Network Policies](../reference/network-policies), [Common Integration Policy Examples](../network-policy/integration-policy-examples), [Customize the Network Policy](../network-policy/customize-network-policy), and [Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels).
+- Onboarding and recovery paths preserve intent across more interrupted flows.
+  Resume recovery now follows one explicit finite-state path, pending route reservations survive resume, sandbox create-failure reporting is separated from create-step handling, BuildKit progress no longer forces plain output, and null-name resume sessions are covered so canceled or malformed session state does not send users down the wrong recovery path.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](../get-started/quickstart), [NemoClaw CLI Commands Reference](../reference/commands), [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle), and [Troubleshooting](../reference/troubleshooting).
+- Documentation and release validation are more deterministic.
+  The docs define extension taxonomy and SDK readiness gates, streamline the agent quickstarts, clarify legacy k3s sandbox resources, preserve list spacing in generated agent-variant pages, and add release-train risk planning with post-merge E2E shadow signals, queued Jetson dispatch guards, TUI idle regression coverage, and reusable live-readiness polling primitives.
+  For more information, refer to [Extension Taxonomy and SDK Readiness](../reference/extension-taxonomy-sdk-readiness), [NemoClaw Quickstart with OpenClaw](../get-started/quickstart), [Architecture Details](../reference/architecture), and the [NemoClaw E2E README](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/README.md).
+
 ## v0.0.78
 
 NemoClaw v0.0.78 adds opt-in thread-scoped auto-approval and policy-routed repository reads for managed LangChain Deep Agents Code, authoritative agent-visible inference health, round-trippable policy export, and stronger recovery for local inference, custom images, managed MCP, remote dashboards, and credential capture.

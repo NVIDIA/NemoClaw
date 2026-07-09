@@ -18,6 +18,7 @@ PREFIX="04-deepagents-code-fresh-reonboard"
 PRIMARY_TARGET_MODEL="openai/openai/gpt-5.5"
 FALLBACK_TARGET_MODEL="nvidia/nvidia/nemotron-3-ultra"
 HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
+CREDENTIAL_CANARY="nemoclaw-dcode-config-get-canary"
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
@@ -74,7 +75,7 @@ import tomllib
 import tomli_w
 
 path = Path("/sandbox/.deepagents/config.toml")
-model = sys.argv[1]
+model, credential_canary = sys.argv[1:]
 config = tomllib.loads(path.read_text(encoding="utf-8"))
 provider = config["models"]["providers"]["openai"]
 config["models"]["default"] = f"openai:{model}"
@@ -88,7 +89,7 @@ config["threads"] = {
     "columns": {"initial_prompt": False},
 }
 config["agents"] = {"startup_command": "discard"}
-config["headers"] = {"authorization": "discard"}
+config["headers"] = {"authorization": credential_canary}
 config["hooks"] = {"post_start": "discard"}
 config["mcp"] = {"autoload": True, "config": "/sandbox/discard-mcp.json"}
 config["servers"] = {"discard": {"api_key": "discard"}}
@@ -173,10 +174,50 @@ fi
 pass "initial live identity reports model A"
 
 seed_source="$(seed_config_source | encode_source)"
-seed_command="printf '%s' ${seed_source@Q} | base64 -d | /opt/venv/bin/python3 -I - ${model_a@Q}"
+seed_command="printf '%s' ${seed_source@Q} | base64 -d | /opt/venv/bin/python3 -I - ${model_a@Q} ${CREDENTIAL_CANARY@Q}"
 seed_output="$(sandbox_exec "$seed_command")" || fail "could not seed stale DCode config"
 printf '%s\n' "$seed_output" | grep -Fq "NEMOCLAW_DCODE_STALE_CONFIG_SEEDED" || fail "stale config seed marker is missing"
 pass "seeded safe preferences and stale managed data"
+
+config_json="$("$CLI" "$SANDBOX_NAME" config get 2>&1)" || fail "config get failed for live DCode TOML: $config_json"
+CONFIG_JSON="$config_json" MODEL_A="$model_a" CREDENTIAL_CANARY="$CREDENTIAL_CANARY" node -e '
+const config = JSON.parse(process.env.CONFIG_JSON);
+if (config.models?.default !== "openai:" + process.env.MODEL_A) process.exit(1);
+if (Object.hasOwn(config, "gateway")) process.exit(1);
+if (config.headers?.authorization !== "[STRIPPED_BY_MIGRATION]") process.exit(1);
+if (JSON.stringify(config).includes(process.env.CREDENTIAL_CANARY)) process.exit(1);
+' || fail "config get did not return sanitized, parseable JSON for model A"
+pass "config get parses live DCode TOML and redacts credentials"
+
+config_model_json="$("$CLI" "$SANDBOX_NAME" config get --key models.default 2>&1)" || fail "keyed config get failed for live DCode TOML: $config_model_json"
+CONFIG_MODEL_JSON="$config_model_json" MODEL_A="$model_a" node -e '
+if (JSON.parse(process.env.CONFIG_MODEL_JSON) !== "openai:" + process.env.MODEL_A) process.exit(1);
+' || fail "keyed config get did not return model A"
+pass "keyed config get returns the live model"
+
+config_yaml="$("$CLI" "$SANDBOX_NAME" config get --format yaml 2>&1)" || fail "YAML config get failed for live DCode TOML: $config_yaml"
+CONFIG_YAML="$config_yaml" MODEL_A="$model_a" CREDENTIAL_CANARY="$CREDENTIAL_CANARY" node -e '
+const config = require("yaml").parse(process.env.CONFIG_YAML);
+if (config.models?.default !== "openai:" + process.env.MODEL_A) process.exit(1);
+if (Object.hasOwn(config, "gateway")) process.exit(1);
+if (config.headers?.authorization !== "[STRIPPED_BY_MIGRATION]") process.exit(1);
+if (JSON.stringify(config).includes(process.env.CREDENTIAL_CANARY)) process.exit(1);
+' || fail "config get --format yaml did not return sanitized, parseable YAML for model A"
+pass "YAML config get preserves the sanitized live DCode shape"
+
+config_sha_before="$(sandbox_exec "sha256sum /sandbox/.deepagents/config.toml | awk '{print \$1}'")" || fail "could not hash DCode config before rejected mutation"
+[[ "$config_sha_before" =~ ^[0-9a-f]{64}$ ]] || fail "invalid pre-mutation DCode config hash"
+set +e
+config_set_output="$("$CLI" "$SANDBOX_NAME" config set --key models.default --value "openai:$model_b" 2>&1)"
+config_set_status=$?
+set -e
+[ "$config_set_status" -ne 0 ] || fail "config set unexpectedly mutated image-baked DCode config"
+printf '%s\n' "$config_set_output" | grep -Fq "config is baked into the sandbox image at build time" || fail "config set rejection did not explain the image-baked boundary"
+printf '%s\n' "$config_set_output" | grep -Fq "re-onboard with the new selection" || fail "config set rejection did not provide re-onboard guidance"
+printf '%s\n' "$config_set_output" | grep -Fq -- "--fresh" || fail "config set rejection did not provide the fresh re-onboard command"
+config_sha_after="$(sandbox_exec "sha256sum /sandbox/.deepagents/config.toml | awk '{print \$1}'")" || fail "could not hash DCode config after rejected mutation"
+[ "$config_sha_after" = "$config_sha_before" ] || fail "rejected config set changed image-baked DCode config"
+pass "config set rejects image-baked DCode mutation without changing the file"
 
 if ! reonboard_output="$(
   COMPATIBLE_API_KEY="$COMPATIBLE_API_KEY" \
@@ -211,6 +252,12 @@ assert_identity "$identity_after" "$model_b" "fresh"
 printf '%s\n' "$identity_after" | grep -Fq "$model_a" && fail "fresh identity still contains model A"
 pass "live dcode identity reports model B"
 
+config_model_after_json="$("$CLI" "$SANDBOX_NAME" config get --key models.default 2>&1)" || fail "keyed config get failed after re-onboard: $config_model_after_json"
+CONFIG_MODEL_JSON="$config_model_after_json" MODEL_B="$model_b" node -e '
+if (JSON.parse(process.env.CONFIG_MODEL_JSON) !== "openai:" + process.env.MODEL_B) process.exit(1);
+' || fail "keyed config get did not return model B after re-onboard"
+pass "keyed config get reports model B after re-onboard"
+
 status_json="$("$CLI" "$SANDBOX_NAME" status --json 2>&1)" || fail "nemoclaw status failed after re-onboard"
 STATUS_JSON="$status_json" SANDBOX_NAME="$SANDBOX_NAME" MODEL_B="$model_b" node -e '
 const status = JSON.parse(process.env.STATUS_JSON);
@@ -237,4 +284,4 @@ verify_output="$(sandbox_exec "$verify_command")" || fail "live DCode config doe
 printf '%s\n' "$verify_output" | grep -Fq "NEMOCLAW_DCODE_FRESH_CONFIG_VERIFIED" || fail "fresh config verification marker is missing"
 pass "config keeps model B and only the allowlisted preferences"
 
-printf '%s: 6 passed, 0 failed\n' "$PREFIX"
+printf '%s: 11 passed, 0 failed\n' "$PREFIX"

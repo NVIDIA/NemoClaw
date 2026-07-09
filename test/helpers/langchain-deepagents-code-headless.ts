@@ -50,6 +50,7 @@ export function makeStartScriptFixture(
 } {
   const envFile = path.join(tempDir, "proxy-env.sh");
   const scriptPath = path.join(tempDir, "start.sh");
+  const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
   const hostFile = path.join(tempDir, "trusted-proxy-host");
   const portFile = path.join(tempDir, "trusted-proxy-port");
   const markerDir = path.join(tempDir, "persistent-dcode-state");
@@ -57,6 +58,7 @@ export function makeStartScriptFixture(
   expect(original).toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
   expect(original).toContain("local marker_dir=/sandbox/.deepagents");
   const fixture = original
+    .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
       `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
@@ -83,6 +85,11 @@ export function makeStartScriptFixture(
   expect(fixture).not.toContain("local marker_dir=/sandbox/.deepagents");
   fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
   fs.writeFileSync(portFile, "3128\n", "utf8");
+  fs.writeFileSync(
+    rlimitLib,
+    "harden_resource_limits() { :; }\nverify_resource_limits_exact() { :; }\n",
+    "utf8",
+  );
   fs.chmodSync(hostFile, 0o444);
   fs.chmodSync(portFile, 0o444);
   fs.writeFileSync(scriptPath, fixture, "utf8");
@@ -93,13 +100,19 @@ export function makeStartScriptFixture(
 type HeadlessCheckOperation =
   | "classify-output"
   | "contains-secret"
+  | "entrypoint-rlimits"
   | "managed-placeholder"
   | "managed-route"
   | "positive-integer";
 
 type HeadlessCheckEnvironment = Partial<
   Record<
-    "CONFIG" | "DCODE_EXIT" | "DEEPAGENTS_HEADLESS_TIMEOUT" | "HEADLESS_OUTPUT" | "TOKEN",
+    | "CONFIG"
+    | "DCODE_EXIT"
+    | "DEEPAGENTS_HEADLESS_TIMEOUT"
+    | "HEADLESS_OUTPUT"
+    | "PROC_ROOT"
+    | "TOKEN",
     string
   >
 >;
@@ -125,6 +138,10 @@ case "$1" in
     ;;
   contains-secret)
     if printf "%s" "$TOKEN" | contains_secret; then printf secret; else printf clean; fi
+    ;;
+  entrypoint-rlimits)
+    command="$(dcode_entrypoint_rlimit_contract_command "$PROC_ROOT")"
+    bash -c "$command"
     ;;
   *)
     printf "unsupported helper operation\\n" >&2
@@ -188,6 +205,7 @@ export function runHeadlessCheckHelper(
       DEEPAGENTS_HEADLESS_TIMEOUT: env.DEEPAGENTS_HEADLESS_TIMEOUT ?? "",
       HEADLESS_OUTPUT: env.HEADLESS_OUTPUT ?? "",
       PATH: "/usr/bin:/bin",
+      PROC_ROOT: env.PROC_ROOT ?? "",
       TOKEN: env.TOKEN ?? "",
     },
   });

@@ -4,6 +4,11 @@
 import { listMessagingProviderSuffixes } from "../messaging/channels";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 
+export {
+  type ReconcileExtraProvidersDeps,
+  reconcileRegisteredExtraProviders,
+} from "./extra-provider-reconciliation";
+
 export type SandboxProviderRunOpenshell = (
   args: string[],
   opts?: Record<string, unknown>,

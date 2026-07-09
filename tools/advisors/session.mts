@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   AuthStorage,
   createAgentSession,
@@ -14,21 +14,61 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
+import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
+import {
+  type AdvisorContextToolResult,
+  type AdvisorPromptTurn,
+  type AdvisorTurnFlowEvent,
+  advisorTurnFlowErrors,
+  atomicTerminalRepairErrors,
+  atomicTerminalRepairPrompt,
+  missingRequiredAdvisorToolNames,
+  normalizedToolNames,
+  promptWithRequiredContextTools,
+  READ_ONLY_TOOLS,
+  repairableAtomicTerminalToolName,
+  resolveAdvisorTurnTools,
+  sanitizeToolName,
+} from "./turn-protocol.mts";
+
+export {
+  type AdvisorContextToolContentType,
+  type AdvisorContextToolResult,
+  type AdvisorPromptTurn,
+  type AdvisorTurnFlowEvent,
+  type AdvisorTurnTools,
+  advisorTurnFlowErrors,
+  createAdvisorContextToolResult,
+  createAdvisorPromptTurn,
+  missingRequiredAdvisorToolNames,
+  promptWithRequiredContextTools,
+  READ_ONLY_TOOLS,
+  resolveAdvisorTurnTools,
+} from "./turn-protocol.mts";
+
 export const DEFAULT_ADVISOR_PROVIDER = "openai";
 export const DEFAULT_ADVISOR_MODEL = "openai/openai/gpt-5.5";
 export const NEMOTRON_ULTRA_ADVISOR_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 export const ADVISOR_OPENAI_COMPATIBLE_BASE_URL = "https://inference-api.nvidia.com/v1";
-export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
+
+export function advisorRetrySettings(modelId: string) {
+  return {
+    enabled: true,
+    maxRetries: 4,
+    baseDelayMs: modelId === NEMOTRON_ULTRA_ADVISOR_MODEL ? 9_000 : 6_000,
+    provider: {
+      maxRetries: 0,
+      maxRetryDelayMs: 60_000,
+    },
+  } as const;
+}
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-const ZERO_USAGE = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: { ...ZERO_COST, total: 0 },
-};
+const CONTEXT_TOOL_PARAMETERS = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+} as unknown as ToolDefinition["parameters"];
 
 type AdvisorProviderConfig = Parameters<ModelRegistry["registerProvider"]>[1];
 type AdvisorModelConfig = NonNullable<AdvisorProviderConfig["models"]>[number];
@@ -39,35 +79,17 @@ export type RunAdvisorResult = {
   raw: string;
   turnTexts: string[];
   turnErrors: string[];
+  turnCallbackErrors: string[];
+  fatalError?: string;
 };
 
-export type AdvisorSyntheticToolContentType = "diff" | "json" | "text";
-
-export type AdvisorSyntheticToolResult = {
-  /** Synthetic assistant tool-call id. If omitted, runReadOnlyAdvisor derives a stable safe id. */
-  toolCallId?: string;
-  /** Specific synthetic tool name shown to the model and in session exports. */
-  toolName: string;
-  /** Human-readable label for artifacts/transcripts. Defaults to toolName. */
-  label?: string;
-  /** Text content attached to the matching synthetic tool result. */
-  content: string;
-  /** Content language/format for artifacts and fixed tool-call metadata. */
-  contentType: AdvisorSyntheticToolContentType;
-  /** Mark the synthetic tool result as an error. Defaults to false. */
-  isError?: boolean;
-};
-
-export type AdvisorPromptTurn = {
-  name: string;
-  prompt: string;
-  /**
-   * Deterministic context preloaded as fake assistant tool calls and matching tool results
-   * immediately before this user turn. This avoids relying on the model to request context
-   * tools that the advisor runner already knows are required.
-   */
-  syntheticToolResults?: AdvisorSyntheticToolResult[];
-};
+export function advisorRunErrors(result: RunAdvisorResult): string[] {
+  return [
+    result.fatalError ? `session: ${result.fatalError}` : undefined,
+    ...result.turnErrors.map((error) => `turn: ${error}`),
+    ...result.turnCallbackErrors.map((error) => `artifact: ${error}`),
+  ].filter((error): error is string => error !== undefined);
+}
 
 export type RunReadOnlyAdvisorOptions = {
   cwd: string;
@@ -83,7 +105,70 @@ export type RunReadOnlyAdvisorOptions = {
   credentialEnv: string;
   logPrefix: string;
   logProgress: (message: string) => void;
+  customTools?: ToolDefinition[];
+  onTurnStart?: (turn: AdvisorPromptTurn) => void;
+  onTurnComplete?: (turn: AdvisorCompletedTurn) => void | Promise<void>;
 };
+
+export type AdvisorCompletedTurn = {
+  index: number;
+  total: number;
+  name: string;
+  text: string;
+  status: "completed" | "failed" | "timed_out";
+  error?: string;
+};
+
+export type AdvisorTurnSettlement = {
+  turn: AdvisorCompletedTurn;
+  didThrow: boolean;
+  thrown?: unknown;
+  callbackError?: string;
+};
+
+export async function settleAdvisorTurn(options: {
+  index: number;
+  total: number;
+  name: string;
+  run: () => Promise<void>;
+  readText: () => string;
+  readError: () => string | undefined;
+  onTurnComplete?: (turn: AdvisorCompletedTurn) => void | Promise<void>;
+}): Promise<AdvisorTurnSettlement> {
+  let didThrow = false;
+  let thrown: unknown;
+  try {
+    await options.run();
+  } catch (error: unknown) {
+    didThrow = true;
+    thrown = error;
+  }
+  const thrownReason = didThrow
+    ? normalizeProviderError(errorText(thrown)) || "unknown advisor turn failure"
+    : undefined;
+  const error = options.readError() || thrownReason;
+  const turn: AdvisorCompletedTurn = {
+    index: options.index,
+    total: options.total,
+    name: options.name,
+    text: options.readText(),
+    status:
+      thrownReason && /timed out/iu.test(thrownReason)
+        ? "timed_out"
+        : error
+          ? "failed"
+          : "completed",
+    error,
+  };
+  let callbackError: string | undefined;
+  try {
+    await options.onTurnComplete?.(turn);
+  } catch (callbackFailure: unknown) {
+    callbackError =
+      normalizeProviderError(errorText(callbackFailure)) || "unknown advisor turn callback failure";
+  }
+  return { turn, didThrow, thrown, callbackError };
+}
 
 export function openAiAdvisorProviderConfig(credentialEnv: string): AdvisorProviderConfig {
   return {
@@ -131,6 +216,91 @@ export function advisorModel(
   return { id, name, reasoning, input, cost: ZERO_COST, contextWindow, maxTokens, compat };
 }
 
+export type AdvisorContextToolRuntime = {
+  customTools: ToolDefinition[];
+  allToolNames: string[];
+  toolNamesForTurn: (turn: AdvisorPromptTurn) => string[];
+  activateTurn: (turn: AdvisorPromptTurn) => string[];
+  deactivate: () => void;
+};
+
+/**
+ * Build inert context tools up front, then bind their content to one turn at a time.
+ * A shared tool name may safely carry different content in different turns because only
+ * the active turn's result is visible to its executor.
+ */
+export function createAdvisorContextToolRuntime(
+  promptTurns: AdvisorPromptTurn[],
+): AdvisorContextToolRuntime {
+  const resultsByTurn = new Map<AdvisorPromptTurn, Map<string, AdvisorContextToolResult>>();
+  const firstResultByName = new Map<string, AdvisorContextToolResult>();
+
+  for (const turn of promptTurns) {
+    const results = new Map<string, AdvisorContextToolResult>();
+    for (const result of turn.contextToolResults ?? []) {
+      const toolName = sanitizeToolName(result.toolName);
+      if (READ_ONLY_TOOLS.includes(toolName)) {
+        throw new Error(
+          `Advisor context tool ${JSON.stringify(toolName)} collides with a built-in read-only tool`,
+        );
+      }
+      if (results.has(toolName)) {
+        throw new Error(
+          `Advisor turn ${JSON.stringify(turn.name)} defines duplicate context tool ${JSON.stringify(toolName)}`,
+        );
+      }
+      const normalized = { ...result, toolName, label: result.label || result.toolName };
+      results.set(toolName, normalized);
+      if (!firstResultByName.has(toolName)) firstResultByName.set(toolName, normalized);
+    }
+    resultsByTurn.set(turn, results);
+  }
+
+  let activeResults = new Map<string, AdvisorContextToolResult>();
+  const customTools = [...firstResultByName].map(([toolName, firstResult]) => {
+    const tool: ToolDefinition = {
+      name: toolName,
+      label: firstResult.label || toolName,
+      description:
+        "Load deterministic read-only context for the current advisor turn. Call this zero-argument tool before analyzing or answering the turn.",
+      promptSnippet: `Load required advisor context from ${toolName}`,
+      parameters: CONTEXT_TOOL_PARAMETERS,
+      async execute(_toolCallId, _params, signal) {
+        const result = activeResults.get(toolName);
+        if (!result) {
+          throw new Error(`Advisor context tool ${toolName} is not active for this turn`);
+        }
+        if (signal?.aborted) throw new Error(`Advisor context tool ${toolName} was aborted`);
+        if (result.isError === true) throw new Error(result.content);
+        return {
+          content: [{ type: "text" as const, text: result.content }],
+          details: {
+            advisorContext: true,
+            contentType: result.contentType,
+            label: result.label || result.toolName,
+          },
+        };
+      },
+    };
+    return tool;
+  });
+
+  return {
+    customTools,
+    allToolNames: [...firstResultByName.keys()],
+    toolNamesForTurn(turn) {
+      return [...(resultsByTurn.get(turn)?.keys() ?? [])];
+    },
+    activateTurn(turn) {
+      activeResults = resultsByTurn.get(turn) ?? new Map();
+      return [...activeResults.keys()];
+    },
+    deactivate() {
+      activeResults = new Map();
+    },
+  };
+}
+
 export async function runReadOnlyAdvisor(
   options: RunReadOnlyAdvisorOptions,
 ): Promise<RunAdvisorResult> {
@@ -145,9 +315,35 @@ export async function runReadOnlyAdvisor(
     );
   }
 
+  const promptTurns = normalizePromptTurns(options.promptTurns);
+  const contextTools = createAdvisorContextToolRuntime(promptTurns);
+  const customTools = [
+    ...createRepoConfinedReadOnlyTools(options.cwd),
+    ...contextTools.customTools,
+  ];
+  const availableToolNames = new Set(READ_ONLY_TOOLS);
+  for (const toolName of contextTools.allToolNames) availableToolNames.add(toolName);
+  for (const tool of options.customTools ?? []) {
+    const toolName = sanitizeToolName(tool.name);
+    if (toolName !== tool.name) {
+      throw new Error(`Advisor custom tool name is not normalized: ${JSON.stringify(tool.name)}`);
+    }
+    if (availableToolNames.has(toolName)) {
+      throw new Error(`Advisor custom tool name is already registered: ${toolName}`);
+    }
+    availableToolNames.add(toolName);
+    customTools.push(tool);
+  }
+  const turnTools = new Map(
+    promptTurns.map((turn) => [
+      turn,
+      resolveAdvisorTurnTools(turn, contextTools.toolNamesForTurn(turn), availableToolNames),
+    ]),
+  );
+
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: false },
-    retry: { enabled: true, maxRetries: 2 },
+    retry: advisorRetrySettings(modelId),
   });
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
@@ -174,18 +370,18 @@ export async function runReadOnlyAdvisor(
     modelRegistry,
     model,
     thinkingLevel: "medium",
-    tools: READ_ONLY_TOOLS,
+    tools: [...availableToolNames],
+    customTools,
     resourceLoader,
     sessionManager,
     settingsManager,
   });
 
-  const promptTurns = normalizePromptTurns(options.promptTurns);
   const rawHeader = [
     modelFallbackMessage ? `[${options.logPrefix}] ${modelFallbackMessage}` : undefined,
     `[${options.logPrefix}] model=${model.provider}/${model.id}`,
     `[${options.logPrefix}] base_url=${model.baseUrl}`,
-    `[${options.logPrefix}] tools=${READ_ONLY_TOOLS.join(",")}`,
+    `[${options.logPrefix}] tools=${[...availableToolNames].join(",")}`,
     `[${options.logPrefix}] prompt_turns=${promptTurns.length}`,
     "--- ASSISTANT TEXT ---",
   ].filter((line): line is string => Boolean(line));
@@ -193,9 +389,14 @@ export async function runReadOnlyAdvisor(
   const raw = new CappedBuffer(options.maxCaptureBytes, `${rawHeader.join("\n")}\n`);
   const turnTextBuffers: CappedBuffer[] = [];
   const turnErrors: string[] = [];
+  const turnCallbackErrors: string[] = [];
+  let fatalError: string | undefined;
   let currentTurnText: CappedBuffer | undefined;
   let currentTurnName = "";
   let currentTurnError: string | undefined;
+  let successfulToolNames = new Set<string>();
+  let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
+  let resolveCurrentAgentEnd: (() => void) | undefined;
 
   const captureTurnError = (source: string, message: string | undefined): void => {
     const normalized = normalizeProviderError(message);
@@ -207,6 +408,7 @@ export async function runReadOnlyAdvisor(
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     if (event.type === "message_update") {
       if (event.assistantMessageEvent.type === "text_delta") {
+        currentTurnFlow.push({ type: "text", text: event.assistantMessageEvent.delta });
         currentTurnText?.append(event.assistantMessageEvent.delta);
         raw.append(event.assistantMessageEvent.delta);
         return;
@@ -220,23 +422,54 @@ export async function runReadOnlyAdvisor(
       }
       return;
     }
+    if (event.type === "agent_end") {
+      resolveCurrentAgentEnd?.();
+      resolveCurrentAgentEnd = undefined;
+      return;
+    }
     if (event.type === "message_end") {
       captureTurnError("assistant_message_error", assistantMessageError(event.message));
       return;
     }
     if (event.type === "tool_execution_start") {
+      currentTurnFlow.push({ type: "tool_start", toolName: event.toolName });
       raw.append(`\n[${options.logPrefix}] tool_start ${event.toolName}\n`);
       return;
     }
     if (event.type === "tool_execution_end") {
+      currentTurnFlow.push({
+        type: "tool_end",
+        toolName: event.toolName,
+        isError: event.isError,
+      });
+      if (!event.isError) successfulToolNames.add(event.toolName);
       raw.append(
         `[${options.logPrefix}] tool_end ${event.toolName} ${event.isError ? "error" : "ok"}\n`,
       );
       return;
     }
     if (event.type === "auto_retry_start") {
+      currentTurnError = undefined;
       raw.append(
-        `[${options.logPrefix}] retry ${event.attempt}/${event.maxAttempts}: ${event.errorMessage}\n`,
+        `[${options.logPrefix}] retry ${event.attempt}/${event.maxAttempts} delay_ms=${event.delayMs}: ${event.errorMessage}\n`,
+      );
+      options.logProgress(
+        `Advisor provider retry ${event.attempt}/${event.maxAttempts}: delayMs=${event.delayMs}`,
+      );
+      return;
+    }
+    if (event.type === "auto_retry_end") {
+      if (event.success) {
+        currentTurnError = undefined;
+      } else if (event.finalError) {
+        currentTurnError = undefined;
+        captureTurnError("assistant_retry_exhausted", event.finalError);
+      }
+      raw.append(
+        `[${options.logPrefix}] retry_end success=${event.success} attempts=${event.attempt}\n`,
+      );
+      options.logProgress(
+        `Advisor provider retry settled: success=${event.success} attempts=${event.attempt}`,
       );
     }
   });
@@ -269,30 +502,113 @@ export async function runReadOnlyAdvisor(
       currentTurnName = turn.name;
       currentTurnText = new CappedBuffer(options.maxCaptureBytes);
       currentTurnError = undefined;
+      successfulToolNames = new Set();
+      currentTurnFlow = [];
       turnTextBuffers.push(currentTurnText);
       const turnIndex = `${index + 1}/${promptTurns.length}`;
-      injectSyntheticToolResults({
-        turn,
-        turnNumber: index + 1,
-        session,
-        sessionManager,
-        model,
-        logPrefix: options.logPrefix,
-        raw,
-      });
+      options.onTurnStart?.(turn);
+      contextTools.activateTurn(turn);
+      const tools = turnTools.get(turn);
+      if (!tools) throw new Error(`Advisor turn ${turn.name} is missing its tool configuration`);
+      const contextToolNames = contextTools.toolNamesForTurn(turn);
+      session.setActiveToolsByName([
+        ...(tools.atomicTerminalToolName ? [] : READ_ONLY_TOOLS),
+        ...tools.activeToolNames,
+      ]);
       raw.append(`\n[${options.logPrefix}] user_turn_start ${turnIndex} ${turn.name}\n`);
-      options.logProgress(`Advisor SDK turn ${turnIndex}: ${turn.name}`);
-      await Promise.race([session.prompt(turn.prompt), timeoutPromise]);
-      const turnTextBytes = Buffer.byteLength(currentTurnText.toString(), "utf8");
       raw.append(
-        `\n[${options.logPrefix}] user_turn_end ${turnIndex} ${turn.name} textBytes=${turnTextBytes}\n`,
+        `[${options.logPrefix}] required_tools ${tools.requiredToolNames.join(",") || "<none>"}\n`,
       );
-      if (currentTurnError) {
-        turnErrors.push(`${turn.name}: ${currentTurnError}`);
+      options.logProgress(`Advisor SDK turn ${turnIndex}: ${turn.name}`);
+      const settlement = await settleAdvisorTurn({
+        index: index + 1,
+        total: promptTurns.length,
+        name: turn.name,
+        run: async () => {
+          const promptAndWait = async (prompt: string): Promise<void> => {
+            const agentEndPromise = new Promise<void>((resolve) => {
+              resolveCurrentAgentEnd = resolve;
+            });
+            await Promise.race([session.prompt(prompt), timeoutPromise]);
+            await Promise.race([agentEndPromise, timeoutPromise]);
+          };
+          await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
+          const originalFlow = currentTurnFlow;
+          const repairToolName = repairableAtomicTerminalToolName(
+            turn,
+            originalFlow,
+            tools,
+            successfulToolNames,
+            currentTurnError,
+          );
+          if (repairToolName) {
+            contextTools.deactivate();
+            session.setActiveToolsByName([repairToolName]);
+            currentTurnFlow = [];
+            raw.append(
+              `\n[${options.logPrefix}] atomic_terminal_repair_start ${turn.name} ${repairToolName}\n`,
+            );
+            options.logProgress(
+              `Advisor SDK repairing atomic terminal tool for ${turn.name}: ${repairToolName}`,
+            );
+            await promptAndWait(atomicTerminalRepairPrompt(turn, repairToolName));
+            const repairFlow = currentTurnFlow;
+            const repairErrors = atomicTerminalRepairErrors(turn.name, repairFlow, repairToolName);
+            if (repairErrors.length > 0) {
+              throw new Error(repairErrors.join("; "));
+            }
+            currentTurnFlow = [...originalFlow, ...repairFlow];
+            raw.append(
+              `[${options.logPrefix}] atomic_terminal_repair_end ${turn.name} ${repairToolName} ok\n`,
+            );
+          }
+          const missing = missingRequiredAdvisorToolNames(
+            tools.requiredToolNames,
+            successfulToolNames,
+          );
+          const flowErrors = advisorTurnFlowErrors(turn.name, currentTurnFlow, tools);
+          if (missing.length > 0)
+            flowErrors.unshift(`omitted required tool result(s): ${missing.join(", ")}`);
+          if (flowErrors.length > 0) throw new Error(flowErrors.join("; "));
+        },
+        readText: () => currentTurnText?.toString() ?? "",
+        readError: () => currentTurnError,
+        onTurnComplete: options.onTurnComplete,
+      });
+      const turnTextBytes = Buffer.byteLength(settlement.turn.text, "utf8");
+      raw.append(
+        `\n[${options.logPrefix}] user_turn_end ${turnIndex} ${turn.name} status=${settlement.turn.status} textBytes=${turnTextBytes}\n`,
+      );
+      options.logProgress(
+        `Advisor SDK turn ${turnIndex} settled: ${turn.name} status=${settlement.turn.status} textBytes=${turnTextBytes}`,
+      );
+      if (settlement.turn.error) {
+        turnErrors.push(`${turn.name}: ${settlement.turn.error}`);
       }
+      if (settlement.callbackError) {
+        turnCallbackErrors.push(`${turn.name}: ${settlement.callbackError}`);
+        raw.append(
+          `[${options.logPrefix}] turn_artifact_error ${turn.name}: ${settlement.callbackError}\n`,
+        );
+        options.logProgress(
+          `Could not persist advisor turn ${turn.name}: ${settlement.callbackError}`,
+        );
+      }
+      contextTools.deactivate();
+      session.setActiveToolsByName(READ_ONLY_TOOLS);
+      resolveCurrentAgentEnd = undefined;
       currentTurnText = undefined;
       currentTurnName = "";
+      if (settlement.turn.error) {
+        throw new Error(settlement.turn.error);
+      }
+      if (settlement.callbackError) {
+        throw new Error(`turn artifact persistence failed: ${settlement.callbackError}`);
+      }
     }
+  } catch (error: unknown) {
+    fatalError = normalizeProviderError(errorText(error)) || "unknown advisor session failure";
+    raw.append(`\n[${options.logPrefix}] session_failure: ${fatalError}\n`);
   } finally {
     unsubscribe();
     clearInterval(heartbeat);
@@ -327,6 +643,8 @@ export async function runReadOnlyAdvisor(
     raw: raw.toStringWithTrailingNewline(),
     turnTexts,
     turnErrors,
+    turnCallbackErrors,
+    fatalError,
   };
 }
 
@@ -346,11 +664,27 @@ function normalizeProviderError(message: string | undefined): string | undefined
   return normalized || undefined;
 }
 
+function errorText(error: unknown): string {
+  if (error === undefined || error === null) return "";
+  return error instanceof Error ? error.message : String(error);
+}
+
 function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTurn[] {
   return promptTurns.map((turn, index) => ({
     name: sanitizeTurnName(turn.name || `turn-${index + 1}`),
     prompt: turn.prompt,
-    syntheticToolResults: turn.syntheticToolResults,
+    contextToolResults: turn.contextToolResults,
+    activeToolNames: normalizedToolNames(turn.activeToolNames),
+    requiredToolNames: normalizedToolNames(turn.requiredToolNames),
+    requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
+    requireAssistantText: turn.requireAssistantText === true,
+    atomicTerminalToolName: normalizedToolNames(
+      turn.atomicTerminalToolName ? [turn.atomicTerminalToolName] : undefined,
+    )[0],
+    atomicTerminalRepairPrompt:
+      typeof turn.atomicTerminalRepairPrompt === "string" && turn.atomicTerminalRepairPrompt.trim()
+        ? turn.atomicTerminalRepairPrompt.trim()
+        : undefined,
   }));
 }
 
@@ -362,117 +696,6 @@ function sanitizeTurnName(name: string): string {
       .replace(/[^A-Za-z0-9._-]/g, "")
       .slice(0, 80) || "turn"
   );
-}
-
-type AdvisorSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
-type AdvisorModel = NonNullable<ReturnType<ModelRegistry["find"]>>;
-type PersistableAdvisorMessage = Parameters<SessionManager["appendMessage"]>[0];
-
-function injectSyntheticToolResults({
-  turn,
-  turnNumber,
-  session,
-  sessionManager,
-  model,
-  logPrefix,
-  raw,
-}: {
-  turn: AdvisorPromptTurn;
-  turnNumber: number;
-  session: AdvisorSession;
-  sessionManager: SessionManager;
-  model: AdvisorModel;
-  logPrefix: string;
-  raw: CappedBuffer;
-}): void {
-  const syntheticResults = turn.syntheticToolResults ?? [];
-  if (syntheticResults.length === 0) return;
-
-  const usedIds = new Set<string>();
-  const normalized = syntheticResults.map((result, index) => {
-    const toolName = sanitizeToolName(result.toolName);
-    const toolCallId = uniqueToolCallId(
-      result.toolCallId || `${turnNumber}-${turn.name}-${index + 1}-${toolName}`,
-      usedIds,
-      index + 1,
-    );
-    return { ...result, toolName, toolCallId, label: result.label || result.toolName };
-  });
-  const timestamp = Date.now();
-  const assistantMessage = {
-    role: "assistant" as const,
-    content: normalized.map((result) => ({
-      type: "toolCall" as const,
-      id: result.toolCallId,
-      name: result.toolName,
-      arguments: {},
-    })),
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: ZERO_USAGE,
-    stopReason: "toolUse" as const,
-    timestamp,
-  };
-  const toolResultMessages = normalized.map((result, index) => ({
-    role: "toolResult" as const,
-    toolCallId: result.toolCallId,
-    toolName: result.toolName,
-    content: [{ type: "text" as const, text: result.content }],
-    details: { synthetic: true, contentType: result.contentType, label: result.label },
-    isError: result.isError === true,
-    timestamp: timestamp + index + 1,
-  }));
-  const messages = [assistantMessage, ...toolResultMessages] as PersistableAdvisorMessage[];
-
-  session.agent.state.messages = [
-    ...session.agent.state.messages,
-    ...(messages as typeof session.agent.state.messages),
-  ];
-  for (const message of messages) sessionManager.appendMessage(message);
-
-  raw.append(
-    `\n[${logPrefix}] synthetic_tool_results_start turn=${turn.name} count=${normalized.length}\n`,
-  );
-  for (const result of normalized) {
-    raw.append(
-      `[${logPrefix}] synthetic_tool_result ${result.toolName} ${result.toolCallId} bytes=${Buffer.byteLength(
-        result.content,
-        "utf8",
-      )}\n`,
-    );
-  }
-  raw.append(`[${logPrefix}] synthetic_tool_results_end turn=${turn.name}\n`);
-}
-
-function sanitizeToolName(name: string): string {
-  return (
-    name
-      .trim()
-      .replace(/\s+/g, "_")
-      .replace(/[^A-Za-z0-9_-]/g, "_")
-      .replace(/_+/g, "_")
-      .slice(0, 64) || "advisor_context"
-  );
-}
-
-function uniqueToolCallId(rawId: string, usedIds: Set<string>, fallbackIndex: number): string {
-  const base =
-    rawId
-      .trim()
-      .replace(/\s+/g, "_")
-      .replace(/[^A-Za-z0-9_-]/g, "_")
-      .replace(/_+/g, "_")
-      .slice(0, 40) || `advisor_context_${fallbackIndex}`;
-  let candidate = base;
-  let suffix = 2;
-  while (usedIds.has(candidate)) {
-    const suffixText = `_${suffix}`;
-    candidate = `${base.slice(0, Math.max(1, 40 - suffixText.length))}${suffixText}`;
-    suffix += 1;
-  }
-  usedIds.add(candidate);
-  return candidate;
 }
 
 export class CappedBuffer {

@@ -13,6 +13,7 @@ const {
   VLLM_LOCAL_CREDENTIAL_ENV,
   getSandboxInferenceConfig,
 } = require("../inference/config");
+const openrouter = require("../inference/openrouter");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
 const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
@@ -36,6 +37,8 @@ const NON_INTERACTIVE_PROVIDER_ALIASES = {
   cloud: "build",
   nim: "nim-local",
   vllm: "vllm",
+  "open-router": "openrouter",
+  openrouterai: "openrouter",
   anthropiccompatible: "anthropicCompatible",
   hermes: "hermesProvider",
   "hermes-provider": "hermesProvider",
@@ -45,6 +48,7 @@ const NON_INTERACTIVE_PROVIDER_ALIASES = {
 };
 const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "build",
+  "openrouter",
   "openai",
   "anthropic",
   "anthropicCompatible",
@@ -61,7 +65,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -78,6 +82,17 @@ const REMOTE_PROVIDER_CONFIG = {
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     endpointUrl: BUILD_ENDPOINT_URL,
     helpUrl: "https://build.nvidia.com/settings/api-keys",
+    modelMode: "catalog",
+    defaultModel: DEFAULT_CLOUD_MODEL,
+    skipVerify: true,
+  },
+  openrouter: {
+    label: "OpenRouter",
+    providerName: openrouter.OPENROUTER_PROVIDER_NAME,
+    providerType: openrouter.OPENROUTER_PROVIDER_TYPE,
+    credentialEnv: openrouter.OPENROUTER_CREDENTIAL_ENV,
+    endpointUrl: openrouter.OPENROUTER_ENDPOINT_URL,
+    helpUrl: openrouter.OPENROUTER_HELP_URL,
     modelMode: "catalog",
     defaultModel: DEFAULT_CLOUD_MODEL,
     skipVerify: true,

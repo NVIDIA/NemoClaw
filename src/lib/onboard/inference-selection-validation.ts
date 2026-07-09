@@ -65,6 +65,7 @@ export interface InferenceSelectionValidationHelpers {
     helpUrl?: string | null,
     options?: {
       authMode?: "bearer" | "query-param";
+      extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
       skipResponsesProbe?: boolean;
@@ -182,6 +183,7 @@ export function createInferenceSelectionValidationHelpers(
     helpUrl: string | null = null,
     options: {
       authMode?: "bearer" | "query-param";
+      extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
       skipResponsesProbe?: boolean;
@@ -190,7 +192,10 @@ export function createInferenceSelectionValidationHelpers(
     } = {},
   ): Promise<EndpointValidationResult> {
     const apiKey = credentialEnv ? resolveCredential(credentialEnv) : "";
-    const probe = runOpenAiLikeProbe(endpointUrl, model, apiKey, options);
+    const probe = runOpenAiLikeProbe(endpointUrl, model, apiKey, {
+      ...options,
+      calibrateTimeouts: true,
+    });
     if (!probe.ok) {
       printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
@@ -266,6 +271,7 @@ export function createInferenceSelectionValidationHelpers(
     const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
     // Reasoning-only compatible endpoints often reject Responses, tool-call, and streaming probes.
     const probe = runOpenAiLikeProbe(endpointUrl, model, apiKey, {
+      calibrateTimeouts: true,
       requireResponsesToolCalling: !reasoningEnabled,
       skipResponsesProbe:
         reasoningEnabled || shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
@@ -330,7 +336,7 @@ export function createInferenceSelectionValidationHelpers(
             getCompatibleAnthropicOpenAiSurfaceBaseUrl(endpointUrl),
             model,
             apiKey,
-            { skipResponsesProbe: true, pinnedAddresses },
+            { calibrateTimeouts: true, skipResponsesProbe: true, pinnedAddresses },
           )
         : runAnthropicProbe(endpointUrl, model, apiKey, {
             // Reasoning-only compatible endpoints often reject streaming probes,

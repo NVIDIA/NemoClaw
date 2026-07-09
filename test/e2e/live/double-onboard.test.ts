@@ -16,7 +16,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 //
 // This intentionally stays as one free-standing live test with local
-// helpers: the the contract is a real OpenShell/Docker/nemoclaw lifecycle
+// helpers: the contract is a real OpenShell/Docker/nemoclaw lifecycle
 // boundary, but it does not need a new registry target or shared fixture.
 
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
