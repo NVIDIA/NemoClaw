@@ -35,6 +35,23 @@ const sdk = vi.hoisted(() => {
     state.customTools = [];
   };
 
+  const executeContextTool = async (contextTool: MockTool, emit: Listener): Promise<void> => {
+    emit({ type: "tool_execution_start", toolName: contextTool.name });
+    try {
+      const result = await contextTool.execute(
+        `${contextTool.name}-call`,
+        {},
+        undefined,
+        undefined,
+        undefined as never,
+      );
+      state.contextContents.push(result.content[0]?.text ?? "");
+      emit({ type: "tool_execution_end", toolName: contextTool.name, isError: false });
+    } catch {
+      emit({ type: "tool_execution_end", toolName: contextTool.name, isError: true });
+    }
+  };
+
   const createAgentSession = vi.fn(async (options: { customTools?: MockTool[] }) => {
     state.customTools = options.customTools ?? [];
     const listeners = new Set<Listener>();
@@ -55,22 +72,9 @@ const sdk = vi.hoisted(() => {
         const contextTool = state.customTools.find(
           (tool) => activeToolNames.includes(tool.name) && tool.name.endsWith("_context"),
         );
-        if (contextTool && !state.omitContextTool) {
-          emit({ type: "tool_execution_start", toolName: contextTool.name });
-          try {
-            const result = await contextTool.execute(
-              `${contextTool.name}-call`,
-              {},
-              undefined,
-              undefined,
-              undefined as never,
-            );
-            state.contextContents.push(result.content[0]?.text ?? "");
-            emit({ type: "tool_execution_end", toolName: contextTool.name, isError: false });
-          } catch {
-            emit({ type: "tool_execution_end", toolName: contextTool.name, isError: true });
-          }
-        }
+        await (contextTool && !state.omitContextTool
+          ? executeContextTool(contextTool, emit)
+          : Promise.resolve());
         emit({
           type: "message_update",
           assistantMessageEvent: { type: "text_delta", delta: `analysis for ${prompt}` },
