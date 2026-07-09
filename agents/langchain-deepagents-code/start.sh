@@ -185,21 +185,48 @@ prepare_runtime_env() {
 }
 
 prepare_observability_marker() {
-  local target=/sandbox/.nemoclaw-observability-enabled
+  local marker_dir=/sandbox/.deepagents
+  local target="${marker_dir}/.nemoclaw-observability-enabled"
   local tmp
-  # Treat the target itself as a file so mv cannot descend into a pre-created
-  # directory and disabled startup does not fail with an opaque rm diagnostic.
-  if [ -e "$target" ] || [ -L "$target" ]; then
-    if [ ! -f "$target" ] || [ -L "$target" ]; then
-      printf 'NemoClaw: refusing unsafe observability marker path: %s\n' "$target" >&2
-      return 1
-    fi
+
+  # OpenShell policy replacement can reset the sandbox's ephemeral /tmp while
+  # preserving its /sandbox workspace. Keep this credential-free convenience
+  # bit with the managed DCode state so independent exec/login shells retain
+  # the host-selected observability setting across policy updates. Reject a
+  # symlinked state directory before creating a same-directory temporary file;
+  # the marker remains non-authoritative and the network policy controls OTLP.
+  if [ -L "$marker_dir" ] || { [ -e "$marker_dir" ] && [ ! -d "$marker_dir" ]; }; then
+    printf '%s\n' 'Unsafe managed Deep Agents Code state directory.' >&2
+    return 1
   fi
-  if [ "${NEMOCLAW_OBSERVABILITY:-}" != "1" ]; then
+  if [ -d "$marker_dir" ] \
+    && { [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; }; then
+    printf '%s\n' 'Unsafe managed observability marker target.' >&2
+    return 1
+  fi
+
+  # Policy replacement restarts the entrypoint without the sandbox-create
+  # environment. Absent therefore preserves the validated durable state;
+  # NemoClaw create/rebuild paths pass an explicit authoritative 1 or 0.
+  if [ -z "${NEMOCLAW_OBSERVABILITY+x}" ]; then
+    return 0
+  fi
+  if [ "$NEMOCLAW_OBSERVABILITY" != "1" ]; then
+    [ -d "$marker_dir" ] || return 0
     rm -f "$target"
     return 0
   fi
-  tmp="$(mktemp /sandbox/.nemoclaw-observability-enabled.XXXXXX)"
+  mkdir -p "$marker_dir"
+  if [ -L "$marker_dir" ] || [ ! -d "$marker_dir" ]; then
+    printf '%s\n' 'Unsafe managed Deep Agents Code state directory.' >&2
+    return 1
+  fi
+  if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+    printf '%s\n' 'Unsafe managed observability marker target.' >&2
+    return 1
+  fi
+
+  tmp="$(mktemp "${target}.XXXXXX")"
   printf '%s\n' '1' >"$tmp"
   chmod 444 "$tmp"
   mv -fT -- "$tmp" "$target"

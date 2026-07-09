@@ -32,7 +32,7 @@ observability_marker_value() {
   # Expansion is intentionally deferred to the sandbox shell.
   # shellcheck disable=SC2016
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    sh -c 'marker=/sandbox/.nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
+    sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; if test -f "$marker" && ! test -L "$marker"; then cat "$marker"; else printf "absent"; fi' \
     2>/dev/null
 }
 
@@ -209,10 +209,10 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
     esac
   }
   verify_observability_state "before Tavily policy mutation" || exit 1
-  NEMOCLAW_E2E_POLICY_SETTLE_SECONDS=0 restore_tavily_denial
+  cleanup_status=0
+  NEMOCLAW_E2E_POLICY_SETTLE_SECONDS=0 restore_tavily_denial || cleanup_status=$?
   [ "$(cat "$OBSERVABILITY_MARKER_FIXTURE")" = "1" ]
-  [ "$FAILED" -eq 0 ]
-  exit 0
+  exit "$cleanup_status"
 fi
 
 if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then

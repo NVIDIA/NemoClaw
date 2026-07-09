@@ -48,7 +48,7 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
 // This separate regular-file install is intentionally absent from older images:
 // a newer CLI probing one fails before the stateful entrypoint or dcode wrapper
 // can run, so version skew cannot mutate observability state.
-const DCODE_MANAGED_RUNTIME_LAUNCHER = "/usr/local/lib/nemoclaw/dcode-managed-exec";
+const DCODE_MANAGED_EXEC_LAUNCHER = "/usr/local/lib/nemoclaw/dcode-managed-exec";
 
 /**
  * Classify a route result that is already known not to be healthy.
@@ -69,7 +69,7 @@ export function buildSandboxInferenceRouteProbeArgs(
           // The trusted launcher ignores ambient proxy overrides and does not
           // source sandbox-user startup files or rewrite persistent runtime
           // state before executing this probe.
-          DCODE_MANAGED_RUNTIME_LAUNCHER,
+          DCODE_MANAGED_EXEC_LAUNCHER,
           "/bin/sh",
           "-c",
           INFERENCE_ROUTE_PROBE_SCRIPT,

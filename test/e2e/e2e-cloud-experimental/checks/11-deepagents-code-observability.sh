@@ -60,7 +60,7 @@ observability_policy_state() {
 observability_marker_value() {
   # shellcheck disable=SC2016 # marker expands inside the sandbox shell.
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    sh -c 'marker=/sandbox/.nemoclaw-observability-enabled; test -f "$marker" && ! test -L "$marker" && cat "$marker"' \
+    sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; test -f "$marker" && ! test -L "$marker" && cat "$marker"' \
     2>&1
 }
 
@@ -361,7 +361,7 @@ policy_state="$(observability_policy_state)" \
 
 # shellcheck disable=SC2016 # marker expands inside the sandbox shell.
 marker_recreate_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  sh -c 'marker=/sandbox/.nemoclaw-observability-enabled; rm -f "$marker"; printf "%s\n" 1 >"$marker"; chmod 444 "$marker"' \
+  sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; rm -f "$marker"; printf "%s\n" 1 >"$marker"; chmod 444 "$marker"' \
   2>&1)" || fail "sandbox user could not recreate the observability marker: $marker_recreate_output"
 marker_output="$(observability_marker_value)" \
   || fail "sandbox-created observability marker is absent or unsafe"

@@ -20,6 +20,14 @@ const pluginSourcePath = path.join(
 );
 const pluginProjectPath = path.join(pluginProjectDir, "pyproject.toml");
 const validatorPath = path.join(agentDir, "validate-nemotron-ultra-profile.py");
+const e2eProfileCheckPath = path.join(
+  repoRoot,
+  "test",
+  "e2e",
+  "e2e-cloud-experimental",
+  "checks",
+  "03-deepagents-code-nemotron-ultra-profile.sh",
+);
 const pythonBin = execFileSync("python3", ["-c", "import sys; print(sys.executable)"], {
   encoding: "utf8",
 }).trim();
@@ -34,6 +42,7 @@ const MANAGED_MODEL_ALIASES = [
   "openai:nvidia/nemotron-3-ultra-550b-a55b",
   "openai:nvidia/nvidia/nemotron-3-ultra",
 ] as const;
+const MANAGED_MODEL_IDS = MANAGED_MODEL_ALIASES.map((alias) => alias.slice("openai:".length));
 
 const NATIVE_PROFILE_SOURCE = `"""Focused native Nemotron profile fixture."""
 
@@ -55,13 +64,51 @@ type PluginFixture = {
 
 type ProbeResult = {
   aliases: boolean[];
+  aliasesShareManagedProfile: boolean;
+  aliasMiddleware: string[];
+  canonicalHasGuard: boolean;
   canonicalPresent: boolean;
   error: string | null;
+  guardProbe: {
+    async: {
+      content: string;
+      id: string;
+      legacyText: string;
+      name: string;
+      status: string;
+      text: string;
+      calls: number;
+    };
+    concrete: { calls: number; command: string; result: string };
+    internalWhitespace: {
+      calls: number;
+      content: string;
+      id: string;
+      status: string;
+    };
+    nonExecute: { calls: number; result: string };
+    sync: {
+      content: string;
+      id: string;
+      legacyText: string;
+      name: string;
+      status: string;
+      text: string;
+      calls: number;
+    };
+  } | null;
   registryKeys: string[];
+  unrelatedPresent: boolean;
 };
 
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function managedUltraModelIdsIn(source: string): string[] {
+  return [
+    ...new Set(source.match(/nvidia\/(?:nvidia\/)?nemotron-3-ultra(?:-550b-a55b)?/g) ?? []),
+  ].sort();
 }
 
 function replaceHashDefinitions(
@@ -113,10 +160,54 @@ function makePluginFixture(
 _HARNESS_PROFILES = {}
 
 
+class HarnessProfile:
+    def __init__(self, *, extra_middleware=()):
+        self.extra_middleware = list(extra_middleware)
+
+
 def register_harness_profile(key, profile):
-    _HARNESS_PROFILES[key] = profile
+    existing = _HARNESS_PROFILES.get(key)
+    if existing is None:
+        _HARNESS_PROFILES[key] = profile
+    else:
+        _HARNESS_PROFILES[key] = HarnessProfile(
+            extra_middleware=[*existing.extra_middleware, *profile.extra_middleware]
+        )
     if os.environ.get("NEMOCLAW_TEST_FAIL_KEY") == key:
         raise RuntimeError(f"injected registration failure for {key}")
+`,
+  );
+  writeFixtureFile(
+    root,
+    "langchain/agents/middleware/types.py",
+    "class AgentMiddleware:\n    pass\n",
+  );
+  writeFixtureFile(
+    root,
+    "langchain_core/messages.py",
+    `class TextAccessor(str):
+    def __call__(self):
+        return str(self)
+
+
+class ToolMessage:
+    def __init__(self, *, content, name, tool_call_id, status):
+        self.content = content
+        self.name = name
+        self.tool_call_id = tool_call_id
+        self.status = status
+
+    @property
+    def text(self):
+        if isinstance(self.content, str):
+            value = self.content
+        else:
+            value = "".join(
+                block if isinstance(block, str) else block.get("text", "")
+                for block in self.content
+                if isinstance(block, str) or block.get("type") == "text"
+            )
+        return TextAccessor(value)
 `,
   );
   const nativeProfilePath = writeFixtureFile(
@@ -169,7 +260,7 @@ function makeValidatorDependencyStubRoot(): string {
     "deepagents/profiles/harness/_nvidia_nemotron_3_ultra.py":
       "class NemotronTextToolCallParser: pass\n",
     "deepagents/profiles/harness/harness_profiles.py":
-      "class HarnessProfile: pass\ndef _harness_profile_for_model(*args, **kwargs): return HarnessProfile()\n",
+      "_HARNESS_PROFILES = {}\nclass HarnessProfile: pass\ndef _harness_profile_for_model(*args, **kwargs): return HarnessProfile()\n",
     "deepagents_code/__init__.py": "",
     "deepagents_code/agent.py": "def create_cli_agent(*args, **kwargs): return None\n",
     "langchain/agents/middleware/types.py": "class AgentMiddleware: pass\n",
@@ -305,19 +396,31 @@ function runPlugin(
   options: {
     additionalPythonRoots?: string[];
     aliasState?: "complete" | "conflict" | "partial";
+    concurrentRegisterCalls?: number;
     failKey?: string;
+    probeGuard?: boolean;
     registerCalls?: number;
     withCanonical?: boolean;
+    withUnrelated?: boolean;
   } = {},
 ) {
   const pluginPath = prepareFixturePlugin();
   const pluginRoot = path.dirname(path.dirname(pluginPath));
-  const script = `import json
-from deepagents.profiles.harness.harness_profiles import _HARNESS_PROFILES
+  const script = `import asyncio
+import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from deepagents.profiles.harness.harness_profiles import HarnessProfile, _HARNESS_PROFILES
 
-canonical = object()
+class NativeMiddleware:
+    pass
+
+canonical = HarnessProfile(extra_middleware=[NativeMiddleware()])
 if ${(options.withCanonical ?? true) ? "True" : "False"}:
     _HARNESS_PROFILES[${JSON.stringify(CANONICAL_MODEL_SPEC)}] = canonical
+unrelated = object()
+if ${options.withUnrelated ? "True" : "False"}:
+    _HARNESS_PROFILES["openai:gpt-4.1-mini"] = unrelated
 
 state = ${JSON.stringify(options.aliasState ?? "")}
 aliases = ${JSON.stringify(MANAGED_MODEL_ALIASES)}
@@ -334,16 +437,146 @@ from nemoclaw_deepagents_profile import register
 
 error = None
 try:
-    for _ in range(${options.registerCalls ?? 1}):
-        register()
+    concurrent_calls = ${options.concurrentRegisterCalls ?? 0}
+    if concurrent_calls:
+        barrier = Barrier(concurrent_calls)
+
+        def register_concurrently():
+            barrier.wait()
+            register()
+
+        with ThreadPoolExecutor(max_workers=concurrent_calls) as executor:
+            futures = [executor.submit(register_concurrently) for _ in range(concurrent_calls)]
+            for future in futures:
+                future.result()
+    else:
+        for _ in range(${options.registerCalls ?? 1}):
+            register()
 except Exception as exc:
     error = str(exc)
 
+guard_probe = None
+aliases_registered = [key in _HARNESS_PROFILES for key in aliases]
+managed_profile = _HARNESS_PROFILES.get(aliases[0]) if all(aliases_registered) else None
+alias_middleware = [
+    type(item).__name__
+    for item in getattr(managed_profile, "extra_middleware", ())
+]
+if error is None and ${options.probeGuard ? "True" : "False"}:
+    guard = next(
+        item
+        for item in managed_profile.extra_middleware
+        if type(item).__name__ == "NemoClawExecutePlaceholderGuardMiddleware"
+    )
+
+    class Request:
+        def __init__(self, name, command, call_id):
+            self.tool_call = {
+                "name": name,
+                "args": {"command": command},
+                "id": call_id,
+            }
+
+    sync_calls = []
+    sync_request = Request("execute", "  [CONTENT]  ", "sync-call")
+
+    def sync_handler(request):
+        sync_calls.append(request)
+        return "sync-handler-result"
+
+    sync_result = guard.wrap_tool_call(sync_request, sync_handler)
+
+    async_calls = []
+    async_request = Request("execute", "[content]", "async-call")
+
+    async def async_handler(request):
+        async_calls.append(request)
+        return "async-handler-result"
+
+    async_result = asyncio.run(guard.awrap_tool_call(async_request, async_handler))
+
+    concrete_calls = []
+    concrete_request = Request("execute", "printf concrete", "concrete-call")
+
+    def concrete_handler(request):
+        concrete_calls.append(request)
+        return "concrete-handler-result"
+
+    concrete_result = guard.wrap_tool_call(concrete_request, concrete_handler)
+
+    internal_whitespace_calls = []
+    internal_whitespace_request = Request(
+        "execute", "\\t[  content  ]\\n", "internal-whitespace-call"
+    )
+
+    def internal_whitespace_handler(request):
+        internal_whitespace_calls.append(request)
+        return "internal-whitespace-handler-result"
+
+    internal_whitespace_result = guard.wrap_tool_call(
+        internal_whitespace_request, internal_whitespace_handler
+    )
+
+    non_execute_calls = []
+    non_execute_request = Request("write_file", "[content]", "write-call")
+
+    def non_execute_handler(request):
+        non_execute_calls.append(request)
+        return "non-execute-handler-result"
+
+    non_execute_result = guard.wrap_tool_call(non_execute_request, non_execute_handler)
+    guard_probe = {
+        "sync": {
+            "content": sync_result.content,
+            "id": sync_result.tool_call_id,
+            "legacyText": sync_result.text(),
+            "name": sync_result.name,
+            "status": sync_result.status,
+            "text": str(sync_result.text),
+            "calls": len(sync_calls),
+        },
+        "async": {
+            "content": async_result.content,
+            "id": async_result.tool_call_id,
+            "legacyText": async_result.text(),
+            "name": async_result.name,
+            "status": async_result.status,
+            "text": str(async_result.text),
+            "calls": len(async_calls),
+        },
+        "concrete": {
+            "calls": len(concrete_calls),
+            "command": concrete_calls[0].tool_call["args"]["command"],
+            "result": concrete_result,
+        },
+        "internalWhitespace": {
+            "calls": len(internal_whitespace_calls),
+            "content": internal_whitespace_result.content,
+            "id": internal_whitespace_result.tool_call_id,
+            "status": internal_whitespace_result.status,
+        },
+        "nonExecute": {
+            "calls": len(non_execute_calls),
+            "result": non_execute_result,
+        },
+    }
+
 print(json.dumps({
-    "aliases": [_HARNESS_PROFILES.get(key) is canonical for key in aliases],
+    "aliases": aliases_registered,
+    "aliasesShareManagedProfile": (
+        all(aliases_registered)
+        and _HARNESS_PROFILES[aliases[0]] is _HARNESS_PROFILES[aliases[1]]
+    ),
+    "aliasMiddleware": alias_middleware,
+    "canonicalHasGuard": any(
+        type(item).__name__ == "NemoClawExecutePlaceholderGuardMiddleware"
+        for item in canonical.extra_middleware
+    ),
     "canonicalPresent": _HARNESS_PROFILES.get(${JSON.stringify(CANONICAL_MODEL_SPEC)}) is canonical,
     "error": error,
+    "guardProbe": guard_probe,
     "registryKeys": sorted(_HARNESS_PROFILES),
+    "unrelatedPresent": _HARNESS_PROFILES.get("openai:gpt-4.1-mini") is unrelated,
 }))
 raise SystemExit(1 if error else 0)
 `;
@@ -418,6 +651,19 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(project).toContain('"deepagents==0.7.0a6"');
   });
 
+  it("keeps language-local managed Ultra model ID allowlists in sync", () => {
+    const expected = [...MANAGED_MODEL_IDS].sort();
+    for (const sourcePath of [
+      path.join(agentDir, "generate-config.ts"),
+      validatorPath,
+      pluginSourcePath,
+      e2eProfileCheckPath,
+    ]) {
+      const source = fs.readFileSync(sourcePath, "utf8");
+      expect(managedUltraModelIdsIn(source), path.relative(repoRoot, sourcePath)).toEqual(expected);
+    }
+  });
+
   it("accepts the exact plugin, then rejects source substitution", () => {
     const root = makeValidatorStubRoot("nemoclaw-managed-aliases");
     expect(runEntryPointValidationWithRoots([root]).status).toBe(0);
@@ -481,11 +727,109 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.probe.aliases).toEqual([true, true]);
+    expect(result.probe.aliasesShareManagedProfile).toBe(true);
+    expect(result.probe.aliasMiddleware).toEqual([
+      "NativeMiddleware",
+      "NemoClawExecutePlaceholderGuardMiddleware",
+    ]);
+    expect(result.probe.canonicalHasGuard).toBe(false);
     expect(result.probe.canonicalPresent).toBe(true);
     expect(result.probe.registryKeys).toEqual(
       [...MANAGED_MODEL_ALIASES, CANONICAL_MODEL_SPEC].sort(),
     );
     expectOfficialSourcesUnchanged(fixture);
+  });
+
+  it("atomically registers one managed profile when plugin discovery races", () => {
+    const fixture = makePluginFixture();
+    const result = runPlugin(fixture, { concurrentRegisterCalls: 8 });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.probe.aliases).toEqual([true, true]);
+    expect(result.probe.aliasesShareManagedProfile).toBe(true);
+    expect(result.probe.aliasMiddleware).toEqual([
+      "NativeMiddleware",
+      "NemoClawExecutePlaceholderGuardMiddleware",
+    ]);
+    expect(result.probe.canonicalHasGuard).toBe(false);
+    expect(result.probe.canonicalPresent).toBe(true);
+    expect(result.probe.registryKeys).toEqual(
+      [...MANAGED_MODEL_ALIASES, CANONICAL_MODEL_SPEC].sort(),
+    );
+    expectOfficialSourcesUnchanged(fixture);
+  });
+
+  it("rejects execute placeholder whitespace variants before sync and async dispatch", () => {
+    const fixture = makePluginFixture();
+    const result = runPlugin(fixture, { probeGuard: true });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.probe.guardProbe).not.toBeNull();
+    expect(result.probe.guardProbe?.sync).toMatchObject({
+      id: "sync-call",
+      name: "execute",
+      status: "error",
+      calls: 0,
+    });
+    expect(result.probe.guardProbe?.sync.content).toContain("placeholder '[content]'");
+    expect(result.probe.guardProbe?.sync.content).toContain("complete command");
+    expect(result.probe.guardProbe?.sync.text).toBe(result.probe.guardProbe?.sync.content);
+    expect(result.probe.guardProbe?.sync.legacyText).toBe(result.probe.guardProbe?.sync.content);
+    expect(result.probe.guardProbe?.async).toMatchObject({
+      id: "async-call",
+      name: "execute",
+      status: "error",
+      calls: 0,
+    });
+    expect(result.probe.guardProbe?.async.content).toContain("placeholder '[content]'");
+    expect(result.probe.guardProbe?.async.content).toContain("complete command");
+    expect(result.probe.guardProbe?.async.text).toBe(result.probe.guardProbe?.async.content);
+    expect(result.probe.guardProbe?.async.legacyText).toBe(result.probe.guardProbe?.async.content);
+    expect(result.probe.guardProbe?.concrete).toEqual({
+      calls: 1,
+      command: "printf concrete",
+      result: "concrete-handler-result",
+    });
+    expect(result.probe.guardProbe?.internalWhitespace).toMatchObject({
+      calls: 0,
+      id: "internal-whitespace-call",
+      status: "error",
+    });
+    expect(result.probe.guardProbe?.internalWhitespace.content).toContain(
+      "placeholder '[content]'",
+    );
+    expect(result.probe.guardProbe?.nonExecute).toEqual({
+      calls: 1,
+      result: "non-execute-handler-result",
+    });
+    expectOfficialSourcesUnchanged(fixture);
+  });
+
+  it("pins guard validators to the ToolMessage string-content API", () => {
+    const requirements = fs.readFileSync(path.join(agentDir, "requirements.lock"), "utf8");
+    const validator = fs.readFileSync(validatorPath, "utf8");
+    const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
+
+    expect(requirements).toMatch(/^langchain-core==1\.4\.8 /m);
+    for (const source of [validator, e2eCheck]) {
+      expect(source).toContain("isinstance(sync_result.content, str)");
+      expect(source).toContain("isinstance(async_result.content, str)");
+      expect(source).toContain('"complete command" in sync_result.content');
+      expect(source).toContain('"complete command" in async_result.content');
+      expect(source).not.toContain("sync_result.text");
+      expect(source).not.toContain("async_result.text");
+    }
+  });
+
+  it("resolves a managed model before the E2E probe inspects lazy profile state", () => {
+    const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
+    const managedResolution = e2eCheck.indexOf(
+      "_harness_profile_for_model(make_model(model_id), None)",
+    );
+    const canonicalLookup = e2eCheck.indexOf("canonical_profile = _HARNESS_PROFILES[");
+
+    expect(managedResolution).toBeGreaterThan(-1);
+    expect(canonicalLookup).toBeGreaterThan(managedResolution);
   });
 
   it.each([
@@ -582,12 +926,16 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
   it("rolls back the first alias when the second registration fails", () => {
     const fixture = makePluginFixture();
-    const result = runPlugin(fixture, { failKey: MANAGED_MODEL_ALIASES[1] });
+    const result = runPlugin(fixture, {
+      failKey: MANAGED_MODEL_ALIASES[1],
+      withUnrelated: true,
+    });
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toContain("injected registration failure");
     expect(result.probe.aliases).toEqual([false, false]);
-    expect(result.probe.registryKeys).toEqual([CANONICAL_MODEL_SPEC]);
+    expect(result.probe.unrelatedPresent).toBe(true);
+    expect(result.probe.registryKeys).toEqual([CANONICAL_MODEL_SPEC, "openai:gpt-4.1-mini"].sort());
     expectOfficialSourcesUnchanged(fixture);
   });
 });
