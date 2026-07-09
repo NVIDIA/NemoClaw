@@ -30,7 +30,7 @@ type CallableTool = ToolDefinition & {
 
 function tool(tools: ToolDefinition[], name: string): CallableTool {
   const match = tools.find((candidate) => candidate.name === name);
-  if (!match) throw new Error(`Missing tool ${name}`);
+  expect(match, `Missing tool ${name}`).toBeDefined();
   return match as CallableTool;
 }
 
