@@ -3013,7 +3013,6 @@ async function createSandboxWithBaseImageResolution(
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
-          dashboardRemoteBindPrepared: process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0",
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),

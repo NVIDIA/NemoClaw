@@ -82,7 +82,6 @@ describe("remote dashboard bind production lifecycle", () => {
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },
         dashboardPort: 18789,
-        dashboardRemoteBindPrepared: true,
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
       });
