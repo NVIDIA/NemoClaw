@@ -14,6 +14,8 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
+import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
+
 export const DEFAULT_ADVISOR_PROVIDER = "openai";
 export const DEFAULT_ADVISOR_MODEL = "openai/openai/gpt-5.5";
 export const NEMOTRON_ULTRA_ADVISOR_MODEL = "nvidia/nvidia/nemotron-3-ultra";
@@ -368,6 +370,33 @@ export function missingRequiredAdvisorToolNames(
   return requiredToolNames.filter((toolName) => !successfulToolNames.has(toolName));
 }
 
+function finalToolCardinalityErrors(
+  turnName: string,
+  events: AdvisorTurnFlowEvent[],
+  toolName: string,
+): string[] {
+  const startCount = events.filter(
+    (event) => event.type === "tool_start" && event.toolName === toolName,
+  ).length;
+  const endCount = events.filter(
+    (event) => event.type === "tool_end" && event.toolName === toolName,
+  ).length;
+  const successfulEndCount = events.filter(
+    (event) => event.type === "tool_end" && event.toolName === toolName && !event.isError,
+  ).length;
+  const errors: string[] = [];
+  if (startCount !== 1) {
+    errors.push(`${turnName} must call ${toolName} exactly once (observed ${startCount} starts)`);
+  }
+  if (endCount !== 1 || successfulEndCount !== 1) {
+    errors.push(
+      `${turnName} must finish ${toolName} successfully exactly once ` +
+        `(observed ${successfulEndCount} successful of ${endCount} total completions)`,
+    );
+  }
+  return errors;
+}
+
 export function advisorTurnFlowErrors(
   turnName: string,
   events: AdvisorTurnFlowEvent[],
@@ -393,6 +422,7 @@ export function advisorTurnFlowErrors(
     }
   }
   for (const toolName of tools.requireTextBeforeToolNames) {
+    errors.push(...finalToolCardinalityErrors(turnName, events, toolName));
     const start = firstStart(toolName);
     if (firstText < 0 || start < firstText)
       errors.push(`${turnName} called ${toolName} before analysis`);
@@ -440,7 +470,10 @@ export async function runReadOnlyAdvisor(
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
-  const customTools = [...contextTools.customTools];
+  const customTools = [
+    ...createRepoConfinedReadOnlyTools(options.cwd),
+    ...contextTools.customTools,
+  ];
   const availableToolNames = new Set(READ_ONLY_TOOLS);
   for (const toolName of contextTools.allToolNames) availableToolNames.add(toolName);
   for (const tool of options.customTools ?? []) {

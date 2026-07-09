@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type AdvisorPromptTurn,
+  type AdvisorTurnFlowEvent,
   advisorTurnFlowErrors,
   createAdvisorContextToolRuntime,
   missingRequiredAdvisorToolNames,
@@ -20,6 +21,42 @@ function contextTurn(name: string, content: string): AdvisorPromptTurn {
     ],
   };
 }
+
+const ledgerToolName = "pr_review_update_ledger";
+const finalMutationTools = {
+  activeToolNames: [ledgerToolName],
+  requiredToolNames: [ledgerToolName],
+  requireToolsBeforeText: [],
+  requireTextBeforeToolNames: [ledgerToolName],
+};
+const analysisEvent: AdvisorTurnFlowEvent = { type: "text", text: "analysis" };
+const ledgerStart: AdvisorTurnFlowEvent = { type: "tool_start", toolName: ledgerToolName };
+const ledgerSuccess: AdvisorTurnFlowEvent = {
+  type: "tool_end",
+  toolName: ledgerToolName,
+  isError: false,
+};
+const ledgerFailure: AdvisorTurnFlowEvent = { ...ledgerSuccess, isError: true };
+const invalidFinalMutationFlows: Array<[string, AdvisorTurnFlowEvent[], string]> = [
+  ["an omitted call", [analysisEvent], "observed 0 starts"],
+  [
+    "duplicate starts",
+    [analysisEvent, ledgerStart, ledgerStart, ledgerSuccess],
+    "observed 2 starts",
+  ],
+  ["an omitted completion", [analysisEvent, ledgerStart], "0 successful of 0 total"],
+  [
+    "duplicate successful completions",
+    [analysisEvent, ledgerStart, ledgerSuccess, ledgerSuccess],
+    "2 successful of 2 total",
+  ],
+  ["a failed completion", [analysisEvent, ledgerStart, ledgerFailure], "0 successful of 1 total"],
+  [
+    "a failed duplicate completion",
+    [analysisEvent, ledgerStart, ledgerSuccess, ledgerFailure],
+    "1 successful of 2 total",
+  ],
+];
 
 describe("advisor session context tool flow", () => {
   it("keeps turn context inert until its real scoped tool is invoked (#6446)", async () => {
@@ -110,5 +147,13 @@ describe("advisor session context tool flow", () => {
         new Set(["pr_review_context", "pr_review_update_ledger"]),
       ),
     ).toEqual([]);
+  });
+
+  it.each(
+    invalidFinalMutationFlows,
+  )("rejects %s for a final mutation tool (#6446)", (_case, events, expectedError) => {
+    expect(advisorTurnFlowErrors("review", events, finalMutationTools).join("; ")).toContain(
+      expectedError,
+    );
   });
 });

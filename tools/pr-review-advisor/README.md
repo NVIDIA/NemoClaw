@@ -33,7 +33,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for each configured model variant: the primary GPT-5.5 lane and the Nemotron Ultra lane.
 8. Opens one Pi session per model variant and reviews the PR in seven bounded turns: scope/risk map, correctness/state, security/trust, tests/regressions, CI/operations, finding reconciliation, and final JSON synthesis. Each turn starts with its user instruction, then exposes only that turn's deterministic context as real read-only tools.
-9. Requires intermediate turns to emit concise analysis before submitting every stage finding in one atomic ledger batch. The batch schema rejects surplus fields and commits only when every operation succeeds, so one invalid operation leaves the ledger unchanged. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
+9. Requires intermediate turns to emit concise analysis, then finish with exactly one successful atomic ledger batch and no later prose or tool call. A missing, duplicate, failed, or out-of-order ledger call fails the turn. The batch schema rejects surplus fields and commits only when every operation succeeds, so one invalid operation leaves the ledger unchanged. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
 10. Treats open ledger records as the canonical finding set. Final synthesis cannot silently add, drop, merge, reword, or reclassify those findings.
 11. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript.
 12. Retries synthesis once when the model output is malformed, drifts from the ledger, or contains low-quality placeholder fields.
@@ -68,7 +68,7 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 
 - Static analysis only.
 - PR-provided scripts, tests, package lifecycle hooks, and build tools are never executed.
-- The advisor receives read-only repository tools plus deterministic context tools. Its only mutation tool updates the in-memory finding ledger; it cannot change repository or GitHub state.
+- The advisor receives repo-confined read-only repository tools plus deterministic context tools. Repository paths must remain inside the checked-out analysis workspace after lexical and symlink resolution. Its only mutation tool updates the in-memory finding ledger; it cannot change repository or GitHub state.
 - PR bodies, comments, titles, branch names, and diffs are treated as untrusted evidence, never as instructions.
 - Manual target analysis validates the repository token, decimal PR number, and base-ref token before running any `git` command.
 - Generated advisor credential config is written under `/tmp`, not uploaded artifacts.
