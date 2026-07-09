@@ -14,6 +14,42 @@ Update it whenever `requirements.lock` changes.
 
 The Dockerfile installs this lockfile with `pip3 install --require-hashes`, so this review covers the exact package versions selected for the managed image install.
 
+## Managed `fetch_url` Proxy Adapter
+
+Deep Agents Code `0.1.34` deliberately disables ambient proxies and resolves
+destination DNS locally before pinning the address used by `fetch_url`. That is
+the wrong transport inside a NemoClaw-managed sandbox: ordinary egress and
+destination resolution must pass through the policy proxy, so the direct path
+fails even when the same approved URL works through the managed route.
+
+NemoClaw owns the managed image, launchers, and policy boundary, but not the
+hash-locked third-party `fetch_url` implementation. The exact-version build
+patch therefore delegates only managed launches to a proxy URL independently
+derived from the image's root-owned host and port files. The runtime rejects a
+missing, unsafe, or mismatched file/environment contract, disables Requests'
+ambient proxy, `NO_PROXY`, netrc, and CA discovery, and supplies the verified
+proxy explicitly on every redirect hop. It separately validates the fixed,
+root-owned CA-bundle mount injected into the sandbox and passes it as explicit
+TLS transport trust; that bundle cannot select a proxy or authorize a
+destination. Imports outside the managed launcher retain the upstream direct
+DNS-pinning behavior.
+
+Redirect validation rejects authority userinfo (`user:password@host`). It does
+not treat `@` or `:` in a path segment as credentials: RFC 3986 defines those
+characters as ordinary path data, and coding tasks can legitimately encounter
+them in repository refs or filenames. Focused redirect coverage pins that
+distinction, while validation errors avoid echoing candidate URLs and the
+policy proxy remains authoritative for every destination.
+
+Focused tests patch the released wheel, exercise managed and unmanaged paths,
+reject forged proxy environments and malformed redirects, and prove that
+credential-bearing URLs are not reflected. The live Deep Agents Code egress
+check requires a nonempty 2xx response from an approved raw GitHub URL and
+denial for an unapproved host, cloud metadata, and loopback. Remove this adapter
+rather than refreshing it when a pinned Deep Agents Code release exposes a
+supported policy-proxy transport with equivalent redirect and fail-closed
+behavior.
+
 ## Released Nemotron 3 Ultra Profile
 
 Deep Agents Code `0.1.34` pins `deepagents==0.7.0a6`, whose official wheel

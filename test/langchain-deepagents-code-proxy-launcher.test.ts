@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { isValidProxyHost, isValidProxyPort } from "../src/lib/onboard/dockerfile-patch.ts";
+import { TRUSTED_FETCH_PROXY_ENV_NAME } from "./helpers/langchain-deepagents-code-headless.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const headlessCheckPath = path.join(
@@ -71,7 +72,7 @@ function makeLauncherProxyProbeFixture(
   const probePath = path.join(tempDir, "managed-dcode-probe.sh");
   const probe = [
     "#!/bin/bash -p",
-    "for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy OPENAI_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT NEMOCLAW_OBSERVABILITY; do",
+    `for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy OPENAI_PROXY ${TRUSTED_FETCH_PROXY_ENV_NAME} NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT NEMOCLAW_OBSERVABILITY; do`,
     '  printf \'LAUNCHER_%s=%s\\n\' "$name" "${!name-__unset__}"',
     "done",
     "",
@@ -226,6 +227,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     for (const name of PROXY_URL_ENV_NAMES) {
       expect(lines).toContain(`LAUNCHER_${name}=${managedProxy}`);
     }
+    expect(lines).toContain(`LAUNCHER_${TRUSTED_FETCH_PROXY_ENV_NAME}=${managedProxy}`);
     for (const name of NO_PROXY_ENV_NAMES) {
       expect(lines).toContain(`LAUNCHER_${name}=${managedNoProxy}`);
     }
@@ -364,6 +366,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"',
     );
     expect(launcher).toContain('export HTTPS_PROXY="$_PROXY_URL"');
+    expect(launcher).toContain('export DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL="$_PROXY_URL"');
     expect(launcher).toContain('export no_proxy="$_NO_PROXY_VAL"');
     expect(launcher).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
   });
@@ -379,6 +382,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
       all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
       OPENAI_PROXY: "http://openai-user:openai-password@attacker.example:8080",
+      DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL: "http://attacker-proxy.internal:4444",
       NEMOCLAW_PROXY_HOST: "attacker-proxy.internal",
       NEMOCLAW_PROXY_PORT: "4444",
     };
@@ -407,6 +411,12 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       "START_PROXY=http://trusted-proxy.internal:3129|localhost,127.0.0.1,::1,trusted-proxy.internal|__unset__|__unset__|__unset__|__unset__",
     );
     expect(envFileText).toContain("export HTTPS_PROXY=http://trusted-proxy.internal:3129");
+    expect(envFileText).toContain(
+      "export DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL=http://trusted-proxy.internal:3129",
+    );
+    expect(launcherResult.stdout).toContain(
+      "LAUNCHER_DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL=http://trusted-proxy.internal:3129",
+    );
     expect(envFileText).toContain(
       "export NO_PROXY=localhost\\,127.0.0.1\\,::1\\,trusted-proxy.internal",
     );
