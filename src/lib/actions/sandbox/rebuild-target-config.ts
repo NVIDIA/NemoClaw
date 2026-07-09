@@ -114,11 +114,20 @@ export function prepareRebuildTargetConfig(
   bail: RebuildBail,
   requestedToolDisclosure?: ToolDisclosure,
   allowLegacyManagedImageRecovery = false,
+  rebuildTransactionId?: string,
+  rebuildImageFingerprint?: string,
+  rebuildConfigurationFingerprint?: string,
 ): RebuildTargetConfig | null {
   const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
   if (!resumeConfig) return null;
   const sessionSnapshot = onboardSession.loadSession();
-  const sessionMatchesSandbox = sessionSnapshot?.sandboxName === sandboxName;
+  const sessionMatchesSandbox =
+    sessionSnapshot?.sandboxName === sandboxName &&
+    (!rebuildTransactionId ||
+      (sessionSnapshot.metadata.rebuildTransactionId === rebuildTransactionId &&
+        sessionSnapshot.metadata.rebuildImageFingerprint === rebuildImageFingerprint &&
+        sessionSnapshot.metadata.rebuildConfigurationFingerprint ===
+          rebuildConfigurationFingerprint));
   const durableConfig = resolveRebuildDurableConfig(
     sandboxName,
     sb,

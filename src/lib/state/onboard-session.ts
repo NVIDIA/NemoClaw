@@ -80,6 +80,10 @@ export interface SessionFailure {
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
+  /** Internal correlation for one durable rebuild generation; never user supplied. */
+  rebuildTransactionId?: string | null;
+  rebuildImageFingerprint?: string | null;
+  rebuildConfigurationFingerprint?: string | null;
 }
 
 export interface OnboardMachineSnapshot {
@@ -198,7 +202,13 @@ export interface SessionUpdates {
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
-  metadata?: { gatewayName?: string; fromDockerfile?: string | null };
+  metadata?: {
+    gatewayName?: string;
+    fromDockerfile?: string | null;
+    rebuildTransactionId?: string | null;
+    rebuildImageFingerprint?: string | null;
+    rebuildConfigurationFingerprint?: string | null;
+  };
 }
 
 export interface DebugSessionSummary {
@@ -326,6 +336,9 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
+    rebuildTransactionId: readString(value.rebuildTransactionId),
+    rebuildImageFingerprint: readString(value.rebuildImageFingerprint),
+    rebuildConfigurationFingerprint: readString(value.rebuildConfigurationFingerprint),
   };
 }
 
@@ -490,6 +503,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
+      rebuildTransactionId: overrides.metadata?.rebuildTransactionId ?? null,
+      rebuildImageFingerprint: overrides.metadata?.rebuildImageFingerprint ?? null,
+      rebuildConfigurationFingerprint: overrides.metadata?.rebuildConfigurationFingerprint ?? null,
     },
     machine:
       parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??

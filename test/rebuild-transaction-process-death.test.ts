@@ -58,6 +58,7 @@ describe("rebuild process-death recovery", () => {
       roots.push(root);
       const stateDir = path.join(root, "state");
       const eventsFile = path.join(root, "events.log");
+      const replacementFile = path.join(root, "replacement.json");
       const fixtureEnv = {
         ...process.env,
         HOME: root,
@@ -65,6 +66,7 @@ describe("rebuild process-death recovery", () => {
         NEMOCLAW_REBUILD_PROCESS_PHASE: phase,
         NEMOCLAW_REBUILD_PROCESS_STATE_DIR: stateDir,
         NEMOCLAW_REBUILD_PROCESS_EVENTS: eventsFile,
+        NEMOCLAW_REBUILD_PROCESS_REPLACEMENT: replacementFile,
       };
       const interrupted = await runChild(
         {
@@ -86,7 +88,63 @@ describe("rebuild process-death recovery", () => {
       const resumed = await runChild(resumeEnv, false);
 
       expect(resumed.code, resumed.output).toBe(0);
-      expect(fs.readFileSync(eventsFile, "utf8").trim().split("\n")).toEqual(["delete"]);
+      const events = fs.readFileSync(eventsFile, "utf8").trim().split("\n");
+      expect(events.filter((event) => event === "delete")).toHaveLength(1);
+      expect(events.filter((event) => event === "create")).toHaveLength(1);
+      expect(new RebuildTransactionStore({ stateDir }).load("alpha")).toMatchObject({
+        status: "completed",
+        phase: "completed",
+      });
+    }, 120_000);
+  }
+
+  for (const phase of [
+    "replacement_unjournaled",
+    "replacement_created",
+    "state_restored",
+    "required_verified",
+  ] as const) {
+    it(`converges after SIGKILL at ${phase} without duplicate replacement creation (#6436)`, async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-process-"));
+      roots.push(root);
+      const stateDir = path.join(root, "state");
+      const eventsFile = path.join(root, "events.log");
+      const replacementFile = path.join(root, "replacement.json");
+      const fixtureEnv = {
+        ...process.env,
+        HOME: root,
+        NEMOCLAW_REBUILD_PROCESS_FIXTURE: root,
+        NEMOCLAW_REBUILD_PROCESS_PHASE: phase,
+        NEMOCLAW_REBUILD_PROCESS_STATE_DIR: stateDir,
+        NEMOCLAW_REBUILD_PROCESS_EVENTS: eventsFile,
+        NEMOCLAW_REBUILD_PROCESS_REPLACEMENT: replacementFile,
+      };
+      const interrupted = await runChild(
+        {
+          ...fixtureEnv,
+          NEMOCLAW_REBUILD_PROCESS_ROLE: "interrupt",
+          NEMOCLAW_E2E_FAILURE_INJECTION: "1",
+          NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: `rebuild_${phase}`,
+        },
+        true,
+      );
+      expect(interrupted.signal, interrupted.output).toBe("SIGKILL");
+
+      const resumeEnv: NodeJS.ProcessEnv = {
+        ...fixtureEnv,
+        NEMOCLAW_REBUILD_PROCESS_ROLE: "resume",
+      };
+      delete resumeEnv.NEMOCLAW_E2E_FAILURE_INJECTION;
+      delete resumeEnv.NEMOCLAW_E2E_FORCE_FAIL_AT_STEP;
+      const resumed = await runChild(resumeEnv, false);
+
+      expect(resumed.code, resumed.output).toBe(0);
+      const events = fs.readFileSync(eventsFile, "utf8").trim().split("\n");
+      expect(events.filter((event) => event === "delete")).toHaveLength(1);
+      expect(events.filter((event) => event === "create")).toHaveLength(1);
+      expect(events.filter((event) => event === "restore")).toHaveLength(
+        phase === "state_restored" || phase === "required_verified" ? 2 : 1,
+      );
       expect(new RebuildTransactionStore({ stateDir }).load("alpha")).toMatchObject({
         status: "completed",
         phase: "completed",

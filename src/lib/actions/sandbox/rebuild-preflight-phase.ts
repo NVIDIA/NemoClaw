@@ -5,6 +5,7 @@ import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { redactFull } from "../../security/redact";
+import * as onboardSession from "../../state/onboard-session";
 import {
   type RebuildRegistryRecoveryV1,
   type RebuildTransactionRecordV1,
@@ -43,7 +44,6 @@ import {
   acquireRebuildOnboardLock,
   assertRebuildEntryUnchanged,
   checkRebuildGatewaySchemaPreflight,
-  getRebuildSandboxEntryOrBail,
   isSingleAgentRebuildSupported,
   runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
@@ -54,6 +54,12 @@ import {
   validatePreparedRecoveryManifest,
 } from "./rebuild-prepared-recovery";
 import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
+import {
+  decideRebuildRecovery,
+  observeRebuildRegistry,
+  observeRebuildSession,
+  type RebuildRecoveryAction,
+} from "./rebuild-recovery";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 import {
   fingerprintRebuildRegistryEntry,
@@ -62,6 +68,7 @@ import {
 
 export interface RebuildPreflightPhaseResult {
   transaction: RebuildTransactionRecordV1 | null;
+  recoveryAction: RebuildRecoveryAction | null;
   registryRecovery: RebuildRegistryRecoveryV1;
   sandboxEntry: RebuildSandboxEntry;
   rebuildAgent: string | null;
@@ -110,16 +117,29 @@ export async function runRebuildPreflightPhase(
   }
   const activeTransaction = recovery.transaction?.status === "active" ? recovery.transaction : null;
   if (activeTransaction) {
-    const expectedRegistry = activeTransaction.intent.source.registryRecovery;
-    const currentEntry = registry.getSandbox(sandboxName);
-    if (!currentEntry) {
-      const restored = registry.restoreRebuildRegistryRecoveryIfMissing(expectedRegistry);
-      if (restored) log("Restored missing registry recovery metadata from the rebuild journal");
-    }
-    const recoveredEntry = registry.getSandbox(sandboxName);
+    log(`Loaded durable rebuild transaction at '${activeTransaction.phase}'`);
+  }
+  if (
+    activeTransaction &&
+    activeTransaction.phase !== "prepared" &&
+    ((requestedToolDisclosure !== undefined &&
+      requestedToolDisclosure !== activeTransaction.intent.target.toolDisclosure) ||
+      (requestedObservabilityEnabled !== undefined &&
+        requestedObservabilityEnabled !== activeTransaction.intent.target.observabilityEnabled))
+  ) {
+    printRebuildPreflightFailure(
+      `rebuild transaction '${activeTransaction.transactionId}' intent changed after deletion.`,
+      "Retry without target overrides so recovery uses the original durable intent.",
+      "Rebuild transaction intent changed",
+      bail,
+    );
+    return null;
+  }
+  const observedRegistryEntry = registry.getSandbox(sandboxName);
+  if (activeTransaction?.phase === "prepared") {
     if (
-      !recoveredEntry ||
-      fingerprintRebuildRegistryEntry(recoveredEntry) !==
+      !observedRegistryEntry ||
+      fingerprintRebuildRegistryEntry(observedRegistryEntry) !==
         activeTransaction.intent.source.registryFingerprint
     ) {
       printRebuildPreflightFailure(
@@ -132,10 +152,16 @@ export async function runRebuildPreflightPhase(
     }
   }
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
-  const initialSandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
-  if (!initialSandboxEntry) return null;
+  const initialSandboxEntry = activeTransaction
+    ? (activeTransaction.intent.source.registryRecovery.entry as RebuildSandboxEntry)
+    : (observedRegistryEntry as RebuildSandboxEntry | null);
+  if (!initialSandboxEntry) {
+    console.error(`  Sandbox '${sandboxName}' not found in registry.`);
+    bail(`Sandbox '${sandboxName}' not found in registry.`);
+    return null;
+  }
   let sandboxEntry = initialSandboxEntry;
-  const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
+  const confirmedEntrySnapshot = JSON.stringify(observedRegistryEntry);
   const allowLegacyManagedImageRecovery =
     (opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true) ||
     (recovery.transaction?.status === "active" &&
@@ -193,6 +219,39 @@ export async function runRebuildPreflightPhase(
     let retainOnboardLock = false;
     try {
       assertRebuildEntryUnchanged(sandboxName, confirmedEntrySnapshot, bail);
+      let recoveryAction: RebuildRecoveryAction | null = null;
+      const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
+      if (!liveState) return null;
+      if (
+        activeTransaction &&
+        (activeTransaction.phase === "old_deleted" ||
+          activeTransaction.phase === "replacement_created")
+      ) {
+        const lockedEntry = registry.getSandbox(sandboxName);
+        const decision = decideRebuildRecovery({
+          transaction: activeTransaction,
+          live: liveState.observation,
+          registry: observeRebuildRegistry(activeTransaction, lockedEntry),
+          session: observeRebuildSession(activeTransaction, onboardSession.loadSession()),
+        });
+        log(`Durable rebuild recovery decision: ${decision.action}`);
+        if (decision.action === "refuse") {
+          printRebuildPreflightFailure(
+            `the observed replacement cannot be proven to belong to rebuild transaction '${activeTransaction.transactionId}' (${decision.code}).`,
+            "Inspect the live sandbox, registry row, onboarding session, and validated backup; no recovery side effect was attempted.",
+            "Rebuild replacement recovery failed",
+            bail,
+          );
+          return null;
+        }
+        recoveryAction = decision.action;
+        if (decision.action === "create" && !lockedEntry) {
+          const restored = registry.restoreRebuildRegistryRecoveryIfMissing(
+            activeTransaction.intent.source.registryRecovery,
+          );
+          if (restored) log("Restored missing registry recovery metadata from the rebuild journal");
+        }
+      }
       const lockedRegistry = registry.load();
       const lockedRegistryEntry = lockedRegistry.sandboxes[sandboxName];
       if (!lockedRegistryEntry) {
@@ -204,8 +263,6 @@ export async function runRebuildPreflightPhase(
         wasDefault: lockedRegistry.defaultSandbox === sandboxName,
         defaultSelectionRevision: lockedRegistry.defaultSelectionRevision ?? 0,
       };
-      const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
-      if (!liveState) return null;
       const mcpPreflight = await preflightMcpRebuildState(
         sandboxEntry,
         liveState.staleRecovery,
@@ -221,14 +278,6 @@ export async function runRebuildPreflightPhase(
       const effectiveRecoveryManifest = preparedTransactionNeedsFreshBackup
         ? null
         : recoveryManifest;
-      if (
-        recovery.transaction?.status === "active" &&
-        recovery.transaction.phase === "old_deleted" &&
-        !liveState.staleRecovery
-      ) {
-        bail("A replacement sandbox exists while the rebuild transaction still owns recovery.");
-        return null;
-      }
       const preparedTarget = await prepareRebuildTargetPreflights({
         sandboxName,
         sandboxEntry,
@@ -244,13 +293,28 @@ export async function runRebuildPreflightPhase(
         // endpoint, credential, image, and registry checks still run before
         // deletion; ordinary rebuilds continue to require the live bindings.
         preparedBackupRecovery: effectiveRecoveryManifest !== null,
+        rebuildTransactionId: activeTransaction?.transactionId,
+        rebuildImageFingerprint: activeTransaction?.intent.target.imageFingerprint,
+        rebuildConfigurationFingerprint: activeTransaction?.intent.target.configurationFingerprint,
+        replacementAlreadyPresent: recoveryAction === "adopt" || recoveryAction === "resume",
         log,
         bail,
       });
       if (!preparedTarget) return null;
       preparedImage = preparedTarget.preparedImage;
+      // The target preflight publishes normalized provider/config fields to
+      // the registry. Carry that authoritative row into the final pre-delete
+      // revalidation instead of retaining the transaction's source snapshot.
+      if (activeTransaction) {
+        sandboxEntry =
+          (registry.getSandbox(sandboxName) as RebuildSandboxEntry | null) ?? sandboxEntry;
+      }
 
-      if (isDcodeRebuildAgent(rebuildAgent)) {
+      if (
+        isDcodeRebuildAgent(rebuildAgent) &&
+        recoveryAction !== "adopt" &&
+        recoveryAction !== "resume"
+      ) {
         const recoveryRecreate = liveState.staleRecovery || effectiveRecoveryManifest !== null;
         const imageReady = await dcodePreflight.prepareImage(
           preparedTarget.targetConfig.resumeConfig,
@@ -284,6 +348,7 @@ export async function runRebuildPreflightPhase(
       retainPreparedImage = true;
       return {
         transaction: recovery.transaction,
+        recoveryAction,
         registryRecovery,
         sandboxEntry,
         rebuildAgent,

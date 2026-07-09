@@ -32,6 +32,7 @@ export interface RebuildDestroyPhaseInput {
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
   oldSandboxAlreadyDeleted?: boolean;
+  replacementAlreadyCreated?: boolean;
   onDeleted: () => Promise<void> | void;
 }
 
@@ -52,8 +53,14 @@ export async function runRebuildDestroyPhase(
     relockShieldsIfNeeded,
     validateAfterMcpPreparation,
     oldSandboxAlreadyDeleted,
+    replacementAlreadyCreated,
     onDeleted,
   } = input;
+
+  if (replacementAlreadyCreated) {
+    log("Rebuild journal owns the live replacement; skipping old-sandbox teardown");
+    return prepareMcpForRebuild(sandboxName, true, relockShieldsIfNeeded, bail);
+  }
 
   // Step 3: Delete sandbox without tearing down gateway or session.
   // sandboxDestroy() cleans up the gateway when it's the last sandbox and

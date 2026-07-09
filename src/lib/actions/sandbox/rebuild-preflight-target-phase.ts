@@ -53,6 +53,10 @@ export async function prepareRebuildTargetPreflights(args: {
   requestedObservabilityEnabled?: boolean;
   allowLegacyManagedImageRecovery?: boolean;
   preparedBackupRecovery?: boolean;
+  rebuildTransactionId?: string;
+  rebuildImageFingerprint?: string;
+  rebuildConfigurationFingerprint?: string;
+  replacementAlreadyPresent?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
@@ -65,6 +69,10 @@ export async function prepareRebuildTargetPreflights(args: {
     requestedObservabilityEnabled,
     allowLegacyManagedImageRecovery,
     preparedBackupRecovery,
+    rebuildTransactionId,
+    rebuildImageFingerprint,
+    rebuildConfigurationFingerprint,
+    replacementAlreadyPresent,
     log,
     bail,
   } = args;
@@ -80,6 +88,9 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
     requestedToolDisclosure,
     allowLegacyManagedImageRecovery,
+    rebuildTransactionId,
+    rebuildImageFingerprint,
+    rebuildConfigurationFingerprint,
   );
   if (!targetConfig) return null;
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;
@@ -148,12 +159,13 @@ export async function prepareRebuildTargetPreflights(args: {
   if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)) return null;
 
   const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
-  const baseImagePreflight = rebuildsDcodeSandbox
-    ? { ok: true, imageRef: null, overrideEnvVar: null }
-    : ensureRebuildAgentBaseImage(rebuildAgent, bail, {
-        resolutionHint: baseImageResolutionHint,
-        forceBaseImageRefresh,
-      });
+  const baseImagePreflight =
+    rebuildsDcodeSandbox || replacementAlreadyPresent
+      ? { ok: true, imageRef: null, overrideEnvVar: null }
+      : ensureRebuildAgentBaseImage(rebuildAgent, bail, {
+          resolutionHint: baseImageResolutionHint,
+          forceBaseImageRefresh,
+        });
   if (!baseImagePreflight.ok) return null;
   const restoreBaseImageOverride = pinRebuildAgentBaseImageForRecreate(baseImagePreflight);
   let targetRuntimePreflight: Awaited<ReturnType<typeof preflightRebuildTargetRuntime>> = {
@@ -168,7 +180,7 @@ export async function prepareRebuildTargetPreflights(args: {
       bail,
       {
         allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
-        skipImagePreflight: rebuildsDcodeSandbox,
+        skipImagePreflight: rebuildsDcodeSandbox || replacementAlreadyPresent,
       },
     );
   } finally {

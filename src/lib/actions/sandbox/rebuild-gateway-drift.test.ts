@@ -194,7 +194,7 @@ describe("rebuild gateway drift preflight", () => {
 
     const result = await resolveRebuildLiveState("alpha", entry, behaviorLog, bail);
 
-    expect(result).toEqual({ staleRecovery: true });
+    expect(result).toEqual({ staleRecovery: true, observation: "absent" });
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledTimes(2);
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenNthCalledWith(1, {
       gatewayName,

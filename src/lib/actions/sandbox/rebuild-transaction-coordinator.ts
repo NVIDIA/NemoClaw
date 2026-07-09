@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import crypto from "node:crypto";
-
-import { CLI_NAME } from "../../cli/branding";
 import {
   type RebuildRegistryRecoveryV1,
   type RebuildTransactionIntentV1,
@@ -14,27 +11,15 @@ import * as sandboxState from "../../state/sandbox";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
-import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 import type { RebuildPostRestoreVerification } from "./rebuild-post-restore-phase";
+import type { RebuildTargetConfig } from "./rebuild-target-preflight";
+import {
+  fingerprintRebuildRegistryEntry,
+  fingerprintRebuildReplacement,
+  fingerprintRebuildValue,
+} from "./rebuild-transaction-fingerprint";
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-export function fingerprintRebuildValue(value: unknown): string {
-  return `sha256:${crypto.createHash("sha256").update(stableJson(value)).digest("hex")}`;
-}
-
-export function fingerprintRebuildRegistryEntry(value: RebuildSandboxEntry): string {
-  return fingerprintRebuildValue(JSON.parse(JSON.stringify(value)));
-}
+export { fingerprintRebuildRegistryEntry, fingerprintRebuildValue };
 
 export function loadRebuildRecovery(
   store: RebuildTransactionStore,
@@ -63,16 +48,6 @@ export function loadRebuildRecovery(
   ) {
     throw new Error(
       `Rebuild transaction '${transaction.transactionId}' no longer matches the latest validated backup.`,
-    );
-  }
-  // Recovery boundary: NemoClaw has a durable replacement receipt but
-  // OpenShell cannot yet prove that the replacement is complete and owns the
-  // recorded identity. The boundary test covers crash-after-create and the
-  // actionable snapshot guidance. Remove this stop only when replacement
-  // identity can be verified safely enough to resume post-restore work.
-  if (transaction.phase === "replacement_created") {
-    throw new Error(
-      `Rebuild transaction '${transaction.transactionId}' already created a replacement, so this phase cannot be resumed automatically in #6435. Inspect the replacement before changing it. Validated backup: ${recoveryManifest.backupPath}. If state restoration is needed, run '${CLI_NAME} ${sandboxName} snapshot restore "${recoveryManifest.timestamp}"'.`,
     );
   }
   return { transaction, recoveryManifest };
@@ -173,6 +148,18 @@ export class RebuildTransactionCoordinator {
     return this.transaction?.phase ?? null;
   }
 
+  get transactionId(): string | null {
+    return this.transaction?.transactionId ?? null;
+  }
+
+  get imageFingerprint(): string | null {
+    return this.transaction?.intent.target.imageFingerprint ?? null;
+  }
+
+  get configurationFingerprint(): string | null {
+    return this.transaction?.intent.target.configurationFingerprint ?? null;
+  }
+
   async prepare(
     args: Omit<
       Parameters<typeof prepareRebuildTransaction>[0],
@@ -222,7 +209,7 @@ export class RebuildTransactionCoordinator {
       {
         ...this.transaction.receipts,
         replacement: {
-          identityFingerprint: fingerprintRebuildValue(identity),
+          identityFingerprint: fingerprintRebuildReplacement(identity as RebuildSandboxEntry),
           observedAt: new Date().toISOString(),
         },
       },

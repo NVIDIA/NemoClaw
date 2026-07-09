@@ -38,7 +38,7 @@ describe("rebuild transaction boundary", () => {
     });
   });
 
-  it("fails closed with recovery guidance after replacement creation", async () => {
+  it("resumes a correlated replacement without creating or deleting again (#6436)", async () => {
     const interrupted = createRebuildFlowHarness();
     vi.spyOn(interrupted.transactionStore, "complete").mockRejectedValueOnce(
       new Error("simulated process interruption after replacement creation"),
@@ -49,28 +49,129 @@ describe("rebuild transaction boundary", () => {
         recoveryManifest: makePreparedRecoveryManifest(),
       }),
     ).rejects.toThrow("simulated process interruption after replacement creation");
-    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+    const interruptedRecord = interrupted.transactionStore.load("alpha");
+    expect(interruptedRecord).toMatchObject({
       status: "active",
       phase: "replacement_created",
     });
 
-    const resumed = createRebuildFlowHarness();
+    const resumed = createRebuildFlowHarness({
+      sandboxEntry: { policyPresetsFinalized: true },
+      sessionRebuildTransactionId: interruptedRecord?.transactionId,
+      sessionRebuildImageFingerprint: interruptedRecord?.intent.target.imageFingerprint,
+      sessionRebuildConfigurationFingerprint:
+        interruptedRecord?.intent.target.configurationFingerprint,
+    });
     resumed.runOpenshellSpy.mockClear();
-    await expect(
-      resumed.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        transactionStore: interrupted.transactionStore,
-      }),
-    ).rejects.toThrow("Rebuild transaction recovery failed");
+    resumed.onboardSpy.mockClear();
+    await resumed.rebuildSandbox("alpha", ["--yes"], {
+      throwOnError: true,
+      transactionStore: interrupted.transactionStore,
+    });
 
-    expect(resumed.errorSpy.mock.calls.flat().join("\n")).toMatch(
-      /cannot be resumed automatically.*snapshot restore/,
-    );
     expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(resumed.onboardSpy, resumed.logSpy.mock.calls.flat().join("\n")).not.toHaveBeenCalled();
     expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      status: "completed",
+      phase: "completed",
+    });
+  });
+
+  it("adopts a correlated replacement created before receipt publication (#6436)", async () => {
+    const interrupted = createRebuildFlowHarness();
+    const transition = interrupted.transactionStore.transition.bind(interrupted.transactionStore);
+    const interruptedTransition = vi
+      .spyOn(interrupted.transactionStore, "transition")
+      .mockImplementation(async (sandboxName, revision, phase, receipts) => {
+        if (phase === "replacement_created") {
+          throw new Error("simulated process interruption before replacement receipt");
+        }
+        return transition(sandboxName, revision, phase, receipts);
+      });
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("simulated process interruption before replacement receipt");
+    const interruptedRecord = interrupted.transactionStore.load("alpha");
+    expect(interruptedRecord).toMatchObject({ status: "active", phase: "old_deleted" });
+    interruptedTransition.mockRestore();
+
+    const resumed = createRebuildFlowHarness({
+      sandboxEntry: {
+        credentialEnv: null,
+        observabilityEnabled: false,
+        policyPresetsFinalized: true,
+        toolDisclosure: "progressive",
+      },
+      sessionRebuildTransactionId: interruptedRecord?.transactionId,
+      sessionRebuildImageFingerprint: interruptedRecord?.intent.target.imageFingerprint,
+      sessionRebuildConfigurationFingerprint:
+        interruptedRecord?.intent.target.configurationFingerprint,
+    });
+    resumed.onboardSpy.mockClear();
+    resumed.runOpenshellSpy.mockClear();
+
+    await resumed.rebuildSandbox("alpha", ["--yes"], {
+      throwOnError: true,
+      transactionStore: interrupted.transactionStore,
+    });
+
+    expect(resumed.onboardSpy).not.toHaveBeenCalled();
+    expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      status: "completed",
+      phase: "completed",
+      receipts: { replacement: expect.any(Object) },
+    });
+  });
+
+  it("recreates a receipted replacement that is now absent (#6436)", async () => {
+    const interrupted = createRebuildFlowHarness();
+    vi.spyOn(interrupted.transactionStore, "complete").mockRejectedValueOnce(
+      new Error("simulated process interruption after replacement creation"),
+    );
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("simulated process interruption after replacement creation");
+    const interruptedRecord = interrupted.transactionStore.load("alpha");
+
+    const resumed = createRebuildFlowHarness({
+      staleRecovery: true,
+      sandboxEntry: { policyPresetsFinalized: true },
+      sessionRebuildTransactionId: interruptedRecord?.transactionId,
+      sessionRebuildImageFingerprint: interruptedRecord?.intent.target.imageFingerprint,
+      sessionRebuildConfigurationFingerprint:
+        interruptedRecord?.intent.target.configurationFingerprint,
+    });
+    resumed.onboardSpy.mockClear();
+    resumed.runOpenshellSpy.mockClear();
+
+    await resumed.rebuildSandbox("alpha", ["--yes"], {
+      throwOnError: true,
+      transactionStore: interrupted.transactionStore,
+    });
+
+    expect(resumed.onboardSpy).toHaveBeenCalledOnce();
+    expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      status: "completed",
+      phase: "completed",
+    });
   });
 
   it("does not create a transaction when backup fails", async () => {
@@ -292,7 +393,7 @@ describe("rebuild transaction boundary", () => {
         throwOnError: true,
         transactionStore: interrupted.transactionStore,
       }),
-    ).rejects.toThrow("Rebuild registry recovery failed");
+    ).rejects.toThrow("Rebuild replacement recovery failed");
 
     expect(resumed.restoreRebuildRegistryRecoveryIfMissingSpy).not.toHaveBeenCalled();
     expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();

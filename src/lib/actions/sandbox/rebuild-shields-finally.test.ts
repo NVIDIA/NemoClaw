@@ -39,7 +39,7 @@ describe("rebuild shields relock guard", () => {
       sandboxEntry: { name: "alpha", customPolicies: [] },
       targetConfig: { durableConfig: { webSearchConfig: null } },
       recreateOptions: { observabilityEnabled: false },
-      liveState: { staleRecovery: false },
+      liveState: { staleRecovery: false, observation: "ready" },
       recoveryManifest: null,
       dcodePreflight: { cleanup: cleanupDcodePreflight },
       preparedImage: null,

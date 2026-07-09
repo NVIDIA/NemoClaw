@@ -59,6 +59,9 @@ export type RebuildFlowOverrides = {
   registryEntryMissing?: boolean;
   sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
+  sessionRebuildTransactionId?: string;
+  sessionRebuildImageFingerprint?: string;
+  sessionRebuildConfigurationFingerprint?: string;
   sandboxListOutput?: string;
   defaultSandbox?: string | null;
   preDeleteSandboxEntry?: Record<string, unknown>;

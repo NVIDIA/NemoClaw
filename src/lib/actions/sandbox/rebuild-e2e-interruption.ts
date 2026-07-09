@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** Testing-only process-death checkpoint; inert unless the shared E2E gate is enabled. */
-export function maybePauseForRebuildInterruption(phase: "prepared" | "delete_unjournaled"): void {
+export type RebuildInterruptionPhase =
+  | "delete_unjournaled"
+  | "prepared"
+  | "replacement_created"
+  | "replacement_unjournaled"
+  | "required_verified"
+  | "state_restored";
+
+export function maybePauseForRebuildInterruption(phase: RebuildInterruptionPhase): void {
   if (process.env.VITEST !== "true") return;
   const fixtureRoot = process.env.NEMOCLAW_REBUILD_PROCESS_FIXTURE;
   if (!fixtureRoot || fixtureRoot !== process.env.HOME) return;

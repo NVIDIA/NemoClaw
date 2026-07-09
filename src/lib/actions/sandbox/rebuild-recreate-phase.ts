@@ -13,6 +13,7 @@ import * as registry from "../../state/registry";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
+import { maybePauseForRebuildInterruption } from "./rebuild-e2e-interruption";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
 import {
   pinRebuildAgentBaseImageForRecreate,
@@ -54,6 +55,10 @@ export interface RebuildRecreatePhaseInput {
   mcpEntries: McpRebuildPreparation["entries"];
   rebuildShieldsWindow: RebuildShieldsWindow;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
+  replacementAlreadyCreated?: boolean;
+  rebuildTransactionId: string | null;
+  rebuildImageFingerprint: string | null;
+  rebuildConfigurationFingerprint: string | null;
   onCreated: () => Promise<void> | void;
   onFailed?: () => Promise<void> | void;
   log: RebuildLog;
@@ -88,11 +93,17 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     mcpEntries: rebuildMcpEntries,
     rebuildShieldsWindow,
     relockShieldsIfNeeded,
+    replacementAlreadyCreated,
+    rebuildTransactionId,
+    rebuildImageFingerprint,
+    rebuildConfigurationFingerprint,
     onCreated,
     onFailed,
     log,
     bail,
   } = input;
+
+  if (replacementAlreadyCreated) return true;
 
   console.log("");
   console.log("  Creating new sandbox with current image...");
@@ -123,6 +134,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
+          rebuildTransactionId,
+          rebuildImageFingerprint,
+          rebuildConfigurationFingerprint,
         },
       }),
     );
@@ -203,7 +217,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     else process.env.NEMOCLAW_SANDBOX_NAME = previousSandboxName;
   }
 
-  if (!onboardFailed) await onCreated();
+  if (!onboardFailed) {
+    maybePauseForRebuildInterruption("replacement_unjournaled");
+    await onCreated();
+    maybePauseForRebuildInterruption("replacement_created");
+  }
   if (onboardFailed) {
     try {
       await onFailed?.();

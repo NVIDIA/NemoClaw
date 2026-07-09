@@ -73,6 +73,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const transactionStore = new RebuildTransactionStore({ stateDir: transactionStateDir });
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
+  if (overrides.sessionRebuildTransactionId) {
+    (session.metadata as Record<string, unknown>).rebuildTransactionId =
+      overrides.sessionRebuildTransactionId;
+    (session.metadata as Record<string, unknown>).rebuildImageFingerprint =
+      overrides.sessionRebuildImageFingerprint;
+    (session.metadata as Record<string, unknown>).rebuildConfigurationFingerprint =
+      overrides.sessionRebuildConfigurationFingerprint;
+  }
   const rebuildShieldsWindow = {
     relocked: false,
     wasLocked: overrides.shieldsWasLocked ?? false,

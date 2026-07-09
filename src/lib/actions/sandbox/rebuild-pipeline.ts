@@ -86,6 +86,7 @@ async function rebuildSandboxUnlocked(
   if (!preflight) return;
   const {
     transaction: recoveredTransaction,
+    recoveryAction,
     registryRecovery,
     sandboxEntry,
     rebuildAgent,
@@ -119,12 +120,18 @@ async function rebuildSandboxUnlocked(
     fromDockerfile,
   } = targetConfig;
   const { staleRecovery } = liveState;
+  const intentSandboxEntry =
+    recoveredTransaction?.status === "active"
+      ? recoveredTransaction.intent.source.registryRecovery.entry
+      : sandboxEntry;
   const preservedCustomPolicies = (sandboxEntry.customPolicies ?? []).map((entry) => ({
     ...entry,
   }));
   let recoveryManifest = validatedRecoveryManifest;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
+  const replacementAlreadyPresent = recoveryAction === "adopt" || recoveryAction === "resume";
+  if (recoveryAction) log(`Durable rebuild recovery selected '${recoveryAction}'`);
   try {
     const shieldsPhase = runRebuildShieldsPhase(
       sandboxName,
@@ -142,7 +149,7 @@ async function rebuildSandboxUnlocked(
       recoveredTransaction?.status === "active"
         ? recoveredTransaction.intent.source.shieldsLocked
         : staleSandboxWasLocked || rebuildShieldsWindow.wasLocked;
-    let sandboxStillExists = true;
+    let sandboxStillExists = !staleRecovery;
 
     try {
       recoveryManifest = revalidatePreparedRecoveryBeforeDelete(
@@ -173,7 +180,11 @@ async function rebuildSandboxUnlocked(
 
       // Revalidate the retained image context at the last safe point before
       // the destructive boundary.
-      if (preparedImage && !verifyPreparedBuildContext(preparedImage)) {
+      if (
+        !replacementAlreadyPresent &&
+        preparedImage &&
+        !verifyPreparedBuildContext(preparedImage)
+      ) {
         printRebuildPreflightFailure(
           "the retained replacement image context changed after preflight.",
           "Retry the rebuild so the replacement inputs can be staged again.",
@@ -186,6 +197,7 @@ async function rebuildSandboxUnlocked(
       // Revalidate DCode's replacement and inference route before MCP scrub,
       // provider detach, NIM stop, or sandbox deletion.
       if (
+        !replacementAlreadyPresent &&
         !(await dcodePreflight.revalidateBeforeDelete(
           resumeConfig,
           durableConfig.toolDisclosure,
@@ -198,23 +210,34 @@ async function rebuildSandboxUnlocked(
 
       // Journal creation follows the immutable backup: failure can orphan a
       // backup, but cannot create a transaction without recovery data.
-      await transaction.prepare({
-        sandboxEntry,
-        registryRecovery,
-        targetConfig,
-        recreateOptions,
-        backupManifest: backup.backupManifest,
-        imageIdentity: {
-          baseImage: baseImagePreflight.imageRef,
-          fromDockerfile,
-          recordedImage: sandboxEntry.imageTag ?? null,
-          nemoclawVersion: sandboxEntry.nemoclawVersion ?? null,
-        },
-        legacyManagedImageRecoveryAuthorized: allowLegacyManagedImageRecovery,
-        shieldsLocked: originalShieldsLocked,
-        oldSandboxPresent: !staleRecovery,
-      });
+      if (recoveredTransaction) await transaction.reconcileObservedDeletion(staleRecovery);
+      if (!recoveredTransaction || (recoveredTransaction.phase === "prepared" && !staleRecovery)) {
+        await transaction.prepare({
+          sandboxEntry: intentSandboxEntry,
+          registryRecovery,
+          targetConfig,
+          recreateOptions,
+          backupManifest: backup.backupManifest,
+          imageIdentity: {
+            baseImage: baseImagePreflight.imageRef,
+            fromDockerfile,
+            recordedImage: intentSandboxEntry.imageTag ?? null,
+            nemoclawVersion: intentSandboxEntry.nemoclawVersion ?? null,
+          },
+          legacyManagedImageRecoveryAuthorized: allowLegacyManagedImageRecovery,
+          shieldsLocked: originalShieldsLocked,
+          oldSandboxPresent: !staleRecovery,
+        });
+      }
       await transaction.reconcileObservedDeletion(staleRecovery);
+      if (recoveryAction === "adopt") {
+        const replacement = registry.getSandbox(sandboxName);
+        if (!replacement) {
+          bail("The transaction-correlated replacement disappeared before receipt publication.");
+          return;
+        }
+        await transaction.markReplacementCreated(replacement);
+      }
       if (transaction.phase === "prepared") maybePauseForRebuildInterruption("prepared");
 
       const mcpPreparation = await runRebuildDestroyPhase({
@@ -225,6 +248,7 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         relockShieldsIfNeeded,
+        replacementAlreadyCreated: replacementAlreadyPresent,
         validateAfterMcpPreparation: async () => {
           const providerReconfigure = recreateOptions.rebuildProviderReconfigure;
           if (providerReconfigure && !hydrateCredentialEnv(providerReconfigure.credentialEnv)) {
@@ -256,7 +280,7 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
-        oldSandboxAlreadyDeleted: transaction.phase === "old_deleted",
+        oldSandboxAlreadyDeleted: transaction.phase !== "prepared",
         onDeleted: async () => {
           sandboxStillExists = false;
           await transaction.markDeleted();
@@ -289,6 +313,10 @@ async function rebuildSandboxUnlocked(
           mcpEntries: mcpPreparation.entries,
           rebuildShieldsWindow,
           relockShieldsIfNeeded,
+          replacementAlreadyCreated: replacementAlreadyPresent,
+          rebuildTransactionId: transaction.transactionId,
+          rebuildImageFingerprint: transaction.imageFingerprint,
+          rebuildConfigurationFingerprint: transaction.configurationFingerprint,
           onCreated: async () => {
             sandboxStillExists = true;
             await transaction.markReplacementCreated(registry.getSandbox(sandboxName));
@@ -329,6 +357,7 @@ async function rebuildSandboxUnlocked(
         reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
         log,
       });
+      maybePauseForRebuildInterruption("state_restored");
       const verification = await runRebuildPostRestorePhase({
         sandboxName,
         sandboxEntry,
@@ -347,6 +376,7 @@ async function rebuildSandboxUnlocked(
         relockShieldsIfNeeded,
         log,
       });
+      if (verification.complete) maybePauseForRebuildInterruption("required_verified");
       if (!(await transaction.finalize(verification))) {
         bail(
           `Rebuild for '${sandboxName}' has unverified required post-restore state: ${verification.required.join(", ")}. Correct the reported conditions, then retry the rebuild.`,

@@ -22,7 +22,7 @@ import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { parseLiveSandboxNames, parseReadySandboxNames } from "../../runtime-recovery";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
@@ -39,6 +39,7 @@ export type RebuildSandboxEntry = registry.SandboxEntry & { agents?: unknown[] }
 
 export type RebuildLiveState = {
   staleRecovery: boolean;
+  observation: "absent" | "not_ready" | "ready" | "unknown_present";
 };
 
 export type RebuildAgentBaseImageOptions = {
@@ -116,8 +117,14 @@ export async function resolveRebuildLiveState(
   }
 
   const liveNames = parseLiveSandboxNames(isLive.output || "");
+  const readyNames = parseReadySandboxNames(isLive.output || "");
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
-  if (liveNames.has(sandboxName)) return { staleRecovery: false };
+  if (liveNames.has(sandboxName)) {
+    return {
+      staleRecovery: false,
+      observation: readyNames.has(sandboxName) ? "ready" : "not_ready",
+    };
+  }
 
   const reconciled = await getReconciledSandboxGatewayState(sandboxName);
   if (reconciled.state === "present") {
@@ -135,7 +142,7 @@ export async function resolveRebuildLiveState(
       return null;
     }
     log("Sandbox live on the healthy named gateway; using normal rebuild path");
-    return { staleRecovery: false };
+    return { staleRecovery: false, observation: "unknown_present" };
   }
 
   if (reconciled.state === "missing") {
@@ -155,7 +162,7 @@ export async function resolveRebuildLiveState(
     log(
       "Stale-sandbox recovery: live sandbox missing on healthy named gateway; skipping backup/restore and recreating from registry metadata",
     );
-    return { staleRecovery: true };
+    return { staleRecovery: true, observation: "absent" };
   }
 
   if (reconciled.state === "gateway_schema_mismatch") {

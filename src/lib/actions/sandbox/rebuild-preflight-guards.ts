@@ -92,7 +92,7 @@ export function assertRebuildEntryUnchanged(
   bail: RebuildBail,
 ): void {
   const lockedEntry = registry.getSandbox(sandboxName);
-  if (lockedEntry && JSON.stringify(lockedEntry) === confirmedEntrySnapshot) return;
+  if (JSON.stringify(lockedEntry) === confirmedEntrySnapshot) return;
   printRebuildPreflightFailure(
     "the sandbox configuration changed while rebuild confirmation was pending.",
     "Review the current sandbox state and rerun rebuild.",
