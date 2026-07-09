@@ -1193,9 +1193,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const disableDeviceAuth = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1" || isRemote;
   const allowInsecure = parsed.scheme === "http";
   const securityAuditSuppressions: JsonObject[] = [];
-  if (allowInsecure) {
+  if (allowInsecure && !isRemote) {
     const reason =
-      "NemoClaw derives this setting from an HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.";
+      "NemoClaw derives this setting from a loopback HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.";
     securityAuditSuppressions.push(
       { checkId: "gateway.control_ui.insecure_auth", reason },
       {

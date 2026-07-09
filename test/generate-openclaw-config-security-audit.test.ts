@@ -13,8 +13,8 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_INFERENCE_API: "openai",
 };
 
-function buildSecurityAuditConfig(chatUiUrl: string): any {
-  return buildConfig({ ...BASE_ENV, CHAT_UI_URL: chatUiUrl });
+function buildSecurityAuditConfig(chatUiUrl: string, overrides: Record<string, string> = {}): any {
+  return buildConfig({ ...BASE_ENV, CHAT_UI_URL: chatUiUrl, ...overrides });
 }
 
 describe("generate-openclaw-config.mts: managed security audit findings", () => {
@@ -24,13 +24,13 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
       {
         checkId: "gateway.control_ui.insecure_auth",
         reason:
-          "NemoClaw derives this setting from an HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.",
+          "NemoClaw derives this setting from a loopback HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.",
       },
       {
         checkId: "config.insecure_or_dangerous_flags",
         detailIncludes: "gateway.controlUi.allowInsecureAuth=true",
         reason:
-          "NemoClaw derives this setting from an HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.",
+          "NemoClaw derives this setting from a loopback HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.",
       },
     ]);
   });
@@ -52,15 +52,35 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
     ]);
   });
 
-  it("explains both managed flags for a non-loopback HTTP dashboard (#6024)", () => {
+  it("keeps remote HTTP insecure auth active while explaining managed device auth (#6024)", () => {
     const config = buildSecurityAuditConfig("http://remote.example:18789");
-    expect(config.security.audit.suppressions).toHaveLength(4);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
+    expect(config.security.audit.suppressions).toEqual([
+      {
+        checkId: "gateway.control_ui.device_auth_disabled",
+        reason:
+          "NemoClaw enables this compatibility setting for non-loopback or explicitly opted-out dashboards; use loopback access to retain device authentication.",
+      },
+      {
+        checkId: "config.insecure_or_dangerous_flags",
+        detailIncludes: "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+        reason:
+          "NemoClaw enables this compatibility setting for non-loopback or explicitly opted-out dashboards; use loopback access to retain device authentication.",
+      },
+    ]);
+  });
+
+  it("explains an explicit loopback device auth opt-out (#6024)", () => {
+    const config = buildSecurityAuditConfig("https://127.0.0.1:18789", {
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+    });
     expect(config.security.audit.suppressions.map((entry: any) => entry.checkId)).toEqual([
-      "gateway.control_ui.insecure_auth",
-      "config.insecure_or_dangerous_flags",
       "gateway.control_ui.device_auth_disabled",
       "config.insecure_or_dangerous_flags",
     ]);
+    expect(config.security.audit.suppressions[1].detailIncludes).toBe(
+      "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+    );
   });
 
   it("omits audit suppressions for a loopback HTTPS dashboard (#6024)", () => {
