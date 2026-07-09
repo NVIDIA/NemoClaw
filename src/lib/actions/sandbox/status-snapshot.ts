@@ -8,7 +8,12 @@ import {
 import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
-import { parseGatewayInference } from "../../inference/config";
+import {
+  type GatewayInference,
+  parseGatewayInference,
+  planInferenceRouteReconcile,
+  type RecordedInferenceRoute,
+} from "../../inference/config";
 import {
   type ProviderHealthProbeOptions,
   type ProviderHealthStatus,
@@ -18,9 +23,11 @@ import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { redact } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
+import { buildGatewayInferenceGetArgs } from "./connect-inference-gateway";
 import { classifyInferenceRouteFailureLabel } from "./connect-inference-route-probe";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
@@ -156,12 +163,18 @@ export interface SandboxStatusReport {
   dockerPaused: boolean;
 }
 
+export interface SandboxStatusRouteDrift {
+  live: GatewayInference;
+  recorded: RecordedInferenceRoute;
+}
+
 export interface SandboxStatusSnapshot {
   sb: registry.SandboxEntry | null;
   lookup: SandboxGatewayState;
   rpcIssue: OpenShellStateRpcIssue | null;
   currentModel: string;
   currentProvider: string;
+  routeDrift: SandboxStatusRouteDrift | null;
   inferenceHealth: ProviderHealthStatus | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
 }
@@ -258,11 +271,13 @@ export async function collectSandboxStatusSnapshot(
   let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
   if (lookup.state === "present") {
     try {
-      liveResult = await (opts.deps?.captureOpenshellForStatusImpl ?? captureOpenshellForStatus)([
-        "inference",
-        "get",
-      ]);
+      const gatewayName = resolveSandboxGatewayName(sb);
+      liveResult = await (opts.deps?.captureOpenshellForStatusImpl ?? captureOpenshellForStatus)(
+        buildGatewayInferenceGetArgs(gatewayName),
+      );
     } catch {
+      // Invalid persisted gateway bindings and failed reads stay fail-closed:
+      // never substitute the selected/default gateway's inference route.
       liveResult = null;
     }
   }
@@ -274,6 +289,7 @@ export async function collectSandboxStatusSnapshot(
       rpcIssue,
       currentModel: "unknown",
       currentProvider: "unknown",
+      routeDrift: null,
       inferenceHealth: null,
       terminalRuntimeHealth: null,
     };
@@ -282,6 +298,18 @@ export async function collectSandboxStatusSnapshot(
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
+  // Status shows the live gateway route when one is readable, which silently
+  // masks a route another sandbox (or a direct `openshell inference set`)
+  // moved from under this one — the shared-route trap of #6315. Surface the
+  // divergence instead of letting the live value pass as this sandbox's own.
+  const routeDriftPlan =
+    sb && sb.provider && sb.model
+      ? planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model })
+      : null;
+  const routeDrift =
+    routeDriftPlan && routeDriftPlan.kind === "diverged"
+      ? { live: routeDriftPlan.live, recorded: routeDriftPlan.recorded }
+      : null;
   // When the caller has already determined that the local stack is failed
   // (docker daemon down, sandbox container stopped, dashboard port held),
   // skip the provider probe entirely. Without this gate
@@ -336,6 +364,7 @@ export async function collectSandboxStatusSnapshot(
     rpcIssue,
     currentModel,
     currentProvider,
+    routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
   };

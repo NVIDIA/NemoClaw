@@ -129,14 +129,23 @@ export function createQueryParamAuthConfig(
 
 export type OpenAiLikeAuthMode = "bearer" | "query-param";
 
+export interface CreateOpenAiLikeAuthConfigOptions extends CreateCurlAuthConfigOptions {
+  extraHeaders?: readonly string[];
+}
+
 export function createOpenAiLikeAuthConfig(
   apiKey: string,
   authMode?: OpenAiLikeAuthMode,
-  options: CreateCurlAuthConfigOptions = {},
+  options: CreateOpenAiLikeAuthConfigOptions = {},
 ): CurlAuthConfig {
-  if (!apiKey) return EMPTY_CURL_AUTH_CONFIG;
+  const entries: CurlAuthConfigEntry[] = [];
   if (authMode === "query-param") {
-    return createQueryParamAuthConfig("key", apiKey, options);
+    if (apiKey) entries.push({ kind: "url-query", name: "key", value: apiKey });
+  } else if (apiKey) {
+    entries.push({ kind: "header", value: `Authorization: Bearer ${apiKey}` });
   }
-  return createBearerAuthConfig(apiKey, options);
+  for (const header of options.extraHeaders ?? []) {
+    entries.push({ kind: "header", value: header });
+  }
+  return createCurlAuthConfig(entries, options);
 }

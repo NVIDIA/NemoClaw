@@ -1781,7 +1781,6 @@ exit 1
           "/home/linuxbrew/.linuxbrew/bin/*",
           "/home/linuxbrew/.linuxbrew/bin/brew",
           "/usr/bin/curl",
-          "/usr/bin/git",
           "/usr/local/bin/brew",
         ].sort(),
       );

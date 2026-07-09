@@ -18,12 +18,14 @@ import {
   buildPromptTurns,
   buildRetryPromptTurns,
   buildSystemPrompt,
+  canPreserveCanonicalFirstPassAfterRetryFailure,
   classifyMonolithDelta,
   classifyTestDepth,
   collectStaticTestInventory,
   collectTrustedPreviousAdvisorReview,
   detectLocalizedPatchSignals,
   detectSimplificationSignals,
+  extractIssueRefs,
   extractPreviousAdvisorReview,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
@@ -345,7 +347,7 @@ describe("PR review advisor", () => {
         turn.name,
         notes ? "notes" : "json",
         notes ? Number(notes[1]) : null,
-        turn.syntheticToolResults?.map((result) => result.toolName),
+        turn.contextToolResults?.map((result) => result.toolName),
       ];
     });
 
@@ -365,10 +367,23 @@ describe("PR review advisor", () => {
     expect(turns[5]?.prompt).toContain("Collapse duplicate symptoms into one root-cause finding");
     expect(turns.at(-1)?.prompt).toContain("<pr_review_advisor_json>");
     expect(turns.at(-1)?.prompt).toContain("Set the fields exactly as specified");
+    for (const turn of turns.slice(0, -1)) {
+      const contextTools = turn.contextToolResults?.map((result) => result.toolName) ?? [];
+      expect(turn.activeToolNames).toEqual(["pr_review_update_ledger"]);
+      expect(turn.requiredToolNames).toEqual([...contextTools, "pr_review_update_ledger"]);
+      expect(turn.requireToolsBeforeText).toEqual(contextTools);
+      expect(turn.requireTextBeforeToolNames).toEqual(["pr_review_update_ledger"]);
+      expect(turn.prompt).toContain("Required stage protocol — perform these steps in order");
+      expect(turn.prompt).toContain("stage-analysis bullets before the ledger update");
+      expect(turn.prompt).toContain("emit no prose afterward");
+    }
+    expect(turns.at(-1)?.activeToolNames).toEqual(["pr_review_read_ledger"]);
+    expect(turns.at(-1)?.requireToolsBeforeText?.at(-1)).toBe("pr_review_read_ledger");
+    expect(turns.at(-1)?.prompt).toContain("only `status=open` findings in snapshot order");
 
-    const evidence = turns.flatMap((turn) => turn.syntheticToolResults ?? []);
-    const toolCallIds = evidence.map((result) => result.toolCallId);
-    expect(new Set(toolCallIds).size).toBe(toolCallIds.length);
+    const evidence = turns.flatMap((turn) => turn.contextToolResults ?? []);
+    const contextToolNames = evidence.map((result) => result.toolName);
+    expect(new Set(contextToolNames).size).toBe(contextToolNames.length);
     expect(evidence.filter((result) => result.toolName === "pr_review_git_diff")).toHaveLength(1);
     expect(evidence.find((result) => result.toolName === "pr_review_git_diff")?.content).toBe(
       poisonedDiff,
@@ -377,6 +392,9 @@ describe("PR review advisor", () => {
     expect(
       evidence.find((result) => result.toolName === "pr_review_response_schema")?.content,
     ).toBe(JSON.stringify(schema));
+    expect(
+      evidence.find((result) => result.toolName === "pr_review_exact_metadata")?.content,
+    ).toContain(`- changedFiles: ${JSON.stringify(metadata().changedFiles)}`);
   });
 
   it("collects static test inventory from changed test files", () => {
@@ -402,13 +420,26 @@ describe("PR review advisor", () => {
     expect(turns[0]?.prompt).toContain("Retry synthesis only");
     expect(turns[0]?.prompt).toContain("pr_review_retry_reason");
     expect(turns[0]?.prompt).not.toContain(adversarialReason);
-    expect(turns[0]?.syntheticToolResults?.[0]?.content).toBe(adversarialReason);
-    expect(turns[0]?.syntheticToolResults?.map((result) => result.toolName)).toEqual([
+    expect(turns[0]?.contextToolResults?.[0]?.content).toBe(adversarialReason);
+    expect(turns[0]?.contextToolResults?.map((result) => result.toolName)).toEqual([
       "pr_review_retry_reason",
       "pr_review_previous_output",
       "pr_review_exact_metadata",
       "pr_review_response_schema",
     ]);
+    expect(turns[0]?.activeToolNames).toEqual(["pr_review_read_ledger"]);
+    expect(turns[0]?.requiredToolNames?.at(-1)).toBe("pr_review_read_ledger");
+    expect(turns[0]?.requireToolsBeforeText?.at(-1)).toBe("pr_review_read_ledger");
+    expect(turns[0]?.prompt).toContain("Never call `pr_review_update_ledger`");
+  });
+
+  it("recognizes follow-up issue relations used by the PR template (#6446)", () => {
+    expect(
+      extractIssueRefs(
+        "Follow-up to #6446\nFollow up #21\nfollowup to #22\nFollow-up to #6547",
+        6547,
+      ),
+    ).toEqual([21, 22, 6446]);
   });
 
   it("writes auditable deterministic context artifacts", () => {
@@ -960,17 +991,18 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     const firstPass = normalizeReviewResult(validResult(), metadata());
     const preserved = recordRetryFailureOnFirstPass(firstPass, "retry network timeout");
 
-    expect(preserved.findings[0]).toMatchObject({
-      severity: "warning",
-      title: "PR review advisor retry failed",
-      evidence: "retry network timeout",
-    });
-    expect(preserved.findings.some((finding) => finding.title === "trusted-code boundary")).toBe(
-      true,
-    );
+    expect(preserved.findings).toEqual(firstPass.findings);
     expect(preserved.reviewCompleteness.limitations[0]).toContain(
       "using first-pass normalized result",
     );
+  });
+
+  it("fails closed only for a post-retry ledger mismatch or missing first pass (#6446)", () => {
+    const firstPass = normalizeReviewResult(validResult(), metadata());
+
+    expect(canPreserveCanonicalFirstPassAfterRetryFailure(firstPass, false)).toBe(true);
+    expect(canPreserveCanonicalFirstPassAfterRetryFailure(firstPass, true)).toBe(false);
+    expect(canPreserveCanonicalFirstPassAfterRetryFailure(null, false)).toBe(false);
   });
 
   it("preserves generated source-of-truth findings when model findings hit the cap", () => {
