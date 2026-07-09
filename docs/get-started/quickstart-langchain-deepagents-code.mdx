@@ -88,7 +88,10 @@ The image launcher normalizes the runtime proxy environment for interactive, log
 Managed interactive sessions keep Deep Agents Code's optional first-run name prompt, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
 Press Enter at the name prompt to continue without setting a name.
 
-## Choose the Default Sandbox
+  </Accordion>
+
+  <Accordion title="Use the managed runtime">
+### Choose the Default Sandbox
 
 When you manage multiple sandboxes, use the Deep Agents alias to promote a registered Deep Agents Code sandbox to the default.
 
@@ -99,7 +102,7 @@ nemo-deepagents use <sandbox-name>
 The command updates NemoClaw's host-side registry.
 It does not modify the sandbox or the `dcode` configuration.
 
-## Use the Harness
+### Use the Harness
 
 Connect to the sandbox, then launch the terminal UI.
 
@@ -136,7 +139,7 @@ It has no approval UI and automatically approves non-shell tool requests, includ
 The managed headless path still disables shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP configuration, nested remote sandboxes, remote async subagents, and alternate model routes.
 Use the interactive TUI when you need to inspect each destructive tool request before it runs.
 
-### Configure Thread Auto-Approval
+#### Configure Thread Auto-Approval
 
 Managed Deep Agents sandboxes keep interactive thread auto-approval disabled by default.
 In this mode, the TUI auto-approval choice and `dcode -y` fail closed.
@@ -179,14 +182,17 @@ The command prints the sandbox name, NemoClaw harness, active `dcode` agent, con
 `dcode --help` lists the managed aliases before the upstream Deep Agents Code help.
 The sandbox name resolves when you run the command from a `nemoclaw <sandbox-name> connect` shell, which loads the NemoClaw runtime environment.
 
-## Python Environment
+  </Accordion>
+
+  <Accordion title="Manage Python and sandbox state">
+### Python Environment
 
 Deep Agents Code runs from a NemoClaw-managed Python virtual environment at `/opt/venv`.
 The sandbox puts `/opt/venv/bin` on `PATH` before the system Python directories, so `python3` and `pip3` resolve to that managed environment.
 NemoClaw keeps `/opt/venv` read-only to protect the installed harness.
 For project-specific Python dependencies, create a separate virtual environment under `/sandbox` and activate it before installing packages.
 
-## State and Backup
+### State and Backup
 
 Deep Agents Code state lives under `/sandbox/.deepagents`.
 NemoClaw snapshot and rebuild flows preserve the app state directory and skills when those paths exist.
@@ -207,7 +213,10 @@ After backup, NemoClaw rechecks the target, route, and retained build inputs bef
 If the final check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
 Rebuild also preserves the standalone Deep Agents Code `tavily` preset, the recorded observability choice unless explicitly overridden, and recorded custom policies from their exact stored content.
 
-## Optional Tavily Egress
+  </Accordion>
+
+  <Accordion title="Enable Tavily egress">
+### Optional Tavily Egress
 
 Deep Agents Code does not currently have a NemoClaw-managed web-search feature.
 If your project code or a manually configured tool needs Tavily, opt the sandbox Python egress path into Tavily explicitly.
