@@ -4,6 +4,8 @@
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
+import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
+import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
 import type { RebuildManifest } from "../../state/sandbox";
 import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
 import {
@@ -79,8 +81,14 @@ export async function runRebuildPreflightPhase(
   options: string[] | RebuildSandboxOptions = {},
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<RebuildPreflightPhaseResult | null> {
-  const { log, bail, requestedToolDisclosure, requestedObservabilityEnabled, skipConfirm } =
-    createRebuildCommandContext(options, opts);
+  const {
+    log,
+    bail,
+    requestedToolDisclosure,
+    requestedDcodeAutoApprovalMode,
+    requestedObservabilityEnabled,
+    skipConfirm,
+  } = createRebuildCommandContext(options, opts);
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
@@ -110,6 +118,29 @@ export async function runRebuildPreflightPhase(
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
 
   const rebuildAgent = sandboxEntry.agent || null;
+  const dcodeAutoApprovalIssue = managedSandboxFeatureIssue(DCODE_AUTO_APPROVAL_FEATURE, {
+    agent: rebuildAgent,
+    requested: requestedDcodeAutoApprovalMode,
+    registryValue: sandboxEntry.dcodeAutoApprovalMode,
+  });
+  if (dcodeAutoApprovalIssue === "unsupported-request") {
+    printRebuildPreflightFailure(
+      "the DCode auto-approval override is supported only for managed LangChain Deep Agents Code sandboxes.",
+      "Remove --dcode-auto-approval or select a managed Deep Agents Code sandbox.",
+      "Unsupported rebuild DCode auto-approval override",
+      bail,
+    );
+    return null;
+  }
+  if (dcodeAutoApprovalIssue === "recorded-state-on-unsupported-agent") {
+    printRebuildPreflightFailure(
+      "recorded DCode auto-approval is enabled for a sandbox whose agent does not support it.",
+      "Pass --dcode-auto-approval disabled to clear the incompatible state during rebuild.",
+      "Recorded DCode auto-approval state is incompatible with the sandbox agent",
+      bail,
+    );
+    return null;
+  }
   if (requestedObservabilityEnabled !== undefined && !isDcodeRebuildAgent(rebuildAgent)) {
     printRebuildPreflightFailure(
       "the observability override is supported only for managed LangChain Deep Agents Code sandboxes.",
@@ -125,7 +156,14 @@ export async function runRebuildPreflightPhase(
       isDcodeRebuildAgent(rebuildAgent) ||
       checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail),
     confirmIntent: () =>
-      confirmRebuildIntent(sandboxName, agentName, skipConfirm, activeSessionCount, bail),
+      confirmRebuildIntent(
+        sandboxName,
+        agentName,
+        skipConfirm,
+        activeSessionCount,
+        bail,
+        requestedDcodeAutoApprovalMode,
+      ),
   });
   if (!versionCheck) return null;
   const expectedSandboxEntry = expectedRebuildEntryAfterVersionCheck(
@@ -165,6 +203,7 @@ export async function runRebuildPreflightPhase(
         // succeeded, matching the previous `skipConfirm || confirmed` contract.
         autoYes: true,
         requestedToolDisclosure,
+        requestedDcodeAutoApprovalMode,
         requestedObservabilityEnabled,
         allowLegacyManagedImageRecovery,
         // A validated prepared backup is the only path allowed to reconstruct
@@ -186,6 +225,7 @@ export async function runRebuildPreflightPhase(
           preparedTarget.targetConfig.resumeConfig,
           preparedTarget.targetConfig.durableConfig.webSearchConfig,
           preparedTarget.targetConfig.durableConfig.toolDisclosure,
+          preparedTarget.targetConfig.durableConfig.dcodeAutoApprovalMode,
           recoveryRecreate,
           preparedTarget.recreateOptions.targetGatewayPort,
         );

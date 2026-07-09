@@ -3260,11 +3260,43 @@ PROXYEOF
       _escaped_gateway_port="$(printf '%s' "$OPENCLAW_GATEWAY_PORT" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_PORT='%s'\n" "$_escaped_gateway_port"
     fi
+    _escaped_gateway_url=""
     if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
       _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
       # Preserve NemoClaw's sandbox-interface dial-back URL for the few
       # NemoClaw-owned commands that require it without forcing ordinary
       # OpenClaw CLI clients onto the explicit remote-gateway pairing path.
+      # Keep a separate readonly anchor as a source-time integrity check. The
+      # exported compatibility alias is intentionally caller-mutable, so it
+      # must never decide where a gateway token may be sent. Case-based value
+      # checks cannot be shadowed by imported shell functions; the structural
+      # re-export gate below withholds the token after any anchor failure even
+      # if a shadowed return continues sourcing. Use `command` instead of the
+      # Bash-only `builtin`: profile hooks also source this file through sh.
+      printf "case \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" in\\n"
+      printf "  '%s') ;;\\n" "$_escaped_gateway_url"
+      printf "  *) command readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL='%s' 2>/dev/null || : ;;\\n" "$_escaped_gateway_url"
+      printf "esac\\ncase \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" in\\n"
+      printf "  '%s') ;;\\n" "$_escaped_gateway_url"
+      printf "  *)\\n"
+      printf "  command unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null || :\\n"
+      printf "  case \"\${OPENCLAW_GATEWAY_TOKEN+x}\" in\\n"
+      printf "    x) echo 'Error: NemoClaw rejected a conflicting gateway trust anchor, and the ambient gateway token could not be cleared.' >&2; exit 1 ;;\\n"
+      printf "  esac\\n"
+      printf "  echo 'Error: NemoClaw rejected a conflicting gateway trust anchor; gateway-token helpers were disabled.' >&2\\n"
+      printf "  return 1 2>/dev/null || exit 1\\n"
+      printf "  ;;\\nesac\\ncommand readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL\\n"
+      # Verify the shell actually enforced readonly state before installing
+      # token-bearing helpers. A caller-controlled `command` function can
+      # otherwise turn the portable builtin dispatch into a no-op.
+      printf "if ( _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL= ) 2>/dev/null; then\\n"
+      printf "  command unset OPENCLAW_GATEWAY_TOKEN 2>/dev/null || :\\n"
+      printf "  case \"\${OPENCLAW_GATEWAY_TOKEN+x}\" in\\n"
+      printf "    x) echo 'Error: NemoClaw gateway trust anchor did not become readonly, and the ambient gateway token could not be cleared.' >&2; exit 1 ;;\\n"
+      printf "  esac\\n"
+      printf "  echo 'Error: NemoClaw gateway trust anchor did not become readonly; gateway-token helpers were disabled.' >&2\\n"
+      printf "  return 1 2>/dev/null || exit 1\\n"
+      printf "fi\\n"
       printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
       cat <<'GATEWAYURLENVEOF'
 # Equality identifies NemoClaw's inherited private-interface value. A different
@@ -3278,7 +3310,15 @@ GATEWAYURLENVEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
-      printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
+      # Re-export the generated token only when the anchor has the exact baked
+      # value and is actually readonly. This structurally guards against a
+      # shadowed return continuing after either source-time rejection path.
+      printf "case \"\${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL:-}\" in\\n"
+      printf "  '%s')\\n" "$_escaped_gateway_url"
+      printf "    if ! ( _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL= ) 2>/dev/null; then\\n"
+      printf "      export OPENCLAW_GATEWAY_TOKEN='%s'\\n" "$_escaped_gateway_token"
+      printf "    fi\\n"
+      printf "    ;;\\nesac\\n"
     fi
     if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
       # Retain the matching break-glass under the same private namespace.
@@ -3342,7 +3382,113 @@ _nemoclaw_messaging_connect_node_options() {
   done < "/tmp/nemoclaw-messaging-connect-preloads.list"
   printf '%s' "$_nemoclaw_options"
 }
+# Read gateway.auth.token from the mutable OpenClaw config. Mirrors the
+# entrypoint's _read_gateway_token, which is not emitted into this sourced
+# file; keep the JSON5 fallback in sync with it.
+_nemoclaw_whatsapp_gateway_token() {
+  node - "${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}/openclaw.json" <<'NODEWATOKEN'
+const fs = require("fs");
+
+const configPath = process.argv[2];
+
+function loadJson5() {
+  try {
+    const JSON5 = require("/opt/nemoclaw/node_modules/json5");
+    if (JSON5 && typeof JSON5.parse === "function") {
+      return JSON5;
+    }
+  } catch {
+    // Fall through to the caller's empty-token behavior.
+  }
+  return undefined;
+}
+
+try {
+  const text = fs.readFileSync(configPath, "utf8");
+  let cfg;
+  try {
+    cfg = JSON.parse(text);
+  } catch (jsonError) {
+    const JSON5 = loadJson5();
+    if (!JSON5) {
+      throw jsonError;
+    }
+    cfg = JSON5.parse(text);
+  }
+  console.log(cfg?.gateway?.auth?.token || "");
+} catch {
+  console.log("");
+}
+NODEWATOKEN
+}
+# NemoClaw#6413: OpenClaw's `channels login` saves WhatsApp credentials
+# locally and then asks the running gateway to restart the channel through the
+# `channels.start` RPC, which the gateway gates behind `operator.admin`. When
+# the login runs without the ambient gateway token, the client falls back to
+# device auth, the device approval policy deliberately never grants
+# `operator.admin`, and the post-pair restart is denied: credentials are saved
+# but the running channel keeps its old session. Re-issue that same bounded
+# RPC as a NemoClaw-owned one-shot with gateway-token auth after a successful
+# login. The token stays scoped to this single fixed-argv child; per the
+# runtime-env contract, removing the token from ordinary caller argv "is not a
+# secrecy boundary against a command that deliberately reads the file", and
+# this helper is exactly such an owned reader. Auto-approving `operator.admin`
+# for ordinary devices would weaken the reviewed #6291 boundary and is
+# deliberately not done here. Never fails the login: credentials are already
+# saved, so a reconcile failure downgrades to host-side recovery guidance.
+# Removal condition: drop this helper when the pinned OpenClaw lets a local
+# login (re)start its own channel account without `operator.admin`, or ships
+# its own bounded post-login reconcile.
+_nemoclaw_whatsapp_postpair_start() {
+  local _nemoclaw_wa_gateway_url="$1" _nemoclaw_wa_insecure_ws="$2" _nemoclaw_wa_account="$3"
+  local _nemoclaw_wa_token _nemoclaw_wa_params _nemoclaw_wa_call_output
+  # The account id is caller input embedded in JSON params; allowlist it
+  # instead of quoting it (mirrors the approval policy's request-id pattern).
+  # Evaluate the range under the C locale so [A-Za-z0-9._:-] stays ASCII and is
+  # not widened by the caller's LC_COLLATE/LC_CTYPE. Scoped to this function
+  # subshell-style: the assignment cannot leak into the interactive shell
+  # because the helper only runs inside command substitution / the reconcile.
+  local LC_ALL=C
+  case "$_nemoclaw_wa_account" in
+    "") _nemoclaw_wa_params='{"channel":"whatsapp"}' ;;
+    *[!A-Za-z0-9._:-]*)
+      echo "[whatsapp] Credentials saved, but the account id contains unsupported characters, so the" >&2
+      echo "[whatsapp] running gateway was not asked to restart the channel. Exit the sandbox and run" >&2
+      echo "[whatsapp] 'nemoclaw <sandbox> channels status --channel whatsapp' to confirm it reconnects." >&2
+      return 0
+      ;;
+    *)
+      if [ "${#_nemoclaw_wa_account}" -gt 128 ]; then
+        echo "[whatsapp] Credentials saved, but the account id exceeds 128 characters, so the" >&2
+        echo "[whatsapp] running gateway was not asked to restart the channel. Exit the sandbox and run" >&2
+        echo "[whatsapp] 'nemoclaw <sandbox> channels status --channel whatsapp' to confirm it reconnects." >&2
+        return 0
+      fi
+      _nemoclaw_wa_params='{"channel":"whatsapp","accountId":"'"$_nemoclaw_wa_account"'"}'
+      ;;
+  esac
+  _nemoclaw_wa_token="$(_nemoclaw_whatsapp_gateway_token)"
+  if [ -z "$_nemoclaw_wa_token" ]; then
+    echo "[whatsapp] Credentials saved, but the gateway token is unavailable in this shell, so the" >&2
+    echo "[whatsapp] running gateway was not asked to restart the channel. Exit the sandbox and run" >&2
+    echo "[whatsapp] 'nemoclaw <sandbox> channels status --channel whatsapp' to confirm it reconnects." >&2
+    return 0
+  fi
+  if _nemoclaw_wa_call_output="$(OPENCLAW_GATEWAY_URL="$_nemoclaw_wa_gateway_url" \
+    OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_wa_insecure_ws" \
+    OPENCLAW_GATEWAY_TOKEN="$_nemoclaw_wa_token" \
+    command openclaw gateway call channels.start --params "$_nemoclaw_wa_params" --json 2>&1)"; then
+    echo "[whatsapp] Restarted the WhatsApp channel on the running gateway with the new credentials." >&2
+  else
+    echo "[whatsapp] Credentials saved, but restarting the channel on the running gateway failed:" >&2
+    printf '%s\n' "$_nemoclaw_wa_call_output" | tail -n 3 | sed 's/^/[whatsapp]   /' >&2
+    echo "[whatsapp] Exit the sandbox and run 'nemoclaw <sandbox> channels status --channel whatsapp'" >&2
+    echo "[whatsapp] to check the channel; re-run the login from a fresh connect shell if it stays down." >&2
+  fi
+  return 0
+}
 openclaw() {
+  local _nemoclaw_guard_request_handled=0 _nemoclaw_guard_request_status=0
   # NemoClaw#4462: approval calls temporarily drop the gateway URL/port/token
   # so OpenClaw resolves the local loopback gateway and device token. The
   # reviewed 2026.6.10 compatibility patch then performs bounded same-device
@@ -3392,8 +3538,10 @@ openclaw() {
         list | status | "" | -h | --help) ;;
         login)
           _login_channel=""
+          _login_account=""
           _login_help=0
           _prev_arg_was_channel_flag=0
+          _prev_arg_was_account_flag=0
           _seen_login_subcommand=0
           for _arg in "$@"; do
             if [ "$_seen_login_subcommand" = "0" ]; then
@@ -3405,12 +3553,23 @@ openclaw() {
               _prev_arg_was_channel_flag=0
               continue
             fi
+            if [ "$_prev_arg_was_account_flag" = "1" ]; then
+              _login_account="$_arg"
+              _prev_arg_was_account_flag=0
+              continue
+            fi
             case "$_arg" in
               --channel)
                 _prev_arg_was_channel_flag=1
                 ;;
               --channel=*)
                 _login_channel="${_arg#--channel=}"
+                ;;
+              --account)
+                _prev_arg_was_account_flag=1
+                ;;
+              --account=*)
+                _login_account="${_arg#--account=}"
                 ;;
               -h | --help)
                 _login_help=1
@@ -3422,25 +3581,35 @@ openclaw() {
                 ;;
             esac
           done
-          if [ "$_login_help" != "1" ] && [ "$_login_channel" != "whatsapp" ]; then
-            echo "Error: 'openclaw channels login' is only supported inside the sandbox for WhatsApp." >&2
-            echo "Changes inside the sandbox do not persist across rebuilds." >&2
-            echo "" >&2
-            echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-            echo "  nemoclaw <sandbox> channels add <channel>" >&2
-            echo "  nemoclaw <sandbox> channels remove <channel>" >&2
-            echo "" >&2
-            echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
-            echo "  openclaw channels login --channel whatsapp" >&2
-            echo "WeChat captures its token via a host-side QR during the host-side" >&2
-            echo "'channels add wechat' flow — no in-sandbox login step." >&2
-            return 1
-          fi
+          # Route the security-sensitive login without `[` predicates. An
+          # imported Bash function named `[` can otherwise make both the
+          # rejection and WhatsApp-specialized branches false, falling through
+          # to the generic token-preserving invocation. Fail closed by marking
+          # unsupported login forms handled before any later dispatch.
+          case "$_login_help:$_login_channel" in
+            0:whatsapp | 1:*) ;;
+            *)
+              echo "Error: 'openclaw channels login' is only supported inside the sandbox for WhatsApp." >&2
+              echo "Changes inside the sandbox do not persist across rebuilds." >&2
+              echo "" >&2
+              echo "To add or remove messaging channels, exit the sandbox and run:" >&2
+              echo "  nemoclaw <sandbox> channels add <channel>" >&2
+              echo "  nemoclaw <sandbox> channels remove <channel>" >&2
+              echo "" >&2
+              echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
+              echo "  openclaw channels login --channel whatsapp" >&2
+              echo "WeChat captures its token via a host-side QR during the host-side" >&2
+              echo "'channels add wechat' flow — no in-sandbox login step." >&2
+              _nemoclaw_guard_request_handled=1
+              _nemoclaw_guard_request_status=1
+              ;;
+          esac
           # NemoClaw-supported WhatsApp pairing (NemoClaw#4522): validate the
           # gateway environment up front so a gateway close (e.g. the reported
           # "1008 abnormal closure") is diagnosed separately from QR rendering,
           # and force compact QR output so the code fits on the screen.
-          if [ "$_login_help" != "1" ] && [ "$_login_channel" = "whatsapp" ]; then
+          case "$_login_help:$_login_channel" in
+            0:whatsapp)
             # Keep an explicit override coupled to its own opt-in. The private
             # veth URL may inherit only NemoClaw's matching private-WS marker.
             if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
@@ -3482,27 +3651,115 @@ openclaw() {
             # injecting them again here covers non-connect shells. Runtime
             # preload modules are idempotent, so a double --require is harmless.
             _nemoclaw_connect_node_options="$(_nemoclaw_messaging_connect_node_options)"
-            if [ -n "$_nemoclaw_connect_node_options" ]; then
-              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
-                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
-                NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
-                command openclaw "$@"
-            else
-              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
-                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
-                command openclaw "$@"
-            fi
+            # The shared gateway token (ambient in connect shells; see the
+            # runtime env at OPENCLAW_GATEWAY_TOKEN) must never reach a
+            # caller-selected gateway. The public NEMOCLAW_* compatibility
+            # alias and readonly shell variable are caller-preseedable, so the
+            # root-owned runtime file bakes the expected URL directly into this
+            # helper instead of trusting either variable for this decision.
+            # The login tolerates a caller-supplied OPENCLAW_GATEWAY_URL
+            # override; only the baked URL may carry the token, for either the
+            # login itself or the reconcile.
+GUARDENVEOF
+    # nemoclaw-trusted-gateway-literal-injection begin
+    # Keep the security decision independent of a caller-preseedable variable:
+    # this literal is generated into the root-owned runtime file at boot.
+    printf "            _nemoclaw_whatsapp_trusted_url='%s'\n" "${_escaped_gateway_url:-}"
+    # nemoclaw-trusted-gateway-literal-injection end
+    cat <<'GUARDENVEOF'
+            _nemoclaw_whatsapp_url_is_trusted=0
+            # Use shell syntax rather than `[` for this security decision: a
+            # caller may have an exported function named `[` in its Bash
+            # environment, but cannot shadow `case`. The quoted case pattern
+            # is an exact literal match, not a glob.
+            case "$_nemoclaw_whatsapp_trusted_url" in
+              "") ;;
+              "$_nemoclaw_whatsapp_gateway_url") _nemoclaw_whatsapp_url_is_trusted=1 ;;
+            esac
+            # Whether the login could authenticate with the gateway token (only
+            # when it is both present and pointed at the trusted URL). If so,
+            # OpenClaw's own post-pair `channels.start` succeeds and no NemoClaw
+            # reconcile is needed; otherwise that restart is denied for lack of
+            # operator.admin and NemoClaw reconciles it below (NemoClaw#6413).
+            _nemoclaw_whatsapp_login_had_token=0
+            case "$_nemoclaw_whatsapp_url_is_trusted:${OPENCLAW_GATEWAY_TOKEN+x}" in
+              1:x) _nemoclaw_whatsapp_login_had_token=1 ;;
+            esac
+            # Run the login with errexit disabled so its exit status is always
+            # captured (and the post-login guidance/reconcile always runs) even
+            # when the caller shell has `set -e`; mirrors the devices-approve
+            # and configure-guard branches. Restored before returning.
+            _nemoclaw_whatsapp_login_errexit=0
+            case $- in *e*) _nemoclaw_whatsapp_login_errexit=1 ;; esac
+            set +e
+            (
+              # A non-trusted (caller-selected) target must not receive the
+              # shared gateway token. Invoke through the absolute env utility
+              # so readonly variables and ordinary imported functions named
+              # `command`, `unset`, or `exit` cannot defeat token removal
+              # (Bash does not import slash-named functions). This also leaves
+              # the parent shell's token untouched.
+              case "$_nemoclaw_whatsapp_url_is_trusted:$_nemoclaw_connect_node_options" in
+                1:)
+                  OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                    OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                    /usr/bin/env openclaw "$@"
+                  ;;
+                1:*)
+                  OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                    OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                    NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
+                    /usr/bin/env openclaw "$@"
+                  ;;
+                *:)
+                  OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                    OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                    /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN openclaw "$@"
+                  ;;
+                *)
+                  OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                    OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                    NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
+                    /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN openclaw "$@"
+                  ;;
+              esac
+            )
             _whatsapp_login_exit=$?
-            if [ "$_whatsapp_login_exit" -ne 0 ]; then
-              echo "" >&2
-              echo "[whatsapp] Pairing exited with code ${_whatsapp_login_exit} before it completed." >&2
-              echo "[whatsapp] A gateway close (e.g. '1008 abnormal closure') is a gateway/session" >&2
-              echo "issue, not a QR-size issue — the QR above rendered independently of the gateway." >&2
-              echo "[whatsapp] Re-run 'openclaw channels login --channel whatsapp' to retry. If it keeps" >&2
-              echo "closing, exit the sandbox and run 'nemoclaw <sandbox> channels status --channel whatsapp'." >&2
-            fi
-            return $_whatsapp_login_exit
-          fi
+            case "$_whatsapp_login_exit:$_nemoclaw_whatsapp_url_is_trusted:$_nemoclaw_whatsapp_login_had_token" in
+              0:1:1)
+                : # Login authenticated with the gateway token, so its own
+                  # post-pair channels.start already restarted the channel; a
+                  # second restart would only bounce the freshly started session.
+                ;;
+              0:1:*)
+                _nemoclaw_whatsapp_postpair_start "$_nemoclaw_whatsapp_trusted_url" \
+                  "$_nemoclaw_whatsapp_insecure_ws" "$_login_account"
+                ;;
+              0:*)
+                # Login targeted a caller-supplied gateway URL rather than
+                # NemoClaw's injected private URL; the token was withheld above,
+                # and the reconcile must not send it there either.
+                echo "[whatsapp] Credentials saved. The channel was not auto-restarted because pairing used a" >&2
+                echo "[whatsapp] custom gateway URL; exit the sandbox and run" >&2
+                echo "[whatsapp] 'nemoclaw <sandbox> channels status --channel whatsapp' to confirm it reconnects." >&2
+                ;;
+              *)
+                echo "" >&2
+                echo "[whatsapp] Pairing exited with code ${_whatsapp_login_exit} before it completed." >&2
+                echo "[whatsapp] A gateway close (e.g. '1008 abnormal closure') is a gateway/session" >&2
+                echo "issue, not a QR-size issue — the QR above rendered independently of the gateway." >&2
+                echo "[whatsapp] Re-run 'openclaw channels login --channel whatsapp' to retry. If it keeps" >&2
+                echo "closing, exit the sandbox and run 'nemoclaw <sandbox> channels status --channel whatsapp'." >&2
+                ;;
+            esac
+            [ "$_nemoclaw_whatsapp_login_errexit" = "1" ] && set -e
+            # Defer the return to the final dispatch below. If a caller has an
+            # imported function named `return`, it may alter the status but it
+            # cannot fall through into the token-preserving generic invocation.
+            _nemoclaw_guard_request_handled=1
+            _nemoclaw_guard_request_status=$_whatsapp_login_exit
+              ;;
+          esac
           ;;
         *)
           echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
@@ -3538,19 +3795,26 @@ openclaw() {
       done
       ;;
   esac
-  # #4538: re-assert the mutable config perm contract after any openclaw run
-  # (notably `doctor --fix`), even on a nonzero exit, then preserve its status.
-  # Drop errexit around the call (mirroring the devices-approve branch above) so
-  # a nonzero openclaw exit cannot abort the guard before the restore runs — the
-  # nonzero-exit case is the exact #4538 scenario.
-  local _nemoclaw_oc_errexit=0
-  case $- in *e*) _nemoclaw_oc_errexit=1 ;; esac
-  set +e
-  command openclaw "$@"
-  local _nemoclaw_oc_status=$?
-  _nemoclaw_restore_mutable_config_perms
-  [ "$_nemoclaw_oc_errexit" = "1" ] && set -e
-  return "$_nemoclaw_oc_status"
+  case "$_nemoclaw_guard_request_handled" in
+    1)
+      return "$_nemoclaw_guard_request_status"
+      ;;
+    *)
+      # #4538: re-assert the mutable config perm contract after any openclaw run
+      # (notably `doctor --fix`), even on a nonzero exit, then preserve its status.
+      # Drop errexit around the call (mirroring the devices-approve branch above) so
+      # a nonzero openclaw exit cannot abort the guard before the restore runs — the
+      # nonzero-exit case is the exact #4538 scenario.
+      local _nemoclaw_oc_errexit=0
+      case $- in *e*) _nemoclaw_oc_errexit=1 ;; esac
+      set +e
+      command openclaw "$@"
+      local _nemoclaw_oc_status=$?
+      _nemoclaw_restore_mutable_config_perms
+      [ "$_nemoclaw_oc_errexit" = "1" ] && set -e
+      return "$_nemoclaw_oc_status"
+      ;;
+  esac
 }
 # nemoclaw-configure-guard end
 # nemoclaw-policy-denial-hint begin

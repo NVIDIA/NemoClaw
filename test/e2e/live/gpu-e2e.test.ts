@@ -5,6 +5,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { parseOpenClawAgentText } from "./common-egress-agent-helpers.ts";
 import {
   assertGpuInstallProofs,
   assertNvidiaAvailable,
@@ -86,6 +87,14 @@ function assertSmallContextCompactionPolicy(configText: string): void {
   expect(compaction).toEqual({
     reserveTokens: expectedReserve,
     reserveTokensFloor: expectedReserve,
+  });
+}
+
+function loadedOllamaModels(raw: string): string[] {
+  const parsed = JSON.parse(raw) as { models?: Array<{ name?: unknown; model?: unknown }> };
+  return (parsed.models ?? []).flatMap((entry) => {
+    const name = typeof entry.name === "string" ? entry.name : entry.model;
+    return typeof name === "string" && name.trim() ? [name.trim()] : [];
   });
 }
 
@@ -222,4 +231,70 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   );
   expect(chat.exitCode, resultText(chat)).toBe(0);
   expect(chatContent(chat.stdout)).toMatch(/pong/i);
+
+  const restart = await host.command(
+    "bash",
+    [
+      "-c",
+      `set -euo pipefail
+if sudo -n systemctl restart ollama 2>/dev/null; then
+  restart_mode=system
+elif systemctl --user restart ollama 2>/dev/null; then
+  restart_mode=user
+else
+  pkill -f '[o]llama serve' 2>/dev/null || true
+  OLLAMA_HOST=127.0.0.1:11434 nohup ollama serve >/tmp/nemoclaw-gpu-e2e-ollama.log 2>&1 &
+  restart_mode=manual
+fi
+for attempt in $(seq 1 60); do
+  tags_json="$(curl -fsS --connect-timeout 2 http://127.0.0.1:11434/api/tags 2>/dev/null || true)"
+  if [ -n "$tags_json" ]; then
+    ps_json="$(curl -fsS --connect-timeout 2 http://127.0.0.1:11434/api/ps 2>/dev/null || true)"
+    if [ -n "$ps_json" ]; then
+      printf 'restart_mode=%s\n%s\n' "$restart_mode" "$ps_json"
+      exit 0
+    fi
+  fi
+  sleep 1
+done
+echo 'Ollama did not become ready after restart' >&2
+exit 1`,
+    ],
+    { artifactName: "ollama-daemon-restart-unloaded", env: env(), timeoutMs: 90_000 },
+  );
+  expect(restart.exitCode, resultText(restart)).toBe(0);
+  const restartLines = restart.stdout.trim().split("\n");
+  expect(restartLines[0]).toMatch(/^restart_mode=(system|user|manual)$/u);
+  expect(loadedOllamaModels(restartLines.slice(1).join("\n"))).toEqual([]);
+
+  const recovered = await host.nemoclaw(
+    [
+      SANDBOX_NAME,
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--session-id",
+      `e2e-gpu-ollama-restart-${Date.now()}-${process.pid}`,
+      "-m",
+      "Reply with exactly one word: PONG",
+    ],
+    {
+      artifactName: "agent-after-ollama-daemon-restart",
+      env: env(),
+      timeoutMs: 12 * 60_000,
+    },
+  );
+  expect(recovered.exitCode, resultText(recovered)).toBe(0);
+  expect(resultText(recovered)).toContain("Checking Ollama model readiness after daemon restart");
+  expect(resultText(recovered)).toContain(`Ollama model '${model}' is loaded and ready.`);
+  expect(parseOpenClawAgentText(recovered.stdout)).toMatch(/pong/i);
+
+  const loaded = await host.command("curl", ["-fsS", "http://127.0.0.1:11434/api/ps"], {
+    artifactName: "ollama-model-loaded-after-recovery",
+    env: env(),
+    timeoutMs: 30_000,
+  });
+  expect(loaded.exitCode, resultText(loaded)).toBe(0);
+  expect(loadedOllamaModels(loaded.stdout)).toContain(model);
 });

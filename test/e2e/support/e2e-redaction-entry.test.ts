@@ -22,11 +22,27 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildChildEnv, redactString } from "../fixtures/redaction.ts";
+import { buildChildEnv, isValidSecretEnvKey, redactString } from "../fixtures/redaction.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 
 describe("fixture redaction entry point", () => {
+  it("recognizes pass env names only at exact or underscore-delimited boundaries", () => {
+    for (const key of ["PASS", "PASSWD", "CUSTOM_PASS", "CUSTOM_PASSWD"]) {
+      expect(isValidSecretEnvKey(key), key).toBe(true);
+    }
+    for (const key of ["COMPASS", "BYPASS", "PASSENGER_COUNT", "PASSED"]) {
+      expect(isValidSecretEnvKey(key), key).toBe(false);
+    }
+
+    expect(
+      buildChildEnv(
+        { COMPASS: "north", BYPASS: "allowed" },
+        { fixtureOverlay: {}, additionalAllowedEnv: ["COMPASS", "BYPASS"] },
+      ),
+    ).toMatchObject({ COMPASS: "north", BYPASS: "allowed" });
+  });
+
   it("passes only the workflow-owned trace directory through child env", () => {
     const childEnv = buildChildEnv(
       {
@@ -88,6 +104,15 @@ describe("fixture redaction entry point", () => {
     expect(out).not.toContain(canonical);
   });
 
+  it("keeps explicit sentinels stable without masking adjacent credential text", () => {
+    const explicit = "test-secret-aBcD";
+    const once = redactString(`TOKEN=${explicit}`, [explicit]);
+
+    expect(once).toBe("TOKEN=[REDACTED]");
+    expect(redactString(once)).toBe(once);
+    expect(redactString("TOKEN=prefix[REDACTED]suffix")).toBe("TOKEN=<REDACTED>");
+  });
+
   it("redacts a complete multi-segment LangSmith key without exposing its tail", () => {
     const canonical = `lsv2_sk_${"a".repeat(36)}_${"tail".repeat(3)}`;
 
@@ -117,6 +142,58 @@ describe("fixture redaction entry point", () => {
   it("returns the input unchanged when no explicit values are supplied and no shape matches", () => {
     expect(redactString("nothing sensitive here")).toBe("nothing sensitive here");
     expect(redactString("nothing sensitive here", [])).toBe("nothing sensitive here");
+  });
+
+  it("preserves managed credential references and non-credential JSON identifiers", () => {
+    const discordReference = "openshell:resolve:env:DISCORD_BOT_TOKEN";
+    const versionedReference = "openshell:resolve:env:v2237303833964223913_WECHAT_BOT_TOKEN";
+    const slackReference = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+    const discordAssignment = `DISCORD_BOT_TOKEN=${discordReference}`;
+    const text = JSON.stringify({
+      key: "agent:main:main",
+      replyMarker: "A2603-REPLY",
+      token: discordReference,
+      versionedToken: versionedReference,
+      botToken: slackReference,
+    });
+
+    expect(redactString(text)).toBe(text);
+    expect(redactString(discordAssignment)).toBe(discordAssignment);
+    const collision = `\uE000 NEMOCLAW_SAFE_CREDENTIAL_REFERENCE_0 \uE001 ${text}`;
+    expect(redactString(collision)).toBe(collision);
+    expect(redactString(text, [discordReference])).not.toContain(discordReference);
+    expect(redactString('{"replyToken":"opaqueCredentialPayloadZ1234567890"}')).toBe(
+      '{"replyToken":"<REDACTED>"}',
+    );
+
+    const privateKey = [
+      ["-----BEGIN", "PRIVATE KEY-----"].join(" "),
+      `opaquePrivateMaterial123 ${discordReference} morePrivateMaterial456`,
+      ["-----END", "PRIVATE KEY-----"].join(" "),
+    ].join("\n");
+    expect(redactString(privateKey)).toBe("<REDACTED>");
+  });
+
+  it.each([
+    ["attached suffix", "TOKEN=openshell:resolve:env:FOO-opaqueCredentialPayloadZ1234567890"],
+    ["dot suffix", "TOKEN=openshell:resolve:env:FOO.opaqueCredentialPayloadZ1234567890"],
+    ["slash suffix", "TOKEN=openshell:resolve:env:FOO/opaqueCredentialPayloadZ1234567890"],
+    ["colon suffix", "TOKEN=openshell:resolve:env:FOO:opaqueCredentialPayloadZ1234567890"],
+    ["semicolon suffix", "TOKEN=openshell:resolve:env:FOO;opaqueCredentialPayloadZ1234567890"],
+    ["hash suffix", "TOKEN=openshell:resolve:env:FOO#opaqueCredentialPayloadZ1234567890"],
+    ["comma suffix", "TOKEN=openshell:resolve:env:FOO,opaqueCredentialPayloadZ1234567890"],
+    ["brace suffix", "TOKEN=openshell:resolve:env:FOO}opaqueCredentialPayloadZ1234567890"],
+    ["bracket suffix", "TOKEN=openshell:resolve:env:FOO]opaqueCredentialPayloadZ1234567890"],
+    ["nested assignment", "TOKEN=foo=openshell:resolve:env:FOO"],
+    ["short prefix", "TOKEN=short:openshell:resolve:env:FOO"],
+    ["oversized revision", `TOKEN=openshell:resolve:env:v${"1".repeat(21)}_FOO`],
+    ["oversized identifier", `TOKEN=openshell:resolve:env:${"A".repeat(129)}`],
+    ["mixed case", "TOKEN=OpenShell:Resolve:Env:FOO"],
+    ["lowercase Slack", "TOKEN=xoxb-openshell-resolve-env-SLACK_BOT_TOKEN"],
+  ])("redacts a managed-reference lookalike with $label", (_label, value) => {
+    const out = redactString(value);
+    expect(out).toContain("<REDACTED>");
+    expect(out).not.toContain(value.slice("TOKEN=".length));
   });
 
   it("returns empty input verbatim", () => {

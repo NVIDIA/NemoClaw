@@ -19,6 +19,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_A = process.env.NEMOCLAW_CGP_SANDBOX_A ?? "e2e-cgp-a";
@@ -138,26 +139,35 @@ async function waitForSandboxReady(
   gatewayName: string,
   artifactPrefix: string,
 ): Promise<string> {
-  let lastPhase = "missing";
-  let lastOutput = "";
-  for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt += 1) {
-    const result = await sandbox.openshell(["sandbox", "list", "-g", gatewayName], {
-      artifactName: `${artifactPrefix}-attempt-${attempt}`,
-      env: openshellEnvForGateway(gatewayName),
-      timeoutMs: 30_000,
+  try {
+    const result = await pollUntil({
+      artifactPrefix,
+      attempts: PROBE_ATTEMPTS,
+      delayMs: PROBE_DELAY_MS,
+      probe: async (_attempt, artifactName) => {
+        const probe = await sandbox.openshell(["sandbox", "list", "-g", gatewayName], {
+          artifactName,
+          env: openshellEnvForGateway(gatewayName),
+          timeoutMs: 30_000,
+        });
+        const output = resultText(probe);
+        return { output, phase: sandboxPhaseFromList(output, sandboxName) ?? "missing" };
+      },
+      accept: ({ phase }) => phase === "Ready" || phase === "Running",
+      terminal: ({ phase }) =>
+        phase === "Error" || phase === "Failed" || phase === "CrashLoopBackOff"
+          ? `${sandboxName} reached terminal phase '${phase}' on ${gatewayName}`
+          : undefined,
     });
-    lastOutput = resultText(result);
-    const phase = sandboxPhaseFromList(lastOutput, sandboxName);
-    if (phase) lastPhase = phase;
-    if (phase === "Ready" || phase === "Running") return phase;
-    if (phase === "Error" || phase === "Failed" || phase === "CrashLoopBackOff") {
-      throw new Error(`${sandboxName} reached terminal phase '${phase}' on ${gatewayName}`);
-    }
-    if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
+    return result.value.phase;
+  } catch (error) {
+    if (!(error instanceof PollingError)) throw error;
+    if (error.reason === "terminal") throw error;
+    const last = error.lastAttempt?.value;
+    throw new Error(
+      `${sandboxName} did not reach Ready/Running on ${gatewayName}; last phase '${last?.phase ?? "missing"}'\n${last?.output ?? ""}`,
+    );
   }
-  throw new Error(
-    `${sandboxName} did not reach Ready/Running on ${gatewayName}; last phase '${lastPhase}'\n${lastOutput}`,
-  );
 }
 
 async function expectPortListening(

@@ -31,6 +31,7 @@ const PROVIDER_CREDENTIAL_ENV_KEYS = new Set([
   "NVIDIA_INFERENCE_API_KEY",
   "NOUS_API_KEY",
   "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
 ]);
 
 export function requirePresent<T>(value: T | null | undefined, message: string): T {

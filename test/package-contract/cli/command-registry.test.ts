@@ -188,10 +188,11 @@ describe("command-registry", () => {
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 26 tokens matching the global dispatch commands", () => {
+    it("returns the exact set of 27 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "agents",
+        "completion",
         "onboard",
         "update",
         "list",

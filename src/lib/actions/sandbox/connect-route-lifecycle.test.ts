@@ -60,6 +60,9 @@ describe("connectSandbox route lifecycle", () => {
     expect(errorOutput).toContain(
       "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
     );
+    expect(errorOutput).toContain(
+      "nemoclaw inference set --provider 'nvidia-prod' --model 'nvidia/nemotron-3-super-120b-a12b' --sandbox 'alpha'",
+    );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       [
         "inference",
@@ -78,6 +81,26 @@ describe("connectSandbox route lifecycle", () => {
       "openshell",
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
+    );
+  });
+
+  it("shell-quotes hostile route values in drift recovery commands (#3726)", async () => {
+    const sandboxName = "alpha's box";
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: openai; touch /tmp/pwn\n  Model: $(id) model\n",
+      registryEntry: {
+        name: sandboxName,
+        model: "claude-sonnet-4-20250514",
+        provider: "anthropic-prod",
+      },
+    });
+
+    await expect(harness.connectSandbox(sandboxName, { probeOnly: true })).resolves.toBeUndefined();
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "nemoclaw inference set --provider 'openai; touch /tmp/pwn' --model '$(id) model' --sandbox 'alpha'\\''s box'",
     );
   });
 

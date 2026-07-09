@@ -66,9 +66,12 @@ contains_secret() {
         $context_value_pattern = $ENV{"NEMOCLAW_CONTEXT_SECRET_VALUE_PATTERN"};
       }
       if (
+        /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/ ||
         /$token_pattern/ ||
         /Bearer\s+$context_value_pattern/i ||
-        /(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]["'\''"]?$context_value_pattern/i
+        /(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?[^\s"'\''"]{10,}/i ||
+        /(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?[^\s"'\''"]{10,}/ ||
+        /(?:^|[^A-Za-z0-9])KEY["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?[^\s"'\''"]{10,}/
       ) {
         $found = 1;
       }
@@ -84,9 +87,12 @@ redact_secrets() {
         $token_pattern = $ENV{"NEMOCLAW_TOKEN_SECRET_PATTERN"};
         $context_value_pattern = $ENV{"NEMOCLAW_CONTEXT_SECRET_VALUE_PATTERN"};
       }
+      s/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/[REDACTED_SECRET]/g;
       s/$token_pattern/[REDACTED_SECRET]/g;
       s/(Bearer\s+)$context_value_pattern/${1}[REDACTED_SECRET]/gi;
-      s/((?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]["'\''"]?)$context_value_pattern/${1}[REDACTED_SECRET]/gi;
+      s/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?)[^\s"'\''"]{10,}/${1}[REDACTED_SECRET]/gim;
+      s/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?)[^\s"'\''"]{10,}/${1}[REDACTED_SECRET]/gm;
+      s/((?:^|[^A-Za-z0-9])KEY["'\''"]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["'\''"]?)[^\s"'\''"]{10,}/${1}[REDACTED_SECRET]/gm;
     '
 }
 

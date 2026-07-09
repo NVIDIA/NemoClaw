@@ -4,6 +4,10 @@
 import { loadAgent } from "../../agent/defs";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import {
+  type DcodeAutoApprovalMode,
+  normalizeDcodeAutoApprovalMode,
+} from "../../onboard/dcode-auto-approval";
+import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
@@ -30,6 +34,7 @@ export type RebuildGpuOptOutEntry = {
   gatewayName?: string | null;
   gatewayPort?: number | null;
   toolDisclosure?: ToolDisclosure;
+  dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   observabilityEnabled?: boolean;
   policyTier?: string | null;
 };
@@ -104,6 +109,9 @@ export type RebuildRecreateOnboardOpts = {
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode;
+  /** Whether the rebuild command explicitly overrode recorded DCode auto-approval state. */
+  dcodeAutoApprovalRequestedExplicitly: boolean;
   observabilityEnabled: boolean;
   /** Whether the rebuild command explicitly overrode the recorded observability state. */
   observabilityRequestedExplicitly: boolean;
@@ -169,6 +177,8 @@ export function buildRebuildRecreateOnboardOpts(args: {
     ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
     toolDisclosure: toolDisclosureOrDefault(args.sb?.toolDisclosure),
+    dcodeAutoApprovalMode: normalizeDcodeAutoApprovalMode(args.sb?.dcodeAutoApprovalMode),
+    dcodeAutoApprovalRequestedExplicitly: false,
     observabilityEnabled: args.sb?.observabilityEnabled === true,
     observabilityRequestedExplicitly: false,
     policyTier: rawPolicyTier,

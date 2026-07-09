@@ -65,4 +65,32 @@ describe("MCP rebuild retry guidance", () => {
     expect(command).not.toContain("--observability");
     expect(command).not.toContain("--no-observability");
   });
+
+  it.each([
+    "disabled",
+    "thread-opt-in",
+  ] as const)("preserves an explicit DCode auto-approval=%s override", (mode) => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    printMcpRebuildRetryCommand("alpha", [{} as never], "progressive", undefined, {
+      mode,
+      requestedExplicitly: true,
+    });
+
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      `nemoclaw alpha rebuild --yes --tool-disclosure progressive --dcode-auto-approval ${mode}`,
+    );
+  });
+
+  it("keeps inherited DCode auto-approval state implicit on retry", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    printMcpRebuildRetryCommand("alpha", [{} as never], "progressive", undefined, {
+      mode: "thread-opt-in",
+      requestedExplicitly: false,
+    });
+
+    const command = error.mock.calls.flat().find((line) => line.includes("rebuild --yes"));
+    expect(command).not.toContain("--dcode-auto-approval");
+  });
 });

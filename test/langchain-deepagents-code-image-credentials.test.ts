@@ -86,6 +86,93 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     }
   });
 
+  it("pins the OTLP endpoint accept/refuse contract on runtime and dotenv paths (#6466, #6538)", () => {
+    // The managed collector URL is not a credential and must pass; everything
+    // else refuses with the full contract. The #6538 review requires exact
+    // status 2, the variable name present, the rejected value absent (no echo),
+    // no run, across both endpoint names and both the runtime and dotenv paths.
+    const endpointNames = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"];
+    const acceptUrls = [
+      "http://host.openshell.internal:4318",
+      "http://host.openshell.internal:4318/v1/traces",
+      "http://host.openshell.internal",
+    ];
+    const rejectValues = [
+      "https://collector.example.com:4318", // non-managed host
+      "http://evil.host.openshell.internal:4318", // subdomain confusion
+      "http://host.openshell.internal.evil.com", // suffix confusion
+      "http://host.openshell.internal:0", // port 0
+      "http://host.openshell.internal:65536", // port out of range
+      "http://token@host.openshell.internal:4318", // userinfo
+      "http://host.openshell.internal:4318?x=sk%2Dabcdefghij", // percent-encoded token
+      "http://host.openshell.internal:4318?apikey=opaquevalue12345", // opaque query cred
+      "http://host.openshell.internal:4318#fragment", // fragment
+      "http://999.999.999.999:4318", // invalid IPv4
+      "http://héllo:4318", // non-ASCII host
+      '{"https://trace.example":"opaque-key-value"}', // structured blob
+      "http://", // hostless
+    ];
+
+    const mk = (tag: string) => makeWrapperFixture(fs.mkdtempSync(path.join(os.tmpdir(), tag)));
+    for (const name of endpointNames) {
+      for (const url of acceptUrls) {
+        const rt = mk("nemoclaw-dcode-otlp-ok-rt-");
+        expect(
+          runWrapper(rt.wrapperPath, ["-n", "hi"], { [name]: url }).status,
+          `rt ${name}=${url}`,
+        ).toBe(0);
+        expect(fs.existsSync(rt.ranMarker)).toBe(true);
+        const dv = mk("nemoclaw-dcode-otlp-ok-dv-");
+        fs.writeFileSync(dv.envFile, `${name}=${url}\n`, "utf8");
+        expect(runWrapper(dv.wrapperPath, ["-n", "hi"], {}).status, `dv ${name}=${url}`).toBe(0);
+        expect(fs.existsSync(dv.ranMarker)).toBe(true);
+      }
+
+      for (const value of rejectValues) {
+        const rt = mk("nemoclaw-dcode-otlp-bad-rt-");
+        const rtRes = runWrapper(rt.wrapperPath, ["-n", "hi"], { [name]: value });
+        expect(rtRes.status, `rt ${name}=${value}`).toBe(2);
+        expect(rtRes.stderr).toContain(name);
+        expect(rtRes.stderr).not.toContain(value);
+        expect(fs.existsSync(rt.ranMarker)).toBe(false);
+
+        const dv = mk("nemoclaw-dcode-otlp-bad-dv-");
+        fs.writeFileSync(dv.envFile, `${name}=${value}\n`, "utf8");
+        const dvRes = runWrapper(dv.wrapperPath, ["-n", "hi"], {});
+        expect(dvRes.status, `dv ${name}=${value}`).toBe(2);
+        expect(dvRes.stderr).toContain(name);
+        expect(dvRes.stderr).not.toContain(value);
+        expect(fs.existsSync(dv.ranMarker)).toBe(false);
+      }
+
+      // Empty value is treated as unset on both paths.
+      const ert = mk("nemoclaw-dcode-otlp-empty-rt-");
+      expect(
+        runWrapper(ert.wrapperPath, ["-n", "hi"], { [name]: "" }).status,
+        `rt ${name}=empty`,
+      ).toBe(0);
+      expect(fs.existsSync(ert.ranMarker)).toBe(true);
+      const edv = mk("nemoclaw-dcode-otlp-empty-dv-");
+      fs.writeFileSync(edv.envFile, `${name}=\n`, "utf8");
+      expect(runWrapper(edv.wrapperPath, ["-n", "hi"], {}).status, `dv ${name}=empty`).toBe(0);
+      expect(fs.existsSync(edv.ranMarker)).toBe(true);
+
+      // Control characters in a dotenv value fail closed before trim/unquote
+      // could strip a smuggled trailing TAB/VT/FF/ESC/CR (#6538).
+      for (const ctrl of ["\t", "\x0b", "\x0c", "\x1b", "\r"]) {
+        const dv = mk("nemoclaw-dcode-otlp-ctrl-");
+        fs.writeFileSync(
+          dv.envFile,
+          `${name}="http://host.openshell.internal:4318${ctrl}"\n`,
+          "utf8",
+        );
+        const res = runWrapper(dv.wrapperPath, ["-n", "hi"], {});
+        expect(res.status, `dv ${name} ctrl=${JSON.stringify(ctrl)}`).toBe(2);
+        expect(fs.existsSync(dv.ranMarker)).toBe(false);
+      }
+    }
+  });
+
   it("rejects mismatched, malformed, wrapped, and raw credential placeholders", () => {
     const invalidCases = [
       { name: "MODEL_NAME", value: "openshell:resolve:env:OTHER_NAME" },
@@ -127,6 +214,24 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     }
   });
 
+  it("accepts the mounted OpenShell TLS key path only from runtime provenance", () => {
+    const name = "OPENSHELL_TLS_KEY";
+    const value = "/etc/openshell/tls/client/tls.key";
+    const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tls-runtime-"));
+    const runtimeFixture = makeWrapperFixture(runtimeDir);
+    const runtimeResult = runWrapper(runtimeFixture.wrapperPath, ["-n", "hi"], { [name]: value });
+    expect(runtimeResult.status, runtimeResult.stderr).toBe(0);
+    expect(fs.existsSync(runtimeFixture.ranMarker)).toBe(true);
+
+    const dotenvDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tls-dotenv-"));
+    const dotenvFixture = makeWrapperFixture(dotenvDir);
+    fs.writeFileSync(dotenvFixture.envFile, `${name}=${value}\n`, "utf8");
+    const dotenvResult = runWrapper(dotenvFixture.wrapperPath, ["-n", "hi"], {});
+    expect(dotenvResult.status).not.toBe(0);
+    expect(dotenvResult.stderr).toContain(name);
+    expect(dotenvResult.stderr).not.toContain(value);
+    expect(fs.existsSync(dotenvFixture.ranMarker)).toBe(false);
+  });
   it("allows nemoclaw-managed messaging tokens whose values are intentionally credential-shaped", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
@@ -344,23 +449,37 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it.each([
-    { label: "malformed JSON", content: "{not valid json at all" },
-    { label: "present but unreadable", content: '{"credentials": null}', unreadable: true },
-  ])("refuses to launch when auth.json is $label (fail-closed)", ({ content, unreadable }) => {
+  it("refuses to launch when auth.json is malformed JSON (fail-closed)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-edge-"));
     const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
-    fs.writeFileSync(authFile, content, "utf8");
-    fs.chmodSync(authFile, unreadable ? 0o000 : 0o644);
+    fs.writeFileSync(authFile, "{not valid json at all", "utf8");
     const result = runWrapper(wrapperPath, ["-n", "hi"], {});
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("auth.json");
     expect(result.stderr).toContain("stored Deep Agents Code credentials");
     expect(result.stdout).not.toContain("dcode-stub-ran");
     expect(fs.existsSync(ranMarker)).toBe(false);
-    fs.chmodSync(authFile, 0o644);
   });
 
+  it.skipIf(process.getuid?.() === 0)(
+    "refuses to launch when auth.json is present but unreadable (fail-closed)",
+    () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-unreadable-"));
+      const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
+      fs.writeFileSync(authFile, JSON.stringify({ version: 1, credentials: {} }), "utf8");
+      fs.chmodSync(authFile, 0o000);
+      try {
+        const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("auth.json");
+        expect(result.stderr).toContain("stored Deep Agents Code credentials");
+        expect(result.stdout).not.toContain("dcode-stub-ran");
+        expect(fs.existsSync(ranMarker)).toBe(false);
+      } finally {
+        fs.chmodSync(authFile, 0o644);
+      }
+    },
+  );
   it("allows launch when auth.json is absent (fresh sandbox)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-absent-"));
     const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
@@ -590,8 +709,33 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it("rejects exact canonical credential names KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL with opaque payloads", () => {
-    const cases: string[] = ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY"];
+  it("rejects the wrapper credential-name policy with opaque payloads", () => {
+    const cases = [
+      "KEY",
+      "TOKEN",
+      "SECRET",
+      "PASSWORD",
+      "PASSWD",
+      "PASS",
+      "CREDENTIAL",
+      "API_KEY",
+      "CUSTOM_PASSWD",
+      "CUSTOM_PASS",
+      "customPass",
+      "customPasswd",
+      "DBPass",
+      "db_pass",
+      "db_passwd",
+      "db-pass",
+      "db-passwd",
+      "apiKey",
+      "accessToken",
+      "replyToken",
+      "clientSecret",
+      "myCredential",
+      "customPassword",
+      "privateKey",
+    ];
     const opaque = "opaqueCredentialPayloadZ1234567890";
     for (const name of cases) {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-exactctx-${name}-`));
@@ -604,6 +748,26 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     }
   });
 
+  it("allows benign runtime names containing pass as a substring", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pass-near-miss-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {
+      BYPASS: "allowedValue123",
+      COMPASS: "opaqueNonSecretPayload123",
+      passengerCount: "opaqueNonSecretPayload123",
+      passed: "opaqueNonSecretPayload123",
+      passRate: "opaqueNonSecretPayload123",
+      passCount: "opaqueNonSecretPayload123",
+      passThrough: "opaqueNonSecretPayload123",
+      correlationMarker: "reply-correlation-marker-123",
+      tokenizer: "opaqueNonSecretPayload123",
+      publicKey: "opaqueVerificationMaterial123",
+      customKey: "opaqueNonSecretPayload123",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(ranMarker)).toBe(true);
+  });
   it.each([
     { label: "variable expansion", content: "MY_CRED=$OTHER_SECRET" },
     { label: "command substitution", content: "MY_CRED=$(whoami)" },
@@ -658,20 +822,20 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it("rejects the canonical positive secret corpus before dcode starts (#6195)", () => {
-    for (const { label, value } of CANONICAL_SECRET_POSITIVE_VECTORS) {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-parity-${label}-`));
-      try {
-        const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-        const varName = `NEMOCLAW_PARITY_${label.toUpperCase()}`;
-        const result = runWrapper(wrapperPath, ["-n", "hi"], { [varName]: value });
-        expect(result.status, `${label} via runtime env not rejected`).not.toBe(0);
-        expect(result.stderr).toContain(varName);
-        expect(result.stderr).not.toContain(value);
-        expect(fs.existsSync(ranMarker)).toBe(false);
-      } finally {
-        fs.rmSync(tempDir, { force: true, recursive: true });
-      }
+  it.each(
+    CANONICAL_SECRET_POSITIVE_VECTORS,
+  )("rejects canonical $label secrets before dcode starts (#6195)", ({ label, value }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-parity-${label}-`));
+    try {
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+      const varName = `NEMOCLAW_PARITY_${label.toUpperCase()}`;
+      const result = runWrapper(wrapperPath, ["-n", "hi"], { [varName]: value });
+      expect(result.status, `${label} via runtime env not rejected`).not.toBe(0);
+      expect(result.stderr).toContain(varName);
+      expect(result.stderr).not.toContain(value);
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
     }
   });
 });

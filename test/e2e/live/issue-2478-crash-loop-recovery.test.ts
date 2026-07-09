@@ -3,7 +3,7 @@
 
 /**
  *
- * Preserves the the contract with real Docker/OpenShell/NemoClaw boundaries:
+ * Preserves the contract with real Docker/OpenShell/NemoClaw boundaries:
  * onboard an OpenClaw sandbox, kill and recover the gateway via the production
  * `connect --probe-only` path, verify the guard-chain preloads remain present,
  * prove inference.local keeps serving models, exercise the missing proxy-env

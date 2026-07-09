@@ -13,10 +13,123 @@ import {
   restoreRebuildFlowTestEnvironment,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-harness";
+import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("rebuildSandbox DCode flow: preflight", () => {
   beforeEach(resetRebuildFlowTestEnvironment);
   afterEach(restoreRebuildFlowTestEnvironment);
+
+  it.each([
+    ["defaults legacy state to disabled", undefined, undefined, "disabled", null],
+    ["uses recorded state", "thread-opt-in", undefined, "thread-opt-in", null],
+    ["applies an explicit override", "disabled", "thread-opt-in", "thread-opt-in", null],
+    [
+      "does not let an explicit override mask corrupt state",
+      "always",
+      "thread-opt-in",
+      "thread-opt-in",
+      "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in",
+    ],
+  ] as const)("resolves durable DCode mode: %s (#6478)", (_label, recorded, requested, expected, error) => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        nemoclawVersion: "0.1.0",
+        ...(recorded !== undefined ? { dcodeAutoApprovalMode: recorded as never } : {}),
+      },
+      null,
+      undefined,
+      undefined,
+      false,
+      requested,
+    );
+
+    expect(config.dcodeAutoApprovalMode).toBe(expected);
+    expect(config.dcodeAutoApprovalModeError).toBe(error);
+  });
+
+  it("rejects a DCode auto-approval override for unsupported agents before mutation (#6478)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "openclaw",
+      sandboxEntry: { name: "alpha", agent: "openclaw", nemoclawVersion: "0.1.0" },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--dcode-auto-approval", "thread-opt-in"], {
+        throwOnError: true,
+      }),
+    ).rejects.toThrow("Unsupported rebuild DCode auto-approval override");
+
+    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
+
+  it("rejects recorded DCode auto-approval on an unsupported agent before mutation (#6478)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "openclaw",
+      sandboxEntry: {
+        name: "alpha",
+        agent: "openclaw",
+        dcodeAutoApprovalMode: "thread-opt-in",
+        nemoclawVersion: "0.1.0",
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("incompatible with the sandbox agent");
+
+    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
+
+  it("allows an explicit disabled rebuild to repair unsupported recorded state (#6478)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "openclaw",
+      sandboxEntry: {
+        name: "alpha",
+        agent: "openclaw",
+        dcodeAutoApprovalMode: "thread-opt-in",
+        nemoclawVersion: "0.1.0",
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--dcode-auto-approval", "disabled"], {
+        throwOnError: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dcodeAutoApprovalMode: "disabled",
+        dcodeAutoApprovalRequestedExplicitly: true,
+      }),
+    );
+  });
+
+  it("rejects an invalid durable DCode auto-approval mode before mutation (#6478)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: {
+        ...makeDcodeSandboxEntry(),
+        dcodeAutoApprovalMode: "always",
+      },
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recorded DCode auto-approval state is invalid");
+
+    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
 
   it("rejects a stored DCode route failure before any rebuild mutation (#6195)", async () => {
     const harness = createRebuildFlowHarness({

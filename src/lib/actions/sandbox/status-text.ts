@@ -5,6 +5,8 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
+import { shellQuote } from "../../core/shell-quote";
+import { formatInferenceRouteDriftForDisplay } from "../../inference/config";
 import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
@@ -19,7 +21,9 @@ import type { SandboxGatewayState } from "./gateway-state";
 import { isSandboxGatewayRunningForStatus } from "./process-recovery";
 import {
   isInferenceHealthFailing,
+  resolveSandboxStatusDcodeAutoApprovalMode,
   type SandboxStatusAgentInfo,
+  type SandboxStatusRouteDrift,
   type SandboxStatusSnapshot,
 } from "./status-snapshot";
 
@@ -30,6 +34,7 @@ export interface SandboxStatusTextContext
     | "lookup"
     | "currentModel"
     | "currentProvider"
+    | "routeDrift"
     | "inferenceHealth"
     | "terminalRuntimeHealth"
   > {
@@ -169,8 +174,12 @@ function printTerminalHarness(context: SandboxStatusTextContext): number | null 
 }
 
 function printAgentHarness(context: SandboxStatusTextContext): number | null {
-  const { statusAgent } = context;
+  const { sb, statusAgent } = context;
   console.log(`    Harness:  ${statusAgent.agentDisplayName} (${statusAgent.agentRuntime})`);
+  const dcodeAutoApprovalMode = resolveSandboxStatusDcodeAutoApprovalMode(sb);
+  if (dcodeAutoApprovalMode) {
+    console.log(`    DCode auto-approval capability: ${dcodeAutoApprovalMode}`);
+  }
   if (statusAgent.agentLoadError) {
     console.log(`    Agent load error: ${statusAgent.agentLoadError}`);
   }
@@ -240,6 +249,31 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
   }
 }
 
+// The Model/Provider lines above show the live gateway route, which the
+// shared per-gateway route lets another sandbox move (#6315). When it no
+// longer matches this sandbox's recorded route, say so instead of presenting
+// the live value as this sandbox's own; wording mirrors the connect-time
+// divergence warning (#3726).
+function printInferenceRouteDrift(
+  drift: SandboxStatusRouteDrift | null,
+  sandboxName: string,
+): void {
+  if (!drift) return;
+  const display = formatInferenceRouteDriftForDisplay(
+    drift.live,
+    drift.recorded,
+    "for this sandbox",
+  );
+  const { liveProvider, liveModel, recordedRoute } = display;
+  console.log(`    ${YW}Warning: ${display.warning}${R}`);
+  console.log(
+    `    ${YW}${CLI_NAME} ${shellQuote(sandboxName)} connect realigns the gateway to ${recordedRoute}; to adopt the live route instead:${R}`,
+  );
+  console.log(
+    `      ${CLI_NAME} inference set --provider ${shellQuote(liveProvider)} --model ${shellQuote(liveModel)} --sandbox ${shellQuote(sandboxName)}`,
+  );
+}
+
 /** Render registry-backed sandbox details and return any non-fatal degraded outcome. */
 export function printSandboxDetails(context: SandboxStatusTextContext): SandboxStatusTextOutcome {
   const { sb, currentModel, currentProvider, sandboxName } = context;
@@ -250,6 +284,7 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   console.log(`  Sandbox: ${sb.name}`);
   console.log(`    Model:    ${currentModel}`);
   console.log(`    Provider: ${currentProvider}`);
+  printInferenceRouteDrift(context.routeDrift, sb.name);
   printInferenceStatus(context);
   const inferenceExitCode = inferenceHealthExitCode(context.inferenceHealth);
   printSandboxGpuStatus(sb);
