@@ -80,7 +80,7 @@ describe("reportSandboxCreateFailure", () => {
     expect(deps.warn).not.toHaveBeenCalled();
   });
 
-  it("echoes redacted create output only when present", () => {
+  it("redacts create output before classification and echoing", () => {
     // With output: leading blank + headline + blank + output echo + "Try:" hint = 5 error() calls.
     const withOutput = createFailureDeps();
     expect(() =>
@@ -89,6 +89,9 @@ describe("reportSandboxCreateFailure", () => {
         withOutput,
       ),
     ).toThrow(ExitSignal);
+    expect(withOutput.classifyCreateFailure).toHaveBeenCalledWith(
+      "failed with Authorization: Bearer secr********",
+    );
     expect(withOutput.error).toHaveBeenCalledWith("failed with Authorization: Bearer secr********");
     expect(withOutput.error).not.toHaveBeenCalledWith(
       "failed with Authorization: Bearer secret-token",
@@ -103,6 +106,28 @@ describe("reportSandboxCreateFailure", () => {
     expect(noOutput.error).toHaveBeenCalledTimes(3);
     // still exits (createStatus || 1)
     expect(noOutput.exitProcess).toHaveBeenCalledWith(3);
+  });
+
+  it("redacts multiple known token formats in create output", () => {
+    const deps = createFailureDeps();
+    const createOutput = [
+      "Authorization: Bearer secret-token",
+      "github ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+      "openai sk-abcdefghijklmnopqrstuvwxyz1234567890",
+      "aws AKIAABCDEFGHIJKLMNOP",
+    ].join("\n");
+
+    expect(() => reportSandboxCreateFailure(createFailureOptions({ createOutput }), deps)).toThrow(
+      ExitSignal,
+    );
+
+    const echoed = (deps.error as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => String(call[0]))
+      .join("\n");
+    expect(echoed).not.toContain("secret-token");
+    expect(echoed).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(echoed).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(echoed).not.toContain("AKIAABCDEFGHIJKLMNOP");
   });
 
   it("falls back to exit code 1 when the create status is zero", () => {

@@ -20,6 +20,7 @@ function makeLaunch(overrides: Record<string, unknown> = {}) {
   return {
     createCommand: "openshell sandbox create alpha",
     effectiveDashboardPort: "18789",
+    createArgv: ["openshell", "sandbox", "create", "alpha"],
     envArgs: [],
     sandboxEnv: { FOO: "bar" },
     sandboxStartupCommand: ["run", "alpha"],
@@ -119,7 +120,8 @@ describe("runSandboxCreateStep", () => {
     );
     // stream is fed the launch command + env.
     expect(deps.streamCreate).toHaveBeenCalledWith(
-      "openshell sandbox create alpha",
+      "openshell",
+      ["sandbox", "create", "alpha"],
       { FOO: "bar" },
       expect.objectContaining({ traceEvent: deps.addTraceEvent }),
     );
@@ -144,7 +146,7 @@ describe("runSandboxCreateStep", () => {
 
     await runSandboxCreateStep(makeContext(), deps);
     const streamOpts = (deps.streamCreate as unknown as { mock: { calls: unknown[][] } }).mock
-      .calls[0][2] as { readyCheck: () => boolean; onPoll: () => void };
+      .calls[0][3] as { readyCheck: () => boolean; onPoll: () => void };
 
     expect(streamOpts.readyCheck()).toBe(true);
     expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
@@ -168,14 +170,14 @@ describe("runSandboxCreateStep", () => {
     );
     await runSandboxCreateStep(makeContext(), terminalDeps);
     expect(
-      (terminalDeps.streamCreate as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][2],
+      (terminalDeps.streamCreate as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][3],
     ).toMatchObject({ readyCheckOutputPatterns: [] });
 
     const nonTerminalDeps = makeDeps(makeLaunch(), makePatch(), { status: 0, output: "" });
     await runSandboxCreateStep(makeContext(), nonTerminalDeps);
     expect(
       (nonTerminalDeps.streamCreate as unknown as { mock: { calls: unknown[][] } }).mock
-        .calls[0][2],
+        .calls[0][3],
     ).toMatchObject({ readyCheckOutputPatterns: undefined });
   });
 
@@ -194,8 +196,8 @@ describe("runSandboxCreateStep", () => {
       makePatch(),
       { status: 0, output: "" },
       {
-        streamCreate: ((command, sandboxEnv, options) =>
-          streamSandboxCreate(command, sandboxEnv, {
+        streamCreate: ((command, args, sandboxEnv, options) =>
+          streamSandboxCreate(command, args, sandboxEnv, {
             ...options,
             ...streamOptions,
           })) as SandboxCreateStepDeps["streamCreate"],
@@ -232,8 +234,8 @@ describe("runSandboxCreateStep", () => {
       makePatch(),
       { status: 0, output: "" },
       {
-        streamCreate: ((command, sandboxEnv, options) =>
-          streamSandboxCreate(command, sandboxEnv, {
+        streamCreate: ((command, args, sandboxEnv, options) =>
+          streamSandboxCreate(command, args, sandboxEnv, {
             ...options,
             ...streamOptions,
           })) as SandboxCreateStepDeps["streamCreate"],
@@ -260,6 +262,36 @@ describe("runSandboxCreateStep", () => {
       createResult: expect.objectContaining({ status: 0, forcedReady: true }),
     });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    vi.useRealTimers();
+  });
+
+  it("recovers SSH 255 exits when the sandbox is ready", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const streamOptions = makePollingOptions(child, { pollIntervalMs: 60_000 });
+    const deps = makeDeps(
+      makeLaunch({ sandboxEnv: dockerEnv }),
+      makePatch(),
+      { status: 0, output: "" },
+      {
+        streamCreate: ((command, args, sandboxEnv, options) =>
+          streamSandboxCreate(command, args, sandboxEnv, {
+            ...options,
+            ...streamOptions,
+          })) as SandboxCreateStepDeps["streamCreate"],
+        isSandboxReady: vi.fn(() => true),
+      },
+    );
+
+    const promise = runSandboxCreateStep(makeContext(), deps);
+    child.stdout.emit("data", Buffer.from("Created sandbox: alpha\n"));
+    child.emit("close", 255);
+    await vi.runOnlyPendingTimersAsync();
+
+    await expect(promise).resolves.toMatchObject({
+      createResult: expect.objectContaining({ status: 0, forcedReady: true }),
+    });
     vi.useRealTimers();
   });
 });

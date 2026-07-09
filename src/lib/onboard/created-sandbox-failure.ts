@@ -35,7 +35,8 @@ export function reportSandboxCreateFailure(
   options: SandboxCreateFailureReportOptions,
   deps: SandboxCreateFailureReportDeps,
 ): void {
-  const failure = deps.classifyCreateFailure(options.createOutput);
+  const redactedCreateOutput = redact(options.createOutput);
+  const failure = deps.classifyCreateFailure(redactedCreateOutput);
   if (failure.kind === "sandbox_create_incomplete") {
     // The sandbox was created in the gateway but the create stream exited
     // with a non-zero code (e.g. SSH 255).  Fall through to the ready-wait
@@ -51,7 +52,7 @@ export function reportSandboxCreateFailure(
   deps.error(`  Sandbox creation failed (exit ${options.createStatus}).`);
   if (options.createOutput) {
     deps.error("");
-    deps.error(redact(options.createOutput));
+    deps.error(redactedCreateOutput);
   }
   deps.printCreateFailureDiagnostics(options.sandboxName, {
     backupPath: options.restoreBackupPath,

@@ -5,6 +5,7 @@ import { type SpawnOptions, spawn } from "node:child_process";
 
 import { redact } from "../security/redact";
 import { ROOT } from "../state/paths";
+import { getReadyCheckOutputPatterns } from "./create-stream-ready-gate";
 
 export interface StreamSandboxCreateResult {
   status: number;
@@ -98,7 +99,6 @@ const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
   /^✓ /,
 ];
 
-const VM_READY_DETACH_OUTPUT_PATTERNS: readonly RegExp[] = [/Setting up NemoClaw/];
 const CLASSIC_DOCKER_STEP_RE = /^\s*Step (\d+)\/(\d+) : (.+)$/;
 const BUILDKIT_STEP_RE = /^#(\d+)\s+(.+)$/;
 
@@ -106,35 +106,28 @@ function matchesAny(line: string, patterns: readonly RegExp[]) {
   return patterns.some((pattern) => pattern.test(line));
 }
 
-function selectedDrivers(env: NodeJS.ProcessEnv): string[] {
-  const raw =
-    env.OPENSHELL_DRIVERS ??
-    process.env.OPENSHELL_DRIVERS ??
-    (process.platform === "darwin" ? "vm" : "docker");
-  return raw
-    .split(",")
-    .map((driver) => driver.trim())
-    .filter(Boolean);
-}
-
-function getReadyCheckOutputPatterns(
-  env: NodeJS.ProcessEnv,
-  patterns: readonly RegExp[] | undefined,
-): readonly RegExp[] {
-  if (patterns) return patterns;
-  return selectedDrivers(env).includes("vm") ? VM_READY_DETACH_OUTPUT_PATTERNS : [];
-}
-
 export function streamSandboxCreate(
   command: string,
-  env: NodeJS.ProcessEnv = process.env,
-  options: StreamSandboxCreateOptions = {},
+  env?: NodeJS.ProcessEnv,
+  options?: StreamSandboxCreateOptions,
+): Promise<StreamSandboxCreateResult>;
+export function streamSandboxCreate(
+  command: string,
+  args: readonly string[],
+  env?: NodeJS.ProcessEnv,
+  options?: StreamSandboxCreateOptions,
+): Promise<StreamSandboxCreateResult>;
+export function streamSandboxCreate(
+  command: string,
+  argsOrEnv: readonly string[] | NodeJS.ProcessEnv = process.env,
+  envOrOptions: NodeJS.ProcessEnv | StreamSandboxCreateOptions = {},
+  maybeOptions: StreamSandboxCreateOptions = {},
 ): Promise<StreamSandboxCreateResult> {
-  // Trust boundary: command is assembled by internal sandbox/onboard callers from
-  // trusted OpenShell CLI fragments. Do not pass user-supplied free-form text to
-  // this shell boundary; switch the API to direct spawn args if external input
-  // ever needs to cross it.
-  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)("bash", ["-lc", command], {
+  const hasArgs = Array.isArray(argsOrEnv);
+  const commandArgs = hasArgs ? argsOrEnv : [];
+  const env = hasArgs ? (envOrOptions as NodeJS.ProcessEnv) : (argsOrEnv as NodeJS.ProcessEnv);
+  const options = hasArgs ? maybeOptions : (envOrOptions as StreamSandboxCreateOptions);
+  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)(command, commandArgs, {
     cwd: ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -430,14 +423,15 @@ export function streamSandboxCreate(
             // Localized containment: onPoll bridges optional host-side create
             // patching into the stream poll loop. Patch failures are observed
             // here but the source of truth remains the dedicated failureCheck;
-            // keep polling so sandbox readiness/failure can settle deterministically.
-            // Regression coverage: create-stream.test.ts verifies redacted trace
-            // emission and continued polling. Remove when onPoll becomes a typed
-            // result-returning dependency instead of an opportunistic side effect.
+            // keep the dedicated failureCheck active in this same tick so a
+            // patch-observed terminal failure is not delayed by another poll.
+            // Regression coverage: create-stream-ready-gate.test.ts verifies
+            // redacted trace emission, continued polling, and same-tick failure
+            // detection. Remove when onPoll becomes a typed result-returning
+            // dependency instead of an opportunistic side effect.
             emitTraceEvent("sandbox_create_poll_error", {
               message: redact(error instanceof Error ? error.message : String(error)),
             });
-            return;
           }
 
           const failure = options.failureCheck?.();

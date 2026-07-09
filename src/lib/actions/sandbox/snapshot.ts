@@ -254,11 +254,12 @@ async function autoCreateSandboxFromSource(
     "--",
     ...startupCommand,
   ].map((p) => shellQuote(p));
-  const command = `${cmdParts.join(" ")} 2>&1`;
+  const command = "bash";
+  const commandArgs = ["-lc", `${cmdParts.join(" ")} 2>&1`];
 
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
 
-  const createResult = await streamSandboxCreate(command, createEnv, {
+  const createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
     // Use a pre-built image, so skip build+push and jump to pod creation.
     initialPhase: "create",
     // Wait until the sandbox actually reaches Ready state, not just appears in the list.

@@ -124,4 +124,38 @@ describe("sandbox-create-stream ready gate", () => {
     await vi.advanceTimersByTimeAsync(6);
     await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
   });
+
+  it("checks failure after a poll side-effect error in the same tick", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const traceEvent = vi.fn();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate(
+      "echo create",
+      dockerEnv,
+      makePollingOptions(child, {
+        readyCheck: () => false,
+        onPoll: () => {
+          throw new Error("Authorization: Bearer secret-token");
+        },
+        failureCheck: () => "Docker GPU patch failed",
+        traceEvent,
+        logLine,
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(6);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 1,
+      output: expect.stringContaining("Docker GPU patch failed"),
+    });
+    expect(traceEvent).toHaveBeenCalledWith("sandbox_create_poll_error", {
+      message: "Authorization: Bearer secr********",
+    });
+    expect(logLine).toHaveBeenCalledWith("  Docker GPU patch failed");
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.unref).toHaveBeenCalled();
+  });
 });

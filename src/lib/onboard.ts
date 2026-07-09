@@ -2830,6 +2830,7 @@ async function createSandboxWithBaseImageResolution(
         hermesDashboardState,
         manageDashboard,
         openshellShellCommand,
+        openshellArgv,
         prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
         useDockerGpuPatch,
         gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,

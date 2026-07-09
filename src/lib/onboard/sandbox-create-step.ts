@@ -7,6 +7,7 @@ import type {
   StreamSandboxCreateResult,
   streamSandboxCreate,
 } from "../sandbox/create-stream";
+import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import type {
   createDockerGpuSandboxCreatePatch,
   DockerGpuSandboxCreatePatch,
@@ -32,6 +33,7 @@ export type SandboxCreateStepContext = {
   hermesDashboardState: LaunchInput["hermesDashboardState"];
   manageDashboard: boolean;
   openshellShellCommand: LaunchInput["openshellShellCommand"];
+  openshellArgv?: LaunchInput["openshellArgv"];
   prebuild: LaunchInput["prebuild"];
   useDockerGpuPatch: boolean;
   gpuDevice: string | null | undefined;
@@ -69,21 +71,28 @@ export async function runSandboxCreateStep(
   context: SandboxCreateStepContext,
   deps: SandboxCreateStepDeps,
 ): Promise<SandboxCreateStepResult> {
-  const { createCommand, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
-    await deps.prepareCreateLaunch({
-      agent: context.agent,
-      observabilityEnabled: context.observabilityEnabled,
-      chatUiUrl: context.chatUiUrl,
-      createArgs: context.createArgs,
-      sandboxName: context.sandboxName,
-      env: context.env,
-      extraPlaceholderKeys: context.extraPlaceholderKeys,
-      getDashboardForwardPort: context.getDashboardForwardPort,
-      hermesDashboardState: context.hermesDashboardState,
-      manageDashboard: context.manageDashboard,
-      openshellShellCommand: context.openshellShellCommand,
-      prebuild: context.prebuild,
-    });
+  const {
+    createCommand,
+    createArgv,
+    effectiveDashboardPort,
+    prebuild,
+    sandboxEnv,
+    sandboxStartupCommand,
+  } = await deps.prepareCreateLaunch({
+    agent: context.agent,
+    observabilityEnabled: context.observabilityEnabled,
+    chatUiUrl: context.chatUiUrl,
+    createArgs: context.createArgs,
+    sandboxName: context.sandboxName,
+    env: context.env,
+    extraPlaceholderKeys: context.extraPlaceholderKeys,
+    getDashboardForwardPort: context.getDashboardForwardPort,
+    hermesDashboardState: context.hermesDashboardState,
+    manageDashboard: context.manageDashboard,
+    openshellShellCommand: context.openshellShellCommand,
+    openshellArgv: context.openshellArgv,
+    prebuild: context.prebuild,
+  });
   const dockerGpuCreatePatch = deps.createDockerGpuPatch({
     enabled: context.useDockerGpuPatch,
     sandboxName: context.sandboxName,
@@ -97,18 +106,23 @@ export async function runSandboxCreateStep(
       sleep: deps.sleepSeconds,
     },
   });
-  const createResult = await deps.streamCreate(createCommand, sandboxEnv, {
-    readyCheck: () => {
-      const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      return deps.isSandboxReady(list, context.sandboxName);
+  const [createExecutable, ...createExecutableArgs] = createArgv;
+  const createResult = await deps.streamCreate(
+    createExecutable ?? createCommand,
+    createExecutableArgs,
+    sandboxEnv,
+    {
+      readyCheck: () => {
+        const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+        return deps.isSandboxReady(list, context.sandboxName);
+      },
+      onPoll: () => dockerGpuCreatePatch.maybeApplyDuringCreate(),
+      readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
+        deps.isTerminalAgent(context.agent),
+      ),
+      failureCheck: dockerGpuCreatePatch.createFailureMessage,
+      traceEvent: deps.addTraceEvent,
     },
-    onPoll: () => dockerGpuCreatePatch.maybeApplyDuringCreate(),
-    // Terminal agents use [] to detach as soon as Ready is observed. Non-terminal
-    // agents pass undefined so streamSandboxCreate applies its driver defaults:
-    // VM waits for the "Setting up NemoClaw" startup marker, Docker detaches on Ready.
-    readyCheckOutputPatterns: deps.isTerminalAgent(context.agent) ? [] : undefined,
-    failureCheck: dockerGpuCreatePatch.createFailureMessage,
-    traceEvent: deps.addTraceEvent,
-  });
+  );
   return { createResult, prebuild, effectiveDashboardPort, dockerGpuCreatePatch };
 }
