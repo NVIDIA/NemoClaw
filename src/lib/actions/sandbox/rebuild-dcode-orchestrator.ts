@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../inference/web-search";
+import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { Session } from "../../state/onboard-session";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
@@ -50,6 +51,7 @@ export type DcodeRebuildOrchestrator = {
     resumeConfig: RebuildResumeConfig,
     webSearchConfig: WebSearchConfig | null,
     toolDisclosure: ToolDisclosure,
+    dcodeAutoApprovalMode: DcodeAutoApprovalMode,
     skipLiveRoute: boolean,
     gatewayPort: number,
     baseImageOptions?: RebuildAgentBaseImageOptions,
@@ -57,12 +59,14 @@ export type DcodeRebuildOrchestrator = {
   revalidateBeforeDelete(
     resumeConfig: RebuildResumeConfig,
     toolDisclosure: ToolDisclosure,
+    dcodeAutoApprovalMode: DcodeAutoApprovalMode,
     skipLiveRoute: boolean,
     gatewayPort: number,
   ): Promise<boolean>;
   checkAtDeleteEdge(
     resumeConfig: RebuildResumeConfig,
     toolDisclosure: ToolDisclosure,
+    dcodeAutoApprovalMode: DcodeAutoApprovalMode,
     skipLiveRoute: boolean,
     gatewayPort: number,
   ): Promise<{ ok: true } | { ok: false; message: string; code?: number }>;
@@ -137,6 +141,7 @@ export function createDcodeRebuildOrchestrator(
       resumeConfig,
       webSearchConfig,
       toolDisclosure,
+      dcodeAutoApprovalMode,
       skipLiveRoute,
       gatewayPort,
       baseImageOptions,
@@ -151,6 +156,7 @@ export function createDcodeRebuildOrchestrator(
           resumeConfig,
           webSearchConfig,
           toolDisclosure,
+          dcodeAutoApprovalMode,
           skipLiveRoute,
           gatewayPort,
           log,
@@ -164,7 +170,13 @@ export function createDcodeRebuildOrchestrator(
         scope.adopt(replacement);
         return true;
       }),
-    revalidateBeforeDelete: (resumeConfig, toolDisclosure, skipLiveRoute, gatewayPort) =>
+    revalidateBeforeDelete: (
+      resumeConfig,
+      toolDisclosure,
+      dcodeAutoApprovalMode,
+      skipLiveRoute,
+      gatewayPort,
+    ) =>
       run(async () => {
         if (!scope.enabled) return true;
         const replacement = scope.preparedReplacement;
@@ -174,6 +186,7 @@ export function createDcodeRebuildOrchestrator(
           entry,
           resumeConfig,
           toolDisclosure,
+          dcodeAutoApprovalMode,
           skipLiveRoute,
           gatewayPort,
           log,
@@ -182,7 +195,13 @@ export function createDcodeRebuildOrchestrator(
           replacement,
         });
       }),
-    checkAtDeleteEdge: async (resumeConfig, toolDisclosure, skipLiveRoute, gatewayPort) => {
+    checkAtDeleteEdge: async (
+      resumeConfig,
+      toolDisclosure,
+      dcodeAutoApprovalMode,
+      skipLiveRoute,
+      gatewayPort,
+    ) => {
       if (!scope.enabled) return { ok: true };
       const replacement = scope.preparedReplacement;
       if (!replacement) {
@@ -197,6 +216,7 @@ export function createDcodeRebuildOrchestrator(
           entry,
           resumeConfig,
           toolDisclosure,
+          dcodeAutoApprovalMode,
           skipLiveRoute,
           gatewayPort,
           log,

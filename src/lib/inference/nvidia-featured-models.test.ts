@@ -42,17 +42,21 @@ describe("NVIDIA featured model catalog", () => {
     ).toEqual([{ id: "minimaxai/minimax-m3", label: "Minimax M3" }]);
   });
 
-  it("filters GLM 5.1 while it is retired from NVIDIA Endpoints (#6069)", () => {
+  it("filters models whose catalogs outlive their NVIDIA Endpoints routes", () => {
     expect(
       parseNvidiaFeaturedModels(
         JSON.stringify({
           "featured-models": [
             { model: "z-ai/glm-5.1", "model-name": "GLM 5.1" },
             { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
+            {
+              model: "nvidia/nemotron-3-super-120b-a12b",
+              "model-name": "Nemotron 3 Super 120B",
+            },
           ],
         }),
       ),
-    ).toEqual([{ id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" }]);
+    ).toEqual([{ id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" }]);
   });
 
   it("sanitizes untrusted catalog labels and bounds the rendered menu", () => {
@@ -92,7 +96,7 @@ describe("NVIDIA featured model catalog", () => {
           httpStatus: 200,
           curlStatus: 0,
           body: JSON.stringify({
-            "featured-models": [{ model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" }],
+            "featured-models": [{ model: "minimaxai/minimax-m3", "model-name": "Minimax M3" }],
           }),
           stderr: "",
           message: "",
@@ -102,16 +106,17 @@ describe("NVIDIA featured model catalog", () => {
 
     expect(result).toEqual({
       ok: true,
-      models: [{ id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" }],
+      models: [{ id: "minimaxai/minimax-m3", label: "Minimax M3" }],
     });
   });
 
-  it("can fetch OpenRouter's temporary featured catalog from its own endpoint (#5826)", () => {
+  it("can fetch OpenRouter's featured catalog from its own endpoint (#5826)", () => {
     const result = fetchNvidiaFeaturedModels({
       catalogUrl: OPENROUTER_FEATURED_MODELS_URL,
+      retiredModelIds: [],
       runCurlProbeImpl: (argv) => {
         expect(argv.at(-1)).toBe(
-          "https://assets.ngc.nvidia.com/products/api-catalog/featured-models.json",
+          "https://assets.ngc.nvidia.com/products/api-catalog/featured-models-openrouter.json",
         );
         return {
           ok: true,
@@ -132,6 +137,23 @@ describe("NVIDIA featured model catalog", () => {
     });
   });
 
+  it("lets provider-specific catalogs opt out of NVIDIA-only retirement filters (#5826)", () => {
+    expect(
+      parseNvidiaFeaturedModels(
+        JSON.stringify({
+          "featured-models": [
+            { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
+            { model: "z-ai/glm-5.1", "model-name": "GLM 5.1" },
+          ],
+        }),
+        { retiredModelIds: [] },
+      ),
+    ).toEqual([
+      { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
+      { id: "z-ai/glm-5.1", label: "GLM 5.1" },
+    ]);
+  });
+
   it("falls back to the curated NVIDIA featured model snapshot when the catalog is unavailable", () => {
     const warnings: string[] = [];
     const models = getNvidiaFeaturedModelOptions({
@@ -149,7 +171,6 @@ describe("NVIDIA featured model catalog", () => {
     expect(models.map((model) => model.id)).toEqual([
       "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-super-120b-a12b",
-      "moonshotai/kimi-k2.6",
       "minimaxai/minimax-m3",
     ]);
     expect(warnings).toEqual([
@@ -230,6 +251,7 @@ describe("NVIDIA featured model catalog", () => {
           "featured-models": [
             { model: "unsafe model id", "model-name": "Unsafe" },
             { model: "z-ai/glm-5.1", "model-name": "Retired" },
+            { model: "moonshotai/kimi-k2.6", "model-name": "Also retired" },
           ],
         }),
         stderr: "",
@@ -304,6 +326,9 @@ describe("NVIDIA featured model catalog", () => {
     });
 
     expect(options.defaultModelId).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(options.cloudModelOptions.map((option) => option.id)).not.toContain(
+      "moonshotai/kimi-k2.6",
+    );
   });
 
   it("reuses one featured catalog lookup but recomputes defaults across onboarding retries", () => {
@@ -330,11 +355,11 @@ describe("NVIDIA featured model catalog", () => {
       },
     });
 
-    const kimiDefault = loadOptions("moonshotai/kimi-k2.6");
+    const retiredDefault = loadOptions("moonshotai/kimi-k2.6");
     const ultraDefault = loadOptions("nvidia/nemotron-3-ultra-550b-a55b");
-    expect(kimiDefault.defaultModelId).toBe("moonshotai/kimi-k2.6");
+    expect(retiredDefault.defaultModelId).toBe("nvidia/nemotron-3-ultra-550b-a55b");
     expect(ultraDefault.defaultModelId).toBe("nvidia/nemotron-3-ultra-550b-a55b");
-    expect(kimiDefault.cloudModelOptions).toBe(ultraDefault.cloudModelOptions);
+    expect(retiredDefault.cloudModelOptions).toBe(ultraDefault.cloudModelOptions);
     expect(probeCount).toBe(1);
   });
 });

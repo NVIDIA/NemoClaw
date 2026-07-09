@@ -16,6 +16,7 @@ import {
   activeChannelsFromDockerfile,
   encodeTestMessagingPlan,
 } from "./helpers/messaging-plan-fixtures";
+import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 
 type CommandEntry = {
   command: string;
@@ -67,9 +68,7 @@ describe("onboard messaging", () => {
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -511,9 +510,7 @@ const { createSandbox } = require(${onboardPath});
     ]);
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -675,9 +672,7 @@ const { createSandbox } = require(${onboardPath});
     const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "telegram", active: false }]);
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -831,9 +826,7 @@ const { createSandbox } = require(${onboardPath});
       const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "whatsapp", active: true }]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -984,9 +977,7 @@ const { createSandbox } = require(${onboardPath});
       const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "whatsapp", active: false }]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -1309,9 +1300,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -1442,9 +1431,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const runner = require(${runnerPath});

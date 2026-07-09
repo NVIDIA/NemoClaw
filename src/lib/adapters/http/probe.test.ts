@@ -405,12 +405,16 @@ describe("http-probe helpers", () => {
     }
   });
 
-  it("strips credential-shaped opts.env entries when trustedConfigFiles is supplied", () => {
+  it("strips expanded credential-shaped opts.env entries with trusted config (#5048)", () => {
     const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
     let spawnedEnv: NodeJS.ProcessEnv | undefined;
     runCurlProbe(["-sS", "--config", configPath, "https://example.test/models"], {
       trustedConfigFiles: [configPath],
-      env: { NVIDIA_API_KEY: "nvapi-should-not-leak", MY_BENIGN_VAR: "should-survive" },
+      env: {
+        CONNECTIONSTRING: "should-not-leak",
+        NVIDIA_API_KEY: "nvapi-should-not-leak",
+        MY_BENIGN_VAR: "should-survive",
+      },
       spawnSyncImpl: (_command, _args, options) => {
         spawnedEnv = options.env as NodeJS.ProcessEnv;
         return {
@@ -424,6 +428,7 @@ describe("http-probe helpers", () => {
       },
     });
 
+    expect(spawnedEnv?.CONNECTIONSTRING).toBeUndefined();
     expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
     expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
   });
@@ -457,6 +462,94 @@ describe("http-probe helpers", () => {
     expect(spawnedEnv?.HTTP_PROXY).toBe("http://proxy.internal:3128");
     expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
     expect(spawnedEnv?.MY_SECRET_TOKEN).toBeUndefined();
+  });
+
+  it("bypasses ambient proxies when --resolve pins the validated origin (#6293)", () => {
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    runCurlProbe(
+      ["-sS", "--resolve", "example.test:443:93.184.216.34", "https://example.test/models"],
+      {
+        pinnedAddresses: ["93.184.216.34"],
+        replaceEnv: true,
+        env: {
+          PATH: "/usr/bin",
+          HTTP_PROXY: "http://proxy.internal:3128",
+          HTTPS_PROXY: "http://proxy.internal:3128",
+          ALL_PROXY: "socks5://proxy.internal:1080",
+          http_proxy: "http://proxy.internal:3128",
+          https_proxy: "http://proxy.internal:3128",
+          all_proxy: "socks5://proxy.internal:1080",
+        },
+        spawnSyncImpl: (_command, _args, options) => {
+          spawnedEnv = options.env as NodeJS.ProcessEnv;
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      },
+    );
+
+    for (const name of [
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "ALL_PROXY",
+      "http_proxy",
+      "https_proxy",
+      "all_proxy",
+    ]) {
+      expect(spawnedEnv?.[name]).toBeUndefined();
+    }
+    expect(spawnedEnv?.NO_PROXY).toBe("*");
+    expect(spawnedEnv?.no_proxy).toBe("*");
+  });
+
+  it.each([
+    "http://127.0.0.1:8000/v1/models",
+    "https://inference.local/v1/models",
+    "https://93.184.216.34/v1/models",
+  ])("bypasses ambient proxies for approved no-pin origin %s (#6293)", (url) => {
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    runCurlProbe(["-sS", url], {
+      pinnedAddresses: [],
+      replaceEnv: true,
+      env: {
+        HTTP_PROXY: "http://proxy.internal:3128",
+        HTTPS_PROXY: "http://proxy.internal:3128",
+        ALL_PROXY: "socks5://proxy.internal:1080",
+        http_proxy: "http://proxy.internal:3128",
+        https_proxy: "http://proxy.internal:3128",
+        all_proxy: "socks5://proxy.internal:1080",
+      },
+      spawnSyncImpl: (_command, _args, options) => {
+        spawnedEnv = options.env as NodeJS.ProcessEnv;
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    for (const name of [
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "ALL_PROXY",
+      "http_proxy",
+      "https_proxy",
+      "all_proxy",
+    ]) {
+      expect(spawnedEnv?.[name]).toBeUndefined();
+    }
+    expect(spawnedEnv?.NO_PROXY).toBe("*");
+    expect(spawnedEnv?.no_proxy).toBe("*");
   });
 
   it("scrubs credential-shaped env even when trustedConfigFiles is not supplied", () => {

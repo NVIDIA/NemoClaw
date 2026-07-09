@@ -53,10 +53,22 @@ def parse_args():
 def cli_main():
     return parse_args()
 `,
-  "app.py": fs.readFileSync(
-    path.join(repoRoot, "test", "fixtures", "langchain-deepagents-code", "app.py"),
-    "utf8",
-  ),
+  "app.py": fs
+    .readFileSync(
+      path.join(repoRoot, "test", "fixtures", "langchain-deepagents-code", "app.py"),
+      "utf8",
+    )
+    .replace(
+      "    async def _switch_model(self, model_spec, **kwargs):\n",
+      `    async def _resume_thread(self, thread_id):
+        del thread_id
+
+    async def _restart_server_for_agent_swap(self, agent_name):
+        del agent_name
+
+    async def _switch_model(self, model_spec, **kwargs):
+`,
+    ),
   "auth_store.py": `from __future__ import annotations
 
 class StoredCredential: pass
@@ -78,6 +90,15 @@ def _load_dotenv(*, start_path=None, refresh_loaded=False): return False
 def _parse_interpreter_ptc(raw): return raw
 def _preview_dotenv_environ(*, start_path=None): return {}
 def _tracing_enabled(): return False
+`,
+  "tools.py": `from __future__ import annotations
+
+_MAX_FETCH_REDIRECTS = 5
+
+class _UrlValidationError(ValueError): pass
+
+def _fetch_with_redirects(url, *, timeout):
+    return url, timeout
 `,
   "model_config.py": `from __future__ import annotations
 
@@ -133,6 +154,7 @@ def create_deep_agent(*args, **kwargs):
 
 def _resolve_ptc_option(*args, **kwargs): return None
 def load_async_subagents(config_path=None): return []
+def build_model_identity_section(name, provider=None, context_limit=None, unsupported_modalities=frozenset()): return name
 
 def create_cli_agent(model, assistant_id, *args, **kwargs):
     del model, assistant_id, args
@@ -216,6 +238,16 @@ def should_run_onboarding(state_dir=None): return True
 
 class ApprovalMenu:
     def _handle_selection(self, option, *, reject_message=None): pass
+`,
+  "tui/widgets/status.py": `from __future__ import annotations
+
+class StatusBar:
+    def set_model(self, *, provider, model, effort=""): pass
+`,
+  "tui/widgets/welcome.py": `from __future__ import annotations
+
+class WelcomeBanner:
+    def update_model(self, *, provider, model): pass
 `,
   "client/launch/server.py": fs.readFileSync(
     path.join(repoRoot, "test", "fixtures", "langchain-deepagents-code", "server.py"),

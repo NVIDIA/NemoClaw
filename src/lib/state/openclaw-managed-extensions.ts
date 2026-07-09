@@ -52,6 +52,7 @@ function isAllowedExtensionNpmBinSymlink(relPath: string, linkTarget: string): b
 
   return (
     targetWithinNodeModules.length > 0 &&
+    targetWithinNodeModules !== ".." &&
     !targetWithinNodeModules.startsWith("../") &&
     !path.posix.isAbsolute(targetWithinNodeModules) &&
     !targetWithinNodeModules.startsWith(".bin/")
@@ -89,33 +90,44 @@ export function shouldPreserveOpenClawManagedExtensions(
 export function buildRestoreTarArgs(
   backupPath: string,
   localDirs: readonly string[],
-  preserveManagedExtensions: boolean,
+  managedExtensionDirs: readonly string[],
 ): string[] {
   const args = ["-cf", "-", "-C", backupPath];
-  if (preserveManagedExtensions) {
-    for (const extensionName of OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS) {
-      args.push("--exclude", `extensions/${extensionName}`);
-    }
+  for (const extensionName of managedExtensionDirs) {
+    args.push("--exclude", `extensions/${extensionName}`);
   }
   args.push("--", ...localDirs);
   return args;
 }
 
-function buildOpenClawExtensionsCleanupCommand(dir: string): string {
+function buildOpenClawExtensionsCleanupCommand(
+  dir: string,
+  managedExtensionDirs: readonly string[],
+  requiredExtensionDirs: ReadonlySet<string>,
+): string {
   const extensionsDir = `${dir}/extensions`;
   const quotedExtensionsDir = shellQuote(extensionsDir);
-  const validationCommands = OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS.map((extensionName) => {
-    const managedPath = `${extensionsDir}/${extensionName}`;
-    return (
-      `p=${shellQuote(managedPath)}; ` +
-      'if { [ -e "$p" ] || [ -L "$p" ]; } && { [ ! -d "$p" ] || [ -L "$p" ]; }; then ' +
-      'echo "refusing to preserve unsafe managed extension: $p" >&2; exit 20; fi'
-    );
-  }).join("; ");
+  const validationCommands = managedExtensionDirs
+    .map((extensionName) => {
+      const managedPath = `${extensionsDir}/${extensionName}`;
+      if (requiredExtensionDirs.has(extensionName)) {
+        return (
+          `p=${shellQuote(managedPath)}; ` +
+          'if [ ! -d "$p" ] || [ -L "$p" ]; then ' +
+          'echo "refusing missing or unsafe image-managed extension: $p" >&2; exit 20; fi'
+        );
+      }
+      return (
+        `p=${shellQuote(managedPath)}; ` +
+        'if { [ -e "$p" ] || [ -L "$p" ]; } && { [ ! -d "$p" ] || [ -L "$p" ]; }; then ' +
+        'echo "refusing to preserve unsafe managed extension: $p" >&2; exit 20; fi'
+      );
+    })
+    .join("; ");
   const validateManagedPaths = `{ ${validationCommands}; }`;
-  const preservedNames = OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS.map(
-    (extensionName) => `! -name ${shellQuote(extensionName)}`,
-  ).join(" ");
+  const preservedNames = managedExtensionDirs
+    .map((extensionName) => `! -name ${shellQuote(extensionName)}`)
+    .join(" ");
 
   return [
     `mkdir -p -- ${quotedExtensionsDir}`,
@@ -127,15 +139,19 @@ function buildOpenClawExtensionsCleanupCommand(dir: string): string {
 export function buildRestoreCleanupCommand(
   dir: string,
   localDirs: readonly string[],
-  preserveManagedExtensions: boolean,
+  managedExtensionDirs: readonly string[],
+  requiredExtensionDirs: ReadonlySet<string>,
 ): string {
+  const preserveManagedExtensions = managedExtensionDirs.length > 0;
   const commands: string[] = [];
   for (const dirName of localDirs) {
     if (preserveManagedExtensions && dirName === "extensions") continue;
     commands.push(`rm -rf -- ${shellQuote(`${dir}/${dirName}`)}`);
   }
   if (preserveManagedExtensions) {
-    commands.push(buildOpenClawExtensionsCleanupCommand(dir));
+    commands.push(
+      buildOpenClawExtensionsCleanupCommand(dir, managedExtensionDirs, requiredExtensionDirs),
+    );
   }
   return commands.length > 0 ? commands.join(" && ") : ":";
 }

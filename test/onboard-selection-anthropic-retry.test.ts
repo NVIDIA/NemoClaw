@@ -98,6 +98,7 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
+require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
 
 const { setupNim } = require(${onboardPath});
 
@@ -179,6 +180,7 @@ credentials.prompt = async (message) => {
 };
 runner.runCapture = () => "";
 
+require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
 const { setupNim } = require(${onboardPath});
 
 (async () => {

@@ -337,6 +337,7 @@ export function createSetupNim(
     let compatibleEndpointReasoning: string | null = null;
     let allowToolsIncompatible = false;
     let reuseGatewayCredential = false;
+    let endpointPinnedAddresses: string[] | undefined;
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
@@ -346,6 +347,7 @@ export function createSetupNim(
       catalogUrl: OPENROUTER_FEATURED_MODELS_URL,
       defaultModel: resolveAgentDefaultCloudModel(agent),
       loadingMessage: "  Loading OpenRouter's featured model catalog...",
+      retiredModelIds: [],
       writeLine: deps.log,
     });
     const createSelectionState = (): SetupNimSelectionState => {
@@ -360,6 +362,7 @@ export function createSetupNim(
         compatibleEndpointReasoning,
         nimContainer,
         allowToolsIncompatible,
+        ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
         nvidiaFeaturedModels,
         openRouterFeaturedModels,
       };
@@ -545,6 +548,7 @@ export function createSetupNim(
             hermesToolGateways,
             preferredInferenceApi,
             allowToolsIncompatible,
+            endpointPinnedAddresses,
           } = state);
           compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
           reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
@@ -722,6 +726,7 @@ export function createSetupNim(
       allowToolsIncompatible,
       skipHostInferenceSmoke: reuseGatewayCredential,
       reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
+      ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
     };
   };
 }

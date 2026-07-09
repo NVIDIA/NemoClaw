@@ -437,9 +437,9 @@ export default function register(api: OpenClawPluginApi): void {
     "  Slash:     /nemoclaw",
   ];
 
-  api.logger.info("");
+  process.stderr.write("\n");
   for (const line of renderBox(bannerLines)) {
-    api.logger.info(line);
+    process.stderr.write(`${line}\n`);
   }
-  api.logger.info("");
+  process.stderr.write("\n");
 }

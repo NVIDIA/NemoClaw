@@ -177,6 +177,7 @@ describe("createSetupNim", () => {
       catalogUrl: OPENROUTER_FEATURED_MODELS_URL,
       defaultModel: ultra,
       loadingMessage: "  Loading OpenRouter's featured model catalog...",
+      retiredModelIds: [],
       writeLine: log,
     });
   });

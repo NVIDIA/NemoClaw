@@ -3,7 +3,7 @@
 
 export const OPENROUTER_ENDPOINT_URL = "https://openrouter.ai/api/v1";
 export const OPENROUTER_FEATURED_MODELS_URL =
-  "https://assets.ngc.nvidia.com/products/api-catalog/featured-models.json";
+  "https://assets.ngc.nvidia.com/products/api-catalog/featured-models-openrouter.json";
 export const OPENROUTER_HELP_URL = "https://openrouter.ai/workspaces/default/keys";
 export const OPENROUTER_CREDENTIAL_ENV = "OPENROUTER_API_KEY";
 export const OPENROUTER_PROVIDER_NAME = "openrouter-api";
