@@ -13,6 +13,7 @@ import {
   CORPORATE_CA_EXPLICIT_ENV,
   CORPORATE_CA_HOST_ANCHOR_DIRS,
   CORPORATE_CA_HOST_ANCHOR_SOURCE,
+  CORPORATE_CA_LITERAL_SSL_CERTS_DIR,
   CorporateCaValidationError,
   encodeCorporateCaArg,
   isKnownMergedTrustStorePath,
@@ -289,10 +290,11 @@ describe("isKnownMergedTrustStorePath (#6210)", () => {
 });
 
 describe("resolveCorporateCaFromHostAnchors host trust-store path (#6210)", () => {
-  it("narrows /etc/ssl/certs detection to anchor-source dirs, not merged output (#6210)", () => {
+  it("imports from anchor-source dirs, not merged /etc/ssl/certs output (#6210)", () => {
     expect(CORPORATE_CA_HOST_ANCHOR_DIRS).toContain("/usr/local/share/ca-certificates");
     expect(CORPORATE_CA_HOST_ANCHOR_DIRS).not.toContain("/etc/ssl/certs");
     expect(CORPORATE_CA_HOST_ANCHOR_DIRS).not.toContain("/etc/ssl/certs/ca-certificates.crt");
+    expect(CORPORATE_CA_LITERAL_SSL_CERTS_DIR).toBe("/etc/ssl/certs");
     expect(isKnownMergedTrustStorePath("/etc/ssl/certs/ca-certificates.crt")).toBe(true);
   });
 
@@ -412,7 +414,12 @@ describe("resolveCorporateCa env then host anchors (#6210)", () => {
   });
 
   it("returns null when neither env nor host anchors provide a CA", () => {
-    expect(resolveCorporateCa({}, { hostAnchorDirs: [path.join(tmpDir(), "absent")] })).toBeNull();
+    expect(
+      resolveCorporateCa(
+        {},
+        { hostAnchorDirs: [path.join(tmpDir(), "absent")], literalSslCertsDir: null },
+      ),
+    ).toBeNull();
   });
 
   it("reads host anchor directories from the anchor-dirs env override", () => {
@@ -425,6 +432,59 @@ describe("resolveCorporateCa env then host anchors (#6210)", () => {
 
   it("disables host-store scanning when the anchor-dirs override is empty", () => {
     expect(resolveCorporateCa({ [CORPORATE_CA_ANCHOR_DIRS_ENV]: "" })).toBeNull();
+  });
+
+  it("warns when only a literal /etc/ssl/certs-style directory has a standalone cert (#6210)", () => {
+    const literalSslCertsDir = tmpDir();
+    const standaloneCert = writeAnchor(literalSslCertsDir, "corp-proxy-root.pem");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const resolved = resolveCorporateCa(
+      {},
+      { hostAnchorDirs: [path.join(tmpDir(), "absent")], literalSslCertsDir },
+    );
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
+
+    expect(resolved).toBeNull();
+    expect(
+      messages.some(
+        (m) =>
+          m.includes(literalSslCertsDir) &&
+          m.includes(standaloneCert) &&
+          m.includes(CORPORATE_CA_EXPLICIT_ENV) &&
+          m.includes(CORPORATE_CA_ANCHOR_DIRS_ENV),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not warn for the merged /etc/ssl/certs ca-certificates output alone (#6210)", () => {
+    const literalSslCertsDir = tmpDir();
+    writeAnchor(literalSslCertsDir, "ca-certificates.crt");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const resolved = resolveCorporateCa(
+      {},
+      { hostAnchorDirs: [path.join(tmpDir(), "absent")], literalSslCertsDir },
+    );
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
+
+    expect(resolved).toBeNull();
+    expect(messages).toHaveLength(0);
+  });
+
+  it("does not warn about literal /etc/ssl/certs when host-store scanning is disabled", () => {
+    const literalSslCertsDir = tmpDir();
+    writeAnchor(literalSslCertsDir, "corp-proxy-root.pem");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const resolved = resolveCorporateCa(
+      { [CORPORATE_CA_ANCHOR_DIRS_ENV]: "" },
+      { literalSslCertsDir },
+    );
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
+
+    expect(resolved).toBeNull();
+    expect(messages).toHaveLength(0);
   });
 });
 

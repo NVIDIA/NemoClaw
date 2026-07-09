@@ -97,19 +97,25 @@ const DEFAULT_HOST_ANCHOR_SPECS = [
 
 /**
  * Host trust-store anchor directories scanned as a last resort (#6210
- * acceptance path). The issue's "host `/etc/ssl/certs/`" acceptance is narrowed
- * here to administrator-managed anchor **source** directories only. These hold
- * locally-added anchors: the distro's ~140 public roots live elsewhere and are
- * compiled into the merged `/etc/ssl/certs/ca-certificates.crt` output — which
- * we deliberately do NOT scan. Reading the anchor sources lets us import exactly
- * the corporate root the reporter installed on the DGX Station host without
- * baking broad, unrelated OS trust into the image. Discovery is bounded by
+ * acceptance path). Automatic import reads administrator-managed anchor
+ * **source** directories only. These hold locally-added anchors: the distro's
+ * ~140 public roots live elsewhere and are compiled into the merged
+ * `/etc/ssl/certs/ca-certificates.crt` output, which is never imported as a
+ * corporate CA. Reading the anchor sources lets us import exactly the corporate
+ * root the reporter installed on the DGX Station host without baking broad,
+ * unrelated OS trust into the image. If those sources miss but a standalone
+ * certificate file exists only in the literal `/etc/ssl/certs/` output
+ * directory, `resolveCorporateCa` warns with explicit bundle guidance so the
+ * #6210 path is not silent. Discovery is bounded by
  * {@link MAX_CORPORATE_CA_CERTS} / {@link MAX_CORPORATE_CA_BYTES}; a directory
  * that would exceed those caps is skipped rather than truncated.
  */
 export const CORPORATE_CA_HOST_ANCHOR_DIRS = DEFAULT_HOST_ANCHOR_SPECS.map(
   (spec) => spec.dir,
 ) as readonly string[];
+
+/** Literal Debian/Ubuntu merged trust-store output directory from #6210. */
+export const CORPORATE_CA_LITERAL_SSL_CERTS_DIR = "/etc/ssl/certs";
 
 /**
  * Override the host anchor directories scanned. A path-list (`path.delimiter`
@@ -147,6 +153,9 @@ const HOST_ANCHOR_MAX_FILES = 256;
  * certificate files, so `HOST_ANCHOR_MAX_FILES` alone cannot stop it.
  */
 const HOST_ANCHOR_MAX_DIRS = 1024;
+
+const LITERAL_SSL_CERTS_EXT_RE = /\.(?:pem|crt|cer)$/i;
+const LITERAL_SSL_CERTS_MERGED_BASENAMES = new Set(["ca-certificates.crt"]);
 
 /** Opt-out: set to a falsey token to disable corporate CA import entirely. */
 export const CORPORATE_CA_DISABLE_ENV = "NEMOCLAW_CORPORATE_CA_IMPORT";
@@ -417,6 +426,47 @@ function collectAnchorFiles(root: string, extensions: RegExp): string[] {
   return out.sort();
 }
 
+function collectLiteralSslCertFiles(root: string): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        LITERAL_SSL_CERTS_EXT_RE.test(entry.name) &&
+        !LITERAL_SSL_CERTS_MERGED_BASENAMES.has(entry.name),
+    )
+    .map((entry) => path.join(root, entry.name))
+    .filter((file) => !isKnownMergedTrustStorePath(file))
+    .sort()
+    .slice(0, HOST_ANCHOR_MAX_FILES);
+}
+
+function warnIfLiteralSslCertsOnlySource(root: string): void {
+  const candidates = collectLiteralSslCertFiles(root);
+  if (candidates.length === 0) return;
+
+  const validCandidates: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      validateCorporateCaFile(candidate);
+      validCandidates.push(candidate);
+    } catch {
+      // Invalid standalone files are not actionable enough for the #6210 warning.
+    }
+  }
+  if (validCandidates.length === 0) return;
+
+  const example = validCandidates[0];
+  warnCorporateCa(
+    `host ${root} contains standalone certificate file(s) such as ${example}, but NemoClaw does not import the merged/output trust directory automatically; set ${CORPORATE_CA_EXPLICIT_ENV} to the corporate root PEM, or set ${CORPORATE_CA_ANCHOR_DIRS_ENV} to the administrator anchor source directory`,
+  );
+}
+
 /**
  * Resolve a corporate CA from the host administrator-managed anchor directories
  * (#6210 acceptance path).
@@ -431,8 +481,9 @@ function collectAnchorFiles(root: string, extensions: RegExp): string[] {
  * bounded by the depth/file caps above.
  *
  * Returns `null` when no anchor directory yields a usable, bounded bundle.
- * Never throws: an unreadable/invalid/oversized anchor set is skipped silently
- * (this is an implicit fallback, like the conventional CA env vars).
+ * Never throws: an unreadable/invalid/oversized anchor set is skipped without
+ * breaking onboard (this is an implicit fallback, like the conventional CA env
+ * vars), with warnings only when a concrete candidate was found but not imported.
  */
 export function resolveCorporateCaFromHostAnchors(
   dirs: readonly string[] = CORPORATE_CA_HOST_ANCHOR_DIRS,
@@ -507,6 +558,8 @@ function hostAnchorDirsFromEnv(env: NodeJS.ProcessEnv): readonly string[] | null
 export interface ResolveCorporateCaOptions {
   /** Override the host anchor directories scanned (testing seam). */
   hostAnchorDirs?: readonly string[];
+  /** Override the literal `/etc/ssl/certs` warning probe path (testing seam). */
+  literalSslCertsDir?: string | null;
 }
 
 /**
@@ -531,9 +584,21 @@ export function resolveCorporateCa(
   if (isDisabled(env)) return null;
   const fromEnv = resolveCorporateCaFromEnv(env);
   if (fromEnv) return fromEnv;
-  const anchorDirs =
-    options.hostAnchorDirs ?? hostAnchorDirsFromEnv(env) ?? CORPORATE_CA_HOST_ANCHOR_DIRS;
-  return resolveCorporateCaFromHostAnchors(anchorDirs);
+  const envAnchorDirs = hostAnchorDirsFromEnv(env);
+  const anchorDirs = options.hostAnchorDirs ?? envAnchorDirs ?? CORPORATE_CA_HOST_ANCHOR_DIRS;
+  const fromHostAnchors = resolveCorporateCaFromHostAnchors(anchorDirs);
+  if (fromHostAnchors) return fromHostAnchors;
+
+  const hostScanningDisabledByEnv =
+    envAnchorDirs !== null && (env[CORPORATE_CA_ANCHOR_DIRS_ENV] ?? "").trim().length === 0;
+  const literalSslCertsDir =
+    options.literalSslCertsDir === undefined
+      ? CORPORATE_CA_LITERAL_SSL_CERTS_DIR
+      : options.literalSslCertsDir;
+  if (!hostScanningDisabledByEnv && literalSslCertsDir !== null) {
+    warnIfLiteralSslCertsOnlySource(literalSslCertsDir);
+  }
+  return null;
 }
 
 /** Base64-encode PEM text for a single-line Dockerfile ARG value. */
