@@ -91,6 +91,17 @@ function reportsExactProviderNotFound(output: string, providerName: string): boo
     /^(?:(?:error|rpc\s+error)\s*:\s*)?provider\s+(["'`])([^"'`\r\n]+)\1\s+(?:(?:was|is)\s+)?(?:not\s+found|notfound)[.!]?\s*$/i;
   const structuredMissingThenProvider =
     /^(?:(?:error|rpc\s+error)\s*:\s*)*(?:status\s*:\s*)?notfound\s*:\s*provider\s+(["'`])([^"'`\r\n]+)\1(?:\s+(?:(?:was|is)\s+)?(?:not\s+found|notfound))?[.!]?\s*$/i;
+  const issueDiagnostic = diagnosticLines.map((line) => line.replace(/^│\s*/u, "")).join(" ");
+  const missingAndUnrecognized =
+    /^(?:error\s*:\s*)?(?:×\s*)?provider\s+(["'`])([^"'`\r\n]+)\1\s+not\s+found\s+and\s+(["'`])([^"'`\r\n]+)\3\s+is\s+not\s+a\s+recognized\s+provider\s+type\.\s+Create\s+it\s+first\s+with\s+`openshell\s+provider\s+create\s+--type\s+<type>\s+--name\s+([^`\s]+)`[.!]?\s*$/i;
+  const issueMatch = missingAndUnrecognized.exec(issueDiagnostic);
+  if (issueMatch) {
+    return (
+      issueMatch[2] === providerName &&
+      issueMatch[4] === providerName &&
+      issueMatch[5] === providerName
+    );
+  }
 
   return diagnosticLines.every((line) => {
     const match = providerThenMissing.exec(line) ?? structuredMissingThenProvider.exec(line);

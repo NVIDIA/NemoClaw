@@ -111,6 +111,44 @@ describe("reconcileRegisteredExtraProviders", () => {
     expect(recorded).toEqual(["healthy-provider", "stale-provider", "indeterminate-provider"]);
   });
 
+  it("accepts the exact wrapped not-found diagnostic reported by OpenShell (#6501)", () => {
+    const diagnostics = new Map<string, string>([
+      [
+        "tavily-search",
+        [
+          "Error:   × provider 'tavily-search' not found and 'tavily-search' is not a recognized",
+          "  │ provider type. Create it first with `openshell provider create --type",
+          "  │ <type> --name tavily-search`",
+        ].join("\n"),
+      ],
+      [
+        "mismatched-provider",
+        "Error: × provider 'mismatched-provider' not found and 'other-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name mismatched-provider`",
+      ],
+      [
+        "spoofed-command-provider",
+        "Error: × provider 'spoofed-command-provider' not found and 'spoofed-command-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name other-provider`",
+      ],
+    ]);
+    const runOpenshell = vi.fn(
+      (args: string[]): ProbeResult => ({
+        status: 1,
+        stderr: diagnostics.get(args.at(-1) ?? ""),
+      }),
+    );
+
+    expect(
+      reconcileRegisteredExtraProviders("nemoclaw", {
+        listExtraProviders: () => [
+          "tavily-search",
+          "mismatched-provider",
+          "spoofed-command-provider",
+        ],
+        runOpenshell,
+      }),
+    ).toEqual(["mismatched-provider", "spoofed-command-provider"]);
+  });
+
   it("accepts the exact gRPC not-found ordering without using broad name heuristics (#6501)", () => {
     const runOpenshell = vi.fn(
       (): ProbeResult => ({

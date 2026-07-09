@@ -104,9 +104,12 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxNames = [
+    await createSandbox(null, "gpt-5.4"),
+    await createSandbox(null, "gpt-5.4"),
+  ];
   console.log(JSON.stringify({
-    sandboxName,
+    sandboxNames,
     commands,
     extraProviders: registry.listExtraProviders(),
   }));
@@ -137,16 +140,22 @@ const { createSandbox } = require(${onboardPath});
         .find((line) => line.startsWith("{") && line.endsWith("}"));
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
-      assert.equal(payload.sandboxName, "my-assistant");
+      assert.deepEqual(payload.sandboxNames, ["my-assistant", "my-assistant"]);
 
-      const createCommand = payload.commands.find((entry: CommandEntry) =>
+      const createCommands = payload.commands.filter((entry: CommandEntry) =>
         entry.command.includes("sandbox create"),
       );
-      assert.ok(createCommand, "expected sandbox create command");
+      assert.equal(createCommands.length, 2, "expected one sandbox create command per attempt");
+      const [createCommand, retryCreateCommand] = createCommands;
       assert.match(createCommand.command, /--provider brave-search/);
       assert.match(createCommand.command, /--provider custom-provider/);
       assert.match(createCommand.command, /--provider my-slack-bridge/);
       assert.doesNotMatch(createCommand.command, /--provider tavily-search/);
+      assert.deepEqual(
+        createCommand.command.match(/--provider\s+\S+/g),
+        retryCreateCommand.command.match(/--provider\s+\S+/g),
+        "retry must preserve the exact filtered provider arguments",
+      );
 
       const providerProbes = payload.commands.filter((entry: CommandEntry) =>
         entry.command.includes("provider get -g nemoclaw "),
@@ -159,10 +168,14 @@ const { createSandbox } = require(${onboardPath});
           .sort(),
         [
           "provider get -g nemoclaw brave-search",
+          "provider get -g nemoclaw brave-search",
+          "provider get -g nemoclaw custom-provider",
           "provider get -g nemoclaw custom-provider",
           "provider get -g nemoclaw my-slack-bridge",
+          "provider get -g nemoclaw my-slack-bridge",
           "provider get -g nemoclaw tavily-search",
-        ],
+          "provider get -g nemoclaw tavily-search",
+        ].sort(),
       );
       assert.equal(
         payload.commands.some((entry: CommandEntry) =>
