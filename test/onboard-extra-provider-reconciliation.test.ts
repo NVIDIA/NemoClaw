@@ -63,9 +63,6 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  if (normalized.includes("provider list -g nemoclaw --names")) {
-    return { status: 0, stdout: "" };
-  }
   return { status: 0 };
 };
 runner.runCapture = (command) => {
