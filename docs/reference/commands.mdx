@@ -367,7 +367,7 @@ After successful recovery, the installer skips generic onboarding.
 For a manually prepared upgrade, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after preserving every registered sandbox and retiring the old gateway.
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
-Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
+Supported non-experimental choices include NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are registered with the OpenShell gateway and never persisted to host disk.
 Refer to [Credential Storage](../security/credential-storage) for details on inspection, rotation, and migration from earlier releases.
 The legacy `$$nemoclaw setup` command is deprecated; use `$$nemoclaw onboard` instead.
@@ -3145,7 +3145,7 @@ Set them before running `$$nemoclaw onboard`.
 
 | Variable | Format | Effect |
 |----------|--------|--------|
-| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. Aliases: `cloud` → `build`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
+| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. |
 | `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |

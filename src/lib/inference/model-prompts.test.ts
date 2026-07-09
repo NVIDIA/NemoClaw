@@ -143,6 +143,36 @@ describe("model prompt helpers", () => {
     );
   });
 
+  it("supports provider-specific catalog labels, credentials, and manual validation (#5826)", async () => {
+    const promptFn = promptSequence(["2", "moonshotai/kimi-k2.6"]);
+    const writeLine = vi.fn();
+    const getCredentialFn = vi.fn((envName: string) =>
+      envName === "OPENROUTER_API_KEY" ? "sk-or-test" : null,
+    );
+    const validateCloudModelFn = vi.fn((model: string, apiKey: string) => ({
+      ok: model === "moonshotai/kimi-k2.6" && apiKey === "sk-or-test",
+    }));
+
+    const result = await promptCloudModel({
+      promptFn,
+      writeLine,
+      cloudModelMenuLabel: "OpenRouter cloud models",
+      cloudModelOptions: [{ id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron" }],
+      manualCredentialEnv: "OPENROUTER_API_KEY",
+      manualCredentialMissingMessage:
+        "  OPENROUTER_API_KEY is required before validating a custom OpenRouter model.",
+      manualModelLabel: "OpenRouter",
+      getCredentialFn,
+      validateCloudModelFn,
+    });
+
+    expect(result).toBe("moonshotai/kimi-k2.6");
+    expect(writeLine).toHaveBeenCalledWith("  OpenRouter cloud models:");
+    expect(promptFn).toHaveBeenNthCalledWith(2, "  OpenRouter model id: ");
+    expect(getCredentialFn).toHaveBeenCalledWith("OPENROUTER_API_KEY");
+    expect(validateCloudModelFn).toHaveBeenCalledWith("moonshotai/kimi-k2.6", "sk-or-test");
+  });
+
   it("defers transient manual validation failures back to the caller flow", async () => {
     const errorLine = vi.fn();
     const result = await promptManualModelId(

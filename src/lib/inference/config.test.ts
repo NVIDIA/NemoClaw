@@ -199,6 +199,16 @@ describe("inference selection config", () => {
       provider: "openai-api",
       providerLabel: "OpenAI",
     });
+    expect(getProviderSelectionConfig("openrouter-api", "moonshotai/kimi-k2.6")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "moonshotai/kimi-k2.6",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "OPENROUTER_API_KEY",
+      provider: "openrouter-api",
+      providerLabel: "OpenRouter",
+    });
     expect(getProviderSelectionConfig("anthropic-prod", "claude-sonnet-4-6")).toEqual(
       expect.objectContaining({ model: "claude-sonnet-4-6", providerLabel: "Anthropic" }),
     );
@@ -252,6 +262,7 @@ describe("inference selection config", () => {
       "nvidia-prod",
       "nvidia-nim",
       "openai-api",
+      "openrouter-api",
       "anthropic-prod",
       "compatible-anthropic-endpoint",
       "gemini-api",
@@ -286,6 +297,7 @@ describe("inference selection config", () => {
 
   it("falls back to provider defaults when model is omitted", () => {
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
+    expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
@@ -367,6 +379,18 @@ describe("getSandboxInferenceConfig", () => {
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/deepseek-ai/DeepSeek-V4-Flash`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
+  });
+
+  it("maps OpenRouter to the managed inference provider with store disabled (#5826)", () => {
+    expect(getSandboxInferenceConfig("moonshotai/kimi-k2.6", "openrouter-api")).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
       inferenceBaseUrl: INFERENCE_ROUTE_URL,
       inferenceApi: "openai-completions",
       inferenceCompat: {

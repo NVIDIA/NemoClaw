@@ -106,11 +106,13 @@ export async function ensureNamedCredential({
   envName,
   label,
   helpUrl = null,
+  validator = null,
   exitOnboardFromPrompt,
 }: {
   envName: string | null;
   label: string;
   helpUrl?: string | null;
+  validator?: ((value: string) => string | null) | null;
   exitOnboardFromPrompt: () => never;
 }): Promise<string | BackToSelection> {
   if (!envName) {
@@ -119,10 +121,14 @@ export async function ensureNamedCredential({
   }
   const key = credentials.getCredential(envName);
   if (key) {
-    process.env[envName] = key;
-    return key;
+    const validationError = typeof validator === "function" ? validator(key) : null;
+    if (!validationError) {
+      process.env[envName] = key;
+      return key;
+    }
+    console.error(validationError);
   }
-  return replaceNamedCredential({ envName, label, helpUrl, exitOnboardFromPrompt });
+  return replaceNamedCredential({ envName, label, helpUrl, validator, exitOnboardFromPrompt });
 }
 
 export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never): {
@@ -137,6 +143,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     envName: string | null,
     label: string,
     helpUrl?: string | null,
+    validator?: ((value: string) => string | null) | null,
   ) => Promise<string | BackToSelection>;
   shouldReturnToProviderSelection: (result: unknown) => boolean;
   returningToProviderSelection: (result: unknown) => result is BackNavigationResult;
@@ -145,8 +152,8 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     readValue: (question) => readCredentialValue(question, exitOnboardFromPrompt),
     replaceNamedCredential: (envName, label, helpUrl = null, validator = null) =>
       replaceNamedCredential({ envName, label, helpUrl, validator, exitOnboardFromPrompt }),
-    ensureNamedCredential: (envName, label, helpUrl = null) =>
-      ensureNamedCredential({ envName, label, helpUrl, exitOnboardFromPrompt }),
+    ensureNamedCredential: (envName, label, helpUrl = null, validator = null) =>
+      ensureNamedCredential({ envName, label, helpUrl, validator, exitOnboardFromPrompt }),
     shouldReturnToProviderSelection: (result) =>
       shouldReturnToProviderSelection(result, exitOnboardFromPrompt),
     returningToProviderSelection: (result) =>

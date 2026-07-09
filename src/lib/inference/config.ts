@@ -8,6 +8,7 @@
 
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
 import { DEFAULT_OLLAMA_MODEL } from "./local";
+import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
@@ -158,6 +159,13 @@ export function getProviderSelectionConfig(
         credentialEnv: "OPENAI_API_KEY",
         providerLabel: "OpenAI",
       };
+    case OPENROUTER_PROVIDER_NAME:
+      return {
+        ...base,
+        model: model || DEFAULT_CLOUD_MODEL,
+        credentialEnv: OPENROUTER_CREDENTIAL_ENV,
+        providerLabel: "OpenRouter",
+      };
     case "anthropic-prod":
       return {
         ...base,
@@ -259,6 +267,7 @@ export function getSandboxInferenceConfig(
       inferenceApi = "anthropic-messages";
       break;
     case "gemini-api":
+    case OPENROUTER_PROVIDER_NAME:
     case "hermes-provider":
       providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
