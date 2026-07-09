@@ -117,7 +117,7 @@ function makeStartProxyProbeFixture(
   const markerDir = path.dirname(markerFile);
   const scriptPath = path.join(tempDir, "start.sh");
   fs.mkdirSync(ephemeralDir);
-  let fixture = replaceManagedProxyFileConstants(readAgentFile("start.sh"), tempDir)
+  const productionFixture = replaceManagedProxyFileConstants(readAgentFile("start.sh"), tempDir)
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
@@ -126,9 +126,10 @@ function makeStartProxyProbeFixture(
     .replace("local marker_dir=/sandbox/.deepagents", `local marker_dir="${markerDir}"`);
   // macOS mv lacks GNU's --no-target-directory flag. Linux CI exercises the
   // production command so a missing -T regression cannot be hidden here.
-  if (process.platform === "darwin") {
-    fixture = fixture.replace('mv -fT -- "$tmp" "$target"', 'mv -f "$tmp" "$target"');
-  }
+  const fixture =
+    process.platform === "darwin"
+      ? productionFixture.replace('mv -fT -- "$tmp" "$target"', 'mv -f "$tmp" "$target"')
+      : productionFixture;
   fs.writeFileSync(scriptPath, fixture, "utf8");
   writeManagedProxyFiles(tempDir, managedProxy);
   fs.chmodSync(scriptPath, 0o755);
