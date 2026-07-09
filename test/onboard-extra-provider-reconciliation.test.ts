@@ -57,8 +57,14 @@ registry.addExtraProvider("my-slack-bridge");
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get -g nemoclaw tavily-search")) {
+    return { status: 1, stderr: "Error: provider 'tavily-search' not found" };
+  }
+  if (normalized.includes("provider get -g nemoclaw ")) {
+    return { status: 0, stdout: "" };
+  }
   if (normalized.includes("provider list -g nemoclaw --names")) {
-    return { status: 0, stdout: "brave-search\ncustom-provider\nmy-slack-bridge\n" };
+    return { status: 0, stdout: "" };
   }
   return { status: 0 };
 };
@@ -145,10 +151,29 @@ const { createSandbox } = require(${onboardPath});
       assert.match(createCommand.command, /--provider my-slack-bridge/);
       assert.doesNotMatch(createCommand.command, /--provider tavily-search/);
 
-      const providerLists = payload.commands.filter((entry: CommandEntry) =>
-        entry.command.includes("provider list -g nemoclaw --names"),
+      const providerProbes = payload.commands.filter((entry: CommandEntry) =>
+        entry.command.includes("provider get -g nemoclaw "),
       );
-      assert.equal(providerLists.length, 1, "expected one gateway-scoped provider list");
+      assert.deepEqual(
+        providerProbes
+          .map((entry: CommandEntry) =>
+            entry.command.slice(entry.command.indexOf("provider get -g nemoclaw ")),
+          )
+          .sort(),
+        [
+          "provider get -g nemoclaw brave-search",
+          "provider get -g nemoclaw custom-provider",
+          "provider get -g nemoclaw my-slack-bridge",
+          "provider get -g nemoclaw tavily-search",
+        ],
+      );
+      assert.equal(
+        payload.commands.some((entry: CommandEntry) =>
+          entry.command.includes("provider list -g nemoclaw --names"),
+        ),
+        false,
+        "provider-list snapshots must not control extra-provider attachment",
+      );
       assert.deepEqual(payload.extraProviders, [
         "brave-search",
         "custom-provider",
