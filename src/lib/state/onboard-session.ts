@@ -86,7 +86,8 @@ export interface SessionMetadata {
   fromDockerfile: string | null;
   /**
    * Cross-process rebuild correlation source. Remove when RebuildTransactionRecord
-   * durably owns the complete session snapshot needed to prove replacement identity.
+   * durably owns the complete session snapshot needed to prove replacement identity;
+   * #6433 tracks that transaction-model follow-up.
    */
   rebuild?: RebuildSessionCorrelation | null;
 }

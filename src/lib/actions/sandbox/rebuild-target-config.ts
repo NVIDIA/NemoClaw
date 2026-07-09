@@ -117,8 +117,6 @@ export function prepareRebuildTargetConfig(
   allowLegacyManagedImageRecovery = false,
   rebuildCorrelation?: RebuildSessionCorrelation,
 ): RebuildTargetConfig | null {
-  const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
-  if (!resumeConfig) return null;
   const sessionSnapshot = onboardSession.loadSession();
   const sessionMatchesSandbox =
     sessionSnapshot?.sandboxName === sandboxName &&
@@ -130,6 +128,15 @@ export function prepareRebuildTargetConfig(
   // Transaction-owned recovery may consume durable session fields only from
   // the session whose internal correlation anchor matched above.
   const durableSession = rebuildCorrelation && !sessionMatchesSandbox ? null : sessionSnapshot;
+  const resumeConfig = prepareRebuildResumeConfig(
+    sandboxName,
+    sb,
+    rebuildAgent,
+    log,
+    bail,
+    durableSession,
+  );
+  if (!resumeConfig) return null;
   const durableConfig = resolveRebuildDurableConfig(
     sandboxName,
     sb,

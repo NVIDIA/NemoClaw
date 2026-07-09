@@ -13,6 +13,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
+import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { AmbientRecreateEnvAssessment } from "./rebuild-env-isolation";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -88,10 +89,11 @@ export function prepareRebuildResumeConfig(
   rebuildAgent: string | null,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
+  sessionOverride?: Session | null,
 ): RebuildResumeConfig | null {
   const ambient = assessRebuildAmbientEnv(sandboxName, rebuildAgent, log);
 
-  const session = onboardSession.loadSession();
+  const session = sessionOverride === undefined ? onboardSession.loadSession() : sessionOverride;
   const sessionMatchesSandbox = session?.sandboxName === sandboxName;
   const registrySelection = normalizeInferenceSelection(sb);
   const matchingSessionSelection = sessionMatchesSandbox

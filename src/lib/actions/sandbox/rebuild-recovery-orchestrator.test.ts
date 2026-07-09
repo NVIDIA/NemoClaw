@@ -91,8 +91,11 @@ describe("rebuild recovery receipt publication", () => {
     expect(transaction.markReplacementRecreated).toHaveBeenCalledWith(replacement);
   });
 
-  it("refuses receipt publication after replacement identity drift", async () => {
-    const { orchestrator, transaction } = makeOrchestrator({ ...replacement, model: "other" });
+  it.each([
+    ["model", { model: "other" }],
+    ["credential", { credentialEnv: "OTHER_API_KEY" }],
+  ])("refuses receipt publication after %s identity drift", async (_field, drift) => {
+    const { orchestrator, transaction } = makeOrchestrator({ ...replacement, ...drift });
 
     await expect(orchestrator.publishCreatedReplacement()).rejects.toThrow(
       "identity changed before its durable receipt",

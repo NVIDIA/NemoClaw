@@ -59,7 +59,8 @@ export function reconcileRebuildRecovery(input: {
       replacementAlreadyPresent: decision.action === "adopt" || decision.action === "resume",
       // Source of truth: the durable journal; the registry is a mutable fallback.
       // Remove restoration when the journal owns the complete recovery snapshot
-      // or registry updates become atomic with transaction publication.
+      // or registry updates become atomic with transaction publication; #6433
+      // tracks that durable-transaction migration.
       registryRestored:
         decision.action === "create" && !registryEntry
           ? input.restoreRegistry(transaction.intent.source.registryRecovery)

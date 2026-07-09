@@ -183,6 +183,7 @@ describe("rebuild transaction boundary", () => {
 
     const resumed = createRebuildFlowHarness({ staleRecovery: true });
     resumed.session.toolDisclosure = "direct";
+    resumed.session.preferredInferenceApi = "stale-session-api";
     await resumed.rebuildSandbox("alpha", ["--yes"], {
       throwOnError: true,
       transactionStore: interrupted.transactionStore,
@@ -195,6 +196,9 @@ describe("rebuild transaction boundary", () => {
     expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(resumed.onboardSpy).toHaveBeenCalledWith(
       expect.objectContaining({ toolDisclosure: "progressive" }),
+    );
+    expect(resumed.onboardSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ preferredInferenceApi: "stale-session-api" }),
     );
     expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],

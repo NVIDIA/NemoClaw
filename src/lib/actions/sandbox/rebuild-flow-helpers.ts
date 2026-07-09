@@ -24,7 +24,8 @@ import {
 } from "../../openshell-sandbox-list";
 // Source of truth: OpenShell sandbox-list output. When OpenShell exposes a
 // structured sandbox-state API with stable JSON name/readiness fields, replace
-// this text parsing with that API and remove parseReadySandboxNames.
+// this text parsing with that API and remove parseReadySandboxNames. The
+// upstream API follow-up and this removal are tracked by #6433.
 import { parseLiveSandboxNames, parseReadySandboxNames } from "../../runtime-recovery";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as shields from "../../shields";
