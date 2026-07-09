@@ -4,7 +4,11 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
+import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import {
+  canonicalRetryFallback,
+  normalizeReviewResult,
+  partialLedgerFailureResult,
   reviewLedgerConsistencyIssues,
   withCanonicalReviewLedgerFindings,
 } from "../tools/pr-review-advisor/analyze.mts";
@@ -55,7 +59,126 @@ function finding() {
   };
 }
 
+function reviewMetadata(): Parameters<typeof normalizeReviewResult>[1] {
+  return {
+    baseRef: "origin/main",
+    headRef: "HEAD",
+    headSha: "abc123def456",
+    changedFiles: ["src/lib/runner.ts"],
+    deterministic: {
+      diffStat: "1 file changed",
+      commits: [],
+      riskyAreas: [],
+      riskPlan: buildRiskPlan({ headSha: "abc123def456", changedFiles: [] }),
+      testDepth: {
+        verdict: "unit_sufficient",
+        rationale: "deterministic fallback",
+        suggestedTests: [],
+      },
+      staticTestInventory: {
+        changedTestFiles: [],
+        nearbyTestNames: [],
+        candidateExistingCoverage: [],
+      },
+      simplificationSignals: [],
+      workflowSignals: [],
+      localizedPatchSignals: [],
+      monolithDeltas: [],
+      driftEvidence: [],
+      previousAdvisorReview: null,
+      github: null,
+    },
+  };
+}
+
 describe("PR review ledger tools", () => {
+  it("requires every source-of-truth review item to declare findingId", () => {
+    expect(() =>
+      normalizeReviewResult(
+        {
+          sourceOfTruthReview: [{ surface: "resolved cleanup", status: "satisfied" }],
+        },
+        reviewMetadata(),
+      ),
+    ).toThrow("sourceOfTruthReview[1] must include findingId");
+  });
+
+  it("keeps source-of-truth prose from creating findings outside the ledger", () => {
+    const ledger = createReviewFindingLedger();
+    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
+    const result = normalizeReviewResult(
+      {
+        findings: [{ ...finding(), evidence: finding().evidence.join("\n") }],
+        sourceOfTruthReview: [
+          {
+            surface: "best-effort refusal cleanup",
+            status: "needs_followup",
+            findingId: "F-001",
+            invalidState: "A refusal can be reported as success.",
+            sourceBoundary: "Runner refusal handling.",
+            whyNotSourceFix: "Not established.",
+            regressionTest: finding().missingRegressionTest,
+            removalCondition: "Remove the cleanup when refusal state is impossible.",
+            evidence: finding().evidence[0],
+          },
+        ],
+      },
+      reviewMetadata(),
+    );
+
+    expect(result.findings).toHaveLength(1);
+    expect(reviewLedgerConsistencyIssues(result, ledger.snapshot())).toEqual([]);
+  });
+
+  it("rejects unresolved source-of-truth review without an open ledger finding", () => {
+    const result = normalizeReviewResult(
+      {
+        findings: [],
+        sourceOfTruthReview: [
+          {
+            surface: "best-effort cleanup",
+            status: "missing",
+            findingId: null,
+            invalidState: "A failed resource may remain allocated.",
+            sourceBoundary: "Resource creation lifecycle.",
+            whyNotSourceFix: "Not established.",
+            regressionTest: "Missing.",
+            removalCondition: "Unknown.",
+            evidence: "The cleanup suppresses deletion failures.",
+          },
+        ],
+      },
+      reviewMetadata(),
+    );
+
+    const snapshot = createReviewFindingLedger().snapshot();
+    expect(reviewLedgerConsistencyIssues(result, snapshot)).toEqual([
+      "sourceOfTruthReview[1] best-effort cleanup must reference an open ledger finding",
+    ]);
+    expect(canonicalRetryFallback(result, snapshot)).toBeNull();
+  });
+
+  it("preserves canonical findings when a later advisor stage fails", () => {
+    const ledger = createReviewFindingLedger();
+    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
+
+    const result = partialLedgerFailureResult(
+      reviewMetadata(),
+      "tests-regressions omitted its ledger commit",
+      ledger.snapshot(),
+    );
+
+    expect(result).toMatchObject({
+      summary: { confidence: "low", recommendation: "merge_after_fixes" },
+      findings: [{ title: finding().title }],
+      reviewCompleteness: { requiresHumanReview: true },
+    });
+    expect(result?.findings[0]?.title).not.toBe("PR review advisor unavailable");
+    expect(result?.reviewCompleteness.limitations[0]).toContain(
+      "stopped before completing all review stages",
+    );
+  });
+
   it("binds mutations to the runner stage and exposes the canonical snapshot (#6446)", async () => {
     const ledger = createReviewFindingLedger();
     const controller = createReviewLedgerToolController(ledger);
