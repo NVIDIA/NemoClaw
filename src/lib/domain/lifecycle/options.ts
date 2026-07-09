@@ -18,8 +18,8 @@ export interface DestroySandboxOptions {
   /**
    * When the sandbox being destroyed is the last one, also tear down the
    * shared NemoClaw gateway (port forward, gateway pod, cluster volumes).
-   * Default `false` — gateway is preserved so the next `nemoclaw onboard`
-   * can reuse it without a full re-bootstrap. See #2166.
+   * Unattended macOS destroys default to cleanup so the host listener is
+   * released; Linux preserves the gateway for reuse. See #4662 and #2166.
    *
    * Resolution order during normalization: explicit option, then
    * `--cleanup-gateway` argv flag, then `NEMOCLAW_CLEANUP_GATEWAY=1` env

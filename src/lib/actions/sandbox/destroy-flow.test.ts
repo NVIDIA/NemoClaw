@@ -54,6 +54,29 @@ describe("destroySandbox flow", () => {
     expectSuccessfulLiveDestroy(harness, exitSpy);
   });
 
+  it("cleans the final gateway for unattended macOS destroys (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const harness = createDestroyHarness();
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+    );
+  });
+
+  it("honors an explicit gateway-preservation override on macOS (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const harness = createDestroyHarness();
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: false }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  });
+
   it("stops before local cleanup when OpenShell fails to delete the live sandbox", async () => {
     const harness = createDestroyHarness({
       deleteStatus: 7,

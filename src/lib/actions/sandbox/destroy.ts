@@ -89,20 +89,21 @@ function isNonInteractive(): boolean {
 
 /**
  * Decide whether to tear down the shared NemoClaw gateway after destroying
- * the last sandbox. Default is to preserve it (#2166); explicit opt-in via
- * `cleanupGateway: true` (which `normalizeDestroySandboxOptions` also reads
- * from `--cleanup-gateway` / `NEMOCLAW_CLEANUP_GATEWAY`).
+ * the last sandbox. Linux preserves it by default for reuse (#2166), while
+ * unattended macOS destroys clean it up so the host listener is released
+ * (#4662). Explicit cleanup options always take precedence.
  *
  * Prompt rules:
  *   - explicit `cleanupGateway` set         → honour it without prompting
- *   - non-interactive or `--yes` / `--force` → preserve gateway (safe default)
+ *   - non-interactive or `--yes` / `--force` → use the platform default
  *   - interactive without `--yes`           → prompt the user
  */
 async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
   if (options.cleanupGateway === true) return true;
   if (options.cleanupGateway === false) return false;
-  if (options.yes === true || options.force === true) return false;
-  if (isNonInteractive()) return false;
+  if (options.yes === true || options.force === true || isNonInteractive()) {
+    return process.platform === "darwin";
+  }
   console.log(`  ${YW}This was the last sandbox.${R}`);
   console.log(
     "  Also destroy the shared NemoClaw gateway (port forward, gateway pod, cluster volumes)?",
