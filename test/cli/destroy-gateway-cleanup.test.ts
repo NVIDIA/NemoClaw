@@ -81,7 +81,7 @@ describe("CLI dispatch", () => {
   });
 
   it(
-    "tears down the gateway runtime when --cleanup-gateway is passed (#2166)",
+    "falls back to legacy gateway destroy and still cleans volumes when remove fails (#6569)",
     testTimeoutOptions(30_000),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
@@ -119,6 +119,9 @@ describe("CLI dispatch", () => {
           "  exit 0",
           "fi",
           'printf \'%s\\n\' "$*" >> "$log_file"',
+          'if [ "$1" = "gateway" ] && [ "$2" = "remove" ]; then',
+          "  exit 1",
+          "fi",
           "exit 0",
         ].join("\n"),
         { mode: 0o755 },
@@ -151,7 +154,10 @@ describe("CLI dispatch", () => {
       expect(openshellOutput).toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw-8081");
-      expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw-8081");
+      expect(openshellOutput).toContain("gateway destroy -g nemoclaw-8081");
+      expect(openshellOutput.indexOf("gateway remove nemoclaw-8081")).toBeLessThan(
+        openshellOutput.indexOf("gateway destroy -g nemoclaw-8081"),
+      );
       expect(fs.readFileSync(bashLog, "utf8")).toContain(
         "volume ls -q --filter name=openshell-cluster-nemoclaw-8081",
       );
