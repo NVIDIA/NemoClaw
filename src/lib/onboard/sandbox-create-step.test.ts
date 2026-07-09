@@ -180,11 +180,10 @@ describe("runSandboxCreateStep", () => {
   });
 
   it.each([
-    ["terminal VM", true, vmEnv, false],
-    ["terminal Docker", true, dockerEnv, false],
-    ["non-terminal VM", false, vmEnv, true],
-    ["non-terminal Docker", false, dockerEnv, false],
-  ])("applies driver-aware detach behavior for %s", async (_label, isTerminalAgent, env, shouldWaitForStartupOutput) => {
+    ["terminal VM", true, vmEnv],
+    ["terminal Docker", true, dockerEnv],
+    ["non-terminal Docker", false, dockerEnv],
+  ])("detaches immediately for %s", async (_label, isTerminalAgent, env) => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
@@ -212,16 +211,50 @@ describe("runSandboxCreateStep", () => {
     ready = true;
     await vi.advanceTimersByTimeAsync(6);
 
-    const waitMessage =
-      "  Sandbox reported Ready; waiting for startup command output before detaching.";
-    if (shouldWaitForStartupOutput) {
-      expect(child.kill).not.toHaveBeenCalled();
-      expect(logLine).toHaveBeenCalledWith(waitMessage);
-      child.stderr.emit("data", Buffer.from("Setting up NemoClaw (Hermes)...\n"));
-      await vi.advanceTimersByTimeAsync(6);
-    } else {
-      expect(logLine).not.toHaveBeenCalledWith(waitMessage);
-    }
+    expect(logLine).not.toHaveBeenCalledWith(
+      "  Sandbox reported Ready; waiting for startup command output before detaching.",
+    );
+    await expect(promise).resolves.toMatchObject({
+      createResult: expect.objectContaining({ status: 0, forcedReady: true }),
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    vi.useRealTimers();
+  });
+
+  it("waits for startup output for non-terminal VM creates", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const streamOptions = makePollingOptions(child, { logLine });
+    const deps = makeDeps(
+      makeLaunch({ sandboxEnv: vmEnv }),
+      makePatch(),
+      { status: 0, output: "" },
+      {
+        streamCreate: ((command, sandboxEnv, options) =>
+          streamSandboxCreate(command, sandboxEnv, {
+            ...options,
+            ...streamOptions,
+          })) as SandboxCreateStepDeps["streamCreate"],
+      },
+    );
+    let ready = false;
+    deps.isSandboxReady = vi.fn(() => ready);
+    deps.addTraceEvent = vi.fn();
+
+    const promise = runSandboxCreateStep(makeContext(), deps);
+    child.stdout.emit("data", Buffer.from("Created sandbox: alpha\n"));
+    ready = true;
+    await vi.advanceTimersByTimeAsync(6);
+
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(logLine).toHaveBeenCalledWith(
+      "  Sandbox reported Ready; waiting for startup command output before detaching.",
+    );
+
+    child.stderr.emit("data", Buffer.from("Setting up NemoClaw (Hermes)...\n"));
+    await vi.advanceTimersByTimeAsync(6);
 
     await expect(promise).resolves.toMatchObject({
       createResult: expect.objectContaining({ status: 0, forcedReady: true }),

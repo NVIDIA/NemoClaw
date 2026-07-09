@@ -12,54 +12,72 @@ describe("sandbox-create-stream ready gate", () => {
   });
 
   it.each([
-    ["explicit empty gate on VM", vmEnv, [], false],
-    ["explicit empty gate on Docker", dockerEnv, [], false],
-    ["default Docker gate", dockerEnv, undefined, false],
-    ["default VM gate", vmEnv, undefined, true],
-  ])(
-    "handles %s",
-    async (_label, env, readyCheckOutputPatterns, shouldWaitForStartupOutput) => {
-      vi.useFakeTimers();
+    ["explicit empty gate on VM", vmEnv, []],
+    ["explicit empty gate on Docker", dockerEnv, []],
+    ["default Docker gate", dockerEnv, undefined],
+  ])("detaches immediately for %s", async (_label, env, readyCheckOutputPatterns) => {
+    vi.useFakeTimers();
 
-      const child = new FakeChild();
-      const logLine = vi.fn();
-      let resolved = false;
-      const promise = streamSandboxCreate(
-        "echo create",
-        env,
-        makePollingOptions(child, {
-          readyCheck: () => true,
-          readyCheckOutputPatterns,
-          logLine,
-        }),
-      ).then((result) => {
-        resolved = true;
-        return result;
-      });
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate(
+      "echo create",
+      env,
+      makePollingOptions(child, {
+        readyCheck: () => true,
+        readyCheckOutputPatterns,
+        logLine,
+      }),
+    );
 
-      child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
-      await vi.advanceTimersByTimeAsync(6);
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    await vi.advanceTimersByTimeAsync(6);
 
-      const waitMessage =
-        "  Sandbox reported Ready; waiting for startup command output before detaching.";
-      if (shouldWaitForStartupOutput) {
-        expect(resolved).toBe(false);
-        expect(child.kill).not.toHaveBeenCalled();
-        expect(logLine).toHaveBeenCalledWith(waitMessage);
-        child.stderr.emit("data", Buffer.from("Setting up NemoClaw (Hermes)...\n"));
-        await vi.advanceTimersByTimeAsync(6);
-      } else {
-        expect(logLine).not.toHaveBeenCalledWith(waitMessage);
-      }
+    expect(logLine).not.toHaveBeenCalledWith(
+      "  Sandbox reported Ready; waiting for startup command output before detaching.",
+    );
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      forcedReady: true,
+      output: expect.stringContaining("Sandbox reported Ready before create stream exited"),
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
 
-      await expect(promise).resolves.toMatchObject({
-        status: 0,
-        forcedReady: true,
-        output: expect.stringContaining("Sandbox reported Ready before create stream exited"),
-      });
-      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-    },
-  );
+  it("waits for startup output before detaching with the default VM gate", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    let resolved = false;
+    const promise = streamSandboxCreate(
+      "echo create",
+      vmEnv,
+      makePollingOptions(child, { readyCheck: () => true, logLine }),
+    ).then((result) => {
+      resolved = true;
+      return result;
+    });
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    await vi.advanceTimersByTimeAsync(6);
+
+    expect(resolved).toBe(false);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(logLine).toHaveBeenCalledWith(
+      "  Sandbox reported Ready; waiting for startup command output before detaching.",
+    );
+
+    child.stderr.emit("data", Buffer.from("Setting up NemoClaw (Hermes)...\n"));
+    await vi.advanceTimersByTimeAsync(6);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      forcedReady: true,
+      output: expect.stringContaining("Sandbox reported Ready before create stream exited"),
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
 
   it("runs poll side effects only after a not-ready poll", async () => {
     vi.useFakeTimers();
