@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execSandboxMock = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../../lib/actions/sandbox/exec", () => ({
   execSandbox: execSandboxMock,
 }));
 
+import { log } from "../../lib/cli/logger";
 import SandboxExecCommand from "./exec";
 
 const rootDir = process.cwd();
@@ -15,6 +16,10 @@ const rootDir = process.cwd();
 describe("SandboxExecCommand oclif parse path", () => {
   beforeEach(() => {
     execSandboxMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("forwards everything after -- as the inner command argv", async () => {
@@ -27,6 +32,21 @@ describe("SandboxExecCommand oclif parse path", () => {
       ["openclaw", "agent", "--agent", "main", "-m", "hi"],
       { workdir: undefined, tty: null, timeoutSeconds: undefined, stdin: undefined },
     );
+  });
+
+  it("does not assign host meaning to logging flags after --", async () => {
+    const configure = vi.spyOn(log, "configure").mockImplementation(() => undefined);
+
+    await SandboxExecCommand.run(["alpha", "--", "agent-cli", "--debug", "--quiet"], rootDir);
+
+    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["agent-cli", "--debug", "--quiet"], {
+      workdir: undefined,
+      tty: null,
+      timeoutSeconds: undefined,
+    });
+    expect(configure).toHaveBeenCalledWith({ debug: false, quiet: false });
+    expect(configure).not.toHaveBeenCalledWith({ debug: true, quiet: false });
+    expect(configure).not.toHaveBeenCalledWith({ debug: false, quiet: true });
   });
 
   it("preserves repeated flag/value pairs after -- in their original order", async () => {
@@ -75,7 +95,7 @@ describe("SandboxExecCommand oclif parse path", () => {
         "-c",
         "pass",
       ],
-      { workdir: undefined, tty: null, timeoutSeconds: undefined },
+      { workdir: undefined, tty: null, timeoutSeconds: undefined, stdin: undefined },
     );
   });
 
