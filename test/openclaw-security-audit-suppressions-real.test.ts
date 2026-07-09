@@ -147,6 +147,17 @@ function findingForFlag(findings: AuditFinding[], flag: string): AuditFinding | 
   );
 }
 
+function managedAuthFindings(findings: AuditFinding[]): AuditFinding[] {
+  return findings.filter(
+    (finding) =>
+      finding.checkId === "gateway.control_ui.insecure_auth" ||
+      finding.checkId === "gateway.control_ui.device_auth_disabled" ||
+      findingForFlag([finding], "gateway.controlUi.allowInsecureAuth=true") !== undefined ||
+      findingForFlag([finding], "gateway.controlUi.dangerouslyDisableDeviceAuth=true") !==
+        undefined,
+  );
+}
+
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
   "OpenClaw managed security audit consumer contract",
   () => {
@@ -176,25 +187,34 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
             loopback.findings.some((finding) => finding.checkId === "gateway.loopback_no_auth"),
           ).toBe(true);
 
-          const remote = runOpenClawAudit(binary, "http://remote.example:18789", {
+          const remoteOnboard = runOpenClawAudit(binary, "http://remote.example:18789", {
             NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
           });
           expect(
-            remote.findings.some(
+            remoteOnboard.findings.some(
               (finding) => finding.checkId === "gateway.control_ui.insecure_auth",
             ),
           ).toBe(true);
           expect(
-            findingForFlag(remote.findings, "gateway.controlUi.allowInsecureAuth=true"),
+            findingForFlag(remoteOnboard.findings, "gateway.controlUi.allowInsecureAuth=true"),
           ).toBeDefined();
           expect(
-            remote.findings.some(
+            remoteOnboard.findings.some(
               (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
             ),
           ).toBe(true);
           expect(
-            findingForFlag(remote.findings, "gateway.controlUi.dangerouslyDisableDeviceAuth=true"),
+            findingForFlag(
+              remoteOnboard.findings,
+              "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+            ),
           ).toBeDefined();
+          expect(managedAuthFindings(remoteOnboard.findings)).toHaveLength(4);
+          expect(remoteOnboard.suppressedFindings ?? []).toHaveLength(0);
+
+          const remoteWithoutOptOut = runOpenClawAudit(binary, "http://remote.example:18789");
+          expect(managedAuthFindings(remoteWithoutOptOut.findings)).toHaveLength(4);
+          expect(remoteWithoutOptOut.suppressedFindings ?? []).toHaveLength(0);
 
           const explicitOptOut = runOpenClawAudit(binary, "https://127.0.0.1:18789", {
             NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
