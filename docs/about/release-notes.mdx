@@ -16,16 +16,41 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
-## Unreleased
+## v0.0.78
 
-The next NemoClaw release adds an optional thread-scoped auto-approval capability for managed LangChain Deep Agents Code sandboxes.
+NemoClaw v0.0.78 adds opt-in thread-scoped auto-approval and policy-routed repository reads for managed LangChain Deep Agents Code, authoritative agent-visible inference health, round-trippable policy export, and stronger recovery for local inference, custom images, managed MCP, remote dashboards, and credential capture.
 
-- Deep Agents interactive sessions keep auto-approval disabled by default.
-  Operators can enable the `thread-opt-in` capability through a named transactional rebuild, after which each thread must still activate it through the TUI approval choice or `dcode -y`.
-  Active state resets for a new process or thread, `/clear`, thread switching, and agent switching.
-  The root-owned capability fails closed on invalid state, ambient environment values cannot enable it, and OpenShell policy, credential, inference, MCP, filesystem, and process controls remain in force.
-  Headless `dcode -n` remains a separate automation boundary.
+- Managed LangChain Deep Agents Code sandboxes keep auto-approval disabled by default and can enable the `thread-opt-in` capability through a named transactional rebuild.
+  Each thread must still opt in through the TUI or `dcode -y`, and approval state resets across process, thread, and agent transitions without bypassing OpenShell controls.
+  Managed Nemotron 3 Ultra aliases now load through a version-pinned first-party profile plugin, preserve required nonempty tool-call content, and reject the observed literal `[content]` execute placeholder before shell dispatch.
   For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), [Security Best Practices](../security/best-practices), [Model Capability Audit](../inference/model-capability-audit), and [NemoClaw CLI Commands Reference](../reference/commands).
+- Managed LangChain Deep Agents Code `fetch_url` requests now use NemoClaw's policy proxy, allowing GitHub file links and repository source to resolve inside the sandbox while keeping initial and redirected destinations inside the managed egress boundary.
+  The baseline GitHub policy permits only GET and HEAD requests to `raw.githubusercontent.com` from the listed managed binaries.
+  For more information, refer to [Network Policies](../reference/network-policies).
+- `status`, `doctor`, and `connect` now treat the agent-visible `https://inference.local/v1/models` route as authoritative and return nonzero or fail closed when trusted evidence is unavailable.
+  Deep Agents probes reject login-shell preambles and multiline contamination while preserving configured observability through a side-effect-free managed execution path.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands), [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity), and [Troubleshooting](../reference/troubleshooting).
+- Compatible-endpoint onboarding now probes `max_model_len` and carries it into Hermes `context_length` unless `NEMOCLAW_CONTEXT_WINDOW` is set.
+  Inference switches also synchronize explicit OpenClaw main-agent model state, and NVIDIA Endpoints no longer advertises Kimi K2.6 while its production Chat Completions route is unavailable.
+  For more information, refer to [Switch Inference Providers](../inference/switch-inference-providers), [NemoClaw Inference Options](../inference/inference-options), and [Model Capability Audit](../inference/model-capability-audit).
+- Local inference setup waits for newly pulled Ollama models to appear, warms an unloaded model before OpenClaw agent passthrough after daemon restarts, and allows a 15-minute quiet Docker pull window for large managed vLLM images.
+  For more information, refer to [Use a Local Inference Server](../inference/use-local-inference) and [Troubleshooting](../reference/troubleshooting).
+- New `$$nemoclaw <name> policy-get` output provides validated base-policy YAML suitable for review, editing, and reapplication, while `--raw` preserves the metadata-bearing response for diagnostics.
+  The plugin registration banner now uses stderr, and `agents apply` tolerates warning-prefixed and wrapped JSON so command stdout remains usable by automation.
+  For more information, refer to [Customize the Network Policy](../network-policy/customize-network-policy), [Common Integration Policy Examples](../network-policy/integration-policy-examples), and [NemoClaw CLI Commands Reference](../reference/commands).
+- Rebuild now prints redacted managed MCP destroy diagnostics before backup or deletion, recovers prepared-only transactions through `mcp remove --force`, and lets an explicit `rebuild --force` continue without a backup when a crashed sandbox cannot be reached.
+  The no-backup path warns that prior sandbox state is not preserved, and gateway recovery reports its bounded retry budget.
+  For more information, refer to [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers), [NemoClaw CLI Commands Reference](../reference/commands), and [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle).
+- Custom OpenClaw image handling now detects base-only images that lack the managed runtime and reconciles image-owned plugin provenance across recreate and rebuild while preserving user-owned plugin, channel, tool, and workspace state.
+  Workspace template seeding also survives the startup function serialization path.
+  A new reference defines lifecycle contributions, managed agent packages, agent-native plugins, and the gates required before any future public NemoClaw plugin SDK.
+  For more information, refer to [Install OpenClaw Plugins](/user-guide/openclaw/manage-sandboxes/install-openclaw-plugins), [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle), and [Extension Taxonomy and SDK Readiness](../reference/extension-taxonomy-sdk-readiness).
+- Remote dashboard and shutdown flows now provide copyable SSH port-forward hints, recognize a live untracked loopback forward before rolling back onboarding, align the Hermes WebUI with the resolved host dashboard port, and make the deprecated full stop attempt agent-owned host-forward cleanup before safely releasing an unshared, ownership-verified OpenShell gateway port.
+  Supervisor-owned Hermes runtime processes remain under sandbox control, and OpenClaw Slack and compact-QR WhatsApp runtime hooks compose safely when both are enabled.
+  For more information, refer to [Deploy to a Remote GPU Host](/user-guide/openclaw/deployment/deploy-to-remote-gpu), [NemoClaw Quickstart with Hermes](/user-guide/hermes/get-started/quickstart), [Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels), and [NemoClaw CLI Commands Reference](../reference/commands).
+- Starter prompts now bind the local credential form to an authenticated one-shot helper with immutable commit and SHA-256 pins, explicit isolated or account-home execution profiles, denial of ambient process-control variables, and a preview, edit, and confirm flow.
+  This keeps credential collection behind verified helper and approved-command boundaries.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart) and [Use NemoClaw Agent Prompts, Docs MCP Server, and Skills with Your AI Coding Agent](../resources/agent-skills).
 
 ## v0.0.77
 
