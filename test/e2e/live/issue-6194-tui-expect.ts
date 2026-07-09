@@ -1,11 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
 export const ISSUE6194_TUI_TIMEOUT_SEC = 240;
+export const ISSUE6194_TUI_EXIT_TIMEOUT_SEC = 10;
 export const ISSUE6194_TUI_SESSION_PREFIX = "issue-6194-tui";
 export const ISSUE6194_NETWORK_APPROVAL_ENDPOINT =
   "https://api.atlassian.com/oauth/token/accessible-resources";
 export const ISSUE6194_NETWORK_APPROVAL_HOST = "api.atlassian.com";
+
+export type Issue6194Capture = {
+  exists: boolean;
+  contents: string;
+};
+
+export function precreateIssue6194Capture(path: string): void {
+  writeFileSync(path, "", { mode: 0o600 });
+}
+
+export function readIssue6194Capture(path: string): Issue6194Capture {
+  if (!existsSync(path)) return { exists: false, contents: "" };
+  return { exists: true, contents: readFileSync(path, "utf8") };
+}
 
 export function buildIssue6194TuiExpectScript(): string {
   return `set timeout $env(NEMOCLAW_ISSUE_6194_TUI_TIMEOUT)
@@ -39,16 +56,21 @@ expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33
 # this OpenClaw TUI regression scoped to inputs it can perform directly so a
 # tool-less hosted model cannot turn assistant prose into a test oracle.
 send "\\003"
+set savedTimeout $timeout
+set timeout ${ISSUE6194_TUI_EXIT_TIMEOUT_SEC}
 expect {
   eof {}
-  timeout {
+  -nocase -re {press ctrl\\+c again to exit} {
+    mark exit_confirmation
     send "\\003"
     expect {
       eof {}
       timeout { exit 40 }
     }
   }
+  timeout { exit 39 }
 }
+set timeout $savedTimeout
 mark clean_exit
 exit 0
 `;

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SecretStore } from "../fixtures/secrets.ts";
 import {
@@ -8,8 +11,11 @@ import {
   buildIssue6194TuiExpectScript,
   ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
   ISSUE6194_NETWORK_APPROVAL_HOST,
+  ISSUE6194_TUI_EXIT_TIMEOUT_SEC,
   ISSUE6194_TUI_SESSION_PREFIX,
   ISSUE6194_TUI_TIMEOUT_SEC,
+  precreateIssue6194Capture,
+  readIssue6194Capture,
 } from "../live/issue-6194-tui-expect.ts";
 import { stripTerminalControl } from "./issue-4434-tui-capture.ts";
 
@@ -54,6 +60,26 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     const order = markers.map((marker) => script.indexOf(marker));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("confirms the two-step Ctrl+C exit without waiting for the global timeout", () => {
+    const script = buildIssue6194TuiExpectScript();
+    const exitFlow = script.slice(script.indexOf("# Network-rule approvals belong"));
+    const firstCtrlC = exitFlow.indexOf('send "\\003"');
+    const shortTimeout = exitFlow.indexOf(`set timeout ${ISSUE6194_TUI_EXIT_TIMEOUT_SEC}`);
+    const confirmation = exitFlow.indexOf("press ctrl\\+c again to exit");
+    const secondCtrlC = exitFlow.indexOf('send "\\003"', firstCtrlC + 1);
+
+    expect(ISSUE6194_TUI_EXIT_TIMEOUT_SEC).toBe(10);
+    expect(firstCtrlC).toBeGreaterThanOrEqual(0);
+    expect(shortTimeout).toBeGreaterThan(firstCtrlC);
+    expect(confirmation).toBeGreaterThan(shortTimeout);
+    expect(secondCtrlC).toBeGreaterThan(confirmation);
+    expect(exitFlow.split('send "\\003"')).toHaveLength(3);
+    expect(exitFlow).toContain("eof {}");
+    expect(exitFlow).toContain("timeout { exit 39 }");
+    expect(exitFlow).toContain("timeout { exit 40 }");
+    expect(exitFlow).toContain("set timeout $savedTimeout");
   });
 
   it("drives a direct blocked request through the real OpenShell approval surface", () => {
@@ -159,5 +185,57 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(redactedCapture).not.toContain(secret);
     expect(plainCapture).not.toContain(secret);
     expect(plainCapture).toContain("[REDACTED]");
+  });
+
+  it("precreates captures and writes structured diagnostics before capture assertions", () => {
+    const captureDir = mkdtempSync(join(tmpdir(), "nemoclaw-issue6194-contract-"));
+    const captureFile = join(captureDir, "capture.log");
+    const missingFile = join(captureDir, "missing.log");
+
+    try {
+      expect(readIssue6194Capture(missingFile)).toEqual({ exists: false, contents: "" });
+
+      precreateIssue6194Capture(captureFile);
+      expect(statSync(captureFile).mode & 0o777).toBe(0o600);
+      expect(readIssue6194Capture(captureFile)).toEqual({ exists: true, contents: "" });
+
+      writeFileSync(captureFile, "ISSUE6194_MARK diagnostic");
+      expect(readIssue6194Capture(captureFile)).toEqual({
+        exists: true,
+        contents: "ISSUE6194_MARK diagnostic",
+      });
+
+      const liveSource = readFileSync(
+        new URL("../live/openclaw-tui-chat-correlation.test.ts", import.meta.url),
+        "utf8",
+      );
+      const tuiPrecreate = liveSource.indexOf("precreateIssue6194Capture(captureFile)");
+      const tuiCommand = liveSource.indexOf('host.command("expect", [expectScript]');
+      const tuiResult = liveSource.indexOf('artifacts.writeJson("issue6194-target-result.json"');
+      const tuiCaptureAssertion = liveSource.indexOf(
+        'expect(tuiCapture.exists, "TUI expect capture must exist")',
+      );
+      const approvalPrecreate = liveSource.indexOf(
+        "precreateIssue6194Capture(approvalCaptureFile)",
+      );
+      const approvalCommand = liveSource.indexOf('host.command("expect", [approvalExpectScript]');
+      const approvalResult = liveSource.indexOf(
+        'artifacts.writeJson("issue6194-approval-result.json"',
+      );
+      const approvalCaptureAssertion = liveSource.indexOf(
+        'expect(approvalCapture.exists, "OpenShell approval capture must exist")',
+      );
+
+      expect(tuiPrecreate).toBeGreaterThanOrEqual(0);
+      expect(tuiCommand).toBeGreaterThan(tuiPrecreate);
+      expect(tuiResult).toBeGreaterThan(tuiCommand);
+      expect(tuiCaptureAssertion).toBeGreaterThan(tuiResult);
+      expect(approvalPrecreate).toBeGreaterThan(tuiCaptureAssertion);
+      expect(approvalCommand).toBeGreaterThan(approvalPrecreate);
+      expect(approvalResult).toBeGreaterThan(approvalCommand);
+      expect(approvalCaptureAssertion).toBeGreaterThan(approvalResult);
+    } finally {
+      rmSync(captureDir, { recursive: true, force: true });
+    }
   });
 });

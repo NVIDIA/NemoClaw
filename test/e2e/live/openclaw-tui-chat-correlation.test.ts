@@ -36,6 +36,8 @@ import {
   ISSUE6194_NETWORK_APPROVAL_HOST,
   ISSUE6194_TUI_SESSION_PREFIX,
   ISSUE6194_TUI_TIMEOUT_SEC,
+  precreateIssue6194Capture,
+  readIssue6194Capture,
 } from "./issue-6194-tui-expect.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
@@ -556,6 +558,7 @@ test(
     const captureFile = join(captureDir, "openclaw-tui-capture.log");
     const expectScript = artifacts.pathFor("issue6194-openclaw-tui.expect");
     const tuiSession = `${ISSUE6194_TUI_SESSION_PREFIX}-${instance.sandboxName}-${Date.now()}-${randomUUID()}`;
+    precreateIssue6194Capture(captureFile);
     writeFileSync(expectScript, buildIssue6194TuiExpectScript(), { mode: 0o700 });
     try {
       const tui = await host.command("expect", [expectScript], {
@@ -570,14 +573,10 @@ test(
         redactionValues: [apiKey],
         timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
       });
-      const rawCapture = readFileSync(captureFile, "utf8");
+      const tuiCapture = readIssue6194Capture(captureFile);
+      const rawCapture = tuiCapture.contents;
       const redactedCapture = secrets.redact(rawCapture, [apiKey]);
       const plainCapture = stripTerminalControl(redactedCapture);
-      expect(plainCapture.length, "TUI expect capture must not be empty").toBeGreaterThan(0);
-      expect(plainCapture, "TUI expect capture must include expect-script markers").toContain(
-        "ISSUE6194_MARK",
-      );
-
       const combined = `${resultText(tui)}\n${plainCapture}`;
       const redactedArtifact = await artifacts.writeText(
         "issue6194-openclaw-tui-capture.log",
@@ -587,17 +586,12 @@ test(
         "issue6194-openclaw-tui-capture.plain.log",
         plainCapture,
       );
-      expect(
-        readFileSync(redactedArtifact, "utf8"),
-        "published ANSI capture must redact API key",
-      ).not.toContain(apiKey);
-      expect(
-        readFileSync(plainArtifact, "utf8"),
-        "published plain capture must redact API key",
-      ).not.toContain(apiKey);
       await artifacts.writeJson("issue6194-target-result.json", {
         id: "issue-6194-tui-post-connected-idle",
         expectExitCode: tui.exitCode,
+        captureExists: tuiCapture.exists,
+        captureNonEmpty: plainCapture.length > 0,
+        captureHasMarkers: plainCapture.includes("ISSUE6194_MARK"),
         connectedIdleInitial: combined.includes("ISSUE6194_MARK connected_idle_initial"),
         chatReply: combined.includes("ISSUE6194_MARK chat_reply"),
         connectedIdleAfterChat: combined.includes("ISSUE6194_MARK connected_idle_after_chat"),
@@ -606,6 +600,19 @@ test(
         cleanExit: combined.includes("ISSUE6194_MARK clean_exit"),
       });
 
+      expect(tuiCapture.exists, "TUI expect capture must exist").toBe(true);
+      expect(plainCapture.length, "TUI expect capture must not be empty").toBeGreaterThan(0);
+      expect(plainCapture, "TUI expect capture must include expect-script markers").toContain(
+        "ISSUE6194_MARK",
+      );
+      expect(
+        readFileSync(redactedArtifact, "utf8"),
+        "published ANSI capture must redact API key",
+      ).not.toContain(apiKey);
+      expect(
+        readFileSync(plainArtifact, "utf8"),
+        "published plain capture must redact API key",
+      ).not.toContain(apiKey);
       expect(tui.exitCode, combined).toBe(0);
       expect(combined, "TUI must reach connected idle before post-idle input").toContain(
         "ISSUE6194_MARK connected_idle_initial",
@@ -638,8 +645,9 @@ test(
       const triggerCaptureFile = join(captureDir, "openshell-network-trigger.log");
       const ruleCaptureFile = join(captureDir, "openshell-pending-rule.log");
       const approvalExpectScript = artifacts.pathFor("issue6194-openshell-approval.expect");
-      writeFileSync(triggerCaptureFile, "", { mode: 0o600 });
-      writeFileSync(ruleCaptureFile, "", { mode: 0o600 });
+      precreateIssue6194Capture(approvalCaptureFile);
+      precreateIssue6194Capture(triggerCaptureFile);
+      precreateIssue6194Capture(ruleCaptureFile);
       writeFileSync(approvalExpectScript, buildIssue6194OpenShellApprovalExpectScript(), {
         mode: 0o700,
       });
@@ -658,12 +666,12 @@ test(
         redactionValues: [apiKey],
         timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
       });
-      const rawApprovalCapture = readFileSync(approvalCaptureFile, "utf8");
-      const rawTriggerCapture = readFileSync(triggerCaptureFile, "utf8");
-      const rawRuleCapture = readFileSync(ruleCaptureFile, "utf8");
-      const redactedApprovalCapture = secrets.redact(rawApprovalCapture, [apiKey]);
-      const redactedTriggerCapture = secrets.redact(rawTriggerCapture, [apiKey]);
-      const redactedRuleCapture = secrets.redact(rawRuleCapture, [apiKey]);
+      const approvalCapture = readIssue6194Capture(approvalCaptureFile);
+      const triggerCapture = readIssue6194Capture(triggerCaptureFile);
+      const ruleCapture = readIssue6194Capture(ruleCaptureFile);
+      const redactedApprovalCapture = secrets.redact(approvalCapture.contents, [apiKey]);
+      const redactedTriggerCapture = secrets.redact(triggerCapture.contents, [apiKey]);
+      const redactedRuleCapture = secrets.redact(ruleCapture.contents, [apiKey]);
       const plainApprovalCapture = stripTerminalControl(redactedApprovalCapture);
       const approvalCombined = `${resultText(approval)}\n${plainApprovalCapture}\n${redactedTriggerCapture}\n${redactedRuleCapture}`;
       await artifacts.writeText(
@@ -679,6 +687,11 @@ test(
       await artifacts.writeJson("issue6194-approval-result.json", {
         id: "issue-6194-openshell-network-approval",
         expectExitCode: approval.exitCode,
+        approvalCaptureExists: approvalCapture.exists,
+        approvalCaptureNonEmpty: plainApprovalCapture.length > 0,
+        triggerCaptureExists: triggerCapture.exists,
+        ruleCaptureExists: ruleCapture.exists,
+        ruleCaptureNonEmpty: redactedRuleCapture.length > 0,
         pendingQueueEmpty: approvalCombined.includes("ISSUE6194_MARK pending_queue_empty"),
         requestTriggered: approvalCombined.includes("ISSUE6194_MARK network_request_triggered"),
         requestCompleted: approvalCombined.includes("ISSUE6194_MARK network_request_completed"),
@@ -690,6 +703,11 @@ test(
         cleanExit: approvalCombined.includes("ISSUE6194_MARK openshell_clean_exit"),
       });
 
+      expect(approvalCapture.exists, "OpenShell approval capture must exist").toBe(true);
+      expect(
+        plainApprovalCapture.length,
+        "OpenShell approval capture must not be empty",
+      ).toBeGreaterThan(0);
       expect(approval.exitCode, approvalCombined).toBe(0);
       expect(
         approvalCombined,
