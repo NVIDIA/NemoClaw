@@ -295,16 +295,16 @@ Use `--no-verify` only when OpenShell cannot verify the provider at switch time 
 `--no-verify` does not bypass the one-route-per-gateway compatibility check.
 </AgentOnly>
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
 
 ## Tune Model Metadata
 
-The sandbox image bakes model metadata (context window, max output tokens, reasoning mode, and accepted input modalities) into `openclaw.json` at build time.
+The sandbox image bakes model metadata into `openclaw.json` at build time.
 To change these values, set the corresponding environment variables before running `$$nemoclaw onboard` so they patch into the Dockerfile before the image builds.
 
 | Variable | Values | Default |
 |---|---|---|
-| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer (tokens) | `131072` (OpenClaw baked metadata); Hermes leaves it unset to auto-detect |
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer (tokens) | `131072` |
 | `NEMOCLAW_MAX_TOKENS` | Positive integer (tokens) | `4096` |
 | `NEMOCLAW_REASONING` | `true` or `false` | `false` |
 | `NEMOCLAW_INFERENCE_INPUTS` | `text` or `text,image` | `text` |
@@ -314,9 +314,8 @@ To change these values, set the corresponding environment variables before runni
 NemoClaw ignores invalid values and bakes the default into the image.
 For Local Ollama, onboarding loads the selected model first and uses Ollama's reported runtime context length when `NEMOCLAW_CONTEXT_WINDOW` is unset.
 For local vLLM, onboarding uses the runtime `max_model_len` value when the server reports one and `NEMOCLAW_CONTEXT_WINDOW` is unset.
-For an OpenAI-compatible endpoint (the **Other OpenAI-compatible endpoint** provider, including a self-hosted vLLM server), onboarding probes the endpoint's `/v1/models` response and uses its reported `max_model_len` when `NEMOCLAW_CONTEXT_WINDOW` is unset, so the agent gets the endpoint's real context window instead of a small architecture default.
+For an OpenAI-compatible endpoint (the **Other OpenAI-compatible endpoint** provider, including a self-hosted vLLM server), onboarding probes the endpoint's `/v1/models` response and uses its reported `max_model_len` when `NEMOCLAW_CONTEXT_WINDOW` is unset, so OpenClaw gets the endpoint's real context window instead of a small architecture default.
 Set `NEMOCLAW_CONTEXT_WINDOW` to override the probed value.
-For Hermes, the resolved window is written as `model.context_length` in the generated `config.yaml`, and leaving it unset lets Hermes auto-detect.
 Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
 During interactive onboarding, NemoClaw prompts for **Text only** or **Text + Image** when the discovered model name looks multimodal and `NEMOCLAW_INFERENCE_INPUTS` is not already valid.
 Non-interactive onboarding uses the environment value or the default `text` setting.
@@ -332,6 +331,30 @@ $$nemoclaw onboard
 ```
 
 </AgentOnly>
+<AgentOnly variant="hermes">
+
+## Tune Model Metadata
+
+Hermes accepts `NEMOCLAW_CONTEXT_WINDOW` as its model-metadata override.
+Set it before running `$$nemoclaw onboard` so NemoClaw patches the value into the Dockerfile before the image builds.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer (tokens) | Unset so Hermes auto-detects |
+
+For Local Ollama, onboarding loads the selected model first and uses Ollama's reported runtime context length when `NEMOCLAW_CONTEXT_WINDOW` is unset.
+For local vLLM, onboarding uses the runtime `max_model_len` value when the server reports one and `NEMOCLAW_CONTEXT_WINDOW` is unset.
+For an OpenAI-compatible endpoint (the **Other OpenAI-compatible endpoint** provider, including a self-hosted vLLM server), onboarding probes the endpoint's `/v1/models` response and uses its reported `max_model_len` when `NEMOCLAW_CONTEXT_WINDOW` is unset, so Hermes gets the endpoint's real context window instead of a small architecture default.
+Set `NEMOCLAW_CONTEXT_WINDOW` to override the probed value.
+When onboarding resolves a valid window from an explicit override or endpoint probe, NemoClaw writes it as `model.context_length` in the generated `config.yaml`.
+If neither path yields a valid value, `model.context_length` remains unset and Hermes auto-detects from the endpoint.
+
+```bash
+export NEMOCLAW_CONTEXT_WINDOW=65536
+$$nemoclaw onboard
+```
+
+</AgentOnly>
 
 <AgentOnly variant="openclaw">
 
@@ -342,15 +365,6 @@ The default sandbox can keep that file writable for agent state, but direct in-s
 Rebuild the sandbox with `$$nemoclaw onboard` to apply a new value.
 
 </AgentOnly>
-<AgentOnly variant="hermes">
-
-`NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into the Hermes sandbox image.
-Increase it for slow local inference, such as CPU-only Ollama or vLLM on modest hardware.
-Direct in-sandbox edits are not the supported or durable way to change NemoClaw-managed defaults.
-Rebuild the sandbox with `$$nemoclaw onboard` to apply a new value.
-
-</AgentOnly>
-
 <AgentOnly variant="openclaw">
 
 `NEMOCLAW_AGENT_HEARTBEAT_EVERY` sets `agents.defaults.heartbeat.every`.
@@ -367,14 +381,14 @@ Recreate the sandbox with `$$nemoclaw onboard --fresh --name <sandbox-name> --re
 <AgentOnly variant="hermes">
 
 Hermes does not use OpenClaw's `HEARTBEAT.md` wake-up mechanism.
-Recreate the sandbox with `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` to apply build-time inference metadata changes.
+Hermes also does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` or `NEMOCLAW_AGENT_HEARTBEAT_EVERY` model-metadata variables.
 
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 
-These variables are build-time settings.
-If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:
+Supported model-metadata variables are build-time settings.
+If you change a supported value on an existing sandbox, recreate the sandbox so the new value bakes into the image:
 
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
@@ -440,7 +454,7 @@ The status output includes the active provider, model, and endpoint with the res
 - The host keeps provider credentials.
 - The sandbox continues to use `inference.local`.
 - `$$nemoclaw inference set` patches the selected running Hermes sandbox config and recomputes its config hash.
-- Use `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` for build-time settings such as context window, max tokens, reasoning mode, heartbeat cadence, or image contents.
+- Use `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` for build-time settings such as context window or image contents.
 - Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 
 </AgentOnly>
