@@ -35,6 +35,8 @@ TOOL_NAME="nemoclaw_otlp_e2e_tool"
 TOOL_ARGUMENT="NEMOCLAW_OTLP_TOOL_ARGUMENT_SENTINEL"
 TOOL_RESULT="NEMOCLAW_OTLP_TOOL_RESULT_SENTINEL"
 AMBIENT_CANARY="NEMOCLAW_OTLP_AMBIENT_EXPORTER_CANARY"
+REDACTION_PROBE="sk-EXAMPLE0000000000000000000000"
+REDACTION_MARKER="<redacted-secret>"
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
@@ -199,8 +201,10 @@ NODE
 )"
 [ "$registry_output" = "enabled" ] || fail "host registry does not record observability enabled"
 
+# Expansion is intentionally deferred to the sandbox shell.
+# shellcheck disable=SC2016
 marker_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  sh -c 'test -f /tmp/nemoclaw-observability-enabled && cat /tmp/nemoclaw-observability-enabled' \
+  sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; test -f "$marker" && ! test -L "$marker" && cat "$marker"' \
   2>&1)" || fail "managed observability marker is absent"
 [ "$marker_output" = "1" ] || fail "managed observability marker has an unexpected value"
 pass "host registry, live policy, and sandbox marker agree on enabled observability"
@@ -247,7 +251,7 @@ run_dcode_direct() {
     env OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
     dcode -n \
-    "Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the input marker ${DIRECT_PROMPT}." 2>&1
+    "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}." 2>&1
 }
 
 run_dcode_login() {
@@ -341,6 +345,8 @@ for _attempt in $(seq 1 45); do
       TOOL_ARGUMENT="$TOOL_ARGUMENT" \
       TOOL_RESULT="$TOOL_RESULT" \
       AMBIENT_CANARY="$AMBIENT_CANARY" \
+      REDACTION_PROBE="$REDACTION_PROBE" \
+      REDACTION_MARKER="$REDACTION_MARKER" \
       "$TSX" "$CONTRACT_HELPER" validate-captures "$CAPTURE_DIR" 2>&1
   )"
   validation_status=$?

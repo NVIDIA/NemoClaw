@@ -126,7 +126,10 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     skip(`Docker is required: ${resultText(docker)}`);
   }
 
-  const fake = await startFakeOpenAiCompatibleServer();
+  const fake = await startFakeOpenAiCompatibleServer({
+    host: "0.0.0.0",
+    publicHost: "host.openshell.internal",
+  });
   cleanupRegistry.add("close fake OpenAI-compatible endpoint", async () => fake.close());
   cleanupRegistry.add("remove repair sandboxes", () => cleanup(host, sandbox));
   await cleanup(host, sandbox);

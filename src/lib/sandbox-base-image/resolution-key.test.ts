@@ -55,6 +55,19 @@ describe("sandbox base-image resolution key", () => {
     expect(createSandboxBaseImageResolutionKey(options(root))).not.toBe(before);
   });
 
+  it("changes when an agent-specific dependency lock changes (#6456)", () => {
+    const root = fixture();
+    const lockfile = path.join(root, "agents", "langchain-deepagents-code", "requirements.lock");
+    fs.mkdirSync(path.dirname(lockfile), { recursive: true });
+    fs.writeFileSync(lockfile, "deepagents-code==0.1.34\n");
+    const keyedOptions = { ...options(root), inputPaths: [lockfile] };
+    const before = createSandboxBaseImageResolutionKey(keyedOptions);
+
+    fs.writeFileSync(lockfile, "deepagents-code==0.1.34\ntransitive-dependency==2.0.0\n");
+
+    expect(createSandboxBaseImageResolutionKey(keyedOptions)).not.toBe(before);
+  });
+
   it("isolates explicit base-image overrides (#4680)", () => {
     const root = fixture();
     const base = { ...options(root), envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF" };

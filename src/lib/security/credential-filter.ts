@@ -23,7 +23,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { SECRET_PATTERNS } from "./secret-patterns";
+import { hasPassCredentialSegment, SECRET_PATTERNS } from "./secret-patterns";
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -106,6 +106,8 @@ const CREDENTIAL_FIELDS = new Set([
   "token",
   "secret",
   "password",
+  "pass",
+  "passwd",
   "resolvedKey",
 ]);
 
@@ -123,12 +125,12 @@ const CREDENTIAL_FIELD_PATTERN =
  * server's `env: { GITHUB_TOKEN, BRAVE_API_KEY, TOKEN }` block. These are not
  * camelCase, so the suffix pattern above misses them. Matches an all-uppercase
  * name that is, or ends in, a secret word (`TOKEN`, `KEY`, `SECRET`,
- * `PASSWORD`, `PASSPHRASE`, `CREDENTIAL`, optionally pluralized) — covering both
+ * `PASSWORD`, `PASSWD`, `PASS`, `PASSPHRASE`, `CREDENTIAL`, optionally pluralized) — covering both
  * the prefixed (`GITHUB_TOKEN`) and bare (`TOKEN`) forms — while leaving benign
  * env vars like `NODE_ENV`, `LOG_LEVEL`, or `PATH` untouched.
  */
 const ENV_SECRET_FIELD_PATTERN =
-  /^(?:[A-Z0-9]+_)*(?:TOKEN|KEY|SECRET|PASSWORD|PASSPHRASE|CREDENTIAL)S?$/;
+  /^(?:[A-Z0-9]+_)*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|PASS|PASSPHRASE|CREDENTIAL)S?$/;
 
 /**
  * Well-known HTTP auth header names (matched case-insensitively) whose entire
@@ -166,6 +168,7 @@ export function isCredentialField(key: string): boolean {
   return (
     CREDENTIAL_FIELDS.has(key) ||
     CREDENTIAL_FIELD_PATTERN.test(key) ||
+    hasPassCredentialSegment(key) ||
     ENV_SECRET_FIELD_PATTERN.test(key) ||
     HEADER_CREDENTIAL_PATTERN.test(key) ||
     CREDENTIAL_HEADER_NAMES.has(key.toLowerCase())

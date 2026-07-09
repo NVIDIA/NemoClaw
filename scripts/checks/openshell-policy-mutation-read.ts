@@ -35,6 +35,12 @@ interface AuditedMutationRead {
 
 export const MUTATION_READS: readonly AuditedMutationRead[] = [
   {
+    relativePath: "src/lib/actions/sandbox/policy-get.ts",
+    expectedReadCalls: 1,
+    baseCommand: "runCapture(buildPolicyGetCommand(sandboxName))",
+    fullCommand: "runCapture(buildPolicyGetFullCommand(sandboxName))",
+  },
+  {
     relativePath: "src/lib/policy/index.ts",
     expectedReadCalls: 6,
     baseCommand: "runCapture(buildPolicyGetCommand(sandboxName))",

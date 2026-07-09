@@ -206,6 +206,35 @@ describe("prepareSandboxDockerfilePatch", () => {
     });
   });
 
+  it("forwards the DCode auto-approval mode only as a Dockerfile patch option (#6478)", async () => {
+    const patchStagedDockerfile = vi.fn();
+    await prepareSandboxDockerfilePatch({
+      agent: { name: "langchain-deepagents-code" } as any,
+      fromDockerfile: null,
+      sandboxBaseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+      sandboxBaseTag: "latest",
+      stagedDockerfile: "/tmp/Dockerfile",
+      model: "model-a",
+      chatUiUrl: "",
+      provider: null,
+      preferredInferenceApi: null,
+      webSearchConfig: null,
+      dcodeAutoApprovalMode: "thread-opt-in",
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      deps: {
+        isLinuxDockerDriverGatewayEnabled: vi.fn(() => false),
+        enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
+        patchStagedDockerfile,
+        now: () => 1,
+      },
+    });
+
+    expect(patchStagedDockerfile.mock.calls[0]?.[11]).toMatchObject({
+      dcodeAutoApprovalMode: "thread-opt-in",
+    });
+  });
+
   it("resolves the base image when an agent uses a custom Dockerfile", async () => {
     const pullAndResolveBaseImageDigest = vi.fn(() => ({
       digest: "sha256:customagent",

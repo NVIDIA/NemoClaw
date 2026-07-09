@@ -47,6 +47,13 @@ function extractShellFunction(src: string, name: string): string {
   return `${name}() {${body.slice(0, closing?.index ?? 0)}\n}`;
 }
 
+function extractGatewayLogAppendFunction(src: string, gatewayLog: string): string {
+  const functionSource = extractShellFunction(src, "append_openclaw_gateway_log_line");
+  const marker = '  local log_file="/tmp/gateway.log"';
+  expect(functionSource).toContain(marker);
+  return functionSource.replace(marker, `  local log_file=${JSON.stringify(gatewayLog)}`);
+}
+
 function safeTmpHelpers(src: string): string {
   const start = src.indexOf("_nemoclaw_safe_replace_tmp_file() {");
   const end = src.indexOf("_START_LOG=", Math.max(start, 0));
@@ -78,11 +85,12 @@ const writeProcStatFunction = [
   "}",
 ].join("\n");
 
-function watchdogFunctions(): string {
+function watchdogFunctions(gatewayLog: string): string {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   return [
     safeTmpHelpers(src),
     pidIdentityFunctions(src),
+    extractGatewayLogAppendFunction(src, gatewayLog),
     extractShellFunction(src, "record_gateway_pid"),
     extractShellFunction(src, "gateway_pid_is_openclaw_gateway"),
     extractShellFunction(src, "gateway_watchdog_positive_int_ok"),
@@ -124,6 +132,7 @@ function runWatchdog(opts: {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watchdog-"));
   const planFile = path.join(tmpDir, "curl-plan.txt");
   const wedgeLogFile = path.join(tmpDir, "gateway.log");
+  fs.writeFileSync(wedgeLogFile, "", { mode: 0o644 });
   const pidFile = path.join(tmpDir, "gateway.pid");
   const procRoot = path.join(tmpDir, "proc");
   fs.writeFileSync(planFile, `${opts.curlPlan.join("\n")}\n`);
@@ -135,7 +144,7 @@ function runWatchdog(opts: {
     `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
     "_DASHBOARD_PORT=18789",
     `_NEMOCLAW_PROC_ROOT=${JSON.stringify(procRoot)}`,
-    `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(wedgeLogFile)}`,
+    `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(path.join(tmpDir, "ignored-inherited.log"))}`,
     writeProcStatFunction,
     // Throttle rather than no-op so the spinning loop stays cheap but the
     // test still completes in well under a second per cycle.
@@ -158,9 +167,7 @@ function runWatchdog(opts: {
     `mkdir -p ${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID`,
     `printf '%s' ${JSON.stringify(opts.cmdline ?? "openclaw-gateway")} >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/cmdline`,
     `write_proc_stat "$FAKE_GATEWAY_PID" "$$" "$FAKE_GATEWAY_START" >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/stat`,
-    watchdogFunctions(),
-    // The watchdog itself is outside the fake proc fixture. Its launch
-    // identity is irrelevant to these gateway-target tests.
+    watchdogFunctions(wedgeLogFile),
     'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
     'record_gateway_pid "$FAKE_GATEWAY_PID" "$FAKE_GATEWAY_START"',
     "start_gateway_serving_watchdog",
@@ -339,6 +346,8 @@ describe("gateway serving watchdog (#4710)", () => {
     try {
       const planFile = path.join(tmpDir, "curl-plan.txt");
       const probeLog = path.join(tmpDir, "probes.log");
+      const wedgeLogFile = path.join(tmpDir, "gateway.log");
+      fs.writeFileSync(wedgeLogFile, "", { mode: 0o644 });
       const pidFile = path.join(tmpDir, "gateway.pid");
       const procRoot = path.join(tmpDir, "proc");
       // First probe arms on gateway A; everything after refuses.
@@ -380,7 +389,7 @@ describe("gateway serving watchdog (#4710)", () => {
         `printf 'openclaw-gateway' >${JSON.stringify(procRoot)}/$GATEWAY_B/cmdline`,
         `write_proc_stat "$GATEWAY_A" "$$" "$GATEWAY_A_START" >${JSON.stringify(procRoot)}/$GATEWAY_A/stat`,
         `write_proc_stat "$GATEWAY_B" "$$" "$GATEWAY_B_START" >${JSON.stringify(procRoot)}/$GATEWAY_B/stat`,
-        watchdogFunctions(),
+        watchdogFunctions(wedgeLogFile),
         'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
         'record_gateway_pid "$GATEWAY_A" "$GATEWAY_A_START"',
         "start_gateway_serving_watchdog",
