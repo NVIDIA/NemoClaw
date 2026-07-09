@@ -92,9 +92,8 @@ export class RebuildRecoveryOrchestrator {
         ? recoveredTransaction.intent.source.registryRecovery.entry
         : input.sandboxEntry;
 
-    if (recoveredTransaction) await transaction.reconcileObservedDeletion(input.staleRecovery);
     if (
-      !recoveredTransaction ||
+      recoveredTransaction?.status !== "active" ||
       (recoveredTransaction.phase === "prepared" && !input.staleRecovery)
     ) {
       await transaction.prepare({

@@ -83,6 +83,35 @@ function makeOrchestrator(entry: SandboxEntry) {
 }
 
 describe("rebuild recovery receipt publication", () => {
+  it("starts a new transaction generation after a completed tombstone", async () => {
+    const completed = { ...record, status: "completed", phase: "completed" } as const;
+    const transaction = {
+      record: completed,
+      prepare: vi.fn(),
+      reconcileObservedDeletion: vi.fn(),
+    } as unknown as RebuildTransactionCoordinator;
+    const orchestrator = new RebuildRecoveryOrchestrator({
+      plan: null,
+      transaction,
+      recoveredTransaction: completed as RebuildTransactionRecordV1,
+      sandboxName: "alpha",
+      readRegistryEntry: () => replacement,
+      readSession: () => session,
+      bail: (message) => {
+        throw new Error(message);
+      },
+      log: vi.fn(),
+    });
+
+    await orchestrator.prepare({
+      sandboxEntry: replacement,
+      staleRecovery: false,
+    } as Parameters<RebuildRecoveryOrchestrator["prepare"]>[0]);
+
+    expect(transaction.prepare).toHaveBeenCalledOnce();
+    expect(transaction.reconcileObservedDeletion).toHaveBeenCalledOnce();
+  });
+
   it("publishes a compensation receipt only after re-verifying registry and session evidence", async () => {
     const { orchestrator, transaction } = makeOrchestrator(replacement);
 
