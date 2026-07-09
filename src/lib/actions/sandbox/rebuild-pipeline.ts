@@ -109,7 +109,6 @@ async function rebuildSandboxUnlocked(
   const recovery = new RebuildRecoveryOrchestrator({
     plan: recoveryPlan,
     transaction,
-    recoveredTransaction,
     sandboxName,
     readRegistryEntry: () => registry.getSandbox(sandboxName),
     readSession: onboardSession.loadSession,

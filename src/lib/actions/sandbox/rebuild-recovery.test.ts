@@ -34,6 +34,39 @@ function reverseObjectKeys(value: unknown): unknown {
 }
 
 describe("rebuild replacement recovery decision", () => {
+  it("exhaustively pins all 120 phase and observation combinations (#6580)", () => {
+    const phases = ["old_deleted", "replacement_created"] as const;
+    const lives = ["absent", "not_ready", "ready", "unknown_present"] as const;
+    const registries = ["mismatch", "missing", "replacement", "source", "target"] as const;
+    const sessions = ["matching", "missing", "unrelated"] as const;
+    let cases = 0;
+    for (const phase of phases)
+      for (const live of lives)
+        for (const registry of registries)
+          for (const session of sessions) {
+            cases++;
+            const expected =
+              phase === "old_deleted"
+                ? live === "absent" && ["source", "missing", "target"].includes(registry)
+                  ? "create"
+                  : live === "ready" && registry === "target" && session === "matching"
+                    ? "adopt"
+                    : "refuse"
+                : registry === "replacement" && session === "matching"
+                  ? live === "ready"
+                    ? "resume"
+                    : live === "absent"
+                      ? "recreate"
+                      : "refuse"
+                  : "refuse";
+            expect(
+              decideRebuildRecovery({ transaction: transaction(phase), live, registry, session })
+                .action,
+            ).toBe(expected);
+          }
+    expect(cases).toBe(120);
+  });
+
   it("rejects malformed persisted rebuild correlation identifiers (#6436)", () => {
     const valid = {
       transactionId: "11111111-1111-4111-8111-111111111111",

@@ -3,17 +3,11 @@
 
 import { matchesRebuildTargetRegistry } from "../../rebuild-correlation";
 import type { Session } from "../../state/onboard-session";
-import type {
-  RebuildRegistryRecoveryV1,
-  RebuildTransactionRecordV1,
-} from "../../state/rebuild-transaction";
 import type { SandboxEntry } from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
-import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { DcodeRebuildOrchestrator } from "./rebuild-dcode-orchestrator";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
-import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   type FingerprintedPreparedBuildContext,
@@ -21,31 +15,19 @@ import {
 } from "./rebuild-prepared-image-context";
 import { observeRebuildSession, type RebuildRecoveryAction } from "./rebuild-recovery";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
-import type { RebuildTargetConfig } from "./rebuild-target-preflight";
-import type { RebuildTransactionCoordinator } from "./rebuild-transaction-coordinator";
+import type {
+  RebuildTransactionCoordinator,
+  StartOrResumeRebuildTransactionInput,
+} from "./rebuild-transaction-coordinator";
 
 export interface RebuildRecoveryOrchestratorOptions {
   plan: RebuildRecoveryAction | null;
   transaction: RebuildTransactionCoordinator;
-  recoveredTransaction: RebuildTransactionRecordV1 | null;
   sandboxName: string;
   readRegistryEntry: () => SandboxEntry | null;
   readSession: () => Session | null;
   bail: RebuildBail;
   log: RebuildLog;
-}
-
-export interface PrepareRebuildRecoveryTransactionInput {
-  sandboxEntry: RebuildSandboxEntry;
-  registryRecovery: RebuildRegistryRecoveryV1;
-  targetConfig: RebuildTargetConfig;
-  recreateOptions: RebuildRecreateOnboardOpts;
-  backupManifest: RebuildBackupManifest;
-  baseImage: string | null;
-  fromDockerfile: string | null;
-  legacyManagedImageRecoveryAuthorized: boolean;
-  shieldsLocked: boolean;
-  staleRecovery: boolean;
 }
 
 /** Owns recovery-specific transaction preparation and receipt publication. */
@@ -84,37 +66,10 @@ export class RebuildRecoveryOrchestrator {
     );
   }
 
-  async prepare(input: PrepareRebuildRecoveryTransactionInput): Promise<void> {
-    const { recoveredTransaction, transaction } = this.options;
-    const intentSandboxEntry =
-      recoveredTransaction?.status === "active"
-        ? recoveredTransaction.intent.source.registryRecovery.entry
-        : input.sandboxEntry;
-
-    if (
-      recoveredTransaction?.status !== "active" ||
-      (recoveredTransaction.phase === "prepared" && !input.staleRecovery)
-    ) {
-      await transaction.prepare({
-        sandboxEntry: intentSandboxEntry,
-        registryRecovery: input.registryRecovery,
-        targetConfig: input.targetConfig,
-        recreateOptions: input.recreateOptions,
-        backupManifest: input.backupManifest,
-        imageIdentity: {
-          baseImage: input.baseImage,
-          fromDockerfile: input.fromDockerfile,
-          recordedImage: intentSandboxEntry.imageTag ?? null,
-          nemoclawVersion: intentSandboxEntry.nemoclawVersion ?? null,
-        },
-        legacyManagedImageRecoveryAuthorized: input.legacyManagedImageRecoveryAuthorized,
-        shieldsLocked: input.shieldsLocked,
-        oldSandboxPresent: !input.staleRecovery,
-      });
-    }
-    await transaction.reconcileObservedDeletion(input.staleRecovery);
+  async prepare(input: StartOrResumeRebuildTransactionInput): Promise<void> {
+    await this.options.transaction.startOrResume(input);
     if (this.options.plan === "adopt") {
-      await transaction.markReplacementCreated(this.requireCorrelatedReplacement());
+      await this.options.transaction.markReplacementCreated(this.requireCorrelatedReplacement());
     }
   }
 

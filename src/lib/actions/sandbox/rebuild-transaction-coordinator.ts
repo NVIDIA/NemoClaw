@@ -22,6 +22,19 @@ import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 
 export { fingerprintRebuildRegistryEntry, fingerprintRebuildValue };
 
+export interface StartOrResumeRebuildTransactionInput {
+  sandboxEntry: RebuildSandboxEntry;
+  registryRecovery: RebuildRegistryRecoveryV1;
+  targetConfig: RebuildTargetConfig;
+  recreateOptions: RebuildRecreateOnboardOpts;
+  backupManifest: RebuildBackupManifest;
+  baseImage: string | null;
+  fromDockerfile: string | null;
+  legacyManagedImageRecoveryAuthorized: boolean;
+  shieldsLocked: boolean;
+  staleRecovery: boolean;
+}
+
 function fingerprintBackupManifest({
   snapshotVersion: _snapshotVersion,
   ...manifest
@@ -164,31 +177,39 @@ export class RebuildTransactionCoordinator {
     return this.transaction ? rebuildSessionCorrelation(this.transaction) : null;
   }
 
-  async prepare(
-    args: Omit<
-      Parameters<typeof prepareRebuildTransaction>[0],
-      "store" | "existing" | "sandboxName"
-    >,
-  ): Promise<void> {
-    this.transaction = await prepareRebuildTransaction({
-      ...args,
-      store: this.store,
-      existing: this.transaction,
-      sandboxName: this.sandboxName,
-    });
-  }
-
-  async reconcileObservedDeletion(staleRecovery: boolean): Promise<void> {
-    if (!staleRecovery || this.transaction?.phase !== "prepared") return;
-    this.transaction = await this.store.transition(
-      this.sandboxName,
-      this.transaction.revision,
-      "old_deleted",
-      {
-        ...this.transaction.receipts,
-        oldSandboxDeletion: { observedAt: new Date().toISOString() },
-      },
-    );
+  async startOrResume(input: StartOrResumeRebuildTransactionInput): Promise<void> {
+    const recovered = this.transaction;
+    const sandboxEntry =
+      recovered?.status === "active"
+        ? (recovered.intent.source.registryRecovery.entry as RebuildSandboxEntry)
+        : input.sandboxEntry;
+    if (
+      recovered?.status !== "active" ||
+      (recovered.phase === "prepared" && !input.staleRecovery)
+    ) {
+      this.transaction = await prepareRebuildTransaction({
+        store: this.store,
+        existing: recovered,
+        sandboxName: this.sandboxName,
+        sandboxEntry,
+        registryRecovery: input.registryRecovery,
+        targetConfig: input.targetConfig,
+        recreateOptions: input.recreateOptions,
+        backupManifest: input.backupManifest,
+        imageIdentity: {
+          baseImage: input.baseImage,
+          fromDockerfile: input.fromDockerfile,
+          recordedImage: sandboxEntry.imageTag ?? null,
+          nemoclawVersion: sandboxEntry.nemoclawVersion ?? null,
+        },
+        legacyManagedImageRecoveryAuthorized: input.legacyManagedImageRecoveryAuthorized,
+        shieldsLocked: input.shieldsLocked,
+        oldSandboxPresent: !input.staleRecovery,
+      });
+    }
+    if (input.staleRecovery && this.transaction?.phase === "prepared") {
+      await this.markDeleted();
+    }
   }
 
   async markDeleted(): Promise<void> {
