@@ -63,24 +63,41 @@ const CORPORATE_CA_ENV_BY_MODE: Record<
 
 const CORPORATE_CA_MERGE_PROBE = trustedSandboxShellScript(`
 set -eu
+probe_fail() {
+  printf 'CORPORATE_CA_PROBE_FAIL:%s\\n' "$1" >&2
+  exit 1
+}
+
+expect_export() {
+  env_name="$1"
+  if grep -F "export $env_name=$bundle" "$runtime_env" >/dev/null || \\
+    grep -F "export $env_name='$bundle'" "$runtime_env" >/dev/null || \\
+    grep -F "export $env_name=\\"$bundle\\"" "$runtime_env" >/dev/null; then
+    return 0
+  fi
+  probe_fail "runtime-env-$env_name"
+}
+
 corp='/usr/local/share/nemoclaw/corporate-ca.pem'
-bundle="\${SSL_CERT_FILE:-}"
-test "\${_NEMOCLAW_CORPORATE_CA_MERGED:-}" = "1"
-test -n "$bundle"
-test -s "$corp"
-test -s "$bundle"
-test "\${CURL_CA_BUNDLE:-}" = "$bundle"
-test "\${REQUESTS_CA_BUNDLE:-}" = "$bundle"
-test "\${GIT_SSL_CAINFO:-}" = "$bundle"
-test "\${NODE_EXTRA_CA_CERTS:-}" = "$bundle"
-grep -F '${CORPORATE_CA_CANARY_LINE}' "$corp" >/dev/null
-grep -F '${CORPORATE_CA_CANARY_LINE}' "$bundle" >/dev/null
+bundle='/tmp/nemoclaw-ca-bundle.pem'
+runtime_env='/tmp/nemoclaw-proxy-env.sh'
+
+[ -s "$corp" ] || probe_fail missing-corporate-ca
+[ -s "$bundle" ] || probe_fail missing-merged-bundle
+[ -s "$runtime_env" ] || probe_fail missing-runtime-env
+grep -F '${CORPORATE_CA_CANARY_LINE}' "$corp" >/dev/null || probe_fail corporate-canary-missing
+grep -F '${CORPORATE_CA_CANARY_LINE}' "$bundle" >/dev/null || probe_fail bundle-canary-missing
 set -- $(wc -c < "$corp")
 corp_bytes="$1"
 set -- $(wc -c < "$bundle")
 bundle_bytes="$1"
-test "$bundle_bytes" -gt "$corp_bytes"
-printf 'corporate CA merged into %s (%s > %s bytes)\\n' "$bundle" "$bundle_bytes" "$corp_bytes"
+[ "$bundle_bytes" -gt "$corp_bytes" ] || probe_fail bundle-did-not-preserve-base
+
+for env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS; do
+  expect_export "$env_name"
+done
+
+printf 'corporate CA baked and merged into %s (%s > %s bytes)\\n' "$bundle" "$bundle_bytes" "$corp_bytes"
 `);
 
 export function createCorporateCaFixture(
