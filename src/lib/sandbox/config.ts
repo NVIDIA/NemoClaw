@@ -404,7 +404,18 @@ function classifyNewKeyGate(inputs: NewKeyGateInputs): NewKeyGate {
  * Parse a config file's raw text according to its format.
  */
 function parseConfig(raw: string, format: string): ConfigObject {
-  const parsed = format === "yaml" ? require("yaml").parse(raw) : JSON.parse(raw);
+  // dcode declares `format: toml` (agents/langchain-deepagents-code/manifest.yaml);
+  // without a TOML branch a config.toml (which opens with a `# Generated ...`
+  // comment) fell through to JSON.parse() and threw. Parse it with smol-toml,
+  // mirroring how yaml is handled. #6548.
+  let parsed: ConfigValue;
+  if (format === "yaml") {
+    parsed = require("yaml").parse(raw);
+  } else if (format === "toml") {
+    parsed = require("smol-toml").parse(raw);
+  } else {
+    parsed = JSON.parse(raw);
+  }
   if (!isConfigObject(parsed)) {
     throw new Error("Config is not an object.");
   }
@@ -420,11 +431,11 @@ function serializeConfig(config: ConfigObject, format: string): string {
     return YAML.stringify(config);
   }
   if (format === "toml") {
-    // `config get` now reads TOML (via the sandbox tomllib), but writing TOML
-    // back is not wired yet. Refuse rather than serialize JSON into a `.toml`
-    // file, which would corrupt the agent config. #6548.
+    // Backstop: config set already refuses TOML agents up front (their config
+    // is image-baked; #6321/#6548), so this is unreachable in practice. Refuse
+    // rather than serialize JSON into a `.toml` file, which would corrupt it.
     throw new Error(
-      "config set is not yet supported for TOML-format agents (e.g. langchain-deepagents-code).",
+      "config set is not supported for TOML-format agents (e.g. langchain-deepagents-code).",
     );
   }
   return JSON.stringify(config, null, 2);
@@ -461,42 +472,21 @@ function parseCliConfigValue(rawValue: string): ConfigValue {
  * Read the agent's config from a running sandbox.
  * Resolves the correct config path based on the agent type.
  */
-// dcode declares `format: toml`, but there is no host-side TOML parser (adding a
-// dependency is out of scope). The sandbox image ships Python's stdlib `tomllib`
-// (3.11+), so parse the config inside the sandbox and emit JSON, keeping the
-// host parse a single JSON path. The one-liner has no newline, so it satisfies
-// OpenShell exec's argv contract (which rejects `\r`/`\n`); `-I` matches the
-// isolated interpreter the dcode restore path already uses. openclaw/hermes
-// (yaml/json) stay on `cat`. #6548.
-const TOML_TO_JSON_PY =
-  'import json,sys,tomllib; json.dump(tomllib.load(open(sys.argv[1],"rb")), sys.stdout)';
-
 function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): ConfigObject {
   const binary = getOpenshellBinary();
-  const readArgv =
-    target.format === "toml"
-      ? [
-          "sandbox",
-          "exec",
-          "--name",
-          sandboxName,
-          "--",
-          "/opt/venv/bin/python3",
-          "-I",
-          "-c",
-          TOML_TO_JSON_PY,
-          target.configPath,
-        ]
-      : ["sandbox", "exec", "--name", sandboxName, "--", "cat", target.configPath];
   let raw: string;
   try {
-    const result = captureOpenshellCommand(binary, readArgv, {
-      ignoreError: true,
-      includeStreams: true,
-      maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
-      errorLine: console.error,
-      exit: (code: number) => process.exit(code),
-    });
+    const result = captureOpenshellCommand(
+      binary,
+      ["sandbox", "exec", "--name", sandboxName, "--", "cat", target.configPath],
+      {
+        ignoreError: true,
+        includeStreams: true,
+        maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+        errorLine: console.error,
+        exit: (code: number) => process.exit(code),
+      },
+    );
     if (result.error || result.signal || result.status !== 0) {
       const detail = result.error?.message || result.stderr?.trim() || result.output;
       configFail(
@@ -518,9 +508,7 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
   }
 
   try {
-    // A `toml` config was already converted to JSON in-sandbox above.
-    const parseFormat = target.format === "toml" ? "json" : target.format;
-    const config = parseConfig(raw, parseFormat);
+    const config = parseConfig(raw, target.format);
     Object.defineProperty(config, CONFIG_SOURCE_SHA256, {
       configurable: false,
       enumerable: false,
@@ -942,12 +930,14 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
       `  --restart is supported only for OpenClaw and Hermes; '${target.agentName}' config was not changed.`,
     );
   }
-  // config get reads TOML (via the sandbox tomllib), but writing TOML back is
-  // not wired yet. Refuse cleanly up front rather than reading, mutating, and
-  // failing in serializeConfig (which would surface as an uncaught error). #6548
+  // dcode bakes its config into the sandbox image at build time, so — unlike
+  // OpenClaw/Hermes — it has no host-side config-mutation path (the same reason
+  // inference set refuses it, #6321). config get now reads TOML, but refuse
+  // config set cleanly and point at the only way to change it: re-onboard. #6548
   if (target.format === "toml") {
+    const { CLI_NAME } = require("../cli/branding");
     configFail(
-      `  config set is not yet supported for TOML-format agents (e.g. '${target.agentName}'). Only 'config get' is available for this agent.`,
+      `  config set is not available for '${target.agentName}': its config is baked into the sandbox image at build time. To change it, re-onboard with the new selection (e.g. ${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh).`,
     );
   }
   if (target.agentName === "openclaw" || target.agentName === "hermes") {
