@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../state/onboard-session";
+import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
 import {
   createInitialOnboardFlowPhases,
   type InitialOnboardFlowContext,
@@ -68,12 +69,6 @@ function runtime(session: Session = createSession()): OnboardMachineRunnerRuntim
   return {
     session: async () => session,
     applyResult: async () => session,
-  };
-}
-
-function recordInvalidatedTargets(targets: string[]) {
-  return async (result: OnboardStateResult) => {
-    if (result.type === "transition") targets.push(result.next);
   };
 }
 

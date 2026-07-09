@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
+import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
 import {
   type CoreOnboardFlowPhaseOptions,
   createCoreOnboardFlowPhases,
@@ -65,12 +66,6 @@ function completeStep(): Session["steps"][string] {
     startedAt: "2026-06-09T00:00:00.000Z",
     completedAt: "2026-06-09T00:01:00.000Z",
     error: null,
-  };
-}
-
-function recordInvalidatedTargets(targets: string[]) {
-  return async (result: OnboardStateResult) => {
-    if (result.type === "transition") targets.push(result.next);
   };
 }
 

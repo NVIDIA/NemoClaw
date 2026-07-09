@@ -11,6 +11,7 @@ import {
   type Session,
   type SessionUpdates,
 } from "../state/onboard-session";
+import { applyInvalidatedTransitionOrDefer } from "./__test-helpers__/machine-recorders";
 import { advanceTo, branchTo } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import { resumeMachineState } from "./resume-machine-repair";
@@ -116,23 +117,13 @@ async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
     const current = await boundary.getRuntime().session();
     const sourceState =
       result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
-    if (result.type === "transition" && current.machine.state === result.next) {
-      await boundary.recordInvalidatedStateResult(result, {
-        reason: "already_at_target",
-        currentState: current.machine.state,
-        sourceState,
-      });
-      continue;
-    }
-    if (result.type === "transition" && sourceState && current.machine.state !== sourceState) {
-      await boundary.recordInvalidatedStateResult(result, {
-        reason: "source_state_mismatch",
-        currentState: current.machine.state,
-        sourceState,
-      });
-      continue;
-    }
-    await boundary.recordStateResult(result);
+    const invalidated = await applyInvalidatedTransitionOrDefer(
+      boundary,
+      result,
+      current.machine.state,
+      sourceState,
+    );
+    invalidated || (await boundary.recordStateResult(result));
   }
   await boundary.recordSessionComplete();
   return getSession();
