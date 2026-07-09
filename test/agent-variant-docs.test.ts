@@ -183,6 +183,7 @@ title: "Example"
 
     for (const variant of ["openclaw", "hermes", "deepagents"] as const) {
       const rendered = renderAgentVariantPage(troubleshooting, variant, {
+        outputPath: `/repo/docs/_build/agent-variants/reference/troubleshooting.${variant}.generated.mdx`,
         sourcePath: "/repo/docs/reference/troubleshooting.mdx",
       });
 
