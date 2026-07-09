@@ -375,7 +375,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("keeps optional service egress out of the default policy and requires Landlock", () => {
     const policy = readAgentFile("policy-additions.yaml");
-
     expect(policy).not.toContain("api.tavily.com");
     expect(policy).not.toContain("api.smith.langchain.com");
     expect(policy).not.toContain("supabase.co");
