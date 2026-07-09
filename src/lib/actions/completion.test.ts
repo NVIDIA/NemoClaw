@@ -1,114 +1,186 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Config as OclifConfig } from "@oclif/core";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-import { detectShell, generateCompletionScript, runCompletionAction } from "./completion";
+import {
+  buildCompletionModel,
+  type CompletionCommandMetadata,
+  detectShell,
+  generateCompletionScript,
+  runCompletionAction,
+  runCompletionSandboxNamesAction,
+} from "./completion";
 
-describe("detectShell", () => {
-  it("detects zsh from SHELL", () => {
-    expect(detectShell("/bin/zsh")).toBe("zsh");
+const COMMANDS = [
+  {
+    args: {},
+    flags: {
+      agent: { hidden: false, name: "agent", type: "option" },
+      help: { char: "h", hidden: false, name: "help", type: "boolean" },
+    },
+    hidden: false,
+    id: "onboard",
+  },
+  {
+    args: {},
+    flags: { type: { hidden: false, name: "type", type: "option" } },
+    hidden: false,
+    id: "credentials:add",
+  },
+  {
+    args: {
+      shell: { name: "shell", options: ["bash", "zsh", "fish"] },
+    },
+    flags: {
+      "list-sandbox-names": {
+        hidden: true,
+        name: "list-sandbox-names",
+        type: "boolean",
+      },
+    },
+    hidden: false,
+    id: "completion",
+  },
+  { args: {}, flags: {}, hidden: false, id: "resources" },
+  {
+    args: {},
+    flags: { json: { hidden: false, name: "json", type: "boolean" } },
+    hidden: false,
+    id: "sandbox:status",
+  },
+  {
+    args: {},
+    flags: { quiet: { char: "q", hidden: false, name: "quiet", type: "boolean" } },
+    hidden: false,
+    id: "sandbox:gateway:token",
+  },
+  { args: {}, flags: {}, hidden: false, id: "sandbox:channels:add" },
+  { args: {}, flags: {}, hidden: true, id: "internal:secret" },
+] as unknown as CompletionCommandMetadata[];
+
+function findCase(
+  model: ReturnType<typeof buildCompletionModel>,
+  scope: "global" | "sandbox",
+  key: string,
+) {
+  return model[scope].find((entry) => entry.key === `${scope}:${key}`);
+}
+
+describe("buildCompletionModel", () => {
+  it("derives public routes and flags from oclif metadata", () => {
+    const model = buildCompletionModel(COMMANDS);
+
+    expect(findCase(model, "global", "")?.candidates).toEqual([
+      "completion",
+      "credentials",
+      "onboard",
+      "resources",
+    ]);
+    expect(findCase(model, "global", "credentials")?.candidates).toEqual(["add"]);
+    expect(findCase(model, "global", "credentials add")?.flags).toEqual(["--type"]);
+    expect(findCase(model, "global", "completion")?.argOptions).toEqual(["bash", "fish", "zsh"]);
+    expect(findCase(model, "sandbox", "")?.candidates).toEqual([
+      "channels",
+      "gateway-token",
+      "status",
+    ]);
+    expect(findCase(model, "sandbox", "gateway-token")?.flags).toEqual(["--quiet", "-q"]);
+    expect(JSON.stringify(model)).not.toContain("internal:secret");
+    expect(JSON.stringify(model)).not.toContain("credentials:add");
   });
 
-  it("detects fish from SHELL", () => {
-    expect(detectShell("/usr/local/bin/fish")).toBe("fish");
-  });
+  it("tracks the repository's discovered oclif and public-route registries", async () => {
+    const config = await OclifConfig.load(process.cwd());
+    const model = buildCompletionModel(config.commands);
 
-  it("defaults to bash", () => {
-    expect(detectShell("/bin/bash")).toBe("bash");
-    expect(detectShell(undefined)).toBe("bash");
-    expect(detectShell("")).toBe("bash");
+    expect(findCase(model, "global", "")?.candidates).toEqual(
+      expect.arrayContaining(["help", "resources", "uninstall", "use", "version"]),
+    );
+    expect(findCase(model, "global", "")?.flags).toEqual(
+      expect.arrayContaining(["--help", "--version", "-h", "-v"]),
+    );
+    expect(findCase(model, "global", "inference")?.candidates).toEqual(
+      expect.arrayContaining(["get", "set"]),
+    );
+    expect(findCase(model, "sandbox", "sessions")?.candidates).toEqual(
+      expect.arrayContaining(["delete", "export", "list", "reset"]),
+    );
+    expect(findCase(model, "sandbox", "gateway")?.candidates).toContain("restart");
+    expect(findCase(model, "sandbox", "gateway-token")?.flags).toContain("--quiet");
   });
 });
 
 describe("generateCompletionScript", () => {
-  it("emits a bash completion function", () => {
-    const script = generateCompletionScript("bash");
-    expect(script).toContain("_nemoclaw()");
-    expect(script).toContain("complete -F _nemoclaw nemoclaw");
+  it.each([
+    "bash",
+    "zsh",
+    "fish",
+  ] as const)("generates %s from the same metadata model", (shell) => {
+    const script = generateCompletionScript(shell, COMMANDS, "nemoclaw");
+    expect(script).toContain("credentials add");
+    expect(script).toContain("gateway-token");
+    expect(script).toContain("completion --list-sandbox-names");
+    expect(script).not.toContain("nemoclaw list --json");
+    expect(script).not.toContain("credentials:add");
   });
 
-  it("emits a zsh compdef", () => {
-    const script = generateCompletionScript("zsh");
-    expect(script).toContain("#compdef nemoclaw");
+  it("uses the active oclif binary name", () => {
+    const script = generateCompletionScript("bash", COMMANDS, "nemo-deepagents");
+    expect(script).toContain("complete -F _nemo_deepagents 'nemo-deepagents'");
+    expect(script).toContain("'nemo-deepagents' completion --list-sandbox-names");
   });
 
-  it("emits fish completions", () => {
-    const script = generateCompletionScript("fish");
-    expect(script).toContain("__nemoclaw_sandboxes");
-  });
-
-  it("reads sandbox names from list --json in every shell", () => {
-    expect(generateCompletionScript("bash")).toContain("nemoclaw list --json");
-    expect(generateCompletionScript("zsh")).toContain("nemoclaw list --json");
-    expect(generateCompletionScript("fish")).toContain("nemoclaw list --json");
-  });
-
-  it("includes the same sandbox subcommands in fish as in bash", () => {
-    const bash = generateCompletionScript("bash");
-    const fish = generateCompletionScript("fish");
-    const probes = ["gateway-token", "policy-explain", "share:mount", "config:rotate-token"];
-    for (const subcommand of probes) {
-      expect(bash).toContain(subcommand);
-      expect(fish).toContain(subcommand);
-    }
-  });
-
-  it("offers the same per-command flags in all three shells", () => {
-    const bash = generateCompletionScript("bash");
-    const zsh = generateCompletionScript("zsh");
-    const fish = generateCompletionScript("fish");
-    const longFlagProbes = [
-      "--sandbox",
-      "--agent",
-      "--non-interactive",
-      "--type",
-      "--credential",
-      "--config",
-      "--from-existing",
-      "--quick",
-      "--output",
-      "--force",
-      "--dry-run",
-      "--json",
-    ];
-    for (const flag of longFlagProbes) {
-      expect(bash).toContain(flag);
-      expect(zsh).toContain(flag);
-      // fish spells long flags as `-l <name>` without the dashes
-      expect(fish).toContain(`-l ${flag.slice(2)}`);
-    }
-  });
-
-  it("completes shell names for the completion command in all three shells", () => {
-    expect(generateCompletionScript("bash")).toContain("bash zsh fish");
-    expect(generateCompletionScript("zsh")).toContain("'bash' 'zsh' 'fish'");
-    expect(generateCompletionScript("fish")).toContain(
-      "__fish_seen_subcommand_from completion' -a 'bash zsh fish'",
+  it("loads and caches sandbox names in the generated Bash script", () => {
+    const script = generateCompletionScript("bash", COMMANDS, "nemoclaw");
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `${script}
+nemoclaw() { printf 'beta\\nalpha\\n'; }
+_nemoclaw_load_sandboxes
+printf '%s|%s\\n' "$__nemoclaw_sandbox_cache" "$__nemoclaw_sandbox_cache_loaded"`,
+      ],
+      { encoding: "utf8" },
     );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("beta\nalpha|1\n");
   });
 });
 
-describe("runCompletionAction", () => {
-  it("writes the script for an explicit shell", () => {
+describe("completion actions", () => {
+  it("detects the target shell and defaults to bash", () => {
+    expect(detectShell("/bin/zsh")).toBe("zsh");
+    expect(detectShell("/usr/local/bin/fish")).toBe("fish");
+    expect(detectShell("/bin/tcsh")).toBe("bash");
+    expect(detectShell(undefined)).toBe("bash");
+  });
+
+  it("writes the selected generated script", () => {
     const written: string[] = [];
-    runCompletionAction("zsh", { write: (s) => written.push(s) });
+    runCompletionAction(undefined, COMMANDS, "nemoclaw", {
+      shellEnv: "/bin/zsh",
+      write: (output) => written.push(output),
+    });
     expect(written).toHaveLength(1);
     expect(written[0]).toContain("#compdef nemoclaw");
   });
 
-  it("auto-detects the shell from the env dep when omitted", () => {
+  it("emits sorted registry names without running the full list command", () => {
     const written: string[] = [];
-    runCompletionAction(undefined, {
-      write: (s) => written.push(s),
-      shellEnv: "/usr/local/bin/fish",
+    runCompletionSandboxNamesAction({
+      listRegisteredSandboxes: () => ({
+        defaultSandbox: "beta",
+        sandboxes: [{ name: "beta" }, { name: "alpha" }],
+      }),
+      write: (output) => written.push(output),
     });
-    expect(written[0]).toContain("# nemoclaw fish completion");
-  });
-
-  it("falls back to bash for unknown shells", () => {
-    const written: string[] = [];
-    runCompletionAction(undefined, { write: (s) => written.push(s), shellEnv: "/bin/tcsh" });
-    expect(written[0]).toContain("complete -F _nemoclaw nemoclaw");
+    expect(written).toEqual(["alpha\nbeta\n"]);
   });
 });

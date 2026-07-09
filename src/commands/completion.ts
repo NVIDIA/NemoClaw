@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Args } from "@oclif/core";
+import { Args, Flags } from "@oclif/core";
 
-import { runCompletionAction } from "../lib/actions/completion";
+import { runCompletionAction, runCompletionSandboxNamesAction } from "../lib/actions/completion";
 import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
 
 export default class CompletionCommand extends NemoClawCommand {
@@ -31,9 +31,19 @@ export default class CompletionCommand extends NemoClawCommand {
       required: false,
     }),
   };
+  static flags = {
+    "list-sandbox-names": Flags.boolean({
+      description: "List registered sandbox names for shell completion",
+      hidden: true,
+    }),
+  };
 
   public async run(): Promise<void> {
-    const { args } = await this.parse(CompletionCommand);
-    runCompletionAction(args.shell);
+    const { args, flags } = await this.parse(CompletionCommand);
+    if (flags["list-sandbox-names"]) {
+      runCompletionSandboxNamesAction();
+      return;
+    }
+    runCompletionAction(args.shell, this.config.commands, this.config.bin);
   }
 }

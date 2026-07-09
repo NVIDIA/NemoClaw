@@ -28,8 +28,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
   completion: [
     {
       group: "Getting Started",
-      order: 2.5,
-      description: "Generate a shell completion script (bash, zsh, or fish)",
+      order: 1.75,
       flags: "[bash|zsh|fish]",
     },
   ],
