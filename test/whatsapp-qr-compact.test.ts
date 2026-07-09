@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -287,9 +288,10 @@ function extractGuardFunction(src: string, trustedGatewayUrl: string): string {
     "    # nemoclaw-trusted-gateway-literal-injection end\n    cat <<'GUARDENVEOF'\n";
   const injectionStart = guardSource.indexOf(injectionStartMarker);
   const injectionEnd = guardSource.indexOf(injectionEndMarker, injectionStart);
-  if (injectionStart === -1 || injectionEnd === -1) {
-    throw new Error("Expected the generated trusted gateway literal injection markers");
-  }
+  assert(
+    injectionStart !== -1 && injectionEnd !== -1,
+    "Expected the generated trusted gateway literal injection markers",
+  );
   return `${guardSource.slice(0, injectionStart)}            _nemoclaw_whatsapp_trusted_url=${JSON.stringify(trustedGatewayUrl)}\n${guardSource.slice(injectionEnd + injectionEndMarker.length)}`;
 }
 
