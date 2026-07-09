@@ -189,14 +189,30 @@ describe("rebuild replacement recovery decision", () => {
     expect(observeRebuildSession(record, null, replacement)).toBe("missing");
   });
 
-  it("keeps registry fingerprints stable across nested key insertion order (#6436)", () => {
+  it("keeps rebuild fingerprints stable across nested key insertion order (#6436)", () => {
     fc.assert(
-      fc.property(fc.jsonValue(), (value) => {
-        const entry = { name: "alpha", generated: value } as unknown as SandboxEntry;
-        expect(fingerprintRebuildRegistryEntry(entry)).toBe(
-          fingerprintRebuildRegistryEntry(reverseObjectKeys(entry) as SandboxEntry),
-        );
-      }),
+      fc.property(
+        fc.record({
+          name: fc.string({ minLength: 1 }),
+          agent: fc.option(fc.string(), { nil: null }),
+          agentVersion: fc.option(fc.string(), { nil: null }),
+          nemoclawVersion: fc.option(fc.string(), { nil: null }),
+          imageTag: fc.option(fc.string(), { nil: null }),
+          provider: fc.option(fc.string(), { nil: null }),
+          model: fc.option(fc.string(), { nil: null }),
+          nested: fc.jsonValue(),
+        }),
+        (entry) => {
+          const reversed = reverseObjectKeys(entry) as SandboxEntry;
+          expect(fingerprintRebuildValue(entry)).toBe(fingerprintRebuildValue(reversed));
+          expect(fingerprintRebuildRegistryEntry(entry as SandboxEntry)).toBe(
+            fingerprintRebuildRegistryEntry(reversed),
+          );
+          expect(fingerprintRebuildReplacement(entry as SandboxEntry)).toBe(
+            fingerprintRebuildReplacement(reversed),
+          );
+        },
+      ),
     );
   });
 });

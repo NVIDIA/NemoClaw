@@ -24,7 +24,10 @@ import {
 } from "../onboard/machine/events";
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
-import type { RebuildSessionCorrelation } from "../rebuild-correlation";
+import {
+  parseRebuildSessionCorrelation,
+  type RebuildSessionCorrelation,
+} from "../rebuild-correlation";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
   assignSafeToolDisclosureUpdate,
@@ -81,7 +84,7 @@ export interface SessionFailure {
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
-  /** Internal cross-process rebuild anchor; remove when the journal owns the session snapshot. */
+  /** Cross-process recovery source; remove when the transaction journal owns the session snapshot. */
   rebuild?: RebuildSessionCorrelation | null;
 }
 
@@ -330,21 +333,10 @@ function parseWechatConfig(value: unknown): WechatConfig | null {
 
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
-  const rebuild = isObject(value.rebuild)
-    ? {
-        transactionId: readString(value.rebuild.transactionId),
-        imageFingerprint: readString(value.rebuild.imageFingerprint),
-        configurationFingerprint: readString(value.rebuild.configurationFingerprint),
-        replacementFingerprint: readString(value.rebuild.replacementFingerprint),
-      }
-    : null;
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
-    rebuild:
-      rebuild?.transactionId && rebuild.imageFingerprint && rebuild.configurationFingerprint
-        ? (rebuild as RebuildSessionCorrelation)
-        : null,
+    rebuild: parseRebuildSessionCorrelation(value.rebuild),
   };
 }
 

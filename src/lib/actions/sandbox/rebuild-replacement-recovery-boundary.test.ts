@@ -195,5 +195,9 @@ describe("rebuild replacement recovery boundary", () => {
     expect(completed?.receipts.replacement?.identityFingerprint).not.toBe(
       interruptedRecord?.receipts.replacement?.identityFingerprint,
     );
+    expect(
+      ((resumed.session.metadata as Record<string, unknown>).rebuild as Record<string, unknown>)
+        .replacementFingerprint,
+    ).toBe(fingerprintRebuildReplacement(recreated as SandboxEntry));
   }, 10_000);
 });

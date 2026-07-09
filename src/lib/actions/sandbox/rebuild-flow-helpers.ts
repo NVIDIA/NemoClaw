@@ -22,8 +22,8 @@ import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
-// OpenShell list output is the current readiness source. Replace these parsers
-// with its structured state API when one exposes stable name/state fields.
+// Source: OpenShell sandbox-list output. Remove these parsers when OpenShell
+// exposes a structured API with stable sandbox name and readiness fields.
 import { parseLiveSandboxNames, parseReadySandboxNames } from "../../runtime-recovery";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as shields from "../../shields";

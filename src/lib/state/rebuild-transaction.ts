@@ -4,7 +4,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
 import { isErrnoException } from "../core/errno";
 import { isRecord, type UnknownRecord } from "../core/json-types";
@@ -13,6 +12,10 @@ import type { ToolDisclosure } from "../tool-disclosure";
 import { ensureConfigDir } from "./config-io";
 import { withMcpLifecycleLock } from "./mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "./paths";
+import {
+  findReplacedRebuildReceipt,
+  nextRebuildTransactionPhase,
+} from "./rebuild-transaction-transition";
 import type { SandboxEntry } from "./registry";
 
 export const REBUILD_TRANSACTION_VERSION = 1 as const;
@@ -640,30 +643,6 @@ function readStrictRecord(
   }
 }
 
-const NEXT_PHASE: Readonly<
-  Record<Exclude<RebuildTransactionPhaseV1, "completed">, RebuildTransactionPhaseV1>
-> = {
-  prepared: "old_deleted",
-  old_deleted: "replacement_created",
-  replacement_created: "completed",
-};
-
-function assertReceiptHistoryUnchanged(
-  current: RebuildTransactionReceiptsV1,
-  next: RebuildTransactionReceiptsV1,
-  sandboxName: string,
-): void {
-  for (const key of ["backup", "oldSandboxDeletion", "replacement"] as const) {
-    if (current[key] !== undefined && !isDeepStrictEqual(current[key], next[key])) {
-      throw transactionError(
-        "INVALID_TRANSITION",
-        sandboxName,
-        `cannot replace the existing ${key} receipt`,
-      );
-    }
-  }
-}
-
 /** Durable state for the rebuild coordinator. Each mutation acquires the
  * existing per-sandbox lifecycle lock before revision validation and durable
  * publication. Reentrancy is intra-process only via AsyncLocalStorage;
@@ -780,14 +759,21 @@ export class RebuildTransactionStore {
   ): Promise<RebuildTransactionRecordV1> {
     return this.withMutationLock(sandboxName, () => {
       const current = this.requireActive(sandboxName, expectedRevision);
-      if (current.phase === "completed" || NEXT_PHASE[current.phase] !== phase) {
+      if (nextRebuildTransactionPhase(current.phase) !== phase) {
         throw transactionError(
           "INVALID_TRANSITION",
           sandboxName,
           `cannot advance from ${current.phase} to ${phase}`,
         );
       }
-      assertReceiptHistoryUnchanged(current.receipts, receipts, sandboxName);
+      const replacedReceipt = findReplacedRebuildReceipt(current.receipts, receipts);
+      if (replacedReceipt) {
+        throw transactionError(
+          "INVALID_TRANSITION",
+          sandboxName,
+          `cannot replace the existing ${replacedReceipt} receipt`,
+        );
+      }
       const updated = normalizeMutationRecord(
         {
           ...current,
@@ -820,9 +806,8 @@ export class RebuildTransactionStore {
           `cannot refresh a replacement receipt from ${current.phase}`,
         );
       }
-      // The caller has reconciled the receipted replacement as absent and
-      // created its compensation. Preserve every prior receipt while replacing
-      // only the evidence that identifies the now-current replacement.
+      // The caller reconciled the old replacement as absent. Preserve prior
+      // receipts while replacing only the compensated replacement's evidence.
       const updated = normalizeMutationRecord(
         {
           ...current,

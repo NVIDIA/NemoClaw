@@ -30,6 +30,10 @@ import {
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
 import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
+import {
+  publishAdoptedRebuildReplacement,
+  publishCreatedRebuildReplacement,
+} from "./rebuild-recovery-plan";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import { runRebuildShieldsPhase } from "./rebuild-shields-phase";
@@ -86,7 +90,7 @@ async function rebuildSandboxUnlocked(
   if (!preflight) return;
   const {
     transaction: recoveredTransaction,
-    recoveryAction,
+    recoveryPlan,
     registryRecovery,
     sandboxEntry,
     rebuildAgent,
@@ -130,8 +134,8 @@ async function rebuildSandboxUnlocked(
   let recoveryManifest = validatedRecoveryManifest;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
-  const replacementAlreadyPresent = recoveryAction === "adopt" || recoveryAction === "resume";
-  if (recoveryAction) log(`Durable rebuild recovery selected '${recoveryAction}'`);
+  const replacementAlreadyPresent = recoveryPlan?.replacementAlreadyPresent === true;
+  if (recoveryPlan) log(`Durable rebuild recovery selected '${recoveryPlan.action}'`);
   try {
     const shieldsPhase = runRebuildShieldsPhase(
       sandboxName,
@@ -230,14 +234,12 @@ async function rebuildSandboxUnlocked(
         });
       }
       await transaction.reconcileObservedDeletion(staleRecovery);
-      if (recoveryAction === "adopt") {
-        const replacement = registry.getSandbox(sandboxName);
-        if (!replacement) {
-          bail("The transaction-correlated replacement disappeared before receipt publication.");
-          return;
-        }
-        await transaction.markReplacementCreated(replacement);
-      }
+      await publishAdoptedRebuildReplacement(
+        recoveryPlan,
+        transaction,
+        () => registry.getSandbox(sandboxName),
+        bail,
+      );
       if (transaction.phase === "prepared") maybePauseForRebuildInterruption("prepared");
 
       const mcpPreparation = await runRebuildDestroyPhase({
@@ -317,10 +319,11 @@ async function rebuildSandboxUnlocked(
           rebuildCorrelation: transaction.sessionCorrelation,
           onCreated: async () => {
             sandboxStillExists = true;
-            const replacement = registry.getSandbox(sandboxName);
-            await (recoveryAction === "recreate"
-              ? transaction.markReplacementRecreated(replacement)
-              : transaction.markReplacementCreated(replacement));
+            await publishCreatedRebuildReplacement(
+              recoveryPlan,
+              transaction,
+              registry.getSandbox(sandboxName),
+            );
           },
           onFailed: async () => {
             await transaction.recordReplacementFailure();

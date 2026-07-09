@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Deterministic local-state correlation only. Digests in this module are not a
+// security MAC and must never authorize or authenticate a caller.
+
 import crypto from "node:crypto";
 
 import type { RebuildTransactionRecordV1 } from "./state/rebuild-transaction";
@@ -11,6 +14,26 @@ export interface RebuildSessionCorrelation {
   imageFingerprint: string;
   configurationFingerprint: string;
   replacementFingerprint: string | null;
+}
+
+function correlationString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+export function parseRebuildSessionCorrelation(value: unknown): RebuildSessionCorrelation | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const transactionId = correlationString(record.transactionId);
+  const imageFingerprint = correlationString(record.imageFingerprint);
+  const configurationFingerprint = correlationString(record.configurationFingerprint);
+  return transactionId && imageFingerprint && configurationFingerprint
+    ? {
+        transactionId,
+        imageFingerprint,
+        configurationFingerprint,
+        replacementFingerprint: correlationString(record.replacementFingerprint),
+      }
+    : null;
 }
 
 export function rebuildSessionCorrelation(
@@ -35,7 +58,6 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** Deterministic correlation only: this unkeyed digest is not authentication or authorization. */
 export function fingerprintRebuildValue(value: unknown): string {
   return `sha256:${crypto.createHash("sha256").update(stableJson(value)).digest("hex")}`;
 }
