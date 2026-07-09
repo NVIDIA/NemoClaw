@@ -17,10 +17,7 @@ function classify(sandboxes: Entry[], overrides: { observed?: string[]; reconnec
     observedNames: new Set(overrides.observed ?? []),
     reconnectedNames: new Set(overrides.reconnected ?? []),
     selectedGatewayName: "nemoclaw",
-    resolveGatewayBinding: (sandbox) => {
-      if (sandbox.gatewayName === "corrupt") throw new Error("invalid binding");
-      return sandbox.gatewayName ?? "nemoclaw";
-    },
+    resolveGatewayBinding: (sandbox) => sandbox.gatewayName ?? "nemoclaw",
   });
 }
 
@@ -42,7 +39,16 @@ describe("classifyOrphanedRegistrySandboxes (#6520)", () => {
   });
 
   it("never classifies a corrupted binding as an orphan", () => {
-    expect(classify([{ name: "tampered", gatewayName: "corrupt" }], {})).toEqual([]);
+    expect(
+      classifyOrphanedRegistrySandboxes([{ name: "tampered" }], {
+        observedNames: new Set<string>(),
+        reconnectedNames: new Set<string>(),
+        selectedGatewayName: "nemoclaw",
+        resolveGatewayBinding: () => {
+          throw new Error("invalid persisted binding");
+        },
+      }),
+    ).toEqual([]);
   });
 });
 
