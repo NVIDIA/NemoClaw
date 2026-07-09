@@ -106,6 +106,18 @@ NemoClaw isolates agents inside OpenShell sandboxes with:
 
 Security-sensitive code paths require extra test coverage.
 
+## Engineering Behavior
+
+Apply these principles to implementation, review, refactoring, and defect investigation:
+
+- **Make assumptions reviewable.** State assumptions and meaningfully different interpretations when they affect behavior, security, compatibility, data, or a public contract. Ask before implementation when the choice would change the intended outcome.
+- **Build the smallest sufficient change.** Implement the acceptance criteria without speculative features, abstractions, configuration, or fallback behavior. Follow existing architecture and local patterns.
+- **Keep changes issue-scoped.** Make every changed line traceable to the requested outcome, its verification, or cleanup caused by the change. Report unrelated debt instead of including drive-by changes.
+- **Define and verify the outcome.** Establish observable success criteria, reproduce defects before fixing them when feasible, and use the narrowest stable evidence that proves the changed behavior.
+- **Root-cause escaped defects.** When QA finds a defect, identify both the product root cause and the engineering detection gap. Close the smallest durable gap, check adjacent code for the same failure class, and record prevention evidence without assigning individual blame.
+
+Load [`nemoclaw-contributor-engineering-guidelines`](.agents/skills/nemoclaw-contributor-engineering-guidelines/SKILL.md) for the expanded workflow and examples.
+
 ## Code Style and Conventions
 
 ### Commit Messages

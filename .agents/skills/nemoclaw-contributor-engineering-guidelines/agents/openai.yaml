@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw Engineering Guidelines"
+  short_description: "Apply focused, verifiable engineering practices"
+  default_prompt: "Use $nemoclaw-contributor-engineering-guidelines to plan and implement this change with explicit assumptions, minimal scope, verification, and escape analysis when applicable."
