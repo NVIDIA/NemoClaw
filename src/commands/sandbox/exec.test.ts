@@ -12,6 +12,7 @@ import { log } from "../../lib/cli/logger";
 import SandboxExecCommand from "./exec";
 
 const rootDir = process.cwd();
+const execExitDeps = { exit: expect.any(Function) };
 
 describe("SandboxExecCommand oclif parse path", () => {
   beforeEach(() => {
@@ -31,7 +32,23 @@ describe("SandboxExecCommand oclif parse path", () => {
       "alpha",
       ["openclaw", "agent", "--agent", "main", "-m", "hi"],
       { workdir: undefined, tty: null, timeoutSeconds: undefined, stdin: undefined },
+      execExitDeps,
     );
+  });
+
+  it("routes completion codes through oclif exit-code handling", async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    execSandboxMock.mockImplementationOnce(async (_name, _cmd, _options, deps) => {
+      deps?.exit?.(42);
+    });
+
+    try {
+      await SandboxExecCommand.run(["alpha", "--", "sh", "-c", "exit 42"], rootDir);
+      expect(process.exitCode).toBe(42);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it("does not assign host meaning to logging flags after --", async () => {
@@ -39,11 +56,16 @@ describe("SandboxExecCommand oclif parse path", () => {
 
     await SandboxExecCommand.run(["alpha", "--", "agent-cli", "--debug", "--quiet"], rootDir);
 
-    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["agent-cli", "--debug", "--quiet"], {
-      workdir: undefined,
-      tty: null,
-      timeoutSeconds: undefined,
-    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      ["agent-cli", "--debug", "--quiet"],
+      {
+        workdir: undefined,
+        tty: null,
+        timeoutSeconds: undefined,
+      },
+      execExitDeps,
+    );
     expect(configure).toHaveBeenCalledWith({ debug: false, quiet: false });
     expect(configure).not.toHaveBeenCalledWith({ debug: true, quiet: false });
     expect(configure).not.toHaveBeenCalledWith({ debug: false, quiet: true });
@@ -96,6 +118,7 @@ describe("SandboxExecCommand oclif parse path", () => {
         "pass",
       ],
       { workdir: undefined, tty: null, timeoutSeconds: undefined, stdin: undefined },
+      execExitDeps,
     );
   });
 
@@ -104,12 +127,17 @@ describe("SandboxExecCommand oclif parse path", () => {
       ["alpha", "--workdir", "/sandbox/workspace", "--", "ls", "-la"],
       rootDir,
     );
-    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["ls", "-la"], {
-      workdir: "/sandbox/workspace",
-      tty: null,
-      timeoutSeconds: undefined,
-      stdin: undefined,
-    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      ["ls", "-la"],
+      {
+        workdir: "/sandbox/workspace",
+        tty: null,
+        timeoutSeconds: undefined,
+        stdin: undefined,
+      },
+      execExitDeps,
+    );
   });
 
   it("forwards a multi-line heredoc command verbatim to the action guard (#5980)", async () => {
@@ -118,12 +146,17 @@ describe("SandboxExecCommand oclif parse path", () => {
     // action test. Here we pin that the heredoc reaches the action intact.
     const heredoc = "cat <<EOF\nline1\nline2\nEOF";
     await SandboxExecCommand.run(["alpha", "--", "bash", "-lc", heredoc], rootDir);
-    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["bash", "-lc", heredoc], {
-      workdir: undefined,
-      tty: null,
-      timeoutSeconds: undefined,
-      stdin: undefined,
-    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      ["bash", "-lc", heredoc],
+      {
+        workdir: undefined,
+        tty: null,
+        timeoutSeconds: undefined,
+        stdin: undefined,
+      },
+      execExitDeps,
+    );
   });
 
   it("forwards the semicolon workaround to dispatch (#5980)", async () => {
@@ -135,6 +168,7 @@ describe("SandboxExecCommand oclif parse path", () => {
       "alpha",
       ["bash", "-lc", "echo line1; echo line2"],
       { workdir: undefined, tty: null, timeoutSeconds: undefined, stdin: undefined },
+      execExitDeps,
     );
   });
 
@@ -147,55 +181,81 @@ describe("SandboxExecCommand oclif parse path", () => {
       "alpha",
       ["bash", "-lc", "echo line1; echo line2"],
       { workdir: "/sandbox", tty: null, timeoutSeconds: undefined, stdin: undefined },
+      execExitDeps,
     );
   });
 
   it("parses --tty / --no-tty and --timeout into typed options", async () => {
     await SandboxExecCommand.run(["alpha", "--tty", "--timeout", "30", "--", "hostname"], rootDir);
-    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["hostname"], {
-      workdir: undefined,
-      tty: true,
-      timeoutSeconds: 30,
-      stdin: undefined,
-    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      ["hostname"],
+      {
+        workdir: undefined,
+        tty: true,
+        timeoutSeconds: 30,
+        stdin: undefined,
+      },
+      execExitDeps,
+    );
     execSandboxMock.mockReset();
 
     await SandboxExecCommand.run(["alpha", "--no-tty", "--", "hostname"], rootDir);
-    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["hostname"], {
-      workdir: undefined,
-      tty: false,
-      timeoutSeconds: undefined,
-      stdin: undefined,
-    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      ["hostname"],
+      {
+        workdir: undefined,
+        tty: false,
+        timeoutSeconds: undefined,
+        stdin: undefined,
+      },
+      execExitDeps,
+    );
   });
 
   it("parses --stdin as explicit stdin forwarding", async () => {
     await SandboxExecCommand.run(["alpha", "--stdin", "--", "cat"], rootDir);
-    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["cat"], {
-      workdir: undefined,
-      tty: null,
-      timeoutSeconds: undefined,
-      stdin: true,
-    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      ["cat"],
+      {
+        workdir: undefined,
+        tty: null,
+        timeoutSeconds: undefined,
+        stdin: true,
+      },
+      execExitDeps,
+    );
   });
 
   it("parses --no-stdin as explicit stdin closure", async () => {
     await SandboxExecCommand.run(["alpha", "--no-stdin", "--", "pwd"], rootDir);
-    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["pwd"], {
-      workdir: undefined,
-      tty: null,
-      timeoutSeconds: undefined,
-      stdin: false,
-    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      ["pwd"],
+      {
+        workdir: undefined,
+        tty: null,
+        timeoutSeconds: undefined,
+        stdin: false,
+      },
+      execExitDeps,
+    );
   });
 
   it("leaves stdin mode unset for the production spawner to auto-detect", async () => {
     await SandboxExecCommand.run(["alpha", "--", "bash"], rootDir);
-    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["bash"], {
-      workdir: undefined,
-      tty: null,
-      timeoutSeconds: undefined,
-      stdin: undefined,
-    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      ["bash"],
+      {
+        workdir: undefined,
+        tty: null,
+        timeoutSeconds: undefined,
+        stdin: undefined,
+      },
+      execExitDeps,
+    );
   });
 });

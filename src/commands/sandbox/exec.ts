@@ -51,11 +51,22 @@ export default class SandboxExecCommand extends NemoClawCommand {
     const cmd = (
       separatorIndex === -1 ? argv.slice(1) : originalArgv.slice(separatorIndex + 1)
     ) as string[];
-    await execSandbox(args.sandboxName, cmd, {
-      workdir: flags.workdir,
-      tty: typeof flags.tty === "boolean" ? flags.tty : null,
-      timeoutSeconds: flags.timeout,
-      stdin: flags.stdin,
-    });
+    await execSandbox(
+      args.sandboxName,
+      cmd,
+      {
+        workdir: flags.workdir,
+        tty: typeof flags.tty === "boolean" ? flags.tty : null,
+        timeoutSeconds: flags.timeout,
+        stdin: flags.stdin,
+      },
+      {
+        // Route through oclif's exit-code contract so host `$?` stays scriptable
+        // when dispatch completes normally instead of terminating via process.exit.
+        exit: (code) => {
+          this.setExitCode(code);
+        },
+      },
+    );
   }
 }

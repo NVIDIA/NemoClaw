@@ -392,6 +392,8 @@ export type ExecSandboxDeps = {
   run?: SandboxExecRunner;
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
+  /** Exit seam; defaults to process.exit for passthrough and action callers. */
+  exit?: (code: number) => void;
 };
 
 export async function execSandbox(
@@ -442,5 +444,6 @@ export async function execSandbox(
     console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
   }
   await emitPolicyDenialHint(completion);
-  process.exit(completion.code);
+  const exit = deps.exit ?? ((code: number) => process.exit(code));
+  exit(completion.code);
 }
