@@ -84,7 +84,10 @@ export interface SessionFailure {
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
-  /** Cross-process recovery source; remove when the transaction journal owns the session snapshot. */
+  /**
+   * Cross-process rebuild correlation source. Remove when RebuildTransactionRecord
+   * durably owns the complete session snapshot needed to prove replacement identity.
+   */
   rebuild?: RebuildSessionCorrelation | null;
 }
 

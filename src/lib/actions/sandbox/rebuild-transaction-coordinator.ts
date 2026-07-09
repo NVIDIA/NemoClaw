@@ -149,6 +149,10 @@ export class RebuildTransactionCoordinator {
     return this.transaction?.phase ?? null;
   }
 
+  get record(): RebuildTransactionRecordV1 | null {
+    return this.transaction;
+  }
+
   get sessionCorrelation() {
     return this.transaction ? rebuildSessionCorrelation(this.transaction) : null;
   }
@@ -193,7 +197,7 @@ export class RebuildTransactionCoordinator {
     );
   }
 
-  async markReplacementCreated(identity: unknown): Promise<void> {
+  async markReplacementCreated(identity: RebuildSandboxEntry): Promise<void> {
     if (this.transaction?.phase !== "old_deleted") return;
     this.transaction = await this.store.transition(
       this.sandboxName,
@@ -206,7 +210,7 @@ export class RebuildTransactionCoordinator {
     );
   }
 
-  async markReplacementRecreated(identity: unknown): Promise<void> {
+  async markReplacementRecreated(identity: RebuildSandboxEntry): Promise<void> {
     if (this.transaction?.phase !== "replacement_created") return;
     this.transaction = await this.store.refreshReplacementReceipt(
       this.sandboxName,
@@ -224,9 +228,9 @@ export class RebuildTransactionCoordinator {
     });
   }
 
-  private replacementReceipt(identity: unknown) {
+  private replacementReceipt(identity: RebuildSandboxEntry) {
     return {
-      identityFingerprint: fingerprintRebuildReplacement(identity as RebuildSandboxEntry),
+      identityFingerprint: fingerprintRebuildReplacement(identity),
       observedAt: new Date().toISOString(),
     };
   }

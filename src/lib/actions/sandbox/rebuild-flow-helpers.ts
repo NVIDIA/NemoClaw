@@ -22,8 +22,9 @@ import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
-// Source: OpenShell sandbox-list output. Remove these parsers when OpenShell
-// exposes a structured API with stable sandbox name and readiness fields.
+// Source of truth: OpenShell sandbox-list output. When OpenShell exposes a
+// structured sandbox-state API with stable JSON name/readiness fields, replace
+// this text parsing with that API and remove parseReadySandboxNames.
 import { parseLiveSandboxNames, parseReadySandboxNames } from "../../runtime-recovery";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as shields from "../../shields";

@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Deterministic local-state correlation only. Digests in this module are not a
-// security MAC and must never authorize or authenticate a caller.
+// Deterministic correlation and tamper evidence for local rebuild recovery.
+// These digests are NOT a security MAC: no secret key is used. Never use them
+// for authentication or authorization decisions.
 
 import crypto from "node:crypto";
 
@@ -90,5 +91,6 @@ export function fingerprintRebuildReplacement(entry: SandboxEntry): string {
     gatewayPort: entry.gatewayPort ?? 8080,
     toolDisclosure: entry.toolDisclosure ?? null,
     observabilityEnabled: entry.observabilityEnabled === true,
+    policyTier: entry.policyTier ?? null,
   });
 }

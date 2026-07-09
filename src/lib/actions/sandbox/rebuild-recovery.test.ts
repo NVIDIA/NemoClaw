@@ -119,6 +119,15 @@ describe("rebuild replacement recovery decision", () => {
     expect(observeRebuildRegistry(record, source)).toBe("source");
     expect(observeRebuildRegistry(record, target)).toBe("target");
     expect(observeRebuildRegistry(record, { ...target, model: "other" })).toBe("mismatch");
+    expect(
+      observeRebuildRegistry(
+        {
+          ...record,
+          intent: { ...record.intent, target: { ...record.intent.target, agent: "openclaw" } },
+        },
+        target,
+      ),
+    ).toBe("mismatch");
 
     const receipted = {
       ...record,

@@ -12,6 +12,7 @@ import type { ToolDisclosure } from "../tool-disclosure";
 import { ensureConfigDir } from "./config-io";
 import { withMcpLifecycleLock } from "./mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "./paths";
+import { normalizeRebuildTransactionReceipts } from "./rebuild-transaction-receipts";
 import {
   findReplacedRebuildReceipt,
   nextRebuildTransactionPhase,
@@ -378,53 +379,12 @@ function normalizeIntent(value: unknown, sandboxName: string): RebuildTransactio
 }
 
 function normalizeReceipts(value: unknown, sandboxName: string): RebuildTransactionReceiptsV1 {
-  const receipts = requiredRecord(value, "receipts", sandboxName);
-  const backup = requiredRecord(receipts.backup, "receipts.backup", sandboxName);
-  const oldSandboxDeletionValue = receipts.oldSandboxDeletion;
-  const oldSandboxDeletion =
-    oldSandboxDeletionValue === undefined
-      ? undefined
-      : requiredRecord(oldSandboxDeletionValue, "receipts.oldSandboxDeletion", sandboxName);
-  const normalizedOldSandboxDeletion = oldSandboxDeletion
-    ? {
-        observedAt: timestamp(
-          oldSandboxDeletion.observedAt,
-          "receipts.oldSandboxDeletion.observedAt",
-          sandboxName,
-        ),
-      }
-    : undefined;
-  const replacementValue = receipts.replacement;
-  const replacement =
-    replacementValue === undefined
-      ? undefined
-      : requiredRecord(replacementValue, "receipts.replacement", sandboxName);
-  const normalizedReplacement = replacement
-    ? {
-        identityFingerprint: fingerprint(
-          replacement.identityFingerprint,
-          "receipts.replacement.identityFingerprint",
-          sandboxName,
-        ),
-        observedAt: timestamp(
-          replacement.observedAt,
-          "receipts.replacement.observedAt",
-          sandboxName,
-        ),
-      }
-    : undefined;
-  return {
-    backup: {
-      manifestTimestamp: backupManifestTimestamp(backup.manifestTimestamp, sandboxName),
-      manifestFingerprint: fingerprint(
-        backup.manifestFingerprint,
-        "receipts.backup.manifestFingerprint",
-        sandboxName,
-      ),
-    },
-    ...(normalizedOldSandboxDeletion ? { oldSandboxDeletion: normalizedOldSandboxDeletion } : {}),
-    ...(normalizedReplacement ? { replacement: normalizedReplacement } : {}),
-  };
+  return normalizeRebuildTransactionReceipts(value, sandboxName, {
+    record: requiredRecord,
+    timestamp,
+    backupTimestamp: backupManifestTimestamp,
+    fingerprint,
+  });
 }
 
 function normalizeFailure(value: unknown, sandboxName: string): RebuildTransactionFailureV1 | null {

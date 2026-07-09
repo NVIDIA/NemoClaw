@@ -19,21 +19,14 @@ import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import { maybePauseForRebuildInterruption } from "./rebuild-e2e-interruption";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
-import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
-import {
-  disposePreparedBuildContext,
-  verifyPreparedBuildContext,
-} from "./rebuild-prepared-image-context";
+import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
   type RebuildSandboxExecutionOptions,
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
 import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
-import {
-  publishAdoptedRebuildReplacement,
-  publishCreatedRebuildReplacement,
-} from "./rebuild-recovery-plan";
+import { RebuildRecoveryOrchestrator } from "./rebuild-recovery-orchestrator";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import { runRebuildShieldsPhase } from "./rebuild-shields-phase";
@@ -113,6 +106,16 @@ async function rebuildSandboxUnlocked(
     sandboxName,
     recoveredTransaction,
   );
+  const recovery = new RebuildRecoveryOrchestrator({
+    plan: recoveryPlan,
+    transaction,
+    recoveredTransaction,
+    sandboxName,
+    readRegistryEntry: () => registry.getSandbox(sandboxName),
+    readSession: onboardSession.loadSession,
+    bail,
+    log,
+  });
   const {
     resumeConfig,
     sessionSnapshot,
@@ -124,18 +127,13 @@ async function rebuildSandboxUnlocked(
     fromDockerfile,
   } = targetConfig;
   const { staleRecovery } = liveState;
-  const intentSandboxEntry =
-    recoveredTransaction?.status === "active"
-      ? recoveredTransaction.intent.source.registryRecovery.entry
-      : sandboxEntry;
   const preservedCustomPolicies = (sandboxEntry.customPolicies ?? []).map((entry) => ({
     ...entry,
   }));
   let recoveryManifest = validatedRecoveryManifest;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
-  const replacementAlreadyPresent = recoveryPlan?.replacementAlreadyPresent === true;
-  if (recoveryPlan) log(`Durable rebuild recovery selected '${recoveryPlan.action}'`);
+  const replacementAlreadyPresent = recovery.replacementAlreadyPresent;
   try {
     const shieldsPhase = runRebuildShieldsPhase(
       sandboxName,
@@ -182,64 +180,33 @@ async function rebuildSandboxUnlocked(
       });
       if (!backup) return;
 
-      // Revalidate the retained image context at the last safe point before
-      // the destructive boundary.
       if (
-        !replacementAlreadyPresent &&
-        preparedImage &&
-        !verifyPreparedBuildContext(preparedImage)
-      ) {
-        printRebuildPreflightFailure(
-          "the retained replacement image context changed after preflight.",
-          "Retry the rebuild so the replacement inputs can be staged again.",
-          "Replacement sandbox image context changed before delete",
-          bail,
-        );
-        return;
-      }
-
-      // Revalidate DCode's replacement and inference route before MCP scrub,
-      // provider detach, NIM stop, or sandbox deletion.
-      if (
-        !replacementAlreadyPresent &&
-        !(await dcodePreflight.revalidateBeforeDelete(
+        !(await recovery.revalidateReplacementBeforeDelete({
+          preparedImage,
+          dcodePreflight,
           resumeConfig,
-          durableConfig.toolDisclosure,
+          toolDisclosure: durableConfig.toolDisclosure,
           recoveryRecreate,
-          recreateOptions.targetGatewayPort,
-        ))
+          gatewayPort: recreateOptions.targetGatewayPort,
+        }))
       ) {
         return;
       }
 
       // Journal creation follows the immutable backup: failure can orphan a
       // backup, but cannot create a transaction without recovery data.
-      if (recoveredTransaction) await transaction.reconcileObservedDeletion(staleRecovery);
-      if (!recoveredTransaction || (recoveredTransaction.phase === "prepared" && !staleRecovery)) {
-        await transaction.prepare({
-          sandboxEntry: intentSandboxEntry,
-          registryRecovery,
-          targetConfig,
-          recreateOptions,
-          backupManifest: backup.backupManifest,
-          imageIdentity: {
-            baseImage: baseImagePreflight.imageRef,
-            fromDockerfile,
-            recordedImage: intentSandboxEntry.imageTag ?? null,
-            nemoclawVersion: intentSandboxEntry.nemoclawVersion ?? null,
-          },
-          legacyManagedImageRecoveryAuthorized: allowLegacyManagedImageRecovery,
-          shieldsLocked: originalShieldsLocked,
-          oldSandboxPresent: !staleRecovery,
-        });
-      }
-      await transaction.reconcileObservedDeletion(staleRecovery);
-      await publishAdoptedRebuildReplacement(
-        recoveryPlan,
-        transaction,
-        () => registry.getSandbox(sandboxName),
-        bail,
-      );
+      await recovery.prepare({
+        sandboxEntry,
+        registryRecovery,
+        targetConfig,
+        recreateOptions,
+        backupManifest: backup.backupManifest,
+        baseImage: baseImagePreflight.imageRef,
+        fromDockerfile,
+        legacyManagedImageRecoveryAuthorized: allowLegacyManagedImageRecovery,
+        shieldsLocked: originalShieldsLocked,
+        staleRecovery,
+      });
       if (transaction.phase === "prepared") maybePauseForRebuildInterruption("prepared");
 
       const mcpPreparation = await runRebuildDestroyPhase({
@@ -319,11 +286,7 @@ async function rebuildSandboxUnlocked(
           rebuildCorrelation: transaction.sessionCorrelation,
           onCreated: async () => {
             sandboxStillExists = true;
-            await publishCreatedRebuildReplacement(
-              recoveryPlan,
-              transaction,
-              registry.getSandbox(sandboxName),
-            );
+            await recovery.publishCreatedReplacement();
           },
           onFailed: async () => {
             await transaction.recordReplacementFailure();

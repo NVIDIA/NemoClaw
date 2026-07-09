@@ -4,13 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
-import {
-  publishAdoptedRebuildReplacement,
-  publishCreatedRebuildReplacement,
-  type RebuildRecoveryPlan,
-  reconcileRebuildRecovery,
-} from "./rebuild-recovery-plan";
-import type { RebuildTransactionCoordinator } from "./rebuild-transaction-coordinator";
+import { reconcileRebuildRecovery } from "./rebuild-recovery-plan";
 
 function deletedTransaction(): RebuildTransactionRecordV1 {
   return {
@@ -53,36 +47,5 @@ describe("rebuild recovery plan orchestration", () => {
       plan: { action: "create", replacementAlreadyPresent: false, registryRestored: true },
     });
     expect(restoreRegistry).toHaveBeenCalledOnce();
-  });
-
-  it("publishes adoption and compensation receipts through the coordinator", async () => {
-    const coordinator = {
-      markReplacementCreated: vi.fn(),
-      markReplacementRecreated: vi.fn(),
-    } as unknown as RebuildTransactionCoordinator;
-    const replacement = { name: "alpha" };
-    const adopt = {
-      action: "adopt",
-      replacementAlreadyPresent: true,
-      registryRestored: false,
-    } satisfies RebuildRecoveryPlan;
-    const recreate = {
-      ...adopt,
-      action: "recreate",
-      replacementAlreadyPresent: false,
-    } satisfies RebuildRecoveryPlan;
-
-    await publishAdoptedRebuildReplacement(
-      adopt,
-      coordinator,
-      () => replacement,
-      (message) => {
-        throw new Error(message);
-      },
-    );
-    await publishCreatedRebuildReplacement(recreate, coordinator, replacement);
-
-    expect(coordinator.markReplacementCreated).toHaveBeenCalledWith(replacement);
-    expect(coordinator.markReplacementRecreated).toHaveBeenCalledWith(replacement);
   });
 });

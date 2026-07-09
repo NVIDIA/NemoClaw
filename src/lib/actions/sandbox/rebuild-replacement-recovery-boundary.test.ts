@@ -49,25 +49,43 @@ async function interruptBeforeReplacementReceipt() {
   };
 }
 
+async function interruptAfterReplacementReceipt() {
+  const interrupted = createRebuildFlowHarness({
+    onboardReplacementEntry: {
+      credentialEnv: null,
+      observabilityEnabled: false,
+      toolDisclosure: "progressive",
+    },
+  });
+  vi.spyOn(interrupted.transactionStore, "complete").mockRejectedValueOnce(
+    new Error("simulated process interruption after replacement creation"),
+  );
+  await expect(
+    interrupted.rebuildSandbox("alpha", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: makePreparedRecoveryManifest(),
+    }),
+  ).rejects.toThrow("simulated process interruption after replacement creation");
+  return {
+    interrupted,
+    transaction: interrupted.transactionStore.load("alpha"),
+  };
+}
+
 describe("rebuild replacement recovery boundary", () => {
   it("resumes a correlated replacement without creating or deleting again (#6436)", async () => {
-    const interrupted = createRebuildFlowHarness();
-    vi.spyOn(interrupted.transactionStore, "complete").mockRejectedValueOnce(
-      new Error("simulated process interruption after replacement creation"),
-    );
-    await expect(
-      interrupted.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("simulated process interruption after replacement creation");
-    const interruptedRecord = interrupted.transactionStore.load("alpha");
-    expect(interruptedRecord).toMatchObject({ status: "active", phase: "replacement_created" });
+    const { interrupted, transaction } = await interruptAfterReplacementReceipt();
+    expect(transaction).toMatchObject({ status: "active", phase: "replacement_created" });
 
-    const replacement = makeRebuildFlowSandboxEntry({ policyPresetsFinalized: true });
+    const replacement = makeRebuildFlowSandboxEntry({
+      credentialEnv: null,
+      observabilityEnabled: false,
+      policyPresetsFinalized: true,
+      toolDisclosure: "progressive",
+    });
     const resumed = createRebuildFlowHarness({
       sandboxEntry: replacement,
-      ...correlationOverrides(interruptedRecord, replacement as SandboxEntry),
+      ...correlationOverrides(transaction, replacement as SandboxEntry),
     });
     resumed.runOpenshellSpy.mockClear();
     resumed.onboardSpy.mockClear();
@@ -85,6 +103,41 @@ describe("rebuild replacement recovery boundary", () => {
     expect(interrupted.transactionStore.load("alpha")).toMatchObject({
       status: "completed",
       phase: "completed",
+    });
+  });
+
+  it("refuses a receipted replacement whose policy tier drifted (#6436)", async () => {
+    const { interrupted, transaction } = await interruptAfterReplacementReceipt();
+    const expected = makeRebuildFlowSandboxEntry({
+      credentialEnv: null,
+      observabilityEnabled: false,
+      policyPresetsFinalized: true,
+      toolDisclosure: "progressive",
+    });
+    const resumed = createRebuildFlowHarness({
+      sandboxEntry: { ...expected, policyTier: "restricted" },
+      ...correlationOverrides(transaction, expected as SandboxEntry),
+    });
+    resumed.onboardSpy.mockClear();
+    resumed.runOpenshellSpy.mockClear();
+    resumed.restoreSandboxStateSpy.mockClear();
+
+    await expect(
+      resumed.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        transactionStore: interrupted.transactionStore,
+      }),
+    ).rejects.toThrow("Rebuild replacement recovery failed");
+
+    expect(resumed.restoreSandboxStateSpy).not.toHaveBeenCalled();
+    expect(resumed.onboardSpy).not.toHaveBeenCalled();
+    expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(interrupted.transactionStore.load("alpha")).toMatchObject({
+      status: "active",
+      phase: "replacement_created",
     });
   });
 
@@ -159,24 +212,19 @@ describe("rebuild replacement recovery boundary", () => {
   });
 
   it("refreshes the receipt when an absent receipted replacement is recreated (#6436)", async () => {
-    const interrupted = createRebuildFlowHarness();
-    vi.spyOn(interrupted.transactionStore, "complete").mockRejectedValueOnce(
-      new Error("simulated process interruption after replacement creation"),
-    );
-    await expect(
-      interrupted.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("simulated process interruption after replacement creation");
-    const interruptedRecord = interrupted.transactionStore.load("alpha");
-    const replacement = makeRebuildFlowSandboxEntry({ policyPresetsFinalized: true });
+    const { interrupted, transaction } = await interruptAfterReplacementReceipt();
+    const replacement = makeRebuildFlowSandboxEntry({
+      credentialEnv: null,
+      observabilityEnabled: false,
+      policyPresetsFinalized: true,
+      toolDisclosure: "progressive",
+    });
     const recreated = { ...replacement, imageTag: "nemoclaw-alpha:recreated" };
     const resumed = createRebuildFlowHarness({
       staleRecovery: true,
       sandboxEntry: replacement,
       onboardReplacementEntry: recreated,
-      ...correlationOverrides(interruptedRecord, replacement as SandboxEntry),
+      ...correlationOverrides(transaction, replacement as SandboxEntry),
     });
     resumed.onboardSpy.mockClear();
     resumed.runOpenshellSpy.mockClear();
@@ -193,7 +241,7 @@ describe("rebuild replacement recovery boundary", () => {
       fingerprintRebuildReplacement(recreated as SandboxEntry),
     );
     expect(completed?.receipts.replacement?.identityFingerprint).not.toBe(
-      interruptedRecord?.receipts.replacement?.identityFingerprint,
+      transaction?.receipts.replacement?.identityFingerprint,
     );
     expect(
       ((resumed.session.metadata as Record<string, unknown>).rebuild as Record<string, unknown>)

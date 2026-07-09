@@ -30,10 +30,6 @@ export type RebuildRegistryObservation =
   | "target";
 export type RebuildSessionObservation = "matching" | "missing" | "unrelated";
 
-function normalizedAgent(agent: string | null | undefined): string {
-  return agent || "openclaw";
-}
-
 /** Stable target fields that are published by the recreated onboard run. */
 export function matchesRebuildTargetRegistry(
   transaction: RebuildTransactionRecordV1,
@@ -55,7 +51,7 @@ export function matchesRebuildTargetRegistry(
 
   return (
     entry.name === transaction.intent.sandboxName &&
-    normalizedAgent(entry.agent) === normalizedAgent(target.agent) &&
+    entry.agent === target.agent &&
     entry.provider === target.provider &&
     entry.model === target.model &&
     (entry.credentialEnv ?? null) === target.credentialEnv &&

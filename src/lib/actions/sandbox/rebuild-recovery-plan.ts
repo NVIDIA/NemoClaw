@@ -7,7 +7,6 @@ import type {
   RebuildTransactionRecordV1,
 } from "../../state/rebuild-transaction";
 import type { SandboxEntry } from "../../state/registry";
-import type { RebuildBail } from "./rebuild-credential-preflight";
 import {
   decideRebuildRecovery,
   observeRebuildRegistry,
@@ -16,7 +15,6 @@ import {
   type RebuildRecoveryAction,
   type RebuildRecoveryRefusalCode,
 } from "./rebuild-recovery";
-import type { RebuildTransactionCoordinator } from "./rebuild-transaction-coordinator";
 
 export interface RebuildRecoveryPlan {
   action: RebuildRecoveryAction;
@@ -59,36 +57,13 @@ export function reconcileRebuildRecovery(input: {
     plan: {
       action: decision.action,
       replacementAlreadyPresent: decision.action === "adopt" || decision.action === "resume",
-      // The journal is authoritative and the registry is a mutable fallback.
-      // Remove restoration when either store owns the whole atomic transaction.
+      // Source of truth: the durable journal; the registry is a mutable fallback.
+      // Remove restoration when the journal owns the complete recovery snapshot
+      // or registry updates become atomic with transaction publication.
       registryRestored:
         decision.action === "create" && !registryEntry
           ? input.restoreRegistry(transaction.intent.source.registryRecovery)
           : false,
     },
   };
-}
-
-export async function publishAdoptedRebuildReplacement(
-  plan: RebuildRecoveryPlan | null,
-  transaction: RebuildTransactionCoordinator,
-  readReplacement: () => SandboxEntry | null,
-  bail: RebuildBail,
-): Promise<void> {
-  if (plan?.action !== "adopt") return;
-  const replacement = readReplacement();
-  if (!replacement) {
-    bail("The transaction-correlated replacement disappeared before receipt publication.");
-  }
-  await transaction.markReplacementCreated(replacement);
-}
-
-export async function publishCreatedRebuildReplacement(
-  plan: RebuildRecoveryPlan | null,
-  transaction: RebuildTransactionCoordinator,
-  replacement: SandboxEntry | null,
-): Promise<void> {
-  await (plan?.action === "recreate"
-    ? transaction.markReplacementRecreated(replacement)
-    : transaction.markReplacementCreated(replacement));
 }
