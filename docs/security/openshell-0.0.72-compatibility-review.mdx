@@ -32,7 +32,7 @@ User principals remain blocked from sandbox-only methods.
 The compatibility container remains an explicit trusted-host fallback behind `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1`.
 It uses host networking and read-only Docker socket access, so directly supported glibc 2.28 or newer hosts remain preferred.
 Wildcard gateway binds remain rejected while gateway JWT authentication is active.
-Review this fallback at every stable OpenShell bump and remove it in the same NemoClaw release that raises every supported Linux host to OpenShell's native glibc floor and passes the exact-head gateway-authentication and gateway-upgrade matrix without the flag.
+Review this fallback at every stable OpenShell bump and remove it in the same NemoClaw release that raises every supported Linux host to OpenShell's native glibc floor and passes the gateway-authentication and gateway-upgrade matrix for the release candidate commit without the flag.
 
 ### Compatibility Container Opt-In
 
@@ -40,7 +40,7 @@ Review this fallback at every stable OpenShell bump and remove it in the same Ne
 - `sourceBoundary`: OpenShell owns its native glibc floor; NemoClaw owns the explicit `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` opt-in, host-networking configuration, read-only socket mount, and gateway authentication controls.
 - `whyNotSourceFix`: NemoClaw cannot make an upstream binary support an older host libc, so supported legacy hosts require an explicit, audited container boundary until the host floor is raised.
 - `regressionTest`: `test/install-openshell-version-check.test.ts` proves the flag gates the fallback, while `src/lib/onboard/docker-driver-gateway-compat-container.test.ts` covers container launch, the trust boundary, and the glibc decision.
-- `removalCondition`: Remove the fallback when every supported Linux host meets OpenShell's native glibc 2.28-or-newer floor and the exact-head gateway-authentication and gateway-upgrade matrix passes without the flag.
+- `removalCondition`: Remove the fallback when every supported Linux host meets OpenShell's native glibc 2.28-or-newer floor and the gateway-authentication and gateway-upgrade matrix passes for the release candidate commit without the flag.
 
 The release source boundary is the immutable upstream tag, its GitHub release asset digests, and the GHCR manifest digest produced by the linked release workflow.
 A mutable tag, a digest copied from another release, or a checksum file that disagrees with NemoClaw's table is an invalid state.
