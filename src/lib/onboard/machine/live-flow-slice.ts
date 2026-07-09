@@ -82,25 +82,15 @@ function missingInvalidatedRecorder(): never {
   throw new Error("Missing onboarding state result invalidation recorder");
 }
 
-/**
- * Result of a single recomputed phase-result recording pass. Callers use
- * `applied` to decide whether the phase's recomputed context is safe to
- * propagate forward: any invalidated transition (already-at-target or
- * source-state mismatch) leaves the phase's context untrusted because the
- * phase computed it under an assumed transition that the durable machine
- * state rejects.
- */
-type RecomputedResultOutcome = { applied: boolean };
-
 async function recordRecomputedResult<Context>(
   options: Pick<
     LiveOnboardFlowSliceOptions<Context>,
     "runtime" | "recordStateResult" | "recordInvalidatedStateResult"
   > & { phaseState: OnboardSequencePhase<Context>["state"]; result: OnboardStateResult },
-): Promise<RecomputedResultOutcome> {
+): Promise<void> {
   if (options.result.type !== "transition") {
     await options.recordStateResult(options.result);
-    return { applied: true };
+    return;
   }
 
   const current = await options.runtime.session();
@@ -111,23 +101,17 @@ async function recordRecomputedResult<Context>(
       currentState: current.machine.state,
       sourceState,
     });
-    return { applied: false };
+    return;
   }
   if (sourceState && current.machine.state !== sourceState) {
-    // Covers both (a) explicit source metadata mismatching current and
-    // (b) fallback phaseState mismatching current when a phase was
-    // recomputed at an ahead-state through compatibilityWhenState. Together
-    // with the boundary's assertValidOnboardMachineTransition on the apply
-    // path, this rejects stale phase output before it can advance state.
     await (options.recordInvalidatedStateResult ?? missingInvalidatedRecorder)(options.result, {
       reason: "source_state_mismatch",
       currentState: current.machine.state,
       sourceState,
     });
-    return { applied: false };
+    return;
   }
   await options.recordStateResult(options.result);
-  return { applied: true };
 }
 
 /**
@@ -171,22 +155,16 @@ export async function runLiveOnboardFlowSlice<Context>({
   for (const rawPhase of phases) {
     const phase = phaseProgress.wrap(rawPhase);
     const phaseResult = await phase.run(nextContext);
-    let phaseAllApplied = true;
     for (const result of asResultArray(phaseResult.result, phase.state)) {
-      const outcome = await recordRecomputedResult({
+      await recordRecomputedResult({
         runtime,
         recordStateResult,
         recordInvalidatedStateResult,
         phaseState: phase.state,
         result,
       });
-      if (!outcome.applied) phaseAllApplied = false;
     }
-    // Only propagate the phase's recomputed context when every result was
-    // applied. Otherwise the context was computed under an invalidated
-    // transition and must not be forwarded to later phases, matching #6227's
-    // "stale state results cannot be silently accepted" acceptance clause.
-    if (phaseAllApplied) nextContext = phaseResult.context;
+    nextContext = phaseResult.context;
   }
   return { context: nextContext, session: await runtime.session() };
 }

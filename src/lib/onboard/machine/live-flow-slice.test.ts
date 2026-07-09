@@ -339,39 +339,6 @@ describe("runLiveOnboardFlowSlice", () => {
     expect(recordStateResult).not.toHaveBeenCalled();
   });
 
-  it("does not propagate phase context after an invalidated transition, stale-context guard (#6227)", async () => {
-    const liveRuntime = runtime("provider_selection");
-    const recordStateResult = vi.fn(async (result: OnboardStateResult) =>
-      liveRuntime.applyResult(result),
-    );
-    const recordInvalidatedStateResult = invalidatedRecorder();
-    // Stale phase advertised at 'preflight' but the durable machine is
-    // already at 'provider_selection'. The phase still runs to keep
-    // side-effect compatibility, but its transition is invalidated as
-    // source_state_mismatch and its recomputed context (value: 99) must
-    // NOT flow forward to callers.
-    const stalePhase = phase("preflight", 99, advanceTo("gateway"));
-
-    const result = await runLiveOnboardFlowSlice({
-      context: { value: 1 },
-      runtime: liveRuntime.runtime,
-      phases: [stalePhase],
-      runWhenState: ["preflight"],
-      compatibilityWhenState: ["provider_selection"],
-      runSlice: vi.fn(),
-      recordStateResult,
-      recordInvalidatedStateResult,
-    });
-
-    expect(recordStateResult).not.toHaveBeenCalled();
-    expect(recordInvalidatedStateResult).toHaveBeenCalledOnce();
-    expect(recordInvalidatedStateResult).toHaveBeenCalledWith(
-      expect.objectContaining({ next: "gateway" }),
-      expect.objectContaining({ reason: "source_state_mismatch" }),
-    );
-    expect(result.context).toEqual({ value: 1 });
-  });
-
   it("propagates recomputed result application failures without running later phases", async () => {
     const liveRuntime = runtime("preflight");
     const later = phase("gateway", 3);
