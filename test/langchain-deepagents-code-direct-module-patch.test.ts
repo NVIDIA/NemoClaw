@@ -43,6 +43,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "app.py",
       "auth_store.py",
       "config.py",
+      "tools.py",
       "model_config.py",
       "agent.py",
       "update_check.py",
@@ -86,6 +87,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
   it.each([
     ["entrypoint", "__main__.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["main", "main.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
+    ["tools", "tools.py", "_nemoclaw_original_fetch_with_redirects = _fetch_with_redirects"],
     [
       "agent",
       "agent.py",
@@ -337,7 +339,10 @@ check("disabled", False)
       ["SLACK_BOT_TOKEN", "xoxb-sk-abcdefghijklmnopqrstuv"],
       ["LANGSMITH_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
       ["LANGCHAIN_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
-      ["OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.example/v1/traces"],
+      // A plain OTLP endpoint URL is allowed (#6466); credential-bearing forms
+      // (embedded userinfo, structured key blob) are still refused.
+      ["OTEL_EXPORTER_OTLP_ENDPOINT", "http://token@collector.example:4318"],
+      ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", '{"https://trace.example":"opaque-key-value"}'],
       ["OTEL_EXPORTER_OTLP_HEADERS", "authorization=opaque-value"],
     ]) {
       const result = spawnSync("python3", ["-m", "deepagents_code"], {
@@ -347,6 +352,54 @@ check("disabled", False)
 
       expect(result.status, `${name} was allowed`).not.toBe(0);
       expect(result.stderr).toContain(`runtime environment variable ${name}`);
+    }
+  });
+
+  it("allows the managed OTLP collector URL in the direct-module runtime (#6466)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
+      for (const value of [
+        "http://host.openshell.internal:4318",
+        "http://host.openshell.internal:4318/v1/traces",
+        "http://host.openshell.internal",
+      ]) {
+        const result = spawnSync("python3", ["-m", "deepagents_code"], {
+          env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+          encoding: "utf8",
+        });
+        expect(result.status, `${name}=${value} was rejected: ${result.stderr}`).toBe(0);
+        expect(result.stdout).toContain("managed-posture-ok");
+      }
+    }
+  });
+
+  it("rejects fail-open OTLP endpoint values in the direct-module runtime (#6538)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
+      for (const value of [
+        "https://collector.example.com:4318",
+        "http://evil.host.openshell.internal:4318",
+        "http://host.openshell.internal.evil.com",
+        "http://host.openshell.internal:0",
+        "http://host.openshell.internal:65536",
+        "http://999.999.999.999:4318",
+        "http://host.openshell.internal:4318?x=sk%2Dabcdefghij",
+        "http://host.openshell.internal:4318?apikey=opaquevalue12345",
+        "http://token@host.openshell.internal:4318",
+        "http://host.openshell.internal:4318#fragment",
+        "http://héllo:4318",
+        "http://",
+        `http://host.openshell.internal:4318/p${"a".repeat(3000)}`,
+      ]) {
+        const result = spawnSync("python3", ["-m", "deepagents_code"], {
+          env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+          encoding: "utf8",
+        });
+        expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
+        expect(result.stderr).toContain(`runtime environment variable ${name}`);
+      }
     }
   });
 
@@ -1077,11 +1130,18 @@ async def validate():
 
     project = Path(${JSON.stringify(tempDir)}) / "project"
     project.mkdir()
-    (project / ".env").write_text("PROJECT_API_KEY=should-not-load\\n", encoding="utf-8")
+    (project / ".env").write_text(
+        "PROJECT_API_KEY=should-not-load\\n"
+        "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL=http://attacker.internal:4444\\n",
+        encoding="utf-8",
+    )
     os.chdir(project)
     assert config._load_dotenv() is False
     assert "PROJECT_API_KEY" not in os.environ
+    assert "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" not in os.environ
     assert "PROJECT_API_KEY" not in config._preview_dotenv_environ()
+    assert "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" not in config._preview_dotenv_environ()
+    assert _nemoclaw_managed.managed_fetch_proxy_url() is None
     for name in (
         "LANGSMITH_TRACING",
         "LANGSMITH_TRACING_V2",
@@ -1350,5 +1410,57 @@ print("managed-auto-approval-ok")
     });
     expect(shapeResult.status).not.toBe(0);
     expect(shapeResult.stderr).toContain("_prompt_launch_tavily");
+
+    const missingFetch = createPackageFixture();
+    const toolsPath = path.join(missingFetch, "deepagents_code", "tools.py");
+    fs.writeFileSync(
+      toolsPath,
+      fs
+        .readFileSync(toolsPath, "utf8")
+        .replace("def _fetch_with_redirects(", "def _renamed_fetch_with_redirects("),
+      "utf8",
+    );
+    const fetchShapeResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingFetch },
+      encoding: "utf8",
+    });
+    expect(fetchShapeResult.status).not.toBe(0);
+    expect(fetchShapeResult.stderr).toContain("_fetch_with_redirects");
+
+    const missingRedirectLimit = createPackageFixture();
+    const missingRedirectLimitPath = path.join(missingRedirectLimit, "deepagents_code", "tools.py");
+    fs.writeFileSync(
+      missingRedirectLimitPath,
+      fs
+        .readFileSync(missingRedirectLimitPath, "utf8")
+        .replace("_MAX_FETCH_REDIRECTS = 5", "_RENAMED_MAX_FETCH_REDIRECTS = 5"),
+      "utf8",
+    );
+    const redirectLimitResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingRedirectLimit },
+      encoding: "utf8",
+    });
+    expect(redirectLimitResult.status).not.toBe(0);
+    expect(redirectLimitResult.stderr).toContain("_MAX_FETCH_REDIRECTS");
+
+    const missingValidationError = createPackageFixture();
+    const missingValidationErrorPath = path.join(
+      missingValidationError,
+      "deepagents_code",
+      "tools.py",
+    );
+    fs.writeFileSync(
+      missingValidationErrorPath,
+      fs
+        .readFileSync(missingValidationErrorPath, "utf8")
+        .replace("class _UrlValidationError", "class _RenamedUrlValidationError"),
+      "utf8",
+    );
+    const validationErrorResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingValidationError },
+      encoding: "utf8",
+    });
+    expect(validationErrorResult.status).not.toBe(0);
+    expect(validationErrorResult.stderr).toContain("_UrlValidationError");
   });
 });

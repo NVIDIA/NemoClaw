@@ -480,7 +480,7 @@ def _preview_dotenv_environ(*, start_path=None) -> dict[str, str]:
 
 
 def _load_dotenv(*, start_path=None, refresh_loaded=False) -> bool:
-    """Disable project and global dotenv loading in the managed image."""
+    """Disable all dotenv loading so it cannot supply the trusted fetch proxy."""
     del start_path, refresh_loaded
     _dotenv_loaded_values.clear()
     return False
@@ -516,6 +516,34 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
         "base_url": managed_inference_base_url(),
         "use_responses_api": False,
     }
+'''
+
+# Source-of-truth boundary: upstream Deep Agents Code 0.1.34 resolves and pins
+# destination DNS locally, then disables environment proxies. That is a sound
+# standalone SSRF defense but cannot operate in OpenShell's proxy-only network
+# namespace, where direct DNS and direct target connections are rejected. The
+# managed launcher supplies an explicit, root-owned proxy URL. `trust_env=False`
+# disables every Requests environment-derived session setting (proxy/NO_PROXY,
+# netrc, and CA discovery); each hop receives only the explicit proxy mapping
+# and separately validated fixed CA bundle. The proxy's network policy and SSRF
+# checks remain authoritative.
+TOOLS_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+_nemoclaw_original_fetch_with_redirects = _fetch_with_redirects
+
+
+def _fetch_with_redirects(url: str, *, timeout: int):
+    """Use only the launcher-delegated OpenShell proxy when configured."""
+    from deepagents_code._nemoclaw_managed import managed_fetch_with_redirects
+
+    return managed_fetch_with_redirects(
+        url,
+        timeout=timeout,
+        max_redirects=_MAX_FETCH_REDIRECTS,
+        original_fetch=_nemoclaw_original_fetch_with_redirects,
+        validation_error=_UrlValidationError,
+    )
 '''
 
 MODEL_CONFIG_PATCH = r'''
@@ -1132,6 +1160,20 @@ def _top_level_functions(tree: ast.Module) -> set[str]:
     }
 
 
+def _top_level_symbols(tree: ast.Module) -> set[str]:
+    symbols = _top_level_functions(tree)
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            symbols.add(node.name)
+        elif isinstance(node, ast.Assign):
+            symbols.update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            symbols.add(node.target.id)
+    return symbols
+
+
 def _class_methods(tree: ast.Module, class_name: str) -> set[str]:
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == class_name:
@@ -1149,6 +1191,12 @@ def _require_functions(path: Path, text: str, names: set[str]) -> ast.Module:
     if missing:
         raise RuntimeError(f"Required upstream functions missing in {path}: {sorted(missing)}")
     return tree
+
+
+def _require_symbols(path: Path, tree: ast.Module, names: set[str]) -> None:
+    missing = names - _top_level_symbols(tree)
+    if missing:
+        raise RuntimeError(f"Required upstream symbols missing in {path}: {sorted(missing)}")
 
 
 def _require_methods(
@@ -1235,6 +1283,7 @@ def main() -> None:
         "app": root / "app.py",
         "auth_store": root / "auth_store.py",
         "config": root / "config.py",
+        "tools": root / "tools.py",
         "model_config": root / "model_config.py",
         "agent": root / "agent.py",
         "update_check": root / "update_check.py",
@@ -1310,6 +1359,7 @@ def main() -> None:
         for name, patch in (
             ("entrypoint", ENTRYPOINT_PATCH),
             ("main", MAIN_PATCH),
+            ("tools", TOOLS_PATCH),
             ("app", APP_PATCH),
             ("approval", APPROVAL_PATCH),
             ("agent", AGENT_PATCH),
@@ -1383,6 +1433,12 @@ def main() -> None:
             "_preview_dotenv_environ",
             "_tracing_enabled",
         },
+    )
+    tools_tree = _require_functions(
+        paths["tools"], texts["tools"], {"_fetch_with_redirects"}
+    )
+    _require_symbols(
+        paths["tools"], tools_tree, {"_MAX_FETCH_REDIRECTS", "_UrlValidationError"}
     )
     _require_methods(
         paths["model_config"],
@@ -1503,6 +1559,7 @@ def main() -> None:
         paths["auth_store"], texts["auth_store"], AUTH_STORE_PATCH
     )
     transformed["config"] = _append_patch(paths["config"], texts["config"], CONFIG_PATCH)
+    transformed["tools"] = _append_patch(paths["tools"], texts["tools"], TOOLS_PATCH)
     transformed["model_config"] = _append_patch(
         paths["model_config"], texts["model_config"], MODEL_CONFIG_PATCH
     )

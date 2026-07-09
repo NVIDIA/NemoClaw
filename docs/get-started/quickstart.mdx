@@ -70,7 +70,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
   bash
 ```
 
-The example above uses the NVIDIA Endpoints path. Set `NEMOCLAW_PROVIDER` and the matching API key variable for your chosen path (see the provider table above), and set `NEMOCLAW_SANDBOX_NAME` so the run does not depend on a default left behind by a previous, possibly interrupted, onboard session.
+The example above uses the NVIDIA Endpoints path. Set `NEMOCLAW_PROVIDER` and the matching API key variable for your chosen path (see [Choose an Inference Provider](#choose-an-inference-provider)), and set `NEMOCLAW_SANDBOX_NAME` so the run does not depend on a default left behind by a previous, possibly interrupted, onboard session.
 
 If a scripted installer rerun finds a failed onboarding session, choose whether to discard the saved state with `--fresh` or retry it with `nemoclaw onboard --resume`.
 For the recovery commands, refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed).
@@ -120,6 +120,7 @@ At any prompt, press Enter to accept the default shown in `[brackets]`, type `ba
 If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell, then requires a fresh backup of every registered sandbox before it changes the gateway.
 After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto` to rebuild stale sandboxes and restore validated backups for registered sandboxes that are not Ready.
 Successful recovery completes the existing-sandbox upgrade and skips generic onboarding, so the installer does not create an extra sandbox or ask for a new provider credential.
+If the recovery pass exits 0 but a recorded sandbox is not found on its own recorded gateway (for example after `nemoclaw uninstall` removed the gateway and Docker image while preserving `sandboxes.json`), the installer finishes with `Installation completed with warnings` and remediation guidance instead of claiming the sandbox was recovered.
 For pre-fingerprint OpenClaw and Hermes registry entries, the installer asks you to confirm that every listed sandbox used a NemoClaw-managed image before it permits recovery onto the current managed image.
 In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
 Legacy managed-image confirmation never overrides recorded custom-image evidence.
@@ -131,13 +132,14 @@ The inference provider prompt presents a numbered list.
 
 ```text
   1) NVIDIA Endpoints
-  2) OpenAI
-  3) Other OpenAI-compatible endpoint
-  4) Anthropic
-  5) Other Anthropic-compatible endpoint
-  6) Google Gemini
-  7) Local Ollama (localhost:11434)
-  8) Model Router (experimental)
+  2) OpenRouter
+  3) OpenAI
+  4) Other OpenAI-compatible endpoint
+  5) Anthropic
+  6) Other Anthropic-compatible endpoint
+  7) Google Gemini
+  8) Local Ollama (localhost:11434)
+  9) Model Router (experimental)
   Choose [1]:
 ```
 
@@ -162,8 +164,9 @@ For Ollama, vLLM, NIM, and compatible local servers, refer to [Use a Local Infer
 | Option | Use when | Credential variable |
 |---|---|---|
 | NVIDIA Endpoints | You want hosted models from `build.nvidia.com`, including hosted Nemotron models. | `NVIDIA_INFERENCE_API_KEY` |
+| OpenRouter | You want OpenRouter as a managed hosted OpenAI-compatible provider. | `OPENROUTER_API_KEY` |
 | OpenAI | You want the OpenAI API at `https://api.openai.com/v1`. | `OPENAI_API_KEY` |
-| Other OpenAI-compatible endpoint | You have OpenRouter, LocalAI, llama.cpp, vLLM, NIM, SGLang, an enterprise gateway, or another `/v1/chat/completions` endpoint. | `COMPATIBLE_API_KEY` |
+| Other OpenAI-compatible endpoint | You have LocalAI, llama.cpp, vLLM, NIM, SGLang, an enterprise gateway, or another `/v1/chat/completions` endpoint. | `COMPATIBLE_API_KEY` |
 | Anthropic | You want the Anthropic Messages API. | `ANTHROPIC_API_KEY` |
 | Other Anthropic-compatible endpoint | You have a Claude proxy, Bedrock-compatible gateway, or self-hosted `/v1/messages` endpoint. | `COMPATIBLE_ANTHROPIC_API_KEY` |
 | Google Gemini | You want Google's OpenAI-compatible Gemini endpoint. | `GEMINI_API_KEY` |

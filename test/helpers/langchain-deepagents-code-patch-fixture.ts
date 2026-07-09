@@ -282,6 +282,26 @@ def _get_provider_kwargs(provider, *, model_name=None):
   );
   writeFixtureFile(
     packageDir,
+    "tools.py",
+    `
+from __future__ import annotations
+
+from urllib.parse import urljoin, urlparse
+
+_ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
+_MAX_FETCH_REDIRECTS = 5
+
+
+class _UrlValidationError(ValueError):
+    pass
+
+
+def _fetch_with_redirects(url, *, timeout):
+    return {"transport": "direct", "url": url, "timeout": timeout}
+`,
+  );
+  writeFixtureFile(
+    packageDir,
     "model_config.py",
     `
 from __future__ import annotations

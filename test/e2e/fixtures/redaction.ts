@@ -34,6 +34,11 @@ import type { Readable, Writable } from "node:stream";
 
 const REDACTED = "<REDACTED>";
 const EXPLICIT_REDACTED = "[REDACTED]";
+// Keep the fixture-owned explicit sentinel stable when already-redacted output
+// crosses another artifact boundary. Tight boundaries ensure a sentinel
+// embedded in a longer credential value remains eligible for canonical
+// redaction instead of becoming a bypass.
+const SAFE_EXPLICIT_REDACTION_PATTERN = /(^|[\s=:,'"(]|\[|\{)\[REDACTED\](?=$|[\s,;:.'")\]}])/g;
 const MANAGED_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127}|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127})`;
 const SAFE_QUOTED_CREDENTIAL_REFERENCE_PATTERN = new RegExp(
   `(["'])${MANAGED_CREDENTIAL_REFERENCE_SOURCE}\\1`,
@@ -127,7 +132,11 @@ function redactCanonicalShapes(text: string): string {
   return out;
 }
 
-function protectManagedCredentialReferences(text: string): {
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function protectSafeRedactionValues(text: string): {
   protectedText: string;
   references: Array<{ marker: string; value: string }>;
 } {
@@ -145,6 +154,7 @@ function protectManagedCredentialReferences(text: string): {
       return marker;
     });
   };
+  protect(SAFE_EXPLICIT_REDACTION_PATTERN);
   protect(SAFE_ENV_ASSIGNMENT_PATTERN);
   protect(SAFE_QUOTED_CREDENTIAL_REFERENCE_PATTERN);
   protect(SAFE_STANDALONE_CREDENTIAL_REFERENCE_PATTERN);
@@ -154,19 +164,27 @@ function protectManagedCredentialReferences(text: string): {
 export function redactString(text: string, explicitValues?: Iterable<string>): string {
   if (!text) return text;
   let out = text;
+  let explicitMarker: string | undefined;
   if (explicitValues) {
     const values = [
       ...new Set(Array.from(explicitValues).filter((value) => value && value.length > 0)),
     ];
     values.sort((a, b) => b.length - a.length);
-    for (const value of values) {
-      out = out.split(value).join(EXPLICIT_REDACTED);
+    if (values.length > 0) {
+      do {
+        explicitMarker = `\uE002 ${randomUUID()} \uE003`;
+      } while (text.includes(explicitMarker));
+      const explicitPattern = new RegExp(values.map(escapeRegExpLiteral).join("|"), "g");
+      out = out.replace(explicitPattern, explicitMarker);
     }
   }
-  const { protectedText, references } = protectManagedCredentialReferences(out);
+  const { protectedText, references } = protectSafeRedactionValues(out);
   let redacted = redactCanonicalShapes(protectedText);
   for (const { marker, value } of references) {
     redacted = redacted.replace(marker, value);
+  }
+  if (explicitMarker) {
+    redacted = redacted.split(explicitMarker).join(EXPLICIT_REDACTED);
   }
   return redacted;
 }

@@ -4,7 +4,7 @@
 title: "Common NemoClaw Integration Policy Examples"
 sidebar-title: "Integration Policy Examples"
 description: "Guided examples for adding post-install integration policy access to a NemoClaw sandbox."
-description-agent: "Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Jira, Brave and Tavily web search, package managers, Hugging Face, local inference, and OpenShell approval workflows."
+description-agent: "Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Gmail, Jira, Brave and Tavily web search, package managers, Hugging Face, local inference, and OpenShell approval workflows."
 keywords: ["nemoclaw integration policy examples", "post-install policy setup", "openshell approval workflow", "policy preset"]
 content:
   type: "how_to"
@@ -55,6 +55,7 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 | Homebrew packages | `brew` |
 | Discord messaging | `discord` |
 | GitHub and GitHub API | `github` |
+| Gmail IMAP and SMTP | `gmail` |
 | Hugging Face Hub and Inference API | `huggingface` |
 | Jira and Atlassian Cloud | `jira` |
 | Local Ollama or vLLM through the host gateway | `local-inference` |
@@ -396,6 +397,170 @@ Then verify the sandbox status:
 ```bash
 $$nemoclaw my-assistant status
 ```
+
+## Gmail With an App Password
+
+Use the `gmail` preset when a Python script needs to receive mail through IMAP or send mail through SMTP with a Gmail App Password.
+The preset allows only `/usr/bin/python3` to open raw TLS connections to `imap.gmail.com:993` and `smtp.gmail.com:465`.
+OpenShell enforces the exact hosts, ports, and binary, but it cannot inspect individual IMAP or SMTP commands inside the encrypted connections.
+This preset does not grant Gmail REST API, Google OAuth, or service-account endpoints.
+
+<Warning>
+Google recommends [App Passwords](https://support.google.com/accounts/answer/185833) only for clients that cannot use Sign in with Google.
+This workflow stores the App Password inside the sandbox, where the agent can read it while the file exists.
+Create an App Password only for this workflow, delete the uploaded file, and revoke the App Password after the task.
+</Warning>
+
+### Prerequisites
+
+Prepare the Google Account before applying the preset:
+
+- Turn on 2-Step Verification for the Google Account.
+- Create an App Password for the sandbox workflow.
+- Confirm that the account or Google Workspace administrator permits IMAP and App Passwords.
+
+Google documents the TLS endpoints and ports in [IMAP, POP, and SMTP](https://developers.google.com/workspace/gmail/imap/imap-smtp).
+
+### Apply the Preset
+
+Preview and apply the preset from the host:
+
+```bash
+$$nemoclaw my-assistant policy-add gmail --dry-run
+$$nemoclaw my-assistant policy-add gmail --yes
+```
+
+### Upload the App Password
+
+Create `gmail_config.json` on the host outside any source checkout:
+
+```json
+{
+  "email": "your-address@gmail.com",
+  "app_password": "<16-character-app-password>"
+}
+```
+
+Restrict the host file, prepare a sandbox directory, upload the file, and restrict the uploaded copy:
+
+```bash
+chmod 600 /path/to/gmail_config.json
+$$nemoclaw my-assistant exec -- mkdir -p /sandbox/hand
+$$nemoclaw my-assistant upload /path/to/gmail_config.json /sandbox/hand/gmail_config.json
+$$nemoclaw my-assistant exec -- chmod 600 /sandbox/hand/gmail_config.json
+```
+
+Do not commit `gmail_config.json` or paste its contents into chat, logs, issues, or pull requests.
+
+### Download Recent Attachments
+
+Save this standard-library example as `download_attachments.py` on the host.
+It reads the 10 most recent messages without marking them as read and writes attachments under `/sandbox/hand/gmail_attachments`:
+
+```python
+import imaplib
+import json
+from email import policy
+from email.parser import BytesParser
+from pathlib import Path
+
+ROOT = Path("/sandbox/hand")
+CONFIG = json.loads((ROOT / "gmail_config.json").read_text(encoding="utf-8"))
+ATTACHMENTS = ROOT / "gmail_attachments"
+ATTACHMENTS.mkdir(mode=0o700, parents=True, exist_ok=True)
+ATTACHMENTS.chmod(0o700)
+
+with imaplib.IMAP4_SSL("imap.gmail.com", 993) as mailbox:
+    mailbox.login(CONFIG["email"], CONFIG["app_password"])
+    status, _ = mailbox.select("INBOX", readonly=True)
+    if status != "OK":
+        raise RuntimeError("Could not select the Gmail inbox")
+
+    status, search_data = mailbox.search(None, "ALL")
+    if status != "OK":
+        raise RuntimeError("Could not search the Gmail inbox")
+
+    for message_id in search_data[0].split()[-10:]:
+        status, message_data = mailbox.fetch(message_id, "(BODY.PEEK[])")
+        if status != "OK":
+            continue
+        raw_message = next(
+            (entry[1] for entry in message_data if isinstance(entry, tuple)),
+            None,
+        )
+        if raw_message is None:
+            continue
+
+        message = BytesParser(policy=policy.default).parsebytes(raw_message)
+        for part in message.walk():
+            filename = part.get_filename()
+            payload = part.get_payload(decode=True)
+            if part.get_content_disposition() != "attachment" or not filename or payload is None:
+                continue
+            safe_name = Path(filename.replace("\\", "/")).name
+            destination = ATTACHMENTS / f"{message_id.decode()}-{safe_name}"
+            destination.write_bytes(payload)
+            destination.chmod(0o600)
+            print(destination)
+```
+
+Upload and run the script, then copy the attachment directory back to the host:
+
+```bash
+$$nemoclaw my-assistant upload ./download_attachments.py /sandbox/hand/download_attachments.py
+$$nemoclaw my-assistant exec -- python3 /sandbox/hand/download_attachments.py
+$$nemoclaw my-assistant download /sandbox/hand/gmail_attachments/ ./gmail_attachments/
+```
+
+Treat every downloaded attachment as untrusted content.
+Do not execute an attachment in the sandbox or on the host without reviewing it.
+
+### Send a Test Message
+
+Save this standard-library example as `send_email.py` on the host.
+The example sends a test message back to the configured account:
+
+```python
+import json
+import smtplib
+from email.message import EmailMessage
+from pathlib import Path
+
+config = json.loads(
+    Path("/sandbox/hand/gmail_config.json").read_text(encoding="utf-8")
+)
+message = EmailMessage()
+message["From"] = config["email"]
+message["To"] = config["email"]
+message["Subject"] = "NemoClaw Gmail policy test"
+message.set_content("Sent through the NemoClaw Gmail policy preset.")
+
+with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+    smtp.login(config["email"], config["app_password"])
+    smtp.send_message(message)
+```
+
+Upload and run the script:
+
+```bash
+$$nemoclaw my-assistant upload ./send_email.py /sandbox/hand/send_email.py
+$$nemoclaw my-assistant exec -- python3 /sandbox/hand/send_email.py
+```
+
+### Remove Credentials and Access
+
+Delete the host and uploaded credential files, along with the temporary sandbox files, after downloading any attachments you need:
+
+```bash
+rm -f /path/to/gmail_config.json
+$$nemoclaw my-assistant exec -- rm -f /sandbox/hand/gmail_config.json
+$$nemoclaw my-assistant exec -- rm -f /sandbox/hand/download_attachments.py /sandbox/hand/send_email.py
+$$nemoclaw my-assistant exec -- rm -rf /sandbox/hand/gmail_attachments
+$$nemoclaw my-assistant policy-remove gmail --yes
+```
+
+Removing the preset does not delete uploaded files or revoke the App Password.
+Revoke the dedicated App Password in your Google Account when the sandbox no longer needs it.
 
 ## Inspect or Replace the Live Policy
 
