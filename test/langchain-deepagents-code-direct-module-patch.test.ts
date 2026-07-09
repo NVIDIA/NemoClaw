@@ -373,6 +373,30 @@ check("disabled", False)
     }
   });
 
+  it("rejects fail-open OTLP endpoint values in the direct-module runtime (#6538)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
+      for (const value of [
+        "http://host:4318?x=sk%2Dabcdefghijklmnop",
+        "http://host:4318?apikey=opaquevalue12345",
+        "http://user%40host:4318",
+        "http://a;http://b@evil:4318",
+        "http://host:4318#fragment",
+        "http://héllo:4318",
+        "http://",
+        `http://host:4318/p${"a".repeat(3000)}`,
+      ]) {
+        const result = spawnSync("python3", ["-m", "deepagents_code"], {
+          env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+          encoding: "utf8",
+        });
+        expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
+        expect(result.stderr).toContain(`runtime environment variable ${name}`);
+      }
+    }
+  });
+
   it("allows only scoped managed credential-shaped runtime values", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);

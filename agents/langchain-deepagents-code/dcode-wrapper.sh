@@ -116,11 +116,13 @@ run_dcode() {
 #       _PASSWD, _PASS, _CREDENTIAL) and the value is at least 10 chars (mirroring
 #       CONTEXT_PATTERNS minimum length).
 #     * OTLP endpoint variables (OTEL_EXPORTER_OTLP_ENDPOINT and its _TRACES_
-#       variant) carry a collector URL, not a credential, so a clean bare
-#       http(s) URL is allowed (the documented `--observability` flow sets one).
-#       A value with userinfo or a structured blob that could smuggle a key is
-#       still refused; the `_HEADERS` variants remain under the name-context
-#       refusal because they do carry auth material.
+#       variant) carry a collector URL, not a credential, so the documented
+#       `--observability` flow can set one. is_safe_otlp_endpoint_url accepts
+#       ONLY a strict scheme://host[:port][/path] ASCII URL and refuses userinfo,
+#       query, fragment, percent-encoding, controls, non-ASCII, and oversized
+#       inputs (a value that cannot smuggle a credential in any field); the
+#       is_secret_shaped_value scan still runs first. The `_HEADERS` variants
+#       remain under the name-context refusal because they do carry auth material.
 #     * Managed messaging values (SLACK_BOT_TOKEN, SLACK_APP_TOKEN,
 #       TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN) are allowed only when the value
 #       matches the platform-specific token shape AND does not embed a
@@ -370,27 +372,23 @@ is_otlp_endpoint_name() {
   return 1
 }
 
-# Accept only a single, credential-free http(s) URL. Anything else — a value
-# with userinfo (scheme://user:pass@host) or a structured blob that could
-# smuggle a key in another field (JSON, quoted, whitespace- or comma-joined) —
-# is rejected, mirroring the OpenClaw OTEL config contract ("... must not
-# include credentials"). Token-shaped material anywhere in the value is already
-# caught by is_secret_shaped_value before this runs.
-is_bare_http_url_without_userinfo() {
-  local value="$1" authority
-  case "$value" in
-    http://* | https://*) ;;
-    *) return 1 ;;
-  esac
-  case "$value" in
-    *[[:space:]]* | *\"* | *\'* | *\{* | *\}* | *,*) return 1 ;;
-  esac
-  authority="${value#*://}"
-  authority="${authority%%/*}"
-  case "$authority" in
-    *@*) return 1 ;;
-  esac
-  return 0
+# Accept ONLY a single credential-free URL of the form scheme://host[:port][/path]
+# built from a strict ASCII allowlist. This rejects userinfo (@), query (?),
+# fragment (#), percent-encoding (%), C0 controls, DEL, non-ASCII bytes,
+# backslashes, whitespace, and every other delimiter, so no encoded or
+# structured field can smuggle a credential past the is_secret_shaped_value scan
+# that runs first. The charset is identical to the managed Python runtime's
+# _SAFE_OTLP_ENDPOINT_URL so the wrapper and runtime classify a value the same
+# way (#6538 review: the prior predicate was fail-open on encoded/query cases and
+# disagreed with Python on VT/FF).
+is_safe_otlp_endpoint_url() {
+  local value="$1"
+  # Force byte-wise ASCII matching: under a UTF-8 locale `[[ =~ ]]` collation can
+  # fold non-ASCII bytes into [A-Za-z0-9] ranges, which would accept hosts the
+  # Python runtime (ASCII code-point matching) rejects. LC_ALL=C keeps parity.
+  local LC_ALL=C
+  [ "${#value}" -le 2048 ] || return 1
+  [[ "$value" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$ ]]
 }
 
 is_dynamic_dotenv_value() {
@@ -490,7 +488,7 @@ assert_no_secret_runtime_env() {
     if is_otlp_endpoint_name "$name"; then
       # An empty value is treated as unset (matches the length check it
       # replaces and the managed Python runtime), so only scan a set value.
-      if [ -n "$value" ] && ! is_bare_http_url_without_userinfo "$value"; then
+      if [ -n "$value" ] && ! is_safe_otlp_endpoint_url "$value"; then
         refuse_secret_env "runtime environment variable" "$name"
       fi
       continue
@@ -559,7 +557,7 @@ assert_no_secret_env_file() {
       refuse_secret_env "$env_file" "$key"
     fi
     if is_otlp_endpoint_name "$key"; then
-      if [ -n "$value" ] && ! is_bare_http_url_without_userinfo "$value"; then
+      if [ -n "$value" ] && ! is_safe_otlp_endpoint_url "$value"; then
         refuse_secret_env "$env_file" "$key"
       fi
       continue

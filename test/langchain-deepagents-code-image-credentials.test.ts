@@ -89,8 +89,10 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
   it("allows plain OTLP endpoint URLs but rejects credential-bearing endpoint values (#6466)", () => {
     // Regression for #6466: a plain OTLP collector URL is not a credential and
     // must pass the guard (the documented `--observability` flow sets one),
-    // while a URL with embedded userinfo or a structured key-bearing blob is
-    // still refused.
+    // while anything that is not a strict scheme://host[:port][/path] ASCII URL
+    // is refused. The #6538 review hardened this against fail-open cases:
+    // percent-encoded tokens, opaque query credentials, encoded/parser-
+    // differential userinfo, hostless URLs, and non-ASCII hosts.
     const endpointNames = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"];
     const plainUrls = [
       "http://host.openshell.internal:4318",
@@ -101,6 +103,13 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
       "http://token@example.com:4318",
       "http://user:pass@host:4318",
       '{"https://trace.example":"opaque-key-value"}',
+      "http://host:4318?x=sk%2Dabcdefghijklmnop",
+      "http://host:4318?apikey=opaquevalue12345",
+      "http://user%40host:4318",
+      "http://a;http://b@evil:4318",
+      "http://host:4318#fragment",
+      "http://héllo:4318",
+      "http://",
     ];
 
     for (const name of endpointNames) {

@@ -67,6 +67,14 @@ _OTLP_ENDPOINT_ENV_NAMES = {
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
 }
+# A credential-free OTLP collector URL: scheme://host[:port][/path] from a
+# strict ASCII allowlist. No userinfo, query, fragment, percent-encoding,
+# controls, non-ASCII, or backslashes can appear, so no encoded or structured
+# field can smuggle a credential. The charset matches the Bash wrapper's
+# is_safe_otlp_endpoint_url for cross-runtime parity (#6538 review).
+_SAFE_OTLP_ENDPOINT_URL = re.compile(
+    r"https?://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[A-Za-z0-9._/-]*)?"
+)
 # Python's \s also includes control separators that ECMAScript excludes, so
 # spell out the canonical whitespace set for cross-runtime parity.
 _ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
@@ -240,21 +248,18 @@ def _is_managed_value(name: str, value: str) -> bool:
     return False
 
 
-def _is_bare_http_url_without_userinfo(value: str) -> bool:
-    """Accept only a single credential-free http(s) URL.
+def _is_safe_otlp_endpoint_url(value: str) -> bool:
+    """Accept ONLY a strict scheme://host[:port][/path] ASCII URL.
 
-    A value with userinfo (scheme://user:pass@host) or a structured blob that
-    could smuggle a key in another field (JSON, quoted, whitespace- or
-    comma-joined) is rejected, mirroring the OpenClaw OTEL config contract
-    ("... must not include credentials"). Token-shaped material anywhere in the
-    value is still caught by _contains_secret_shape before this runs.
+    Rejects userinfo, query, fragment, percent-encoding, C0 controls, DEL,
+    non-ASCII bytes, backslashes, whitespace, and oversized inputs, so no
+    encoded or structured field can smuggle a credential past the
+    _contains_secret_shape scan that runs first. The charset matches the Bash
+    wrapper's is_safe_otlp_endpoint_url for cross-runtime parity (#6538 review).
     """
-    if not (value.startswith("http://") or value.startswith("https://")):
+    if len(value) > 2048:
         return False
-    if any(ch in value for ch in " \t\r\n\"'{},"):
-        return False
-    authority = value.split("://", 1)[1].split("/", 1)[0]
-    return "@" not in authority
+    return _SAFE_OTLP_ENDPOINT_URL.fullmatch(value) is not None
 
 
 def _assert_safe_environment() -> None:
@@ -284,7 +289,7 @@ def _assert_safe_environment() -> None:
         if (
             name.upper() in _OTLP_ENDPOINT_ENV_NAMES
             and value
-            and not _is_bare_http_url_without_userinfo(value)
+            and not _is_safe_otlp_endpoint_url(value)
         ):
             raise RuntimeError(
                 f"runtime environment variable {name} contains a credential; "
