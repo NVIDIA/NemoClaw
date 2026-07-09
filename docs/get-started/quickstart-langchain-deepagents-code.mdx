@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Quickstart with LangChain Deep Agents Code"
 sidebar-title: "Quickstart with Deep Agents"
-description: "Create and operate a NemoClaw sandbox for LangChain Deep Agents Code with managed inference and backend-neutral OTLP tracing."
-description-agent: "Creates and operates a NemoClaw sandbox that runs LangChain Deep Agents Code with managed inference and backend-neutral OTLP trace export through a host-side collector, including LangSmith. Use when installing or testing dcode, enabling observability, or configuring a local OpenTelemetry collector for LangSmith."
+description: "Install NemoClaw, launch a LangChain Deep Agents Code sandbox, and run your first prompt."
+description-agent: "Installs NemoClaw, launches a LangChain Deep Agents Code sandbox, and runs the first prompt. Use when installing or testing dcode for the first time."
 keywords: ["langchain deep agents code nemoclaw", "dcode openshell sandbox", "langchain coding agent", "dcode otlp tracing"]
 topics: ["get-started", "terminal-runtime", "langchain-deepagents-code", "observability"]
 tags: ["deep-agents-code", "dcode", "managed-inference", "otlp"]
@@ -17,57 +17,94 @@ content:
 import { StarterPromptFallback } from "../_components/StarterPrompt";
 import { StarterPromptButton } from "../_components/StarterPromptButton";
 
-Use NemoClaw for Deep Agents to create an OpenShell sandbox that runs LangChain Deep Agents Code.
+Create a sandboxed LangChain Deep Agents Code agent, then run your first prompt.
 The `nemo-deepagents` command is an alias for `nemoclaw` with the `langchain-deepagents-code` agent pre-selected.
 
-Review the [Prerequisites](prerequisites) before starting.
-Install Docker, start it, and verify that the current shell can reach it before Deep Agents onboarding builds the sandbox image.
-On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.
-If it changes group membership, run the printed `newgrp docker` recovery command before rerunning the installer.
-On macOS, start Docker Desktop or Colima before you run the installer.
+## Set Up with a Coding Agent
 
-## Start from Your Coding Agent
-
-Copy the starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want the assistant to install NemoClaw with you.
-The prompt points your agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
-It also asks your agent to confirm LangChain Deep Agents Code as the selected agent before it builds the install or onboard command, and to use the checked-in local credential helper and form after you approve the exact command that will receive the credentials.
+Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
+The prompt points the agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+It asks the agent to confirm LangChain Deep Agents Code before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
 
 <StarterPromptButton />
 
 <StarterPromptFallback />
 
-## Install and Onboard
+If you prefer to control setup directly, use the interactive installer in [Create Your First Sandboxed Agent](#create-your-first-sandboxed-agent).
 
-Start the installer with `NEMOCLAW_AGENT=langchain-deepagents-code` set in your shell.
-The installer installs the CLI, selects the `nemo-deepagents` alias, and runs the guided onboarding flow.
+## Create Your First Sandboxed Agent
+
+If you use the coding-agent prompt in the preceding section, you can skip this procedure or keep it as reference.
+The prompt directs your coding agent to this quickstart, so it has the full setup context.
+
+<Note>
+Review the [Prerequisites](prerequisites) before you begin.
+</Note>
+
+<Steps>
+  <Step title="Install NemoClaw for Deep Agents">
+    Select Deep Agents, then run the hosted installer.
+
+    ```bash
+    export NEMOCLAW_AGENT=langchain-deepagents-code
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
+  </Step>
+
+  <Step title="Complete Onboarding">
+    Choose an inference provider and model, provide its credential when prompted, and give the sandbox a name such as `my-deepagents`.
+    Accept the suggested network policy tier for a first run.
+  </Step>
+
+  <Step title="Confirm the Sandbox Is Ready">
+    Wait for the ready summary, then check the sandbox state.
+
+    ```bash
+    nemo-deepagents my-deepagents status
+    ```
+  </Step>
+
+  <Step title="Run Your First Prompt">
+    Connect to the sandbox and launch the Deep Agents terminal UI.
+
+    ```bash
+    nemo-deepagents my-deepagents connect
+    dcode
+    ```
+  </Step>
+</Steps>
+
+## Considerations
+
+Use these details after the first sandbox is running.
+
+<AccordionGroup>
+  <Accordion title="Onboarding and runtime behavior">
+
+### Installation and Onboarding Details
+
+The hosted installer follows the last-known-good (`lkg`) release tag by default, so the install command selects the maintained Deep Agents-capable build without a version override.
+If NemoClaw is already installed, run `nemo-deepagents onboard` to start Deep Agents onboarding directly.
+
+On Linux, install Docker, start it, and confirm that the current shell can reach it before onboarding builds the sandbox image.
+The installer can install Docker, start the service, and add your user to the `docker` group.
+If it changes group membership, run the printed `newgrp docker` command before rerunning the installer.
+On macOS, start Docker Desktop or Colima before you run the installer.
+
+You can use the canonical agent ID or a short alias instead of `nemo-deepagents`.
 
 ```bash
-export NEMOCLAW_AGENT=langchain-deepagents-code
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-```
-
-The hosted installer follows the last-known-good (`lkg`) release tag by default, so this command installs the maintained Deep Agents-capable build without a version override.
-If NemoClaw is already installed, start Deep Agents onboarding directly.
-
-## Onboard
-
-Run onboarding with the Deep Agents alias, or use `nemoclaw --agent` with either the canonical agent ID or a short alias.
-
-```bash
-nemo-deepagents onboard
-# Equivalent:
 nemoclaw onboard --agent langchain-deepagents-code
-# Also accepted:
 nemoclaw onboard --agent dcode
 nemoclaw onboard --agent deepagents
 nemoclaw onboard --agent langchain
 ```
 
-The onboard wizard asks for an inference provider, model, any required credential, sandbox name, and policy tier before it prints the review summary.
+The wizard asks for an inference provider, model, required credential, sandbox name, and policy tier before it prints the review summary.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 The default Deep Agents sandbox name is `deepagents-code`.
-Use a distinct sandbox name, such as `my-deepagents`, so you can run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
-For provider-specific prompts, refer to [Inference Options](../inference/inference-options).
+Use a distinct name, such as `my-deepagents`, when you run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
+Refer to [Inference Options](../inference/inference-options) for provider-specific prompts.
 
 The image installs hash-locked Deep Agents Code `0.1.34` with NVIDIA provider support.
 After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
@@ -84,7 +121,10 @@ The image launcher normalizes the runtime proxy environment for interactive, log
 Managed interactive sessions keep Deep Agents Code's optional first-run name prompt, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
 Press Enter at the name prompt to continue without setting a name.
 
-## Choose the Default Sandbox
+  </Accordion>
+
+  <Accordion title="Use the managed runtime">
+### Choose the Default Sandbox
 
 When you manage multiple sandboxes, use the Deep Agents alias to promote a registered Deep Agents Code sandbox to the default.
 
@@ -95,7 +135,7 @@ nemo-deepagents use <sandbox-name>
 The command updates NemoClaw's host-side registry.
 It does not modify the sandbox or the `dcode` configuration.
 
-## Use the Harness
+### Use the Harness
 
 Connect to the sandbox, then launch the terminal UI.
 
@@ -132,7 +172,7 @@ It has no approval UI and automatically approves non-shell tool requests, includ
 The managed headless path still disables shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP configuration, nested remote sandboxes, remote async subagents, and alternate model routes.
 Use the interactive TUI when you need to inspect each destructive tool request before it runs.
 
-### Configure Thread Auto-Approval
+#### Configure Thread Auto-Approval
 
 Managed Deep Agents sandboxes keep interactive thread auto-approval disabled by default.
 In this mode, the TUI auto-approval choice and `dcode -y` fail closed.
@@ -175,14 +215,17 @@ The command prints the sandbox name, NemoClaw harness, active `dcode` agent, con
 `dcode --help` lists the managed aliases before the upstream Deep Agents Code help.
 The sandbox name resolves when you run the command from a `nemoclaw <sandbox-name> connect` shell, which loads the NemoClaw runtime environment.
 
-## Python Environment
+  </Accordion>
+
+  <Accordion title="Manage Python and sandbox state">
+### Python Environment
 
 Deep Agents Code runs from a NemoClaw-managed Python virtual environment at `/opt/venv`.
 The sandbox puts `/opt/venv/bin` on `PATH` before the system Python directories, so `python3` and `pip3` resolve to that managed environment.
 NemoClaw keeps `/opt/venv` read-only to protect the installed harness.
 For project-specific Python dependencies, create a separate virtual environment under `/sandbox` and activate it before installing packages.
 
-## State and Backup
+### State and Backup
 
 Deep Agents Code state lives under `/sandbox/.deepagents`.
 NemoClaw snapshot and rebuild flows preserve the app state directory and skills when those paths exist.
@@ -203,7 +246,10 @@ After backup, NemoClaw rechecks the target, route, and retained build inputs bef
 If the final check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
 Rebuild also preserves the standalone Deep Agents Code `tavily` preset, the recorded observability choice unless explicitly overridden, and recorded custom policies from their exact stored content.
 
-## Optional Tavily Egress
+  </Accordion>
+
+  <Accordion title="Enable Tavily egress">
+### Optional Tavily Egress
 
 Deep Agents Code does not currently have a NemoClaw-managed web-search feature.
 If your project code or a manually configured tool needs Tavily, opt the sandbox Python egress path into Tavily explicitly.
@@ -249,9 +295,10 @@ This does not unregister the gateway-wide `tavily-search` provider; its credenti
 When no sandbox needs the provider, destroy those sandboxes or detach it from each one with `openshell sandbox provider detach <sandbox-name> tavily-search`, then remove it globally with `nemo-deepagents credentials reset tavily-search --yes`.
 OpenShell rejects provider deletion while any sandbox still has it attached.
 
-## Export Traces Through a Local Collector
+  </Accordion>
 
-NemoClaw can export Deep Agents Code traces to an OTLP/HTTP collector that you operate on the host.
+  <Accordion title="Export traces through a local collector" id="export-traces-through-a-local-collector">
+    NemoClaw can export Deep Agents Code traces to an OTLP/HTTP collector that you operate on the host.
 The sandbox always targets one local collector address, while the collector owns the remote backend, credentials, TLS, batching, retry, and optional filtering.
 Changing from LangSmith to another OTLP-compatible backend does not require a sandbox rebuild or policy change.
 
@@ -627,6 +674,9 @@ For additional collector diagnostics, refer to [Troubleshooting the OpenTelemetr
 | Collector logs `429` | Review LangSmith ingestion and plan limits, then allow the configured sending queue and retry policy to drain. |
 | Debug exporter logs traces but the LangSmith project is empty | Inspect the same collector log for remote exporter errors, then verify the endpoint, project, workspace ID, and API key. |
 | Agent succeeds while every trace check fails | This is expected fail-open behavior. Troubleshoot the policy, receiver bind, collector health, and remote exporter independently rather than using the agent exit status as delivery evidence. |
+
+  </Accordion>
+</AccordionGroup>
 
 ## Troubleshooting
 
