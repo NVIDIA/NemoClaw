@@ -100,8 +100,7 @@ function captureError(run: () => void): Error {
   try {
     run();
   } catch (error) {
-    if (error instanceof Error) return error;
-    throw error;
+    return error as Error;
   }
   throw new Error("Expected callback to throw.");
 }
