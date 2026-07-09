@@ -39,7 +39,17 @@ export type RunAdvisorResult = {
   raw: string;
   turnTexts: string[];
   turnErrors: string[];
+  turnCallbackErrors: string[];
+  fatalError?: string;
 };
+
+export function advisorRunErrors(result: RunAdvisorResult): string[] {
+  return [
+    result.fatalError ? `session: ${result.fatalError}` : undefined,
+    ...result.turnErrors.map((error) => `turn: ${error}`),
+    ...result.turnCallbackErrors.map((error) => `artifact: ${error}`),
+  ].filter((error): error is string => error !== undefined);
+}
 
 export type AdvisorSyntheticToolContentType = "diff" | "json" | "text";
 
@@ -83,7 +93,68 @@ export type RunReadOnlyAdvisorOptions = {
   credentialEnv: string;
   logPrefix: string;
   logProgress: (message: string) => void;
+  onTurnComplete?: (turn: AdvisorCompletedTurn) => void | Promise<void>;
 };
+
+export type AdvisorCompletedTurn = {
+  index: number;
+  total: number;
+  name: string;
+  text: string;
+  status: "completed" | "failed" | "timed_out";
+  error?: string;
+};
+
+export type AdvisorTurnSettlement = {
+  turn: AdvisorCompletedTurn;
+  didThrow: boolean;
+  thrown?: unknown;
+  callbackError?: string;
+};
+
+export async function settleAdvisorTurn(options: {
+  index: number;
+  total: number;
+  name: string;
+  run: () => Promise<void>;
+  readText: () => string;
+  readError: () => string | undefined;
+  onTurnComplete?: (turn: AdvisorCompletedTurn) => void | Promise<void>;
+}): Promise<AdvisorTurnSettlement> {
+  let didThrow = false;
+  let thrown: unknown;
+  try {
+    await options.run();
+  } catch (error: unknown) {
+    didThrow = true;
+    thrown = error;
+  }
+  const thrownReason = didThrow
+    ? normalizeProviderError(errorText(thrown)) || "unknown advisor turn failure"
+    : undefined;
+  const error = options.readError() || thrownReason;
+  const turn: AdvisorCompletedTurn = {
+    index: options.index,
+    total: options.total,
+    name: options.name,
+    text: options.readText(),
+    status:
+      thrownReason && /timed out/iu.test(thrownReason)
+        ? "timed_out"
+        : error
+          ? "failed"
+          : "completed",
+    error,
+  };
+  let callbackError: string | undefined;
+  try {
+    await options.onTurnComplete?.(turn);
+  } catch (callbackFailure: unknown) {
+    callbackError =
+      normalizeProviderError(errorText(callbackFailure)) || "unknown advisor turn callback failure";
+  }
+  return { turn, didThrow, thrown, callbackError };
+}
 
 export function openAiAdvisorProviderConfig(credentialEnv: string): AdvisorProviderConfig {
   return {
@@ -193,6 +264,8 @@ export async function runReadOnlyAdvisor(
   const raw = new CappedBuffer(options.maxCaptureBytes, `${rawHeader.join("\n")}\n`);
   const turnTextBuffers: CappedBuffer[] = [];
   const turnErrors: string[] = [];
+  const turnCallbackErrors: string[] = [];
+  let fatalError: string | undefined;
   let currentTurnText: CappedBuffer | undefined;
   let currentTurnName = "";
   let currentTurnError: string | undefined;
@@ -282,17 +355,48 @@ export async function runReadOnlyAdvisor(
       });
       raw.append(`\n[${options.logPrefix}] user_turn_start ${turnIndex} ${turn.name}\n`);
       options.logProgress(`Advisor SDK turn ${turnIndex}: ${turn.name}`);
-      await Promise.race([session.prompt(turn.prompt), timeoutPromise]);
-      const turnTextBytes = Buffer.byteLength(currentTurnText.toString(), "utf8");
+      const settlement = await settleAdvisorTurn({
+        index: index + 1,
+        total: promptTurns.length,
+        name: turn.name,
+        run: () => Promise.race([session.prompt(turn.prompt), timeoutPromise]),
+        readText: () => currentTurnText?.toString() ?? "",
+        readError: () => currentTurnError,
+        onTurnComplete: options.onTurnComplete,
+      });
+      const turnTextBytes = Buffer.byteLength(settlement.turn.text, "utf8");
       raw.append(
-        `\n[${options.logPrefix}] user_turn_end ${turnIndex} ${turn.name} textBytes=${turnTextBytes}\n`,
+        `\n[${options.logPrefix}] user_turn_end ${turnIndex} ${turn.name} status=${settlement.turn.status} textBytes=${turnTextBytes}\n`,
       );
-      if (currentTurnError) {
-        turnErrors.push(`${turn.name}: ${currentTurnError}`);
+      options.logProgress(
+        `Advisor SDK turn ${turnIndex} settled: ${turn.name} status=${settlement.turn.status} textBytes=${turnTextBytes}`,
+      );
+      if (settlement.turn.error) {
+        turnErrors.push(`${turn.name}: ${settlement.turn.error}`);
+      }
+      if (settlement.callbackError) {
+        turnCallbackErrors.push(`${turn.name}: ${settlement.callbackError}`);
+        raw.append(
+          `[${options.logPrefix}] turn_artifact_error ${turn.name}: ${settlement.callbackError}\n`,
+        );
+        options.logProgress(
+          `Could not persist advisor turn ${turn.name}: ${settlement.callbackError}`,
+        );
       }
       currentTurnText = undefined;
       currentTurnName = "";
+      if (settlement.didThrow) {
+        throw settlement.thrown instanceof Error
+          ? settlement.thrown
+          : new Error(settlement.turn.error || "unknown advisor turn failure");
+      }
+      if (settlement.callbackError) {
+        throw new Error(`turn artifact persistence failed: ${settlement.callbackError}`);
+      }
     }
+  } catch (error: unknown) {
+    fatalError = normalizeProviderError(errorText(error)) || "unknown advisor session failure";
+    raw.append(`\n[${options.logPrefix}] session_failure: ${fatalError}\n`);
   } finally {
     unsubscribe();
     clearInterval(heartbeat);
@@ -327,6 +431,8 @@ export async function runReadOnlyAdvisor(
     raw: raw.toStringWithTrailingNewline(),
     turnTexts,
     turnErrors,
+    turnCallbackErrors,
+    fatalError,
   };
 }
 
@@ -344,6 +450,11 @@ function normalizeProviderError(message: string | undefined): string | undefined
   if (!message) return undefined;
   const normalized = message.trim().replace(/\s+/g, " ");
   return normalized || undefined;
+}
+
+function errorText(error: unknown): string {
+  if (error === undefined || error === null) return "";
+  return error instanceof Error ? error.message : String(error);
 }
 
 function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTurn[] {
