@@ -339,6 +339,39 @@ describe("runLiveOnboardFlowSlice", () => {
     expect(recordStateResult).not.toHaveBeenCalled();
   });
 
+  it("invalidates a recomputed transition when the machine already stands at its target (#6227)", async () => {
+    const liveRuntime = runtime("gateway");
+    const recordStateResult = vi.fn(async (result: OnboardStateResult) =>
+      liveRuntime.applyResult(result),
+    );
+    const recordInvalidatedStateResult = invalidatedRecorder();
+    // Recompute of the preflight phase in ahead-state resume: machine is
+    // already at 'gateway' when preflight replays advanceTo('gateway',
+    // { state: 'preflight' }). Recording must route through the invalidated
+    // path with reason 'already_at_target', not the standard apply path.
+    await runLiveOnboardFlowSlice({
+      context: { value: 1 },
+      runtime: liveRuntime.runtime,
+      phases: [phase("preflight", 2)],
+      runWhenState: ["preflight"],
+      compatibilityWhenState: ["gateway"],
+      runSlice: vi.fn(),
+      recordStateResult,
+      recordInvalidatedStateResult,
+    });
+
+    expect(recordStateResult).not.toHaveBeenCalled();
+    expect(recordInvalidatedStateResult).toHaveBeenCalledOnce();
+    expect(recordInvalidatedStateResult).toHaveBeenCalledWith(
+      expect.objectContaining({ next: "gateway" }),
+      {
+        reason: "already_at_target",
+        currentState: "gateway",
+        sourceState: "preflight",
+      },
+    );
+  });
+
   it("propagates recomputed result application failures without running later phases", async () => {
     const liveRuntime = runtime("preflight");
     const later = phase("gateway", 3);

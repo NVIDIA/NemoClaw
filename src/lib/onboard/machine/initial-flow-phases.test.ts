@@ -423,6 +423,15 @@ describe("initial onboard flow phases", () => {
       "record-gateway-complete",
     ]);
     expect(recorded).toEqual(["gateway", "provider_selection"]);
+    // Ahead-state resume invalidates the preflight/gateway transitions but the
+    // recomputed context (sandboxGpuConfig, gpu, gpuPassthrough) must still
+    // survive so runOnboard's assertion at src/lib/onboard.ts:4397
+    // ("Preflight did not produce a sandbox GPU configuration") stays
+    // satisfied on resume, and downstream sandbox setup can consume the
+    // freshly detected GPU rather than a stale saved value (#6227).
+    expect(result.context.sandboxGpuConfig).toEqual(config(gpu));
+    expect(result.context.gpu).toEqual(gpu);
+    expect(result.context.gpuPassthrough).toBe(true);
   });
 
   it.each([
