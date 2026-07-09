@@ -16,6 +16,7 @@ import { advanceTo, branchTo, completeOnboardMachine, retryTo } from "./machine/
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import type { OnboardMachineState } from "./machine/types";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
+import { applySessionRecovery } from "./session-recovery";
 
 function cloneSession(session: Session): Session {
   return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
@@ -174,6 +175,56 @@ describe("OnboardRuntimeBoundary", () => {
     ]);
     expect(harness.events[0]).toMatchObject({ state: "init" });
     expect(harness.events[1]).toMatchObject({ state: "init" });
+  });
+
+  it("dispatches a durable recovery receipt after resume and clears it on transition (#6227)", async () => {
+    const recovered = createSession({
+      resumable: true,
+      status: "in_progress",
+      lastCompletedStep: "gateway",
+      machine: {
+        version: 1,
+        state: "complete",
+        stateEnteredAt: "2026-05-27T00:00:00.000Z",
+        revision: 9,
+      },
+    });
+    recovered.steps.preflight.status = "complete";
+    recovered.steps.gateway.status = "complete";
+    applySessionRecovery(recovered, "2026-05-27T00:01:00.000Z");
+    const receiptId = recovered.machine.recoveryReceipt?.id;
+    const harness = createRuntimeHarness(recovered);
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordOnboardStarted(true);
+
+    expect(harness.events.map((event) => event.type)).toEqual([
+      "onboard.resumed",
+      "state.repair.completed",
+    ]);
+    expect(harness.events[1]).toMatchObject({
+      state: "provider_selection",
+      metadata: {
+        reason: "reopened_complete_snapshot",
+        entry: "provider_selection",
+        receiptId,
+        revision: 10,
+      },
+    });
+
+    await boundary.recordStateResult(
+      advanceTo("inference", { metadata: { state: "provider_selection" } }),
+    );
+    expect(harness.getSession().machine.recoveryReceipt).toBeUndefined();
+
+    await boundary.recordOnboardStarted(true);
+    expect(harness.events.filter((event) => event.type === "state.repair.completed")).toHaveLength(
+      1,
+    );
   });
 
   it("defaults boundary step recorders to record-only machine mutations", async () => {

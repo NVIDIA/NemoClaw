@@ -22,6 +22,7 @@ describe("isCredentialField", () => {
     expect(isCredentialField("bearerToken")).toBe(true);
     expect(isCredentialField("privateKey")).toBe(true);
     expect(isCredentialField("sessionToken")).toBe(true);
+    expect(isCredentialField("sessionKey")).toBe(true);
     // OpenClaw channel token fields (#5027).
     expect(isCredentialField("botToken")).toBe(true);
     expect(isCredentialField("appToken")).toBe(true);
@@ -58,6 +59,8 @@ describe("isCredentialField", () => {
     expect(isCredentialField("GITHUB_TOKEN")).toBe(true);
     expect(isCredentialField("BRAVE_API_KEY")).toBe(true);
     expect(isCredentialField("OPENAI_API_KEY")).toBe(true);
+    expect(isCredentialField("API_SERVER_KEY")).toBe(true);
+    expect(isCredentialField("NEMOCLAW_PROVIDER_KEY")).toBe(true);
     expect(isCredentialField("DB_PASSWORD")).toBe(true);
     expect(isCredentialField("DB_PASSWD")).toBe(true);
     expect(isCredentialField("DB_PASS")).toBe(true);
@@ -96,6 +99,7 @@ describe("isCredentialField", () => {
     expect(isCredentialField("tokenizer")).toBe(false);
     expect(isCredentialField("maxTokens")).toBe(false);
     expect(isCredentialField("X-Request-Id")).toBe(false);
+    expect(isCredentialField("author")).toBe(false);
   });
 
   it("does not strip public keys (verification material, not secrets)", () => {

@@ -36,7 +36,7 @@ function metadata(
 }
 
 describe("E2E target advisor — prompt construction", () => {
-  it("user prompt refers to synthetic context instead of embedding bulky metadata", () => {
+  it("user prompt refers to context tools instead of embedding bulky metadata", () => {
     const prompt = buildPrompt({
       baseRef: "origin/main",
       headRef: "HEAD",
@@ -44,8 +44,8 @@ describe("E2E target advisor — prompt construction", () => {
       diff: "+ echo ok",
     });
     // Caller of normalizeE2eTargetAdvisorResult re-injects metadata; the prompt
-    // now points at synthetic tool results instead of embedding bulky context.
-    expect(prompt).toContain("tool results");
+    // now points at turn-scoped context tools instead of embedding bulky context.
+    expect(prompt).toContain("context tools");
     expect(prompt).not.toContain("origin/main");
     expect(prompt).not.toContain("test/e2e/fixtures/phases/onboarding.ts");
     expect(prompt).not.toContain("+ echo ok");
@@ -57,24 +57,27 @@ describe("E2E target advisor — prompt construction", () => {
       diff: "+ echo ok",
       schema: { $id: "test-schema", type: "object" },
     });
-    expect(turn.syntheticToolResults?.map((result) => result.toolName)).toEqual([
+    expect(turn.contextToolResults?.map((result) => result.toolName)).toEqual([
       "e2e_target_metadata",
       "e2e_target_changed_files",
       "e2e_target_risk_plan",
       "e2e_target_git_diff",
       "e2e_target_response_schema",
     ]);
-    expect(turn.syntheticToolResults?.[0]?.content).toContain("origin/main");
-    expect(turn.syntheticToolResults?.[1]?.content).toContain(
+    expect(turn.contextToolResults?.[0]?.content).toContain("origin/main");
+    expect(turn.contextToolResults?.[1]?.content).toContain(
       "test/e2e/fixtures/phases/onboarding.ts",
     );
-    expect(turn.syntheticToolResults?.[2]?.content).toContain('"version":1');
-    expect(turn.syntheticToolResults?.[3]?.content).toContain("+ echo ok");
-    expect(turn.syntheticToolResults?.[4]?.content).toContain("test-schema");
+    expect(turn.contextToolResults?.[2]?.content).toContain('"version":1');
+    expect(turn.contextToolResults?.[3]?.content).toContain("+ echo ok");
+    expect(turn.contextToolResults?.[4]?.content).toContain("test-schema");
+    for (const result of turn.contextToolResults ?? []) {
+      expect(turn.prompt).toContain(`\`${result.toolName}\``);
+    }
   });
 
-  it("system prompt is non-empty and points JSON schema lookup at synthetic context", () => {
-    // The model receives the schema through a synthetic tool result; the system
+  it("system prompt is non-empty and points JSON schema lookup at a context tool", () => {
+    // The model receives the schema through a turn-scoped context tool; the system
     // prompt still routes target recommendations to the E2E workflow rather
     // than the legacy typed-shell dispatch surfaces.
     const systemPrompt = buildSystemPrompt({ $id: "test-schema", type: "object" });

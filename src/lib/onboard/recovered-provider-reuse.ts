@@ -11,6 +11,7 @@ const MAX_PROVIDER_LENGTH = 128;
 const MAX_MODEL_LENGTH = 512;
 const SUPPORTED_INFERENCE_APIS_BY_SELECTION: Readonly<Record<string, ReadonlySet<string>>> = {
   openai: new Set(["openai-completions", "openai-responses"]),
+  openrouter: new Set(["openai-completions"]),
   gemini: new Set(["openai-completions", "openai-responses"]),
   custom: new Set(["openai-completions", "openai-responses"]),
   anthropic: new Set(["anthropic-messages"]),

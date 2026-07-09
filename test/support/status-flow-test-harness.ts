@@ -7,6 +7,7 @@ import { type MockInstance, vi } from "vitest";
 
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { SandboxStatusPreflightResult } from "../../src/lib/actions/sandbox/status-preflight";
+import type { SandboxStatusRouteDrift } from "../../src/lib/actions/sandbox/status-snapshot";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
 
 type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
@@ -53,6 +54,7 @@ const baseSandboxEntry = {
 export type StatusFlowHarnessOptions = {
   currentModel?: string;
   currentProvider?: string;
+  routeDrift?: SandboxStatusRouteDrift | null;
   inferenceHealth?: ProviderHealthStatus | null;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
@@ -136,6 +138,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       rpcIssue: null,
       currentModel: options.currentModel ?? "nvidia/nemotron-live",
       currentProvider: options.currentProvider ?? "ollama-local",
+      routeDrift: options.routeDrift ?? null,
       inferenceHealth:
         options.inferenceHealth === undefined
           ? {

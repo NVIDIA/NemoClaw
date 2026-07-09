@@ -141,7 +141,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
     expect(result.out).not.toContain("not verified");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
     const sandboxGetIndex = calls.indexOf("sandbox get alpha");
-    const inferenceGetIndex = calls.indexOf("inference get");
+    const inferenceGetIndex = calls.indexOf("inference get -g nemoclaw");
     expect(sandboxGetIndex).toBeGreaterThanOrEqual(0);
     expect(inferenceGetIndex).toBeGreaterThan(sandboxGetIndex);
   });

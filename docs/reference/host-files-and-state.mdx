@@ -51,6 +51,7 @@ If you see `registry.json` in older tests, notes, or discussions, treat it as le
 
 `$$nemoclaw uninstall --yes` removes active NemoClaw runtime resources but preserves the user data needed for recovery by default.
 Preserved entries include `rebuild-backups/`, `backups/`, and `sandboxes.json`.
+Preserved `sandboxes.json` records are not automatically recoverable after reinstall, because uninstall removes the gateway registration, provider registrations, and Docker image they reference; uninstall warns about this at preserve time, and a later reinstall reports such records as not found on their recorded gateway with `$$nemoclaw <name> destroy` / `$$nemoclaw onboard` remediation.
 Interactive uninstall prompts before removing preserved state.
 For non-interactive runs, pass `--destroy-user-data` only when you accept losing local registry metadata and backups.
 
