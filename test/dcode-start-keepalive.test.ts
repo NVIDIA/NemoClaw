@@ -19,13 +19,25 @@ const START_SCRIPT = path.join(
 const RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
 const tempDirs: string[] = [];
 
-function makeStartFixture(
-  options: {
-    includeRlimitHelper?: boolean;
-    rlimitsHelperContent?: (tempDir: string) => string;
-  } = {},
-): { scriptPath: string; rlimitMarker: string } {
-  const { includeRlimitHelper = true } = options;
+type RlimitHelperInstaller = (helperPath: string, markerPath: string, tempDir: string) => void;
+
+function installDefaultRlimitHelper(
+  helperPath: string,
+  markerPath: string,
+  _tempDir: string,
+): void {
+  fs.writeFileSync(
+    helperPath,
+    `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }\n`,
+    { mode: 0o444 },
+  );
+}
+
+function makeStartFixture(options: { installRlimitHelper?: RlimitHelperInstaller } = {}): {
+  scriptPath: string;
+  rlimitMarker: string;
+} {
+  const installRlimitHelper = options.installRlimitHelper ?? installDefaultRlimitHelper;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-keepalive-"));
   const scriptPath = path.join(tempDir, "start.sh");
   const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
@@ -50,11 +62,7 @@ function makeStartFixture(
     .replace("../../scripts/lib/sandbox-rlimits.sh", "missing-dev-sandbox-rlimits.sh");
   fs.writeFileSync(hostFile, "10.200.0.1\n");
   fs.writeFileSync(portFile, "3128\n");
-  if (includeRlimitHelper) {
-    const defaultHelper = `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(rlimitMarker)}; }\n`;
-    fs.writeFileSync(rlimitLib, options.rlimitsHelperContent?.(tempDir) ?? defaultHelper);
-    fs.chmodSync(rlimitLib, 0o444);
-  }
+  installRlimitHelper(rlimitLib, rlimitMarker, tempDir);
   fs.chmodSync(hostFile, 0o444);
   fs.chmodSync(portFile, 0o444);
   fs.writeFileSync(scriptPath, fixture);
@@ -109,7 +117,9 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
   });
 
   it("refuses to launch when the required rlimit helper is missing (#6545)", () => {
-    const { scriptPath, rlimitMarker } = makeStartFixture({ includeRlimitHelper: false });
+    const { scriptPath, rlimitMarker } = makeStartFixture({
+      installRlimitHelper: () => undefined,
+    });
     const result = spawnSync(scriptPath, ["printf", "SHOULD_NOT_RUN"], {
       input: "",
       timeout: 3000,
@@ -127,21 +137,27 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
   it("hardens resource limits before managed proxy startup work", () => {
     let rlimitsLog = "";
     const { scriptPath } = makeStartFixture({
-      rlimitsHelperContent: (tempDir) => {
+      installRlimitHelper: (helperPath, _markerPath, tempDir) => {
         rlimitsLog = path.join(tempDir, "rlimits.log");
-        return [
-          "harden_resource_limits() {",
-          `  printf 'called=1\\n' > ${JSON.stringify(rlimitsLog)}`,
-          `  printf 'proxy_host=%s\\n' "\${PROXY_HOST-__unset__}" >> ${JSON.stringify(rlimitsLog)}`,
-          "}",
-        ].join("\n");
+        fs.writeFileSync(
+          helperPath,
+          [
+            "harden_resource_limits() {",
+            `  printf 'called=1\\n' > ${JSON.stringify(rlimitsLog)}`,
+            `  printf 'proxy_host=%s\\n' "\${PROXY_HOST-__unset__}" >> ${JSON.stringify(rlimitsLog)}`,
+            "}",
+          ].join("\n"),
+          { mode: 0o444 },
+        );
       },
     });
+    const { PROXY_HOST: _ambientProxyHost, ...envWithoutProxyHost } = process.env;
 
     const result = spawnSync(scriptPath, ["printf", "RAN_CMD"], {
       input: "",
       timeout: 3000,
       encoding: "utf-8",
+      env: envWithoutProxyHost,
     });
 
     expect(result.status, result.stderr).toBe(0);

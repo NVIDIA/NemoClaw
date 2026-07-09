@@ -15,16 +15,25 @@ const LAUNCHER_PATH = path.join(
 );
 const TEST_OWNER_UID = process.getuid?.() ?? 0;
 
+type RlimitHelperInstaller = (helperPath: string, markerPath: string) => void;
+
+function installDefaultRlimitHelper(helperPath: string, markerPath: string): void {
+  fs.writeFileSync(
+    helperPath,
+    `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }\n`,
+  );
+}
+
 function makeLauncherFixture(
   tempDir: string,
-  options: { includeRlimitHelper?: boolean } = {},
+  options: { installRlimitHelper?: RlimitHelperInstaller } = {},
 ): {
   launcherPath: string;
   markerPath: string;
   rlimitMarkerPath: string;
   wrapperMarkerPath: string;
 } {
-  const { includeRlimitHelper = true } = options;
+  const installRlimitHelper = options.installRlimitHelper ?? installDefaultRlimitHelper;
   const launcherPath = path.join(tempDir, "dcode-launcher.sh");
   const markerPath = path.join(tempDir, "observability-enabled");
   const hostPath = path.join(tempDir, "trusted-proxy-host");
@@ -63,12 +72,7 @@ function makeLauncherFixture(
 
   fs.writeFileSync(hostPath, "managed-proxy.internal\n", { mode: 0o444 });
   fs.writeFileSync(portPath, "3128\n", { mode: 0o444 });
-  if (includeRlimitHelper) {
-    fs.writeFileSync(
-      rlimitPath,
-      `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(rlimitMarkerPath)}; }\n`,
-    );
-  }
+  installRlimitHelper(rlimitPath, rlimitMarkerPath);
   fs.writeFileSync(
     wrapperPath,
     `#!/bin/sh\nprintf ran > ${JSON.stringify(wrapperMarkerPath)}\nexit 99\n`,
@@ -168,7 +172,7 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-managed-exec-"));
     try {
       const { launcherPath, rlimitMarkerPath, wrapperMarkerPath } = makeLauncherFixture(tempDir, {
-        includeRlimitHelper: false,
+        installRlimitHelper: () => undefined,
       });
 
       const result = spawnSync(launcherPath, ["/bin/sh", "-c", "printf SHOULD_NOT_RUN"], {
