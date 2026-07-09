@@ -26,6 +26,7 @@ import {
 const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
 const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
 const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
+const dcodeFreshReonboardCheck = path.join(cloudChecksDir, "04-deepagents-code-fresh-reonboard.sh");
 const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
 const tavilyBlocked = "BLOCKED:policy denied";
 const observabilityEnabled = "enabled";
@@ -57,22 +58,13 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
     try {
       fs.writeFileSync(path.join(binDir, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      const result = spawnSync(
-        "bash",
-        [
-          path.join(
-            process.cwd(),
-            "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
-          ),
-        ],
-        {
-          encoding: "utf8",
-          env: {
-            PATH: `${binDir}:${DEFAULT_TEST_PATH}`,
-            SANDBOX_NAME: "openclaw-sandbox",
-          },
+      const result = spawnSync("bash", [dcodeFreshReonboardCheck], {
+        encoding: "utf8",
+        env: {
+          PATH: `${binDir}:${DEFAULT_TEST_PATH}`,
+          SANDBOX_NAME: "openclaw-sandbox",
         },
-      );
+      });
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain(
@@ -81,6 +73,18 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     } finally {
       fs.rmSync(binDir, { force: true, recursive: true });
     }
+  });
+
+  it("keeps live DCode config inspection and mutation-boundary coverage in the fresh re-onboard check", () => {
+    const script = fs.readFileSync(dcodeFreshReonboardCheck, "utf8");
+
+    expect(script).toContain('"$CLI" "$SANDBOX_NAME" config get');
+    expect(script).toContain("config get --key models.default");
+    expect(script).toContain("config get --format yaml");
+    expect(script).toContain("config set --key models.default");
+    expect(script).toContain("sha256sum /sandbox/.deepagents/config.toml");
+    expect(script).toContain("config is baked into the sandbox image at build time");
+    expect(script).toContain("re-onboard with the new selection");
   });
 
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {

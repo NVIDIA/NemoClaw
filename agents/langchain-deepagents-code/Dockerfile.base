@@ -59,6 +59,38 @@ RUN printf '%s\n' \
     && chown root:root /sandbox/.bashrc /sandbox/.profile \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile
 
+COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
+
+# System-wide RLIMIT hooks for Deep Agents Code connect and login shells.
+# Deep Agents Code runs as the non-root sandbox user and is reached through fresh
+# `openshell sandbox exec` / connect shells that do not inherit the entrypoint's
+# lowered limits, so the nproc/nofile caps are installed for every bash mode:
+# login shells via /etc/profile.d, interactive shells via /etc/bash.bashrc.
+# A shell stays available if enforcement fails, matching the established
+# OpenClaw/Hermes compatibility contract, but the hook must emit a visible
+# security diagnostic. OpenShell creates these exec/connect processes outside
+# the entrypoint tree, and this image layer cannot make them inherit a child's
+# lowered limits. Remove the warn-and-continue exception when OpenShell starts
+# every exec/connect process under enforced caps or exposes a fail-closed limit
+# contract. The managed entrypoint and direct launcher separately fail closed
+# if the helper is absent or the effective limits cannot be verified.
+# Mirrors the OpenClaw and Hermes base images. Ref: sandbox-rlimits.sh (#2173).
+# hadolint ignore=SC2028
+RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
+    && printf '%s\n' \
+        '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+        '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits_exact --quiet || { printf "%s\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }' \
+        > /etc/profile.d/nemoclaw-rlimits.sh \
+    && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh \
+    && { printf '%s\n' \
+            '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits_exact --quiet || { printf "%s\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }' \
+            ''; \
+         cat /etc/bash.bashrc; \
+       } > /etc/bash.bashrc.new \
+    && mv /etc/bash.bashrc.new /etc/bash.bashrc \
+    && chmod 444 /etc/bash.bashrc
+
 COPY agents/langchain-deepagents-code/requirements.lock /tmp/deepagents-code-requirements.lock
 
 RUN python3 -m venv --copies "$VIRTUAL_ENV" \

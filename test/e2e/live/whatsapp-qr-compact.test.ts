@@ -15,7 +15,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 // @openclaw/whatsapp versions bundled by Dockerfile.base and measures the real
 // upstream terminal QR renderer with and without the NemoClaw compact preload.
 // It intentionally does not require a WhatsApp account, phone scan, sandbox,
-// Docker, or NVIDIA_INFERENCE_API_KEY: the the contract is the renderer boundary.
+// Docker, or NVIDIA_INFERENCE_API_KEY: the contract is the renderer boundary.
 
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
 const PRELOAD_SOURCE = path.join(

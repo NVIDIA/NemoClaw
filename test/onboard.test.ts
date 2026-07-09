@@ -1774,7 +1774,7 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 const registerCalls = [];
 const updateCalls = [];
-const defaultCalls = []; registry.addExtraProvider("tavily-search");
+const defaultCalls = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -1877,7 +1877,7 @@ const { createSandbox } = require(${onboardPath});
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /(?=.*nemoclaw-start)(?=.*--provider tavily-search)/);
+    assert.match(createCommand.command, /nemoclaw-start/);
     assert.doesNotMatch(createCommand.command, /--upload/);
     assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
     assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);

@@ -41,6 +41,10 @@ const {
 const {
   buildHermesUpstreamHeader,
 }: typeof import("./hermes-upstream-header") = require("./hermes-upstream-header");
+const {
+  parseConfig,
+  serializeConfig,
+}: typeof import("./config-format") = require("./config-format");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -69,7 +73,7 @@ export interface AgentConfigTarget {
   configPath: string;
   /** Directory containing the config (for chown after cp) */
   configDir: string;
-  /** Config file format: "json" or "yaml" */
+  /** Config file format: "json", "yaml", or "toml" */
   format: string;
   /** Config file basename */
   configFile: string;
@@ -398,28 +402,6 @@ function classifyNewKeyGate(inputs: NewKeyGateInputs): NewKeyGate {
     return { mode: "refuse" };
   }
   return { mode: "prompt" };
-}
-
-/**
- * Parse a config file's raw text according to its format.
- */
-function parseConfig(raw: string, format: string): ConfigObject {
-  const parsed = format === "yaml" ? require("yaml").parse(raw) : JSON.parse(raw);
-  if (!isConfigObject(parsed)) {
-    throw new Error("Config is not an object.");
-  }
-  return parsed;
-}
-
-/**
- * Serialize a config object according to its format.
- */
-function serializeConfig(config: ConfigObject, format: string): string {
-  if (format === "yaml") {
-    const YAML = require("yaml");
-    return YAML.stringify(config);
-  }
-  return JSON.stringify(config, null, 2);
 }
 
 /**
@@ -909,6 +891,16 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   if (opts.restart && target.agentName !== "openclaw" && target.agentName !== "hermes") {
     configFail(
       `  --restart is supported only for OpenClaw and Hermes; '${target.agentName}' config was not changed.`,
+    );
+  }
+  // dcode bakes its config into the sandbox image at build time, so — unlike
+  // OpenClaw/Hermes — it has no host-side config-mutation path (the same reason
+  // inference set refuses it, #6321). config get now reads TOML, but refuse
+  // config set cleanly and point at the only way to change it: re-onboard. #6548
+  if (target.format === "toml") {
+    const { CLI_NAME } = require("../cli/branding");
+    configFail(
+      `  config set is not available for '${target.agentName}': its config is baked into the sandbox image at build time. To change it, re-onboard with the new selection (e.g. ${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh).`,
     );
   }
   if (target.agentName === "openclaw" || target.agentName === "hermes") {

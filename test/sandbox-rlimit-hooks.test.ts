@@ -11,6 +11,12 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
+const DCODE_DOCKERFILE_BASE = path.join(
+  ROOT,
+  "agents",
+  "langchain-deepagents-code",
+  "Dockerfile.base",
+);
 const SANDBOX_RLIMITS = path.join(ROOT, "scripts", "lib", "sandbox-rlimits.sh");
 
 function dockerRunCommandBetween(
@@ -76,6 +82,10 @@ function rlimitShim(rlimitLib: string): string {
   return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits --quiet || true`;
 }
 
+function dcodeRlimitShim(rlimitLib: string): string {
+  return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits_exact --quiet || { printf "%s\\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }`;
+}
+
 type ProbeValues = Record<string, string | undefined>;
 
 function parseProbeOutput(stdout: string): ProbeValues {
@@ -98,7 +108,7 @@ function occurrenceCount(haystack: string, needle: string): number {
 function expectSystemRlimitHookEnforcesLimits(hookPath: string): void {
   const probe = [
     "set -euo pipefail",
-    `source ${JSON.stringify(hookPath)}`,
+    'source "$1"',
     'nproc_limit="$(builtin ulimit -u)"',
     'nofile_limit="$(builtin ulimit -n)"',
     "set +e",
@@ -112,8 +122,9 @@ function expectSystemRlimitHookEnforcesLimits(hookPath: string): void {
     'printf "raise_nproc=%s\\n" "$raise_nproc"',
     'printf "raise_nofile=%s\\n" "$raise_nofile"',
   ].join("\n");
-  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", probe], {
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-s", "--", hookPath], {
     encoding: "utf-8",
+    input: probe,
     timeout: 5000,
   });
 
@@ -139,13 +150,14 @@ function expectSystemRlimitHookBypassesShadowedUlimit(hookPath: string): void {
     "  esac",
     "  return 0",
     "}",
-    `source ${JSON.stringify(hookPath)}`,
+    'source "$1"',
     'printf "shadow=%s\\n" "$(type -t ulimit)"',
     'printf "nproc=%s\\n" "$(builtin ulimit -u)"',
     'printf "nofile=%s\\n" "$(builtin ulimit -n)"',
   ].join("\n");
-  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", probe], {
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-s", "--", hookPath], {
     encoding: "utf-8",
+    input: probe,
     timeout: 5000,
   });
 
@@ -173,11 +185,10 @@ function expectSystemRlimitHookIsSilentWhenVerificationFails(
       "}",
     ].join("\n"),
   );
-  const probe = ["set -euo pipefail", `source ${JSON.stringify(hookPath)}`, 'printf "OK\\n"'].join(
-    "\n",
-  );
-  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", probe], {
+  const probe = ["set -euo pipefail", 'source "$1"', 'printf "OK\\n"'].join("\n");
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-s", "--", hookPath], {
     encoding: "utf-8",
+    input: probe,
     timeout: 5000,
   });
 
@@ -186,10 +197,53 @@ function expectSystemRlimitHookIsSilentWhenVerificationFails(
   expect(result.stderr).toBe("");
 }
 
+function expectDcodeRlimitHookWarnsWhenVerificationFails(
+  hookPath: string,
+  rlimitLib: string,
+): void {
+  fs.chmodSync(rlimitLib, 0o644);
+  fs.writeFileSync(
+    rlimitLib,
+    [
+      "harden_resource_limits() { :; }",
+      "verify_resource_limits() { :; }",
+      "verify_resource_limits_exact() { return 1; }",
+    ].join("\n"),
+  );
+  const probe = ["set -euo pipefail", 'source "$1"', 'printf "OK\\n"'].join("\n");
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-s", "--", hookPath], {
+    encoding: "utf-8",
+    input: probe,
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toBe("OK\n");
+  expect(result.stderr).toContain(
+    "[SECURITY] Sandbox resource limits were NOT hardened for this shell.",
+  );
+}
+
+function expectDcodeRlimitHookWarnsWhenHelperIsMissing(hookPath: string, rlimitLib: string): void {
+  fs.rmSync(rlimitLib, { force: true });
+  const probe = ["set -euo pipefail", 'source "$1"', 'printf "OK\\n"'].join("\n");
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-s", "--", hookPath], {
+    encoding: "utf-8",
+    input: probe,
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toBe("OK\n");
+  expect(result.stderr).toContain(
+    "[SECURITY] Sandbox resource limits were NOT hardened for this shell.",
+  );
+}
+
 function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
   const probe = [
     "set -e",
-    `. ${JSON.stringify(rlimitLib)}`,
+    '. "$1"',
     'current_nproc="$(command ulimit -u 2>/dev/null || printf "%s" 512)"',
     'case "$current_nproc" in "" | *[!0-9]*) current_nproc=512 ;; esac',
     'current_nofile="$(command ulimit -n 2>/dev/null || printf "%s" 256)"',
@@ -205,8 +259,9 @@ function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
     'printf "target_nofile=%s\\n" "$target_nofile"',
     'printf "effective_nofile=%s\\n" "$effective_nofile"',
   ].join("\n");
-  const result = spawnSync("sh", ["-c", probe], {
+  const result = spawnSync("sh", ["-s", "--", rlimitLib], {
     encoding: "utf-8",
+    input: probe,
     timeout: 5000,
   });
 
@@ -218,10 +273,48 @@ function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
   expect(Number(values.effective_nofile)).toBeLessThan(Number(values.current_nofile));
 }
 
+function expectExactRlimitVerifierRejectsLowerNofile(rlimitLib: string): void {
+  const probe = [
+    "set -e",
+    '. "$1"',
+    "_nemoclaw_ulimit() {",
+    '  case "$1" in',
+    '    -Su | -Hu) printf "%s" 512 ;;',
+    '    -Sn) printf "%s" 1024 ;;',
+    '    -Hn) printf "%s" 65536 ;;',
+    "    *) return 1 ;;",
+    "  esac",
+    "}",
+    "set +e",
+    "verify_resource_limits --quiet",
+    'maximum_status="$?"',
+    'exact_output="$(verify_resource_limits_exact 2>&1)"',
+    'exact_status="$?"',
+    "set -e",
+    'printf "maximum_status=%s\\n" "$maximum_status"',
+    'printf "exact_status=%s\\n" "$exact_status"',
+    'printf "exact_output=%s\\n" "$exact_output"',
+  ].join("\n");
+  const result = spawnSync("sh", ["-s", "--", rlimitLib], {
+    encoding: "utf-8",
+    input: probe,
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stderr).toBe("");
+  const values = parseProbeOutput(result.stdout);
+  expect(values.maximum_status).toBe("0");
+  expect(values.exact_status).toBe("1");
+  expect(values.exact_output).toContain(
+    "Effective soft nofile limit is 1024; expected exactly 65536",
+  );
+}
+
 function expectRlimitLibRejectsUnboundedPosixShNoFile(rlimitLib: string): void {
   const probe = [
     "set -e",
-    `. ${JSON.stringify(rlimitLib)}`,
+    '. "$1"',
     // This probe isolates nofile validation. Host nproc hard/soft defaults vary
     // (notably on macOS), so do not let an unrelated nproc diagnostic mask the
     // deliberately unbounded nofile result asserted below.
@@ -242,8 +335,9 @@ function expectRlimitLibRejectsUnboundedPosixShNoFile(rlimitLib: string): void {
     'printf "effective_nofile=%s\\n" "$(command ulimit -n)"',
     'printf "verify_output=%s\\n" "$verify_output"',
   ].join("\n");
-  const result = spawnSync("sh", ["-c", probe], {
+  const result = spawnSync("sh", ["-s", "--", rlimitLib], {
     encoding: "utf-8",
+    input: probe,
     timeout: 5000,
   });
 
@@ -258,7 +352,7 @@ function expectRlimitLibRejectsUnboundedPosixShNoFile(rlimitLib: string): void {
 function expectUnsupportedNprocDoesNotMaskPosixShNoFile(rlimitLib: string): void {
   const probe = [
     "set -e",
-    `. ${JSON.stringify(rlimitLib)}`,
+    '. "$1"',
     '_nemoclaw_ulimit() { case "$1" in -Su | -Hu) return 2 ;; esac; command ulimit "$@"; }',
     'current_nofile="$(command ulimit -n 2>/dev/null || printf "%s" 0)"',
     'case "$current_nofile" in "" | *[!0-9]*) current_nofile=0 ;; esac',
@@ -280,8 +374,9 @@ function expectUnsupportedNprocDoesNotMaskPosixShNoFile(rlimitLib: string): void
     'printf "verify_status=%s\\n" "$verify_status"',
     'printf "verify_output=%s\\n" "$verify_output"',
   ].join("\n");
-  const result = spawnSync("sh", ["-c", probe], {
+  const result = spawnSync("sh", ["-s", "--", rlimitLib], {
     encoding: "utf-8",
+    input: probe,
     timeout: 5000,
   });
 
@@ -301,6 +396,22 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     expect(fs.readFileSync(SANDBOX_RLIMITS, "utf-8")).toMatch(
       /^NEMOCLAW_SANDBOX_NPROC_LIMIT=512$/m,
     );
+  });
+
+  it("distinguishes the exact DCode defaults from maximum-cap verification (#6545)", () => {
+    expectExactRlimitVerifierRejectsLowerNofile(SANDBOX_RLIMITS);
+  });
+
+  it("treats the rlimit helper path as data when invoking shell probes", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-$(printf injected)-"));
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+
+    try {
+      fs.copyFileSync(SANDBOX_RLIMITS, rlimitLib);
+      expectExactRlimitVerifierRejectsLowerNofile(rlimitLib);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("rlimit helper enforces supported nofile limits under POSIX sh", () => {
@@ -348,6 +459,42 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expectSystemRlimitHookEnforcesLimits(bashrc);
       expectSystemRlimitHookBypassesShadowedUlimit(rlimitHook);
       expectSystemRlimitHookIsSilentWhenVerificationFails(rlimitHook, rlimitLib);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("Deep Agents Code base image selects exact verification for connect and login shells", () => {
+    const dockerfile = fs.readFileSync(DCODE_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rlimit-hooks-"));
+    const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+    const bashrc = path.join(tmp, "bash.bashrc");
+    const expectedRlimitShim = dcodeRlimitShim(rlimitLib);
+
+    try {
+      fs.mkdirSync(path.dirname(rlimitHook), { recursive: true });
+      copyRlimitFixture(rlimitLib);
+      fs.writeFileSync(bashrc, "# existing dcode bashrc\n");
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# System-wide RLIMIT hooks for Deep Agents Code",
+        "COPY agents/langchain-deepagents-code/requirements.lock",
+      )
+        .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+        .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
+        .replaceAll("/etc/bash.bashrc", bashrc);
+
+      const result = runLoggedDockerShell(command, tmp);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(rlimitHook, "utf-8")).toContain(expectedRlimitShim);
+      expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
+      expect(fs.readFileSync(bashrc, "utf-8")).toContain("# existing dcode bashrc");
+      expectSystemRlimitHookEnforcesLimits(rlimitHook);
+      expectSystemRlimitHookEnforcesLimits(bashrc);
+      expectSystemRlimitHookBypassesShadowedUlimit(rlimitHook);
+      expectDcodeRlimitHookWarnsWhenVerificationFails(rlimitHook, rlimitLib);
+      expectDcodeRlimitHookWarnsWhenHelperIsMissing(rlimitHook, rlimitLib);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
