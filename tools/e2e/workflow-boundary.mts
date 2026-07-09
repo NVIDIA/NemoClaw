@@ -3411,9 +3411,15 @@ function validateAllowJetsonRunnerQueueInput(
     errors.push("workflow_dispatch allow_jetson_runner_queue input must default to false");
   }
   const description = stringValue(input.description);
-  if (!description.includes("Jetson runner") || !description.includes("timeout-minutes")) {
+  if (
+    !description.includes("Repository administrators") ||
+    !description.includes("Jetson runner") ||
+    !description.includes("authoritative") ||
+    !description.includes("NVIDIA/NemoClaw Settings -> Actions -> Runners") ||
+    !description.includes("timeout-minutes")
+  ) {
     errors.push(
-      "workflow_dispatch allow_jetson_runner_queue input must document runner confirmation and queued timeout behavior",
+      "workflow_dispatch allow_jetson_runner_queue input must identify repository administrators and NVIDIA/NemoClaw Settings -> Actions -> Runners as the authoritative runner inventory, and document queued timeout behavior",
     );
   }
 }
@@ -3462,6 +3468,9 @@ function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecor
   }
   requireRunContains(errors, guard, "allow_jetson_runner_queue=true");
   requireRunContains(errors, guard, "timeout-minutes");
+  requireRunContains(errors, guard, "repository administrator");
+  requireRunContains(errors, guard, "authoritative");
+  requireRunContains(errors, guard, "NVIDIA/NemoClaw Settings -> Actions -> Runners");
   requireRunContains(errors, guard, "${JETSON_E2E_RUNNER_LABEL}");
   requireRunDoesNotContain(errors, guard, "linux-arm64-gpu-jetson-orin-latest-1");
 }

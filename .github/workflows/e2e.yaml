@@ -20,7 +20,7 @@ on:
         default: ""
         type: string
       allow_jetson_runner_queue:
-        description: "Required for jetson-nvmap-gpu: set true only after confirming an online Jetson runner; queued self-hosted jobs do not honor timeout-minutes before assignment."
+        description: "Repository administrators only: before setting true for jetson-nvmap-gpu, confirm an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
         required: false
         default: false
         type: boolean
@@ -2795,6 +2795,7 @@ jobs:
           set -euo pipefail
           echo "::error::jetson-nvmap-gpu was selected without allow_jetson_runner_queue=true."
           echo "::error::GitHub Actions does not apply timeout-minutes while a self-hosted job is queued before runner assignment."
+          echo "::error::A repository administrator must confirm the runner is online in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory before enabling queueing."
           echo "::error::Confirm an online runner with label ${JETSON_E2E_RUNNER_LABEL}, then re-run with allow_jetson_runner_queue=true."
           exit 1
 

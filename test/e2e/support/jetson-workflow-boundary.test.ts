@@ -113,6 +113,11 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
       default: false,
       type: "boolean",
     });
+    expect(inputs.allow_jetson_runner_queue?.description).toContain("Repository administrators");
+    expect(inputs.allow_jetson_runner_queue?.description).toContain("authoritative");
+    expect(inputs.allow_jetson_runner_queue?.description).toContain(
+      "NVIDIA/NemoClaw Settings -> Actions -> Runners",
+    );
     expect(inputs.allow_jetson_runner_queue?.description).toContain("timeout-minutes");
     expect(job["runs-on"]).toBe(
       "${{ inputs.allow_jetson_runner_queue && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}",
@@ -123,6 +128,9 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     );
     expect(guard?.run).toContain("allow_jetson_runner_queue=true");
     expect(guard?.run).toContain("timeout-minutes");
+    expect(guard?.run).toContain("repository administrator");
+    expect(guard?.run).toContain("authoritative");
+    expect(guard?.run).toContain("NVIDIA/NemoClaw Settings -> Actions -> Runners");
     expect(guard?.run).toContain("${JETSON_E2E_RUNNER_LABEL}");
     expect(guard?.run).not.toContain("linux-arm64-gpu-jetson-orin-latest-1");
     expect(checkoutIndex).toBeLessThan(guardIndex);
@@ -160,7 +168,9 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     );
   });
 
-  it("reports default jobs without claiming explicit-only Jetson ran", () => {
-    expect(validateE2eWorkflowBoundary()).toEqual([]);
+  it("accepts the real workflow without Jetson queue contract errors (#6430)", () => {
+    const errors = validateE2eWorkflowBoundary();
+    expect(errors.filter((error) => /jetson|allow_jetson_runner_queue/iu.test(error))).toEqual([]);
+    expect(errors).toEqual([]);
   });
 });
