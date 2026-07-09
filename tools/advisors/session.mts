@@ -15,12 +15,41 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
+import {
+  type AdvisorContextToolResult,
+  type AdvisorPromptTurn,
+  type AdvisorTurnFlowEvent,
+  advisorTurnFlowErrors,
+  atomicTerminalRepairErrors,
+  atomicTerminalRepairPrompt,
+  missingRequiredAdvisorToolNames,
+  normalizedToolNames,
+  promptWithRequiredContextTools,
+  READ_ONLY_TOOLS,
+  repairableAtomicTerminalToolName,
+  resolveAdvisorTurnTools,
+  sanitizeToolName,
+} from "./turn-protocol.mts";
+
+export {
+  type AdvisorContextToolContentType,
+  type AdvisorContextToolResult,
+  type AdvisorPromptTurn,
+  type AdvisorTurnFlowEvent,
+  type AdvisorTurnTools,
+  advisorTurnFlowErrors,
+  createAdvisorContextToolResult,
+  createAdvisorPromptTurn,
+  missingRequiredAdvisorToolNames,
+  promptWithRequiredContextTools,
+  READ_ONLY_TOOLS,
+  resolveAdvisorTurnTools,
+} from "./turn-protocol.mts";
 
 export const DEFAULT_ADVISOR_PROVIDER = "openai";
 export const DEFAULT_ADVISOR_MODEL = "openai/openai/gpt-5.5";
 export const NEMOTRON_ULTRA_ADVISOR_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 export const ADVISOR_OPENAI_COMPATIBLE_BASE_URL = "https://inference-api.nvidia.com/v1";
-export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const CONTEXT_TOOL_PARAMETERS = {
@@ -48,62 +77,6 @@ export function advisorRunErrors(result: RunAdvisorResult): string[] {
     ...result.turnErrors.map((error) => `turn: ${error}`),
     ...result.turnCallbackErrors.map((error) => `artifact: ${error}`),
   ].filter((error): error is string => error !== undefined);
-}
-
-export type AdvisorContextToolContentType = "diff" | "json" | "text";
-
-export type AdvisorContextToolResult = {
-  /** Specific read-only context tool name shown to the model and in session exports. */
-  toolName: string;
-  /** Human-readable label for artifacts/transcripts. Defaults to toolName. */
-  label?: string;
-  /** Text returned when the matching context tool is called. */
-  content: string;
-  /** Content language/format for artifacts and fixed tool-call metadata. */
-  contentType: AdvisorContextToolContentType;
-  /** Make the context tool return this content as an error. Defaults to false. */
-  isError?: boolean;
-};
-
-export function createAdvisorContextToolResult(
-  toolName: string,
-  content: string,
-  contentType: AdvisorContextToolContentType,
-  label?: string,
-): AdvisorContextToolResult {
-  return { toolName, content, contentType, label };
-}
-
-export type AdvisorPromptTurn = {
-  name: string;
-  prompt: string;
-  /**
-   * Deterministic context exposed as required, zero-argument read-only tools for this turn.
-   * The runner sends the user prompt first, scopes the session to these context tools, and
-   * fails the turn if the model omits any of them.
-   */
-  contextToolResults?: AdvisorContextToolResult[];
-  /** Additional registered custom tools made available only for this turn. */
-  activeToolNames?: string[];
-  /** Additional tools that must finish successfully during this turn. */
-  requiredToolNames?: string[];
-  /** Tools that must finish before the assistant emits text. Context tools are included automatically. */
-  requireToolsBeforeText?: string[];
-  /** Tools that must start after all assistant text, making them the turn's final action. */
-  requireTextBeforeToolNames?: string[];
-};
-
-export function createAdvisorPromptTurn({
-  name,
-  contextToolResults,
-  prompt,
-}: {
-  name: string;
-  contextToolResults: AdvisorContextToolResult[];
-  prompt: (contextToolNames: string) => string;
-}): AdvisorPromptTurn {
-  const contextToolNames = contextToolResults.map(({ toolName }) => toolName).join("`, `");
-  return { name, contextToolResults, prompt: prompt(contextToolNames) };
 }
 
 export type RunReadOnlyAdvisorOptions = {
@@ -316,144 +289,6 @@ export function createAdvisorContextToolRuntime(
   };
 }
 
-export type AdvisorTurnTools = {
-  activeToolNames: string[];
-  requiredToolNames: string[];
-  requireToolsBeforeText: string[];
-  requireTextBeforeToolNames: string[];
-};
-
-export type AdvisorTurnFlowEvent =
-  | { type: "text"; text: string }
-  | { type: "tool_start"; toolName: string }
-  | { type: "tool_end"; toolName: string; isError: boolean };
-
-export function resolveAdvisorTurnTools(
-  turn: AdvisorPromptTurn,
-  contextToolNames: string[],
-  availableToolNames: ReadonlySet<string>,
-): AdvisorTurnTools {
-  const requireToolsBeforeText = uniqueToolNames([
-    ...contextToolNames,
-    ...normalizedToolNames(turn.requireToolsBeforeText),
-  ]);
-  const requireTextBeforeToolNames = normalizedToolNames(turn.requireTextBeforeToolNames);
-  const requiredToolNames = uniqueToolNames([
-    ...contextToolNames,
-    ...normalizedToolNames(turn.requiredToolNames),
-    ...requireToolsBeforeText,
-    ...requireTextBeforeToolNames,
-  ]);
-  const activeToolNames = uniqueToolNames([
-    ...contextToolNames,
-    ...normalizedToolNames(turn.activeToolNames),
-    ...requiredToolNames,
-  ]);
-  const unknown = activeToolNames.filter((toolName) => !availableToolNames.has(toolName));
-  if (unknown.length > 0) {
-    throw new Error(
-      `Advisor turn ${turn.name} references unregistered tool(s): ${unknown.join(", ")}`,
-    );
-  }
-  return {
-    activeToolNames,
-    requiredToolNames,
-    requireToolsBeforeText,
-    requireTextBeforeToolNames,
-  };
-}
-
-export function missingRequiredAdvisorToolNames(
-  requiredToolNames: string[],
-  successfulToolNames: ReadonlySet<string>,
-): string[] {
-  return requiredToolNames.filter((toolName) => !successfulToolNames.has(toolName));
-}
-
-function finalToolCardinalityErrors(
-  turnName: string,
-  events: AdvisorTurnFlowEvent[],
-  toolName: string,
-): string[] {
-  const startCount = events.filter(
-    (event) => event.type === "tool_start" && event.toolName === toolName,
-  ).length;
-  const endCount = events.filter(
-    (event) => event.type === "tool_end" && event.toolName === toolName,
-  ).length;
-  const successfulEndCount = events.filter(
-    (event) => event.type === "tool_end" && event.toolName === toolName && !event.isError,
-  ).length;
-  const errors: string[] = [];
-  if (startCount !== 1) {
-    errors.push(`${turnName} must call ${toolName} exactly once (observed ${startCount} starts)`);
-  }
-  if (endCount !== 1 || successfulEndCount !== 1) {
-    errors.push(
-      `${turnName} must finish ${toolName} successfully exactly once ` +
-        `(observed ${successfulEndCount} successful of ${endCount} total completions)`,
-    );
-  }
-  return errors;
-}
-
-export function advisorTurnFlowErrors(
-  turnName: string,
-  events: AdvisorTurnFlowEvent[],
-  tools: AdvisorTurnTools,
-): string[] {
-  const errors: string[] = [];
-  const textIndexes = events.flatMap((event, index) =>
-    event.type === "text" && event.text.trim() ? [index] : [],
-  );
-  const firstText = textIndexes[0] ?? -1;
-  const lastText = textIndexes.at(-1) ?? -1;
-  const successfulEnd = (toolName: string): number =>
-    events.findIndex(
-      (event) => event.type === "tool_end" && event.toolName === toolName && !event.isError,
-    );
-  const firstStart = (toolName: string): number =>
-    events.findIndex((event) => event.type === "tool_start" && event.toolName === toolName);
-
-  for (const toolName of tools.requireToolsBeforeText) {
-    const end = successfulEnd(toolName);
-    if (firstText >= 0 && (end < 0 || end > firstText)) {
-      errors.push(`${turnName} emitted text before ${toolName} completed`);
-    }
-  }
-  for (const toolName of tools.requireTextBeforeToolNames) {
-    errors.push(...finalToolCardinalityErrors(turnName, events, toolName));
-    const start = firstStart(toolName);
-    if (firstText < 0 || start < firstText)
-      errors.push(`${turnName} called ${toolName} before analysis`);
-    if (start >= 0 && lastText > start) errors.push(`${turnName} emitted text after ${toolName}`);
-    const laterTool = events
-      .slice(start + 1)
-      .find(
-        (event) =>
-          event.type !== "text" && !tools.requireTextBeforeToolNames.includes(event.toolName),
-      );
-    if (start >= 0 && laterTool && laterTool.type !== "text") {
-      errors.push(`${turnName} called ${laterTool.toolName} after ${toolName}`);
-    }
-  }
-  return errors;
-}
-
-function normalizedToolNames(toolNames: string[] | undefined): string[] {
-  return uniqueToolNames((toolNames ?? []).map(sanitizeToolName));
-}
-
-function uniqueToolNames(toolNames: string[]): string[] {
-  return toolNames.filter((toolName, index) => toolNames.indexOf(toolName) === index);
-}
-
-export function promptWithRequiredContextTools(prompt: string, toolNames: string[]): string {
-  if (toolNames.length === 0) return prompt;
-  const tools = toolNames.map((name) => `\`${name}\``).join(", ");
-  return `${prompt.trimEnd()}\n\nRequired context tools: ${tools}. Their results are not preloaded; call each before answering.`;
-}
-
 export async function runReadOnlyAdvisor(
   options: RunReadOnlyAdvisorOptions,
 ): Promise<RunAdvisorResult> {
@@ -645,10 +480,10 @@ export async function runReadOnlyAdvisor(
       const tools = turnTools.get(turn);
       if (!tools) throw new Error(`Advisor turn ${turn.name} is missing its tool configuration`);
       const contextToolNames = contextTools.toolNamesForTurn(turn);
-      session.setActiveToolsByName([...READ_ONLY_TOOLS, ...tools.activeToolNames]);
-      const agentEndPromise = new Promise<void>((resolve) => {
-        resolveCurrentAgentEnd = resolve;
-      });
+      session.setActiveToolsByName([
+        ...(tools.atomicTerminalToolName ? [] : READ_ONLY_TOOLS),
+        ...tools.activeToolNames,
+      ]);
       raw.append(`\n[${options.logPrefix}] user_turn_start ${turnIndex} ${turn.name}\n`);
       raw.append(
         `[${options.logPrefix}] required_tools ${tools.requiredToolNames.join(",") || "<none>"}\n`,
@@ -659,11 +494,43 @@ export async function runReadOnlyAdvisor(
         total: promptTurns.length,
         name: turn.name,
         run: async () => {
-          await Promise.race([
-            session.prompt(promptWithRequiredContextTools(turn.prompt, contextToolNames)),
-            timeoutPromise,
-          ]);
-          await Promise.race([agentEndPromise, timeoutPromise]);
+          const promptAndWait = async (prompt: string): Promise<void> => {
+            const agentEndPromise = new Promise<void>((resolve) => {
+              resolveCurrentAgentEnd = resolve;
+            });
+            await Promise.race([session.prompt(prompt), timeoutPromise]);
+            await Promise.race([agentEndPromise, timeoutPromise]);
+          };
+          await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
+          const originalFlow = currentTurnFlow;
+          const repairToolName = repairableAtomicTerminalToolName(
+            turn,
+            originalFlow,
+            tools,
+            successfulToolNames,
+            currentTurnError,
+          );
+          if (repairToolName) {
+            contextTools.deactivate();
+            session.setActiveToolsByName([repairToolName]);
+            currentTurnFlow = [];
+            raw.append(
+              `\n[${options.logPrefix}] atomic_terminal_repair_start ${turn.name} ${repairToolName}\n`,
+            );
+            options.logProgress(
+              `Advisor SDK repairing atomic terminal tool for ${turn.name}: ${repairToolName}`,
+            );
+            await promptAndWait(atomicTerminalRepairPrompt(turn, repairToolName));
+            const repairFlow = currentTurnFlow;
+            const repairErrors = atomicTerminalRepairErrors(turn.name, repairFlow, repairToolName);
+            if (repairErrors.length > 0) {
+              throw new Error(repairErrors.join("; "));
+            }
+            currentTurnFlow = [...originalFlow, ...repairFlow];
+            raw.append(
+              `[${options.logPrefix}] atomic_terminal_repair_end ${turn.name} ${repairToolName} ok\n`,
+            );
+          }
           const missing = missingRequiredAdvisorToolNames(
             tools.requiredToolNames,
             successfulToolNames,
@@ -701,10 +568,10 @@ export async function runReadOnlyAdvisor(
       resolveCurrentAgentEnd = undefined;
       currentTurnText = undefined;
       currentTurnName = "";
-      if (settlement.didThrow) {
+      if (settlement.turn.error) {
         throw settlement.thrown instanceof Error
           ? settlement.thrown
-          : new Error(settlement.turn.error || "unknown advisor turn failure");
+          : new Error(settlement.turn.error);
       }
       if (settlement.callbackError) {
         throw new Error(`turn artifact persistence failed: ${settlement.callbackError}`);
@@ -781,7 +648,14 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     activeToolNames: normalizedToolNames(turn.activeToolNames),
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
-    requireTextBeforeToolNames: normalizedToolNames(turn.requireTextBeforeToolNames),
+    requireAssistantText: turn.requireAssistantText === true,
+    atomicTerminalToolName: normalizedToolNames(
+      turn.atomicTerminalToolName ? [turn.atomicTerminalToolName] : undefined,
+    )[0],
+    atomicTerminalRepairPrompt:
+      typeof turn.atomicTerminalRepairPrompt === "string" && turn.atomicTerminalRepairPrompt.trim()
+        ? turn.atomicTerminalRepairPrompt.trim()
+        : undefined,
   }));
 }
 
@@ -792,17 +666,6 @@ function sanitizeTurnName(name: string): string {
       .replace(/\s+/g, "-")
       .replace(/[^A-Za-z0-9._-]/g, "")
       .slice(0, 80) || "turn"
-  );
-}
-
-function sanitizeToolName(name: string): string {
-  return (
-    name
-      .trim()
-      .replace(/\s+/g, "_")
-      .replace(/[^A-Za-z0-9_-]/g, "_")
-      .replace(/_+/g, "_")
-      .slice(0, 64) || "advisor_context"
   );
 }
 

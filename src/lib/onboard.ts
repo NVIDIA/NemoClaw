@@ -118,6 +118,13 @@ const {
 const {
   finalizeCreatedSandbox,
 }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
+const {
+  reportSandboxCreateFailure,
+  reportSandboxReadinessFailure,
+}: typeof import("./onboard/created-sandbox-failure") = require("./onboard/created-sandbox-failure");
+const {
+  runSandboxCreateStep,
+}: typeof import("./onboard/sandbox-create-step") = require("./onboard/sandbox-create-step");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const {
   isLinuxDockerDriverGatewayEnabled,
@@ -2800,41 +2807,39 @@ async function createSandboxWithBaseImageResolution(
     gatewayPort: GATEWAY_PORT,
   });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
-  const { createCommand, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
-    await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
-      agent,
-      observabilityEnabled: createIntent?.observabilityEnabled === true,
-      chatUiUrl,
-      createArgs,
-      sandboxName,
-      env: process.env,
-      extraPlaceholderKeys,
-      getDashboardForwardPort,
-      hermesDashboardState,
-      manageDashboard,
-      openshellShellCommand,
-      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
-    });
-  const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
-    enabled: useDockerGpuPatch,
-    sandboxName,
-    gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
-    openshellSandboxCommand: sandboxStartupCommand,
-    timeoutSecs: sandboxReadyTimeoutSecs,
-    backend: effectiveSandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
-    deps: { runOpenshell, runCaptureOpenshell, sleep: sleepSeconds },
-  });
-  const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
-    readyCheck: () => {
-      const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      if (isSandboxReady(list, sandboxName)) return true;
-      dockerGpuCreatePatch.maybeApplyDuringCreate();
-      return false;
-    },
-    readyCheckOutputPatterns: agentDefs.isTerminalAgent(agent) ? [] : undefined,
-    failureCheck: dockerGpuCreatePatch.createFailureMessage,
-    traceEvent: onboardTracing.addTraceEvent,
-  });
+  const { createResult, prebuild, effectiveDashboardPort, dockerGpuCreatePatch } =
+    await runSandboxCreateStep(
+      {
+        agent,
+        observabilityEnabled: createIntent?.observabilityEnabled === true,
+        chatUiUrl,
+        createArgs,
+        sandboxName,
+        env: process.env,
+        extraPlaceholderKeys,
+        getDashboardForwardPort,
+        hermesDashboardState,
+        manageDashboard,
+        openshellShellCommand,
+        openshellArgv,
+        prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
+        useDockerGpuPatch,
+        gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
+        gpuBackend: effectiveSandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
+        timeoutSecs: sandboxReadyTimeoutSecs,
+      },
+      {
+        prepareCreateLaunch: sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild,
+        createDockerGpuPatch: dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch,
+        streamCreate: streamSandboxCreate,
+        isSandboxReady,
+        isTerminalAgent: agentDefs.isTerminalAgent,
+        addTraceEvent: onboardTracing.addTraceEvent,
+        runOpenshell,
+        runCaptureOpenshell,
+        sleepSeconds,
+      },
+    );
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
@@ -2854,30 +2859,24 @@ async function createSandboxWithBaseImageResolution(
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
 
   if (createResult.status !== 0) {
-    const failure = classifySandboxCreateFailure(createResult.output);
-    if (failure.kind === "sandbox_create_incomplete") {
-      // The sandbox was created in the gateway but the create stream exited
-      // with a non-zero code (e.g. SSH 255).  Fall through to the ready-wait
-      // loop — the sandbox may still reach Ready on its own.
-      console.warn("");
-      console.warn(
-        `  Create stream exited with code ${createResult.status} after sandbox was created.`,
-      );
-      console.warn("  Checking whether the sandbox reaches Ready state...");
-    } else {
-      console.error("");
-      console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
-      if (createResult.output) {
-        console.error("");
-        console.error(createResult.output);
-      }
-      sandboxCreateFailureDiagnostics.printSandboxCreateFailureDiagnostics(sandboxName, {
-        backupPath: restoreBackupPath,
-      });
-      console.error("  Try:  openshell sandbox list        # check gateway state");
-      printSandboxCreateRecoveryHints(createResult.output, { createArgs: prebuild.createArgs });
-      process.exit(createResult.status || 1);
-    }
+    reportSandboxCreateFailure(
+      {
+        sandboxName,
+        createStatus: createResult.status,
+        createOutput: createResult.output,
+        restoreBackupPath,
+        createArgs: prebuild.createArgs,
+      },
+      {
+        classifyCreateFailure: classifySandboxCreateFailure,
+        printCreateFailureDiagnostics: (name, options) =>
+          sandboxCreateFailureDiagnostics.printSandboxCreateFailureDiagnostics(name, options),
+        printRecoveryHints: printSandboxCreateRecoveryHints,
+        warn: (message) => console.warn(message),
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
+    );
   }
 
   dockerGpuCreatePatch.ensureApplied();
@@ -2898,26 +2897,27 @@ async function createSandboxWithBaseImageResolution(
   });
 
   if (!readiness.ready) {
-    console.error("");
-    sandboxReadinessTracing.printReadinessFailure(readiness, sandboxName, sandboxReadyTimeoutSecs);
-    sandboxCreateFailureDiagnostics.printSandboxCreateFailureDiagnostics(sandboxName, {
-      backupPath: restoreBackupPath,
-    });
-    if (useDockerGpuPatch) {
-      dockerGpuCreatePatch.printReadinessFailureIfEnabled();
-    } else {
-      // Clean up non-GPU failures after preserving local diagnostics so the
-      // next onboard retry with the same name does not fail on "sandbox already exists".
-      const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
-      if (delResult.status === 0) {
-        console.error("  The failed sandbox has been removed; retry will recreate it.");
-      } else {
-        console.error("  Could not remove the failed sandbox. Manual cleanup:");
-        console.error(`    openshell sandbox delete "${sandboxName}"`);
-      }
-    }
-    console.error(`  Retry: ${cliName()} onboard`);
-    process.exit(1);
+    reportSandboxReadinessFailure(
+      {
+        sandboxName,
+        readiness,
+        createStatus: createResult.status,
+        timeoutSecs: sandboxReadyTimeoutSecs,
+        restoreBackupPath,
+        useDockerGpuPatch,
+      },
+      {
+        printReadinessFailure: (result, name, timeoutSecs) =>
+          sandboxReadinessTracing.printReadinessFailure(result, name, timeoutSecs),
+        printCreateFailureDiagnostics: (name, options) =>
+          sandboxCreateFailureDiagnostics.printSandboxCreateFailureDiagnostics(name, options),
+        printDockerGpuReadinessFailure: () => dockerGpuCreatePatch.printReadinessFailureIfEnabled(),
+        deleteSandbox: (name) => runOpenshell(["sandbox", "delete", name], { ignoreError: true }),
+        cliName,
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
+    );
   }
 
   if (manageDashboard) {

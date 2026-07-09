@@ -13,7 +13,7 @@ import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { negativeOverlayOutcome } from "./overlayfs-autofix-outcome.ts";
 
-// Keep this direct: the the contract mutates the host Docker daemon into
+// Keep this direct: the contract mutates the host Docker daemon into
 // Docker 26+ containerd-snapshotter overlayfs mode, runs the real installer,
 // proves NemoClaw routes the OpenShell cluster through a local
 // fuse-overlayfs-patched image, and then proves disabling the auto-fix exposes

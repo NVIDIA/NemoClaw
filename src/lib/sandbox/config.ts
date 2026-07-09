@@ -41,6 +41,10 @@ const {
 const {
   buildHermesUpstreamHeader,
 }: typeof import("./hermes-upstream-header") = require("./hermes-upstream-header");
+const {
+  parseConfig,
+  serializeConfig,
+}: typeof import("./config-format") = require("./config-format");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -69,7 +73,7 @@ export interface AgentConfigTarget {
   configPath: string;
   /** Directory containing the config (for chown after cp) */
   configDir: string;
-  /** Config file format: "json" or "yaml" */
+  /** Config file format: "json", "yaml", or "toml" */
   format: string;
   /** Config file basename */
   configFile: string;
@@ -398,47 +402,6 @@ function classifyNewKeyGate(inputs: NewKeyGateInputs): NewKeyGate {
     return { mode: "refuse" };
   }
   return { mode: "prompt" };
-}
-
-/**
- * Parse a config file's raw text according to its format.
- */
-function parseConfig(raw: string, format: string): ConfigObject {
-  // dcode declares `format: toml` (agents/langchain-deepagents-code/manifest.yaml);
-  // without a TOML branch a config.toml (which opens with a `# Generated ...`
-  // comment) fell through to JSON.parse() and threw. Parse it with smol-toml,
-  // mirroring how yaml is handled. #6548.
-  let parsed: ConfigValue;
-  if (format === "yaml") {
-    parsed = require("yaml").parse(raw);
-  } else if (format === "toml") {
-    parsed = require("smol-toml").parse(raw);
-  } else {
-    parsed = JSON.parse(raw);
-  }
-  if (!isConfigObject(parsed)) {
-    throw new Error("Config is not an object.");
-  }
-  return parsed;
-}
-
-/**
- * Serialize a config object according to its format.
- */
-function serializeConfig(config: ConfigObject, format: string): string {
-  if (format === "yaml") {
-    const YAML = require("yaml");
-    return YAML.stringify(config);
-  }
-  if (format === "toml") {
-    // Backstop: config set already refuses TOML agents up front (their config
-    // is image-baked; #6321/#6548), so this is unreachable in practice. Refuse
-    // rather than serialize JSON into a `.toml` file, which would corrupt it.
-    throw new Error(
-      "config set is not supported for TOML-format agents (e.g. langchain-deepagents-code).",
-    );
-  }
-  return JSON.stringify(config, null, 2);
 }
 
 /**
