@@ -19,6 +19,7 @@ import {
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
 interface WorkflowStep {
+  env?: Record<string, string>;
   name?: string;
   run?: string;
   uses?: string;
@@ -258,13 +259,33 @@ describe("E2E recommendation advisor prompt", () => {
       expect(valid.gitCalls).toEqual([
         "-C /tmp/e2e-advisor-target init",
         "-C /tmp/e2e-advisor-target remote add target https://github.com/NVIDIA/NemoClaw.git",
-        "-C /tmp/e2e-advisor-target fetch --no-tags target main",
+        "-C /tmp/e2e-advisor-target fetch --no-tags target refs/heads/main:refs/remotes/target/main",
         "-C /tmp/e2e-advisor-target fetch --no-tags target pull/5756/head:refs/remotes/target/pr-5756",
         "-C /tmp/e2e-advisor-target checkout --detach refs/remotes/target/pr-5756",
       ]);
       expect(valid.githubEnv).toBe("ADVISOR_WORKDIR=/tmp/e2e-advisor-target\nPR_NUMBER=5756\n");
     } finally {
       valid.cleanup();
+    }
+  });
+
+  it("strips untrusted symlinks before secret-bearing advisor steps", () => {
+    const steps = readAdvisorWorkflow().jobs?.advise?.steps ?? [];
+    const removeSymlinksIndex = steps.findIndex(
+      (step) => step.name === "Remove symlinks from analysis workspace",
+    );
+    expect(removeSymlinksIndex).toBeGreaterThanOrEqual(0);
+
+    const removeSymlinks = steps[removeSymlinksIndex];
+    expect(removeSymlinks?.run).toContain('find "$ADVISOR_WORKDIR" -type l -print0');
+    expect(removeSymlinks?.run).toContain('rm -- "$link"');
+
+    for (const advisorStepName of ["Run E2E recommendation advisor", "Run E2E target advisor"]) {
+      const advisorIndex = steps.findIndex((step) => step.name === advisorStepName);
+      expect(advisorIndex, advisorStepName).toBeGreaterThan(removeSymlinksIndex);
+      expect(steps[advisorIndex]?.env?.E2E_ADVISOR_API_KEY, advisorStepName).toBe(
+        "${{ secrets.PI_E2E_ADVISOR_API_KEY }}",
+      );
     }
   });
 });

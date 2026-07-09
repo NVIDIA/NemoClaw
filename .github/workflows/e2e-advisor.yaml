@@ -149,7 +149,7 @@ jobs:
           mkdir -p "$TARGET_DIR"
           git -C "$TARGET_DIR" init
           git -C "$TARGET_DIR" remote add target "https://github.com/${TARGET_REPO}.git"
-          git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"
+          git -C "$TARGET_DIR" fetch --no-tags target "refs/heads/${TARGET_BASE}:refs/remotes/target/${TARGET_BASE}"
           git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"
           git -C "$TARGET_DIR" checkout --detach "refs/remotes/target/pr-${TARGET_PR}"
           if [ -n "$EXPECTED_HEAD_SHA" ] && [ "$(git -C "$TARGET_DIR" rev-parse HEAD)" != "$EXPECTED_HEAD_SHA" ]; then
