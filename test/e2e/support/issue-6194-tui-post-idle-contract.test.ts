@@ -141,6 +141,10 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "expect_exact_or_exit $termSpawn {Sandboxes} openshell_dashboard 64 65",
     );
     expect(script.match(/send -i \$termSpawn -- "\\t"/gu) ?? []).toHaveLength(2);
+    expect(script).toContain(
+      "expect_exact_or_exit $termSpawn {Name:} openshell_sandbox_detail 68 69",
+    );
+    expect(script).not.toContain("(Dashboard-)?Sandbox:");
     expect(script).toContain('send -i $termSpawn -- "r"');
     expect(script).toContain(
       "expect_exact_or_exit $termSpawn {Network Rules} network_rules_focused",

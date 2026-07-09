@@ -175,7 +175,7 @@ send -i $termSpawn -- "\\t"
 after 200
 expect_exact_or_exit $termSpawn $sandbox openshell_sandbox_listed 66 67
 send -i $termSpawn -- "\\r"
-expect_or_exit $termSpawn {(Dashboard-)?Sandbox:} openshell_sandbox_detail 68 69
+expect_exact_or_exit $termSpawn {Name:} openshell_sandbox_detail 68 69
 expect_exact_or_exit $termSpawn $sandbox openshell_sandbox_detail_name 70 71
 # OpenShell documents 'r' as the Network Rules focus key in sandbox detail.
 send -i $termSpawn -- "r"
