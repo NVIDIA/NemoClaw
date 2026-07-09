@@ -86,6 +86,50 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     }
   });
 
+  it("allows plain OTLP endpoint URLs but rejects credential-bearing endpoint values", () => {
+    // Regression for #6466: a plain OTLP collector URL is not a credential and
+    // must pass the guard (the documented `--observability` flow sets one),
+    // while a URL with embedded userinfo or a structured key-bearing blob is
+    // still refused.
+    const endpointNames = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"];
+    const plainUrls = [
+      "http://host.openshell.internal:4318",
+      "http://host.openshell.internal:4318/v1/traces",
+      "https://collector.example.com:4318",
+    ];
+    const credentialBearing = [
+      "http://token@example.com:4318",
+      "http://user:pass@host:4318",
+      '{"https://trace.example":"opaque-key-value"}',
+    ];
+
+    for (const name of endpointNames) {
+      for (const url of plainUrls) {
+        const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-otlp-ok-"));
+        const runtimeFixture = makeWrapperFixture(runtimeDir);
+        const runtimeResult = runWrapper(runtimeFixture.wrapperPath, ["-n", "hi"], { [name]: url });
+        expect(runtimeResult.status, `${name}=${url}`).toBe(0);
+        expect(fs.existsSync(runtimeFixture.ranMarker)).toBe(true);
+
+        const dotenvDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-otlp-ok-dotenv-"));
+        const dotenvFixture = makeWrapperFixture(dotenvDir);
+        fs.writeFileSync(dotenvFixture.envFile, `${name}=${url}\n`, "utf8");
+        const dotenvResult = runWrapper(dotenvFixture.wrapperPath, ["-n", "hi"], {});
+        expect(dotenvResult.status, `${name}=${url} (dotenv)`).toBe(0);
+        expect(fs.existsSync(dotenvFixture.ranMarker)).toBe(true);
+      }
+
+      for (const value of credentialBearing) {
+        const rejectDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-otlp-bad-"));
+        const rejectFixture = makeWrapperFixture(rejectDir);
+        const result = runWrapper(rejectFixture.wrapperPath, ["-n", "hi"], { [name]: value });
+        expect(result.status, `${name}=${value}`).not.toBe(0);
+        expect(result.stderr).toContain(name);
+        expect(fs.existsSync(rejectFixture.ranMarker)).toBe(false);
+      }
+    }
+  });
+
   it("rejects mismatched, malformed, wrapped, and raw credential placeholders", () => {
     const invalidCases = [
       { name: "MODEL_NAME", value: "openshell:resolve:env:OTHER_NAME" },

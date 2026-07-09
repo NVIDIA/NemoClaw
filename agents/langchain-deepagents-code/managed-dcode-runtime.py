@@ -54,10 +54,18 @@ _CREDENTIAL_CAMEL_NAME = re.compile(
 _CREDENTIAL_ENV_NAMES = {
     "LANGSMITH_RUNS_ENDPOINTS",
     "LANGCHAIN_RUNS_ENDPOINTS",
-    "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
     "OTEL_EXPORTER_OTLP_HEADERS",
     "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+}
+# OTLP endpoint variables carry the collector URL, not a credential. The
+# documented `--observability` flow sets one (e.g.
+# http://host.openshell.internal:4318), so a clean bare http(s) URL is allowed;
+# a value with userinfo or a structured key-bearing blob is still refused. The
+# `_HEADERS` variants stay in _CREDENTIAL_ENV_NAMES because they carry auth
+# material. Mirrors dcode-wrapper.sh is_otlp_endpoint_name (#6466).
+_OTLP_ENDPOINT_ENV_NAMES = {
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
 }
 # Python's \s also includes control separators that ECMAScript excludes, so
 # spell out the canonical whitespace set for cross-runtime parity.
@@ -232,6 +240,23 @@ def _is_managed_value(name: str, value: str) -> bool:
     return False
 
 
+def _is_bare_http_url_without_userinfo(value: str) -> bool:
+    """Accept only a single credential-free http(s) URL.
+
+    A value with userinfo (scheme://user:pass@host) or a structured blob that
+    could smuggle a key in another field (JSON, quoted, whitespace- or
+    comma-joined) is rejected, mirroring the OpenClaw OTEL config contract
+    ("... must not include credentials"). Token-shaped material anywhere in the
+    value is still caught by _contains_secret_shape before this runs.
+    """
+    if not (value.startswith("http://") or value.startswith("https://")):
+        return False
+    if any(ch in value for ch in " \t\r\n\"'{},"):
+        return False
+    authority = value.split("://", 1)[1].split("/", 1)[0]
+    return "@" not in authority
+
+
 def _assert_safe_environment() -> None:
     for name, value in os.environ.items():
         if _OPENSHELL_ENV_PLACEHOLDER_PREFIX in value:
@@ -251,6 +276,15 @@ def _assert_safe_environment() -> None:
             )
         ) or (
             bool(value) and name.upper() in _CREDENTIAL_ENV_NAMES
+        ):
+            raise RuntimeError(
+                f"runtime environment variable {name} contains a credential; "
+                "use NemoClaw credential handling"
+            )
+        if (
+            name.upper() in _OTLP_ENDPOINT_ENV_NAMES
+            and value
+            and not _is_bare_http_url_without_userinfo(value)
         ):
             raise RuntimeError(
                 f"runtime environment variable {name} contains a credential; "

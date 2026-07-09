@@ -339,7 +339,10 @@ check("disabled", False)
       ["SLACK_BOT_TOKEN", "xoxb-sk-abcdefghijklmnopqrstuv"],
       ["LANGSMITH_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
       ["LANGCHAIN_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
-      ["OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.example/v1/traces"],
+      // A plain OTLP endpoint URL is allowed (#6466); credential-bearing forms
+      // (embedded userinfo, structured key blob) are still refused.
+      ["OTEL_EXPORTER_OTLP_ENDPOINT", "http://token@collector.example:4318"],
+      ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", '{"https://trace.example":"opaque-key-value"}'],
       ["OTEL_EXPORTER_OTLP_HEADERS", "authorization=opaque-value"],
     ]) {
       const result = spawnSync("python3", ["-m", "deepagents_code"], {
@@ -349,6 +352,24 @@ check("disabled", False)
 
       expect(result.status, `${name} was allowed`).not.toBe(0);
       expect(result.stderr).toContain(`runtime environment variable ${name}`);
+    }
+  });
+
+  it("allows plain OTLP endpoint URLs in the direct-module runtime (#6466)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
+      for (const value of [
+        "http://host.openshell.internal:4318",
+        "https://collector.example/v1/traces",
+      ]) {
+        const result = spawnSync("python3", ["-m", "deepagents_code"], {
+          env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+          encoding: "utf8",
+        });
+        expect(result.status, `${name}=${value} was rejected: ${result.stderr}`).toBe(0);
+        expect(result.stdout).toContain("managed-posture-ok");
+      }
     }
   });
 

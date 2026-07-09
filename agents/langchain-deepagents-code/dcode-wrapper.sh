@@ -115,6 +115,12 @@ run_dcode() {
 #       ends in a credential keyword (_KEY, _TOKEN, _SECRET, _PASSWORD,
 #       _PASSWD, _PASS, _CREDENTIAL) and the value is at least 10 chars (mirroring
 #       CONTEXT_PATTERNS minimum length).
+#     * OTLP endpoint variables (OTEL_EXPORTER_OTLP_ENDPOINT and its _TRACES_
+#       variant) carry a collector URL, not a credential, so a clean bare
+#       http(s) URL is allowed (the documented `--observability` flow sets one).
+#       A value with userinfo or a structured blob that could smuggle a key is
+#       still refused; the `_HEADERS` variants remain under the name-context
+#       refusal because they do carry auth material.
 #     * Managed messaging values (SLACK_BOT_TOKEN, SLACK_APP_TOKEN,
 #       TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN) are allowed only when the value
 #       matches the platform-specific token shape AND does not embed a
@@ -327,7 +333,7 @@ has_credential_name_context() {
     LANGSMITH_RUNS_ENDPOINTS | LANGCHAIN_RUNS_ENDPOINTS)
       return 0
       ;;
-    OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT | OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
+    OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
       return 0
       ;;
     *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASSWD | *_PASS | *_CREDENTIAL | *-API-KEY | *-KEY | *-TOKEN | *-SECRET | *-PASSWORD | *-PASSWD | *-PASS | *-CREDENTIAL)
@@ -349,6 +355,42 @@ is_allowed_openshell_runtime_value() {
   local name="$1"
   local value="$2"
   [ "$name" = "OPENSHELL_TLS_KEY" ] && [ "$value" = "$OPENSHELL_TLS_KEY_PATH" ]
+}
+
+# OTLP endpoint variables carry the collector URL, not a credential. The
+# documented `--observability` flow sets one (e.g.
+# http://host.openshell.internal:4318), so a clean bare http(s) URL must be
+# accepted rather than refused on length like a credential-named var. The
+# `_HEADERS` variants (which do carry auth material) stay under the generic
+# name-context refusal; only the `_ENDPOINT` variants get this URL allowance.
+is_otlp_endpoint_name() {
+  case "$1" in
+    OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) return 0 ;;
+  esac
+  return 1
+}
+
+# Accept only a single, credential-free http(s) URL. Anything else — a value
+# with userinfo (scheme://user:pass@host) or a structured blob that could
+# smuggle a key in another field (JSON, quoted, whitespace- or comma-joined) —
+# is rejected, mirroring the OpenClaw OTEL config contract ("... must not
+# include credentials"). Token-shaped material anywhere in the value is already
+# caught by is_secret_shaped_value before this runs.
+is_bare_http_url_without_userinfo() {
+  local value="$1" authority
+  case "$value" in
+    http://* | https://*) ;;
+    *) return 1 ;;
+  esac
+  case "$value" in
+    *[[:space:]]* | *\"* | *\'* | *\{* | *\}* | *,*) return 1 ;;
+  esac
+  authority="${value#*://}"
+  authority="${authority%%/*}"
+  case "$authority" in
+    *@*) return 1 ;;
+  esac
+  return 0
 }
 
 is_dynamic_dotenv_value() {
@@ -445,6 +487,11 @@ assert_no_secret_runtime_env() {
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
+    if is_otlp_endpoint_name "$name"; then
+      is_bare_http_url_without_userinfo "$value" \
+        || refuse_secret_env "runtime environment variable" "$name"
+      continue
+    fi
     if has_credential_name_context "$name" && [ ${#value} -ge 10 ] && ! is_allowed_openshell_runtime_value "$name" "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
@@ -507,6 +554,11 @@ assert_no_secret_env_file() {
     fi
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "$env_file" "$key"
+    fi
+    if is_otlp_endpoint_name "$key"; then
+      is_bare_http_url_without_userinfo "$value" \
+        || refuse_secret_env "$env_file" "$key"
+      continue
     fi
     if has_credential_name_context "$key" && [ ${#value} -ge 10 ]; then
       refuse_secret_env "$env_file" "$key"
