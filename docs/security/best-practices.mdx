@@ -643,10 +643,10 @@ Device authentication requires each connecting device to go through a pairing fl
 
 | Aspect | Detail |
 |---|---|
-| Default | Enabled. The gateway requires device pairing for all connections. |
-| What you can change | Set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` as a Docker build argument to disable device authentication. This is a build-time setting baked into `openclaw.json` and verified by hash at startup. |
+| Default | Enabled for loopback dashboards. NemoClaw disables device authentication for non-loopback `CHAT_UI_URL` values and when `NEMOCLAW_DISABLE_DEVICE_AUTH=1`. |
+| What you can change | Use a loopback `CHAT_UI_URL` to retain device authentication. Set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` only as a deliberate build-time opt-out. The setting is baked into `openclaw.json` and verified by hash at startup. |
 | Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
-| Recommendation | Keep device auth enabled (the default). Only disable it for headless or development environments where no untrusted devices can reach the gateway. |
+| Recommendation | Prefer loopback access or SSH port forwarding so device authentication stays enabled. If a browser-only remote dashboard requires the compatibility setting, use HTTPS and restrict who can reach the dashboard. |
 
 ### Gateway Bind Address
 
@@ -682,6 +682,20 @@ The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS a
 | What you can change | This is derived automatically from `CHAT_UI_URL`. Set `CHAT_UI_URL` to an `https://` URL to enforce secure auth. |
 | Risk if relaxed | Allowing insecure auth over HTTPS defeats the purpose of TLS, because authentication tokens transit in cleartext. |
 | Recommendation | Use `https://` for any deployment accessible beyond `localhost`. The default local URL (`http://127.0.0.1:18789`) correctly allows insecure auth for local development. |
+
+OpenClaw's security audit keeps NemoClaw-managed `allowInsecureAuth` and `dangerouslyDisableDeviceAuth` findings visible as accepted findings instead of counting them as unexplained active findings.
+The generated configuration uses exact audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
+The audit also reports that suppressions are active so you can review the accepted risk.
+These suppressions change audit reporting only.
+They do not make either flag safe, weaken enforcement, or suppress unrelated findings.
+
+Review the accepted findings and their recorded reasons:
+
+```bash
+openclaw security audit --json | jq '.suppressedFindings'
+```
+
+Remove the underlying risky condition when dashboard compatibility no longer requires it.
 
 ### Auto-Pair Client Allowlist
 

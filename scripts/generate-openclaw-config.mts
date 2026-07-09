@@ -1192,6 +1192,31 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const isRemote = !isLoopback(parsed.hostname || "");
   const disableDeviceAuth = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1" || isRemote;
   const allowInsecure = parsed.scheme === "http";
+  const securityAuditSuppressions: JsonObject[] = [];
+  if (allowInsecure) {
+    const reason =
+      "NemoClaw derives this setting from an HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.";
+    securityAuditSuppressions.push(
+      { checkId: "gateway.control_ui.insecure_auth", reason },
+      {
+        checkId: "config.insecure_or_dangerous_flags",
+        detailIncludes: "gateway.controlUi.allowInsecureAuth=true",
+        reason,
+      },
+    );
+  }
+  if (disableDeviceAuth) {
+    const reason =
+      "NemoClaw enables this compatibility setting for non-loopback or explicitly opted-out dashboards; use loopback access to retain device authentication.";
+    securityAuditSuppressions.push(
+      { checkId: "gateway.control_ui.device_auth_disabled", reason },
+      {
+        checkId: "config.insecure_or_dangerous_flags",
+        detailIncludes: "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+        reason,
+      },
+    );
+  }
 
   const providerModels: JsonObject[] = [
     {
@@ -1311,6 +1336,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
     channels: { defaults: {} },
     tools: openclawTools,
     update: { checkOnStart: false },
+    ...(securityAuditSuppressions.length > 0
+      ? { security: { audit: { suppressions: securityAuditSuppressions } } }
+      : {}),
     plugins,
     gateway: {
       mode: "local",
