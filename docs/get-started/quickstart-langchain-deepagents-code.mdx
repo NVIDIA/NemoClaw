@@ -215,6 +215,15 @@ The command prints the sandbox name, NemoClaw harness, active `dcode` agent, con
 `dcode --help` lists the managed aliases before the upstream Deep Agents Code help.
 The sandbox name resolves when you run the command from a `nemoclaw <sandbox-name> connect` shell, which loads the NemoClaw runtime environment.
 
+Inspect the generated Deep Agents configuration from the host with:
+
+```bash
+nemo-deepagents <sandbox-name> config get
+```
+
+NemoClaw parses `config.toml`, removes gateway auth data, and redacts credential-shaped values before printing it.
+`config set` is not supported for this image-baked configuration; re-onboard the named sandbox to change its managed provider or model selection.
+
   </Accordion>
 
   <Accordion title="Manage Python and sandbox state">
