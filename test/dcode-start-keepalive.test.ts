@@ -27,8 +27,9 @@ function makeStartFixture(
   const hostFile = path.join(tempDir, "trusted-proxy-host");
   const portFile = path.join(tempDir, "trusted-proxy-port");
   const rlimitsHelper = path.join(tempDir, "sandbox-rlimits.sh");
-  if (options.rlimitsHelperContent) {
-    fs.writeFileSync(rlimitsHelper, options.rlimitsHelperContent(tempDir));
+  const rlimitsHelperContent = options.rlimitsHelperContent?.(tempDir);
+  for (const content of rlimitsHelperContent === undefined ? [] : [rlimitsHelperContent]) {
+    fs.writeFileSync(rlimitsHelper, content);
     fs.chmodSync(rlimitsHelper, 0o444);
   }
   const fixture = fs
