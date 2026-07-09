@@ -7,6 +7,7 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   listCredentialLeakPaths,
@@ -19,8 +20,6 @@ import {
 import {
   readCompletedRebuildEvidence,
   readInterruptedRebuildEvidence,
-  readRebuildRegistryEvidence,
-  sandboxContainerIds,
   startRebuildAtDurableBoundary,
 } from "../fixtures/rebuild-recovery.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -83,6 +82,62 @@ async function expectStoppedRebuild(
   });
   expect(state.exitCode, resultText(state)).toBe(0);
   expect(state.stdout.trim()).toMatch(/^T/u);
+}
+
+async function sandboxContainerIds(host: HostCliClient, artifactName: string): Promise<string[]> {
+  const result = await host.command(
+    "docker",
+    [
+      "ps",
+      "-a",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--format",
+      "{{.ID}}",
+    ],
+    { artifactName, env: buildAvailabilityProbeEnv() },
+  );
+  expect(result.exitCode, resultText(result)).toBe(0);
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+async function expectOpenClawVersion(
+  sandbox: SandboxClient,
+  expectedVersion: string,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.exec(SANDBOX_NAME, ["openclaw", "--version"], {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(resultText(result)).toContain(expectedVersion);
+}
+
+function registryEvidence(home: string) {
+  const entry = readRegistrySandboxEntry(SANDBOX_NAME);
+  const registry = JSON.parse(
+    fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
+  ) as { defaultSandbox?: string | null };
+  const policies = entry.policies;
+  if (!Array.isArray(policies) || !policies.every((policy) => typeof policy === "string")) {
+    throw new Error("registry policies must be a string array");
+  }
+  return {
+    agent: entry.agent ?? null,
+    defaultSandbox: registry.defaultSandbox ?? null,
+    gatewayName: entry.gatewayName,
+    gatewayPort: entry.gatewayPort,
+    agentVersion: entry.agentVersion,
+    nemoclawVersion: entry.nemoclawVersion,
+    observabilityEnabled: entry.observabilityEnabled === true,
+    policies: [...policies].sort(),
+    toolDisclosure: entry.toolDisclosure,
+  };
 }
 
 test(
@@ -174,7 +229,7 @@ test(
       timeoutMs: ONBOARD_TIMEOUT_MS,
     });
     const home = process.env.HOME ?? os.homedir();
-    const initialRegistry = readRebuildRegistryEvidence(SANDBOX_NAME, home);
+    const initialRegistry = registryEvidence(home);
 
     const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
       artifactName: "phase-2-status-version-detection",
@@ -224,12 +279,7 @@ test(
     });
     await expectStoppedRebuild(host, deletedProcess.pid, "phase-5-stopped-process-state");
     const deletedEvidence = readInterruptedRebuildEvidence(SANDBOX_NAME, "old_deleted", home);
-    expect(
-      await sandboxContainerIds(host, SANDBOX_NAME, {
-        artifactName: "phase-5-old-sandbox-container-absence",
-        env: buildAvailabilityProbeEnv(),
-      }),
-    ).toEqual([]);
+    expect(await sandboxContainerIds(host, "phase-5-old-sandbox-container-absence")).toEqual([]);
     const deletedList = await sandbox.list({
       artifactName: "phase-5-old-sandbox-openshell-absence",
       env: {
@@ -272,6 +322,11 @@ test(
       SANDBOX_NAME,
       STALE_AGENT_VERSION,
     );
+    await expectOpenClawVersion(
+      sandbox,
+      updatedVersion,
+      "phase-7-openclaw-version-after-old-deleted-recovery",
+    );
     await artifacts.writeJson("phase-7-registry-version-summary.json", {
       sandboxName: SANDBOX_NAME,
       staleVersion: STALE_AGENT_VERSION,
@@ -298,10 +353,10 @@ test(
       home,
     );
     expect(replacementEvidence.transactionId).not.toBe(firstCompleted.transactionId);
-    const replacementContainers = await sandboxContainerIds(host, SANDBOX_NAME, {
-      artifactName: "phase-8-replacement-container-identity",
-      env: buildAvailabilityProbeEnv(),
-    });
+    const replacementContainers = await sandboxContainerIds(
+      host,
+      "phase-8-replacement-container-identity",
+    );
     expect(replacementContainers).toHaveLength(1);
     const replacementList = await sandbox.list({
       artifactName: "phase-8-replacement-ready",
@@ -340,26 +395,29 @@ test(
       attempts: 12,
       delayMs: 5_000,
     });
-    expect(
-      await sandboxContainerIds(host, SANDBOX_NAME, {
-        artifactName: "phase-9-adopted-container-identity",
-        env: buildAvailabilityProbeEnv(),
-      }),
-    ).toEqual([adoptedContainerId]);
+    expect(await sandboxContainerIds(host, "phase-9-adopted-container-identity")).toEqual([
+      adoptedContainerId,
+    ]);
     await stateValidation.expectMarkerFileContent(instance, MARKER_FILE, MARKER_CONTENT, {
       artifactName: "phase-9-read-marker-after-adoption",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 60_000,
     });
+    await expectOpenClawVersion(
+      sandbox,
+      updatedVersion,
+      "phase-9-openclaw-version-after-replacement-adoption",
+    );
 
     const secondCompleted = readCompletedRebuildEvidence(SANDBOX_NAME, home);
     expect(secondCompleted.transactionId).toBe(replacementEvidence.transactionId);
     expect(secondCompleted.transactionId).not.toBe(firstCompleted.transactionId);
     await artifacts.writeJson("phase-10-completed-generations.json", {
-      retainedCompletedTombstones: [firstCompleted, secondCompleted],
+      observedCompletedGenerations: [firstCompleted, secondCompleted],
+      durableRetention: "latest-generation-only",
     });
 
-    const finalRegistry = readRebuildRegistryEvidence(SANDBOX_NAME, home);
+    const finalRegistry = registryEvidence(home);
     expect(finalRegistry).toMatchObject({
       agent: initialRegistry.agent,
       defaultSandbox: initialRegistry.defaultSandbox,

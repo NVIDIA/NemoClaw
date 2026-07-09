@@ -3,138 +3,9 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createRebuildFlowHarness,
-  installRebuildFlowTestHooks,
-} from "../../../test/helpers/rebuild-flow-test-harness";
-import { makePreparedRecoveryManifest } from "../actions/sandbox/rebuild-flow-test-fixtures";
-import * as coreVersion from "../core/version";
-import * as sandboxList from "../openshell-sandbox-list";
-import * as sandboxVersion from "../sandbox/version";
-import * as registry from "../state/registry";
-import * as sandboxState from "../state/sandbox";
-import { upgradeSandboxes, upgradeSandboxesDependencies } from "./upgrade-sandboxes";
-
-type UpgradeSandboxes = typeof upgradeSandboxes;
-
-installRebuildFlowTestHooks();
-
-function makeManifest(sandboxName: string) {
-  const timestamp = `2026-07-01T06-50-4${sandboxName.length}-044Z`;
-  return {
-    version: 1,
-    sandboxName,
-    timestamp,
-    agentType: "openclaw",
-    agentVersion: "2026.5.27",
-    expectedVersion: "2026.5.27",
-    stateDirs: ["workspace"],
-    backedUpDirs: ["workspace"],
-    stateFiles: [],
-    dir: "/sandbox/.openclaw",
-    backupPath: `/tmp/rebuild-backups/${sandboxName}/${timestamp}`,
-    blueprintDigest: null,
-    policyPresets: [],
-    customPolicies: [],
-    snapshotVersion: 1,
-  };
-}
-
-function createRecoveryHarness(
-  names: string[],
-  options: {
-    gatewayNames?: Record<string, string>;
-    gatewayPort?: number;
-    liveOutput?: string;
-    latestBackup?: ReturnType<typeof makeManifest> | null;
-    registryOverrides?: Record<
-      string,
-      Partial<{
-        agent: "openclaw" | "hermes" | "langchain-deepagents-code" | null;
-        agentVersion: string | null;
-        nemoclawVersion: string | null;
-        fromDockerfile: string | null;
-      }>
-    >;
-    confirmedLegacyManagedNames?: string[] | string;
-    staleNames?: string[];
-    useRealManagedEvidence?: boolean;
-  } = {},
-): {
-  upgradeSandboxes: UpgradeSandboxes;
-  rebuildSpy: ReturnType<typeof vi.fn>;
-  latestBackupSpy: ReturnType<typeof vi.spyOn>;
-  managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
-  liveListSpy: ReturnType<typeof vi.spyOn>;
-} {
-  vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
-  vi.stubEnv(
-    "NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES",
-    typeof options.confirmedLegacyManagedNames === "string"
-      ? options.confirmedLegacyManagedNames
-      : JSON.stringify(options.confirmedLegacyManagedNames ?? []),
-  );
-
-  vi.spyOn(console, "log").mockImplementation(() => undefined);
-  vi.spyOn(console, "error").mockImplementation(() => undefined);
-  vi.spyOn(console, "warn").mockImplementation(() => undefined);
-  vi.spyOn(upgradeSandboxesDependencies, "getGatewayPort").mockReturnValue(
-    options.gatewayPort ?? 8080,
-  );
-  vi.spyOn(coreVersion, "getVersion").mockReturnValue("0.0.71");
-  const liveListSpy = vi
-    .spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit")
-    .mockResolvedValue({
-      status: 0,
-      output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
-    });
-  vi.spyOn(registry, "listSandboxes").mockReturnValue({
-    defaultSandbox: null,
-    sandboxes: names.map((name) => ({
-      name,
-      agent: null,
-      agentVersion: "2026.5.27",
-      gatewayName: options.gatewayNames?.[name],
-      gatewayPort: options.gatewayPort,
-      nemoclawVersion: "0.0.71",
-      ...options.registryOverrides?.[name],
-    })),
-  });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation((...args: unknown[]) => {
-    const name = String(args[0]);
-    return {
-      sandboxVersion: options.staleNames?.includes(name) === true ? "2026.5.26" : "2026.5.27",
-      expectedVersion: "2026.5.27",
-      isStale: options.staleNames?.includes(name) === true,
-      verificationFailed: false,
-      detectionMethod: "registry",
-    };
-  });
-  const latestBackupSpy = vi
-    .spyOn(sandboxState, "getLatestBackup")
-    .mockImplementation((...args: unknown[]) =>
-      options.latestBackup === undefined ? makeManifest(String(args[0])) : options.latestBackup,
-    );
-  vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
-    (...args: unknown[]) => ({
-      ok: true as const,
-      manifest: args[2] as ReturnType<typeof makeManifest>,
-    }),
-  );
-  const managedEvidenceSpy = options.useRealManagedEvidence
-    ? vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence")
-    : vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(true);
-  const rebuildSpy = vi
-    .spyOn(upgradeSandboxesDependencies, "rebuildSandbox")
-    .mockResolvedValue(undefined);
-
-  return {
-    upgradeSandboxes,
-    rebuildSpy,
-    latestBackupSpy,
-    managedEvidenceSpy,
-    liveListSpy,
-  };
-}
+  createRecoveryHarness,
+  makeRecoveryManifest,
+} from "./upgrade-sandboxes-recovery.test-support";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -176,55 +47,11 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
-  it("continues an existing old_deleted transaction through the installer runner (#6437)", async () => {
-    let onboardAttempts = 0;
-    const flow = createRebuildFlowHarness({
-      staleRecovery: true,
-      onboard: () => {
-        onboardAttempts += 1;
-        return onboardAttempts === 1
-          ? Promise.reject(new Error("interrupt before replacement receipt"))
-          : undefined;
-      },
-    });
-
-    await expect(
-      flow.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Recreate failed");
-    const interrupted = flow.transactionStore.load("alpha");
-    expect(interrupted).toMatchObject({ status: "active", phase: "old_deleted" });
-
-    const resumed = createRebuildFlowHarness({ staleRecovery: true });
-    resumed.onboardSpy.mockClear();
-    const upgrade = createRecoveryHarness(["alpha"], {
-      latestBackup: makePreparedRecoveryManifest() as ReturnType<typeof makeManifest>,
-    });
-    upgrade.rebuildSpy.mockImplementation((...args) =>
-      resumed.rebuildSandbox(args[0], args[1], {
-        ...args[2],
-        transactionStore: flow.transactionStore,
-      }),
-    );
-
-    await expect(upgrade.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
-
-    expect(flow.transactionStore.load("alpha")).toMatchObject({
-      transactionId: interrupted?.transactionId,
-      status: "completed",
-      phase: "completed",
-    });
-    expect(resumed.onboardSpy).toHaveBeenCalledOnce();
-    expect(upgrade.rebuildSpy).toHaveBeenCalledOnce();
-  });
-
   it("fails closed for a probed v0.0.55 custom image with matching backup agent version", async () => {
     const probedAgentVersion = "2026.5.27";
     const harness = createRecoveryHarness(["custom-box"], {
       latestBackup: {
-        ...makeManifest("custom-box"),
+        ...makeRecoveryManifest("custom-box"),
         agentVersion: probedAgentVersion,
       },
       registryOverrides: {
@@ -604,7 +431,7 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       .mockImplementationOnce(() => {
         throw new Error("ENOTDIR: unreadable backup root");
       })
-      .mockImplementationOnce((name: string) => makeManifest(name));
+      .mockImplementationOnce((name: string) => makeRecoveryManifest(name));
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);

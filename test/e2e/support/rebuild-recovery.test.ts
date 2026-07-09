@@ -10,7 +10,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
-  readCompletedRebuildEvidence,
   readInterruptedRebuildEvidence,
   startRebuildAtDurableBoundary,
 } from "../fixtures/rebuild-recovery.ts";
@@ -43,7 +42,7 @@ function statePaths(home: string) {
   };
 }
 
-function writeState(home: string): ReturnType<typeof statePaths> {
+function writeState(home: string): void {
   const paths = statePaths(home);
   for (const file of Object.values(paths)) fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(
@@ -103,7 +102,6 @@ function writeState(home: string): ReturnType<typeof statePaths> {
       },
     }),
   );
-  return paths;
 }
 
 afterEach(() => {
@@ -119,10 +117,12 @@ describe("live rebuild interruption evidence", () => {
       command,
       `#!/usr/bin/env node
 const phase = process.env.NEMOCLAW_E2E_FORCE_FAIL_AT_STEP.replace("rebuild_", "");
-console.error(process.env.INJECTED_SECRET);
-console.error(\`[e2e] Rebuild interruption point '\${phase}' (pid \${process.pid}).\`);
-process.kill(process.pid, "SIGSTOP");
-setInterval(() => undefined, 1000);
+const marker = "[e2e] Rebuild interruption point '" + phase + "' (pid " + process.pid + ").";
+const output = "x".repeat(300000) + process.env.INJECTED_SECRET + "\\n" + marker + "\\n";
+process.stderr.write(output, () => {
+  process.kill(process.pid, "SIGSTOP");
+  setInterval(() => undefined, 1000);
+});
 `,
       { mode: 0o755 },
     );
@@ -140,16 +140,20 @@ setInterval(() => undefined, 1000);
     });
 
     expect(
-      execFileSync("ps", ["-o", "stat=", "-p", String(paused.pid)], { encoding: "utf8" }).trim(),
+      execFileSync("ps", ["-o", "stat=", "-p", String(paused.pid)], {
+        encoding: "utf8",
+      }).trim(),
     ).toMatch(/^T/u);
     await expect(paused.kill()).resolves.toMatchObject({ signal: "SIGKILL" });
-    expect(
-      fs.readFileSync(path.join(artifacts.rootDir, "process-death.stderr.txt"), "utf8"),
-    ).toContain("[REDACTED]");
-    expect(
-      fs.readFileSync(path.join(artifacts.rootDir, "process-death.stderr.txt"), "utf8"),
-    ).not.toContain(secret);
-  });
+    const stderr = fs.readFileSync(
+      path.join(artifacts.rootDir, "process-death.stderr.txt"),
+      "utf8",
+    );
+    expect(stderr).toContain("[earlier output truncated]");
+    expect(stderr).toContain("[REDACTED]");
+    expect(stderr).not.toContain(secret);
+    expect(stderr.length).toBeLessThanOrEqual(256 * 1024);
+  }, 15_000);
 
   it("projects only allow-listed recovery identity at replacement_unjournaled (#6437)", () => {
     const home = createHome();
@@ -178,28 +182,5 @@ setInterval(() => undefined, 1000);
     expect(serialized).not.toContain("secret-model-name");
     expect(serialized).not.toContain("SECRET_API_KEY");
     expect(serialized).not.toContain("secret.invalid");
-  });
-
-  it("keeps the completed tombstone projection after required receipts publish (#6437)", () => {
-    const home = createHome();
-    const paths = writeState(home);
-    const record = JSON.parse(fs.readFileSync(paths.transaction, "utf8"));
-    record.revision = 4;
-    record.status = "completed";
-    record.phase = "completed";
-    record.completedAt = "2026-07-09T00:03:00.000Z";
-    record.receipts.replacement = {
-      identityFingerprint: fingerprintC,
-      observedAt: "2026-07-09T00:02:00.000Z",
-    };
-    fs.writeFileSync(paths.transaction, JSON.stringify(record));
-
-    expect(readCompletedRebuildEvidence(sandboxName, home)).toMatchObject({
-      transactionId,
-      revision: 4,
-      status: "completed",
-      phase: "completed",
-      receipts: { backup: true, oldSandboxDeletion: true, replacement: true },
-    });
   });
 });

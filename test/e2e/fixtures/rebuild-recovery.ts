@@ -2,32 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawn } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import type { Session } from "../../../src/lib/state/onboard-session";
+import {
+  getRebuildTransactionPath,
+  type RebuildTransactionDiagnosticV1,
+  type RebuildTransactionRecordV1,
+} from "../../../src/lib/state/rebuild-transaction";
+import type { SandboxRegistry } from "../../../src/lib/state/registry";
 
 import type { ArtifactSink } from "./artifacts.ts";
-import { resultText } from "./clients/command.ts";
-import type { HostCliClient } from "./clients/host.ts";
-import type { ShellProbeRunOptions } from "./shell-probe.ts";
 
 export type LiveRebuildInterruptionPhase = "old_deleted" | "replacement_unjournaled";
 
-export interface RebuildTransactionEvidence {
-  transactionId: string;
-  sandboxName: string;
-  revision: number;
-  status: "active" | "completed";
+export interface RebuildTransactionEvidence
+  extends Omit<RebuildTransactionDiagnosticV1, "failureCode" | "phase" | "updatedAt" | "version"> {
   phase: "old_deleted" | "completed";
-  createdAt: string;
-  completedAt: string | null;
-  receipts: { backup: boolean; oldSandboxDeletion: boolean; replacement: boolean };
-  target: {
-    gatewayName: string;
-    gatewayPort: number;
-    imageFingerprint: string;
-    configurationFingerprint: string;
-  };
+  target: Pick<
+    RebuildTransactionRecordV1["intent"]["target"],
+    "configurationFingerprint" | "gatewayName" | "gatewayPort" | "imageFingerprint"
+  >;
 }
 
 export interface RebuildInterruptionEvidence extends RebuildTransactionEvidence {
@@ -40,19 +35,6 @@ export interface RebuildInterruptionEvidence extends RebuildTransactionEvidence 
     sessionConfigurationFingerprint: string;
     replacementFingerprint: string;
   };
-}
-
-export interface RebuildRegistryEvidence {
-  agent: string | null;
-  defaultSandbox: string | null;
-  sandboxName: string;
-  gatewayName: string;
-  gatewayPort: number;
-  agentVersion: string;
-  nemoclawVersion: string;
-  observabilityEnabled: boolean;
-  policies: string[];
-  toolDisclosure: string;
 }
 
 export interface PausedRebuildProcess {
@@ -71,12 +53,15 @@ interface StartInterruptedRebuildOptions {
   timeoutMs: number;
 }
 
-type JsonObject = Record<string, unknown>;
+const MAX_CAPTURED_CHARACTERS = 256 * 1024;
+const MAX_ERROR_TAIL_CHARACTERS = 16 * 1024;
+const OUTPUT_TRUNCATED = "\n...[earlier output truncated]...\n";
 
 export async function startRebuildAtDurableBoundary(
   options: StartInterruptedRebuildOptions,
 ): Promise<PausedRebuildProcess> {
-  const home = readText(options.env.HOME, "rebuild interruption HOME");
+  const home = options.env.HOME;
+  if (!home) throw new Error("rebuild interruption HOME is required");
   const args = [options.sandboxName, "rebuild", "--yes"];
   const child = spawn(options.commandPath, args, {
     detached: true,
@@ -93,10 +78,10 @@ export async function startRebuildAtDurableBoundary(
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString("utf8");
+    stdout = appendCapturedOutput(stdout, chunk.toString("utf8"));
   });
   child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
+    stderr = appendCapturedOutput(stderr, chunk.toString("utf8"));
   });
 
   const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
@@ -159,9 +144,11 @@ export async function startRebuildAtDurableBoundary(
     await waitForStopped(child.pid!, Math.min(options.timeoutMs, 5_000));
   } catch (error) {
     await kill().catch(() => undefined);
-    throw new Error(
-      `${error instanceof Error ? error.message : String(error)}\n${options.redact(`${stdout}\n${stderr}`).trim()}`,
-    );
+    const outputTail = options
+      .redact(`${stdout}\n${stderr}`)
+      .trim()
+      .slice(-MAX_ERROR_TAIL_CHARACTERS);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${outputTail}`);
   }
 
   return { pid: child.pid!, kill };
@@ -172,7 +159,9 @@ export function readInterruptedRebuildEvidence(
   interruption: LiveRebuildInterruptionPhase,
   home: string,
 ): RebuildInterruptionEvidence {
-  const record = readObject(transactionPath(home, sandboxName), "rebuild transaction");
+  const record = readJson<RebuildTransactionRecordV1>(
+    getRebuildTransactionPath(sandboxName, path.join(home, ".nemoclaw", "state")),
+  );
   const base = projectTransaction(record, sandboxName, "active");
   if (base.phase !== "old_deleted" || base.receipts.replacement) {
     throw new Error("interrupted transaction is not at durable old_deleted");
@@ -180,17 +169,14 @@ export function readInterruptedRebuildEvidence(
 
   let replacement: RebuildInterruptionEvidence["replacement"] = null;
   if (interruption === "replacement_unjournaled") {
-    const registry = readObject(path.join(home, ".nemoclaw", "sandboxes.json"), "registry");
-    const entry = readObjectValue(
-      readObjectValue(registry.sandboxes, "registry.sandboxes")[sandboxName],
-      "replacement registry entry",
-    );
-    const session = readObject(path.join(home, ".nemoclaw", "onboard-session.json"), "session");
-    const correlation = readObjectValue(
-      readObjectValue(session.metadata, "session.metadata").rebuild,
-      "session.metadata.rebuild",
-    );
+    const registry = readJson<SandboxRegistry>(path.join(home, ".nemoclaw", "sandboxes.json"));
+    const entry = registry.sandboxes[sandboxName];
+    const session = readJson<Session>(path.join(home, ".nemoclaw", "onboard-session.json"));
+    const correlation = session.metadata.rebuild;
     if (
+      !entry ||
+      !correlation ||
+      correlation.replacementFingerprint === null ||
       session.sandboxName !== sandboxName ||
       entry.name !== sandboxName ||
       correlation.transactionId !== base.transactionId ||
@@ -206,21 +192,12 @@ export function readInterruptedRebuildEvidence(
       throw new Error("replacement registry gateway does not match the rebuild target");
     }
     replacement = {
-      registryGatewayName: readText(entry.gatewayName, "replacement gatewayName"),
-      registryGatewayPort: readInteger(entry.gatewayPort, "replacement gatewayPort"),
-      sessionTransactionId: readText(correlation.transactionId, "session transactionId"),
-      sessionImageFingerprint: readFingerprint(
-        correlation.imageFingerprint,
-        "session imageFingerprint",
-      ),
-      sessionConfigurationFingerprint: readFingerprint(
-        correlation.configurationFingerprint,
-        "session configurationFingerprint",
-      ),
-      replacementFingerprint: readFingerprint(
-        correlation.replacementFingerprint,
-        "session replacementFingerprint",
-      ),
+      registryGatewayName: entry.gatewayName,
+      registryGatewayPort: entry.gatewayPort,
+      sessionTransactionId: correlation.transactionId,
+      sessionImageFingerprint: correlation.imageFingerprint,
+      sessionConfigurationFingerprint: correlation.configurationFingerprint,
+      replacementFingerprint: correlation.replacementFingerprint,
     };
   }
   return { ...base, interruption, replacement };
@@ -231,7 +208,9 @@ export function readCompletedRebuildEvidence(
   home: string,
 ): RebuildTransactionEvidence {
   const evidence = projectTransaction(
-    readObject(transactionPath(home, sandboxName), "rebuild transaction"),
+    readJson<RebuildTransactionRecordV1>(
+      getRebuildTransactionPath(sandboxName, path.join(home, ".nemoclaw", "state")),
+    ),
     sandboxName,
     "completed",
   );
@@ -241,68 +220,13 @@ export function readCompletedRebuildEvidence(
   return evidence;
 }
 
-export function readRebuildRegistryEvidence(
-  sandboxName: string,
-  home: string,
-): RebuildRegistryEvidence {
-  const registry = readObject(path.join(home, ".nemoclaw", "sandboxes.json"), "registry");
-  const entry = readObjectValue(
-    readObjectValue(registry.sandboxes, "registry.sandboxes")[sandboxName],
-    "registry sandbox entry",
-  );
-  const policies = entry.policies ?? [];
-  if (!Array.isArray(policies) || !policies.every((policy) => typeof policy === "string")) {
-    throw new Error("registry entry policies must be a string array");
-  }
-  return {
-    agent: entry.agent === null ? null : readText(entry.agent, "registry entry agent"),
-    defaultSandbox:
-      registry.defaultSandbox === null
-        ? null
-        : readText(registry.defaultSandbox, "registry.defaultSandbox"),
-    sandboxName,
-    gatewayName: readText(entry.gatewayName, "registry entry gatewayName"),
-    gatewayPort: readInteger(entry.gatewayPort, "registry entry gatewayPort"),
-    agentVersion: readText(entry.agentVersion, "registry entry agentVersion"),
-    nemoclawVersion: readText(entry.nemoclawVersion, "registry entry nemoclawVersion"),
-    observabilityEnabled: entry.observabilityEnabled === true,
-    policies: [...policies].sort(),
-    toolDisclosure: readText(entry.toolDisclosure, "registry entry toolDisclosure"),
-  };
-}
-
-export async function sandboxContainerIds(
-  host: HostCliClient,
-  sandboxName: string,
-  options: ShellProbeRunOptions = {},
-): Promise<string[]> {
-  const result = await host.command(
-    "docker",
-    [
-      "ps",
-      "-a",
-      "--filter",
-      `label=openshell.ai/sandbox-name=${sandboxName}`,
-      "--format",
-      "{{.ID}}",
-    ],
-    options,
-  );
-  if (result.exitCode !== 0) throw new Error(resultText(result));
-  return result.stdout
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 function projectTransaction(
-  record: JsonObject,
+  record: RebuildTransactionRecordV1,
   sandboxName: string,
   status: "active" | "completed",
 ): RebuildTransactionEvidence {
-  const intent = readObjectValue(record.intent, "transaction.intent");
-  const target = readObjectValue(intent.target, "transaction.intent.target");
-  const receipts = readObjectValue(record.receipts, "transaction.receipts");
+  const { intent, receipts } = record;
+  const { target } = intent;
   const phase = status === "completed" ? "completed" : "old_deleted";
   if (record.status !== status || record.phase !== phase || intent.sandboxName !== sandboxName) {
     throw new Error(`rebuild transaction is not ${status} for ${sandboxName}`);
@@ -311,27 +235,23 @@ function projectTransaction(
     throw new Error("rebuild transaction is missing destructive receipts");
   }
   return {
-    transactionId: readText(record.transactionId, "transaction.transactionId"),
+    transactionId: record.transactionId,
     sandboxName,
-    revision: readInteger(record.revision, "transaction.revision"),
+    revision: record.revision,
     status,
     phase,
-    createdAt: readText(record.createdAt, "transaction.createdAt"),
-    completedAt:
-      status === "completed" ? readText(record.completedAt, "transaction.completedAt") : null,
+    createdAt: record.createdAt,
+    completedAt: status === "completed" ? record.completedAt : null,
     receipts: {
       backup: true,
       oldSandboxDeletion: true,
       replacement: receipts.replacement !== undefined,
     },
     target: {
-      gatewayName: readText(target.gatewayName, "transaction target gatewayName"),
-      gatewayPort: readInteger(target.gatewayPort, "transaction target gatewayPort"),
-      imageFingerprint: readFingerprint(target.imageFingerprint, "transaction imageFingerprint"),
-      configurationFingerprint: readFingerprint(
-        target.configurationFingerprint,
-        "transaction configurationFingerprint",
-      ),
+      gatewayName: target.gatewayName,
+      gatewayPort: target.gatewayPort,
+      imageFingerprint: target.imageFingerprint,
+      configurationFingerprint: target.configurationFingerprint,
     },
   };
 }
@@ -352,36 +272,12 @@ async function waitForStopped(pid: number, timeoutMs: number): Promise<void> {
   throw new Error(`rebuild process ${String(pid)} did not enter SIGSTOP state`);
 }
 
-function transactionPath(home: string, sandboxName: string): string {
-  const stem = crypto.createHash("sha256").update(sandboxName).digest("hex");
-  return path.join(home, ".nemoclaw", "state", "rebuild-transactions", `${stem}.json`);
+function appendCapturedOutput(current: string, chunk: string): string {
+  const combined = current + chunk;
+  if (combined.length <= MAX_CAPTURED_CHARACTERS) return combined;
+  return OUTPUT_TRUNCATED + combined.slice(-(MAX_CAPTURED_CHARACTERS - OUTPUT_TRUNCATED.length));
 }
 
-function readObject(file: string, label: string): JsonObject {
-  return readObjectValue(JSON.parse(fs.readFileSync(file, "utf8")), label);
-}
-
-function readObjectValue(value: unknown, label: string): JsonObject {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be an object`);
-  }
-  return value as JsonObject;
-}
-
-function readText(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) throw new Error(`${label} is missing`);
-  return value;
-}
-
-function readInteger(value: unknown, label: string): number {
-  if (!Number.isInteger(value)) throw new Error(`${label} must be an integer`);
-  return value as number;
-}
-
-function readFingerprint(value: unknown, label: string): string {
-  const candidate = readText(value, label);
-  if (!/^sha256:[0-9a-f]{64}$/u.test(candidate)) {
-    throw new Error(`${label} must be a sha256 fingerprint`);
-  }
-  return candidate;
+function readJson<T>(file: string): T {
+  return JSON.parse(fs.readFileSync(file, "utf8")) as T;
 }
