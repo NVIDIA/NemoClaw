@@ -8,6 +8,7 @@ type ExtraProviderRunOpenshell = (
   opts?: Record<string, unknown>,
 ) => {
   status: number | null;
+  error?: Error;
   output?: unknown;
   stdout?: unknown;
   stderr?: unknown;
@@ -149,16 +150,24 @@ export function reconcileRegisteredExtraProviders(
     } catch {
       return true;
     }
+    if (result.error) return true;
     if (result.status === 0) return true;
     // OpenShell CLI command errors use exit 1. A null status means timeout or
     // signal termination, while any other exit is outside this diagnostic
     // contract; both are indeterminate and must preserve the provider.
     if (result.status !== 1) return true;
 
-    const diagnostic = [result.stderr, result.stdout, result.output]
-      .map(outputText)
-      .filter(Boolean)
-      .join("\n");
+    const primaryDiagnosticParts = [result.stderr, result.stdout].map(outputText).filter(Boolean);
+    const diagnosticParts =
+      primaryDiagnosticParts.length > 0
+        ? primaryDiagnosticParts
+        : [outputText(result.output)].filter(Boolean);
+    if (
+      diagnosticParts.some((part) => Buffer.byteLength(part) >= PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
+    ) {
+      return true;
+    }
+    const diagnostic = diagnosticParts.join("\n");
     return !reportsExactProviderNotFound(diagnostic, name);
   });
 }

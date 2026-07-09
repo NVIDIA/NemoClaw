@@ -58,7 +58,13 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw tavily-search")) {
-    return { status: 1, stderr: "Error: provider 'tavily-search' not found" };
+    const stderr = Buffer.from("Error: provider 'tavily-search' not found");
+    return {
+      status: 1,
+      stderr,
+      stdout: Buffer.alloc(0),
+      output: [null, Buffer.alloc(0), stderr],
+    };
   }
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };

@@ -6,7 +6,8 @@ import { reconcileRegisteredExtraProviders } from "./extra-provider-reconciliati
 
 type ProbeResult = {
   status: number | null;
-  output?: string | Buffer | null;
+  error?: Error;
+  output?: string | Buffer | Array<string | Buffer | null> | null;
   stdout?: string | Buffer | null;
   stderr?: string | Buffer | null;
 };
@@ -112,30 +113,43 @@ describe("reconcileRegisteredExtraProviders", () => {
   });
 
   it("accepts the exact wrapped not-found diagnostic reported by OpenShell (#6501)", () => {
-    const diagnostics = new Map<string, string>([
+    const wrappedDiagnostic = Buffer.from(
+      [
+        "Error:   × provider 'tavily-search' not found and 'tavily-search' is not a recognized",
+        "  │ provider type. Create it first with `openshell provider create --type",
+        "  │ <type> --name tavily-search`",
+      ].join("\n"),
+    );
+    const responses = new Map<string, ProbeResult>([
       [
         "tavily-search",
-        [
-          "Error:   × provider 'tavily-search' not found and 'tavily-search' is not a recognized",
-          "  │ provider type. Create it first with `openshell provider create --type",
-          "  │ <type> --name tavily-search`",
-        ].join("\n"),
+        {
+          status: 1,
+          stderr: wrappedDiagnostic,
+          stdout: Buffer.alloc(0),
+          output: [null, Buffer.alloc(0), wrappedDiagnostic],
+        },
       ],
       [
         "mismatched-provider",
-        "Error: × provider 'mismatched-provider' not found and 'other-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name mismatched-provider`",
+        {
+          status: 1,
+          stderr:
+            "Error: × provider 'mismatched-provider' not found and 'other-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name mismatched-provider`",
+        },
       ],
       [
         "spoofed-command-provider",
-        "Error: × provider 'spoofed-command-provider' not found and 'spoofed-command-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name other-provider`",
+        {
+          status: 1,
+          stderr:
+            "Error: × provider 'spoofed-command-provider' not found and 'spoofed-command-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name other-provider`",
+        },
       ],
     ]);
-    const runOpenshell = vi.fn(
-      (args: string[]): ProbeResult => ({
-        status: 1,
-        stderr: diagnostics.get(args.at(-1) ?? ""),
-      }),
-    );
+    const runOpenshell = vi.fn((args: string[]): ProbeResult => {
+      return responses.get(args.at(-1) ?? "") ?? { status: 0 };
+    });
 
     expect(
       reconcileRegisteredExtraProviders("nemoclaw", {
@@ -147,6 +161,39 @@ describe("reconcileRegisteredExtraProviders", () => {
         runOpenshell,
       }),
     ).toEqual(["mismatched-provider", "spoofed-command-provider"]);
+  });
+
+  it("uses the composite spawn output only when stderr and stdout are empty (#6501)", () => {
+    const diagnostic = Buffer.from("Error: provider 'stale-provider' not found");
+    const runOpenshell = vi.fn(
+      (): ProbeResult => ({
+        status: 1,
+        output: [null, Buffer.alloc(0), diagnostic],
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.alloc(0),
+      }),
+    );
+
+    expect(
+      reconcileRegisteredExtraProviders("nemoclaw", {
+        listExtraProviders: () => ["stale-provider"],
+        runOpenshell,
+      }),
+    ).toEqual([]);
+  });
+
+  it("fails open when a diagnostic stream reaches the capture limit (#6501)", () => {
+    const truncated = Buffer.from(
+      "Error: provider 'stale-provider' not found".padEnd(64 * 1024, " "),
+    );
+    const runOpenshell = vi.fn((): ProbeResult => ({ status: 1, stderr: truncated }));
+
+    expect(
+      reconcileRegisteredExtraProviders("nemoclaw", {
+        listExtraProviders: () => ["stale-provider"],
+        runOpenshell,
+      }),
+    ).toEqual(["stale-provider"]);
   });
 
   it("accepts the exact gRPC not-found ordering without using broad name heuristics (#6501)", () => {
@@ -222,6 +269,12 @@ describe("reconcileRegisteredExtraProviders", () => {
             status: 7,
             stderr: "provider 'nonstandard-exit-provider' not found",
           };
+        case "buffer-error-provider":
+          return {
+            status: 1,
+            error: new Error("spawnSync ENOBUFS"),
+            stderr: "provider 'buffer-error-provider' not found",
+          };
         case "ambiguous-provider":
           return { status: 1, stderr: "provider lookup failed" };
         case "unavailable-provider":
@@ -238,6 +291,7 @@ describe("reconcileRegisteredExtraProviders", () => {
       "thrown-provider",
       "timed-out-provider",
       "nonstandard-exit-provider",
+      "buffer-error-provider",
       "ambiguous-provider",
       "unavailable-provider",
     ];
