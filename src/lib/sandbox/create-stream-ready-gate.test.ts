@@ -98,6 +98,16 @@ describe("sandbox-create-stream ready gate", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("rejects poll side effects without a terminal failure check", () => {
+    expect(() =>
+      streamSandboxCreate(
+        "echo create",
+        dockerEnv,
+        makePollingOptions(new FakeChild(), { readyCheck: () => false, onPoll: () => {} }),
+      ),
+    ).toThrow("streamSandboxCreate onPoll requires failureCheck");
+  });
+
   it("runs poll side effects only after a not-ready poll", async () => {
     vi.useFakeTimers();
 
@@ -107,7 +117,7 @@ describe("sandbox-create-stream ready gate", () => {
     const promise = streamSandboxCreate(
       "echo create",
       dockerEnv,
-      makePollingOptions(child, { readyCheck: () => ready, onPoll }),
+      makePollingOptions(child, { readyCheck: () => ready, onPoll, failureCheck: () => null }),
     );
 
     await vi.advanceTimersByTimeAsync(6);
@@ -131,7 +141,12 @@ describe("sandbox-create-stream ready gate", () => {
     const promise = streamSandboxCreate(
       "echo create",
       dockerEnv,
-      makePollingOptions(child, { readyCheck: () => ready, onPoll, traceEvent }),
+      makePollingOptions(child, {
+        readyCheck: () => ready,
+        onPoll,
+        failureCheck: () => null,
+        traceEvent,
+      }),
     );
 
     await vi.advanceTimersByTimeAsync(6);

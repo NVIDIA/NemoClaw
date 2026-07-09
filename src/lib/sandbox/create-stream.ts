@@ -16,6 +16,8 @@ export interface StreamSandboxCreateResult {
 
 export interface StreamSandboxCreateOptions {
   readyCheck?: (() => boolean) | null;
+  // Optional poll side effect. Must be paired with failureCheck so any
+  // observed side-effect error has an authoritative terminal-state classifier.
   onPoll?: (() => void) | null;
   failureCheck?: (() => string | null | undefined) | null;
   pollIntervalMs?: number;
@@ -128,6 +130,9 @@ export function streamSandboxCreate(
   const spawnCommand = hasArgs ? command : "bash";
   const env = hasArgs ? (envOrOptions as NodeJS.ProcessEnv) : (argsOrEnv as NodeJS.ProcessEnv);
   const options = hasArgs ? maybeOptions : (envOrOptions as StreamSandboxCreateOptions);
+  if (options.onPoll && !options.failureCheck) {
+    throw new Error("streamSandboxCreate onPoll requires failureCheck");
+  }
   const child: StreamableChildProcess = (options.spawnImpl ?? spawn)(spawnCommand, commandArgs, {
     cwd: ROOT,
     env,
