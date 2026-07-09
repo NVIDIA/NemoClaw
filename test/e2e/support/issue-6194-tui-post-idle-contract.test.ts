@@ -21,6 +21,24 @@ import {
 import { stripTerminalControl } from "./issue-4434-tui-capture.ts";
 
 describe("live TUI post-idle coverage contract (#6194)", () => {
+  it("declares every combined OpenClaw and OpenShell live boundary", () => {
+    const liveSource = readFileSync(
+      new URL("../live/openclaw-tui-chat-correlation.test.ts", import.meta.url),
+      "utf8",
+    );
+    const declarationStart = liveSource.indexOf("await artifacts.target.declare({");
+    const declarationEnd = liveSource.indexOf("    });", declarationStart);
+    const declaration = liveSource.slice(declarationStart, declarationEnd);
+
+    expect(declarationStart).toBeGreaterThanOrEqual(0);
+    expect(declarationEnd).toBeGreaterThan(declarationStart);
+    expect(declaration).toContain('"openclaw-gateway-websocket"');
+    expect(declaration).toContain('"openclaw-tui-terminal-after-connected-idle"');
+    expect(declaration).toContain('"openshell-network-rule-terminal-approval"');
+    expect(liveSource).toContain('artifactName: "issue6194-openshell-network-approval"');
+    expect(liveSource).toContain('artifacts.writeJson("issue6194-approval-result.json"');
+  });
+
   it("builds an expect flow for chat, slash status, return to idle, and clean exit", () => {
     const script = buildIssue6194TuiExpectScript();
 

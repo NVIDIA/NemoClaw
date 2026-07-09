@@ -508,7 +508,11 @@ test(
 
     await artifacts.target.declare({
       id: "openclaw-tui-chat-correlation",
-      boundary: ["openclaw-gateway-websocket", "openclaw-tui-terminal-after-connected-idle"],
+      boundary: [
+        "openclaw-gateway-websocket",
+        "openclaw-tui-terminal-after-connected-idle",
+        "openshell-network-rule-terminal-approval",
+      ],
       issues: ["#2603", "#3145", "#6194"],
       ownerIssue: "#4347",
       pinnedOpenClawVersion: EXPECTED_OPENCLAW_VERSION,
