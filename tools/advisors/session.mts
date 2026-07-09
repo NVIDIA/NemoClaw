@@ -63,6 +63,15 @@ export type AdvisorContextToolResult = {
   isError?: boolean;
 };
 
+export function createAdvisorContextToolResult(
+  toolName: string,
+  content: string,
+  contentType: AdvisorContextToolContentType,
+  label?: string,
+): AdvisorContextToolResult {
+  return { toolName, content, contentType, label };
+}
+
 export type AdvisorPromptTurn = {
   name: string;
   prompt: string;
@@ -81,6 +90,19 @@ export type AdvisorPromptTurn = {
   /** Tools that must start after all assistant text, making them the turn's final action. */
   requireTextBeforeToolNames?: string[];
 };
+
+export function createAdvisorPromptTurn({
+  name,
+  contextToolResults,
+  prompt,
+}: {
+  name: string;
+  contextToolResults: AdvisorContextToolResult[];
+  prompt: (contextToolNames: string) => string;
+}): AdvisorPromptTurn {
+  const contextToolNames = contextToolResults.map(({ toolName }) => toolName).join("`, `");
+  return { name, contextToolResults, prompt: prompt(contextToolNames) };
+}
 
 export type RunReadOnlyAdvisorOptions = {
   cwd: string;

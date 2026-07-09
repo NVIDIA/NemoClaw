@@ -23,9 +23,10 @@ import {
 } from "../advisors/json.mts";
 import { buildRiskPlan, type RiskPlan } from "../advisors/risk-plan.mts";
 import {
-  type AdvisorContextToolResult,
   type AdvisorPromptTurn,
   advisorRunErrors,
+  createAdvisorContextToolResult,
+  createAdvisorPromptTurn,
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
   READ_ONLY_TOOLS,
@@ -287,10 +288,10 @@ export function buildPromptTurn({
   schema: AdvisorSchema;
   riskPlan?: RiskPlan;
 }): AdvisorPromptTurn {
-  return {
+  return createAdvisorPromptTurn({
     name: "analysis",
     contextToolResults: [
-      contextToolResult(
+      createAdvisorContextToolResult(
         "e2e_advisor_metadata",
         [
           "Set these fields exactly:",
@@ -302,44 +303,35 @@ export function buildPromptTurn({
         "text",
         "exact metadata fields",
       ),
-      contextToolResult(
+      createAdvisorContextToolResult(
         "e2e_advisor_changed_files",
         changedFiles.map((file) => `- ${file}`).join("\n") || "- <none>",
         "text",
         "changed files",
       ),
-      contextToolResult(
+      createAdvisorContextToolResult(
         "e2e_advisor_risk_plan",
         JSON.stringify(riskPlan),
         "json",
         "deterministic regression risk plan",
       ),
-      contextToolResult(
+      createAdvisorContextToolResult(
         "e2e_advisor_git_diff",
         diff || "<no diff available>",
         "diff",
         "truncated git diff",
       ),
-      contextToolResult(
+      createAdvisorContextToolResult(
         "e2e_advisor_response_schema",
         JSON.stringify(schema),
         "json",
         "E2E advisor JSON schema",
       ),
     ],
-    prompt: `Return an E2E recommendation for this PR.
+    prompt: (contextToolNames) => `Return an E2E recommendation for this PR.
 
-Call the real \`e2e_advisor_metadata\`, \`e2e_advisor_changed_files\`, \`e2e_advisor_risk_plan\`, \`e2e_advisor_git_diff\`, and \`e2e_advisor_response_schema\` context tools before answering. Treat required jobs in the deterministic risk plan as a floor. Set the metadata fields exactly as specified there. Return JSON only matching the supplied schema.`,
-  };
-}
-
-function contextToolResult(
-  toolName: string,
-  content: string,
-  contentType: AdvisorContextToolResult["contentType"],
-  label?: string,
-): AdvisorContextToolResult {
-  return { toolName, content, contentType, label };
+Call the real \`${contextToolNames}\` context tools before answering. Treat required jobs in the deterministic risk plan as a floor. Set the metadata fields exactly as specified there. Return JSON only matching the supplied schema.`,
+  });
 }
 
 function normalizeAdvisorResult(

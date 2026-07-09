@@ -32,6 +32,7 @@ import {
   type AdvisorContextToolResult,
   type AdvisorPromptTurn,
   advisorRunErrors,
+  createAdvisorContextToolResult,
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
   type RunAdvisorResult,
@@ -1444,10 +1445,10 @@ async function collectOpenPrOverlaps(
     .slice(0, 25);
 }
 
-function extractIssueRefs(text: string, prNumber: number): number[] {
+export function extractIssueRefs(text: string, prNumber: number): number[] {
   const numbers = new Set<number>();
   const patterns = [
-    /(?:fixes|closes|resolves|related(?:\s+issue)?|linked(?:\s+issue)?)\s+#(\d+)/gi,
+    /(?:fixes|closes|resolves|related(?:\s+issue)?|linked(?:\s+issue)?|follow[- ]?up(?:\s+to)?)\s+#(\d+)/gi,
     /\(#(\d+)\)/g,
     /issue[-_/](\d+)/gi,
   ];
@@ -1692,13 +1693,13 @@ export function buildPromptTurns({
       name: "scope-risk-map",
       title: "map scope, drift, and deterministic risk",
       contextToolResults: [
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_scope_risk_context",
           jsonContext(buildScopeRiskTurnContext(context)),
           "json",
           "scope and risk context",
         ),
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_git_diff",
           diff || "<no diff available>",
           "diff",
@@ -1719,7 +1720,7 @@ Do not produce final JSON. Reply with at most 8 concise, evidence-backed stage-a
       name: "correctness-state",
       title: "correctness, acceptance, and state transitions",
       contextToolResults: [
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_correctness_state_context",
           jsonContext(buildCorrectnessTurnContext(context)),
           "json",
@@ -1740,7 +1741,7 @@ Do not produce final JSON. Reply with at most 8 concise, evidence-backed stage-a
       name: "security-trust",
       title: "security and trust-boundary review",
       contextToolResults: [
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_security_trust_context",
           jsonContext(buildSecurityTurnContext(context)),
           "json",
@@ -1761,7 +1762,7 @@ Do not produce final JSON. Reply with at most 12 concise, evidence-backed stage-
       name: "tests-regressions",
       title: "tests and regression evidence",
       contextToolResults: [
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_tests_regressions_context",
           jsonContext(buildTestsTurnContext(context)),
           "json",
@@ -1782,7 +1783,7 @@ Do not produce final JSON. Reply with at most 8 concise, evidence-backed stage-a
       name: "ci-operations",
       title: "CI, workflow, and operational behavior",
       contextToolResults: [
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_ci_operations_context",
           jsonContext(buildOperationsTurnContext(context)),
           "json",
@@ -1803,7 +1804,7 @@ Do not produce final JSON. Reply with at most 8 concise, evidence-backed stage-a
       name: "reconcile-findings",
       title: "reconcile findings and contradictions",
       contextToolResults: [
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_reconciliation_context",
           jsonContext(buildReconciliationTurnContext(context)),
           "json",
@@ -1824,13 +1825,13 @@ Do not produce final JSON. Reply with at most 12 concise stage-analysis bullets 
       name: "synthesize-json",
       title: "synthesize the final advisor result",
       contextToolResults: [
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_exact_metadata",
           exactMetadataFields(metadata),
           "text",
           "exact metadata fields",
         ),
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_response_schema",
           JSON.stringify(schema),
           "json",
@@ -1903,20 +1904,20 @@ export function buildRetryPromptTurns({
         "pr_review_read_ledger",
       ],
       contextToolResults: [
-        contextToolResult("pr_review_retry_reason", reason, "text", "retry reason"),
-        contextToolResult(
+        createAdvisorContextToolResult("pr_review_retry_reason", reason, "text", "retry reason"),
+        createAdvisorContextToolResult(
           "pr_review_previous_output",
           previousRaw.slice(-40000),
           "text",
           "previous advisor output tail",
         ),
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_exact_metadata",
           exactMetadataFields(metadata),
           "text",
           "exact metadata fields",
         ),
-        contextToolResult(
+        createAdvisorContextToolResult(
           "pr_review_response_schema",
           JSON.stringify(schema),
           "json",
@@ -1940,15 +1941,6 @@ function fencedBlock(content: string, language = ""): string {
   );
   const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
   return `${fence}${language}\n${content}\n${fence}`;
-}
-
-function contextToolResult(
-  toolName: string,
-  content: string,
-  contentType: AdvisorContextToolResult["contentType"],
-  label?: string,
-): AdvisorContextToolResult {
-  return { toolName, content, contentType, label };
 }
 
 function buildDriftTurnContext(context: DeterministicReviewContext): Record<string, unknown> {

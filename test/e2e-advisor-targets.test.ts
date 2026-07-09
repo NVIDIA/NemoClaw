@@ -71,6 +71,9 @@ describe("E2E target advisor — prompt construction", () => {
     expect(turn.contextToolResults?.[2]?.content).toContain('"version":1');
     expect(turn.contextToolResults?.[3]?.content).toContain("+ echo ok");
     expect(turn.contextToolResults?.[4]?.content).toContain("test-schema");
+    for (const result of turn.contextToolResults ?? []) {
+      expect(turn.prompt).toContain(`\`${result.toolName}\``);
+    }
   });
 
   it("system prompt is non-empty and points JSON schema lookup at a context tool", () => {

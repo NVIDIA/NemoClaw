@@ -181,6 +181,9 @@ describe("E2E recommendation advisor prompt", () => {
       "e2e_advisor_response_schema",
     ]);
     expect(turn.contextToolResults?.[2]?.content).toContain("messaging-lifecycle");
+    for (const result of turn.contextToolResults ?? []) {
+      expect(turn.prompt).toContain(`\`${result.toolName}\``);
+    }
     expect(turn.prompt).toContain("deterministic risk plan");
   });
 

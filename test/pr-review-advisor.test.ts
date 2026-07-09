@@ -25,6 +25,7 @@ import {
   collectTrustedPreviousAdvisorReview,
   detectLocalizedPatchSignals,
   detectSimplificationSignals,
+  extractIssueRefs,
   extractPreviousAdvisorReview,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
@@ -430,6 +431,15 @@ describe("PR review advisor", () => {
     expect(turns[0]?.requiredToolNames?.at(-1)).toBe("pr_review_read_ledger");
     expect(turns[0]?.requireToolsBeforeText?.at(-1)).toBe("pr_review_read_ledger");
     expect(turns[0]?.prompt).toContain("Never call `pr_review_update_ledger`");
+  });
+
+  it("recognizes follow-up issue relations used by the PR template (#6446)", () => {
+    expect(
+      extractIssueRefs(
+        "Follow-up to #6446\nFollow up #21\nfollowup to #22\nFollow-up to #6547",
+        6547,
+      ),
+    ).toEqual([21, 22, 6446]);
   });
 
   it("writes auditable deterministic context artifacts", () => {
