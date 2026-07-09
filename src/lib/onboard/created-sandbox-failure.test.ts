@@ -89,9 +89,7 @@ describe("reportSandboxCreateFailure", () => {
         withOutput,
       ),
     ).toThrow(ExitSignal);
-    expect(withOutput.error).toHaveBeenCalledWith(
-      "failed with Authorization: Bearer secr********",
-    );
+    expect(withOutput.error).toHaveBeenCalledWith("failed with Authorization: Bearer secr********");
     expect(withOutput.error).not.toHaveBeenCalledWith(
       "failed with Authorization: Bearer secret-token",
     );
