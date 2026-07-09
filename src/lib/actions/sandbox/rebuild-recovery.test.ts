@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fc from "fast-check";
 import { describe, expect, it } from "vitest";
+import {
+  fingerprintRebuildRegistryEntry,
+  fingerprintRebuildReplacement,
+  fingerprintRebuildValue,
+} from "../../rebuild-correlation";
 import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
 import type { SandboxEntry } from "../../state/registry";
 import {
@@ -9,14 +15,21 @@ import {
   observeRebuildRegistry,
   observeRebuildSession,
 } from "./rebuild-recovery";
-import {
-  fingerprintRebuildRegistryEntry,
-  fingerprintRebuildReplacement,
-  fingerprintRebuildValue,
-} from "./rebuild-transaction-fingerprint";
 
 function transaction(phase: "old_deleted" | "replacement_created"): RebuildTransactionRecordV1 {
   return { phase } as RebuildTransactionRecordV1;
+}
+
+function reverseObjectKeys(value: unknown): unknown {
+  return Array.isArray(value)
+    ? value.map(reverseObjectKeys)
+    : value && typeof value === "object"
+      ? Object.fromEntries(
+          Object.entries(value)
+            .reverse()
+            .map(([key, item]) => [key, reverseObjectKeys(item)]),
+        )
+      : value;
 }
 
 describe("rebuild replacement recovery decision", () => {
@@ -36,6 +49,13 @@ describe("rebuild replacement recovery decision", () => {
     ["old_deleted", "ready", "target", "unrelated", "REBUILD_RECOVERY_SESSION_MISMATCH"],
     ["old_deleted", "ready", "source", "matching", "REBUILD_RECOVERY_REGISTRY_MISMATCH"],
     ["old_deleted", "not_ready", "target", "matching", "REBUILD_RECOVERY_LIVE_STATE_AMBIGUOUS"],
+    [
+      "old_deleted",
+      "unknown_present",
+      "target",
+      "matching",
+      "REBUILD_RECOVERY_LIVE_STATE_AMBIGUOUS",
+    ],
     ["replacement_created", "ready", "target", "matching", "REBUILD_RECOVERY_REGISTRY_MISMATCH"],
     [
       "replacement_created",
@@ -125,30 +145,58 @@ describe("rebuild replacement recovery decision", () => {
         },
       },
     } as RebuildTransactionRecordV1;
+    const replacement = {
+      name: "alpha",
+      agent: null,
+      agentVersion: "0.2.0",
+      nemoclawVersion: "0.2.0",
+      imageTag: "nemoclaw-alpha:replacement",
+    } as SandboxEntry;
     const session = {
       sandboxName: "alpha",
       metadata: {
         gatewayName: "nemoclaw",
         fromDockerfile: null,
-        rebuildTransactionId: record.transactionId,
-        rebuildImageFingerprint: record.intent.target.imageFingerprint,
-        rebuildConfigurationFingerprint: record.intent.target.configurationFingerprint,
+        rebuild: {
+          transactionId: record.transactionId,
+          imageFingerprint: record.intent.target.imageFingerprint,
+          configurationFingerprint: record.intent.target.configurationFingerprint,
+          replacementFingerprint: fingerprintRebuildReplacement(replacement),
+        },
       },
     } as Parameters<typeof observeRebuildSession>[1];
 
-    expect(observeRebuildSession(record, session)).toBe("matching");
+    expect(observeRebuildSession(record, session, replacement)).toBe("matching");
+    expect(observeRebuildSession(record, session, { ...replacement, imageTag: "unrelated" })).toBe(
+      "unrelated",
+    );
     expect(
-      observeRebuildSession(record, {
-        ...session!,
-        metadata: {
-          gatewayName: "nemoclaw",
-          fromDockerfile: null,
-          rebuildTransactionId: "22222222-2222-4222-8222-222222222222",
-          rebuildImageFingerprint: record.intent.target.imageFingerprint,
-          rebuildConfigurationFingerprint: record.intent.target.configurationFingerprint,
+      observeRebuildSession(
+        record,
+        {
+          ...session!,
+          metadata: {
+            ...session!.metadata,
+            rebuild: {
+              ...session!.metadata.rebuild!,
+              transactionId: "22222222-2222-4222-8222-222222222222",
+            },
+          },
         },
-      }),
+        replacement,
+      ),
     ).toBe("unrelated");
-    expect(observeRebuildSession(record, null)).toBe("missing");
+    expect(observeRebuildSession(record, null, replacement)).toBe("missing");
+  });
+
+  it("keeps registry fingerprints stable across nested key insertion order (#6436)", () => {
+    fc.assert(
+      fc.property(fc.jsonValue(), (value) => {
+        const entry = { name: "alpha", generated: value } as unknown as SandboxEntry;
+        expect(fingerprintRebuildRegistryEntry(entry)).toBe(
+          fingerprintRebuildRegistryEntry(reverseObjectKeys(entry) as SandboxEntry),
+        );
+      }),
+    );
   });
 });

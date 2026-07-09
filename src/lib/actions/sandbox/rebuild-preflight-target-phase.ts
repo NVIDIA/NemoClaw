@@ -5,6 +5,7 @@ import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
 import { createRebuildProviderReconfigureHandoff } from "../../onboard/rebuild-route-handoff";
+import type { RebuildSessionCorrelation } from "../../rebuild-correlation";
 import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -53,9 +54,7 @@ export async function prepareRebuildTargetPreflights(args: {
   requestedObservabilityEnabled?: boolean;
   allowLegacyManagedImageRecovery?: boolean;
   preparedBackupRecovery?: boolean;
-  rebuildTransactionId?: string;
-  rebuildImageFingerprint?: string;
-  rebuildConfigurationFingerprint?: string;
+  rebuildCorrelation?: RebuildSessionCorrelation;
   replacementAlreadyPresent?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
@@ -69,9 +68,7 @@ export async function prepareRebuildTargetPreflights(args: {
     requestedObservabilityEnabled,
     allowLegacyManagedImageRecovery,
     preparedBackupRecovery,
-    rebuildTransactionId,
-    rebuildImageFingerprint,
-    rebuildConfigurationFingerprint,
+    rebuildCorrelation,
     replacementAlreadyPresent,
     log,
     bail,
@@ -88,9 +85,7 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
     requestedToolDisclosure,
     allowLegacyManagedImageRecovery,
-    rebuildTransactionId,
-    rebuildImageFingerprint,
-    rebuildConfigurationFingerprint,
+    rebuildCorrelation,
   );
   if (!targetConfig) return null;
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;

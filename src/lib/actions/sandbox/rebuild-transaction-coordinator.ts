@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  fingerprintRebuildRegistryEntry,
+  fingerprintRebuildReplacement,
+  fingerprintRebuildValue,
+  rebuildSessionCorrelation,
+} from "../../rebuild-correlation";
+import {
   type RebuildRegistryRecoveryV1,
   type RebuildTransactionIntentV1,
   type RebuildTransactionRecordV1,
@@ -13,11 +19,6 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import type { RebuildPostRestoreVerification } from "./rebuild-post-restore-phase";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
-import {
-  fingerprintRebuildRegistryEntry,
-  fingerprintRebuildReplacement,
-  fingerprintRebuildValue,
-} from "./rebuild-transaction-fingerprint";
 
 export { fingerprintRebuildRegistryEntry, fingerprintRebuildValue };
 
@@ -148,16 +149,8 @@ export class RebuildTransactionCoordinator {
     return this.transaction?.phase ?? null;
   }
 
-  get transactionId(): string | null {
-    return this.transaction?.transactionId ?? null;
-  }
-
-  get imageFingerprint(): string | null {
-    return this.transaction?.intent.target.imageFingerprint ?? null;
-  }
-
-  get configurationFingerprint(): string | null {
-    return this.transaction?.intent.target.configurationFingerprint ?? null;
+  get sessionCorrelation() {
+    return this.transaction ? rebuildSessionCorrelation(this.transaction) : null;
   }
 
   async prepare(
@@ -208,11 +201,17 @@ export class RebuildTransactionCoordinator {
       "replacement_created",
       {
         ...this.transaction.receipts,
-        replacement: {
-          identityFingerprint: fingerprintRebuildReplacement(identity as RebuildSandboxEntry),
-          observedAt: new Date().toISOString(),
-        },
+        replacement: this.replacementReceipt(identity),
       },
+    );
+  }
+
+  async markReplacementRecreated(identity: unknown): Promise<void> {
+    if (this.transaction?.phase !== "replacement_created") return;
+    this.transaction = await this.store.refreshReplacementReceipt(
+      this.sandboxName,
+      this.transaction.revision,
+      this.replacementReceipt(identity),
     );
   }
 
@@ -223,6 +222,13 @@ export class RebuildTransactionCoordinator {
       recordedAt: new Date().toISOString(),
       retryable: true,
     });
+  }
+
+  private replacementReceipt(identity: unknown) {
+    return {
+      identityFingerprint: fingerprintRebuildReplacement(identity as RebuildSandboxEntry),
+      observedAt: new Date().toISOString(),
+    };
   }
 
   async finalize(verification: RebuildPostRestoreVerification): Promise<boolean> {

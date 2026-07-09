@@ -24,6 +24,7 @@ import {
 } from "../onboard/machine/events";
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
+import type { RebuildSessionCorrelation } from "../rebuild-correlation";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
   assignSafeToolDisclosureUpdate,
@@ -80,10 +81,8 @@ export interface SessionFailure {
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
-  /** Internal correlation for one durable rebuild generation; never user supplied. */
-  rebuildTransactionId?: string | null;
-  rebuildImageFingerprint?: string | null;
-  rebuildConfigurationFingerprint?: string | null;
+  /** Internal cross-process rebuild anchor; remove when the journal owns the session snapshot. */
+  rebuild?: RebuildSessionCorrelation | null;
 }
 
 export interface OnboardMachineSnapshot {
@@ -205,9 +204,7 @@ export interface SessionUpdates {
   metadata?: {
     gatewayName?: string;
     fromDockerfile?: string | null;
-    rebuildTransactionId?: string | null;
-    rebuildImageFingerprint?: string | null;
-    rebuildConfigurationFingerprint?: string | null;
+    rebuild?: RebuildSessionCorrelation | null;
   };
 }
 
@@ -333,12 +330,21 @@ function parseWechatConfig(value: unknown): WechatConfig | null {
 
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
+  const rebuild = isObject(value.rebuild)
+    ? {
+        transactionId: readString(value.rebuild.transactionId),
+        imageFingerprint: readString(value.rebuild.imageFingerprint),
+        configurationFingerprint: readString(value.rebuild.configurationFingerprint),
+        replacementFingerprint: readString(value.rebuild.replacementFingerprint),
+      }
+    : null;
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
-    rebuildTransactionId: readString(value.rebuildTransactionId),
-    rebuildImageFingerprint: readString(value.rebuildImageFingerprint),
-    rebuildConfigurationFingerprint: readString(value.rebuildConfigurationFingerprint),
+    rebuild:
+      rebuild?.transactionId && rebuild.imageFingerprint && rebuild.configurationFingerprint
+        ? (rebuild as RebuildSessionCorrelation)
+        : null,
   };
 }
 
@@ -503,9 +509,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
-      rebuildTransactionId: overrides.metadata?.rebuildTransactionId ?? null,
-      rebuildImageFingerprint: overrides.metadata?.rebuildImageFingerprint ?? null,
-      rebuildConfigurationFingerprint: overrides.metadata?.rebuildConfigurationFingerprint ?? null,
+      rebuild: overrides.metadata?.rebuild ?? null,
     },
     machine:
       parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??

@@ -62,6 +62,8 @@ export type RebuildFlowOverrides = {
   sessionRebuildTransactionId?: string;
   sessionRebuildImageFingerprint?: string;
   sessionRebuildConfigurationFingerprint?: string;
+  sessionRebuildReplacementFingerprint?: string;
+  onboardReplacementEntry?: Record<string, unknown>;
   sandboxListOutput?: string;
   defaultSandbox?: string | null;
   preDeleteSandboxEntry?: Record<string, unknown>;

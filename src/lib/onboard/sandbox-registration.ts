@@ -5,6 +5,7 @@ import type { AgentDefinition } from "../agent/defs";
 import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
+import { fingerprintRebuildReplacement } from "../rebuild-correlation";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
@@ -136,5 +137,29 @@ export function buildCreatedSandboxRegistryEntry(
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
   const entry = buildCreatedSandboxRegistryEntry(input);
   (input.registerSandbox ?? registry.registerSandbox)(entry);
+  recordCreatedRebuildReplacement(entry);
   return entry;
+}
+
+function recordCreatedRebuildReplacement(entry: SandboxEntry): void {
+  const session = onboardSession.loadSession();
+  const correlation = session?.metadata.rebuild;
+  if (!correlation || session.sandboxName !== entry.name) return;
+
+  // OpenShell currently exposes name/readiness but no structured image/build
+  // identity. The registry row plus transaction-owned session are therefore the
+  // local proof used after a create-before-receipt crash. A missing or divergent
+  // half fails closed. Replace this dual-file anchor when OpenShell exposes an
+  // authoritative replacement identity API.
+  const replacementFingerprint = fingerprintRebuildReplacement(entry);
+  onboardSession.updateSession((current) => {
+    const currentCorrelation = current.metadata.rebuild;
+    if (
+      current.sandboxName === entry.name &&
+      currentCorrelation?.transactionId === correlation.transactionId
+    ) {
+      current.metadata.rebuild = { ...currentCorrelation, replacementFingerprint };
+    }
+    return current;
+  });
 }

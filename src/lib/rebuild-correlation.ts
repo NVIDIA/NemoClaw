@@ -3,7 +3,26 @@
 
 import crypto from "node:crypto";
 
-import type { SandboxEntry } from "../../state/registry";
+import type { RebuildTransactionRecordV1 } from "./state/rebuild-transaction";
+import type { SandboxEntry } from "./state/registry";
+
+export interface RebuildSessionCorrelation {
+  transactionId: string;
+  imageFingerprint: string;
+  configurationFingerprint: string;
+  replacementFingerprint: string | null;
+}
+
+export function rebuildSessionCorrelation(
+  transaction: RebuildTransactionRecordV1,
+): RebuildSessionCorrelation {
+  return {
+    transactionId: transaction.transactionId,
+    imageFingerprint: transaction.intent.target.imageFingerprint,
+    configurationFingerprint: transaction.intent.target.configurationFingerprint,
+    replacementFingerprint: null,
+  };
+}
 
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -16,6 +35,7 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Deterministic correlation only: this unkeyed digest is not authentication or authorization. */
 export function fingerprintRebuildValue(value: unknown): string {
   return `sha256:${crypto.createHash("sha256").update(stableJson(value)).digest("hex")}`;
 }

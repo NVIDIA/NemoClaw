@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Session } from "../../state/onboard-session";
-import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
-import type { SandboxEntry } from "../../state/registry";
 import {
   fingerprintRebuildRegistryEntry,
   fingerprintRebuildReplacement,
   fingerprintRebuildValue,
-} from "./rebuild-transaction-fingerprint";
+} from "../../rebuild-correlation";
+import type { Session } from "../../state/onboard-session";
+import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
+import type { SandboxEntry } from "../../state/registry";
 
 export type RebuildObservedLiveState = "absent" | "not_ready" | "ready" | "unknown_present";
 export type RebuildRecoveryAction = "adopt" | "create" | "recreate" | "resume";
@@ -87,13 +87,15 @@ export function observeRebuildRegistry(
 export function observeRebuildSession(
   transaction: RebuildTransactionRecordV1,
   session: Session | null,
+  entry: SandboxEntry | null,
 ): RebuildSessionObservation {
-  if (!session) return "missing";
+  if (!session || !entry) return "missing";
+  const correlation = session.metadata.rebuild;
   return session.sandboxName === transaction.intent.sandboxName &&
-    session.metadata.rebuildTransactionId === transaction.transactionId &&
-    session.metadata.rebuildImageFingerprint === transaction.intent.target.imageFingerprint &&
-    session.metadata.rebuildConfigurationFingerprint ===
-      transaction.intent.target.configurationFingerprint
+    correlation?.transactionId === transaction.transactionId &&
+    correlation.imageFingerprint === transaction.intent.target.imageFingerprint &&
+    correlation.configurationFingerprint === transaction.intent.target.configurationFingerprint &&
+    correlation.replacementFingerprint === fingerprintRebuildReplacement(entry)
     ? "matching"
     : "unrelated";
 }

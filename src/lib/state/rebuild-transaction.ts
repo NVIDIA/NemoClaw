@@ -806,6 +806,40 @@ export class RebuildTransactionStore {
     });
   }
 
+  async refreshReplacementReceipt(
+    sandboxName: string,
+    expectedRevision: number,
+    replacement: NonNullable<RebuildTransactionReceiptsV1["replacement"]>,
+  ): Promise<RebuildTransactionRecordV1> {
+    return this.withMutationLock(sandboxName, () => {
+      const current = this.requireActive(sandboxName, expectedRevision);
+      if (current.phase !== "replacement_created" || !current.receipts.replacement) {
+        throw transactionError(
+          "INVALID_TRANSITION",
+          sandboxName,
+          `cannot refresh a replacement receipt from ${current.phase}`,
+        );
+      }
+      // The caller has reconciled the receipted replacement as absent and
+      // created its compensation. Preserve every prior receipt while replacing
+      // only the evidence that identifies the now-current replacement.
+      const updated = normalizeMutationRecord(
+        {
+          ...current,
+          receipts: { ...current.receipts, replacement },
+          failure: null,
+          revision: current.revision + 1,
+          updatedAt: this.now().toISOString(),
+        },
+        sandboxName,
+        "INVALID_TRANSITION",
+        "replacement receipt refresh input is invalid",
+      );
+      durablePublish(this.path(sandboxName), updated, false);
+      return updated;
+    });
+  }
+
   async recordFailure(
     sandboxName: string,
     expectedRevision: number,

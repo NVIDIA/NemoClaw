@@ -505,6 +505,23 @@ describe("onboard session", () => {
     expect("token" in loaded.metadata).toBe(false);
   });
 
+  it("round-trips the internal rebuild correlation anchor (#6436)", () => {
+    const rebuild = {
+      transactionId: "11111111-1111-4111-8111-111111111111",
+      imageFingerprint: `sha256:${"a".repeat(64)}`,
+      configurationFingerprint: `sha256:${"b".repeat(64)}`,
+      replacementFingerprint: `sha256:${"c".repeat(64)}`,
+    };
+    session.saveSession(
+      session.createSession({
+        sandboxName: "alpha",
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: null, rebuild },
+      }),
+    );
+
+    expect(requireLoadedSession(session.loadSession()).metadata.rebuild).toEqual(rebuild);
+  });
+
   // ── GH #2625: provider switch from remote→local must clear stale fields ──
   //
   // Before the fix, filterSafeUpdates only accepted `typeof === "string"` for

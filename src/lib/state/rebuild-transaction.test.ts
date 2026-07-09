@@ -16,8 +16,8 @@ import {
   preparedReceipts,
   replacementReceipts,
   SANDBOX,
-  tempDir,
   TRANSACTION_ID,
+  tempDir,
 } from "../../../test/helpers/rebuild-transaction-store";
 
 import {
@@ -80,6 +80,10 @@ describe("RebuildTransactionStore", () => {
 
     await expectCode(
       () => store.transition(SANDBOX, 1, "old_deleted", deletedReceipts()),
+      "NOT_FOUND",
+    );
+    await expectCode(
+      () => store.refreshReplacementReceipt(SANDBOX, 1, replacementReceipts().replacement!),
       "NOT_FOUND",
     );
     await expectCode(
@@ -204,6 +208,37 @@ describe("RebuildTransactionStore", () => {
     expect(replacement.failure).toBeNull();
   });
 
+  it("refreshes only the replacement receipt after compensating for an absent replacement", async () => {
+    const { store } = makeStore();
+    const replacement = await advanceToReplacement(store);
+    const refreshed = await store.refreshReplacementReceipt(SANDBOX, replacement.revision, {
+      identityFingerprint: FP_D,
+      observedAt: "2026-07-08T00:03:00.000Z",
+    });
+
+    expect(refreshed).toMatchObject({
+      phase: "replacement_created",
+      revision: replacement.revision + 1,
+      receipts: {
+        backup: replacement.receipts.backup,
+        oldSandboxDeletion: replacement.receipts.oldSandboxDeletion,
+        replacement: { identityFingerprint: FP_D },
+      },
+    });
+    await expectCode(
+      () =>
+        store.refreshReplacementReceipt(
+          SANDBOX,
+          replacement.revision,
+          refreshed.receipts.replacement!,
+        ),
+      "REVISION_CONFLICT",
+    );
+    await expect(store.complete(SANDBOX, refreshed.revision)).resolves.toMatchObject({
+      status: "completed",
+    });
+  });
+
   it("rejects skipped, reversed, and prematurely completed transitions", async () => {
     const { store } = makeStore();
     const prepared = await store.create(intent(), preparedReceipts());
@@ -211,6 +246,15 @@ describe("RebuildTransactionStore", () => {
     await expectCode(
       () =>
         store.transition(SANDBOX, prepared.revision, "replacement_created", replacementReceipts()),
+      "INVALID_TRANSITION",
+    );
+    await expectCode(
+      () =>
+        store.refreshReplacementReceipt(
+          SANDBOX,
+          prepared.revision,
+          replacementReceipts().replacement!,
+        ),
       "INVALID_TRANSITION",
     );
     await expectCode(() => store.complete(SANDBOX, prepared.revision), "INVALID_TRANSITION");

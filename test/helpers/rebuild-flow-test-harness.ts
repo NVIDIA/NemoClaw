@@ -19,6 +19,23 @@ import {
 
 export { originalSandboxName, snapshotEnv } from "./rebuild-flow-test-support";
 
+export function makeRebuildFlowSandboxEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    name: "alpha",
+    provider: "ollama-local",
+    model: "nvidia/nemotron",
+    policies: ["npm"],
+    agent: null,
+    agentVersion: "0.1.0",
+    nimContainer: null,
+    nemoclawVersion: "0.1.0",
+    dashboardPort: 18789,
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    ...overrides,
+  };
+}
+
 const requireDist = createRequire(
   new URL("../../src/lib/actions/sandbox/rebuild-flow.test.ts", import.meta.url),
 );
@@ -40,6 +57,9 @@ const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependenci
 const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
 const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 const onboardSession = requireDist("../../state/onboard-session.js");
+const { fingerprintRebuildReplacement } = requireDist(
+  "../../rebuild-correlation.js",
+) as typeof import("../../src/lib/rebuild-correlation");
 const registry = requireDist("../../state/registry.js");
 const sandboxState = requireDist("../../state/sandbox.js");
 const sandboxSession = requireDist("../../state/sandbox-session.js");
@@ -74,12 +94,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   if (overrides.sessionRebuildTransactionId) {
-    (session.metadata as Record<string, unknown>).rebuildTransactionId =
-      overrides.sessionRebuildTransactionId;
-    (session.metadata as Record<string, unknown>).rebuildImageFingerprint =
-      overrides.sessionRebuildImageFingerprint;
-    (session.metadata as Record<string, unknown>).rebuildConfigurationFingerprint =
-      overrides.sessionRebuildConfigurationFingerprint;
+    (session.metadata as Record<string, unknown>).rebuild = {
+      transactionId: overrides.sessionRebuildTransactionId,
+      imageFingerprint: overrides.sessionRebuildImageFingerprint,
+      configurationFingerprint: overrides.sessionRebuildConfigurationFingerprint,
+      replacementFingerprint: overrides.sessionRebuildReplacementFingerprint ?? null,
+    };
   }
   const rebuildShieldsWindow = {
     relocked: false,
@@ -198,20 +218,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true });
   const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
-  const sandboxEntry = {
-    name: "alpha",
-    provider: "ollama-local",
-    model: "nvidia/nemotron",
-    policies: ["npm"],
-    agent: null,
-    agentVersion: "0.1.0",
-    nimContainer: null,
-    nemoclawVersion: "0.1.0",
-    dashboardPort: 18789,
-    gatewayName: "nemoclaw",
-    gatewayPort: 8080,
-    ...(overrides.sandboxEntry ?? {}),
-  };
+  const sandboxEntry = makeRebuildFlowSandboxEntry(overrides.sandboxEntry);
   let registryEntryPresent = overrides.registryEntryMissing !== true;
   vi.spyOn(registry, "getSandbox").mockImplementation(() =>
     registryEntryPresent ? sandboxEntry : null,
@@ -393,6 +400,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(async (...args: unknown[]) => {
       const options = args[0] as RebuildRecreateOnboardOpts;
       await overrides.onboard?.(session, options);
+      Object.assign(sandboxEntry, overrides.onboardReplacementEntry);
+      const correlation = (session.metadata as Record<string, unknown>).rebuild as
+        | Record<string, unknown>
+        | undefined;
+      if (correlation)
+        correlation.replacementFingerprint = fingerprintRebuildReplacement(sandboxEntry);
     });
   vi.spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget").mockResolvedValue(
     undefined,

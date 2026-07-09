@@ -305,6 +305,10 @@ describe("selection", () => {
 });
 
 describe("registerCreatedSandbox", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("passes the built entry to the supplied registry writer", () => {
     const registerSandbox = vi.fn();
 
@@ -335,5 +339,47 @@ describe("registerCreatedSandbox", () => {
 
     expect(registerSandbox).toHaveBeenCalledWith(entry);
     expect(entry.name).toBe("demo");
+  });
+
+  it("anchors the created replacement identity in a transaction-owned session (#6436)", () => {
+    const rebuild = {
+      transactionId: "11111111-1111-4111-8111-111111111111",
+      imageFingerprint: `sha256:${"a".repeat(64)}`,
+      configurationFingerprint: `sha256:${"b".repeat(64)}`,
+      replacementFingerprint: null,
+    };
+    const current = { sandboxName: "demo", metadata: { rebuild } };
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(current as never);
+    vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator) => {
+      (mutator as (session: typeof current) => unknown)(current);
+      return current as never;
+    });
+
+    registerCreatedSandbox({
+      sandboxName: "demo",
+      inferenceSelection: {
+        model: "llama",
+        provider: "openai-compatible",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
+        nimContainer: null,
+      },
+      runtimeFields,
+      agent: null,
+      agentVersionKnown: true,
+      imageTag: "nemoclaw-demo:replacement",
+      appliedPolicies: [],
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      registerSandbox: vi.fn(),
+    });
+
+    expect(current.metadata.rebuild.replacementFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 });

@@ -92,11 +92,13 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     mcpEntries: [],
     rebuildShieldsWindow: { relocked: false, wasLocked: false },
     relockShieldsIfNeeded: vi.fn(() => true),
-    rebuildTransactionId: "11111111-1111-4111-8111-111111111111",
-    rebuildImageFingerprint:
-      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    rebuildConfigurationFingerprint:
-      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    rebuildCorrelation: {
+      transactionId: "11111111-1111-4111-8111-111111111111",
+      imageFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      configurationFingerprint:
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      replacementFingerprint: null,
+    },
     onCreated: vi.fn(),
     log: vi.fn(),
     bail: vi.fn((message: string): never => {

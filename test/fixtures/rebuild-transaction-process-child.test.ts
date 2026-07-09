@@ -4,12 +4,13 @@
 import fs from "node:fs";
 
 import { expect, test } from "vitest";
-
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { fingerprintRebuildReplacement } from "../../src/lib/rebuild-correlation";
 import { RebuildTransactionStore } from "../../src/lib/state/rebuild-transaction";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
+  makeRebuildFlowSandboxEntry,
 } from "../helpers/rebuild-flow-test-harness";
 
 const role = process.env.NEMOCLAW_REBUILD_PROCESS_ROLE;
@@ -45,18 +46,19 @@ test.skipIf(!role)(
         phase === "replacement_created" ||
         phase === "state_restored" ||
         phase === "required_verified");
+    const replacementEntry = makeRebuildFlowSandboxEntry(
+      phase === "replacement_unjournaled"
+        ? {
+            credentialEnv: null,
+            observabilityEnabled: false,
+            policyPresetsFinalized: true,
+            toolDisclosure: "progressive",
+          }
+        : { policyPresetsFinalized: true },
+    );
     const harness = createRebuildFlowHarness({
       staleRecovery: role === "resume" && phase === "delete_unjournaled",
-      sandboxEntry: replacementObserved
-        ? phase === "replacement_unjournaled"
-          ? {
-              credentialEnv: null,
-              observabilityEnabled: false,
-              policyPresetsFinalized: true,
-              toolDisclosure: "progressive",
-            }
-          : { policyPresetsFinalized: true }
-        : undefined,
+      sandboxEntry: replacementObserved ? replacementEntry : undefined,
       sessionRebuildTransactionId: replacementObserved ? recovered?.transactionId : undefined,
       sessionRebuildImageFingerprint: replacementObserved
         ? recovered?.intent.target.imageFingerprint
@@ -64,13 +66,18 @@ test.skipIf(!role)(
       sessionRebuildConfigurationFingerprint: replacementObserved
         ? recovered?.intent.target.configurationFingerprint
         : undefined,
+      sessionRebuildReplacementFingerprint: replacementObserved
+        ? fingerprintRebuildReplacement(replacementEntry)
+        : undefined,
       preDeleteLatestManifest: manifest,
       onboard: (session) => {
         fs.appendFileSync(eventsFile!, "create\n");
         fs.writeFileSync(
           replacementFile!,
           JSON.stringify({
-            transactionId: (session.metadata as Record<string, unknown>).rebuildTransactionId,
+            transactionId: (
+              (session.metadata as Record<string, unknown>).rebuild as Record<string, unknown>
+            ).transactionId,
           }),
         );
       },

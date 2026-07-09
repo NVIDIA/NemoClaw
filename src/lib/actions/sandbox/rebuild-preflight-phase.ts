@@ -4,6 +4,7 @@
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
+import { rebuildSessionCorrelation } from "../../rebuild-correlation";
 import { redactFull } from "../../security/redact";
 import * as onboardSession from "../../state/onboard-session";
 import {
@@ -232,7 +233,11 @@ export async function runRebuildPreflightPhase(
           transaction: activeTransaction,
           live: liveState.observation,
           registry: observeRebuildRegistry(activeTransaction, lockedEntry),
-          session: observeRebuildSession(activeTransaction, onboardSession.loadSession()),
+          session: observeRebuildSession(
+            activeTransaction,
+            onboardSession.loadSession(),
+            lockedEntry,
+          ),
         });
         log(`Durable rebuild recovery decision: ${decision.action}`);
         if (decision.action === "refuse") {
@@ -246,6 +251,8 @@ export async function runRebuildPreflightPhase(
         }
         recoveryAction = decision.action;
         if (decision.action === "create" && !lockedEntry) {
+          // The durable journal is authoritative; the mutable registry is only
+          // reconstructed until it can participate in the same atomic commit.
           const restored = registry.restoreRebuildRegistryRecoveryIfMissing(
             activeTransaction.intent.source.registryRecovery,
           );
@@ -293,9 +300,9 @@ export async function runRebuildPreflightPhase(
         // endpoint, credential, image, and registry checks still run before
         // deletion; ordinary rebuilds continue to require the live bindings.
         preparedBackupRecovery: effectiveRecoveryManifest !== null,
-        rebuildTransactionId: activeTransaction?.transactionId,
-        rebuildImageFingerprint: activeTransaction?.intent.target.imageFingerprint,
-        rebuildConfigurationFingerprint: activeTransaction?.intent.target.configurationFingerprint,
+        rebuildCorrelation: activeTransaction
+          ? rebuildSessionCorrelation(activeTransaction)
+          : undefined,
         replacementAlreadyPresent: recoveryAction === "adopt" || recoveryAction === "resume",
         log,
         bail,

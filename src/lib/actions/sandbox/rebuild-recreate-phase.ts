@@ -5,6 +5,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
+import type { RebuildSessionCorrelation } from "../../rebuild-correlation";
 import { redactFull } from "../../security/redact";
 import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
@@ -56,9 +57,7 @@ export interface RebuildRecreatePhaseInput {
   rebuildShieldsWindow: RebuildShieldsWindow;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   replacementAlreadyCreated?: boolean;
-  rebuildTransactionId: string | null;
-  rebuildImageFingerprint: string | null;
-  rebuildConfigurationFingerprint: string | null;
+  rebuildCorrelation: RebuildSessionCorrelation | null;
   onCreated: () => Promise<void> | void;
   onFailed?: () => Promise<void> | void;
   log: RebuildLog;
@@ -94,9 +93,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     rebuildShieldsWindow,
     relockShieldsIfNeeded,
     replacementAlreadyCreated,
-    rebuildTransactionId,
-    rebuildImageFingerprint,
-    rebuildConfigurationFingerprint,
+    rebuildCorrelation,
     onCreated,
     onFailed,
     log,
@@ -134,9 +131,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
-          rebuildTransactionId,
-          rebuildImageFingerprint,
-          rebuildConfigurationFingerprint,
+          rebuild: rebuildCorrelation,
         },
       }),
     );

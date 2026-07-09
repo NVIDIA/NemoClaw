@@ -314,12 +314,13 @@ async function rebuildSandboxUnlocked(
           rebuildShieldsWindow,
           relockShieldsIfNeeded,
           replacementAlreadyCreated: replacementAlreadyPresent,
-          rebuildTransactionId: transaction.transactionId,
-          rebuildImageFingerprint: transaction.imageFingerprint,
-          rebuildConfigurationFingerprint: transaction.configurationFingerprint,
+          rebuildCorrelation: transaction.sessionCorrelation,
           onCreated: async () => {
             sandboxStillExists = true;
-            await transaction.markReplacementCreated(registry.getSandbox(sandboxName));
+            const replacement = registry.getSandbox(sandboxName);
+            await (recoveryAction === "recreate"
+              ? transaction.markReplacementRecreated(replacement)
+              : transaction.markReplacementCreated(replacement));
           },
           onFailed: async () => {
             await transaction.recordReplacementFailure();

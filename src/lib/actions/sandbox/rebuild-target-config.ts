@@ -3,6 +3,7 @@
 
 import { loadAgent } from "../../agent/defs";
 import { webSearchProviderForConfig } from "../../inference/web-search";
+import type { RebuildSessionCorrelation } from "../../rebuild-correlation";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -114,20 +115,18 @@ export function prepareRebuildTargetConfig(
   bail: RebuildBail,
   requestedToolDisclosure?: ToolDisclosure,
   allowLegacyManagedImageRecovery = false,
-  rebuildTransactionId?: string,
-  rebuildImageFingerprint?: string,
-  rebuildConfigurationFingerprint?: string,
+  rebuildCorrelation?: RebuildSessionCorrelation,
 ): RebuildTargetConfig | null {
   const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
   if (!resumeConfig) return null;
   const sessionSnapshot = onboardSession.loadSession();
   const sessionMatchesSandbox =
     sessionSnapshot?.sandboxName === sandboxName &&
-    (!rebuildTransactionId ||
-      (sessionSnapshot.metadata.rebuildTransactionId === rebuildTransactionId &&
-        sessionSnapshot.metadata.rebuildImageFingerprint === rebuildImageFingerprint &&
-        sessionSnapshot.metadata.rebuildConfigurationFingerprint ===
-          rebuildConfigurationFingerprint));
+    (!rebuildCorrelation ||
+      (sessionSnapshot.metadata.rebuild?.transactionId === rebuildCorrelation.transactionId &&
+        sessionSnapshot.metadata.rebuild.imageFingerprint === rebuildCorrelation.imageFingerprint &&
+        sessionSnapshot.metadata.rebuild.configurationFingerprint ===
+          rebuildCorrelation.configurationFingerprint));
   const durableConfig = resolveRebuildDurableConfig(
     sandboxName,
     sb,
