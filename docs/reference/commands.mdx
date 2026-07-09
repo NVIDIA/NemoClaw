@@ -132,6 +132,35 @@ Print the installed NemoClaw CLI version.
 $$nemoclaw --version
 ```
 
+### `$$nemoclaw completion`
+
+Generate a tab-completion script for Bash, Zsh, or Fish from the commands and flags available in the installed CLI.
+The script completes public global commands, the sandbox-first `$$nemoclaw <name> ...` grammar, flags, shell choices, and locally registered sandbox names.
+If you omit the shell name, `$$nemoclaw completion` detects the target from `$SHELL` and defaults to Bash when it cannot identify Zsh or Fish.
+The generated script is bound to the CLI name that created it, so install a separate script for each CLI alias you use.
+It loads sandbox names from the local registry the first time completion runs and caches them for the rest of that shell session.
+
+For Bash, source the generated script and add the same line to `~/.bashrc` for future sessions.
+
+```bash
+source <($$nemoclaw completion bash)
+```
+
+For Zsh, source the generated script and add the same line to `~/.zshrc` for future sessions.
+
+```zsh
+source <($$nemoclaw completion zsh)
+```
+
+For Fish, write the generated script to Fish's completions directory.
+
+```fish
+mkdir -p ~/.config/fish/completions
+$$nemoclaw completion fish > ~/.config/fish/completions/$$nemoclaw.fish
+```
+
+Start a new shell session to refresh the cached sandbox names after creating or removing a sandbox.
+
 ### `$$nemoclaw resources`
 
 Display host hardware inventory and configured sandbox resource profiles.
