@@ -35,6 +35,25 @@ describe("credential rotation documentation", () => {
     expect(readGuide()).not.toContain("--resume");
   });
 
+  it("keeps replacement credentials out of command text (#6266)", () => {
+    const guide = readGuide();
+    const credentialVariables = [
+      "NVIDIA_INFERENCE_API_KEY",
+      "SLACK_BOT_TOKEN",
+      "SLACK_APP_TOKEN",
+      "TELEGRAM_BOT_TOKEN",
+      "DISCORD_BOT_TOKEN",
+      "BRAVE_API_KEY",
+      "TAVILY_API_KEY",
+    ];
+
+    for (const variable of credentialVariables) {
+      expect(guide).toMatch(new RegExp(`IFS= read -r -s ${variable}`));
+      expect(guide).toMatch(new RegExp(`unset [^\\n]*\\b${variable}\\b`));
+      expect(guide).not.toMatch(new RegExp(`${variable}=[^\\s$]`));
+    }
+  });
+
   it("documents messaging rebuilds and web search recreation", () => {
     const guide = readGuide();
     const bash = fencedBlocks(guide, "bash");
