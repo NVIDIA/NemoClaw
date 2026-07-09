@@ -15,9 +15,20 @@ export function parseConfig(raw: string, format: string): ConfigObject {
   if (format === "yaml") {
     parsed = require("yaml").parse(raw);
   } else if (format === "toml") {
-    parsed = require("smol-toml").parse(raw);
+    const TOML = require("smol-toml") as {
+      parse: (text: string) => ConfigValue | object;
+    };
+    try {
+      parsed = TOML.parse(raw);
+    } catch {
+      throw new Error("Invalid TOML configuration syntax.");
+    }
   } else {
-    parsed = JSON.parse(raw);
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("Invalid JSON configuration syntax.");
+    }
   }
   if (!isConfigObject(parsed) || !isConfigValue(parsed)) {
     throw new Error("Config is not a JSON-like object.");

@@ -70,7 +70,10 @@ function loadConfigGet(): (name: string, opts?: { key?: string; format?: string 
 }
 
 function stubSandboxRead(rawConfig: unknown): void {
-  const raw = JSON.stringify(rawConfig);
+  stubSandboxRawRead(JSON.stringify(rawConfig));
+}
+
+function stubSandboxRawRead(raw: string): void {
   client.captureOpenshellCommand = () => ({
     status: 0,
     signal: null,
@@ -91,6 +94,16 @@ function captureStdout(run: () => void): string {
     spy.mockRestore();
   }
   return chunks.join("\n");
+}
+
+function captureError(run: () => void): Error {
+  try {
+    run();
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw error;
+  }
+  throw new Error("Expected callback to throw.");
 }
 
 describe("configGet output redaction and gateway omission (#config-get)", () => {
@@ -155,6 +168,18 @@ describe("configGet output redaction and gateway omission (#config-get)", () => 
     // gateway is deleted before dotpath extraction, so the key is not found and
     // the command fails rather than leaking regenerated auth material.
     expect(() => configGet("alpha", { key: "gateway.token" })).toThrow(/not found/i);
+  });
+
+  it("does not echo credential-bearing source text from malformed JSON", () => {
+    const secret = "nvapi-jsonabcdefghijklmnopqrstuvwxyz0123456789";
+    const sourceLine = `{"provider":{"apiKey":"${secret}"}} trailing-text`;
+    stubSandboxRawRead(sourceLine);
+
+    const error = captureError(() => loadConfigGet()("alpha"));
+
+    expect(error.message).toContain("Invalid JSON configuration syntax.");
+    expect(error.message).not.toContain(secret);
+    expect(error.message).not.toContain(sourceLine);
   });
 });
 
@@ -237,6 +262,18 @@ describe("configGet TOML parsing for dcode agents (#6548)", () => {
     expect(out).not.toContain("nvapi-gateway000000000000000000000000000000");
     expect(out).toContain("[STRIPPED_BY_MIGRATION]");
     expect(JSON.parse(out)).not.toHaveProperty("gateway");
+  });
+
+  it("does not echo credential-bearing source lines from malformed TOML", () => {
+    const secret = "nvapi-tomlabcdefghijklmnopqrstuvwxyz0123456789";
+    const sourceLine = `api_key = "${secret}" trailing-text`;
+    stubSandboxRawRead(["[provider]", sourceLine].join("\n"));
+
+    const error = captureError(() => loadConfigGet()("dcode-sb"));
+
+    expect(error.message).toContain("Invalid TOML configuration syntax.");
+    expect(error.message).not.toContain(secret);
+    expect(error.message).not.toContain(sourceLine);
   });
 
   it("refuses config set before attempting to rewrite an image-baked TOML file", async () => {
