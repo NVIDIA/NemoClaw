@@ -86,7 +86,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     }
   });
 
-  it("allows plain OTLP endpoint URLs but rejects credential-bearing endpoint values (`#6466`)", () => {
+  it("allows plain OTLP endpoint URLs but rejects credential-bearing endpoint values (#6466)", () => {
     // Regression for #6466: a plain OTLP collector URL is not a credential and
     // must pass the guard (the documented `--observability` flow sets one),
     // while a URL with embedded userinfo or a structured key-bearing blob is
