@@ -39,6 +39,62 @@ describe("sandbox config formats", () => {
     });
   });
 
+  it("rejects excessive TOML nesting with a generic source-safe error", () => {
+    const secret = "credential-canary-must-not-escape";
+    const acceptedPath = Array.from({ length: 63 }, (_, index) => `level${index}`).join(".");
+    const tablePath = Array.from({ length: 64 }, (_, index) => `level${index}`).join(".");
+    const source = `[${tablePath}]\npassword = "${secret}"`;
+
+    expect(parseConfig(`[${acceptedPath}]\nvalue = 1`, "toml")).toBeDefined();
+    expect(() => parseConfig(source, "toml")).toThrow("Config exceeds safe structural limits.");
+    try {
+      parseConfig(source, "toml");
+    } catch (error) {
+      expect(String(error)).not.toContain(secret);
+      expect(String(error)).not.toContain(tablePath);
+    }
+  });
+
+  it("rejects oversized TOML containers", () => {
+    const accepted = `values = [${Array.from({ length: 10_000 }, () => "0").join(",")}]`;
+    const source = `values = [${Array.from({ length: 10_001 }, () => "0").join(",")}]`;
+
+    expect((parseConfig(accepted, "toml").values as unknown[]).length).toBe(10_000);
+    expect(() => parseConfig(source, "toml")).toThrow("Config exceeds safe structural limits.");
+  });
+
+  it("rejects objects that exceed per-object and aggregate key budgets", () => {
+    const oversizedTomlObject = Array.from(
+      { length: 10_001 },
+      (_, index) => `key${index} = 0`,
+    ).join("\n");
+    const groups = Array.from({ length: 6 }, (_, group) =>
+      Object.fromEntries(Array.from({ length: 9_000 }, (_, index) => [`key${group}_${index}`, 0])),
+    );
+
+    expect(() => parseConfig(oversizedTomlObject, "toml")).toThrow(
+      "Config exceeds safe structural limits.",
+    );
+    expect(() => parseConfig(JSON.stringify({ groups }), "json")).toThrow(
+      "Config exceeds safe structural limits.",
+    );
+  });
+
+  it("rejects TOML that exceeds the total parsed-node budget", () => {
+    const array = Array.from({ length: 100 }, () => "0").join(",");
+    const source = Array.from({ length: 1_000 }, (_, index) => `key${index} = [${array}]`).join(
+      "\n",
+    );
+
+    expect(() => parseConfig(source, "toml")).toThrow("Config exceeds safe structural limits.");
+  });
+
+  it("rejects cyclic YAML aliases without recursive validation", () => {
+    const source = "root: &root\n  child: *root\n";
+
+    expect(() => parseConfig(source, "yaml")).toThrow("Config exceeds safe structural limits.");
+  });
+
   it("refuses to serialize TOML as another format", () => {
     expect(() => serializeConfig({ model: "nemotron" }, "toml")).toThrow(
       /config set is not supported for TOML-format agents/,

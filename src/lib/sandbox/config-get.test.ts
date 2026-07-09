@@ -298,6 +298,18 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
     expect(error.message).not.toContain(sourceLine);
   });
 
+  it("rejects excessive TOML structure without echoing credential-bearing source", () => {
+    const secret = "credential-canary-must-not-escape";
+    const tablePath = Array.from({ length: 64 }, (_, index) => `level${index}`).join(".");
+    stubSandboxRawRead(`[${tablePath}]\npassword = "${secret}"`);
+
+    const error = captureError(() => loadConfigGet()("dcode-sb"));
+
+    expect(error.message).toContain("Config exceeds safe structural limits.");
+    expect(error.message).not.toContain(secret);
+    expect(error.message).not.toContain(tablePath);
+  });
+
   it("does not echo credential-bearing source lines from malformed YAML", () => {
     registry.getSandbox = () => ({ agent: "hermes" });
     agentDefs.loadAgent = () => ({
