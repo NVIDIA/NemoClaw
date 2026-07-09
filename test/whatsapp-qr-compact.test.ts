@@ -377,14 +377,18 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
   });
 
-  it("refuses to pair when no public or private gateway URL is available (#4504)", () => {
+  it("pairs over loopback config resolution when no gateway URL is set (#6413)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       preloadPresent: true,
     });
-    expect(r.stderr).toContain("gateway URL is not set");
-    expect(r.stdout).toContain("GUARD_EXIT=1");
-    // Must not attempt the login when the gateway env is missing.
-    expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
+    expect(r.stderr).toContain("Pairing via the in-sandbox gateway (loopback)");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
+    // No URL in the environment: OpenClaw resolves ws://127.0.0.1:<port> from
+    // its own config, keeping the pairing origin local so operator scopes
+    // survive the post-pair channels.start restart.
+    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=unset");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=unset");
+    expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 
   it.each([
@@ -414,15 +418,19 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 
-  it("reinjects the NemoClaw-private gateway URL and private-WS flag for WhatsApp (#4504)", () => {
+  it("does not re-inject the stashed private gateway URL for WhatsApp (#6413)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       privateGatewayUrl: "ws://10.200.0.2:18790",
       insecurePrivateWs: "1",
       preloadPresent: true,
     });
     expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
-    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=ws://10.200.0.2:18790");
-    expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=1");
+    // The stashed private veth URL must stay out of the login environment: a
+    // private-IP origin makes the gateway's locality check strip operator
+    // scopes and the post-pair restart fails with "missing scope:
+    // operator.admin".
+    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=unset");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=unset");
     expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 
