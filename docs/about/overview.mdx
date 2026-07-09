@@ -13,7 +13,17 @@ skill:
 ---
 import { AgentCli, AgentOnly } from "../_components/AgentGuide";
 
-NVIDIA NemoClaw is an open-source reference stack for running <AgentOnly variant="openclaw,hermes">always-on AI agents</AgentOnly><AgentOnly variant="deepagents">AI coding agents</AgentOnly> more safely inside OpenShell containers.
+<AgentOnly variant="openclaw,hermes">
+
+NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents more safely inside OpenShell containers.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+NVIDIA NemoClaw is an open-source reference stack for running AI coding agents more safely inside OpenShell containers.
+
+</AgentOnly>
+
 NemoClaw provides onboarding, lifecycle management, and agent operations for supported runtimes in OpenShell sandboxes.
 It adds policy-based privacy and security controls for agent behavior and data handling.
 These controls help agents run in clouds, on-premises environments, RTX PCs, and DGX Spark.
