@@ -227,7 +227,11 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--attention-backend flashinfer");
     expect(cmd).toContain("--moe-backend marlin");
     expect(cmd).toContain("--enable-auto-tool-choice");
-    expect(cmd).toContain("--tool-call-parser qwen3_xml");
+    // #6457: `qwen3_coder` (not `qwen3_xml`) is the validated tool-call parser
+    // for this Spark checkpoint; `qwen3_xml` mis-parses its tool-call frames and
+    // breaks Deep Agents Code tool calls with HTTP 400.
+    expect(cmd).toContain("--tool-call-parser qwen3_coder");
+    expect(cmd).not.toContain("qwen3_xml");
     expect(cmd).toContain("--reasoning-parser qwen3");
     expect(cmd).toContain("--max-model-len 262144");
     expect(cmd).toContain(
