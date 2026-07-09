@@ -1,26 +1,33 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EventEmitter } from "node:events";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   dockerCapture: vi.fn(),
+  dockerForceRm: vi.fn(),
   dockerPullWithProgressWatchdog: vi.fn(),
+  dockerRunDetached: vi.fn(),
   dockerSpawn: vi.fn(),
-  getGpuIndicesByName: vi.fn(() => []),
+  dockerStop: vi.fn(),
+  getGpuIndicesByName: vi.fn<(_pattern: RegExp) => number[]>(() => []),
   runCapture: vi.fn(),
-  runShell: vi.fn(),
 }));
 
 vi.mock("../runner", () => ({
   runCapture: mocks.runCapture,
-  runShell: mocks.runShell,
 }));
 
 vi.mock("../adapters/docker", () => ({
   dockerCapture: mocks.dockerCapture,
+  dockerForceRm: mocks.dockerForceRm,
   dockerPullWithProgressWatchdog: mocks.dockerPullWithProgressWatchdog,
+  dockerRunDetached: mocks.dockerRunDetached,
   dockerSpawn: mocks.dockerSpawn,
+  dockerStop: mocks.dockerStop,
 }));
 
 vi.mock("./nim", () => ({
@@ -28,12 +35,46 @@ vi.mock("./nim", () => ({
 }));
 
 import {
-  buildVllmRunCommand,
+  buildVllmRunArgs,
   detectVllmProfile,
   installVllm,
   pullImage,
   resolveVllmServedModelId,
 } from "./vllm";
+
+function mockDockerSpawnSuccess(): EventEmitter & {
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+} {
+  const proc = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+  };
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  process.nextTick(() => proc.emit("exit", 0));
+  return proc;
+}
+
+function mockSuccessfulVllmInstall(containerName: string): void {
+  const captureByCommand: Record<string, string> = {
+    curl: '{"data":[]}',
+    sh: "/usr/bin/tool\n",
+  };
+  mocks.runCapture.mockImplementation(
+    (cmd: readonly string[]) => captureByCommand[cmd[0] ?? ""] ?? "",
+  );
+  mocks.dockerPullWithProgressWatchdog.mockResolvedValue({
+    status: 0,
+    signal: null,
+    output: "",
+    timedOut: false,
+    timeoutKind: null,
+  });
+  mocks.dockerSpawn.mockReturnValue(mockDockerSpawnSuccess());
+  mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+  mocks.dockerCapture.mockReturnValue(`${containerName}\n`);
+}
 
 describe("vLLM served route identity", () => {
   it("uses one safe served-model override and rejects ambiguous aliases (#6315)", () => {
@@ -165,23 +206,72 @@ describe("vLLM run command", () => {
   it("adds --restart unless-stopped so the container survives a host reboot (#4886)", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
-    const cmd = buildVllmRunCommand(
-      profile!,
-      profile!.defaultModel,
-      profile!.dockerRunFlags.join(" "),
-    );
-    expect(cmd).toContain("docker run -d --restart unless-stopped");
-    expect(cmd).toContain(`--name ${profile!.containerName}`);
-    expect(cmd).toContain(":8000");
+    const args = buildVllmRunArgs(profile!, profile!.defaultModel, profile!.dockerRunFlags);
+    expect(args.slice(0, 2)).toEqual(["--restart", "unless-stopped"]);
+    expect(args).toContain("--name");
+    expect(args[args.indexOf("--name") + 1]).toBe(profile!.containerName);
+    expect(args).toContain("8000:8000");
   });
 
-  it("preserves the profile run flags and image", () => {
+  it("preserves profile run flags and image as argv tokens", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
     expect(profile).not.toBeNull();
-    const cmd = buildVllmRunCommand(profile!, profile!.defaultModel, "--gpus device=0 --ipc=host");
-    expect(cmd).toContain("--restart unless-stopped --gpus device=0 --ipc=host");
-    expect(cmd).toContain(profile!.image);
-    expect(cmd).toContain("--entrypoint /bin/bash");
+    const args = buildVllmRunArgs(profile!, profile!.defaultModel, [
+      "--gpus",
+      '"device=0,1"',
+      "--ipc=host",
+    ]);
+    expect(args).toEqual(expect.arrayContaining(["--gpus", '"device=0,1"', "--ipc=host"]));
+    expect(args).toContain(profile!.image);
+    expect(args).toEqual(expect.arrayContaining(["--entrypoint", "/bin/bash"]));
+    expect(args.join(" ")).not.toContain("docker run");
+  });
+
+  it("keeps shell metacharacters in Docker argv tokens instead of shell composing them", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const labelValue = "profile=$(touch /tmp/nemoclaw-vllm-pwn)";
+    const args = buildVllmRunArgs(profile!, profile!.defaultModel, ["--label", labelValue], {
+      HF_TOKEN: "hf_test",
+    } as NodeJS.ProcessEnv);
+
+    expect(args).toEqual(expect.arrayContaining(["--label", labelValue, "-e", "HF_TOKEN"]));
+    expect(args).not.toContain(`--label ${labelValue}`);
+    expect(args).not.toContain("-e HF_TOKEN");
+    expect(args.join(" ")).not.toContain("hf_test");
+  });
+
+  it("rejects empty and NUL-bearing Docker argv tokens", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    expect(profile).not.toBeNull();
+
+    expect(() => buildVllmRunArgs(profile!, profile!.defaultModel, ["--label", ""])).toThrow(
+      "must not be empty",
+    );
+    expect(() =>
+      buildVllmRunArgs(profile!, profile!.defaultModel, ["--label", "unsafe\0value"]),
+    ).toThrow("must not contain NUL bytes");
+  });
+
+  it("uses os.homedir for the Hugging Face cache mount without shell quoting", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const mount = profile!.dockerRunFlags[profile!.dockerRunFlags.indexOf("-v") + 1];
+
+    expect(mount).toBe(
+      `${path.join(os.homedir(), ".cache", "huggingface")}:/root/.cache/huggingface`,
+    );
+  });
+
+  it("keeps Docker CSV quoting inside the Station multi-GPU argv token", () => {
+    mocks.getGpuIndicesByName.mockReturnValue([0, 1]);
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const flags = profile!.buildDockerRunFlags!();
+
+    expect(flags).toEqual(expect.arrayContaining(["--gpus", '"device=0,1"']));
+    expect(flags).not.toContain("device=0,1");
+    expect(flags).not.toContain(`'"device=0,1"'`);
   });
 });
 
@@ -321,5 +411,57 @@ describe("installVllm model resolution", () => {
     expect(mocks.runCapture).not.toHaveBeenCalled();
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+  });
+
+  it("starts the long-lived vLLM container through Docker argv, not a shell command", async () => {
+    process.env.HF_TOKEN = "hf_test";
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.dockerForceRm).toHaveBeenCalledWith(
+      profile.containerName,
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(mocks.dockerRunDetached).toHaveBeenCalledTimes(1);
+    const [args, opts] = mocks.dockerRunDetached.mock.calls[0] as [
+      string[],
+      { env?: Record<string, string> },
+    ];
+    expect(args).toEqual(
+      expect.arrayContaining(["--restart", "unless-stopped", "-e", "HF_TOKEN", profile.image]),
+    );
+    expect(args.join(" ")).not.toContain("hf_test");
+    expect(args.some((arg) => arg.includes("docker run"))).toBe(false);
+    expect(args[args.indexOf("-lc") + 1]).toContain("vllm serve");
+    expect(opts).toEqual(expect.objectContaining({ env: { HF_TOKEN: "hf_test" } }));
+  });
+
+  it("rejects invalid profile run flags before launching the long-lived container", async () => {
+    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const profile = {
+      ...baseProfile,
+      buildDockerRunFlags: () => ["--label", ""],
+    };
+    mockSuccessfulVllmInstall(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("vLLM docker run flags[1] must not be empty"),
+    );
   });
 });

@@ -3,7 +3,7 @@
 
 /**
  *
- * This keeps the the contract real: onboarding a restricted OpenClaw
+ * This keeps the contract real: onboarding a restricted OpenClaw
  * sandbox, mutating live OpenShell network policy from the NemoClaw CLI, and
  * probing egress from inside the sandbox. The prompt-driving helper is kept
  * separate so support tests can pin its command shape without live infra.

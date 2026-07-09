@@ -86,6 +86,7 @@ describe("prepareSandboxCreateLaunch", () => {
     expect(result.createCommand).toBe(
       `openshell sandbox create --from /tmp/build/Dockerfile --name demo -- ${result.sandboxStartupCommand.join(" ")} 2>&1`,
     );
+    expect(result.createArgv).toEqual(["bash", "-lc", result.createCommand]);
   });
 
   it("forwards only the allowlisted OpenClaw auto-pair runtime controls", () => {
@@ -256,6 +257,7 @@ describe("prepareSandboxCreateLaunch", () => {
         getDashboardForwardPort: () => "19000",
         hermesDashboardState: disabledHermesDashboardState,
         openshellShellCommand: helpers.openshellShellCommand,
+        openshellArgv: helpers.openshellArgv,
         buildEnv: () => ({}),
       });
 
@@ -279,6 +281,7 @@ describe("prepareSandboxCreateLaunch", () => {
       expect(fs.existsSync(injectedFromPath)).toBe(false);
       expect(fs.existsSync(injectedUrlPath)).toBe(false);
       expect(fs.existsSync(injectedProxyPath)).toBe(false);
+      expect(result.createArgv).toEqual([fakeOpenshell, ...capturedArgs]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

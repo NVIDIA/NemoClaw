@@ -22,6 +22,10 @@ export type FinalGatewayStartFailureDeps = {
   cleanupGateway(): void;
 };
 
+export function normalizeGatewayStartError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 export function reportLegacyGatewayStartResultFailure(
   output: string,
   log: (message: string) => void,

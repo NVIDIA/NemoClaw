@@ -105,7 +105,7 @@ export type RebuildFlowHarness = {
   ensureValidatedBraveSearchCredentialSpy: MockInstance;
   hydrateCredentialEnvSpy: MockInstance;
   logSpy: MockInstance;
-  markStepFailedSpy: MockInstance;
+  finalizeIncompleteOnboardStepSpy: MockInstance;
   onboardSpy: MockInstance;
   registryUpdateSpy: MockInstance;
   setDefaultSpy: MockInstance;
@@ -178,15 +178,18 @@ export function createRebuildFlowSession(machineSnapshotVersion: number): Rebuil
   };
 }
 export function installTerminalStepFailureMock(
-  onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
+  onboardSession: { finalizeIncompleteOnboardStep: (...args: unknown[]) => unknown },
   session: RebuildFlowSession,
 ): MockInstance {
   return vi
-    .spyOn(onboardSession, "markStepFailed")
-    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
+    .spyOn(onboardSession, "finalizeIncompleteOnboardStep")
+    .mockImplementation((stepName: unknown, message: unknown) => {
+      if (session.machine.state === "failed" || session.machine.state === "complete") {
+        return session;
+      }
       const stepKey = String(stepName);
-      const step = session.steps[stepKey] ?? createStep("pending");
-      session.steps[stepKey] = step;
+      const step = session.steps[stepKey];
+      if (!step) return session;
       step.status = "failed";
       step.error = typeof message === "string" ? message : null;
       session.status = "failed";
@@ -195,10 +198,8 @@ export function installTerminalStepFailureMock(
         message: typeof message === "string" ? message : null,
         recordedAt: "2026-06-01T00:02:00.000Z",
       };
-      const updateMachine =
-        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
-      session.machine.state = updateMachine ? "failed" : session.machine.state;
-      session.machine.revision += updateMachine ? 1 : 0;
+      session.machine.state = "failed";
+      session.machine.revision += 1;
       return session;
     });
 }

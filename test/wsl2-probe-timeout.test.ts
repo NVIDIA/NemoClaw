@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -188,6 +188,41 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       }
     }
 
+    function runCalibratedProbeWithResults(results: ProbeResultFixture[], clock: number[]) {
+      const httpProbePath = require.resolve("../src/lib/adapters/http/probe.js");
+      const probesPath = require.resolve("../src/lib/inference/onboard-probes.js");
+      const httpProbe = require(httpProbePath);
+      const originalRunCurlProbe = httpProbe.runCurlProbe;
+      const now = vi.spyOn(Date, "now");
+      for (const value of clock) now.mockReturnValueOnce(value);
+      const calls: string[][] = [];
+      let index = 0;
+      httpProbe.runCurlProbe = (args: string[]) => {
+        calls.push(args);
+        return results[index++] ?? results[results.length - 1];
+      };
+      delete require.cache[probesPath];
+      try {
+        const { probeOpenAiLikeEndpoint } = require(probesPath) as {
+          probeOpenAiLikeEndpoint: (
+            endpointUrl: string,
+            model: string,
+            apiKey: string,
+            options?: Record<string, unknown>,
+          ) => { ok: boolean; message?: string };
+        };
+        const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key", {
+          calibrateTimeouts: true,
+          skipResponsesProbe: true,
+        });
+        return { result, calls };
+      } finally {
+        httpProbe.runCurlProbe = originalRunCurlProbe;
+        now.mockRestore();
+        delete require.cache[probesPath];
+      }
+    }
+
     it("retries HTTP 429 validation throttling from successful curl invocations", () => {
       const throttled = {
         ok: false,
@@ -230,6 +265,63 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       expect(result.ok).toBe(false);
       expect(result.message).toContain("WSL2 detected");
       expect(result.message).toContain("--skip-verify");
+    });
+
+    it("uses calibrated fast-network timing for provider validation", () => {
+      const calibration = {
+        ok: false,
+        curlStatus: 0,
+        httpStatus: 401,
+        body: "",
+        stderr: "",
+        message: "HTTP 401",
+      };
+      const success = {
+        ok: true,
+        curlStatus: 0,
+        httpStatus: 200,
+        body: "{}",
+        stderr: "",
+        message: "ok",
+      };
+      const { result, calls } = runCalibratedProbeWithResults([calibration, success], [1000, 1180]);
+      expect(result.ok).toBe(true);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toEqual(
+        expect.arrayContaining(["--connect-timeout", "3", "--max-time", "5"]),
+      );
+      expect(calls[0].at(-1)).toBe("http://localhost:8000/models");
+      expect(calls[1]).toEqual(
+        expect.arrayContaining(["--connect-timeout", "5", "--max-time", "15"]),
+      );
+    });
+
+    it("uses the safe fallback timing when calibration times out", () => {
+      const calibrationTimeout = {
+        ok: false,
+        curlStatus: 28,
+        httpStatus: 0,
+        body: "",
+        stderr: "timeout",
+        message: "curl timed out",
+      };
+      const success = {
+        ok: true,
+        curlStatus: 0,
+        httpStatus: 200,
+        body: "{}",
+        stderr: "",
+        message: "ok",
+      };
+      const { result, calls } = runCalibratedProbeWithResults(
+        [calibrationTimeout, success],
+        [2000, 7000],
+      );
+      expect(result.ok).toBe(true);
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(
+        expect.arrayContaining(["--connect-timeout", "20", "--max-time", "30"]),
+      );
     });
   });
 });

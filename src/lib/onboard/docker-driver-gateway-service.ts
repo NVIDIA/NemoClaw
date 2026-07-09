@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncOptions } from "node:child_process";
+import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
+import {
+  createGatewayHealthWaitOptions,
+  formatGatewayHealthWaitLimit,
+} from "./gateway-health-wait";
 import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
 
 export const OPENSHELL_GATEWAY_USER_SERVICE = "openshell-gateway";
@@ -49,6 +53,7 @@ export interface PackageManagedDockerDriverGatewayOptions {
   healthPollCount?: number;
   healthPollInterval?: number;
   isDockerDriverGatewayReady?: () => Promise<boolean>;
+  now?: () => number;
   registerDockerDriverGatewayEndpoint: () => boolean;
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string;
   sleepSeconds?: (seconds: number) => void;
@@ -291,6 +296,7 @@ export async function startPackageManagedDockerDriverGateway({
   healthPollCount,
   healthPollInterval,
   isDockerDriverGatewayReady = isDockerDriverGatewayHttpReady,
+  now = Date.now,
   registerDockerDriverGatewayEndpoint,
   runCaptureOpenshell,
   sleepSeconds: sleepSecondsImpl = sleepSeconds,
@@ -323,29 +329,22 @@ export async function startPackageManagedDockerDriverGateway({
 
   const pollCount = healthPollCount ?? envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
   const pollInterval = healthPollInterval ?? envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  const pollIntervalMs = Math.max(0, pollInterval * 1000);
+  const waitOptions = createGatewayHealthWaitOptions(pollCount, pollInterval, now, (ms) =>
+    sleepSecondsImpl(ms / 1000),
+  );
   const healthy =
-    pollCount > 0 &&
-    (await waitUntilAsync(
-      async () => {
-        if (!registerDockerDriverGatewayEndpoint()) return false;
-        const status = runCaptureOpenshell(["status"], { ignoreError: true });
-        const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-          ignoreError: true,
-        });
-        const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-        return (
-          isGatewayHealthy(status, namedInfo, currentInfo) && (await isDockerDriverGatewayReady())
-        );
-      },
-      {
-        initialIntervalMs: pollIntervalMs,
-        maxIntervalMs: pollIntervalMs,
-        backoffFactor: 1,
-        maxAttempts: pollCount,
-        sleep: (ms) => sleepSecondsImpl(ms / 1000),
-      },
-    ));
+    waitOptions !== null &&
+    (await waitUntilAsync(async () => {
+      if (!registerDockerDriverGatewayEndpoint()) return false;
+      const status = runCaptureOpenshell(["status"], { ignoreError: true });
+      const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
+        ignoreError: true,
+      });
+      const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+      return (
+        isGatewayHealthy(status, namedInfo, currentInfo) && (await isDockerDriverGatewayReady())
+      );
+    }, waitOptions));
   if (healthy) {
     clearDockerDriverGatewayRuntimeFiles();
     await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
@@ -355,7 +354,10 @@ export async function startPackageManagedDockerDriverGateway({
     return true;
   }
 
-  const message = "OpenShell gateway user service started but did not become healthy.";
+  const message = `OpenShell gateway user service started but did not become healthy within the configured ${formatGatewayHealthWaitLimit(
+    pollCount,
+    pollInterval,
+  )}.`;
   console.error(`  ${message}`);
   console.error("  Check: systemctl --user status openshell-gateway");
   if (exitOnFailure) process.exit(1);

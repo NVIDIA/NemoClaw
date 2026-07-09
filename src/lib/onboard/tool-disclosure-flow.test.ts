@@ -130,4 +130,42 @@ describe("onboard tool-disclosure flow", () => {
     expect(mocks.updateSession).not.toHaveBeenCalled();
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
   });
+
+  it("keeps a pending route reservation for the current sandbox so a resumed onboard can recover", () => {
+    const result = prepareSandboxToolDisclosure(
+      "alpha",
+      null,
+      false,
+      () => ({
+        existingEntry: {
+          name: "alpha",
+          toolDisclosure: "progressive",
+          pendingRouteReservation: true,
+        },
+        preservedMcpState: undefined,
+        liveExists: false,
+      }),
+      "progressive",
+    );
+
+    expect(result).toMatchObject({ effectiveToolDisclosure: "progressive" });
+    expect(mocks.updateSession).toHaveBeenCalledOnce();
+    expect(mocks.removeSandbox).not.toHaveBeenCalled();
+  });
+
+  it("still clears a stale registry entry that has no live sandbox and no pending reservation", () => {
+    prepareSandboxToolDisclosure(
+      "beta",
+      null,
+      false,
+      () => ({
+        existingEntry: { name: "beta", toolDisclosure: "progressive" },
+        preservedMcpState: undefined,
+        liveExists: false,
+      }),
+      "progressive",
+    );
+
+    expect(mocks.removeSandbox).toHaveBeenCalledWith("beta");
+  });
 });
