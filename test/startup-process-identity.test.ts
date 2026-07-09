@@ -256,6 +256,9 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       openshell_wrong_supervisor: false,
       openshell_root_child: false,
       openshell_nested_child: false,
+      // #6565 reproduces nested PID namespaces only for OpenClaw. Hermes keeps
+      // its independently tested same-namespace topology until it has a
+      // Hermes-specific reproduction or acceptance requirement.
       openshell_nested_pid_namespace: name === "OpenClaw",
       openshell_cross_namespace_outer_pid: false,
       openshell_nested_landlock_all_namespaces_denied: name === "OpenClaw",
@@ -269,9 +272,9 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
   });
 });
 
-describe("OpenClaw exact startup argv", () => {
+describe.each(GUARDS)("%s exact startup argv", (_name, guardPath) => {
   it("rejects a trusted script path smuggled in an unrelated argv (#6565)", () => {
-    const proof = runIdentityHarness(path.resolve("scripts/openclaw-config-guard.py"));
+    const proof = runIdentityHarness(guardPath);
 
     expect(proof.openshell_argv_spoof).toBe(false);
     expect(proof.openshell_nested_argv_spoof).toBe(false);

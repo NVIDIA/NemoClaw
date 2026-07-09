@@ -1344,10 +1344,12 @@ def _validate_action_readiness(
             )
         ):
             # OpenShell is the container PID 1 and launches the configured
-            # image command as one non-root child in the same PID namespace.
-            # That degraded topology cannot publish root-owned readiness
-            # markers, so authenticate the stable supervisor/child pair while
-            # refusing any stale or malformed marker left by a strict startup.
+            # image command as one non-root child, either in the supervisor's
+            # PID namespace or as PID 1 in a nested workload PID namespace.
+            # When Landlock hides namespace inode links, the stable direct-child
+            # and NSpid evidence selects the same two topologies. They cannot
+            # publish root-owned readiness markers, so authenticate the stable
+            # supervisor/child pair while refusing stale or malformed markers.
             return
         if installed_current:
             raise GuardError(
