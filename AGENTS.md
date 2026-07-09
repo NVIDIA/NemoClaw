@@ -15,16 +15,6 @@ This repo ships agent skills under `.agents/skills/`.
 Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 
-## Engineering Behavior
-
-Apply these principles to every coding task. Load `nemoclaw-contributor-engineering-guidelines` for the working procedure and examples.
-
-1. **Make assumptions reviewable.** State assumptions that materially affect behavior, security, compatibility, or public contracts. Surface meaningfully different interpretations and tradeoffs, and ask before implementation when resolving ambiguity would change the intended outcome.
-2. **Build the smallest sufficient change.** Meet the acceptance criteria through existing architecture and local patterns. Avoid speculative features, abstractions, or configuration; add complexity only when the current requirement demonstrates a need.
-3. **Keep changes issue-scoped.** Make every changed line support the problem or its required verification. Remove code made obsolete by the change, but keep drive-by refactoring, formatting, comment rewrites, and unrelated cleanup out; report unrelated debt separately and disclose scope deviations before implementing them.
-4. **Define and verify the outcome.** Translate the request into observable success criteria before implementation, reproduce defects when feasible, and use the narrowest stable evidence with relevant regression coverage. Iterate until the criteria are satisfied.
-5. **Root-cause escaped defects.** When QA discovers a defect, identify both the product root cause and why engineering did not detect it. Fix the root cause and the smallest durable detection gap, add regression evidence at the earliest stable boundary, add higher-level coverage only for a distinct integration boundary, and perform a bounded search for the same failure class. Record the root cause, detection gap, and prevention evidence without blame; do not require a heavyweight RCA for ordinary defects.
-
 ## Architecture
 
 | Path | Language | Purpose |
@@ -180,10 +170,11 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 ### Before Making Changes
 
 1. Read `CONTRIBUTING.md` for the full contributor guide
-2. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
-3. Run `npm run dev:doctor` to verify the contributor environment without changing it
-4. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
-5. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
+2. Apply its engineering posture to every coding task: surface material assumptions and outcome-changing ambiguity, make the smallest issue-scoped change, prove observable success criteria, and for QA-escaped defects address both the product root cause and the detection gap
+3. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
+4. Run `npm run dev:doctor` to verify the contributor environment without changing it
+5. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
+6. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
 
 ### Git and GitHub Access Failures
 
