@@ -23,6 +23,11 @@ import {
   cloudExperimentalCheckTimeoutMs,
 } from "../live/cloud-experimental-checks.ts";
 
+const dcodeTavilyCheck = path.join(
+  process.cwd(),
+  "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+);
+
 function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
   return {
     command: [],
@@ -233,7 +238,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
   });
 
-  it("keeps Deep Agents Python egress probe command single-line for OpenShell exec", () => {
+  it("keeps Deep Agents Python egress probe commands single-line for OpenShell exec", () => {
     const result = spawnSync(
       "bash",
       [
@@ -252,7 +257,79 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("NO_NEWLINE_IN_COMMAND");
+    const commands = result.stdout.trim().split("\n");
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toMatch(/^SINGLE_LINE_COMMAND:python3 -c /);
+    expect(commands[1]).toMatch(
+      /^SINGLE_LINE_COMMAND:\/usr\/local\/lib\/nemoclaw\/dcode-managed-exec \/opt\/venv\/bin\/python3 -c /,
+    );
+  });
+
+  it("keeps Deep Agents fetch_url probe command single-line for OpenShell exec", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "fetch-probe-command-shape",
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("NO_NEWLINE_IN_FETCH_COMMAND");
+  });
+
+  it.each([
+    [
+      "accepts an explicit non-empty success response",
+      "fetch-success-classification",
+      "FETCH_SUCCESS:200:1234",
+      0,
+      "1 passed",
+    ],
+    [
+      "accepts explicit denial evidence",
+      "fetch-blocked-classification",
+      "FETCH_BLOCKED:network policy denied",
+      0,
+      "1 passed",
+    ],
+    [
+      "rejects an unclassified fetch error",
+      "fetch-blocked-classification",
+      "FETCH_ERROR:opaque 403",
+      1,
+      "lacked denial evidence",
+    ],
+  ] as const)("%s from the fetch_url probe", (_label, selfTest, fixture, status, expected) => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: selfTest,
+          NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE: fixture,
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+      },
+    );
+
+    expect(result.status).toBe(status);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(expected);
   });
 
   it("keeps Deep Agents secret-boundary probe command single-line for OpenShell exec", () => {
@@ -297,6 +374,50 @@ describe("P0-E cloud-experimental parity guardrails", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
+  });
+
+  it.each([
+    [
+      "BLOCKED:policy denied",
+      "ok",
+      "preserve",
+      0,
+      /returns to the default Tavily denial/,
+      /remains enabled/,
+    ],
+    [
+      "REACHED:403",
+      "ok",
+      "preserve",
+      1,
+      /did not restore the default Tavily denial/,
+      /remains enabled/,
+    ],
+    [
+      "BLOCKED:policy denied",
+      "fail",
+      "preserve",
+      1,
+      /policy-remove tavily failed/,
+      /remains enabled/,
+    ],
+    ["BLOCKED:policy denied", "ok", "lose", 1, /marker was lost/, /restored for ordered cleanup/],
+  ])("restores Tavily denial after opt-in (%s/%s/%s)", (fixture, removeFixture, markerFixture, status, expected, markerExpected) => {
+    const result = spawnSync("bash", [dcodeTavilyCheck], {
+      encoding: "utf8",
+      env: {
+        NEMOCLAW_E2E_TAVILY_MARKER_FIXTURE: markerFixture,
+        NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
+        NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        SANDBOX_NAME: "deepagents-sandbox",
+      },
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
+    expect(result.stdout).toMatch(markerExpected);
   });
 
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {

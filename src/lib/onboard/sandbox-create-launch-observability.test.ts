@@ -36,7 +36,7 @@ describe("prepareSandboxCreateLaunch observability", () => {
     expect(serialized).not.toContain("secret");
   });
 
-  it("does not forward observability for another agent or when disabled", () => {
+  it("forwards an explicit disabled state only to Deep Agents Code", () => {
     const render = (name: string, observabilityEnabled: boolean) =>
       prepareSandboxCreateLaunch({
         agent: { name } as any,
@@ -52,10 +52,11 @@ describe("prepareSandboxCreateLaunch observability", () => {
         buildEnv: () => ({}),
       });
 
-    expect(render("langchain-deepagents-code", false).envArgs).not.toContain(
-      "NEMOCLAW_OBSERVABILITY=1",
+    expect(render("langchain-deepagents-code", false).envArgs).toContain(
+      "NEMOCLAW_OBSERVABILITY=0",
     );
     expect(render("hermes", true).envArgs).not.toContain("NEMOCLAW_OBSERVABILITY=1");
+    expect(render("hermes", false).envArgs).not.toContain("NEMOCLAW_OBSERVABILITY=0");
   });
 
   it("never trusts ambient DCode auto-approval as sandbox runtime input (#6478)", () => {

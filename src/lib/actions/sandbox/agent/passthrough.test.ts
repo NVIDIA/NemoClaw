@@ -7,7 +7,17 @@ const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() =>
   vi.fn(async () => ({ state: "present", output: "Phase: Ready" }) as { output?: string }),
 );
-const getSandboxMock = vi.hoisted(() => vi.fn(() => null as { agent?: string | null } | null));
+const getSandboxMock = vi.hoisted(() =>
+  vi.fn(
+    () =>
+      null as {
+        agent?: string | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+      } | null,
+  ),
+);
 const listAgentsMock = vi.hoisted(() =>
   vi.fn(() => ["custom-terminal", "hermes", "langchain-deepagents-code", "openclaw"]),
 );

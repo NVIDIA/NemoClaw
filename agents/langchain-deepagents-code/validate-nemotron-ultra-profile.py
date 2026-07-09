@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -21,6 +22,7 @@ from deepagents.profiles.harness._nvidia_nemotron_3_ultra import (
 )
 from deepagents.profiles.harness.harness_profiles import (
     HarnessProfile,
+    _HARNESS_PROFILES,
     _harness_profile_for_model,
 )
 from deepagents_code.agent import create_cli_agent
@@ -45,7 +47,7 @@ EXPECTED_PROFILE_ENTRY_POINT = (
 )
 EXPECTED_PLUGIN_LICENSE_EXPRESSION = "Apache-2.0"
 EXPECTED_PLUGIN_SOURCE_SHA256 = (
-    "75ff7e7a5142cad4305126ccb1b8fc756306e82d4c559ddbc624012fb54ebfc4"
+    "1cee6afafcbe545f5d095c94cb0ad81ff2a1512f84ad9d128a69a9b3d72b3def"
 )
 EXPECTED_NATIVE_PROFILE_SHA256 = (
     "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
@@ -57,7 +59,7 @@ MANAGED_MODEL_IDS = (
     "nvidia/nemotron-3-ultra-550b-a55b",
     "nvidia/nvidia/nemotron-3-ultra",
 )
-EXPECTED_MIDDLEWARE = (
+EXPECTED_NATIVE_MIDDLEWARE = (
     "NemotronProgressBudgetMiddleware",
     "NemotronPolicyNudgeMiddleware",
     "NemotronToolCallShim",
@@ -71,8 +73,11 @@ EXPECTED_MIDDLEWARE = (
     "EntityResolutionGuardMiddleware",
     "FinalAnswerGuardMiddleware",
 )
+MANAGED_GUARD = "NemoClawExecutePlaceholderGuardMiddleware"
+EXPECTED_MANAGED_MIDDLEWARE = (*EXPECTED_NATIVE_MIDDLEWARE, MANAGED_GUARD)
 DISPATCH_COMMAND = "printf NEMOCLAW_DISPATCH_OK"
 DENIED_DISPATCH_COMMAND = "uname -a"
+PLACEHOLDER_COMMAND = "\t[  CONTENT  ]\n"
 
 
 def require(condition: bool, message: str) -> None:
@@ -130,11 +135,7 @@ def validate_profile_entry_point() -> None:
     group, name, value = EXPECTED_PROFILE_ENTRY_POINT
     group_entries = tuple(importlib.metadata.entry_points().select(group=group))
     require(group_entries, f"profile entry point group {group!r} was not found")
-    matches = [
-        entry_point
-        for entry_point in group_entries
-        if entry_point.name == name
-    ]
+    matches = [entry_point for entry_point in group_entries if entry_point.name == name]
     require(len(matches) == 1, f"expected exactly one {name!r} profile entry point")
     entry_point = matches[0]
     require(
@@ -226,12 +227,25 @@ def make_model(model_id: str) -> ChatOpenAI:
     )
 
 
-def middleware_names(profile: HarnessProfile) -> tuple[str, ...]:
+def middleware_items(profile: HarnessProfile) -> tuple[AgentMiddleware, ...]:
     middleware = profile.extra_middleware
     if callable(middleware):
         factory = cast(Callable[[], Sequence[AgentMiddleware]], middleware)
         middleware = factory()
-    return tuple(type(item).__name__ for item in middleware)
+    return tuple(middleware)
+
+
+def middleware_names(profile: HarnessProfile) -> tuple[str, ...]:
+    return tuple(type(item).__name__ for item in middleware_items(profile))
+
+
+def validate_canonical_profile() -> None:
+    canonical = _HARNESS_PROFILES.get("nvidia:nvidia/nemotron-3-ultra-550b-a55b")
+    require(canonical is not None, "canonical Ultra profile is missing")
+    require(
+        middleware_names(canonical) == EXPECTED_NATIVE_MIDDLEWARE,
+        "canonical Ultra middleware was changed by the managed plugin",
+    )
 
 
 def validate_profile(model_id: str) -> ChatOpenAI:
@@ -253,10 +267,122 @@ def validate_profile(model_id: str) -> ChatOpenAI:
             f"{model_id}: read_file override is missing {argument}",
         )
     require(
-        middleware_names(profile) == EXPECTED_MIDDLEWARE,
-        f"{model_id}: native middleware stack does not match the reviewed profile",
+        middleware_names(profile) == EXPECTED_MANAGED_MIDDLEWARE,
+        f"{model_id}: managed middleware stack does not match the reviewed profile",
     )
+    canonical = _HARNESS_PROFILES["nvidia:nvidia/nemotron-3-ultra-550b-a55b"]
+    require(profile is not canonical, f"{model_id}: managed profile aliases canonical")
     return model
+
+
+class GuardRequest:
+    """Minimal request shape consumed by the managed tool-call guard."""
+
+    def __init__(self, name: str, command: str, call_id: str) -> None:
+        self.tool_call = {
+            "name": name,
+            "args": {"command": command},
+            "id": call_id,
+        }
+
+
+def validate_direct_guard_contract() -> None:
+    """Exercise exact sync/async rejection without a shell backend."""
+    profile = _harness_profile_for_model(make_model(MANAGED_MODEL_IDS[0]), None)
+    guards = [
+        item
+        for item in middleware_items(profile)
+        if type(item).__name__ == MANAGED_GUARD
+    ]
+    require(len(guards) == 1, "managed execute guard is not unique")
+    guard = guards[0]
+
+    sync_calls: list[GuardRequest] = []
+    sync_request = GuardRequest("execute", PLACEHOLDER_COMMAND, "sync-placeholder")
+
+    def sync_handler(request: GuardRequest) -> str:
+        sync_calls.append(request)
+        return "sync-handler-result"
+
+    sync_result = guard.wrap_tool_call(sync_request, sync_handler)
+    require(
+        isinstance(sync_result, ToolMessage), "sync guard did not return ToolMessage"
+    )
+    require(sync_calls == [], "sync placeholder reached the execute handler")
+    require(sync_result.tool_call_id == "sync-placeholder", "sync guard lost call id")
+    require(sync_result.name == "execute", "sync guard lost tool name")
+    require(
+        sync_result.status == "error", "sync guard did not mark the result as error"
+    )
+    require(
+        isinstance(sync_result.content, str),
+        "sync guard result content is not text",
+    )
+    require(
+        "placeholder '[content]'" in sync_result.content
+        and "complete command" in sync_result.content,
+        "sync guard result is not actionable",
+    )
+
+    async_calls: list[GuardRequest] = []
+    async_request = GuardRequest("execute", "[content]", "async-placeholder")
+
+    async def async_handler(request: GuardRequest) -> str:
+        async_calls.append(request)
+        return "async-handler-result"
+
+    async_result = asyncio.run(guard.awrap_tool_call(async_request, async_handler))
+    require(
+        isinstance(async_result, ToolMessage), "async guard did not return ToolMessage"
+    )
+    require(async_calls == [], "async placeholder reached the execute handler")
+    require(
+        async_result.tool_call_id == "async-placeholder", "async guard lost call id"
+    )
+    require(async_result.name == "execute", "async guard lost tool name")
+    require(
+        async_result.status == "error", "async guard did not mark the result as error"
+    )
+    require(
+        isinstance(async_result.content, str),
+        "async guard result content is not text",
+    )
+    require(
+        "placeholder '[content]'" in async_result.content
+        and "complete command" in async_result.content,
+        "async guard result is not actionable",
+    )
+
+    concrete_calls: list[GuardRequest] = []
+    concrete_request = GuardRequest("execute", DISPATCH_COMMAND, "concrete-command")
+
+    def concrete_handler(request: GuardRequest) -> str:
+        concrete_calls.append(request)
+        return "concrete-handler-result"
+
+    concrete_result = guard.wrap_tool_call(concrete_request, concrete_handler)
+    require(
+        concrete_result == "concrete-handler-result",
+        "concrete execute handler result changed",
+    )
+    require(
+        concrete_calls == [concrete_request],
+        "concrete execute request did not pass through unchanged",
+    )
+
+    other_calls: list[GuardRequest] = []
+    other_request = GuardRequest("write_file", "[content]", "other-tool")
+
+    def other_handler(request: GuardRequest) -> str:
+        other_calls.append(request)
+        return "other-handler-result"
+
+    other_result = guard.wrap_tool_call(other_request, other_handler)
+    require(other_result == "other-handler-result", "non-execute result changed")
+    require(
+        other_calls == [other_request],
+        "non-execute placeholder request did not pass through unchanged",
+    )
 
 
 def validate_parser_tool_visibility() -> None:
@@ -292,8 +418,10 @@ def validate_parser_tool_visibility() -> None:
 
 def dispatch_execute_once(
     first_response: AIMessage,
+    *,
+    restrict_shell: bool = True,
 ) -> tuple[tuple[tuple[str, int | None], ...], tuple[str, str | None]]:
-    """Run one model-produced execute call through DCode's managed allow-list."""
+    """Run one model-produced execute call through the managed DCode graph."""
     with tempfile.TemporaryDirectory(prefix="nemoclaw-profile-dispatch-") as tmp:
         backend = RecordingManagedShell(Path(tmp))
         model = ScriptedManagedModel(
@@ -309,16 +437,16 @@ def dispatch_execute_once(
             sandbox_type="nemoclaw-validation",
             system_prompt="Use the execute tool once, then report the result.",
             interactive=False,
-            auto_approve=False,
-            interrupt_shell_only=True,
-            shell_allow_list=["printf"],
+            auto_approve=not restrict_shell,
+            interrupt_shell_only=restrict_shell,
+            shell_allow_list=["printf"] if restrict_shell else None,
             enable_ask_user=False,
             enable_memory=False,
             enable_skills=False,
         )
         result = graph.invoke(
             {"messages": [HumanMessage(content="Run the validation command once.")]},
-            context={"auto_approve": False},
+            context={"auto_approve": not restrict_shell},
         )
 
     execute_results = [
@@ -337,9 +465,12 @@ def dispatch_execute_once(
 
 def validate_dispatch_case(
     command: str,
+    *,
+    restrict_shell: bool = True,
 ) -> tuple[tuple[tuple[str, int | None], ...], tuple[str, str | None]]:
     repaired = dispatch_execute_once(
-        AIMessage(content=json.dumps({"tool": "bash", "cmd": command}))
+        AIMessage(content=json.dumps({"tool": "bash", "cmd": command})),
+        restrict_shell=restrict_shell,
     )
     native = dispatch_execute_once(
         AIMessage(
@@ -352,7 +483,8 @@ def validate_dispatch_case(
                     "type": "tool_call",
                 }
             ],
-        )
+        ),
+        restrict_shell=restrict_shell,
     )
     require(repaired == native, "repaired and native execute dispatch results differ")
     return repaired
@@ -375,6 +507,29 @@ def validate_parser_dispatch_parity() -> None:
         "denied execute command did not preserve the managed rejection result",
     )
 
+    # invalidState: a literal placeholder reaches an unrestricted shell backend.
+    # sourceBoundary: this assertion mirrors the profile plugin's `_reject`
+    # method and intentionally bypasses DCode's separate headless allow-list so
+    # it isolates the installed profile middleware.
+    # regressionTest: direct sync/async checks above and this real graph dispatch
+    # must both reject the whitespace-normalized placeholder.
+    # removalCondition: remove this case with the guard under the reviewed
+    # dependency-review.md condition; neither may outlive the other.
+    placeholder = validate_dispatch_case(
+        PLACEHOLDER_COMMAND,
+        restrict_shell=False,
+    )
+    require(placeholder[0] == (), "execute placeholder reached the shell backend")
+    require(
+        placeholder[1][1] == "error",
+        "execute placeholder did not return an error",
+    )
+    require(
+        "placeholder '[content]'" in placeholder[1][0]
+        and "complete command" in placeholder[1][0],
+        "execute placeholder rejection was not actionable",
+    )
+
 
 def main() -> None:
     for distribution, expected in EXPECTED_VERSIONS.items():
@@ -387,7 +542,9 @@ def main() -> None:
     validate_profile_entry_point()
     validate_official_sources()
     managed_models = [validate_profile(model_id) for model_id in MANAGED_MODEL_IDS]
+    validate_canonical_profile()
     validate_parser_tool_visibility()
+    validate_direct_guard_contract()
     validate_parser_dispatch_parity()
 
     # One graph construction materializes the shared middleware schemas and

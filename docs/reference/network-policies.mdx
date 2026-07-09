@@ -91,8 +91,11 @@ Use `$$nemoclaw <sandbox> policy-list` or `openshell policy get --base <sandbox>
 | Policy | Endpoints | Binaries | Rules |
 | --- | --- | --- | --- |
 | `managed_inference` | `inference.local:443` | `/usr/local/bin/dcode`, `/opt/venv/bin/python3*`, `/opt/venv/lib/python3.13/**` | POST to OpenAI-compatible completion and embedding paths, GET to model listings |
-| `github` | `github.com:443`, `api.github.com:443` | `/usr/bin/git`, `/usr/local/bin/dcode`, `/opt/venv/bin/python3*` | Full access to the listed hosts |
-| `pypi` | `pypi.org:443`, `files.pythonhosted.org:443` | `/opt/venv/bin/python3*`, `/opt/venv/bin/pip3*` | GET and HEAD for package installation |
+| `github` | `github.com:443`, `api.github.com:443`, `raw.githubusercontent.com:443` | `/usr/bin/git`, `/usr/local/bin/dcode`, `/opt/venv/bin/python3*` | Full access to `github.com` and `api.github.com`; GET and HEAD only to `raw.githubusercontent.com` |
+| `pypi` | `pypi.org:443`, `files.pythonhosted.org:443` | `/opt/venv/bin/python3*`, `/opt/venv/bin/pip3*` | GET for package installation |
+
+The separate `raw.githubusercontent.com` route lets Deep Agents Code follow GitHub file links and read repository source through its managed `fetch_url` tool.
+Repository, ref, and file path segments vary by task, so the route covers the host while limiting requests to read-only GET and HEAD methods and the listed managed binaries.
 
 </AgentOnly>
 
