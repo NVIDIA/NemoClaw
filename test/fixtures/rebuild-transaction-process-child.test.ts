@@ -71,7 +71,7 @@ test.skipIf(!role)(
         : undefined,
       preDeleteLatestManifest: manifest,
       onboard: (session) => {
-        fs.appendFileSync(eventsFile!, "create\n");
+        fs.appendFileSync(eventsFile!, `onboard:${role}\n`);
         fs.writeFileSync(
           replacementFile!,
           JSON.stringify({

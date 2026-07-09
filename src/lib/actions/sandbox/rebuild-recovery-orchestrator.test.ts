@@ -93,7 +93,13 @@ describe("rebuild recovery receipt publication", () => {
 
   it.each([
     ["model", { model: "other" }],
-    ["credential", { credentialEnv: "OTHER_API_KEY" }],
+    ["credentialEnv", { credentialEnv: "OTHER_API_KEY" }],
+    ["provider", { provider: "nvidia" }],
+    ["gatewayName", { gatewayName: "nemoclaw-18080" }],
+    ["gatewayPort", { gatewayPort: 18080 }],
+    ["missing gateway", { gatewayName: undefined, gatewayPort: undefined }],
+    ["toolDisclosure", { toolDisclosure: "direct" as const }],
+    ["observabilityEnabled", { observabilityEnabled: true }],
   ])("refuses receipt publication after %s identity drift", async (_field, drift) => {
     const { orchestrator, transaction } = makeOrchestrator({ ...replacement, ...drift });
 

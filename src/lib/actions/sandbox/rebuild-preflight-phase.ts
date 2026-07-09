@@ -250,6 +250,10 @@ export async function runRebuildPreflightPhase(
         recovery.transaction?.status === "active" &&
         recovery.transaction.phase === "prepared" &&
         !liveState.staleRecovery;
+      // A stale-recovery observation means the source sandbox is already absent,
+      // so no fresh backup is possible. Continue only from the validated manifest
+      // and source snapshot already owned by the prepared transaction. The
+      // delete_unjournaled process-death case proves this cross-process path.
       const effectiveRecoveryManifest = preparedTransactionNeedsFreshBackup
         ? null
         : recoveryManifest;

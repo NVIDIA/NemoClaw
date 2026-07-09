@@ -90,7 +90,7 @@ describe("rebuild process-death recovery", () => {
       expect(resumed.code, resumed.output).toBe(0);
       const events = fs.readFileSync(eventsFile, "utf8").trim().split("\n");
       expect(events.filter((event) => event === "delete")).toHaveLength(1);
-      expect(events.filter((event) => event === "create")).toHaveLength(1);
+      expect(events.filter((event) => event.startsWith("onboard:"))).toHaveLength(1);
       expect(new RebuildTransactionStore({ stateDir }).load("alpha")).toMatchObject({
         status: "completed",
         phase: "completed",
@@ -141,10 +141,15 @@ describe("rebuild process-death recovery", () => {
       expect(resumed.code, resumed.output).toBe(0);
       const events = fs.readFileSync(eventsFile, "utf8").trim().split("\n");
       expect(events.filter((event) => event === "delete")).toHaveLength(1);
-      expect(events.filter((event) => event === "create")).toHaveLength(1);
+      expect(events.filter((event) => event.startsWith("onboard:"))).toHaveLength(1);
       expect(events.filter((event) => event === "restore")).toHaveLength(
         phase === "state_restored" || phase === "required_verified" ? 2 : 1,
       );
+      if (phase === "state_restored") {
+        expect(events).toContain("onboard:interrupt");
+        expect(events).not.toContain("onboard:resume");
+        expect(events.filter((event) => event === "restore")).toHaveLength(2);
+      }
       expect(new RebuildTransactionStore({ stateDir }).load("alpha")).toMatchObject({
         status: "completed",
         phase: "completed",

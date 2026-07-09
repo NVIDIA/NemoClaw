@@ -4,7 +4,9 @@
 // Deterministic correlation and tamper evidence for local rebuild recovery.
 // These digests are NOT a security MAC: no secret key is used. Never use them
 // for authentication or authorization decisions.
-// Replacement identity preserves null agents; it never aliases them to OpenClaw.
+// fingerprintRebuildReplacement preserves agent=null as distinct from
+// agent="openclaw". It never aliases the two, but the fingerprint alone is not
+// an agent-identity authorization decision.
 
 import crypto from "node:crypto";
 
@@ -110,8 +112,8 @@ export function matchesRebuildTargetRegistry(
     entry.provider === target.provider &&
     entry.model === target.model &&
     (entry.credentialEnv ?? null) === target.credentialEnv &&
-    (entry.gatewayName ?? "nemoclaw") === target.gatewayName &&
-    (entry.gatewayPort ?? 8080) === target.gatewayPort &&
+    entry.gatewayName === target.gatewayName &&
+    entry.gatewayPort === target.gatewayPort &&
     entry.toolDisclosure === target.toolDisclosure &&
     entry.observabilityEnabled === target.observabilityEnabled &&
     endpointMatches &&
