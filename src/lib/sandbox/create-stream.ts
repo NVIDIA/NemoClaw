@@ -124,10 +124,11 @@ export function streamSandboxCreate(
   maybeOptions: StreamSandboxCreateOptions = {},
 ): Promise<StreamSandboxCreateResult> {
   const hasArgs = Array.isArray(argsOrEnv);
-  const commandArgs = hasArgs ? argsOrEnv : [];
+  const commandArgs = hasArgs ? argsOrEnv : ["-lc", command];
+  const spawnCommand = hasArgs ? command : "bash";
   const env = hasArgs ? (envOrOptions as NodeJS.ProcessEnv) : (argsOrEnv as NodeJS.ProcessEnv);
   const options = hasArgs ? maybeOptions : (envOrOptions as StreamSandboxCreateOptions);
-  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)(command, commandArgs, {
+  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)(spawnCommand, commandArgs, {
     cwd: ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],

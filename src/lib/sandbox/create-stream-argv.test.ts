@@ -7,6 +7,23 @@ import { streamSandboxCreate } from "./create-stream";
 import { dockerEnv, FakeChild } from "./create-stream-test-fixtures";
 
 describe("sandbox-create-stream argv boundary", () => {
+  it("keeps the legacy string-command overload shell compatible", async () => {
+    const child = new FakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
+      spawnImpl,
+      logLine: vi.fn(),
+    });
+
+    child.emit("close", 0);
+    await expect(promise).resolves.toMatchObject({ status: 0 });
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "bash",
+      ["-lc", "echo create"],
+      expect.not.objectContaining({ shell: true }),
+    );
+  });
+
   it("spawns argv directly without shell wrapping", async () => {
     const child = new FakeChild();
     const spawnImpl = vi.fn(() => child);

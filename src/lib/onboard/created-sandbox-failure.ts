@@ -58,7 +58,7 @@ export function reportSandboxCreateFailure(
     backupPath: options.restoreBackupPath,
   });
   deps.error("  Try:  openshell sandbox list        # check gateway state");
-  deps.printRecoveryHints(options.createOutput, { createArgs: options.createArgs });
+  deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
   return deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);
 }
 

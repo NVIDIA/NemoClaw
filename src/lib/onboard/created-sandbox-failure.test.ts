@@ -96,6 +96,10 @@ describe("reportSandboxCreateFailure", () => {
     expect(withOutput.error).not.toHaveBeenCalledWith(
       "failed with Authorization: Bearer secret-token",
     );
+    expect(withOutput.printRecoveryHints).toHaveBeenCalledWith(
+      "failed with Authorization: Bearer secr********",
+      expect.any(Object),
+    );
     expect(withOutput.error).toHaveBeenCalledTimes(5);
 
     // Without output: the echo block is skipped, so only 3 error() calls remain.
@@ -128,6 +132,13 @@ describe("reportSandboxCreateFailure", () => {
     expect(echoed).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz1234567890");
     expect(echoed).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234567890");
     expect(echoed).not.toContain("AKIAABCDEFGHIJKLMNOP");
+    const hinted = (deps.printRecoveryHints as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => String(call[0]))
+      .join("\n");
+    expect(hinted).not.toContain("secret-token");
+    expect(hinted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(hinted).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(hinted).not.toContain("AKIAABCDEFGHIJKLMNOP");
   });
 
   it("falls back to exit code 1 when the create status is zero", () => {

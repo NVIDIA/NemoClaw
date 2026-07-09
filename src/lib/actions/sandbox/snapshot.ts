@@ -28,7 +28,7 @@ import {
 } from "../../onboard/observability-policy-presets";
 import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import * as policies from "../../policy";
-import { ROOT, run, shellQuote, validateName } from "../../runner";
+import { ROOT, run, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import * as shields from "../../shields";
@@ -240,8 +240,8 @@ async function autoCreateSandboxFromSource(
   const createEnv = { ...process.env };
   delete createEnv.NEMOCLAW_OBSERVABILITY;
 
-  const cmdParts = [
-    openshellBin,
+  const command = openshellBin;
+  const commandArgs = [
     "sandbox",
     "create",
     "--name",
@@ -253,9 +253,7 @@ async function autoCreateSandboxFromSource(
     "--auto-providers",
     "--",
     ...startupCommand,
-  ].map((p) => shellQuote(p));
-  const command = "bash";
-  const commandArgs = ["-lc", `${cmdParts.join(" ")} 2>&1`];
+  ];
 
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
 

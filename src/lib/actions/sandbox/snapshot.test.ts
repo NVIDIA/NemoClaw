@@ -985,8 +985,8 @@ describe("runSandboxSnapshot", () => {
     const createCall = streamSandboxCreateMock.mock.calls[0] ?? [];
     const createArgs = createCall[1] as readonly string[];
     const createEnv = createCall[2] as NodeJS.ProcessEnv | undefined;
-    const createShellCommand = String(createArgs[1] ?? "");
-    expect(createShellCommand).toContain(`'NEMOCLAW_OBSERVABILITY=${expectedValue}'`);
+    expect(createCall[0]).toBe("openshell");
+    expect(createArgs).toContain(`NEMOCLAW_OBSERVABILITY=${expectedValue}`);
     expect(createEnv?.NEMOCLAW_OBSERVABILITY).toBeUndefined();
     expect(registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({

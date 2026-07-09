@@ -143,10 +143,10 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // lets the real exit code flow through to run().
   const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
   const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
+  const createCommand = `${input.openshellShellCommand(openshellArgs)} 2>&1`;
   const createArgv = input.openshellArgv
     ? input.openshellArgv(openshellArgs)
-    : [input.openshellShellCommand(openshellArgs)];
-  const createCommand = `${input.openshellShellCommand(openshellArgs)} 2>&1`;
+    : ["bash", "-lc", createCommand];
 
   return {
     createCommand,
