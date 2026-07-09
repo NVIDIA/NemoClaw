@@ -192,7 +192,7 @@ Use these details when your first-run path needs more control.
     Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
     DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default, and DGX Station uses `deepseek-v4-flash` by default.
     Unless `NEMOCLAW_POLICY_TIER` is set, express install applies policy in `suggested` mode with the `balanced` tier, including the base sandbox policy and supported package, model, web-search, and local-inference presets.
-    DGX Spark uses `my-spark-assistant` as the sandbox name unless `NEMOCLAW_SANDBOX_NAME` is set.
+    Express install uses `my-assistant` as the sandbox name across all platforms unless `NEMOCLAW_SANDBOX_NAME` is set.
     Windows WSL selects the Windows-host Ollama setup path.
     Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer to choose a provider yourself.
 

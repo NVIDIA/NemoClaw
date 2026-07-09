@@ -290,6 +290,9 @@ describe("PR review advisor", () => {
     expect(prompt).toContain("Every finding must be probe-shaped");
     expect(prompt).toContain("Simplification review");
     expect(prompt).toContain("Deterministic regression risks");
+    expect(prompt).toContain("A required validation job is not a finding unless");
+    expect(prompt).toContain("Prior-advisor availability, failure, or incompleteness");
+    expect(prompt).toContain("one flat atomic commit object");
     expect(prompt).toContain("delete, stdlib, native, yagni, or shrink");
     expect(prompt).not.toContain("Consider writing more tests for");
     expect(prompt).toContain("take a closer architecture look for new systems");
@@ -372,8 +375,20 @@ describe("PR review advisor", () => {
     expect(analysisTurns[5]?.prompt).toContain(
       "Collapse duplicate symptoms into one root-cause finding",
     );
+    expect(analysisTurns[0]?.prompt).toContain(
+      "overlap and merge-order observations in this prose receipt",
+    );
+    expect(analysisTurns[5]?.prompt).toContain(
+      "Required-job execution status, overlap metadata, advisor state, and positive observations",
+    );
     expect(turns.at(-1)?.prompt).toContain("<pr_review_advisor_json>");
     expect(turns.at(-1)?.prompt).toContain("Set the fields exactly as specified");
+    expect(commitTurns[0]?.prompt).toContain("categories scope, architecture");
+    expect(commitTurns[1]?.prompt).toContain("categories correctness, acceptance, docs");
+    expect(commitTurns[2]?.prompt).toContain("basis kinds security_violation");
+    expect(commitTurns[3]?.prompt).toContain("basis kinds missing_regression");
+    expect(commitTurns[4]?.prompt).toContain("categories workflow, docs, architecture");
+    expect(commitTurns[5]?.prompt).toContain("Reconciliation may update, resolve, or supersede");
     for (const turn of analysisTurns) {
       const contextTools = turn.contextToolResults?.map((result) => result.toolName) ?? [];
       const reconciliation = turn.name === "reconcile-findings-analysis";
@@ -397,7 +412,13 @@ describe("PR review advisor", () => {
       expect(turn.activeToolNames).toEqual(["pr_review_update_ledger"]);
       expect(turn.requiredToolNames).toEqual(["pr_review_update_ledger"]);
       expect(turn.atomicTerminalToolName).toBe("pr_review_update_ledger");
-      expect(turn.atomicTerminalRepairPrompt).toContain("atomic finding-ledger commit");
+      expect(turn.atomicTerminalRepairPrompt).toContain("flat atomic finding-ledger commit");
+      expect(turn.prompt).toContain(
+        "`additions`, `updates`, `resolutions`, `supersessions`, and `noChangesReason`",
+      );
+      expect(turn.prompt).toContain("a `basis` object");
+      expect(turn.prompt).toContain("do not stringify arrays");
+      expect(turn.prompt).not.toContain("`operations`");
       expect(turn.prompt).toContain("Emit no prose before or after the tool call");
     }
     expect(turns.at(-1)?.activeToolNames).toEqual(["pr_review_read_ledger"]);
