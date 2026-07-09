@@ -68,24 +68,17 @@ describe("CLI dispatch", () => {
 
       expect(r.code).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+      const dockerOutput = fs.readFileSync(bashLog, "utf8");
+      const shouldCleanupGateway = process.platform === "darwin";
       expect(openshellOutput).toContain("sandbox delete alpha");
       expect(openshellOutput).toContain("NAME STATUS");
-      if (process.platform === "darwin") {
-        expect(openshellOutput).toContain("forward stop 18789");
-        expect(openshellOutput).toContain("gateway remove nemoclaw");
-        expect(fs.readFileSync(bashLog, "utf8")).toContain(
-          "volume ls -q --filter name=openshell-cluster-nemoclaw",
-        );
-      } else {
-        expect(openshellOutput).not.toContain("forward stop 18789");
-        expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
-        expect(openshellOutput).not.toContain("gateway remove nemoclaw");
-        expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
-        // The preserved-gateway hint must recommend the real subcommand
-        // (`gateway remove`), never the nonexistent `gateway destroy` (#6569).
-        expect(r.out).toContain("openshell gateway remove nemoclaw");
-        expect(r.out).not.toContain("gateway destroy");
-      }
+      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
+      expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
+        shouldCleanupGateway,
+      );
+      expect(r.out.includes("openshell gateway remove nemoclaw")).toBe(!shouldCleanupGateway);
+      expect(r.out).not.toContain("gateway destroy");
     },
   );
 
@@ -758,16 +751,13 @@ describe("CLI dispatch", () => {
       expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
-      if (process.platform === "darwin") {
-        expect(openshellOutput).toContain("forward stop 18789");
-        expect(openshellOutput).toContain("gateway remove nemoclaw");
-        expect(dockerOutput).toContain("volume ls -q --filter name=openshell-cluster-nemoclaw");
-      } else {
-        expect(openshellOutput).not.toContain("forward stop 18789");
-        expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
-        expect(openshellOutput).not.toContain("gateway remove nemoclaw");
-        expect(dockerOutput).not.toContain("volume ls -q --filter");
-      }
+      const shouldCleanupGateway = process.platform === "darwin";
+      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
+      expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
+        shouldCleanupGateway,
+      );
+      expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
     },
   );
 
