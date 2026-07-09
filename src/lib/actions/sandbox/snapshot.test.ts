@@ -139,18 +139,11 @@ const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
 });
-const streamSandboxCreateMock = vi.fn(
-  async (
-    _command: string,
-    _args: readonly string[],
-    _env: NodeJS.ProcessEnv,
-    _options?: Record<string, unknown>,
-  ) => ({
-    status: 0,
-    output: "",
-    forcedReady: false,
-  }),
-);
+const streamSandboxCreateMock = vi.fn(async (..._args: unknown[]) => ({
+  status: 0,
+  output: "",
+  forcedReady: false,
+}));
 const dcodeSandboxEntry = {
   name: "alpha",
   agent: "langchain-deepagents-code",
