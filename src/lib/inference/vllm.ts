@@ -171,12 +171,14 @@ const STATION_PROFILE: VllmProfile = {
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
     const indices = getGpuIndicesByName(/GB300/i);
+    // Docker parses --gpus as CSV, so multi-device values must retain
+    // double quotes inside the argv token to keep the comma in one field.
     const gpuFlag =
       indices.length === 0
         ? "all"
         : indices.length === 1
           ? `device=${indices[0]}`
-          : `device=${indices.join(",")}`;
+          : `"device=${indices.join(",")}"`;
     return vllmDockerRunFlags(gpuFlag);
   },
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,

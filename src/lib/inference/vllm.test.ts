@@ -218,10 +218,10 @@ describe("vLLM run command", () => {
     expect(profile).not.toBeNull();
     const args = buildVllmRunArgs(profile!, profile!.defaultModel, [
       "--gpus",
-      "device=0,1",
+      '"device=0,1"',
       "--ipc=host",
     ]);
-    expect(args).toEqual(expect.arrayContaining(["--gpus", "device=0,1", "--ipc=host"]));
+    expect(args).toEqual(expect.arrayContaining(["--gpus", '"device=0,1"', "--ipc=host"]));
     expect(args).toContain(profile!.image);
     expect(args).toEqual(expect.arrayContaining(["--entrypoint", "/bin/bash"]));
     expect(args.join(" ")).not.toContain("docker run");
@@ -263,13 +263,14 @@ describe("vLLM run command", () => {
     );
   });
 
-  it("builds the Station multi-GPU flag without shell-only quotes", () => {
+  it("keeps Docker CSV quoting inside the Station multi-GPU argv token", () => {
     mocks.getGpuIndicesByName.mockReturnValue([0, 1]);
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
     expect(profile).not.toBeNull();
     const flags = profile!.buildDockerRunFlags!();
 
-    expect(flags).toEqual(expect.arrayContaining(["--gpus", "device=0,1"]));
+    expect(flags).toEqual(expect.arrayContaining(["--gpus", '"device=0,1"']));
+    expect(flags).not.toContain("device=0,1");
     expect(flags).not.toContain(`'"device=0,1"'`);
   });
 });
