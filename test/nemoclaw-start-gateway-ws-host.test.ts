@@ -197,6 +197,8 @@ describe("gateway websocket url host derivation", () => {
             `. ${JSON.stringify(envFilePath)}`,
             'printf "PUBLIC_URL=%s\\n" "${OPENCLAW_GATEWAY_URL-unset}"',
             'printf "PRIVATE_URL=%s\\n" "${NEMOCLAW_OPENCLAW_GATEWAY_URL-unset}"',
+            'printf "TRUSTED_URL=%s\\n" "${_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL-unset}"',
+            'if ( _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL=ws://attacker.invalid ) 2>/dev/null; then printf "TRUSTED_READONLY=no\\n"; else printf "TRUSTED_READONLY=yes\\n"; fi',
             'printf "PUBLIC_INSECURE=%s\\n" "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"',
             'printf "PRIVATE_INSECURE=%s\\n" "${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"',
             'printf "PORT=%s\\n" "${OPENCLAW_GATEWAY_PORT-unset}"',
@@ -216,6 +218,8 @@ describe("gateway websocket url host derivation", () => {
       expect(sourced.status, sourced.stderr).toBe(0);
       expect(sourced.stdout).toContain("PUBLIC_URL=unset");
       expect(sourced.stdout).toContain("PRIVATE_URL=ws://10.200.0.2:18790");
+      expect(sourced.stdout).toContain("TRUSTED_URL=ws://10.200.0.2:18790");
+      expect(sourced.stdout).toContain("TRUSTED_READONLY=yes");
       expect(sourced.stdout).toContain("PUBLIC_INSECURE=unset");
       expect(sourced.stdout).toContain("PRIVATE_INSECURE=1");
       expect(sourced.stdout).toContain("PORT=18790");
@@ -242,6 +246,66 @@ describe("gateway websocket url host derivation", () => {
       expect(explicitOverride.stdout).toContain(
         "URL=wss://gateway.example.test:443 INSECURE=explicit-marker",
       );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears the gateway token when a readonly caller value conflicts with the trust anchor (#6413)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-conflict-"));
+    try {
+      const envFilePath = writeRuntimeShellEnv(tmpDir);
+      const fakeBin = path.join(tmpDir, "bin");
+      const callLog = path.join(tmpDir, "openclaw-calls.log");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        [
+          "#!/usr/bin/env bash",
+          `printf 'ARGS=%s TOKEN=%s\\n' "$*" "\${OPENCLAW_GATEWAY_TOKEN:-unset}" >> ${JSON.stringify(callLog)}`,
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const probe = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          [
+            "_NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL=ws://attacker.invalid:18790",
+            "builtin readonly _NEMOCLAW_TRUSTED_OPENCLAW_GATEWAY_URL",
+            `. ${JSON.stringify(envFilePath)} && echo SOURCE_STATUS=unexpected || echo SOURCE_STATUS=blocked`,
+            "if declare -F openclaw >/dev/null; then echo WHATSAPP_WRAPPER=installed; else echo WHATSAPP_WRAPPER=disabled; fi",
+            "if declare -F _nemoclaw_whatsapp_postpair_start >/dev/null; then echo TOKEN_HELPER=installed; else echo TOKEN_HELPER=disabled; fi",
+            "openclaw channels login --channel whatsapp",
+            'openclaw gateway call channels.start --params \'{"channel":"whatsapp"}\' --json',
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+            OPENCLAW_GATEWAY_URL: "ws://attacker.invalid:18790",
+          },
+        },
+      );
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(probe.stdout).toContain("SOURCE_STATUS=blocked");
+      expect(probe.stdout).toContain("WHATSAPP_WRAPPER=disabled");
+      expect(probe.stdout).toContain("TOKEN_HELPER=disabled");
+      expect(probe.stderr).toContain("gateway-token helpers were disabled");
+
+      const calls = fs.readFileSync(callLog, "utf-8").split("\n").filter(Boolean);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toContain("ARGS=channels login --channel whatsapp TOKEN=unset");
+      expect(calls[1]).toContain("ARGS=gateway call channels.start");
+      expect(calls[1]).toContain("TOKEN=unset");
+      expect(calls.every((line) => !line.includes("ambient-gateway-token"))).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
