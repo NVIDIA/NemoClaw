@@ -234,6 +234,9 @@ describe("CLI dispatch", () => {
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw");
       expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
+      expect(fs.readFileSync(bashLog, "utf8")).toContain(
+        "volume ls -q --filter name=openshell-cluster-nemoclaw",
+      );
     },
   );
 

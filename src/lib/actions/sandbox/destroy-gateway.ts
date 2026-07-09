@@ -97,13 +97,23 @@ export function cleanupGatewayAfterLastSandbox(
     }
     stopHostGatewayProcesses({}, stopOptions);
   }
-  // `gateway remove <name>` is the modern OpenShell subcommand on every
-  // platform (>=0.0.44). `gateway destroy -g <name>` only existed on pre-0.0.44
-  // builds, so it is a best-effort fallback for those, not a primary path.
-  // macOS previously ran ONLY `gateway destroy`, which current OpenShell
-  // rejects as an unrecognized subcommand — silently leaving the gateway
-  // behind under `ignoreError` (#6569). Run the same remove-then-fallback on
-  // all platforms; the host-process stop above stays Linux-only.
+  /**
+   * SOURCE_OF_TRUTH
+   * Invalid state: a pre-0.0.44 OpenShell CLI does not expose `gateway remove`.
+   * Source boundary: the installed CLI may predate the blueprint floor while
+   * an existing installation is being recovered or removed.
+   * Source-fix constraint: NemoClaw cannot add the modern verb to historical
+   * OpenShell builds, so cleanup tries their legacy verb best-effort.
+   * Regression proof: destroy-gateway-cleanup.test.ts covers successful remove
+   * and remove-nonzero fallback while preserving Docker-volume cleanup.
+   * Removal condition: remove the fallback when every supported recovery and
+   * teardown entry point upgrades OpenShell to the blueprint minimum (currently
+   * 0.0.72) before this function can run.
+   *
+   * macOS previously ran only `gateway destroy`, which current OpenShell
+   * rejects as an unrecognized subcommand (#6569). The host-process stop above
+   * remains Linux-only.
+   */
   const removeResult = openshell(["gateway", "remove", gatewayName], {
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
