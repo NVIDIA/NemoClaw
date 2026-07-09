@@ -92,6 +92,16 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("preserves the final gateway for environment-driven non-interactive Linux destroys (#2166)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
+    const harness = createDestroyHarness();
+
+    await expect(harness.destroySandbox("alpha", {})).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  });
+
   it("honors an explicit gateway-preservation override on macOS (#4662)", async () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     const harness = createDestroyHarness();
