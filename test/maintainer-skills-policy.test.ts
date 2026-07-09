@@ -116,7 +116,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(taxonomy.quality_rules.post_merge_release_labeling_allowed).toBe(true);
   });
 
-  it("requires exact-SHA E2E evidence or itemized maintainer exceptions before tagging", () => {
+  it("requires E2E evidence for the release candidate commit or itemized maintainer exceptions", () => {
     const dailyFlow = read(".agents/skills/nemoclaw-maintainer-policies/references/daily-flow.md");
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");

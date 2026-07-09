@@ -36,6 +36,10 @@ export {
 
 import type { WebSearchProvider } from "../inference/web-search";
 import {
+  type DcodeAutoApprovalMode,
+  isDcodeAutoApprovalMode,
+} from "../onboard/dcode-auto-approval";
+import {
   cloneSandboxMessagingState,
   getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
   getDisabledChannels as getRegistryDisabledChannels,
@@ -108,6 +112,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   toolDisclosure?: ToolDisclosure;
   /** Enables backend-neutral trace export to the fixed local OTLP collector boundary. */
   observabilityEnabled?: boolean;
+  /** Image-baked permission to expose DCode's per-thread auto-approval opt-in. */
+  dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   /** Durable provider identity for enabled managed web search. */
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
@@ -496,6 +502,9 @@ export function registerSandbox(entry: SandboxEntry): void {
       toolDisclosure: normalizeToolDisclosure(entry.toolDisclosure) ?? undefined,
       observabilityEnabled:
         typeof entry.observabilityEnabled === "boolean" ? entry.observabilityEnabled : undefined,
+      dcodeAutoApprovalMode: isDcodeAutoApprovalMode(entry.dcodeAutoApprovalMode)
+        ? entry.dcodeAutoApprovalMode
+        : undefined,
       webSearchProvider:
         entry.webSearchEnabled === true &&
         (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")

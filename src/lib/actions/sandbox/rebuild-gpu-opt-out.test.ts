@@ -177,6 +177,23 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     });
   });
 
+  it("carries recorded DCode auto-approval into authoritative recreation (#6478)", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      sb: {
+        dashboardPort: 0,
+        gatewayName: "nemoclaw",
+        dcodeAutoApprovalMode: "thread-opt-in",
+      },
+      rebuildAgent: "langchain-deepagents-code",
+      storedFromDockerfile: null,
+      autoYes: true,
+      usageNoticeAccepted: true,
+    });
+
+    expect(opts.dcodeAutoApprovalMode).toBe("thread-opt-in");
+    expect(opts.dcodeAutoApprovalRequestedExplicitly).toBe(false);
+  });
+
   it("carries an explicit direct tool-disclosure selection into inner onboard", () => {
     const opts = buildRebuildRecreateOnboardOpts({
       ...baseArgs,
@@ -306,6 +323,7 @@ describe("buildRebuildRecreateOnboardOpts", () => {
         cleanupBuildCtx: () => true,
         origin: "generated" as const,
       },
+      dcodeAutoApprovalMode: "disabled" as const,
       gatewayName: "nemoclaw",
     };
     const opts = buildRebuildRecreateOnboardOpts({

@@ -693,6 +693,9 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
       },
     );
     expectExitZero(rebuild, "nemoclaw rebuild");
+    const rebuildText = resultText(rebuild);
+    expect(rebuildText).toContain(`Sandbox '${SANDBOX_NAME}' rebuilt successfully`);
+    expect(rebuildText).not.toContain("post-restore steps were incomplete");
 
     // Phase 7: state preservation, upgrade, token rotation, backup hygiene, and
     // policy-preset preservation assertions.

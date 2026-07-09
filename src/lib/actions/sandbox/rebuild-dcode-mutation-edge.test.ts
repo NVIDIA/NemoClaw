@@ -31,9 +31,13 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     configureDcodeSession(harness);
 
     await expect(
-      harness.rebuildSandbox("alpha", ["--yes", "--tool-disclosure", "direct"], {
-        throwOnError: true,
-      }),
+      harness.rebuildSandbox(
+        "alpha",
+        ["--yes", "--tool-disclosure", "direct", "--dcode-auto-approval", "thread-opt-in"],
+        {
+          throwOnError: true,
+        },
+      ),
     ).resolves.toBeUndefined();
 
     expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(4);
@@ -41,6 +45,7 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         compatibleEndpointReasoning: null,
+        dcodeAutoApprovalMode: "thread-opt-in",
         toolDisclosure: "direct",
         webSearchConfig: null,
       }),
@@ -48,9 +53,12 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     expect(harness.onboardSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         agent: "langchain-deepagents-code",
+        dcodeAutoApprovalMode: "thread-opt-in",
+        dcodeAutoApprovalRequestedExplicitly: true,
         toolDisclosure: "direct",
         preparedDcodeRebuild: expect.objectContaining({
           buildContext: harness.preparedDcodeBuildContext,
+          dcodeAutoApprovalMode: "thread-opt-in",
           gatewayName: "nemoclaw",
         }),
       }),
