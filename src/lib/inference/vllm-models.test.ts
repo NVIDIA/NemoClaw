@@ -235,8 +235,7 @@ describe("vllm model registry", () => {
     // Exactly one tool-call parser is configured for the Spark recipe, so the
     // #6457 regression (serving this checkpoint with qwen3_xml, which mis-parses
     // its tool-call frames and fails Deep Agents Code with HTTP 400) cannot creep
-    // back in alongside qwen3_coder. Validated end-to-end on real DGX Spark (GB10):
-    // pre-fix 3/4 dcode runs hit HTTP 400, post-fix (qwen3_coder) 5/5 completed.
+    // back in alongside qwen3_coder.
     expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
     expect(cmd).toContain("--reasoning-parser qwen3");
     expect(cmd).toContain("--max-model-len 262144");

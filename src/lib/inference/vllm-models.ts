@@ -201,18 +201,16 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--enable-prefix-caching",
       "--enable-auto-tool-choice",
       // `qwen3_coder`, not `qwen3_xml` (#6457). On DGX Spark this checkpoint's
-      // tool-call frames do not round-trip through vLLM's `qwen3_xml` parser:
-      // it logs `qwen3xml_tool_parser.py:303 Error when parsing XML elements:
-      // not well-formed (invalid token)` and emits truncated/extra-`}` tool
+      // tool-call frames do not round-trip through vLLM's `qwen3_xml` parser: it
+      // logs `qwen3xml_tool_parser.py:303 Error when parsing XML elements: not
+      // well-formed (invalid token)` and emits truncated/extra-`}` tool
       // arguments, so Deep Agents Code headless (`dcode -n`) tool calls fail
-      // intermittently with `POST /v1/chat/completions 400 Bad Request`
-      // (`json.decoder.JSONDecodeError: Extra data`) and `dcode` exits 1. The
-      // `qwen3_coder` parser matches this Qwen3.6-family checkpoint's emitted
-      // tool-call format — the same parser the other Qwen3.6 recipes in this
-      // registry already use (Qwen3.6-27B-FP8, Nemotron-3-Nano-4B) — and was
-      // validated end-to-end on real DGX Spark (GB10) hardware: 5/5 `dcode -n`
-      // runs completed with 0 parse errors and 0 HTTP 400s, versus HTTP 400 on
-      // 3/4 runs with `qwen3_xml`.
+      // with `POST /v1/chat/completions 400 Bad Request`
+      // (`json.decoder.JSONDecodeError: Extra data`) and `dcode` exits 1.
+      // `qwen3_coder` matches this Qwen3.6-family checkpoint's emitted tool-call
+      // format — the parser the other Qwen3.6 recipes in this registry already
+      // use (Qwen3.6-27B-FP8, Nemotron-3-Nano-4B). Validated end-to-end on real
+      // DGX Spark (GB10); see PR verification notes for the `dcode -n` transcript.
       "--tool-call-parser",
       "qwen3_coder",
       "--reasoning-parser",
