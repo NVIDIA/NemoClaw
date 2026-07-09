@@ -125,34 +125,37 @@ const sdk = vi.hoisted(() => {
           failTerminalTool(terminalTool as MockTool, emit),
         );
         const isRepairPrompt = prompt.includes("Call `turn_action` now");
-        if (retryResponse) {
-          const retryError = "429 status code (no body)";
-          emit({
+        const retryError = "429 status code (no body)";
+        const retryAttemptEvents = [
+          {
             type: "message_update",
             assistantMessageEvent: {
               type: "error",
               error: { errorMessage: "transient stream failure before response" },
               reason: "error",
             },
-          });
-          emit({
+          },
+          {
             type: "message_end",
             message: { role: "assistant", stopReason: "error", errorMessage: retryError },
-          });
-          emit({
+          },
+          {
             type: "auto_retry_start",
             attempt: 1,
             maxAttempts: 4,
             delayMs: 6_000,
             errorMessage: retryError,
-          });
-          emit({
-            type: "auto_retry_end",
-            success: retryResponse === "success",
-            attempt: 1,
-            ...(retryResponse === "exhausted" ? { finalError: retryError } : {}),
-          });
-        }
+          },
+        ];
+        const retryPlans = {
+          none: [],
+          success: [...retryAttemptEvents, { type: "auto_retry_end", success: true, attempt: 1 }],
+          exhausted: [
+            ...retryAttemptEvents,
+            { type: "auto_retry_end", success: false, attempt: 1, finalError: retryError },
+          ],
+        };
+        retryPlans[retryResponse ?? "none"].forEach(emit);
         const shouldEmitText =
           !state.omitAnalysis &&
           retryResponse !== "exhausted" &&
