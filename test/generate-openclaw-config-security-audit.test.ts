@@ -52,6 +52,24 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
     expect(config.security).toBeUndefined();
   });
 
+  it("keeps loopback HTTP findings active when the dashboard bind is remote (#6024)", () => {
+    const config = buildSecurityAuditConfig("http://127.0.0.1:18789", {
+      NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
+    });
+    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
+    expect(config.security).toBeUndefined();
+  });
+
+  it("keeps explicit device auth findings active when the dashboard bind is remote (#6024)", () => {
+    const config = buildSecurityAuditConfig("http://127.0.0.1:18789", {
+      NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+    });
+    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.security).toBeUndefined();
+  });
+
   it("explains an explicit loopback device auth opt-out (#6024)", () => {
     const config = buildSecurityAuditConfig("https://127.0.0.1:18789", {
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
