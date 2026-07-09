@@ -119,6 +119,7 @@ export async function runSandboxCreateStep(
       onPoll: () => dockerGpuCreatePatch.maybeApplyDuringCreate(),
       readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
         deps.isTerminalAgent(context.agent),
+        sandboxEnv,
       ),
       failureCheck: dockerGpuCreatePatch.createFailureMessage,
       traceEvent: deps.addTraceEvent,

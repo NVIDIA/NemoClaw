@@ -4,10 +4,7 @@
 export const VM_READY_DETACH_OUTPUT_PATTERNS: readonly RegExp[] = [/Setting up NemoClaw/];
 
 function selectedDrivers(env: NodeJS.ProcessEnv): string[] {
-  const raw =
-    env.OPENSHELL_DRIVERS ??
-    process.env.OPENSHELL_DRIVERS ??
-    (process.platform === "darwin" ? "vm" : "docker");
+  const raw = env.OPENSHELL_DRIVERS ?? (process.platform === "darwin" ? "vm" : "docker");
   return raw
     .split(",")
     .map((driver) => driver.trim())
@@ -24,6 +21,7 @@ export function getReadyCheckOutputPatterns(
 
 export function getReadyCheckOutputPatternsForAgent(
   isTerminalAgent: boolean,
-): readonly RegExp[] | undefined {
-  return isTerminalAgent ? [] : undefined;
+  env: NodeJS.ProcessEnv,
+): readonly RegExp[] {
+  return isTerminalAgent ? [] : getReadyCheckOutputPatterns(env, undefined);
 }

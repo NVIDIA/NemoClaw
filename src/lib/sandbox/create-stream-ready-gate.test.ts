@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { streamSandboxCreate } from "./create-stream";
 import { dockerEnv, FakeChild, makePollingOptions, vmEnv } from "./create-stream-test-fixtures";
+import {
+  getReadyCheckOutputPatterns,
+  getReadyCheckOutputPatternsForAgent,
+} from "./create-stream-ready-gate";
 
 describe("sandbox-create-stream ready gate", () => {
   afterEach(() => {
@@ -42,6 +46,21 @@ describe("sandbox-create-stream ready gate", () => {
       output: expect.stringContaining("Sandbox reported Ready before create stream exited"),
     });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it.each([
+    ["non-terminal Docker", false, dockerEnv],
+    ["non-terminal VM", false, vmEnv],
+    ["terminal Docker", true, dockerEnv],
+    ["terminal VM", true, vmEnv],
+  ])("keeps agent and env ready gates equivalent for %s", (_label, isTerminalAgent, env) => {
+    const explicitPatterns = getReadyCheckOutputPatternsForAgent(isTerminalAgent, env);
+    expect(getReadyCheckOutputPatterns(env, explicitPatterns)).toEqual(explicitPatterns);
+  });
+
+  it("ignores process env driver overrides when explicit env is supplied", () => {
+    vi.stubEnv("OPENSHELL_DRIVERS", "vm");
+    expect(getReadyCheckOutputPatterns(dockerEnv, undefined)).toEqual([]);
   });
 
   it("waits for startup output before detaching with the default VM gate", async () => {

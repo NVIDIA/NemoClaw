@@ -173,12 +173,15 @@ describe("runSandboxCreateStep", () => {
       (terminalDeps.streamCreate as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][3],
     ).toMatchObject({ readyCheckOutputPatterns: [] });
 
-    const nonTerminalDeps = makeDeps(makeLaunch(), makePatch(), { status: 0, output: "" });
+    const nonTerminalDeps = makeDeps(makeLaunch({ sandboxEnv: vmEnv }), makePatch(), {
+      status: 0,
+      output: "",
+    });
     await runSandboxCreateStep(makeContext(), nonTerminalDeps);
     expect(
       (nonTerminalDeps.streamCreate as unknown as { mock: { calls: unknown[][] } }).mock
         .calls[0][3],
-    ).toMatchObject({ readyCheckOutputPatterns: undefined });
+    ).toMatchObject({ readyCheckOutputPatterns: [expect.any(RegExp)] });
   });
 
   it.each([
