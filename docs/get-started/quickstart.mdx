@@ -120,6 +120,7 @@ At any prompt, press Enter to accept the default shown in `[brackets]`, type `ba
 If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell, then requires a fresh backup of every registered sandbox before it changes the gateway.
 After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto` to rebuild stale sandboxes and restore validated backups for registered sandboxes that are not Ready.
 Successful recovery completes the existing-sandbox upgrade and skips generic onboarding, so the installer does not create an extra sandbox or ask for a new provider credential.
+If the recovery pass exits 0 but a recorded sandbox is not found on its own recorded gateway (for example after `nemoclaw uninstall` removed the gateway and Docker image while preserving `sandboxes.json`), the installer finishes with `Installation completed with warnings` and remediation guidance instead of claiming the sandbox was recovered.
 For pre-fingerprint OpenClaw and Hermes registry entries, the installer asks you to confirm that every listed sandbox used a NemoClaw-managed image before it permits recovery onto the current managed image.
 In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
 Legacy managed-image confirmation never overrides recorded custom-image evidence.

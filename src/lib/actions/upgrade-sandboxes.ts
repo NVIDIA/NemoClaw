@@ -16,6 +16,7 @@ import {
   splitRebuildableSandboxes,
   type UpgradeSandboxCandidate,
 } from "../domain/maintenance/upgrade";
+import { compareDottedVersions } from "../onboard/docker-driver-gateway-compat";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
@@ -73,20 +74,47 @@ function resolveCurrentNemoclawVersion(): string | null {
  * Build a human-readable description of why a sandbox needs rebuilding, covering
  * an outdated agent version, NemoClaw image/build drift, or both (#5026).
  */
-function describeStaleUpgrade(s: UpgradeSandboxCandidate): string {
+export function describeStaleUpgrade(s: UpgradeSandboxCandidate): string {
   const reasons = s.reasons ?? [];
   const parts: string[] = [];
   if (reasons.includes("agent-version")) {
-    parts.push(`v${s.current || "?"} → v${s.expected}`);
+    parts.push(`v${s.current || "?"} → v${s.expected}${downgradeSuffix(s.current, s.expected)}`);
   } else if (reasons.includes("image-drift") && s.current) {
     // Agent version is current; make clear it is the NemoClaw image that drifted.
     parts.push(`v${s.current} unchanged`);
   }
   if (reasons.includes("image-drift")) {
     const from = s.imageCurrent ? `v${s.imageCurrent}` : "unknown build";
-    parts.push(`NemoClaw image ${from} → v${s.imageExpected}`);
+    parts.push(
+      `NemoClaw image ${from} → v${s.imageExpected}${downgradeSuffix(s.imageCurrent, s.imageExpected)}`,
+    );
   }
   return parts.join("; ");
+}
+
+// #6520: a requested version below the recorded one is a downgrade (e.g.
+// reinstalling with an older NEMOCLAW_INSTALL_TAG than the build that created
+// the sandbox); call it out instead of framing it as a routine upgrade step.
+function downgradeSuffix(current?: string | null, expected?: string | null): string {
+  if (!current || !expected) return "";
+  return compareDottedVersions(expected, current) < 0 ? " (downgrade)" : "";
+}
+
+// #6520: install.sh greps this marker to keep its final install summary
+// honest — keep the grep in scripts/install.sh in sync. The bash harness in
+// test/install-orphaned-sandbox-recovery.test.ts builds its stub output from
+// this constant and drives the real install.sh grep, so drift on either side
+// fails that suite.
+export const ORPHANED_SANDBOX_MARKER =
+  "recorded sandbox(es) were not found on their recorded gateway";
+
+function printOrphanedRegistrySandboxes(orphans: registry.SandboxEntry[]): void {
+  if (orphans.length === 0) return;
+  const names = orphans.map((sandbox) => sandbox.name).join(", ");
+  console.log(`  ${YW}${orphans.length} ${ORPHANED_SANDBOX_MARKER}: ${names}.${R}`);
+  console.log(
+    `  ${D}Their gateway registration or Docker image may have been removed (for example by \`${CLI_NAME} uninstall\`), so they cannot be recovered automatically — run \`${CLI_NAME} <name> destroy\` to clear a stranded record, then \`${CLI_NAME} onboard\` to rebuild it.${R}`,
+  );
 }
 
 type PreparedBackupRecovery = {
@@ -283,6 +311,9 @@ export async function upgradeSandboxes(
     confirmedLegacyManagedNames.delete(name);
   }
   let recoveryCandidates: registry.SandboxEntry[] = [];
+  // Absent candidates the confirming second listing observed as Ready. They
+  // reconnected mid-run, so they are neither recovery candidates nor orphans.
+  const becameReadyNames = new Set<string>();
   if (recoverPreparedBackups) {
     const gatewayEligible = sandboxes.filter((sandbox) =>
       isPreparedRecoveryCandidate(sandbox, liveNames, selectedGatewayName),
@@ -297,6 +328,10 @@ export async function upgradeSandboxes(
       absentCandidates,
       selectedGatewayName,
     );
+    const confirmedAbsentNames = new Set(confirmedAbsentCandidates.map((s) => s.name));
+    for (const sandbox of absentCandidates) {
+      if (!confirmedAbsentNames.has(sandbox.name)) becameReadyNames.add(sandbox.name);
+    }
     recoveryCandidates = [...nonReadyCandidates, ...confirmedAbsentCandidates];
   }
   const backupRecoveryAssessments = recoveryCandidates.map((sandbox) =>
@@ -314,12 +349,39 @@ export async function upgradeSandboxes(
     backupRecoveryAssessments.map((candidate) => candidate.sandbox.name),
   );
 
+  // #6520: a recorded sandbox the selected gateway does not observe in any
+  // phase, while its persisted binding resolves to that same gateway, has
+  // nowhere else to be running — its gateway registration and Docker image
+  // were likely removed (`nemoclaw uninstall` preserves sandboxes.json but
+  // deletes both). The signal is independent of version classification: a
+  // same-version reinstall leaves such an orphan classified "current" and a
+  // missing cached version leaves it "unknown", so staleness alone cannot
+  // carry it. Sandboxes bound to a different gateway are excluded (they may
+  // be healthy there), as are ones the confirming second listing observed
+  // and ones a prepared-backup recovery restores below.
+  const observedOnSelectedGateway = new Set([...liveNames, ...nonReadyLiveNames]);
+  const unobservedOwnGatewaySandboxes = sandboxes.filter((sandbox) => {
+    if (observedOnSelectedGateway.has(sandbox.name)) return false;
+    if (becameReadyNames.has(sandbox.name)) return false;
+    try {
+      return resolveSandboxGatewayName(sandbox) === selectedGatewayName;
+    } catch {
+      // Invalid persisted binding — surfaced by the recovery-candidate guard;
+      // never classify a corrupted row as an orphan here.
+      return false;
+    }
+  });
+
   if (
     stale.length === 0 &&
     unknown.length === 0 &&
     preparedRecoveries.length === 0 &&
     rejectedRecoveries.length === 0
   ) {
+    if (unobservedOwnGatewaySandboxes.length > 0) {
+      printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
+      return;
+    }
     console.log("  All sandboxes are up to date.");
     return;
   }
@@ -389,12 +451,14 @@ export async function upgradeSandboxes(
     preparedRecoveries.length === 0 &&
     rejectedRecoveries.length === 0
   ) {
+    printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
     console.log("  No running stale sandboxes to rebuild.");
     return;
   }
 
   let rebuilt = 0;
   let failed = rejectedRecoveries.length;
+  const recoveredNames = new Set<string>();
   const work = [
     ...rebuildable.map((sandbox) => ({ sandbox, manifest: null })),
     ...preparedRecoveries.map((recovery) => ({
@@ -424,6 +488,7 @@ export async function upgradeSandboxes(
           : {}),
       });
       rebuilt++;
+      recoveredNames.add(sandbox.name);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       const verb = manifest ? "recover" : "rebuild";
@@ -433,6 +498,9 @@ export async function upgradeSandboxes(
   }
 
   console.log("");
+  printOrphanedRegistrySandboxes(
+    unobservedOwnGatewaySandboxes.filter((sandbox) => !recoveredNames.has(sandbox.name)),
+  );
   if (rebuilt > 0) console.log(`  ${G}✓${R} ${rebuilt} sandbox(es) rebuilt.`);
   if (failed > 0) console.log(`  ${YW}⚠${R} ${failed} sandbox(es) failed — see errors above.`);
   if (failed > 0) process.exit(1);
