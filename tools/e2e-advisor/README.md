@@ -29,7 +29,7 @@ the trusted timing signal.
 ## Safety model
 
 - Static analysis only.
-- The advisor receives only read-only tools: `read`, `grep`, `find`, and `ls`.
+- The advisor receives repo-confined `read`, `grep`, `find`, and `ls` tools plus deterministic, turn-scoped read-only context tools for metadata, changed files, risk plans, diffs, and response schemas.
 - The workflow does not execute PR-provided scripts, tests, or package-manager lifecycle hooks.
 - Generated advisor credential config is written under `/tmp`, not under uploaded artifacts.
 - The job is gated to internal upstream PRs only.
