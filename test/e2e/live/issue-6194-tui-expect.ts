@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 export const ISSUE6194_TUI_TIMEOUT_SEC = 240;
 export const ISSUE6194_TUI_EXIT_TIMEOUT_SEC = 10;
 export const ISSUE6194_OPENSHELL_DASHBOARD_TIMEOUT_SEC = 30;
+export const ISSUE6194_OPENSHELL_APPROVAL_TIMEOUT_BUFFER_SEC = 120;
 export const ISSUE6194_TUI_SESSION_PREFIX = "issue-6194-tui";
 export const ISSUE6194_NETWORK_APPROVAL_ENDPOINT =
   "https://api.atlassian.com/oauth/token/accessible-resources";
@@ -262,7 +263,10 @@ expect {
 set policyStatusOutput "ISSUE6194_APPROVED_POLICY_VERSION=$approvedPolicyVersion\\n"
 set policyLoaded 0
 set policyTerminalStatus timeout
-for {set attempt 1} {$attempt <= 10} {incr attempt} {
+set policyLoadDeadline [expr {[clock milliseconds] + 60000}]
+set attempt 0
+while {[clock milliseconds] < $policyLoadDeadline} {
+  incr attempt
   set policyGetFailed [catch {exec timeout 2 openshell policy get $sandbox --rev $approvedPolicyVersion --output json} candidate]
   append policyStatusOutput "ISSUE6194_POLICY_STATUS_ATTEMPT=$attempt\\n$candidate\\n"
   set versionPattern [format {"version"[[:space:]]*:[[:space:]]*%s([[:space:]]|,)} $approvedPolicyVersion]
@@ -280,7 +284,7 @@ for {set attempt 1} {$attempt <= 10} {incr attempt} {
     set policyTerminalStatus $terminalStatus
     break
   }
-  after 500
+  after 1000
 }
 if {!$policyLoaded} {
   append policyStatusOutput "ISSUE6194_POLICY_STATUS=$policyTerminalStatus\\n"

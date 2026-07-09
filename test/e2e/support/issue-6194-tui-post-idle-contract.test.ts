@@ -11,6 +11,7 @@ import {
   buildIssue6194TuiExpectScript,
   ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
   ISSUE6194_NETWORK_APPROVAL_HOST,
+  ISSUE6194_OPENSHELL_APPROVAL_TIMEOUT_BUFFER_SEC,
   ISSUE6194_OPENSHELL_DASHBOARD_TIMEOUT_SEC,
   ISSUE6194_TUI_EXIT_TIMEOUT_SEC,
   ISSUE6194_TUI_SESSION_PREFIX,
@@ -213,7 +214,9 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(script).toContain(
       'set policyStatusOutput "ISSUE6194_APPROVED_POLICY_VERSION=$approvedPolicyVersion\\n"',
     );
-    expect(script).toContain("for {set attempt 1} {$attempt <= 10} {incr attempt}");
+    expect(script).toContain("set policyLoadDeadline [expr {[clock milliseconds] + 60000}]");
+    expect(script).toContain("while {[clock milliseconds] < $policyLoadDeadline}");
+    expect(script).toContain("incr attempt");
     expect(script).toContain(
       "exec timeout 2 openshell policy get $sandbox --rev $approvedPolicyVersion --output json",
     );
@@ -237,6 +240,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(script).toContain('regexp {"status"[[:space:]]*:[[:space:]]*"loaded"} $candidate');
     expect(script).toContain("write_capture $policyCapture $policyStatusOutput");
     expect(script).toContain("ISSUE6194_DIAGNOSTIC approved policy revision did not become active");
+    expect(ISSUE6194_OPENSHELL_APPROVAL_TIMEOUT_BUFFER_SEC).toBe(120);
     expect(script).toContain(
       "spawn -noecho openshell sandbox exec --name $sandbox --no-tty --timeout 20 -- /usr/bin/curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w {ISSUE6194_POLICY_HTTP_STATUS=%{http_code}\\n} $networkEndpoint",
     );
@@ -374,6 +378,10 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       );
       const policyPrecreate = liveSource.indexOf("precreateIssue6194Capture(policyCaptureFile)");
       const approvalCommand = liveSource.indexOf('host.command("expect", [approvalExpectScript]');
+      const approvalTimeout = liveSource.indexOf(
+        "ISSUE6194_OPENSHELL_APPROVAL_TIMEOUT_BUFFER_SEC",
+        approvalCommand,
+      );
       const approvalResult = liveSource.indexOf(
         'artifacts.writeJson("issue6194-approval-result.json"',
       );
@@ -397,6 +405,8 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       expect(approvalPrecreate).toBeGreaterThan(tuiCaptureAssertion);
       expect(policyPrecreate).toBeGreaterThan(approvalPrecreate);
       expect(approvalCommand).toBeGreaterThan(policyPrecreate);
+      expect(approvalTimeout).toBeGreaterThan(approvalCommand);
+      expect(approvalTimeout).toBeLessThan(approvalResult);
       expect(approvalResult).toBeGreaterThan(approvalCommand);
       expect(approvalCaptureAssertion).toBeGreaterThan(approvalResult);
       expect(websocketCommand).toBeGreaterThan(approvalCaptureAssertion);

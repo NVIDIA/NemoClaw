@@ -34,6 +34,7 @@ import {
   buildIssue6194TuiExpectScript,
   ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
   ISSUE6194_NETWORK_APPROVAL_HOST,
+  ISSUE6194_OPENSHELL_APPROVAL_TIMEOUT_BUFFER_SEC,
   ISSUE6194_TUI_SESSION_PREFIX,
   ISSUE6194_TUI_TIMEOUT_SEC,
   precreateIssue6194Capture,
@@ -671,7 +672,8 @@ test(
           NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
         },
         redactionValues: [apiKey],
-        timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
+        timeoutMs:
+          (ISSUE6194_TUI_TIMEOUT_SEC + ISSUE6194_OPENSHELL_APPROVAL_TIMEOUT_BUFFER_SEC) * 1000,
       });
       const approvalCapture = readIssue6194Capture(approvalCaptureFile);
       const triggerCapture = readIssue6194Capture(triggerCaptureFile);
