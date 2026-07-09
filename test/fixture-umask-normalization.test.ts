@@ -111,11 +111,18 @@ else:
   expect(result.stdout).toContain("group/world-writable");
 });
 
-it("wires the fixture-umask setup into every intended project before other setup files (#6448)", () => {
+it("wires the fixture-umask setup into every npm test project before other setup files (#6448)", () => {
   // A config-contract guard: if a future edit drops or misorders the setup for a
   // project, the permissive-umask failures would only resurface on hosts with a
-  // permissive ambient umask (CI at 0o022 would not catch it). Assert membership
-  // and ordering here instead.
+  // permissive ambient umask (CI at 0o022 would not catch it). Derive the project
+  // list from package.json's `npm test` command rather than hard-coding it, so
+  // adding or removing a `--project` cannot silently drift out of this contract.
+  const testScript = JSON.parse(
+    fs.readFileSync(path.join(import.meta.dirname, "..", "package.json"), "utf-8"),
+  ).scripts.test as string;
+  const npmTestProjects = [...testScript.matchAll(/--project\s+(\S+)/g)].map((match) => match[1]);
+  expect(npmTestProjects.length).toBeGreaterThan(0);
+
   const projects = (vitestConfig.test?.projects ?? []) as ProjectEntry[];
   const setupFilesByName = new Map(
     projects.map((project) => [project.test?.name, project.test?.setupFiles ?? []]),
@@ -123,22 +130,18 @@ it("wires the fixture-umask setup into every intended project before other setup
 
   // Every project `npm test` runs must pin the fixture umask first, before any
   // fixture/source-loader setup file.
-  for (const name of [
-    "cli",
-    "integration",
-    "installer-integration",
-    "package-contract",
-    "plugin",
-    "e2e-support",
-  ]) {
+  for (const name of npmTestProjects) {
     const setupFiles = setupFilesByName.get(name);
     expect(setupFiles, name).toContain(FIXTURE_UMASK_SETUP);
     expect(setupFiles?.indexOf(FIXTURE_UMASK_SETUP), name).toBe(0);
   }
 
-  // e2e-live intentionally keeps the caller's umask (it handles real credentials
-  // and sets its own strict `umask 077` inline); e2e-branch-validation defines no
-  // setupFiles. Neither has guard-fixture suites.
+  // The live/credential-bearing projects are intentionally excluded: e2e-live
+  // keeps the caller's umask (it handles real credentials and sets its own strict
+  // `umask 077` inline) and e2e-branch-validation defines no setupFiles. Neither
+  // is part of `npm test` nor has guard-fixture suites.
+  expect(npmTestProjects).not.toContain("e2e-live");
+  expect(npmTestProjects).not.toContain("e2e-branch-validation");
   expect(setupFilesByName.get("e2e-live") ?? []).not.toContain(FIXTURE_UMASK_SETUP);
   expect(setupFilesByName.get("e2e-branch-validation") ?? []).not.toContain(FIXTURE_UMASK_SETUP);
 });

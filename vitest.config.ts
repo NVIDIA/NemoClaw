@@ -34,10 +34,13 @@ const typedSourceTransform = {
   },
 };
 const sourceNodeOptions = sourceLoaderNodeOptions(process.env.NODE_OPTIONS);
-// Mask group/world write bits into every test worker's umask so Hermes/OpenClaw
-// guard fixtures are never created group/world-writable on a developer host with
-// a permissive ambient umask (e.g. 0002 on Ubuntu 24.04), without relaxing a
-// stricter caller umask. See test/helpers/normalize-fixture-umask.ts (#6448).
+// Pin the file-creation umask of every non-live test worker to exactly 0o022 —
+// the conventional CI baseline — so Hermes/OpenClaw guard fixtures are created
+// with deterministic modes regardless of the developer's ambient umask (e.g. a
+// permissive 0002 on Ubuntu 24.04 would otherwise make them group-writable and
+// the guard would reject them). The live/credential-bearing E2E projects are
+// intentionally excluded below and keep their own stricter umask handling. See
+// test/helpers/normalize-fixture-umask.ts (#6448).
 const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
 const integrationProjectScheduling = resolveIntegrationProjectScheduling({
   isCi,
