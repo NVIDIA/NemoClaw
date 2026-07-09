@@ -20,6 +20,45 @@ const transactionId = "11111111-1111-4111-8111-111111111111";
 const fingerprintA = `sha256:${"a".repeat(64)}`;
 const fingerprintB = `sha256:${"b".repeat(64)}`;
 const fingerprintC = `sha256:${"c".repeat(64)}`;
+const fingerprintD = `sha256:${"d".repeat(64)}`;
+const otherTransactionId = "22222222-2222-4222-8222-222222222222";
+const replacementField = `"replacementFingerprint":"${fingerprintC}"`;
+const sessionMismatch = /replacement session correlation does not match/u;
+const gatewayMismatch = /replacement registry gateway does not match/u;
+type InvalidEvidenceCase = [string, "registry" | "session", string | RegExp, string, RegExp];
+const invalidEvidenceCases: InvalidEvidenceCase[] = [
+  [
+    "missing session correlation",
+    "session",
+    /"rebuild":\{[^{}]+\}/u,
+    '"rebuild":null',
+    sessionMismatch,
+  ],
+  ["transaction mismatch", "session", transactionId, otherTransactionId, sessionMismatch],
+  [
+    "missing replacement fingerprint",
+    "session",
+    replacementField,
+    '"replacementFingerprint":null',
+    sessionMismatch,
+  ],
+  ["image mismatch", "session", fingerprintA, fingerprintD, sessionMismatch],
+  ["configuration mismatch", "session", fingerprintB, fingerprintD, sessionMismatch],
+  [
+    "gateway name mismatch",
+    "registry",
+    '"gatewayName":"nemoclaw"',
+    '"gatewayName":"other-gateway"',
+    gatewayMismatch,
+  ],
+  [
+    "gateway port mismatch",
+    "registry",
+    '"gatewayPort":8080',
+    '"gatewayPort":8181',
+    gatewayMismatch,
+  ],
+];
 
 function createHome(): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-rebuild-recovery-"));
@@ -42,7 +81,7 @@ function statePaths(home: string) {
   };
 }
 
-function writeState(home: string): void {
+function writeState(home: string): ReturnType<typeof statePaths> {
   const paths = statePaths(home);
   for (const file of Object.values(paths)) fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(
@@ -102,6 +141,7 @@ function writeState(home: string): void {
       },
     }),
   );
+  return paths;
 }
 
 afterEach(() => {
@@ -182,5 +222,20 @@ process.stderr.write(output, () => {
     expect(serialized).not.toContain("secret-model-name");
     expect(serialized).not.toContain("SECRET_API_KEY");
     expect(serialized).not.toContain("secret.invalid");
+  });
+
+  it.each(
+    invalidEvidenceCases,
+  )("fails closed for %s (#6437)", (_label, file, search, replacement, error) => {
+    const home = createHome();
+    const paths = writeState(home);
+    const before = fs.readFileSync(paths[file], "utf8");
+    const after = before.replace(search, replacement);
+    expect(after).not.toBe(before);
+    fs.writeFileSync(paths[file], after);
+
+    expect(() =>
+      readInterruptedRebuildEvidence(sandboxName, "replacement_unjournaled", home),
+    ).toThrow(error);
   });
 });
