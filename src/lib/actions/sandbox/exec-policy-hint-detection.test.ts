@@ -20,6 +20,8 @@ const SSH_RELAY_INFO_LINE =
 // fixture strict: speculative wording variants would widen false positives.
 const PROXY_JSON_LINE =
   '{"detail":"CONNECT example.com:443 not permitted by policy","error":"policy_denied"}';
+const INTERLEAVED_CURL_PROXY_JSON_LINE =
+  'curl: (22) The reque{"detail":"POST host.openshell.internal:4318/v1/traces not permitted by policy","error":"policy_denied"}sted URL returned error: 403';
 
 // A denial timestamp of 1783046573.602s parses to 1783046573602ms. Anchor the
 // command-start stamps around it to exercise the recency window.
@@ -40,6 +42,7 @@ describe("isPolicyDenialLine (#5978)", () => {
       true,
     ],
     ["proxy JSON policy_denied body", PROXY_JSON_LINE, true],
+    ["proxy JSON interleaved with curl stderr", INTERLEAVED_CURL_PROXY_JSON_LINE, true],
     [
       "forward proxy host denial body",
       '{"error":"policy_denied","detail":"POST example.com:4318/v1/traces not permitted by policy"}',

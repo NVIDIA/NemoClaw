@@ -165,6 +165,9 @@ navigation:
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.openclaw.generated.mdx
                 slug: architecture
+              - page: "Extension Taxonomy and SDK Readiness"
+                path: _build/agent-variants/reference/extension-taxonomy-sdk-readiness.openclaw.generated.mdx
+                slug: extension-taxonomy-sdk-readiness
               - page: "CLI Commands Reference"
                 path: _build/agent-variants/reference/commands.openclaw.generated.mdx
                 slug: commands
@@ -282,6 +285,9 @@ navigation:
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.deepagents.generated.mdx
                 slug: architecture
+              - page: "Extension Taxonomy and SDK Readiness"
+                path: _build/agent-variants/reference/extension-taxonomy-sdk-readiness.deepagents.generated.mdx
+                slug: extension-taxonomy-sdk-readiness
               - page: "CLI Commands Reference"
                 path: _build/agent-variants/reference/commands.deepagents.generated.mdx
                 slug: commands
@@ -443,6 +449,9 @@ navigation:
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.hermes.generated.mdx
                 slug: architecture
+              - page: "Extension Taxonomy and SDK Readiness"
+                path: _build/agent-variants/reference/extension-taxonomy-sdk-readiness.hermes.generated.mdx
+                slug: extension-taxonomy-sdk-readiness
               - page: "CLI Commands Reference"
                 path: _build/agent-variants/reference/commands.hermes.generated.mdx
                 slug: commands

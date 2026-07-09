@@ -31,7 +31,7 @@ jobs:
 
       - name: Detect changed paths
         id: filter
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         with:
           predicate-quantifier: every
           filters: |
@@ -308,6 +308,32 @@ jobs:
       - name: Run plugin coverage
         uses: ./.trusted-ci-actions/.github/actions/ci-plugin-coverage
 
+  e2e-support:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install E2E support dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI artifacts for E2E support
+        run: npm run build:cli
+
+      - name: Run E2E support tests
+        run: npx vitest run --project e2e-support
+
   test-e2e-ollama-proxy:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -335,6 +361,7 @@ jobs:
       - installer-integration
       - cli-tests
       - plugin-tests
+      - e2e-support
       - test-e2e-ollama-proxy
     if: always()
     runs-on: ubuntu-latest
@@ -350,6 +377,7 @@ jobs:
           INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
+          E2E_SUPPORT_RESULT: ${{ needs['e2e-support'].result }}
           E2E_PROXY_RESULT: ${{ needs['test-e2e-ollama-proxy'].result }}
         run: |
           set -euo pipefail
@@ -384,6 +412,7 @@ jobs:
             require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             require_success "cli-tests" "$CLI_TESTS_RESULT"
             require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
+            require_success "e2e-support" "$E2E_SUPPORT_RESULT"
             require_success "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
           else
             require_success "docs-only-checks" "$DOCS_ONLY_RESULT"
@@ -392,6 +421,7 @@ jobs:
             allow_success_or_skipped "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             allow_success_or_skipped "cli-tests" "$CLI_TESTS_RESULT"
             allow_success_or_skipped "plugin-tests" "$PLUGIN_TESTS_RESULT"
+            allow_success_or_skipped "e2e-support" "$E2E_SUPPORT_RESULT"
             allow_success_or_skipped "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
           fi
 
