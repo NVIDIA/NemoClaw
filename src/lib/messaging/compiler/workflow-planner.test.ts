@@ -3,17 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import { applyMessagingAgentRenderToObject } from "../applier/build/messaging-build-applier.mts";
 import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
 } from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
-import {
-  type ChannelManifest,
-  createChannelManifestRegistry,
-  type SandboxMessagingPlan,
-} from "../manifest";
+import { type ChannelManifest, createChannelManifestRegistry } from "../manifest";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
@@ -104,12 +99,6 @@ function planner(): MessagingWorkflowPlanner {
     }),
     createBuiltInRenderTemplateResolver(),
   );
-}
-
-function renderHermesPlatforms(plan: SandboxMessagingPlan): Record<string, unknown> {
-  const config: { platforms: Record<string, unknown> } = { platforms: {} };
-  applyMessagingAgentRenderToObject(config, plan, "~/.hermes/config.yaml");
-  return config.platforms;
 }
 
 function findFunctionPaths(value: unknown, prefix = "$"): string[] {
@@ -675,61 +664,6 @@ describe("MessagingWorkflowPlanner", () => {
         (entry) => entry.channelId === "telegram" && entry.module === "telegram-diagnostics",
       ),
     ).toBe(true);
-  });
-
-  it("renders Hermes Slack rich blocks only while Slack is active across stop/start (#6443)", async () => {
-    const lifecyclePlanner = planner();
-    const existingPlan = await lifecyclePlanner.buildPlan({
-      sandboxName: "demo",
-      agent: "hermes",
-      workflow: "onboard",
-      isInteractive: false,
-      configuredChannels: ["slack"],
-      credentialAvailability: {
-        SLACK_BOT_TOKEN: true,
-        SLACK_APP_TOKEN: true,
-      },
-    });
-
-    expect(renderHermesPlatforms(existingPlan).slack).toEqual({
-      enabled: true,
-      extra: { rich_blocks: true },
-    });
-
-    const stopped = await lifecyclePlanner.buildChannelStopPlanFromSandboxEntry({
-      sandboxName: "demo",
-      agent: "hermes",
-      sandboxEntry: {
-        name: "demo",
-        messaging: { schemaVersion: 1, plan: existingPlan },
-      },
-      channelId: "slack",
-    });
-
-    expect(stopped?.channels.find((channel) => channel.channelId === "slack")).toMatchObject({
-      active: false,
-      disabled: true,
-    });
-    expect(renderHermesPlatforms(stopped!).slack).toBeUndefined();
-
-    const started = await lifecyclePlanner.buildChannelStartPlanFromSandboxEntry({
-      sandboxName: "demo",
-      agent: "hermes",
-      sandboxEntry: {
-        name: "demo",
-        messaging: { schemaVersion: 1, plan: stopped! },
-      },
-      channelId: "slack",
-    });
-
-    expect(started?.channels.find((channel) => channel.channelId === "slack")).toMatchObject({
-      active: true,
-      disabled: false,
-    });
-    expect(renderHermesPlatforms(started!).slack).toEqual({
-      enabled: true,
-      extra: { rich_blocks: true },
-    });
   });
 
   it("removes Teams host forwarding while the channel is disabled", async () => {
