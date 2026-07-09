@@ -1877,7 +1877,7 @@ const { createSandbox } = require(${onboardPath});
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /(?=.*nemoclaw-start)(?=.*--provider tavily-search)/);
+    assert.match(createCommand.command, /^(?=.*nemoclaw-start)(?!.*--provider tavily-search)/s);
     assert.doesNotMatch(createCommand.command, /--upload/);
     assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
     assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);

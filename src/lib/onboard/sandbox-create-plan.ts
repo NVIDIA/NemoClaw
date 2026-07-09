@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  WEB_SEARCH_PROVIDERS,
+  type WebSearchConfig,
+  webSearchProviderForConfig,
+} from "../inference/web-search";
+import {
   listMessagingCredentialMetadata,
   type MessagingCredentialMetadata,
 } from "../messaging/channels";
@@ -32,6 +37,9 @@ export type {
 // tier there requires updating this set so an explicit tier env value reaches
 // the create-time policy decision.
 const KNOWN_POLICY_TIER_NAMES = new Set(["restricted", "balanced", "open"]);
+const MANAGED_WEB_SEARCH_EXTRA_PROVIDERS = new Set(
+  WEB_SEARCH_PROVIDERS.map((provider) => `${provider}-search`),
+);
 
 function readPolicyTierEnv(): string | null {
   // Only trust the env value in non-interactive mode. Interactive flows let the
@@ -70,6 +78,8 @@ export type PrepareSandboxCreatePlanInput = {
   reusableMessagingChannels: string[];
   reusableMessagingProviders: string[];
   extraProviders?: readonly string[];
+  /** Undefined preserves generic callers; null authoritatively disables managed web search. */
+  webSearchConfig?: WebSearchConfig | null;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuCreateConfig;
   dockerDriverGateway: boolean;
@@ -146,6 +156,20 @@ function filterMessagingProvidersByEnabledChannel(
     const channel = providerChannels.get(providerName);
     return !channel || !disabledChannelNames.has(channel);
   });
+}
+
+function filterManagedWebSearchExtraProviders(
+  extraProviders: readonly string[] | undefined,
+  webSearchConfig: WebSearchConfig | null | undefined,
+): readonly string[] | undefined {
+  if (webSearchConfig === undefined) return extraProviders;
+  const selectedProvider = webSearchConfig?.fetchEnabled
+    ? `${webSearchProviderForConfig(webSearchConfig)}-search`
+    : null;
+  return extraProviders?.filter(
+    (provider) =>
+      !MANAGED_WEB_SEARCH_EXTRA_PROVIDERS.has(provider) || provider === selectedProvider,
+  );
 }
 
 function resolveActiveMessagingChannels({
@@ -411,6 +435,7 @@ export function prepareSandboxCreatePlan({
   reusableMessagingChannels,
   reusableMessagingProviders,
   extraProviders,
+  webSearchConfig,
   hermesToolGateways,
   sandboxGpuConfig,
   dockerDriverGateway,
@@ -446,7 +471,7 @@ export function prepareSandboxCreatePlan({
     primaryMessagingCredentialEnvKeys: [...getPrimaryCredentialEnvKeys()],
     reusableMessagingChannels,
     reusableMessagingProviders,
-    extraProviders,
+    extraProviders: filterManagedWebSearchExtraProviders(extraProviders, webSearchConfig),
     hermesToolGateways,
     sandboxGpuConfig,
     gpuCreateArgs,
