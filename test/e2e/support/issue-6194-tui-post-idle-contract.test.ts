@@ -194,6 +194,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
 
     try {
       expect(readIssue6194Capture(missingFile)).toEqual({ exists: false, contents: "" });
+      expect(() => readIssue6194Capture("\0")).toThrow();
 
       precreateIssue6194Capture(captureFile);
       expect(statSync(captureFile).mode & 0o777).toBe(0o600);

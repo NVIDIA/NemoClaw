@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 export const ISSUE6194_TUI_TIMEOUT_SEC = 240;
 export const ISSUE6194_TUI_EXIT_TIMEOUT_SEC = 10;
@@ -20,8 +20,14 @@ export function precreateIssue6194Capture(path: string): void {
 }
 
 export function readIssue6194Capture(path: string): Issue6194Capture {
-  if (!existsSync(path)) return { exists: false, contents: "" };
-  return { exists: true, contents: readFileSync(path, "utf8") };
+  try {
+    return { exists: true, contents: readFileSync(path, "utf8") };
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "ENOENT") {
+      return { exists: false, contents: "" };
+    }
+    throw error;
+  }
 }
 
 export function buildIssue6194TuiExpectScript(): string {
