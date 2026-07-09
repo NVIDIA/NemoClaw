@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 export const ISSUE6194_TUI_TIMEOUT_SEC = 240;
 export const ISSUE6194_TUI_EXIT_TIMEOUT_SEC = 10;
+export const ISSUE6194_OPENSHELL_DASHBOARD_TIMEOUT_SEC = 30;
 export const ISSUE6194_TUI_SESSION_PREFIX = "issue-6194-tui";
 export const ISSUE6194_NETWORK_APPROVAL_ENDPOINT =
   "https://api.atlassian.com/oauth/token/accessible-resources";
@@ -98,7 +99,7 @@ proc mark {name} {
 proc stop_spawn {target} {
   catch {send -i $target "\\003"}
   catch {close -i $target}
-  catch {wait -i $target}
+  catch {wait -i $target -nowait}
 }
 proc write_capture {path value} {
   set handle [open $path w]
@@ -154,9 +155,17 @@ if {[string trim $pendingBefore] ne $expectedEmpty} {
   exit 63
 }
 mark pending_queue_empty
+# ShellProbe has no controlling TTY. Pin the terminal type and Expect-owned
+# PTY geometry before OpenShell performs its first full-screen render.
+set env(TERM) xterm-256color
 spawn openshell term
 set termSpawn $spawn_id
+set termPty $spawn_out(slave,name)
+stty rows 40 columns 120 < $termPty
+set dashboardTimeout $timeout
+set timeout ${ISSUE6194_OPENSHELL_DASHBOARD_TIMEOUT_SEC}
 expect_exact_or_exit $termSpawn {Sandboxes} openshell_dashboard 64 65
+set timeout $dashboardTimeout
 # Gateways -> Providers -> Sandboxes.
 send -i $termSpawn -- "\\t"
 after 200

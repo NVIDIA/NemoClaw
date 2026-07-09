@@ -11,6 +11,7 @@ import {
   buildIssue6194TuiExpectScript,
   ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
   ISSUE6194_NETWORK_APPROVAL_HOST,
+  ISSUE6194_OPENSHELL_DASHBOARD_TIMEOUT_SEC,
   ISSUE6194_TUI_EXIT_TIMEOUT_SEC,
   ISSUE6194_TUI_SESSION_PREFIX,
   ISSUE6194_TUI_TIMEOUT_SEC,
@@ -80,6 +81,47 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(exitFlow).toContain("timeout { exit 39 }");
     expect(exitFlow).toContain("timeout { exit 40 }");
     expect(exitFlow).toContain("set timeout $savedTimeout");
+  });
+
+  it("stabilizes the OpenShell PTY before a bounded dashboard wait", () => {
+    const script = buildIssue6194OpenShellApprovalExpectScript();
+    const term = script.indexOf("set env(TERM) xterm-256color");
+    const spawn = script.indexOf("spawn openshell term");
+    const spawnId = script.indexOf("set termSpawn $spawn_id");
+    const termPty = script.indexOf("set termPty $spawn_out(slave,name)");
+    const geometry = script.indexOf("stty rows 40 columns 120 < $termPty");
+    const saveTimeout = script.indexOf("set dashboardTimeout $timeout");
+    const boundedTimeout = script.indexOf(
+      `set timeout ${ISSUE6194_OPENSHELL_DASHBOARD_TIMEOUT_SEC}`,
+    );
+    const dashboard = script.indexOf(
+      "expect_exact_or_exit $termSpawn {Sandboxes} openshell_dashboard 64 65",
+    );
+    const restoreTimeout = script.indexOf("set timeout $dashboardTimeout");
+    const stopSpawn = script.slice(
+      script.indexOf("proc stop_spawn"),
+      script.indexOf("proc write_capture"),
+    );
+    const setupOrder = [
+      term,
+      spawn,
+      spawnId,
+      termPty,
+      geometry,
+      saveTimeout,
+      boundedTimeout,
+      dashboard,
+    ];
+
+    expect(ISSUE6194_OPENSHELL_DASHBOARD_TIMEOUT_SEC).toBe(30);
+    expect(setupOrder.every((index) => index >= 0)).toBe(true);
+    expect([...setupOrder].sort((a, b) => a - b)).toEqual(setupOrder);
+    expect(restoreTimeout).toBeGreaterThan(dashboard);
+    expect(script).not.toContain("stty -i");
+    expect(stopSpawn).toContain("catch {wait -i $target -nowait}");
+    expect(stopSpawn).not.toContain("catch {wait -i $target}");
+    expect(script).toContain("catch {wait -i $curlSpawn} curlWait");
+    expect(script).toContain("catch {wait -i $termSpawn} termWait");
   });
 
   it("drives a direct blocked request through the real OpenShell approval surface", () => {
