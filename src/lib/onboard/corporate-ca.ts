@@ -418,11 +418,16 @@ function collectAnchorFiles(root: string, extensions: RegExp): string[] {
 
 /**
  * Resolve a corporate CA from the host administrator-managed anchor directories
- * (#6210 acceptance path). See {@link CORPORATE_CA_HOST_ANCHOR_DIRS} for why
- * these bounded source dirs — not the merged `/etc/ssl/certs/` output — are the
- * safe place to detect an installed corporate root. Each directory is scanned
- * recursively (matching `update-ca-certificates`), bounded by the depth/file
- * caps above.
+ * (#6210 acceptance path).
+ *
+ * NOTE: this deliberately does **not** scan the merged `/etc/ssl/certs/`
+ * (nor `/etc/ssl/certs/ca-certificates.crt`) that the issue text mentions —
+ * only the administrator anchor **source** directories are read. The merged view
+ * interleaves the corporate root with the distro's ~140 public roots, so reading
+ * it would bake broad, unrelated trust; the anchor sources hold exactly the
+ * locally-installed corporate root. See {@link CORPORATE_CA_HOST_ANCHOR_DIRS}.
+ * Each directory is scanned recursively (matching `update-ca-certificates`),
+ * bounded by the depth/file caps above.
  *
  * Returns `null` when no anchor directory yields a usable, bounded bundle.
  * Never throws: an unreadable/invalid/oversized anchor set is skipped silently
