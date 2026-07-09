@@ -36,7 +36,7 @@ const GATEWAY_TOKEN = "unit-test-gateway-token";
 const UPSTREAM_DENIAL_LINE =
   "Local login saved auth for whatsapp/default, but the running gateway did not restart it: missing scope: operator.admin";
 
-function extractGuardFunction(src: string): string {
+function extractGuardFunction(src: string, trustedGatewayUrl: string): string {
   const beginMarker = "# nemoclaw-configure-guard begin";
   const endMarker = "# nemoclaw-configure-guard end";
   const begin = src.indexOf(beginMarker);
@@ -45,7 +45,18 @@ function extractGuardFunction(src: string): string {
     begin !== -1 && end !== -1 && begin < end,
     "Expected nemoclaw-configure-guard markers in scripts/nemoclaw-start.sh",
   );
-  return src.slice(begin, end);
+  const guardSource = src.slice(begin, end);
+  const injectionStartMarker =
+    "GUARDENVEOF\n    # nemoclaw-trusted-gateway-literal-injection begin";
+  const injectionEndMarker =
+    "    # nemoclaw-trusted-gateway-literal-injection end\n    cat <<'GUARDENVEOF'\n";
+  const injectionStart = guardSource.indexOf(injectionStartMarker);
+  const injectionEnd = guardSource.indexOf(injectionEndMarker, injectionStart);
+  assert(
+    injectionStart !== -1 && injectionEnd !== -1,
+    "Expected the generated trusted gateway literal injection markers",
+  );
+  return `${guardSource.slice(0, injectionStart)}            _nemoclaw_whatsapp_trusted_url=${JSON.stringify(trustedGatewayUrl)}\n${guardSource.slice(injectionEnd + injectionEndMarker.length)}`;
 }
 
 interface ReconcileRunOptions {
@@ -74,7 +85,7 @@ interface ReconcileRunResult {
 
 describe("WhatsApp post-pair gateway channel start (#6413)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const guard = extractGuardFunction(src);
+  const guard = extractGuardFunction(src, PRIVATE_GATEWAY_URL);
 
   function runLoginThroughGuard(opts: ReconcileRunOptions): ReconcileRunResult {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wa-postpair-"));
