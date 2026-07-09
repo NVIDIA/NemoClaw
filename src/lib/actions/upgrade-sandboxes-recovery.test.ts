@@ -393,6 +393,22 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining("Unknown version"));
   });
 
+  it("prints the orphan diagnosis in --check mode so check and auto agree (#6520)", async () => {
+    const harness = createRecoveryHarness(["my-assistant"], {
+      liveOutput: "other-box Ready",
+      latestBackup: null,
+      staleNames: ["my-assistant"],
+    });
+    vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "0");
+
+    await expect(harness.upgradeSandboxes({ check: true })).resolves.toBeUndefined();
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("were not found on their recorded gateway: my-assistant"),
+    );
+  });
+
   it("also flags a stale own-gateway orphan alongside the generic skip line (#6520)", async () => {
     // The versioned-reinstall repro (v0.0.77 sandbox, v0.0.76 tag): the
     // sandbox is stale+stopped, prints the generic skip line, and must ALSO

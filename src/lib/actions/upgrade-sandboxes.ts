@@ -11,12 +11,16 @@ import {
   type UpgradeSandboxesOptions,
 } from "../domain/lifecycle/options";
 import {
+  classifyOrphanedRegistrySandboxes,
+  orphanedRegistryRemediation,
+  orphanedRegistrySummary,
+} from "../domain/maintenance/orphan-detection";
+import {
   classifyUpgradeableSandboxes,
+  describeStaleUpgrade,
   shouldSkipUpgradeConfirmation,
   splitRebuildableSandboxes,
-  type UpgradeSandboxCandidate,
 } from "../domain/maintenance/upgrade";
-import { compareDottedVersions } from "../onboard/docker-driver-gateway-compat";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
@@ -70,51 +74,11 @@ function resolveCurrentNemoclawVersion(): string | null {
   }
 }
 
-/**
- * Build a human-readable description of why a sandbox needs rebuilding, covering
- * an outdated agent version, NemoClaw image/build drift, or both (#5026).
- */
-export function describeStaleUpgrade(s: UpgradeSandboxCandidate): string {
-  const reasons = s.reasons ?? [];
-  const parts: string[] = [];
-  if (reasons.includes("agent-version")) {
-    parts.push(`v${s.current || "?"} → v${s.expected}${downgradeSuffix(s.current, s.expected)}`);
-  } else if (reasons.includes("image-drift") && s.current) {
-    // Agent version is current; make clear it is the NemoClaw image that drifted.
-    parts.push(`v${s.current} unchanged`);
-  }
-  if (reasons.includes("image-drift")) {
-    const from = s.imageCurrent ? `v${s.imageCurrent}` : "unknown build";
-    parts.push(
-      `NemoClaw image ${from} → v${s.imageExpected}${downgradeSuffix(s.imageCurrent, s.imageExpected)}`,
-    );
-  }
-  return parts.join("; ");
-}
-
-// #6520: a requested version below the recorded one is a downgrade (e.g.
-// reinstalling with an older NEMOCLAW_INSTALL_TAG than the build that created
-// the sandbox); call it out instead of framing it as a routine upgrade step.
-function downgradeSuffix(current?: string | null, expected?: string | null): string {
-  if (!current || !expected) return "";
-  return compareDottedVersions(expected, current) < 0 ? " (downgrade)" : "";
-}
-
-// #6520: install.sh greps this marker to keep its final install summary
-// honest — keep the grep in scripts/install.sh in sync. The bash harness in
-// test/install-orphaned-sandbox-recovery.test.ts builds its stub output from
-// this constant and drives the real install.sh grep, so drift on either side
-// fails that suite.
-export const ORPHANED_SANDBOX_MARKER =
-  "recorded sandbox(es) were not found on their recorded gateway";
-
+// Rendering over domain/maintenance/orphan-detection.ts (#6520).
 function printOrphanedRegistrySandboxes(orphans: registry.SandboxEntry[]): void {
   if (orphans.length === 0) return;
-  const names = orphans.map((sandbox) => sandbox.name).join(", ");
-  console.log(`  ${YW}${orphans.length} ${ORPHANED_SANDBOX_MARKER}: ${names}.${R}`);
-  console.log(
-    `  ${D}Their gateway registration or Docker image may have been removed (for example by \`${CLI_NAME} uninstall\`), so they cannot be recovered automatically — run \`${CLI_NAME} <name> destroy\` to clear a stranded record, then \`${CLI_NAME} onboard\` to rebuild it.${R}`,
-  );
+  console.log(`  ${YW}${orphanedRegistrySummary(orphans.map((sandbox) => sandbox.name))}${R}`);
+  console.log(`  ${D}${orphanedRegistryRemediation(CLI_NAME)}${R}`);
 }
 
 type PreparedBackupRecovery = {
@@ -311,8 +275,8 @@ export async function upgradeSandboxes(
     confirmedLegacyManagedNames.delete(name);
   }
   let recoveryCandidates: registry.SandboxEntry[] = [];
-  // Absent candidates the confirming second listing observed as Ready. They
-  // reconnected mid-run, so they are neither recovery candidates nor orphans.
+  // Absent candidates the confirming second listing observed as Ready:
+  // reconnected mid-run, so neither recovery candidates nor orphans.
   const becameReadyNames = new Set<string>();
   if (recoverPreparedBackups) {
     const gatewayEligible = sandboxes.filter((sandbox) =>
@@ -349,27 +313,13 @@ export async function upgradeSandboxes(
     backupRecoveryAssessments.map((candidate) => candidate.sandbox.name),
   );
 
-  // #6520: a recorded sandbox the selected gateway does not observe in any
-  // phase, while its persisted binding resolves to that same gateway, has
-  // nowhere else to be running — its gateway registration and Docker image
-  // were likely removed (`nemoclaw uninstall` preserves sandboxes.json but
-  // deletes both). The signal is independent of version classification: a
-  // same-version reinstall leaves such an orphan classified "current" and a
-  // missing cached version leaves it "unknown", so staleness alone cannot
-  // carry it. Sandboxes bound to a different gateway are excluded (they may
-  // be healthy there), as are ones the confirming second listing observed
-  // and ones a prepared-backup recovery restores below.
-  const observedOnSelectedGateway = new Set([...liveNames, ...nonReadyLiveNames]);
-  const unobservedOwnGatewaySandboxes = sandboxes.filter((sandbox) => {
-    if (observedOnSelectedGateway.has(sandbox.name)) return false;
-    if (becameReadyNames.has(sandbox.name)) return false;
-    try {
-      return resolveSandboxGatewayName(sandbox) === selectedGatewayName;
-    } catch {
-      // Invalid persisted binding — surfaced by the recovery-candidate guard;
-      // never classify a corrupted row as an orphan here.
-      return false;
-    }
+  // #6520: see domain/maintenance/orphan-detection.ts; recovered sandboxes
+  // are excluded at print time.
+  const unobservedOwnGatewaySandboxes = classifyOrphanedRegistrySandboxes(sandboxes, {
+    observedNames: new Set([...liveNames, ...nonReadyLiveNames]),
+    reconnectedNames: becameReadyNames,
+    selectedGatewayName,
+    resolveGatewayBinding: resolveSandboxGatewayName,
   });
   // An orphan's version is unknown because the sandbox is gone, not because a
   // probe is pending — listing it under "Unknown version" with start-and-rerun
@@ -439,6 +389,8 @@ export async function upgradeSandboxes(
         `  ${rejectedRecoveries.length} non-Ready sandbox(es) cannot be recovered automatically.`,
       );
     }
+    // Check mode must agree with auto mode on the orphan diagnosis (#6520).
+    printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
     console.log(`  Run \`${CLI_NAME} upgrade-sandboxes\` to rebuild them.`);
     return;
   }

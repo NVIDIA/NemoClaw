@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { ORPHANED_SANDBOX_MARKER } from "../src/lib/actions/upgrade-sandboxes";
+import { ORPHANED_SANDBOX_MARKER } from "../src/lib/domain/maintenance/orphan-detection";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 

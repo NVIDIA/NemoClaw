@@ -16,6 +16,12 @@ import {
   NEMOCLAW_PROVIDERS,
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
+import {
+  gatewayDestroySkipMessage,
+  OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
+  preservedRegistryUnrecoverableWarnings,
+  providerDeleteSkipMessage,
+} from "../../domain/uninstall/messaging";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
@@ -601,14 +607,16 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
     runtime.warn("openshell not found; skipping gateway/provider/sandbox cleanup.");
     return;
   }
-  // #6520 sub-bug: like the gateway destroy below, a no-op delete must not
-  // print `Deleted … skipped` — describe the actual state instead.
+  // #6520 sub-bug: a no-op delete must not print `Deleted … skipped`;
+  // wording lives in domain/uninstall/messaging.ts.
   runOptional(
     runtime,
     "Deleted all OpenShell sandboxes",
     "openshell",
     ["sandbox", "delete", "--all"],
-    { onSkip: "OpenShell sandboxes already removed or unreachable" },
+    {
+      onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
+    },
   );
   for (const provider of NEMOCLAW_PROVIDERS) {
     runOptional(
@@ -616,7 +624,7 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
       `Deleted provider '${provider}'`,
       "openshell",
       ["provider", "delete", provider],
-      { onSkip: `Provider '${provider}' already removed or unreachable` },
+      { onSkip: providerDeleteSkipMessage(provider) },
     );
   }
   const gatewayLabel = options.gatewayName || "nemoclaw";
@@ -625,7 +633,7 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
     `Destroyed gateway '${gatewayLabel}'`,
     "openshell",
     ["gateway", "destroy", "-g", gatewayLabel],
-    { onSkip: `Gateway '${gatewayLabel}' already removed or unreachable` },
+    { onSkip: gatewayDestroySkipMessage(gatewayLabel) },
   );
 }
 
@@ -819,23 +827,17 @@ function detectPreservableEntries(paths: UninstallPaths, runtime: UninstallRunti
   );
 }
 
-// #6520: uninstall keeps sandboxes.json but removes the gateway, provider
-// registrations, and Docker image its recorded sandboxes depend on, so a later
-// reinstall cannot bring them back on its own. Say so at the moment the
-// preserve choice is made instead of letting the reinstall report false
-// success while silently orphaning the user's sandbox.
+// #6520: wording lives in domain/uninstall/messaging.ts; empty when
+// sandboxes.json is not being preserved.
 function warnPreservedRegistryUnrecoverable(
   preservable: readonly string[],
   runtime: UninstallRuntime,
 ): void {
-  if (!preservable.includes("sandboxes.json")) return;
-  const cli = runtimeBranding(runtime).cli;
-  runtime.warn(
-    "Preserved sandboxes.json references the gateway, provider registrations, and Docker image this uninstall removes — its recorded sandboxes cannot be recovered automatically on reinstall.",
-  );
-  runtime.warn(
-    `After reinstalling, run '${cli} <name> destroy' to clear a stranded sandbox and '${cli} onboard' to rebuild it, or rerun uninstall with --destroy-user-data to purge the registry.`,
-  );
+  for (const line of preservedRegistryUnrecoverableWarnings(
+    preservable,
+    runtimeBranding(runtime).cli,
+  ))
+    runtime.warn(line);
 }
 
 function resolvePreserveSet(
