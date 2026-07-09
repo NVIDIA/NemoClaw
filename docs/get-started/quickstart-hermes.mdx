@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "NemoClaw Quickstart with Hermes"
 sidebar-title: "Quickstart with Hermes"
-description: "Install NemoClaw, select the Hermes agent, and launch a sandboxed Hermes dashboard and API endpoint."
-description-agent: "Installs NemoClaw, selects the Hermes agent, and launches a sandboxed Hermes dashboard and API endpoint. Use when users ask for Hermes setup, NemoHermes onboarding, or running Hermes inside OpenShell."
+description: "Install NemoClaw, launch a Hermes sandbox, and run your first Hermes prompt."
+description-agent: "Installs NemoClaw, selects Hermes, launches a sandbox, and runs the first prompt. Use when setting up NemoHermes or running Hermes inside OpenShell."
 keywords: ["nemohermes quickstart", "hermes agent nemoclaw", "run hermes openshell sandbox"]
 content:
   type: "get_started"
@@ -14,242 +14,286 @@ skill:
 import { StarterPromptFallback } from "../_components/StarterPrompt";
 import { StarterPromptButton } from "../_components/StarterPromptButton";
 
-Use NemoHermes to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.
-The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-selected.
+Create a sandboxed Hermes agent, then chat with it from the dashboard or terminal.
+The `nemohermes` command is the NemoClaw CLI with Hermes pre-selected.
 
-Review the [Prerequisites](prerequisites) before starting.
-Install Docker, start it, and verify that the current shell can reach it before Hermes onboarding builds the sandbox image.
-On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.
-If it changes group membership, run the printed `newgrp docker` recovery command before rerunning the installer.
-On macOS, start Docker Desktop or Colima before you run the installer.
-The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image if it is not already cached.
+## Set Up with a Coding Agent
 
-## Start from Your Coding Agent
-
-Copy the starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want the assistant to install NemoClaw with you.
-The prompt points your agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
-It also asks your agent to confirm Hermes as the selected agent before it builds the install or onboard command, and to use the checked-in local credential helper and form after you approve the exact command that will receive the credentials.
+Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
+The prompt points the agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+It asks the agent to confirm Hermes before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
 
 <StarterPromptButton />
 
 <StarterPromptFallback />
 
-## Install and Onboard
+If you prefer to control setup directly, use the interactive installer in [Create Your First Sandboxed Agent](#create-your-first-sandboxed-agent).
 
-Start the installer with `NEMOCLAW_AGENT=hermes` set in your shell.
-The installer installs the CLI, selects the `nemohermes` alias, and runs the guided onboarding flow.
+## Create Your First Sandboxed Agent
 
-```bash
-export NEMOCLAW_AGENT=hermes
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-```
-
-The hosted installer follows the last-known-good (`lkg`) release tag by default, so this command installs the maintained Hermes-capable build without a version override.
-To expose the Hermes dashboard from a headless host through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding.
-Use the externally reachable origin for the dashboard port `18789`.
-NemoClaw derives the forwarded dashboard port from this value, binds the forward for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.
-The OpenAI-compatible API remains available separately on port `8642`.
-
-```bash
-export NEMOCLAW_AGENT=hermes
-export CHAT_UI_URL="https://hermes.example.com:18789"
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-```
-
-For SSH local port forwarding to `127.0.0.1:18789`, leave `CHAT_UI_URL` unset.
-Do not append an OpenClaw `#token=` fragment to the Hermes dashboard URL.
-Hermes API clients authenticate with the bearer token from the generated Hermes environment instead of an OpenClaw dashboard URL token.
-
-If NemoClaw is already installed, start Hermes onboarding directly.
-
-```bash
-nemohermes onboard
-```
-
-## Respond to the Wizard
-
-The onboard wizard asks for an inference provider, model, any required credential, and sandbox name before it prints the review summary.
-After you confirm, NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, then applies the selected network policy tier and presets.
-At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
-
-The default Hermes sandbox name is `hermes`.
-Use a distinct sandbox name, such as `my-hermes`, so you can run Hermes and OpenClaw sandboxes side by side.
-NemoClaw prevents same-name reuse when an existing sandbox uses a different agent.
-
-```text
-Sandbox name [hermes]: my-hermes
-```
-
-Choose the inference provider that matches where you want Hermes model traffic to go.
-The provider options and credential environment variables are the same as the standard NemoClaw quickstart.
-For provider-specific prompts, refer to the [Inference Options](../inference/inference-options) page.
-The Hermes wizard offers Tavily Search as its web search provider.
-Hermes does not support the NemoClaw Brave Search path.
-If you enable Tavily Search, enter `TAVILY_API_KEY` when prompted.
-NemoClaw validates the key, stores it in a sandbox-scoped OpenShell provider, writes `web.backend: tavily` into the Hermes configuration, and writes only an OpenShell resolver placeholder into the generated environment.
-If you authenticate Hermes through Nous Portal OAuth, the wizard can also prompt for managed Nous tool gateways such as web search, image generation, audio, browser automation, or managed code execution.
-Those choices add the matching Hermes policy presets to the sandbox.
-If you select both Tavily Search and the managed Nous web gateway, Tavily becomes the Hermes web search and extract backend.
-NemoClaw removes `nous-web` from the effective managed-tool selection while preserving selected Nous image, audio, browser, and code tools.
-API-key mode is inference-only and does not enable managed tool gateways.
-
-After provider and model selection, review the summary and confirm the build.
-NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
-The Hermes image includes runtime dependencies for the supported NemoClaw messaging integrations, API service, and health endpoint.
-The base image does not include unsupported Hermes integrations.
+If you use the coding-agent prompt in the preceding section, you can skip this procedure or keep it as reference.
+The prompt directs your coding agent to this quickstart, so it has the full setup context.
 
 <Note>
-Hermes uses an agent-specific baseline policy that allows the Hermes binary and Python runtime to reach the required Nous Research service endpoints, PyPI, NVIDIA inference endpoints, and selected messaging APIs.
+Review the [Prerequisites](prerequisites) before you begin.
 </Note>
 
-## Use Non-Interactive Setup
+<Steps>
+  <Step title="Install NemoClaw for Hermes">
+    Select Hermes, then run the hosted installer.
 
-For CI or scripted installs, set the required environment variables before running the installer.
-The following example uses NVIDIA Endpoints and creates a sandbox named `my-hermes`.
+    ```bash
+    export NEMOCLAW_AGENT=hermes
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
+  </Step>
 
-```bash
-export NEMOCLAW_AGENT=hermes
-export NEMOCLAW_NON_INTERACTIVE=1
-export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
-export NEMOCLAW_SANDBOX_NAME=my-hermes
-export NEMOCLAW_WEB_SEARCH_PROVIDER=tavily
-export TAVILY_API_KEY=<your-tavily-key>
-export NVIDIA_INFERENCE_API_KEY=<your-key>
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-```
+  <Step title="Complete Onboarding">
+    Choose an inference provider and model, provide its credential when prompted, and give the sandbox a name such as `my-hermes`.
+    For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
+  </Step>
 
-Use the provider variables from [Inference Options](../inference/inference-options) when you choose a different provider.
-Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` when you want to disable web search explicitly.
-When the selector is unset, Hermes enables Tavily automatically when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY` because Brave Search is unsupported for Hermes.
-Changing or disabling Tavily requires a sandbox recreation because the backend, credential attachment, and policy selection are build-time inputs.
-Rerun onboarding with the new selection and accept the recreation, or pass `--recreate-sandbox`.
-If a scripted installer rerun finds a failed onboarding session, choose whether to discard the saved state with `--fresh` or retry it with `nemohermes onboard --resume`.
-For the recovery commands, refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed).
+  <Step title="Confirm the Sandbox Is Ready">
+    Wait for the ready summary, then check the sandbox state.
 
-## Connect to Hermes
+    ```bash
+    nemohermes my-hermes status
+    ```
+  </Step>
 
-When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, the Hermes dashboard URL, and the OpenAI-compatible API URL.
-When Tavily is enabled, onboarding reads the generated Hermes configuration to confirm `web.backend: tavily` and sends a real search request through OpenShell's request-body credential rewrite path.
-This verification reports a warning instead of aborting onboarding when the configuration or egress path needs attention.
-Hermes exposes its built-in browser dashboard on port `18789`.
-NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients, and the summary announces both URLs.
-NemoClaw builds the Hermes dashboard assets into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
-Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
-If you need to recover the Hermes dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned install paths.
-Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` before onboarding only if you want Hermes' optional in-browser TUI tab.
+  <Step title="Send Your First Prompt">
+    Open the Hermes dashboard from the host.
 
-```text
-──────────────────────────────────────────────────
-NemoHermes is ready
+    ```bash
+    nemohermes my-hermes dashboard-url --quiet
+    ```
 
-Sandbox:  my-hermes
-Model:    nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
+    Alternatively, connect to the sandbox and start the Hermes CLI.
 
-Access
+    ```bash
+    nemohermes my-hermes connect
+    hermes
+    ```
+  </Step>
+</Steps>
 
-  Hermes Agent Dashboard
-  Port 18789 must be forwarded before opening this URL.
-  http://127.0.0.1:18789/
+## Considerations
 
-  Hermes Agent OpenAI-compatible API
-  Port 8642 must be forwarded before connecting.
-  http://127.0.0.1:8642/v1
+Use these details when your first-run path needs more control.
 
-Terminal:
-  nemohermes my-hermes connect
+<AccordionGroup>
+  <Accordion title="Choose inference and optional services">
+    The Hermes wizard supports the same inference provider choices as the OpenClaw quickstart.
+    Refer to [Inference Options](../inference/inference-options) for provider requirements, model choices, and local-server setup.
 
-Manage later
+    Hermes supports Tavily for web search, not the NemoClaw Brave Search path.
+    Select it during onboarding and provide `TAVILY_API_KEY` when prompted.
+    The wizard can also configure supported messaging channels and managed Nous tool gateways when you authenticate through Nous Portal OAuth.
+    Refer to [Messaging Channels](../manage-sandboxes/messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling those services.
+  </Accordion>
 
-  Status:      nemohermes my-hermes status
-  Logs:        nemohermes my-hermes logs --follow
-  Model:       nemohermes inference set --model <model> --provider <provider> --sandbox my-hermes
-  Policies:    nemohermes my-hermes policy-add
-  Credentials: nemohermes credentials reset <KEY> && nemohermes onboard
-──────────────────────────────────────────────────
-```
+  <Accordion title="Automate or repeat onboarding">
+    For a scripted installation, provide the required values before running the installer.
 
-To chat with the agent from a terminal, follow these steps.
+    ```bash
+    export NEMOCLAW_AGENT=hermes
+    export NEMOCLAW_NON_INTERACTIVE=1
+    export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+    export NEMOCLAW_SANDBOX_NAME=my-hermes
+    export NVIDIA_INFERENCE_API_KEY=<your-key>
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
 
-1. Connect to the sandbox and start the Hermes CLI.
+    If NemoClaw is already installed, run `nemohermes onboard`.
+    Use `nemohermes onboard --resume` to continue an interrupted onboarding session or `nemohermes onboard --fresh` to discard it and start again.
+    Refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed) for recovery details.
+  </Accordion>
 
-   ```bash
-   nemohermes my-hermes connect
-   ```
+  <Accordion title="Use the dashboard and API remotely">
+    Hermes forwards its dashboard on port `18789` and its OpenAI-compatible API on port `8642`.
+    For a remote dashboard origin or tunnel, set `CHAT_UI_URL` to the externally reachable dashboard origin before onboarding.
+    Otherwise, leave it unset and use SSH port forwarding for remote access.
 
-2. Inside the sandbox, run the Hermes CLI.
+    ```bash
+    ssh -L 18789:127.0.0.1:18789 <user>@<host>
+    ssh -L 8642:127.0.0.1:8642 <user>@<host>
+    ```
 
-   ```bash
-   hermes
-   ```
+    Configure API clients with the base URL `http://127.0.0.1:8642/v1` after forwarding port `8642`.
+    Hermes handles dashboard and API authentication itself, so do not append an OpenClaw `#token=` fragment to either URL.
+    Treat the dashboard as a local management UI and protect it before you expose it on a shared network.
+  </Accordion>
 
-## Open the Dashboard
+  <Accordion title="Manage a Hermes sandbox">
+    Use the `nemohermes` alias for lifecycle, logs, backups, rebuilds, and model changes.
 
-The onboard flow starts the dashboard port forward automatically.
-Open the dashboard from the host.
+    ```bash
+    nemohermes my-hermes logs --follow
+    nemohermes my-hermes snapshot create --name before-change
+    nemohermes inference set --model <model> --provider <provider> --sandbox my-hermes
+    ```
 
-```bash
-nemohermes my-hermes dashboard-url --quiet
-```
+    Use `nemohermes my-hermes destroy` only when you intend to remove the sandbox.
+    Refer to [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle) for the full lifecycle workflow.
+  </Accordion>
 
-Expected output:
+  <Accordion title="Host and Installer Details">
+    Install Docker, start it, and confirm the current shell can reach it before Hermes onboarding builds the sandbox image.
+    On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.
+    If it changes group membership, run the printed `newgrp docker` command before rerunning the installer.
+    On macOS, start Docker Desktop or Colima before you run the installer.
+    The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image when it is not already cached.
 
-```text
-http://127.0.0.1:18789/
-```
+    The hosted installer follows the maintained last-known-good (`lkg`) release tag by default.
+    To expose the Hermes dashboard from a headless host through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding to the externally reachable origin for dashboard port `18789`.
+    NemoClaw derives the forwarded dashboard port from this value, binds the forward for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.
+    The OpenAI-compatible API remains available separately on port `8642`.
 
-Hermes handles dashboard sessions itself, so this URL does not include an OpenClaw `#token=` fragment.
+    ```bash
+    export NEMOCLAW_AGENT=hermes
+    export CHAT_UI_URL="https://hermes.example.com:18789"
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
 
-## Check the API Endpoint
+    Leave `CHAT_UI_URL` unset when you use SSH local port forwarding to `127.0.0.1:18789`.
+    Hermes API clients authenticate with the bearer token from the generated Hermes environment, not an OpenClaw dashboard URL token.
+  </Accordion>
 
-The onboard flow also starts the API port forward automatically.
-Check the health endpoint from the host to confirm that the Hermes API is reachable.
+  <Accordion title="Onboarding and Integration Details">
+    The wizard asks for an inference provider, model, required credential, and sandbox name before it prints the review summary.
+    After confirmation, NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, and applies the selected network policy tier and presets.
+    At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
-```bash
-curl -sf http://127.0.0.1:8642/health
-```
+    The default Hermes sandbox name is `hermes`.
+    Use a distinct name, such as `my-hermes`, when you run Hermes and OpenClaw sandboxes side by side.
+    NemoClaw prevents same-name reuse when an existing sandbox uses a different agent.
 
-If the command cannot connect after a reboot or terminal restart, start the forward again.
+    ```text
+    Sandbox name [hermes]: my-hermes
+    ```
 
-```bash
-openshell forward start --background 8642 my-hermes
-```
+    The provider options and credential variables match the standard NemoClaw quickstart.
+    Refer to [Inference Options](../inference/inference-options) for provider-specific prompts.
+    Hermes offers Tavily Search and does not support the NemoClaw Brave Search path.
+    When you enable Tavily Search, provide `TAVILY_API_KEY`.
+    NemoClaw validates the key, stores it in a sandbox-scoped OpenShell provider, writes `web.backend: tavily` into the Hermes configuration, and writes only an OpenShell resolver placeholder into the generated environment.
 
-Configure an OpenAI-compatible client with the base URL `http://127.0.0.1:8642/v1`.
-Hermes uses API header authentication for client requests.
-Do not append an OpenClaw `#token=` URL fragment to the Hermes endpoint.
+    When you authenticate through Nous Portal OAuth, the wizard can also prompt for managed Nous tool gateways such as web search, image generation, audio, browser automation, and managed code execution.
+    Those choices add matching Hermes policy presets to the sandbox.
+    If you select Tavily Search and the managed Nous web gateway, Tavily becomes the Hermes web search and extract backend.
+    NemoClaw removes `nous-web` from the effective managed-tool selection while preserving selected Nous image, audio, browser, and code tools.
+    API-key mode is inference-only and does not enable managed tool gateways.
 
-Treat the dashboard as a local management UI.
-Avoid exposing it on shared or public networks unless you put it behind your own access controls.
+    After you select a provider and model, review the summary and confirm the build.
+    NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
+    The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
+    The base image does not include unsupported Hermes integrations.
 
-## Manage the Sandbox
+    <Note>
+    Hermes uses an agent-specific baseline policy that allows the Hermes binary and Python runtime to reach required Nous Research service endpoints, PyPI, NVIDIA inference endpoints, and selected messaging APIs.
+    </Note>
+  </Accordion>
 
-Use the same lifecycle commands as a standard NemoClaw sandbox.
-The `nemohermes` alias keeps help text and recovery messages aligned with Hermes, while targeting the same registered sandbox.
-`nemoclaw list` shows the agent type for each sandbox so you can distinguish Hermes and OpenClaw entries.
+  <Accordion title="Noninteractive Setup Details">
+    For CI or scripted installs, provide every required variable before you run the installer.
+    This NVIDIA Endpoints example creates `my-hermes` with Tavily Search.
 
-```bash
-nemohermes my-hermes status
-nemohermes my-hermes logs --follow
-nemohermes my-hermes snapshot create --name before-change
-nemohermes my-hermes rebuild
-```
+    ```bash
+    export NEMOCLAW_AGENT=hermes
+    export NEMOCLAW_NON_INTERACTIVE=1
+    export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+    export NEMOCLAW_SANDBOX_NAME=my-hermes
+    export NEMOCLAW_WEB_SEARCH_PROVIDER=tavily
+    export TAVILY_API_KEY=<your-tavily-key>
+    export NVIDIA_INFERENCE_API_KEY=<your-key>
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
 
-To change the active model or provider without rebuilding the sandbox, use `nemohermes inference set`.
-It updates the OpenShell inference route and patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
+    Use the provider variables from [Inference Options](../inference/inference-options) when you choose another provider.
+    Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` to disable web search explicitly.
+    When the selector is unset, Hermes enables Tavily automatically when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY`.
+    Changing or disabling Tavily requires sandbox recreation because the backend, credential attachment, and policy selection are build-time inputs.
+    Rerun onboarding with the new selection and accept recreation, or pass `--recreate-sandbox`.
+  </Accordion>
 
-```bash
-nemohermes inference set --model <model> --provider <provider>
-```
+  <Accordion title="Dashboard and API Details">
+    The ready summary prints the sandbox name, model, lifecycle commands, Hermes dashboard URL, and OpenAI-compatible API URL.
+    When Tavily is enabled, onboarding reads the generated Hermes configuration to confirm `web.backend: tavily` and sends a real search request through OpenShell's request-body credential rewrite path.
+    This verification reports a warning instead of aborting onboarding when the configuration or egress path needs attention.
 
-To remove the sandbox when you are done, destroy it explicitly.
+    Hermes exposes its browser dashboard on port `18789` and forwards its OpenAI-compatible API on port `8642` for local clients.
+    The dashboard assets are built into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
+    Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
+    To recover the dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned installation paths.
+    Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` before onboarding only when you want Hermes' optional in-browser TUI tab.
 
-```bash
-nemohermes my-hermes destroy
-```
+    ```text
+    ──────────────────────────────────────────────────
+    NemoHermes is ready
+
+    Sandbox:  my-hermes
+    Model:    nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
+
+    Access
+
+      Hermes Agent Dashboard
+      Port 18789 must be forwarded before opening this URL.
+      http://127.0.0.1:18789/
+
+      Hermes Agent OpenAI-compatible API
+      Port 8642 must be forwarded before connecting.
+      http://127.0.0.1:8642/v1
+    ──────────────────────────────────────────────────
+    ```
+
+    The onboard flow starts both port forwards automatically.
+    The Hermes dashboard URL does not include an OpenClaw `#token=` fragment.
+    `nemohermes my-hermes dashboard-url --quiet` returns `http://127.0.0.1:18789/` when the default local forward is active.
+    Check the API health endpoint from the host.
+
+    ```bash
+    curl -sf http://127.0.0.1:8642/health
+    ```
+
+    If that command cannot connect after a reboot or terminal restart, restart the forward.
+
+    ```bash
+    openshell forward start --background 8642 my-hermes
+    ```
+
+    Configure OpenAI-compatible clients with `http://127.0.0.1:8642/v1`.
+    Hermes uses API header authentication for client requests.
+    Do not append an OpenClaw `#token=` fragment to the endpoint.
+  </Accordion>
+
+  <Accordion title="Lifecycle and Model Details">
+    The `nemohermes` alias keeps help text and recovery messages aligned with Hermes while targeting the same registered sandbox.
+    `nemoclaw list` shows the agent type for each sandbox so you can distinguish Hermes and OpenClaw entries.
+
+    ```bash
+    nemohermes my-hermes status
+    nemohermes my-hermes logs --follow
+    nemohermes my-hermes snapshot create --name before-change
+    nemohermes my-hermes rebuild
+    ```
+
+    `nemohermes inference set` changes the active model or provider without rebuilding the sandbox.
+    It updates the OpenShell inference route and patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
+
+    ```bash
+    nemohermes inference set --model <model> --provider <provider>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+If the installer changes your Linux Docker group membership, run the printed `newgrp docker` command before you rerun it.
+If `nemohermes` is unavailable after installing, reload your shell profile or follow the [Hermes troubleshooting](../reference/troubleshooting#nemohermes-command-not-found-immediately-after-install) steps.
 
 ## Next Steps
 
-- [Inference Options](../inference/inference-options) explains how to choose a provider and model.
-- The [Commands](../reference/commands) page explains the full `nemohermes` alias behavior.
-- [Backup and Restore](../manage-sandboxes/backup-restore) explains how to preserve sandbox state before destructive operations.
+- [Inference Options](../inference/inference-options) explains how to choose or change a model and provider.
+- [Commands](../reference/commands) explains the `nemohermes` alias and its options.
+- [Backup and Restore](../manage-sandboxes/backup-restore) explains how to preserve sandbox state.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) explains how to inspect OpenShell events and sandbox logs.

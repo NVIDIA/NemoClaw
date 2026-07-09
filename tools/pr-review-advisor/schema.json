@@ -96,6 +96,7 @@
         "required": [
           "surface",
           "status",
+          "findingId",
           "invalidState",
           "sourceBoundary",
           "whyNotSourceFix",
@@ -111,6 +112,12 @@
               "satisfied",
               "needs_followup",
               "missing"
+            ]
+          },
+          "findingId": {
+            "anyOf": [
+              { "type": "string", "pattern": "^F-[0-9]+$" },
+              { "type": "null" }
             ]
           },
           "invalidState": { "type": "string" },
