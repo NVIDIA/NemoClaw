@@ -232,9 +232,11 @@ async function autoCreateSandboxFromSource(
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
     (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
-  const startupCommand = sourceObservabilityEnabled
-    ? ["env", "NEMOCLAW_OBSERVABILITY=1", "nemoclaw-start"]
-    : ["nemoclaw-start"];
+  const startupCommand = [
+    "env",
+    `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
+    "nemoclaw-start",
+  ];
   const createEnv = { ...process.env };
   delete createEnv.NEMOCLAW_OBSERVABILITY;
 

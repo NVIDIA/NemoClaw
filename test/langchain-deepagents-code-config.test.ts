@@ -70,6 +70,7 @@ describe("LangChain Deep Agents Code config generator", () => {
       "# NemoClaw provider route: inference; upstream provider: nvidia-prod; API: openai-completions.",
     );
     expect(config).toContain("use_responses_api = false");
+    expect(config).not.toContain("force_nonempty_content");
     expect(config).toContain("check = false");
     expect(config).toContain("auto_update = false");
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);
@@ -80,6 +81,18 @@ describe("LangChain Deep Agents Code config generator", () => {
 
     expect(config).toContain('default = "openai:gpt-oss-120b"');
     expect(config).toContain('models = ["gpt-oss-120b"]');
+  });
+
+  it.each([
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "nvidia/nvidia/nemotron-3-ultra",
+  ])("adds the required coding-agent request options for %s", (model) => {
+    const config = runGenerator({ NEMOCLAW_MODEL: model });
+
+    expect(config).toContain(`[models.providers.openai.params."${model}"]`);
+    expect(config).toContain(
+      "extra_body = { chat_template_kwargs = { force_nonempty_content = true } }",
+    );
   });
 
   it("preserves colons that belong to the model ID", () => {

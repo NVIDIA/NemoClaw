@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: E2E
+run-name: ${{ inputs.risk_correlation != '' && format('E2E risk {0}', inputs.risk_correlation) || format('E2E {0}', github.ref_name) }}
 
 on:
   schedule:
@@ -28,13 +29,40 @@ on:
         required: false
         default: false
         type: boolean
+      checkout_sha:
+        description: Current main commit selected by the trusted post-merge shadow controller.
+        required: false
+        default: ""
+        type: string
+      risk_plan_hash:
+        description: Deterministic post-merge risk-plan hash for shadow evidence correlation.
+        required: false
+        default: ""
+        type: string
+      risk_correlation:
+        description: UUIDv4 correlation id for an exact-commit shadow risk run.
+        required: false
+        default: ""
+        type: string
+      risk_shadow:
+        description: Mark this selective run as post-merge risk-gate shadow evidence.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.targets || 'supported' }}-${{ inputs.jobs || 'all-jobs' }}
+  group: e2e-${{ github.ref }}-${{ inputs.risk_shadow && github.run_id || inputs.targets || 'supported' }}-${{ inputs.risk_shadow && 'risk-shadow' || inputs.jobs || 'all-jobs' }}
   cancel-in-progress: false
+
+env:
+  NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+  NEMOCLAW_E2E_RISK_PLAN_HASH: ${{ inputs.risk_plan_hash }}
+  NEMOCLAW_E2E_RISK_CORRELATION: ${{ inputs.risk_correlation }}
+  NEMOCLAW_E2E_RISK_SHARD: default
+  NEMOCLAW_E2E_RISK_SHADOW: ${{ inputs.risk_shadow && '1' || '0' }}
 
 jobs:
   generate-matrix:
@@ -46,7 +74,33 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Validate exact-commit dispatch
+        if: ${{ inputs.checkout_sha != '' || inputs.risk_plan_hash != '' || inputs.risk_correlation != '' || inputs.risk_shadow }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          JOBS: ${{ inputs.jobs }}
+          PLAN_HASH: ${{ inputs.risk_plan_hash }}
+          RISK_CORRELATION: ${{ inputs.risk_correlation }}
+          RISK_SHADOW: ${{ inputs.risk_shadow }}
+          TARGETS: ${{ inputs.targets }}
+          WORKFLOW_EVENT: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::exact-commit runs require a workflow_dispatch from main"; exit 1; }
+          [[ "$RISK_SHADOW" == "true" ]] || { echo "::error::exact-commit inputs require risk_shadow=true"; exit 1; }
+          [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA"; exit 1; }
+          [[ "$CHECKOUT_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::checkout_sha must equal the current main workflow commit"; exit 1; }
+          [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out HEAD does not match checkout_sha"; exit 1; }
+          git merge-base --is-ancestor "$CHECKOUT_SHA" origin/main || { echo "::error::checkout_sha must already be reachable from main"; exit 1; }
+          [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::risk_plan_hash must be a lowercase SHA-256"; exit 1; }
+          [[ "$RISK_CORRELATION" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::risk_correlation must be a lowercase UUIDv4"; exit 1; }
+          [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::shadow risk runs require selective jobs and forbid targets/fan-out"; exit 1; }
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -260,6 +314,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       # Keep only the credential-bearing step anchored. Cleanup mappings stay
@@ -371,7 +426,7 @@ jobs:
           TARGET_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts -t "^${TARGET_ID}$" --silent=false --reporter=default
+          npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts -t "^${TARGET_ID}$" --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       # The sanitizer reads raw traces only after checking the workflow-owned
       # runner-temp path, then writes the timing-only file into upload roots.
@@ -487,6 +542,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -501,7 +557,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/openshell-version-pin.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenShell version-pin artifacts
         if: always()
@@ -528,6 +584,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -559,7 +616,7 @@ jobs:
           "$OPENSHELL_GATEWAY_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/openshell-gateway-auth-source-contract.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenShell gateway auth contract artifacts
         if: always()
@@ -590,6 +647,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -646,7 +704,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/mcp-bridge.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
@@ -688,6 +746,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -756,7 +815,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/mcp-bridge.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
@@ -790,6 +849,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -803,7 +863,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/onboard-negative-paths.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload onboard negative-paths artifacts
         if: always()
@@ -825,6 +885,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -859,7 +920,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/skill-agent.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload skill-agent artifacts
         if: always()
@@ -900,6 +961,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -914,7 +976,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/openclaw-skill-cli.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenClaw skill CLI artifacts
         if: always()
@@ -942,6 +1004,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -954,7 +1017,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/docs-validation.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload docs validation artifacts
         if: always()
@@ -973,6 +1036,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -989,7 +1053,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/inference-routing.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload inference routing artifacts
         if: always()
@@ -1012,6 +1076,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1030,7 +1095,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/cloud-inference.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload cloud inference artifacts
         if: always()
@@ -1063,6 +1128,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1086,7 +1152,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/gpu-e2e.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-live             test/e2e/live/gpu-e2e.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
       - name: Upload GPU E2E artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1119,6 +1185,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1145,7 +1212,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/agent-turn-latency.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-live             test/e2e/live/agent-turn-latency.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
       - name: Upload agent turn latency artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1174,6 +1241,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1186,7 +1254,7 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell || true)"
-          npx vitest run --project e2e-live             test/e2e/live/kimi-inference-compat.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-live             test/e2e/live/kimi-inference-compat.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
       - name: Upload Kimi compatibility artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1238,6 +1306,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1253,7 +1322,7 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell || true)"
-          npx vitest run --project e2e-live             test/e2e/live/hermes-inference-switch.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-live             test/e2e/live/hermes-inference-switch.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
       - name: Upload Hermes inference switch artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1285,6 +1354,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1313,7 +1383,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/brave-search.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-live             test/e2e/live/brave-search.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Brave search artifacts
         if: always()
@@ -1339,6 +1409,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1351,7 +1422,7 @@ jobs:
       - name: Run Ollama auth proxy live Vitest test
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live             test/e2e/live/ollama-auth-proxy.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-live             test/e2e/live/ollama-auth-proxy.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Ollama auth proxy artifacts
         if: always()
@@ -1381,6 +1452,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1408,7 +1480,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/cron-preflight-inference-local.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-live             test/e2e/live/cron-preflight-inference-local.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload cron preflight inference.local artifacts
         if: always()
@@ -1438,6 +1510,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1491,7 +1564,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/issue-4434-tui-unreachable-inference.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: "Upload issue #4434 TUI unreachable inference artifacts"
         if: always()
@@ -1519,6 +1592,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1537,7 +1611,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/credential-sanitization.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload credential sanitization artifacts
         if: always()
@@ -1564,6 +1638,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1588,7 +1663,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/credential-migration.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload credential migration artifacts
         if: always()
@@ -1616,6 +1691,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1641,7 +1717,7 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           npx vitest run --project e2e-live \
             test/e2e/live/sessions-agents-cli.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload sessions/agents CLI artifacts
         if: always()
@@ -1674,6 +1750,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1693,7 +1770,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/hermes-slack-e2e.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes Slack artifacts
         if: always()
@@ -1728,6 +1805,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1742,7 +1820,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/hermes-e2e.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes live Vitest artifacts
         if: always()
@@ -1775,6 +1853,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1787,7 +1866,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/hermes-gpu-startup.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes GPU startup artifacts
         if: always()
@@ -1820,6 +1899,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1834,7 +1914,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/hermes-e2e.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes dashboard live Vitest artifacts
         if: always()
@@ -1864,6 +1944,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1885,7 +1966,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/hermes-discord.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes Discord artifacts
         if: always()
@@ -1915,6 +1996,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -1962,7 +2044,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/network-policy.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload network-policy artifacts
         if: always()
@@ -1992,6 +2074,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2032,7 +2115,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/common-egress-agent.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload common-egress agent artifacts
         if: always()
@@ -2061,6 +2144,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2080,7 +2164,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/shields-config.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload shields-config artifacts
         if: always()
@@ -2113,6 +2197,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2127,7 +2212,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/hermes-shields-config.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes shields-config artifacts
         if: always()
@@ -2153,6 +2238,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2188,7 +2274,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/rebuild-openclaw.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenClaw rebuild artifacts
         if: always()
@@ -2223,6 +2309,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2242,7 +2329,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/rebuild-hermes.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes rebuild artifacts
         if: always()
@@ -2278,6 +2365,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2296,7 +2384,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/rebuild-hermes.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes stale-base rebuild artifacts
         if: always()
@@ -2325,6 +2413,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2358,7 +2447,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/sandbox-rebuild.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload sandbox rebuild artifacts
         if: always()
@@ -2389,6 +2478,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2422,7 +2512,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/sandbox-rlimits-connect.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload sandbox rlimit connect artifacts
         if: always()
@@ -2453,6 +2543,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2467,7 +2558,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/overlayfs-autofix.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload overlayfs autofix artifacts
         if: always()
@@ -2497,6 +2588,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2530,7 +2622,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/state-backup-restore.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload state backup restore artifacts
         if: always()
@@ -2560,6 +2652,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2592,7 +2685,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/upgrade-stale-sandbox.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload upgrade stale sandbox artifacts
         if: always()
@@ -2619,6 +2712,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2647,7 +2741,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/double-onboard.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload double-onboard Vitest artifacts
         if: always()
@@ -2682,6 +2776,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2710,7 +2805,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/jetson-nvmap-gpu.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Jetson nvmap GPU artifacts
         if: always()
@@ -2737,6 +2832,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2765,7 +2861,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/concurrent-gateway-ports.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload concurrent gateway ports Vitest artifacts
         if: always()
@@ -2793,6 +2889,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2819,7 +2916,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/onboard-resume.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload onboard-resume artifacts
         if: always()
@@ -2848,6 +2945,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2876,7 +2974,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/full-e2e.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload full-e2e artifacts
         if: always()
@@ -2918,6 +3016,7 @@ jobs:
       # set, and NoNewPrivs remain evidence unless an opt-in expectation is set.
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
       NEMOCLAW_E2E_SECURITY_POSTURE: "1"
+      NEMOCLAW_E2E_RISK_SHARD: ${{ matrix.agent }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
       NEMOCLAW_RECREATE_SANDBOX: "1"
@@ -2926,6 +3025,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2944,7 +3044,7 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           npx vitest run --project e2e-live \
             "${{ matrix.test_file }}" \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload security posture artifacts
         if: always()
@@ -2973,10 +3073,11 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-cloud-onboard"
-      NEMOCLAW_PUBLIC_INSTALL_REF: "${{ github.sha }}"
+      NEMOCLAW_PUBLIC_INSTALL_REF: "${{ inputs.checkout_sha || github.sha }}"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -2986,6 +3087,34 @@ jobs:
         run: |
           set -euo pipefail
           printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces" >> "${GITHUB_ENV}"
+
+      # invalidState: the cloud-onboard DCode TUI check requires a PTY driver,
+      # but the fixed GitHub-hosted runner image does not provide expect.
+      # sourceBoundary: this trusted workflow owns host setup; the repository
+      # check only verifies and consumes expect without privilege.
+      # whyNotSourceFix: GitHub-hosted jobs cannot use a repository-owned host
+      # image, and caching privileged dpkg state between clean runners is not
+      # supported.
+      # regressionTest: workflow-boundary tests pin the ordering and exact
+      # one-package apt allowlist.
+      # removalCondition: remove when the hosted runner supplies expect or the
+      # cloud-onboard acceptance check no longer requires a PTY.
+      - name: Install cloud-onboard DCode TUI host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update failed after 3 attempts." >&2
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+            sleep $((attempt * 5))
+          done
+          sudo apt-get install -y --no-install-recommends expect
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -3011,7 +3140,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/cloud-onboard.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Build trusted cloud-onboard timing summary
         if: always()
@@ -3073,6 +3202,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3099,7 +3229,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/gpu-double-onboard.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload gpu-double-onboard artifacts
         if: always()
@@ -3127,6 +3257,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3153,7 +3284,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/onboard-repair.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload onboard-repair artifacts
         if: always()
@@ -3182,6 +3313,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3210,7 +3342,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/issue-4462-scope-upgrade-approval.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload issue-4462-scope-upgrade-approval artifacts
         if: always()
@@ -3235,6 +3367,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3260,7 +3393,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/token-rotation.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload token rotation artifacts
         if: always()
@@ -3287,6 +3420,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3306,7 +3440,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/messaging-compatible-endpoint.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload messaging compatible endpoint artifacts
         if: always()
@@ -3318,10 +3452,29 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-gateway-upgrade:
+    name: OpenShell gateway upgrade (${{ matrix.legacy.id }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-upgrade,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        legacy:
+          - id: v0.0.36
+            nemoclaw_ref: v0.0.36
+            nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
+            installer_sha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            openshell_version: 0.0.36
+            openclaw_version: 2026.4.24
+          - id: v0.0.55
+            nemoclaw_ref: v0.0.55
+            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
+            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            openshell_version: 0.0.44
+            openclaw_version: 2026.5.22
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-gateway-upgrade"
@@ -3331,10 +3484,17 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
+      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.legacy.nemoclaw_ref }}
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.legacy.nemoclaw_commit }}
+      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.legacy.installer_sha256 }}
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.legacy.sandbox_base_image_ref }}
+      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.legacy.openshell_version }}
+      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.legacy.openclaw_version }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3343,10 +3503,9 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run OpenShell gateway upgrade live Vitest test
-        # This
-        # preserves the legacy ubuntu-latest + Docker/OpenShell runner lane,
-        # old installer/current installer upgrade boundary, survivor sandbox
-        # restore checks, and hermetic macOS installer regressions.
+        # This preserves the legacy ubuntu-latest + Docker/OpenShell runner
+        # lane while covering both the original v0.0.36 fixture and the exact
+        # v0.0.55/OpenShell 0.0.44 source shape from upgrade regression #6114.
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -3354,11 +3513,13 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           npx vitest run --project e2e-live \
             test/e2e/live/openshell-gateway-upgrade.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenShell gateway upgrade artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-openshell-gateway-upgrade-${{ matrix.legacy.id }}
 
       - name: Clean up Docker auth
         if: always()
@@ -3383,6 +3544,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3410,7 +3572,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/messaging-providers.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload messaging providers artifacts
         if: always()
@@ -3443,6 +3605,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3460,7 +3623,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/launchable-smoke.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload launchable smoke artifacts
         if: always()
@@ -3488,6 +3651,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3505,7 +3669,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/model-router-provider-routed-inference.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Model Router provider-routed inference artifacts
         if: always()
@@ -3534,6 +3698,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3553,7 +3718,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/snapshot-commands.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload snapshot commands artifacts
         if: always()
@@ -3588,6 +3753,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3618,7 +3784,7 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           npx vitest run --project e2e-live \
             test/e2e/live/sandbox-operations.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload sandbox operations artifacts
         if: always()
@@ -3647,6 +3813,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3665,7 +3832,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/sandbox-survival.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload sandbox survival artifacts
         if: always()
@@ -3695,6 +3862,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3711,7 +3879,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live             test/e2e/live/diagnostics.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-live             test/e2e/live/diagnostics.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload diagnostics artifacts
         if: always()
@@ -3737,6 +3905,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -3751,7 +3920,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project integration \
             test/gateway-drift-preflight.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload gateway drift preflight artifacts
         if: always()
@@ -3782,6 +3951,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3812,7 +3982,8 @@ jobs:
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
             npx vitest run --project e2e-live \
             test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default \
+            --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
         if: always()
@@ -3844,6 +4015,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3859,7 +4031,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/openclaw-tui-chat-correlation.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenClaw TUI chat correlation artifacts
         if: always()
@@ -3906,6 +4078,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3946,7 +4119,7 @@ jobs:
           npx vitest run \
             --project e2e-live \
             test/e2e/live/gateway-guard-recovery.test.ts \
-            --reporter=default --silent=false
+            --reporter=default --reporter=test/e2e/risk-signal-reporter.ts --silent=false
 
       - name: Upload artifacts
         if: always()
@@ -3999,6 +4172,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4018,7 +4192,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/openclaw-inference-switch.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenClaw inference switch artifacts
         if: always()
@@ -4057,6 +4231,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4074,7 +4249,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Bedrock Runtime compatible Anthropic artifacts
         if: always()
@@ -4104,6 +4279,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -4121,7 +4297,7 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           npx vitest run --project e2e-live \
             test/e2e/live/gateway-health-honest.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload gateway health honesty artifacts
         if: always()
@@ -4146,6 +4322,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4171,7 +4348,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/device-auth-health.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-live             test/e2e/live/device-auth-health.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload device auth health artifacts
         if: always()
@@ -4200,6 +4377,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4240,7 +4418,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/channels-add-remove.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload channels add/remove artifacts
         if: always()
@@ -4270,6 +4448,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4306,7 +4485,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/telegram-injection.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Telegram injection artifacts
         if: always()
@@ -4333,6 +4512,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_E2E_RISK_SHARD: ${{ matrix.agent }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
@@ -4342,6 +4522,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4383,7 +4564,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/channels-stop-start.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload channels stop/start artifacts
         if: always()
@@ -4416,6 +4597,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4452,7 +4634,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/openclaw-slack-pairing.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenClaw Slack pairing artifacts
         if: always()
@@ -4481,6 +4663,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4509,7 +4692,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/issue-2478-crash-loop-recovery.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: "Upload issue #2478 crash-loop recovery artifacts"
         if: always()
@@ -4539,6 +4722,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4574,7 +4758,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/openclaw-discord-pairing.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload OpenClaw Discord pairing artifacts
         if: always()
@@ -4604,6 +4788,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4650,7 +4835,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/tunnel-lifecycle.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload tunnel lifecycle artifacts
         if: always()
@@ -4682,6 +4867,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4702,7 +4888,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/spark-install.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Spark install artifacts
         if: always()
@@ -4802,7 +4988,7 @@ jobs:
         channels-stop-start,
         spark-install,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && !inputs.risk_shadow }}
     permissions:
       # The issue-comment endpoint accepts pull request write permission for PR comments.
       # Keep issues: write absent so this job cannot restore general issue routing.
@@ -5005,7 +5191,7 @@ jobs:
   scorecard:
     runs-on: ubuntu-latest
     needs: *e2e-result-jobs
-    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.risk_shadow)) }}
     permissions:
       actions: read
       contents: read
@@ -5013,6 +5199,7 @@ jobs:
       - name: Checkout scorecard builders
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
           sparse-checkout: |
             ci/onboard-performance-budget.json

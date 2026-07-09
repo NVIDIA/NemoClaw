@@ -646,6 +646,8 @@ If an existing sandbox displays `Choose a Recommended Model`, rebuild it so its 
 If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime.
 Proxy launchers and startup scripts are baked into the sandbox image.
 After upgrading NemoClaw from a release with older Deep Agents Code routing, rebuild each existing sandbox before troubleshooting `inference.local` connectivity.
+NemoClaw v0.0.78 and newer clients fail closed when a pre-v0.0.78 sandbox image lacks the trusted `/usr/local/lib/nemoclaw/dcode-managed-exec` route-probe helper, even when the installed Deep Agents Code version still matches the managed manifest.
+Rebuild the sandbox to install that image-owned helper before retrying `status`, `doctor`, `connect`, or onboarding recovery.
 There is no dashboard port or long-running gateway process for this harness.
 
 ## Next Steps
