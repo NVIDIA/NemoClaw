@@ -143,20 +143,22 @@ it("wires the fixture-umask setup into every non-live project before other setup
     expect(setupFiles?.indexOf(FIXTURE_UMASK_SETUP), name).toBe(0);
   }
 
-  // Any other non-live project defined in the config must also be pinned, so a
-  // newly added non-live project cannot silently miss the setup; the
-  // live/credential-bearing projects must never be pinned (e2e-live handles real
-  // credentials and sets its own strict `umask 077` inline, e2e-branch-validation
-  // defines no setupFiles, and neither has guard-fixture suites).
-  for (const project of projects) {
-    const name = project.test?.name;
-    if (name === undefined) continue;
-    const setupFiles = project.test?.setupFiles ?? [];
-    if (LIVE_PROJECTS.has(name)) {
-      expect(setupFiles, name).not.toContain(FIXTURE_UMASK_SETUP);
-    } else {
-      expect(setupFiles, name).toContain(FIXTURE_UMASK_SETUP);
-      expect(setupFiles.indexOf(FIXTURE_UMASK_SETUP), name).toBe(0);
-    }
+  // Every other non-live project defined in the config must also be pinned first,
+  // so a newly added non-live project cannot silently miss the setup. Filters keep
+  // the test body linear (no branching) per the codebase-growth guardrail.
+  const namedProjects = projects
+    .map((project) => project.test)
+    .filter((test): test is { name: string; setupFiles?: string[] } => test?.name !== undefined);
+  for (const test of namedProjects.filter((entry) => !LIVE_PROJECTS.has(entry.name))) {
+    const setupFiles = test.setupFiles ?? [];
+    expect(setupFiles, test.name).toContain(FIXTURE_UMASK_SETUP);
+    expect(setupFiles.indexOf(FIXTURE_UMASK_SETUP), test.name).toBe(0);
+  }
+
+  // The live/credential-bearing projects must never be pinned (e2e-live handles
+  // real credentials and sets its own strict `umask 077` inline,
+  // e2e-branch-validation defines no setupFiles, and neither has guard fixtures).
+  for (const test of namedProjects.filter((entry) => LIVE_PROJECTS.has(entry.name))) {
+    expect(test.setupFiles ?? [], test.name).not.toContain(FIXTURE_UMASK_SETUP);
   }
 });
