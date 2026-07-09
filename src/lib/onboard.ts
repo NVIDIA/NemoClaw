@@ -2717,10 +2717,9 @@ async function createSandboxWithBaseImageResolution(
           ),
       },
     );
-  // Returns true if the build context was fully removed, false otherwise.
-  // The caller uses this to decide whether the process 'exit' safety net
-  // can be deregistered — if inline cleanup fails, we leave the handler
-  // armed so the temp dir is still removed on process exit.
+  // Cleanup success decides whether the process 'exit' safety net can be deregistered;
+  // if inline cleanup fails, we leave the handler armed so the temp dir is still
+  // removed on process exit.
   const defaultPolicyPath = path.join(
     ROOT,
     "nemoclaw-blueprint",
