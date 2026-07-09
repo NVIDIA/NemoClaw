@@ -523,8 +523,11 @@ const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
-const { createFinalGatewayStartFailureHandler, reportLegacyGatewayStartResultFailure } =
-  require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
+const {
+  createFinalGatewayStartFailureHandler,
+  normalizeGatewayStartError,
+  reportLegacyGatewayStartResultFailure,
+} = require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
@@ -1913,7 +1916,7 @@ async function startGatewayWithOptions(
     );
   } catch (error) {
     if (exitOnFailure) handleFinalGatewayStartFailure({ retries, dockerUnreachable });
-    throw error instanceof Error ? error : new Error(String(error));
+    throw normalizeGatewayStartError(error);
   }
 
   console.log("  ✓ Gateway is healthy");

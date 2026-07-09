@@ -298,8 +298,8 @@ describe("docker-driver-gateway-service", () => {
   });
 
   it("preserves bounded immediate package-service probes when the interval is zero", async () => {
+    const clock = createVirtualClock();
     let registerCount = 0;
-    const sleepSeconds = vi.fn();
 
     await expect(
       startPackageManagedDockerDriverGateway({
@@ -310,13 +310,13 @@ describe("docker-driver-gateway-service", () => {
         healthPollCount: 3,
         healthPollInterval: 0,
         isDockerDriverGatewayReady: async () => true,
-        now: () => Number.MAX_SAFE_INTEGER,
+        now: clock.now,
         registerDockerDriverGatewayEndpoint: () => {
           registerCount += 1;
           return registerCount >= 3;
         },
         runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
-        sleepSeconds,
+        sleepSeconds: clock.sleeper,
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
@@ -328,9 +328,9 @@ describe("docker-driver-gateway-service", () => {
     ).resolves.toBe(true);
 
     expect(registerCount).toBe(3);
-    expect(sleepSeconds).toHaveBeenCalledTimes(2);
-    expect(sleepSeconds).toHaveBeenNthCalledWith(1, 0);
-    expect(sleepSeconds).toHaveBeenNthCalledWith(2, 0);
+    expect(clock.sleeper).toHaveBeenCalledTimes(2);
+    expect(clock.sleeper).toHaveBeenNthCalledWith(1, 0);
+    expect(clock.sleeper).toHaveBeenNthCalledWith(2, 0);
   });
 
   it("falls back to standalone when package-managed service startup is unavailable", async () => {
