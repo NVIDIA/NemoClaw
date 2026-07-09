@@ -96,19 +96,22 @@ export function cleanupGatewayAfterLastSandbox(
       stopOptions.pidFile = path.join(perGatewayStateDir, "openshell-gateway.pid");
     }
     stopHostGatewayProcesses({}, stopOptions);
-    const removeResult = openshell(["gateway", "remove", gatewayName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (removeResult.status !== 0) {
-      openshell(["gateway", "destroy", "-g", gatewayName], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    }
-  } else {
+  }
+  // `gateway remove <name>` is the modern OpenShell subcommand on every
+  // platform (>=0.0.44). `gateway destroy -g <name>` only existed on pre-0.0.44
+  // builds, so it is a best-effort fallback for those, not a primary path.
+  // macOS previously ran ONLY `gateway destroy`, which current OpenShell
+  // rejects as an unrecognized subcommand — silently leaving the gateway
+  // behind under `ignoreError` (#6569). Run the same remove-then-fallback on
+  // all platforms; the host-process stop above stays Linux-only.
+  const removeResult = openshell(["gateway", "remove", gatewayName], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (removeResult.status !== 0) {
     openshell(["gateway", "destroy", "-g", gatewayName], {
       ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
     });
   }
   dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {

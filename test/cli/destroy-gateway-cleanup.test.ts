@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { runWithEnv, testTimeoutOptions } from "./helpers";
 
@@ -74,6 +74,10 @@ describe("CLI dispatch", () => {
     expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
     expect(openshellOutput).not.toContain("gateway remove nemoclaw");
     expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
+    // The preserved-gateway hint must recommend the real subcommand
+    // (`gateway remove`), never the nonexistent `gateway destroy` (#6569).
+    expect(r.out).toContain("openshell gateway remove nemoclaw");
+    expect(r.out).not.toContain("gateway destroy");
   });
 
   it(
@@ -145,11 +149,9 @@ describe("CLI dispatch", () => {
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       expect(openshellOutput).toContain("sandbox delete alpha");
       expect(openshellOutput).toContain("forward stop 18789");
-      expect(openshellOutput).toContain(
-        process.platform === "linux"
-          ? "gateway remove nemoclaw-8081"
-          : "gateway destroy -g nemoclaw-8081",
-      );
+      // `gateway remove` is the modern subcommand on every platform (#6569).
+      expect(openshellOutput).toContain("gateway remove nemoclaw-8081");
+      expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw-8081");
       expect(fs.readFileSync(bashLog, "utf8")).toContain(
         "volume ls -q --filter name=openshell-cluster-nemoclaw-8081",
       );
@@ -223,9 +225,9 @@ describe("CLI dispatch", () => {
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       expect(openshellOutput).toContain("forward stop 18789");
-      expect(openshellOutput).toContain(
-        process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
-      );
+      // `gateway remove` is the modern subcommand on every platform (#6569).
+      expect(openshellOutput).toContain("gateway remove nemoclaw");
+      expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
     },
   );
 
