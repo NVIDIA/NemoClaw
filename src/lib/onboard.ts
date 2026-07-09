@@ -171,7 +171,7 @@ const pRetry = require("p-retry");
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
-const { runSandboxProviderPreDeleteCleanup } =
+const { reconcileRegisteredExtraProviders, runSandboxProviderPreDeleteCleanup } =
   require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
 const { getNameValidationGuidance } = nameValidation;
@@ -2717,9 +2717,10 @@ async function createSandboxWithBaseImageResolution(
           ),
       },
     );
-  // Cleanup success decides whether the process 'exit' safety net can be deregistered;
-  // if inline cleanup fails, we leave the handler armed so the temp dir is still
-  // removed on process exit.
+  // Returns true if the build context was fully removed, false otherwise.
+  // The caller uses this to decide whether the process 'exit' safety net
+  // can be deregistered — if inline cleanup fails, we leave the handler
+  // armed so the temp dir is still removed on process exit.
   const defaultPolicyPath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -2746,8 +2747,7 @@ async function createSandboxWithBaseImageResolution(
     messagingTokenDefs,
     reusableMessagingChannels,
     reusableMessagingProviders,
-    extraProviders: registry.listExtraProviders(),
-    webSearchConfig,
+    extraProviders: reconcileRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     dockerDriverGateway,
