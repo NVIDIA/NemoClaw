@@ -48,6 +48,7 @@ describe("credential rotation documentation", () => {
     const searchExamples = bash.filter((block) => block.includes("NEMOCLAW_WEB_SEARCH_PROVIDER"));
     expect(searchExamples.length).toBeGreaterThan(0);
     for (const example of searchExamples) {
+      expect(example).toContain("--fresh");
       expect(example).toContain("--recreate-sandbox");
     }
   });
