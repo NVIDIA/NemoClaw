@@ -470,8 +470,8 @@ describe("PR review advisor", () => {
     ["conjunction", "Follow-up to #6547 and #6446.", [6446, 6547]],
     ["comma-separated list", "Refs #1, #2 and #3.", [1, 2, 3]],
     ["Oxford-comma list", "References #4, #5, and #6.", [4, 5, 6]],
-  ])("recognizes every issue in a %s relation (#6446)", (_case, text, expected) => {
-    expect(extractIssueRefs(text as string, 6566)).toEqual(expected);
+  ] as const)("recognizes every issue in a %s relation (#6446)", (_case, text, expected) => {
+    expect(extractIssueRefs(text, 6566)).toEqual(expected);
   });
 
   it("writes auditable deterministic context artifacts", () => {

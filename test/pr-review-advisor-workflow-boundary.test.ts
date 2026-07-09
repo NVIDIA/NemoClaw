@@ -125,6 +125,25 @@ fi
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
   });
 
+  it("rejects an unpinned runtime package fallback", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-boundary-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = YAML.parse(
+      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
+    ) as { jobs: { review: { steps: Array<{ name?: string; run?: string }> } } };
+    const install = workflow.jobs.review.steps.find((step) => step.name === "Install Pi SDK");
+    install!.run = install!.run!.replace('"ripgrep=${RIPGREP_VERSION}"', "ripgrep");
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual([
+        "step 'Install Pi SDK' run script must include sudo apt-get install -y --no-install-recommends \"ripgrep=${RIPGREP_VERSION}\"",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects malformed manual target inputs before invoking git", () => {
     const invalidCases = [
       {

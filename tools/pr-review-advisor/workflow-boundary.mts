@@ -258,7 +258,11 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     'git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head',
   );
   const install = requireStep(errors, steps, "Install Pi SDK");
-  requireRunContains(errors, install, '"ripgrep=${RIPGREP_VERSION}"');
+  requireRunContains(
+    errors,
+    install,
+    'sudo apt-get install -y --no-install-recommends "ripgrep=${RIPGREP_VERSION}"',
+  );
   requireRunContains(errors, install, "rg --version");
   requireRunContains(errors, install, "--ignore-scripts");
   requireRunContains(errors, install, "$ADVISOR_DIR/node_modules");

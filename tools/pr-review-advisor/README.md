@@ -11,8 +11,9 @@ acceptance coverage, security notes, and code-review follow-up guidance.
 It complements the existing PR surfaces by keeping a NemoClaw maintainer code-review lens focused on the patch itself:
 
 - sandbox and workflow security review;
-- acceptance-clause coverage against linked issues, including common `Refs #...` and
-  `References #...` relations in PR prose;
+- acceptance-clause coverage against linked issues, including common `Refs #...`,
+  `References #...`, and `Follow-up to #...` relations with comma- or
+  conjunction-separated issue lists in PR prose;
 - previous PR Review Advisor follow-up for code findings, using hidden sticky-comment metadata when available;
 - codebase drift, monolith growth, and architecture guardrails;
 - source-of-truth review for fallback, recovery, tolerant parsing, monkeypatching, and other localized workaround behavior;
@@ -29,7 +30,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 1. Runs on internal `pull_request` events and `workflow_dispatch`.
 2. Checks out advisor implementation code from trusted `main` into `advisor/`.
 3. Checks out PR content into `pr-workdir/` as inert read-only analysis data.
-4. Ensures ripgrep is available for the repo-confined `grep` tool from a pinned package on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
+4. Uses the trusted runner's ripgrep when present, otherwise installs an exact pinned package on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
 5. Builds the same deterministic regression risk plan used by E2E Advisor and injects it into the scope/risk, security/trust, and tests/regressions contexts.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for each configured model variant: the primary GPT-5.5 lane and the Nemotron Ultra lane.

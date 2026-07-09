@@ -659,6 +659,25 @@ export function advisorExecutionErrors(result: RunAdvisorResult): string[] {
   return advisorRunErrors(result);
 }
 
+function sourceOfTruthReviewLedgerIssues(
+  review: SourceOfTruthReview,
+  index: number,
+  openFindingIds: ReadonlySet<string>,
+): string[] {
+  const prefix = `sourceOfTruthReview[${index + 1}] ${review.surface}`;
+  const unresolved = review.status === "missing" || review.status === "needs_followup";
+  if (unresolved && !review.findingId) {
+    return [`${prefix} must reference an open ledger finding`];
+  }
+  if (unresolved && !openFindingIds.has(review.findingId!)) {
+    return [`${prefix} references non-open ledger finding ${review.findingId}`];
+  }
+  if (!unresolved && review.findingId) {
+    return [`${prefix} must use findingId=null for status=${review.status}`];
+  }
+  return [];
+}
+
 function parseAdvisorResult(
   text: string,
   rawPath: string,
@@ -695,20 +714,7 @@ export function reviewLedgerConsistencyIssues(
     }
   }
   for (const [index, review] of (result.sourceOfTruthReview ?? []).entries()) {
-    const unresolved = review.status === "missing" || review.status === "needs_followup";
-    if (unresolved && !review.findingId) {
-      issues.push(
-        `sourceOfTruthReview[${index + 1}] ${review.surface} must reference an open ledger finding`,
-      );
-    } else if (unresolved && !openFindingIds.has(review.findingId!)) {
-      issues.push(
-        `sourceOfTruthReview[${index + 1}] ${review.surface} references non-open ledger finding ${review.findingId}`,
-      );
-    } else if (!unresolved && review.findingId) {
-      issues.push(
-        `sourceOfTruthReview[${index + 1}] ${review.surface} must use findingId=null for status=${review.status}`,
-      );
-    }
+    issues.push(...sourceOfTruthReviewLedgerIssues(review, index, openFindingIds));
   }
   return issues;
 }
