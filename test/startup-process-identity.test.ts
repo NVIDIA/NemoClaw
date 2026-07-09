@@ -183,6 +183,9 @@ proof.update({
     "openshell_nested_pid_namespace": supervised_scenario([
         (412, "424242", entrypoint, 1000, 1, 1, "nested"),
     ]),
+    "openshell_cross_namespace_outer_pid": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1, "nested"),
+    ]),
     "openshell_nested_landlock_all_namespaces_denied": supervised_scenario([
         (412, "424242", entrypoint, 1000, 1, 1, "nested"),
     ], namespace_access=False),
@@ -254,6 +257,7 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       openshell_root_child: false,
       openshell_nested_child: false,
       openshell_nested_pid_namespace: name === "OpenClaw",
+      openshell_cross_namespace_outer_pid: false,
       openshell_nested_landlock_all_namespaces_denied: name === "OpenClaw",
       openshell_nested_landlock_supervisor_namespace_denied: name === "OpenClaw",
       openshell_non_direct_child: false,
