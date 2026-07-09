@@ -56,6 +56,26 @@ function mockDockerSpawnSuccess(): EventEmitter & {
   return proc;
 }
 
+function mockSuccessfulVllmInstall(containerName: string): void {
+  const captureByCommand: Record<string, string> = {
+    curl: '{"data":[]}',
+    sh: "/usr/bin/tool\n",
+  };
+  mocks.runCapture.mockImplementation(
+    (cmd: readonly string[]) => captureByCommand[cmd[0] ?? ""] ?? "",
+  );
+  mocks.dockerPullWithProgressWatchdog.mockResolvedValue({
+    status: 0,
+    signal: null,
+    output: "",
+    timedOut: false,
+    timeoutKind: null,
+  });
+  mocks.dockerSpawn.mockReturnValue(mockDockerSpawnSuccess());
+  mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+  mocks.dockerCapture.mockReturnValue(`${containerName}\n`);
+}
+
 describe("vLLM served route identity", () => {
   it("uses one safe served-model override and rejects ambiguous aliases (#6315)", () => {
     expect(resolveVllmServedModelId("catalog/model", [])).toBe("catalog/model");
@@ -395,21 +415,7 @@ describe("installVllm model resolution", () => {
   it("starts the long-lived vLLM container through Docker argv, not a shell command", async () => {
     process.env.HF_TOKEN = "hf_test";
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
-      if (cmd[0] === "sh") return "/usr/bin/tool\n";
-      if (cmd[0] === "curl") return '{"data":[]}';
-      return "";
-    });
-    mocks.dockerPullWithProgressWatchdog.mockResolvedValue({
-      status: 0,
-      signal: null,
-      output: "",
-      timedOut: false,
-      timeoutKind: null,
-    });
-    mocks.dockerSpawn.mockReturnValue(mockDockerSpawnSuccess());
-    mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
-    mocks.dockerCapture.mockReturnValue(`${profile.containerName}\n`);
+    mockSuccessfulVllmInstall(profile.containerName);
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -434,5 +440,26 @@ describe("installVllm model resolution", () => {
     expect(args.some((arg) => arg.includes("docker run"))).toBe(false);
     expect(args[args.indexOf("-lc") + 1]).toContain("vllm serve");
     expect(opts).toEqual(expect.objectContaining({ env: { HF_TOKEN: "hf_test" } }));
+  });
+
+  it("rejects invalid profile run flags before launching the long-lived container", async () => {
+    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const profile = {
+      ...baseProfile,
+      buildDockerRunFlags: () => ["--label", ""],
+    };
+    mockSuccessfulVllmInstall(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("vLLM docker run flags[1] must not be empty"),
+    );
   });
 });
