@@ -19,6 +19,19 @@ const RUNTIME_CONFIG_GUARD = path.join(
 
 type ProjectEntry = { test?: { name?: string; setupFiles?: string[] } };
 const FIXTURE_UMASK_SETUP = "test/helpers/normalize-fixture-umask.ts";
+// Live/credential-bearing projects are intentionally not pinned to 0o022; they
+// are excluded from `npm test` and keep the caller's umask.
+const LIVE_PROJECTS = new Set(["e2e-live", "e2e-branch-validation"]);
+// The projects `npm test` runs (package.json `scripts.test`), asserted explicitly
+// because parsing that command string in a test would trip the source-shape budget.
+const NPM_TEST_PROJECTS = [
+  "cli",
+  "integration",
+  "installer-integration",
+  "package-contract",
+  "plugin",
+  "e2e-support",
+];
 
 // Regression coverage for #6448. The shared setup file
 // test/helpers/normalize-fixture-umask.ts must force the conventional CI
@@ -111,37 +124,39 @@ else:
   expect(result.stdout).toContain("group/world-writable");
 });
 
-it("wires the fixture-umask setup into every npm test project before other setup files (#6448)", () => {
+it("wires the fixture-umask setup into every non-live project before other setup files (#6448)", () => {
   // A config-contract guard: if a future edit drops or misorders the setup for a
   // project, the permissive-umask failures would only resurface on hosts with a
-  // permissive ambient umask (CI at 0o022 would not catch it). Derive the project
-  // list from package.json's `npm test` command rather than hard-coding it, so
-  // adding or removing a `--project` cannot silently drift out of this contract.
-  const testScript = JSON.parse(
-    fs.readFileSync(path.join(import.meta.dirname, "..", "package.json"), "utf-8"),
-  ).scripts.test as string;
-  const npmTestProjects = [...testScript.matchAll(/--project\s+(\S+)/g)].map((match) => match[1]);
-  expect(npmTestProjects.length).toBeGreaterThan(0);
-
+  // permissive ambient umask (CI at 0o022 would not catch it).
   const projects = (vitestConfig.test?.projects ?? []) as ProjectEntry[];
   const setupFilesByName = new Map(
     projects.map((project) => [project.test?.name, project.test?.setupFiles ?? []]),
   );
 
-  // Every project `npm test` runs must pin the fixture umask first, before any
-  // fixture/source-loader setup file.
-  for (const name of npmTestProjects) {
+  // The exact set of projects `npm test` runs, kept in sync with package.json's
+  // `scripts.test`. Each must pin the fixture umask first. (Parsing the npm test
+  // command string here would trip the repo's source-shape test budget, so the
+  // list is asserted explicitly and lives next to that command.)
+  for (const name of NPM_TEST_PROJECTS) {
     const setupFiles = setupFilesByName.get(name);
     expect(setupFiles, name).toContain(FIXTURE_UMASK_SETUP);
     expect(setupFiles?.indexOf(FIXTURE_UMASK_SETUP), name).toBe(0);
   }
 
-  // The live/credential-bearing projects are intentionally excluded: e2e-live
-  // keeps the caller's umask (it handles real credentials and sets its own strict
-  // `umask 077` inline) and e2e-branch-validation defines no setupFiles. Neither
-  // is part of `npm test` nor has guard-fixture suites.
-  expect(npmTestProjects).not.toContain("e2e-live");
-  expect(npmTestProjects).not.toContain("e2e-branch-validation");
-  expect(setupFilesByName.get("e2e-live") ?? []).not.toContain(FIXTURE_UMASK_SETUP);
-  expect(setupFilesByName.get("e2e-branch-validation") ?? []).not.toContain(FIXTURE_UMASK_SETUP);
+  // Any other non-live project defined in the config must also be pinned, so a
+  // newly added non-live project cannot silently miss the setup; the
+  // live/credential-bearing projects must never be pinned (e2e-live handles real
+  // credentials and sets its own strict `umask 077` inline, e2e-branch-validation
+  // defines no setupFiles, and neither has guard-fixture suites).
+  for (const project of projects) {
+    const name = project.test?.name;
+    if (name === undefined) continue;
+    const setupFiles = project.test?.setupFiles ?? [];
+    if (LIVE_PROJECTS.has(name)) {
+      expect(setupFiles, name).not.toContain(FIXTURE_UMASK_SETUP);
+    } else {
+      expect(setupFiles, name).toContain(FIXTURE_UMASK_SETUP);
+      expect(setupFiles.indexOf(FIXTURE_UMASK_SETUP), name).toBe(0);
+    }
+  }
 });
