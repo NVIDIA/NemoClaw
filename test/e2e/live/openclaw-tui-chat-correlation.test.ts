@@ -19,6 +19,7 @@ import { join } from "node:path";
 
 import { containsReplyTokenAllowingWhitespace } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import {
   type SandboxClient,
   sandboxAccessEnv,
@@ -105,12 +106,6 @@ type Issue2603Analysis = {
   duplicateUserTurns: DuplicateUserTurn[];
 };
 type LiveIssue2603Trace = Issue2603Trace & { error?: string };
-
-type CommandResultText = { stdout: string; stderr: string };
-
-function resultText(result: CommandResultText): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function textFromContent(content: unknown): string {
   if (typeof content === "string") return content;
