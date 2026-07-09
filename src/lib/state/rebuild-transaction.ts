@@ -774,7 +774,7 @@ export class RebuildTransactionStore {
           `cannot refresh a replacement receipt from ${current.phase}`,
         );
       }
-      if (!this.replacementIdentityMatches(sandboxName, replacement.identityFingerprint)) {
+      if (!this.replacementIdentityMatches(sandboxName, replacement.identityFingerprint, current)) {
         throw transactionError(
           "INVALID_TRANSITION",
           sandboxName,

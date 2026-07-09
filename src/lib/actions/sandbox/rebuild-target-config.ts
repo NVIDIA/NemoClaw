@@ -127,10 +127,13 @@ export function prepareRebuildTargetConfig(
         sessionSnapshot.metadata.rebuild.imageFingerprint === rebuildCorrelation.imageFingerprint &&
         sessionSnapshot.metadata.rebuild.configurationFingerprint ===
           rebuildCorrelation.configurationFingerprint));
+  // Transaction-owned recovery may consume durable session fields only from
+  // the session whose internal correlation anchor matched above.
+  const durableSession = rebuildCorrelation && !sessionMatchesSandbox ? null : sessionSnapshot;
   const durableConfig = resolveRebuildDurableConfig(
     sandboxName,
     sb,
-    sessionSnapshot,
+    durableSession,
     {
       provider: resumeConfig.provider,
       model: resumeConfig.model,

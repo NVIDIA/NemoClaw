@@ -167,7 +167,7 @@ describe("rebuild transaction boundary", () => {
     });
   });
 
-  it("resumes old-deleted recovery in a fresh coordinator without deleting twice", async () => {
+  it("resumes old-deleted recovery without duplicate delete or unrelated session config", async () => {
     const interrupted = createRebuildFlowHarness({
       staleRecovery: true,
       onboard: () => {
@@ -182,6 +182,7 @@ describe("rebuild transaction boundary", () => {
     ).rejects.toThrow("Recreate failed");
 
     const resumed = createRebuildFlowHarness({ staleRecovery: true });
+    resumed.session.toolDisclosure = "direct";
     await resumed.rebuildSandbox("alpha", ["--yes"], {
       throwOnError: true,
       transactionStore: interrupted.transactionStore,
@@ -192,6 +193,9 @@ describe("rebuild transaction boundary", () => {
       phase: "completed",
     });
     expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(resumed.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ toolDisclosure: "progressive" }),
+    );
     expect(resumed.runOpenshellSpy).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),

@@ -4,6 +4,7 @@
 // Deterministic correlation and tamper evidence for local rebuild recovery.
 // These digests are NOT a security MAC: no secret key is used. Never use them
 // for authentication or authorization decisions.
+// Replacement identity preserves null agents; it never aliases them to OpenClaw.
 
 import crypto from "node:crypto";
 
@@ -82,6 +83,40 @@ export function fingerprintRebuildValue(value: unknown): string {
 
 export function fingerprintRebuildRegistryEntry(value: SandboxEntry): string {
   return fingerprintRebuildValue(JSON.parse(JSON.stringify(value)));
+}
+
+/** Stable target fields that must match before a replacement can be adopted or receipted. */
+export function matchesRebuildTargetRegistry(
+  transaction: RebuildTransactionRecordV1,
+  entry: SandboxEntry,
+): boolean {
+  const target = transaction.intent.target;
+  const endpointMatches =
+    target.endpointFingerprint === null
+      ? entry.endpointUrl == null
+      : typeof entry.endpointUrl === "string" &&
+        fingerprintRebuildValue(entry.endpointUrl) === target.endpointFingerprint;
+  const configurationMatches =
+    fingerprintRebuildValue({
+      fromDockerfile: entry.fromDockerfile ?? null,
+      preferredInferenceApi: entry.preferredInferenceApi ?? null,
+      compatibleEndpointReasoning: entry.compatibleEndpointReasoning ?? null,
+      policyTier: entry.policyTier ?? null,
+    }) === target.configurationFingerprint;
+
+  return (
+    entry.name === transaction.intent.sandboxName &&
+    entry.agent === target.agent &&
+    entry.provider === target.provider &&
+    entry.model === target.model &&
+    (entry.credentialEnv ?? null) === target.credentialEnv &&
+    (entry.gatewayName ?? "nemoclaw") === target.gatewayName &&
+    (entry.gatewayPort ?? 8080) === target.gatewayPort &&
+    entry.toolDisclosure === target.toolDisclosure &&
+    entry.observabilityEnabled === target.observabilityEnabled &&
+    endpointMatches &&
+    configurationMatches
+  );
 }
 
 /** Receipt identity excludes mutable restore/finalization fields such as policies and MCP state. */

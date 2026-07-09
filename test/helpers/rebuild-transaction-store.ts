@@ -92,8 +92,11 @@ export function replacementReceipts(): RebuildTransactionReceiptsV1 {
 
 export function makeStore(
   root = tempDir(),
-  replacementIdentityMatches: (sandboxName: string, identityFingerprint: string) => boolean = () =>
-    true,
+  replacementIdentityMatches: (
+    sandboxName: string,
+    identityFingerprint: string,
+    transaction: RebuildTransactionRecordV1,
+  ) => boolean = () => true,
 ): {
   stateDir: string;
   store: RebuildTransactionStore;

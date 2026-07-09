@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { matchesRebuildTargetRegistry } from "../../rebuild-correlation";
 import type { Session } from "../../state/onboard-session";
 import type {
   RebuildRegistryRecoveryV1,
@@ -18,7 +19,7 @@ import {
   type FingerprintedPreparedBuildContext,
   verifyPreparedBuildContext,
 } from "./rebuild-prepared-image-context";
-import { matchesRebuildTargetRegistry, observeRebuildSession } from "./rebuild-recovery";
+import { observeRebuildSession } from "./rebuild-recovery";
 import type { RebuildRecoveryPlan } from "./rebuild-recovery-plan";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";

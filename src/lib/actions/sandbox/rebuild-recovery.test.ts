@@ -65,7 +65,7 @@ describe("rebuild replacement recovery decision", () => {
   it.each([
     ["old_deleted", "ready", "target", "unrelated", "REBUILD_RECOVERY_SESSION_MISMATCH"],
     ["old_deleted", "ready", "source", "matching", "REBUILD_RECOVERY_REGISTRY_MISMATCH"],
-    ["old_deleted", "absent", "mismatch", "unrelated", "REBUILD_RECOVERY_REGISTRY_MISMATCH"],
+    ["old_deleted", "absent", "mismatch", "unrelated", "REBUILD_RECOVERY_REGISTRY_CORRUPTED"],
     ["old_deleted", "not_ready", "target", "matching", "REBUILD_RECOVERY_LIVE_STATE_AMBIGUOUS"],
     [
       "old_deleted",

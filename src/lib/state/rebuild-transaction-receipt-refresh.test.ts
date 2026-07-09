@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   advanceToReplacement,
@@ -67,8 +67,12 @@ describe("RebuildTransactionStore replacement receipt refresh", () => {
     });
   });
 
-  it("refuses a compensated receipt that does not match the registered replacement", async () => {
-    const { store } = makeStore(undefined, () => false);
+  it("refuses a compensated receipt that does not match the durable target intent", async () => {
+    const replacementIdentityMatches = vi.fn(
+      (_sandboxName, _identityFingerprint, transaction) =>
+        transaction.intent.target.provider === "ollama-local",
+    );
+    const { store } = makeStore(undefined, replacementIdentityMatches);
     const replacement = await advanceToReplacement(store);
 
     await expectCode(
@@ -79,6 +83,11 @@ describe("RebuildTransactionStore replacement receipt refresh", () => {
           replacementReceipts().replacement!,
         ),
       "INVALID_TRANSITION",
+    );
+    expect(replacementIdentityMatches).toHaveBeenCalledWith(
+      SANDBOX,
+      replacementReceipts().replacement?.identityFingerprint,
+      expect.objectContaining({ intent: expect.objectContaining({ target: intent().target }) }),
     );
   });
 });

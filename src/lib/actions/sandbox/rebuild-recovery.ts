@@ -4,7 +4,7 @@
 import {
   fingerprintRebuildRegistryEntry,
   fingerprintRebuildReplacement,
-  fingerprintRebuildValue,
+  matchesRebuildTargetRegistry,
 } from "../../rebuild-correlation";
 import type { Session } from "../../state/onboard-session";
 import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
@@ -19,6 +19,7 @@ export type RebuildRecoveryDecision =
 
 export type RebuildRecoveryRefusalCode =
   | "REBUILD_RECOVERY_LIVE_STATE_AMBIGUOUS"
+  | "REBUILD_RECOVERY_REGISTRY_CORRUPTED"
   | "REBUILD_RECOVERY_REGISTRY_MISMATCH"
   | "REBUILD_RECOVERY_SESSION_MISMATCH";
 
@@ -29,40 +30,6 @@ export type RebuildRegistryObservation =
   | "source"
   | "target";
 export type RebuildSessionObservation = "matching" | "missing" | "unrelated";
-
-/** Stable target fields that are published by the recreated onboard run. */
-export function matchesRebuildTargetRegistry(
-  transaction: RebuildTransactionRecordV1,
-  entry: SandboxEntry,
-): boolean {
-  const target = transaction.intent.target;
-  const endpointMatches =
-    target.endpointFingerprint === null
-      ? entry.endpointUrl == null
-      : typeof entry.endpointUrl === "string" &&
-        fingerprintRebuildValue(entry.endpointUrl) === target.endpointFingerprint;
-  const configurationMatches =
-    fingerprintRebuildValue({
-      fromDockerfile: entry.fromDockerfile ?? null,
-      preferredInferenceApi: entry.preferredInferenceApi ?? null,
-      compatibleEndpointReasoning: entry.compatibleEndpointReasoning ?? null,
-      policyTier: entry.policyTier ?? null,
-    }) === target.configurationFingerprint;
-
-  return (
-    entry.name === transaction.intent.sandboxName &&
-    entry.agent === target.agent &&
-    entry.provider === target.provider &&
-    entry.model === target.model &&
-    (entry.credentialEnv ?? null) === target.credentialEnv &&
-    (entry.gatewayName ?? "nemoclaw") === target.gatewayName &&
-    (entry.gatewayPort ?? 8080) === target.gatewayPort &&
-    entry.toolDisclosure === target.toolDisclosure &&
-    entry.observabilityEnabled === target.observabilityEnabled &&
-    endpointMatches &&
-    configurationMatches
-  );
-}
 
 export function observeRebuildRegistry(
   transaction: RebuildTransactionRecordV1,
@@ -110,9 +77,14 @@ export function decideRebuildRecovery(input: {
   const { transaction, live, registry, session } = input;
   if (transaction.phase === "old_deleted") {
     if (live === "absent") {
-      return registry === "source" || registry === "missing"
-        ? { action: "create" }
-        : { action: "refuse", code: "REBUILD_RECOVERY_REGISTRY_MISMATCH" };
+      if (registry === "source" || registry === "missing") return { action: "create" };
+      return {
+        action: "refuse",
+        code:
+          registry === "mismatch"
+            ? "REBUILD_RECOVERY_REGISTRY_CORRUPTED"
+            : "REBUILD_RECOVERY_REGISTRY_MISMATCH",
+      };
     }
     if (live !== "ready") {
       return { action: "refuse", code: "REBUILD_RECOVERY_LIVE_STATE_AMBIGUOUS" };
