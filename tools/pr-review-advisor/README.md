@@ -11,7 +11,9 @@ acceptance coverage, security notes, and code-review follow-up guidance.
 It complements the existing PR surfaces by keeping a NemoClaw maintainer code-review lens focused on the patch itself:
 
 - sandbox and workflow security review;
-- acceptance-clause coverage against linked issues;
+- acceptance-clause coverage against linked issues, including common `Refs #...`,
+  `References #...`, and `Follow-up to #...` relations with comma- or
+  conjunction-separated issue lists in PR prose;
 - previous PR Review Advisor follow-up for code findings, using hidden sticky-comment metadata when available;
 - codebase drift, monolith growth, and architecture guardrails;
 - source-of-truth review for fallback, recovery, tolerant parsing, monkeypatching, and other localized workaround behavior;
@@ -28,14 +30,14 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 1. Runs on internal `pull_request` events and `workflow_dispatch`.
 2. Checks out advisor implementation code from trusted `main` into `advisor/`.
 3. Checks out PR content into `pr-workdir/` as inert read-only analysis data.
-4. Installs a pinned Pi SDK package with lifecycle scripts disabled.
+4. Uses the trusted runner's ripgrep when present, otherwise installs an exact pinned package on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
 5. Builds the same deterministic regression risk plan used by E2E Advisor and injects it into the scope/risk, security/trust, and tests/regressions contexts.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for each configured model variant: the primary GPT-5.5 lane and the Nemotron Ultra lane.
-8. Opens one Pi session per model variant and reviews the PR in seven bounded turns: scope/risk map, correctness/state, security/trust, tests/regressions, CI/operations, finding reconciliation, and final JSON synthesis. Each turn starts with its user instruction, then exposes only that turn's deterministic context as real read-only tools.
-9. Requires intermediate turns to emit concise analysis, then finish with exactly one successful atomic ledger batch and no later prose or tool call. A missing, duplicate, failed, or out-of-order ledger call fails the turn. The batch schema rejects surplus fields and commits only when every operation succeeds, so one invalid operation leaves the ledger unchanged. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
-10. Treats open ledger records as the canonical finding set. Final synthesis cannot silently add, drop, merge, reword, or reclassify those findings.
-11. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript.
+8. Opens one Pi session per model variant and reviews the PR in 13 bounded turns: six small analysis/commit pairs for scope/risk, correctness/state, security/trust, tests/regressions, CI/operations, and reconciliation, followed by final JSON synthesis. Each analysis turn exposes only that stage's deterministic context as real read-only tools and emits a concise visible receipt.
+9. Gives each commit turn one job: apply exactly one successful atomic ledger batch for the preceding analysis. The ledger mutation tool is the turn's only active tool, and the runner rejects prose, other tool calls, or activity after the successful commit. Rejected attempts do not mutate the ledger and may be corrected before one success. If a commit turn ends with no successful call and every attempt settled without mutating state, the runner permits one tool-only retry and then fails closed. The batch schema rejects surplus fields and commits only when every operation succeeds. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
+10. Treats open ledger records as the canonical finding set. Final synthesis cannot silently add, drop, merge, reword, or reclassify those findings. Unresolved source-of-truth review entries must reference their covering open ledger ID structurally rather than relying on prose matching.
+11. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript. If a later stage fails, already-committed canonical findings remain in the low-confidence incomplete result instead of being replaced by a generic unavailable finding.
 12. Retries synthesis once when the model output is malformed, drifts from the ledger, or contains low-quality placeholder fields.
 13. Writes artifacts under the model-specific artifact directory, for example `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
 14. Posts or updates model-specific sticky PR comments marked by `<!-- nemoclaw-pr-review-advisor -->` and `<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->` plus hidden head-SHA, run, and comment-id metadata for follow-up reviews.
@@ -46,8 +48,9 @@ reordering a stage does not require parallel orchestration changes.
 
 Provider failures and timeouts settle the active turn before the analysis fails, so its status and
 partial response remain available beside the raw transcript. Turn-artifact persistence failures are
-also fatal. A finding mismatch that survives synthesis retry is fatal as well; the advisor does not
-publish a result whose per-turn trace or canonical ledger projection is incomplete.
+also fatal. A finding mismatch that survives synthesis retry is fatal as well. Fatal runs remain
+visibly incomplete, but their final-result artifact preserves any open canonical findings committed
+before the failure so later runs and reviewers do not lose substantive review history.
 
 The workflow is advisory and must not be configured as a required status check. It uses the
 deterministic plan as review context but does not run its jobs. E2E Advisor emits the corresponding
@@ -104,9 +107,9 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 ## Artifacts
 
 - `prompts/00-system.md` — system prompt sent to the advisor.
-- `prompts/01-scope-risk-map.md` through `prompts/07-synthesize-json.md` — the seven bounded review turns in execution order.
+- `prompts/01-scope-risk-map-analysis.md` through `prompts/13-synthesize-json.md` — six alternating analysis/commit pairs followed by synthesis, in execution order.
 - `prompts/*.tool-results/` — bounded deterministic, domain-specific context payloads exposed as real tools after the matching user turn. The untrusted truncated diff appears only in the first turn, and repeated risk-plan projections use capped path samples.
-- `turns/01-scope-risk-map.txt` through `turns/07-synthesize-json.txt` — assistant output and completed/failed/timed-out status written as each primary turn settles.
+- `turns/01-scope-risk-map-analysis.txt` through `turns/13-synthesize-json.txt` — assistant output and completed/failed/timed-out status written as each primary turn settles.
 - `retry-prompts/` — retry synthesis prompt and context-tool payloads when the first output is malformed or low quality.
 - `retry-turns/` — assistant output and settled status from the optional retry synthesis conversation.
 - `context/drift-context.json` — deterministic drift, overlap, monolith, and previous-review context.
@@ -150,7 +153,9 @@ available.
 `tools/pr-review-advisor/schema.json` defines the normalized JSON result shape used for the PR
 comment and future reporting work. Findings include probe-shaped fields for impact, verification
 hints, and missing regression-test guidance so agents know what to check rather than treating findings
-as generic commentary. Findings can also include safe simplification metadata with delete, stdlib,
+as generic commentary. Every source-of-truth review item includes a `findingId`: unresolved items
+reference their covering open ledger finding, while satisfied and not-applicable items use `null`.
+Findings can also include safe simplification metadata with delete, stdlib,
 native, YAGNI, or shrink tags; those suggestions must keep validation, security, data-loss prevention,
 and required tests intact. The advisor is intentionally advisory: every result includes limitations and
 requires human maintainer review. The PR comment deliberately frames suggestions as current-review

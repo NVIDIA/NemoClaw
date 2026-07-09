@@ -159,11 +159,15 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   }
 
   const reviewJob = asRecord(asRecord(workflow.jobs).review);
+  if (stringValue(reviewJob["runs-on"]) !== "ubuntu-24.04") {
+    errors.push("review job must pin the Ubuntu runner used by runtime package versions");
+  }
   const advisorEntries = advisorMatrixEntries(errors, reviewJob);
   for (const field of ["model", "artifact_dir", "artifact_name", "comment_marker"]) {
     requireUniqueAdvisorMatrixField(errors, advisorEntries, field);
   }
   requireJobEnvValue(errors, reviewJob, "PR_REVIEW_ADVISOR_MODEL", "${{ matrix.advisor.model }}");
+  requireJobEnvValue(errors, reviewJob, "RIPGREP_VERSION", "14.1.0-1");
   requireJobEnvValue(
     errors,
     reviewJob,
@@ -254,6 +258,12 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     'git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head',
   );
   const install = requireStep(errors, steps, "Install Pi SDK");
+  requireRunContains(
+    errors,
+    install,
+    'sudo apt-get install -y --no-install-recommends "ripgrep=${RIPGREP_VERSION}"',
+  );
+  requireRunContains(errors, install, "rg --version");
   requireRunContains(errors, install, "--ignore-scripts");
   requireRunContains(errors, install, "$ADVISOR_DIR/node_modules");
 

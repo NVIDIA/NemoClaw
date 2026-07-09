@@ -52,7 +52,7 @@ jobs:
   review:
     name: PR review advisor (${{ matrix.advisor.label }})
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -79,6 +79,9 @@ jobs:
       # normal dependency review so a compromised upstream release cannot run
       # automatically in this secret-bearing job.
       PI_SDK_VERSION: "0.74.0"
+      # Keep the grep tool deterministic for the pinned Ubuntu runner. A newer
+      # package must be reviewed and updated explicitly instead of floating.
+      RIPGREP_VERSION: "14.1.0-1"
       PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
       PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
       # CI status is captured as point-in-time GitHub context. Historical
@@ -159,6 +162,11 @@ jobs:
 
       - name: Install Pi SDK
         run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "ripgrep=${RIPGREP_VERSION}"
+          fi
+          rg --version
           PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
           npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-05-14T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
           rm -rf "$ADVISOR_DIR/node_modules"

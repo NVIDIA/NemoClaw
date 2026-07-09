@@ -33,6 +33,7 @@ import {
   renderDetailedReview,
   renderSummary,
   retryReasonLogSummary,
+  reviewLedgerConsistencyIssues,
   reviewQualityIssues,
   writeDeterministicContextArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
@@ -131,6 +132,7 @@ function validResult(overrides = {}) {
       {
         surface: "trusted-code boundary",
         status: "satisfied",
+        findingId: null,
         invalidState: "PR-controlled workflow code could execute with secrets.",
         sourceBoundary: ".github/workflows/pr-review-advisor.yaml",
         whyNotSourceFix: "The workflow already uses the trusted main checkout.",
@@ -332,52 +334,74 @@ describe("PR review advisor", () => {
       diff: poisonedDiff,
       schema,
     });
-    const expected = [
-      ["scope-risk-map", "notes", 8, ["pr_review_scope_risk_context", "pr_review_git_diff"]],
-      ["correctness-state", "notes", 8, ["pr_review_correctness_state_context"]],
-      ["security-trust", "notes", 12, ["pr_review_security_trust_context"]],
-      ["tests-regressions", "notes", 8, ["pr_review_tests_regressions_context"]],
-      ["ci-operations", "notes", 8, ["pr_review_ci_operations_context"]],
-      ["reconcile-findings", "notes", 12, ["pr_review_reconciliation_context"]],
-      ["synthesize-json", "json", null, ["pr_review_exact_metadata", "pr_review_response_schema"]],
+    const analysisTurns = turns.filter((turn) => turn.name.endsWith("-analysis"));
+    const commitTurns = turns.filter(
+      (turn) => !turn.name.endsWith("-analysis") && turn.name !== "synthesize-json",
+    );
+    const expectedAnalysis = [
+      ["scope-risk-map-analysis", 8, ["pr_review_scope_risk_context", "pr_review_git_diff"]],
+      ["correctness-state-analysis", 8, ["pr_review_correctness_state_context"]],
+      ["security-trust-analysis", 12, ["pr_review_security_trust_context"]],
+      ["tests-regressions-analysis", 8, ["pr_review_tests_regressions_context"]],
+      ["ci-operations-analysis", 8, ["pr_review_ci_operations_context"]],
+      ["reconcile-findings-analysis", 12, ["pr_review_reconciliation_context"]],
     ];
-    const actual = turns.map((turn) => {
+    const actualAnalysis = analysisTurns.map((turn) => {
       const notes = turn.prompt.match(/Reply with at most (\d+)/u);
       return [
         turn.name,
-        notes ? "notes" : "json",
         notes ? Number(notes[1]) : null,
         turn.contextToolResults?.map((result) => result.toolName),
       ];
     });
 
-    expect(actual).toEqual(expected);
+    expect(turns).toHaveLength(13);
+    expect(actualAnalysis).toEqual(expectedAnalysis);
     for (const [index, turn] of turns.entries()) {
       expect(turn.prompt).toContain(`Turn ${index + 1}/${turns.length}`);
     }
-    const workingPrompts = turns.slice(0, -1).map((turn) => turn.prompt);
+    const workingPrompts = analysisTurns.map((turn) => turn.prompt);
     expect(
       workingPrompts.filter((prompt) => prompt.includes("Do not produce final JSON")),
     ).toHaveLength(6);
     expect(workingPrompts.join("\n")).not.toContain("<pr_review_advisor_json>");
-    expect(turns[1]?.prompt).toContain("source-of-truth questions");
-    expect(turns[2]?.prompt).toContain("sandbox escape");
-    expect(turns[3]?.prompt).toContain("every riskPlan invariant");
-    expect(turns[4]?.prompt).toContain("Do not report live CI/check status");
-    expect(turns[5]?.prompt).toContain("Collapse duplicate symptoms into one root-cause finding");
+    expect(analysisTurns[1]?.prompt).toContain("source-of-truth questions");
+    expect(analysisTurns[2]?.prompt).toContain("sandbox escape");
+    expect(analysisTurns[3]?.prompt).toContain("every riskPlan invariant");
+    expect(analysisTurns[4]?.prompt).toContain("Do not report live CI/check status");
+    expect(analysisTurns[5]?.prompt).toContain(
+      "Collapse duplicate symptoms into one root-cause finding",
+    );
     expect(turns.at(-1)?.prompt).toContain("<pr_review_advisor_json>");
     expect(turns.at(-1)?.prompt).toContain("Set the fields exactly as specified");
-    for (const turn of turns.slice(0, -1)) {
+    for (const turn of analysisTurns) {
       const contextTools = turn.contextToolResults?.map((result) => result.toolName) ?? [];
+      const reconciliation = turn.name === "reconcile-findings-analysis";
+      expect(turn.activeToolNames).toEqual(reconciliation ? ["pr_review_read_ledger"] : undefined);
+      expect(turn.requiredToolNames).toEqual([
+        ...contextTools,
+        ...(reconciliation ? ["pr_review_read_ledger"] : []),
+      ]);
+      expect(turn.requireToolsBeforeText).toEqual([
+        ...contextTools,
+        ...(reconciliation ? ["pr_review_read_ledger"] : []),
+      ]);
+      expect(turn.requireAssistantText).toBe(true);
+      expect(turn.atomicTerminalToolName).toBeUndefined();
+      expect(turn.prompt).toContain("Required analysis protocol — perform these steps in order");
+      expect(turn.prompt).toContain("A separate commit turn follows this analysis");
+    }
+    expect(analysisTurns[5]?.prompt).toContain("`pr_review_read_ledger`");
+    for (const turn of commitTurns) {
+      expect(turn.contextToolResults).toBeUndefined();
       expect(turn.activeToolNames).toEqual(["pr_review_update_ledger"]);
-      expect(turn.requiredToolNames).toEqual([...contextTools, "pr_review_update_ledger"]);
-      expect(turn.requireToolsBeforeText).toEqual(contextTools);
-      expect(turn.requireTextBeforeToolNames).toEqual(["pr_review_update_ledger"]);
-      expect(turn.prompt).toContain("Required stage protocol — perform these steps in order");
-      expect(turn.prompt).toContain("stage-analysis bullets before the ledger update");
-      expect(turn.prompt).toContain("emit no prose afterward");
+      expect(turn.requiredToolNames).toEqual(["pr_review_update_ledger"]);
+      expect(turn.atomicTerminalToolName).toBe("pr_review_update_ledger");
+      expect(turn.atomicTerminalRepairPrompt).toContain("atomic finding-ledger commit");
+      expect(turn.prompt).toContain("Emit no prose before or after the tool call");
     }
     expect(turns.at(-1)?.activeToolNames).toEqual(["pr_review_read_ledger"]);
+    expect(turns.at(-1)?.atomicTerminalRepairPrompt).toBeUndefined();
     expect(turns.at(-1)?.requireToolsBeforeText?.at(-1)).toBe("pr_review_read_ledger");
     expect(turns.at(-1)?.prompt).toContain("only `status=open` findings in snapshot order");
 
@@ -433,13 +457,21 @@ describe("PR review advisor", () => {
     expect(turns[0]?.prompt).toContain("Never call `pr_review_update_ledger`");
   });
 
-  it("recognizes follow-up issue relations used by the PR template (#6446)", () => {
+  it("recognizes issue relations used by the PR template and common PR prose (#6446)", () => {
     expect(
       extractIssueRefs(
-        "Follow-up to #6446\nFollow up #21\nfollowup to #22\nFollow-up to #6547",
+        "Follow-up to #6446\nFollow up #21\nfollowup to #22\nFollow-up to #6547\nRefs #6258\nReferences #6194",
         6547,
       ),
-    ).toEqual([21, 22, 6446]);
+    ).toEqual([21, 22, 6194, 6258, 6446]);
+  });
+
+  it.each([
+    ["conjunction", "Follow-up to #6547 and #6446.", [6446, 6547]],
+    ["comma-separated list", "Refs #1, #2 and #3.", [1, 2, 3]],
+    ["Oxford-comma list", "References #4, #5, and #6.", [4, 5, 6]],
+  ] as const)("recognizes every issue in a %s relation (#6446)", (_case, text, expected) => {
+    expect(extractIssueRefs(text, 6566)).toEqual(expected);
   });
 
   it("writes auditable deterministic context artifacts", () => {
@@ -607,35 +639,6 @@ diff --git a/test/example.test.ts b/test/example.test.ts
       }),
     ]);
     expect(signals[0]?.reviewRule).toContain("invalid state");
-  });
-
-  it("adds a finding when source-of-truth review is missing follow-up", () => {
-    const result = normalizeReviewResult(
-      validResult({
-        findings: [],
-        sourceOfTruthReview: [
-          {
-            surface: "Ollama proxy fallback",
-            status: "missing",
-            invalidState: "Provider tools support is unknown.",
-            sourceBoundary: "provider capability registry",
-            whyNotSourceFix: "Not explained.",
-            regressionTest: "Not specified.",
-            removalCondition: "Not specified.",
-            evidence: "Diff adds a fallback branch without explaining the source fix.",
-          },
-        ],
-      }),
-      metadata(),
-    );
-
-    expect(result.findings).toContainEqual(
-      expect.objectContaining({
-        severity: "warning",
-        category: "architecture",
-        title: "Source-of-truth review needed: Ollama proxy fallback",
-      }),
-    );
   });
 
   it("parses previous advisor metadata from trusted hidden sticky-comment fields", () => {
@@ -1003,45 +1006,6 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(canPreserveCanonicalFirstPassAfterRetryFailure(firstPass, false)).toBe(true);
     expect(canPreserveCanonicalFirstPassAfterRetryFailure(firstPass, true)).toBe(false);
     expect(canPreserveCanonicalFirstPassAfterRetryFailure(null, false)).toBe(false);
-  });
-
-  it("preserves generated source-of-truth findings when model findings hit the cap", () => {
-    const findings = Array.from({ length: 50 }, (_, index) => ({
-      severity: "suggestion",
-      category: "correctness",
-      file: "src/lib/example.ts",
-      line: index + 1,
-      title: `Existing finding ${index + 1}`,
-      description: "Existing model finding.",
-      recommendation: "Review manually.",
-      evidence: `existing evidence ${index + 1}`,
-    }));
-    const result = normalizeReviewResult(
-      validResult({
-        findings,
-        sourceOfTruthReview: [
-          {
-            surface: "Ollama proxy fallback",
-            status: "missing",
-            invalidState: "Provider tools support is unknown.",
-            sourceBoundary: "provider capability registry",
-            whyNotSourceFix: "Not explained.",
-            regressionTest: "Not specified.",
-            removalCondition: "Not specified.",
-            evidence: "Diff adds a fallback branch without explaining the source fix.",
-          },
-        ],
-      }),
-      metadata(),
-    );
-
-    expect(result.findings).toHaveLength(50);
-    expect(result.findings[0]).toMatchObject({
-      severity: "warning",
-      category: "architecture",
-      title: "Source-of-truth review needed: Ollama proxy fallback",
-    });
-    expect(result.findings.some((finding) => finding.title === "Existing finding 50")).toBe(false);
   });
 
   it("loads the security review skill from the trusted module checkout, not cwd", () => {
