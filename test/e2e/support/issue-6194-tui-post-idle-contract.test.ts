@@ -37,6 +37,8 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(declaration).toContain('"openshell-network-rule-terminal-approval"');
     expect(liveSource).toContain('artifactName: "issue6194-openshell-network-approval"');
     expect(liveSource).toContain('artifacts.writeJson("issue6194-approval-result.json"');
+    expect(liveSource).toContain('artifactName: "live-issue2603-repro"');
+    expect(liveSource).toContain('artifacts.writeJson("issue2603-trace.json"');
   });
 
   it("builds an expect flow for chat, slash status, return to idle, and clean exit", () => {
@@ -309,6 +311,15 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       const approvalCaptureAssertion = liveSource.indexOf(
         'expect(approvalCapture.exists, "OpenShell approval capture must exist")',
       );
+      const websocketCommand = liveSource.indexOf(
+        "const { repro, attempts } = await runLiveIssue2603ReproWithEventCaptureRetry",
+        approvalCaptureAssertion,
+      );
+      const websocketResult = liveSource.indexOf(
+        'artifacts.writeJson("issue2603-trace.json"',
+        websocketCommand,
+      );
+      const websocketAssertion = liveSource.indexOf("if (repro.error)", websocketResult);
 
       expect(tuiPrecreate).toBeGreaterThanOrEqual(0);
       expect(tuiCommand).toBeGreaterThan(tuiPrecreate);
@@ -318,6 +329,9 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       expect(approvalCommand).toBeGreaterThan(approvalPrecreate);
       expect(approvalResult).toBeGreaterThan(approvalCommand);
       expect(approvalCaptureAssertion).toBeGreaterThan(approvalResult);
+      expect(websocketCommand).toBeGreaterThan(approvalCaptureAssertion);
+      expect(websocketResult).toBeGreaterThan(websocketCommand);
+      expect(websocketAssertion).toBeGreaterThan(websocketResult);
     } finally {
       rmSync(captureDir, { recursive: true, force: true });
     }
