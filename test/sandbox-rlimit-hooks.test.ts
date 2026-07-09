@@ -11,6 +11,12 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
+const DCODE_DOCKERFILE_BASE = path.join(
+  ROOT,
+  "agents",
+  "langchain-deepagents-code",
+  "Dockerfile.base",
+);
 const SANDBOX_RLIMITS = path.join(ROOT, "scripts", "lib", "sandbox-rlimits.sh");
 
 function dockerRunCommandBetween(
@@ -338,6 +344,40 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
         .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
+        .replaceAll("/etc/bash.bashrc", bashrc);
+
+      const result = runLoggedDockerShell(command, tmp);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(rlimitHook, "utf-8")).toContain(expectedRlimitShim);
+      expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
+      expectSystemRlimitHookEnforcesLimits(rlimitHook);
+      expectSystemRlimitHookEnforcesLimits(bashrc);
+      expectSystemRlimitHookBypassesShadowedUlimit(rlimitHook);
+      expectSystemRlimitHookIsSilentWhenVerificationFails(rlimitHook, rlimitLib);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("Deep Agents Code base image enforces connect and login shell nproc <=4096 and nofile <=65536", () => {
+    const dockerfile = fs.readFileSync(DCODE_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rlimit-hooks-"));
+    const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+    const bashrc = path.join(tmp, "bash.bashrc");
+    const expectedRlimitShim = rlimitShim(rlimitLib);
+
+    try {
+      fs.mkdirSync(path.dirname(rlimitHook), { recursive: true });
+      copyRlimitFixture(rlimitLib);
+      fs.writeFileSync(bashrc, "# existing dcode bashrc\n");
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# System-wide RLIMIT hooks for Deep Agents Code",
+        "COPY agents/langchain-deepagents-code/requirements.lock",
+      )
+        .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+        .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
         .replaceAll("/etc/bash.bashrc", bashrc);
 
       const result = runLoggedDockerShell(command, tmp);

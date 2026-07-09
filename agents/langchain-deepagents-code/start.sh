@@ -31,6 +31,21 @@ export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
+# Harden RLIMITs (nproc + nofile) for the long-running Deep Agents Code process
+# tree. Unlike the root-supervised OpenClaw/Hermes entrypoints this runs as the
+# non-root sandbox user, which can still lower the inherited caps. Connect and
+# exec shells are hardened independently by the system-wide profile hooks.
+_NEMOCLAW_SANDBOX_RLIMITS="/usr/local/lib/nemoclaw/sandbox-rlimits.sh"
+if [ ! -f "$_NEMOCLAW_SANDBOX_RLIMITS" ]; then
+  _NEMOCLAW_SANDBOX_RLIMITS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/sandbox-rlimits.sh"
+fi
+if [ -f "$_NEMOCLAW_SANDBOX_RLIMITS" ]; then
+  # shellcheck source=scripts/lib/sandbox-rlimits.sh
+  . "$_NEMOCLAW_SANDBOX_RLIMITS"
+  harden_resource_limits
+fi
+unset _NEMOCLAW_SANDBOX_RLIMITS
+
 # Invalid state: OpenShell's sandbox-create environment contains the host proxy
 # seed, including NO_PROXY=inference.local, so dcode bypasses the managed proxy
 # and attempts direct DNS resolution that is not part of the dcode contract.
