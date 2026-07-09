@@ -209,7 +209,7 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
-  it("builds the NVFP4 serve command from the DGX Spark model-card recipe", () => {
+  it("builds the NVFP4 serve command from the DGX Spark model-card recipe (#6457)", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
     const cmd = buildVllmServeCommand(qwen35b!);
     // The current NVIDIA model card no longer needs Spark-specific env exports.
@@ -243,6 +243,22 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--pipeline-parallel-size 1");
     expect(cmd).toContain("--data-parallel-size 1");
     expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
+  });
+
+  it("does not regress the Spark tool-call parser to qwen3_xml (#6457)", () => {
+    // #6457: served with `qwen3_xml`, this checkpoint's tool-call frames do not
+    // round-trip — vLLM logs `qwen3xml_tool_parser.py:303 Error when parsing XML
+    // elements: not well-formed` and emits truncated/extra-`}` arguments, so
+    // Deep Agents Code (`dcode -n`) tool calls fail with HTTP 400 and exit 1.
+    // Validated end-to-end on real DGX Spark (GB10): pre-fix 3/4 runs hit HTTP
+    // 400, post-fix (qwen3_coder) 5/5 runs completed with 0 parser errors.
+    const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
+    const cmd = buildVllmServeCommand(qwen35b!);
+    expect(cmd).toContain("--enable-auto-tool-choice");
+    expect(cmd).toContain("--tool-call-parser qwen3_coder");
+    expect(cmd).not.toContain("qwen3_xml");
+    // Exactly one tool-call parser is configured for the Spark recipe.
+    expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
   });
 });
 
