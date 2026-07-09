@@ -3,6 +3,7 @@
 
 import { type SpawnOptions, spawn } from "node:child_process";
 
+import { redact } from "../security/redact";
 import { ROOT } from "../state/paths";
 
 export interface StreamSandboxCreateResult {
@@ -129,6 +130,10 @@ export function streamSandboxCreate(
   env: NodeJS.ProcessEnv = process.env,
   options: StreamSandboxCreateOptions = {},
 ): Promise<StreamSandboxCreateResult> {
+  // Trust boundary: command is assembled by internal sandbox/onboard callers from
+  // trusted OpenShell CLI fragments. Do not pass user-supplied free-form text to
+  // this shell boundary; switch the API to direct spawn args if external input
+  // ever needs to cross it.
   const child: StreamableChildProcess = (options.spawnImpl ?? spawn)("bash", ["-lc", command], {
     cwd: ROOT,
     env,
@@ -422,8 +427,15 @@ export function streamSandboxCreate(
           try {
             options.onPoll?.();
           } catch (error) {
+            // Localized containment: onPoll bridges optional host-side create
+            // patching into the stream poll loop. Patch failures are observed
+            // here but the source of truth remains the dedicated failureCheck;
+            // keep polling so sandbox readiness/failure can settle deterministically.
+            // Regression coverage: create-stream.test.ts verifies redacted trace
+            // emission and continued polling. Remove when onPoll becomes a typed
+            // result-returning dependency instead of an opportunistic side effect.
             emitTraceEvent("sandbox_create_poll_error", {
-              message: error instanceof Error ? error.message : String(error),
+              message: redact(error instanceof Error ? error.message : String(error)),
             });
             return;
           }

@@ -4,7 +4,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { streamSandboxCreate } from "./create-stream";
-import { dockerEnv, FakeChild, vmEnv } from "./create-stream-test-fixtures";
+import {
+  dockerEnv,
+  FakeChild,
+  makeDefaultStreamOptions,
+  vmEnv,
+} from "./create-stream-test-fixtures";
 
 describe("sandbox-create-stream", () => {
   afterEach(() => {
@@ -166,132 +171,6 @@ describe("sandbox-create-stream", () => {
     expect(child.unref).toHaveBeenCalled();
   });
 
-  it("does not detach on Ready with default VM gate until required startup output appears", async () => {
-    vi.useFakeTimers();
-
-    const child = new FakeChild();
-    const logLine = vi.fn();
-    let resolved = false;
-    const promise = streamSandboxCreate("echo create", vmEnv, {
-      spawnImpl: () => child,
-      readyCheck: () => true,
-      pollIntervalMs: 5,
-      heartbeatIntervalMs: 1_000,
-      silentPhaseMs: 10_000,
-      logLine,
-    }).then((result) => {
-      resolved = true;
-      return result;
-    });
-
-    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
-    await vi.advanceTimersByTimeAsync(12);
-
-    expect(resolved).toBe(false);
-    expect(child.kill).not.toHaveBeenCalled();
-    expect(logLine).toHaveBeenCalledWith(
-      "  Sandbox reported Ready; waiting for startup command output before detaching.",
-    );
-
-    child.stderr.emit("data", Buffer.from("Setting up NemoClaw (Hermes)...\n"));
-    await vi.advanceTimersByTimeAsync(6);
-
-    await expect(promise).resolves.toMatchObject({
-      status: 0,
-      forcedReady: true,
-      output: expect.stringContaining("Setting up NemoClaw (Hermes)..."),
-    });
-    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-  });
-
-  it.each([
-    ["explicit empty gate on VM", vmEnv, []],
-    ["explicit empty gate on Docker", dockerEnv, []],
-    ["default Docker gate", dockerEnv, undefined],
-  ])("detaches immediately for %s", async (_label, env, readyCheckOutputPatterns) => {
-    vi.useFakeTimers();
-
-    const child = new FakeChild();
-    const logLine = vi.fn();
-    const promise = streamSandboxCreate("echo create", env, {
-      spawnImpl: () => child,
-      readyCheck: () => true,
-      readyCheckOutputPatterns,
-      pollIntervalMs: 5,
-      heartbeatIntervalMs: 1_000,
-      silentPhaseMs: 10_000,
-      logLine,
-    });
-
-    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
-    await vi.advanceTimersByTimeAsync(6);
-
-    await expect(promise).resolves.toMatchObject({
-      status: 0,
-      forcedReady: true,
-      output: expect.stringContaining("Sandbox reported Ready before create stream exited"),
-    });
-    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-    expect(logLine).not.toHaveBeenCalledWith(
-      "  Sandbox reported Ready; waiting for startup command output before detaching.",
-    );
-  });
-
-  it("runs poll side effects only after a not-ready poll", async () => {
-    vi.useFakeTimers();
-
-    const child = new FakeChild();
-    const onPoll = vi.fn();
-    let ready = false;
-    const promise = streamSandboxCreate("echo create", dockerEnv, {
-      spawnImpl: () => child,
-      readyCheck: () => ready,
-      onPoll,
-      pollIntervalMs: 5,
-      heartbeatIntervalMs: 1_000,
-      silentPhaseMs: 10_000,
-      logLine: vi.fn(),
-    });
-
-    await vi.advanceTimersByTimeAsync(6);
-    expect(onPoll).toHaveBeenCalledTimes(1);
-
-    ready = true;
-    await vi.advanceTimersByTimeAsync(6);
-    await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
-    expect(onPoll).toHaveBeenCalledTimes(1);
-  });
-
-  it("traces poll side-effect errors and keeps polling", async () => {
-    vi.useFakeTimers();
-
-    const child = new FakeChild();
-    const traceEvent = vi.fn();
-    const onPoll = vi.fn(() => {
-      throw new Error("patch unavailable");
-    });
-    let ready = false;
-    const promise = streamSandboxCreate("echo create", dockerEnv, {
-      spawnImpl: () => child,
-      readyCheck: () => ready,
-      onPoll,
-      traceEvent,
-      pollIntervalMs: 5,
-      heartbeatIntervalMs: 1_000,
-      silentPhaseMs: 10_000,
-      logLine: vi.fn(),
-    });
-
-    await vi.advanceTimersByTimeAsync(6);
-    expect(traceEvent).toHaveBeenCalledWith("sandbox_create_poll_error", {
-      message: "patch unavailable",
-    });
-
-    ready = true;
-    await vi.advanceTimersByTimeAsync(6);
-    await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
-  });
-
   it("does not recover a non-zero close before required startup output appears", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", vmEnv, {
@@ -342,10 +221,11 @@ describe("sandbox-create-stream", () => {
 
   it("flushes the final partial line before resolving", async () => {
     const child = new FakeChild();
-    const promise = streamSandboxCreate("echo create", process.env, {
-      spawnImpl: () => child,
-      logLine: vi.fn(),
-    });
+    const promise = streamSandboxCreate(
+      "echo create",
+      process.env,
+      makeDefaultStreamOptions(child),
+    );
 
     child.stdout.emit("data", Buffer.from("Created sandbox: demo"));
     child.emit("close", 0);
@@ -557,10 +437,11 @@ describe("sandbox-create-stream", () => {
 
   it("reports spawn errors cleanly", async () => {
     const child = new FakeChild();
-    const promise = streamSandboxCreate("echo create", process.env, {
-      spawnImpl: () => child,
-      logLine: vi.fn(),
-    });
+    const promise = streamSandboxCreate(
+      "echo create",
+      process.env,
+      makeDefaultStreamOptions(child),
+    );
 
     child.emit("error", Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
 

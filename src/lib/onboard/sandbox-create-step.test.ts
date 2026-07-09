@@ -3,6 +3,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { streamSandboxCreate } from "../sandbox/create-stream";
+import {
+  dockerEnv,
+  FakeChild,
+  makePollingOptions,
+  vmEnv,
+} from "../sandbox/create-stream-test-fixtures";
 import {
   runSandboxCreateStep,
   type SandboxCreateStepContext,
@@ -150,7 +157,7 @@ describe("runSandboxCreateStep", () => {
     expect(patch.maybeApplyDuringCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("gates the early-ready escape hatch for terminal agents only", async () => {
+  it("threads the terminal-agent early-ready gate into stream options", async () => {
     const terminalDeps = makeDeps(
       makeLaunch(),
       makePatch(),
@@ -170,5 +177,56 @@ describe("runSandboxCreateStep", () => {
       (nonTerminalDeps.streamCreate as unknown as { mock: { calls: unknown[][] } }).mock
         .calls[0][2],
     ).toMatchObject({ readyCheckOutputPatterns: undefined });
+  });
+
+  it.each([
+    ["terminal VM", true, vmEnv, false],
+    ["terminal Docker", true, dockerEnv, false],
+    ["non-terminal VM", false, vmEnv, true],
+    ["non-terminal Docker", false, dockerEnv, false],
+  ])("applies driver-aware detach behavior for %s", async (_label, isTerminalAgent, env, shouldWaitForStartupOutput) => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const streamOptions = makePollingOptions(child, { logLine });
+    const deps = makeDeps(
+      makeLaunch({ sandboxEnv: env }),
+      makePatch(),
+      { status: 0, output: "" },
+      {
+        streamCreate: ((command, sandboxEnv, options) =>
+          streamSandboxCreate(command, sandboxEnv, {
+            ...options,
+            ...streamOptions,
+          })) as SandboxCreateStepDeps["streamCreate"],
+        isTerminalAgent: vi.fn(() => isTerminalAgent),
+      },
+    );
+    let ready = false;
+    deps.isSandboxReady = vi.fn(() => ready);
+    deps.addTraceEvent = vi.fn();
+
+    const promise = runSandboxCreateStep(makeContext(), deps);
+    child.stdout.emit("data", Buffer.from("Created sandbox: alpha\n"));
+    ready = true;
+    await vi.advanceTimersByTimeAsync(6);
+
+    const waitMessage =
+      "  Sandbox reported Ready; waiting for startup command output before detaching.";
+    if (shouldWaitForStartupOutput) {
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(logLine).toHaveBeenCalledWith(waitMessage);
+      child.stderr.emit("data", Buffer.from("Setting up NemoClaw (Hermes)...\n"));
+      await vi.advanceTimersByTimeAsync(6);
+    } else {
+      expect(logLine).not.toHaveBeenCalledWith(waitMessage);
+    }
+
+    await expect(promise).resolves.toMatchObject({
+      createResult: expect.objectContaining({ status: 0, forcedReady: true }),
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    vi.useRealTimers();
   });
 });

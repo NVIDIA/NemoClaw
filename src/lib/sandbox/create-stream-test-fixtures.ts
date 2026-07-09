@@ -5,7 +5,11 @@ import { EventEmitter } from "node:events";
 
 import { vi } from "vitest";
 
-import type { StreamableChildProcess, StreamableReadable } from "./create-stream";
+import type {
+  StreamSandboxCreateOptions,
+  StreamableChildProcess,
+  StreamableReadable,
+} from "./create-stream";
 
 export class FakeReadable extends EventEmitter implements StreamableReadable {
   destroy(): void {}
@@ -20,3 +24,30 @@ export class FakeChild extends EventEmitter implements StreamableChildProcess {
 
 export const dockerEnv = { ...process.env, OPENSHELL_DRIVERS: "docker" };
 export const vmEnv = { ...process.env, OPENSHELL_DRIVERS: "vm" };
+
+export function makeSpawnImpl(child: StreamableChildProcess = new FakeChild()) {
+  return () => child;
+}
+
+export function makeDefaultStreamOptions(
+  child: StreamableChildProcess = new FakeChild(),
+  overrides: StreamSandboxCreateOptions = {},
+): StreamSandboxCreateOptions {
+  return {
+    spawnImpl: makeSpawnImpl(child),
+    heartbeatIntervalMs: 1_000,
+    silentPhaseMs: 10_000,
+    logLine: vi.fn(),
+    ...overrides,
+  };
+}
+
+export function makePollingOptions(
+  child: StreamableChildProcess = new FakeChild(),
+  overrides: StreamSandboxCreateOptions = {},
+): StreamSandboxCreateOptions {
+  return makeDefaultStreamOptions(child, {
+    pollIntervalMs: 5,
+    ...overrides,
+  });
+}

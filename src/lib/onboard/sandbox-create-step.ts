@@ -103,8 +103,9 @@ export async function runSandboxCreateStep(
       return deps.isSandboxReady(list, context.sandboxName);
     },
     onPoll: () => dockerGpuCreatePatch.maybeApplyDuringCreate(),
-    // Terminal agents do not emit the normal VM startup marker; [] keeps the
-    // output-pattern gate open while undefined preserves driver defaults.
+    // Terminal agents use [] to detach as soon as Ready is observed. Non-terminal
+    // agents pass undefined so streamSandboxCreate applies its driver defaults:
+    // VM waits for the "Setting up NemoClaw" startup marker, Docker detaches on Ready.
     readyCheckOutputPatterns: deps.isTerminalAgent(context.agent) ? [] : undefined,
     failureCheck: dockerGpuCreatePatch.createFailureMessage,
     traceEvent: deps.addTraceEvent,
