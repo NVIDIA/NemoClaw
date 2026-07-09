@@ -60,7 +60,8 @@ Review the [Prerequisites](prerequisites) before you begin.
 ## Use a Coding Agent
 
 Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
-The prompt asks the agent to confirm Deep Agents before it runs commands that create a sandbox or receive credentials.
+The prompt points the agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+It asks the agent to confirm LangChain Deep Agents Code before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
 
 <StarterPromptButton />
 
@@ -72,6 +73,31 @@ Use these details after the first sandbox is running.
 
 <AccordionGroup>
   <Accordion title="Onboarding and runtime behavior">
+
+### Installation and Onboarding Details
+
+The hosted installer follows the last-known-good (`lkg`) release tag by default, so the install command selects the maintained Deep Agents-capable build without a version override.
+If NemoClaw is already installed, run `nemo-deepagents onboard` to start Deep Agents onboarding directly.
+
+On Linux, install Docker, start it, and confirm that the current shell can reach it before onboarding builds the sandbox image.
+The installer can install Docker, start the service, and add your user to the `docker` group.
+If it changes group membership, run the printed `newgrp docker` command before rerunning the installer.
+On macOS, start Docker Desktop or Colima before you run the installer.
+
+You can use the canonical agent ID or a short alias instead of `nemo-deepagents`.
+
+```bash
+nemoclaw onboard --agent langchain-deepagents-code
+nemoclaw onboard --agent dcode
+nemoclaw onboard --agent deepagents
+nemoclaw onboard --agent langchain
+```
+
+The wizard asks for an inference provider, model, required credential, sandbox name, and policy tier before it prints the review summary.
+At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+The default Deep Agents sandbox name is `deepagents-code`.
+Use a distinct name, such as `my-deepagents`, when you run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
+Refer to [Inference Options](../inference/inference-options) for provider-specific prompts.
 
 The image installs hash-locked Deep Agents Code `0.1.34` with NVIDIA provider support.
 After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
