@@ -17,6 +17,28 @@ readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.deepagents/.nemoclaw-observabil
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Raw OpenShell exec processes do not inherit the long-running entrypoint's
+# lowered limits or source shell startup hooks. Apply the same image-baked
+# resource contract before the managed wrapper or diagnostic command runs.
+_NEMOCLAW_SANDBOX_RLIMITS="/usr/local/lib/nemoclaw/sandbox-rlimits.sh"
+if [ ! -f "$_NEMOCLAW_SANDBOX_RLIMITS" ]; then
+  _NEMOCLAW_SANDBOX_RLIMITS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/sandbox-rlimits.sh"
+fi
+if [ ! -f "$_NEMOCLAW_SANDBOX_RLIMITS" ]; then
+  printf '%s\n' '[SECURITY] Required sandbox-rlimits.sh is missing; refusing to launch dcode unhardened.' >&2
+  exit 1
+fi
+# shellcheck source=scripts/lib/sandbox-rlimits.sh
+. "$_NEMOCLAW_SANDBOX_RLIMITS"
+# shellcheck disable=SC2119 # optional $1 selects quiet mode, not launcher args.
+harden_resource_limits
+# shellcheck disable=SC2119 # optional $1 selects quiet mode, not launcher args.
+if ! verify_resource_limits_exact; then
+  printf '%s\n' '[SECURITY] Effective sandbox resource limits do not match policy; refusing to launch dcode unhardened.' >&2
+  exit 1
+fi
+unset _NEMOCLAW_SANDBOX_RLIMITS
+
 # Invalid state: raw OpenShell exec processes do not inherit the sandbox
 # entrypoint's environment, so an opted-in direct dcode exec can lose tracing.
 # Source boundary: start.sh materializes only the credential-free enable bit;

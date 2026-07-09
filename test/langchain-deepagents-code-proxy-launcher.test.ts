@@ -49,7 +49,14 @@ function writeManagedProxyFiles(
 }
 
 function replaceManagedProxyFileConstants(source: string, tempDir: string): string {
+  const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
+  fs.writeFileSync(
+    rlimitLib,
+    "harden_resource_limits() { :; }\nverify_resource_limits_exact() { :; }\n",
+    "utf8",
+  );
   return source
+    .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
       `readonly MANAGED_PROXY_HOST_FILE="${path.join(tempDir, "trusted-proxy-host")}"`,
