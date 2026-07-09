@@ -67,14 +67,14 @@ _OTLP_ENDPOINT_ENV_NAMES = {
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
 }
-# A credential-free OTLP collector URL: scheme://host[:port][/path] from a
-# strict ASCII allowlist. No userinfo, query, fragment, percent-encoding,
-# controls, non-ASCII, or backslashes can appear, so no encoded or structured
-# field can smuggle a credential. The charset matches the Bash wrapper's
-# is_safe_otlp_endpoint_url for cross-runtime parity (#6538 review).
-_SAFE_OTLP_ENDPOINT_URL = re.compile(
-    r"https?://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[A-Za-z0-9._/-]*)?"
-)
+# The only OTLP collector a managed sandbox can reach: the observability egress
+# preset opens exactly this host. Restricting to it (exact match) refuses every
+# other host, userinfo, query, fragment, percent-encoding, control character,
+# non-ASCII byte, and malformed host/port by construction, and keeps trivial
+# parity with the Bash wrapper's is_safe_otlp_endpoint_url (#6538 review).
+_OTLP_MANAGED_ENDPOINT_HOST = "host.openshell.internal"
+_OTLP_ENDPOINT_PORT = re.compile(r"[1-9][0-9]{0,4}")
+_OTLP_ENDPOINT_PATH = re.compile(r"/[A-Za-z0-9._/-]*")
 # Python's \s also includes control separators that ECMAScript excludes, so
 # spell out the canonical whitespace set for cross-runtime parity.
 _ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
@@ -249,17 +249,33 @@ def _is_managed_value(name: str, value: str) -> bool:
 
 
 def _is_safe_otlp_endpoint_url(value: str) -> bool:
-    """Accept ONLY a strict scheme://host[:port][/path] ASCII URL.
+    """Accept ONLY http(s)://host.openshell.internal[:port][/path].
 
-    Rejects userinfo, query, fragment, percent-encoding, C0 controls, DEL,
-    non-ASCII bytes, backslashes, whitespace, and oversized inputs, so no
-    encoded or structured field can smuggle a credential past the
-    _contains_secret_shape scan that runs first. The charset matches the Bash
-    wrapper's is_safe_otlp_endpoint_url for cross-runtime parity (#6538 review).
+    The managed sandbox's observability egress reaches only that host, so an
+    exact-host allowlist refuses every other host, userinfo, query, fragment,
+    percent-encoding, control character, non-ASCII byte, malformed host/port,
+    and oversized input by construction. Mirrors the Bash wrapper's
+    is_safe_otlp_endpoint_url byte-for-byte (#6538 review). The optional path may
+    contain dot segments; that is intentional and safe because the path reaches
+    only the exact managed collector host and cannot traverse to another origin.
     """
     if len(value) > 2048:
         return False
-    return _SAFE_OTLP_ENDPOINT_URL.fullmatch(value) is not None
+    for scheme in ("http://", "https://"):
+        if value.startswith(scheme):
+            rest = value[len(scheme) :]
+            break
+    else:
+        return False
+    authority, sep, path = rest.partition("/")
+    if sep and not _OTLP_ENDPOINT_PATH.fullmatch("/" + path):
+        return False
+    host, colon, port = authority.partition(":")
+    if host != _OTLP_MANAGED_ENDPOINT_HOST:
+        return False
+    if colon and not (_OTLP_ENDPOINT_PORT.fullmatch(port) and int(port) <= 65535):
+        return False
+    return True
 
 
 def _assert_safe_environment() -> None:

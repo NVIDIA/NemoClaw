@@ -372,23 +372,54 @@ is_otlp_endpoint_name() {
   return 1
 }
 
-# Accept ONLY a single credential-free URL of the form scheme://host[:port][/path]
-# built from a strict ASCII allowlist. This rejects userinfo (@), query (?),
-# fragment (#), percent-encoding (%), C0 controls, DEL, non-ASCII bytes,
-# backslashes, whitespace, and every other delimiter, so no encoded or
-# structured field can smuggle a credential past the is_secret_shaped_value scan
-# that runs first. The charset is identical to the managed Python runtime's
-# _SAFE_OTLP_ENDPOINT_URL so the wrapper and runtime classify a value the same
-# way (#6538 review: the prior predicate was fail-open on encoded/query cases and
-# disagreed with Python on VT/FF).
+# The only OTLP collector a managed sandbox can reach: the `--observability`
+# egress preset opens exactly this host, and the runtime hardcodes it. Restricting
+# to it (exact match, so no subdomain/suffix confusion) sidesteps DNS/IPv4/port
+# validation drift between Bash and Python and refuses every unreachable or
+# credential-smuggling host by construction (#6538 review).
+readonly OTLP_MANAGED_ENDPOINT_HOST="host.openshell.internal"
+
+# Accept ONLY http(s)://host.openshell.internal[:port][/path], where port is a
+# 1..65535 decimal with no leading zero and path uses a strict ASCII charset.
+# Everything else — any other host, userinfo (@), query (?), fragment (#),
+# percent-encoding (%), C0 controls, DEL, non-ASCII, backslashes, whitespace,
+# malformed host/port, or oversized input — is refused. The value-shape scan
+# (is_secret_shaped_value) still runs first. LC_ALL=C forces byte-wise ASCII so
+# UTF-8 collation cannot fold non-ASCII into [A-Za-z0-9]; the managed Python
+# runtime's _is_safe_otlp_endpoint_url mirrors this logic byte-for-byte.
+# The optional path may contain dot segments; that is intentional and safe here
+# because the path is delivered verbatim only to the exact managed collector
+# host and cannot traverse to another origin, so there is nothing to smuggle to.
 is_safe_otlp_endpoint_url() {
-  local value="$1"
-  # Force byte-wise ASCII matching: under a UTF-8 locale `[[ =~ ]]` collation can
-  # fold non-ASCII bytes into [A-Za-z0-9] ranges, which would accept hosts the
-  # Python runtime (ASCII code-point matching) rejects. LC_ALL=C keeps parity.
+  local value="$1" rest authority host port
   local LC_ALL=C
   [ "${#value}" -le 2048 ] || return 1
-  [[ "$value" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$ ]]
+  case "$value" in
+    http://*) rest="${value#http://}" ;;
+    https://*) rest="${value#https://}" ;;
+    *) return 1 ;;
+  esac
+  authority="${rest%%/*}"
+  if [ "$authority" != "$rest" ]; then
+    [[ "/${rest#*/}" =~ ^/[A-Za-z0-9._/-]*$ ]] || return 1
+  fi
+  host="${authority%%:*}"
+  [ "$host" = "$OTLP_MANAGED_ENDPOINT_HOST" ] || return 1
+  if [ "$host" != "$authority" ]; then
+    port="${authority#*:}"
+    [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ] || return 1
+  fi
+  return 0
+}
+
+# True if the value carries any C0 control (0x01-0x1F) or DEL (0x7F). NUL cannot
+# reach here — Bash drops it from a variable at read time — so it is out of the
+# claimed boundary by construction. Used to fail closed on dotenv OTLP values
+# before the generic trim/unquote could silently strip a smuggled trailing
+# TAB/VT/FF/CR (#6538 review). LC_ALL=C makes [[:cntrl:]] a byte-wise ASCII class.
+has_control_char() {
+  local LC_ALL=C
+  [[ "$1" =~ [[:cntrl:]] ]]
 }
 
 is_dynamic_dotenv_value() {
@@ -503,7 +534,7 @@ assert_no_secret_env_file() {
   local env_file="$DEEPAGENTS_ENV_FILE"
   [ -r "$env_file" ] || return 0
   local -a lines=()
-  local env_file_content line key value
+  local env_file_content line key value raw_value
   # Scan the whole file before line parsing so raw multiline blocks cannot put
   # their begin and end markers on different physical dotenv lines.
   env_file_content="$(<"$env_file")"
@@ -528,6 +559,10 @@ assert_no_secret_env_file() {
     key="${line%%=*}"
     [ "$key" != "$line" ] || continue
     value="${line#*=}"
+    # Preserve the value as written (still quoted, untrimmed) so the OTLP guard
+    # can fail closed on smuggled control characters before normalization strips
+    # them. The benign CRLF line terminator was already removed above.
+    raw_value="$value"
     key="$(trim_whitespace "$key")"
     value="$(trim_whitespace "$value")"
     case "$value" in
@@ -557,6 +592,11 @@ assert_no_secret_env_file() {
       refuse_secret_env "$env_file" "$key"
     fi
     if is_otlp_endpoint_name "$key"; then
+      # Fail closed on control characters carried in the raw dotenv value before
+      # the trim/unquote above could silently strip a trailing TAB/VT/FF/CR.
+      if has_control_char "$raw_value"; then
+        refuse_secret_env "$env_file" "$key"
+      fi
       if [ -n "$value" ] && ! is_safe_otlp_endpoint_url "$value"; then
         refuse_secret_env "$env_file" "$key"
       fi

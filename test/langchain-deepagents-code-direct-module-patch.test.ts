@@ -355,13 +355,14 @@ check("disabled", False)
     }
   });
 
-  it("allows plain OTLP endpoint URLs in the direct-module runtime (#6466)", () => {
+  it("allows the managed OTLP collector URL in the direct-module runtime (#6466)", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
       for (const value of [
         "http://host.openshell.internal:4318",
-        "https://collector.example/v1/traces",
+        "http://host.openshell.internal:4318/v1/traces",
+        "http://host.openshell.internal",
       ]) {
         const result = spawnSync("python3", ["-m", "deepagents_code"], {
           env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
@@ -378,14 +379,19 @@ check("disabled", False)
     patchFixture(tempDir);
     for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
       for (const value of [
-        "http://host:4318?x=sk%2Dabcdefghijklmnop",
-        "http://host:4318?apikey=opaquevalue12345",
-        "http://user%40host:4318",
-        "http://a;http://b@evil:4318",
-        "http://host:4318#fragment",
+        "https://collector.example.com:4318",
+        "http://evil.host.openshell.internal:4318",
+        "http://host.openshell.internal.evil.com",
+        "http://host.openshell.internal:0",
+        "http://host.openshell.internal:65536",
+        "http://999.999.999.999:4318",
+        "http://host.openshell.internal:4318?x=sk%2Dabcdefghij",
+        "http://host.openshell.internal:4318?apikey=opaquevalue12345",
+        "http://token@host.openshell.internal:4318",
+        "http://host.openshell.internal:4318#fragment",
         "http://héllo:4318",
         "http://",
-        `http://host:4318/p${"a".repeat(3000)}`,
+        `http://host.openshell.internal:4318/p${"a".repeat(3000)}`,
       ]) {
         const result = spawnSync("python3", ["-m", "deepagents_code"], {
           env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
