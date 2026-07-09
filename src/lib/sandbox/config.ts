@@ -404,7 +404,18 @@ function classifyNewKeyGate(inputs: NewKeyGateInputs): NewKeyGate {
  * Parse a config file's raw text according to its format.
  */
 function parseConfig(raw: string, format: string): ConfigObject {
-  const parsed = format === "yaml" ? require("yaml").parse(raw) : JSON.parse(raw);
+  // dcode declares `format: toml` (agents/langchain-deepagents-code/manifest.yaml);
+  // without a TOML branch a config.toml (which opens with a `# Generated ...`
+  // comment) fell through to JSON.parse() and threw. Parse it with smol-toml,
+  // mirroring how yaml is handled. #6548.
+  let parsed: ConfigValue;
+  if (format === "yaml") {
+    parsed = require("yaml").parse(raw);
+  } else if (format === "toml") {
+    parsed = require("smol-toml").parse(raw);
+  } else {
+    parsed = JSON.parse(raw);
+  }
   if (!isConfigObject(parsed)) {
     throw new Error("Config is not an object.");
   }
@@ -418,6 +429,14 @@ function serializeConfig(config: ConfigObject, format: string): string {
   if (format === "yaml") {
     const YAML = require("yaml");
     return YAML.stringify(config);
+  }
+  if (format === "toml") {
+    // Backstop: config set already refuses TOML agents up front (their config
+    // is image-baked; #6321/#6548), so this is unreachable in practice. Refuse
+    // rather than serialize JSON into a `.toml` file, which would corrupt it.
+    throw new Error(
+      "config set is not supported for TOML-format agents (e.g. langchain-deepagents-code).",
+    );
   }
   return JSON.stringify(config, null, 2);
 }
@@ -909,6 +928,16 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   if (opts.restart && target.agentName !== "openclaw" && target.agentName !== "hermes") {
     configFail(
       `  --restart is supported only for OpenClaw and Hermes; '${target.agentName}' config was not changed.`,
+    );
+  }
+  // dcode bakes its config into the sandbox image at build time, so — unlike
+  // OpenClaw/Hermes — it has no host-side config-mutation path (the same reason
+  // inference set refuses it, #6321). config get now reads TOML, but refuse
+  // config set cleanly and point at the only way to change it: re-onboard. #6548
+  if (target.format === "toml") {
+    const { CLI_NAME } = require("../cli/branding");
+    configFail(
+      `  config set is not available for '${target.agentName}': its config is baked into the sandbox image at build time. To change it, re-onboard with the new selection (e.g. ${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh).`,
     );
   }
   if (target.agentName === "openclaw" || target.agentName === "hermes") {

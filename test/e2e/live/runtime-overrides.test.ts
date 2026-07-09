@@ -42,6 +42,16 @@ type OpenClawConfig = {
   [key: string]: unknown;
 };
 
+const MANAGED_INFERENCE_SAFEGUARD_COMPACTION = {
+  mode: "safeguard",
+  timeoutSeconds: 120,
+  maxHistoryShare: 0.35,
+  recentTurnsPreserve: 1,
+  qualityGuard: { enabled: true, maxRetries: 0 },
+  notifyUser: true,
+  truncateAfterCompaction: true,
+};
+
 function commandResult(result: ReturnType<typeof spawnSync>): CommandResult {
   return {
     status: result.status,
@@ -197,6 +207,32 @@ function runConfigHashCheck(
   return result.stdout.trim();
 }
 
+function assertManagedInferenceCompactionRuntime(dockerLog: string[], image: string): void {
+  const result = runContainer(
+    dockerLog,
+    image,
+    "managed inference compaction runtime validation",
+    {},
+    String.raw`set -eu
+validation="$(openclaw config validate --json)"
+compaction="$(openclaw config get agents.defaults.compaction --json)"
+printf '{"validation":%s,"compaction":%s}\n' "$validation" "$compaction" >&3
+sleep 0.1`,
+  );
+  expect(result.status, spawnResultText(result)).toBe(0);
+
+  let proof: { validation?: { valid?: boolean }; compaction?: unknown };
+  try {
+    proof = JSON.parse(result.stdout.trim()) as typeof proof;
+  } catch (error) {
+    throw new Error(
+      `managed inference compaction proof did not emit valid JSON: ${(error as Error).message}\n${result.stdout}`,
+    );
+  }
+  expect(proof.validation?.valid).toBe(true);
+  expect(proof.compaction).toEqual(MANAGED_INFERENCE_SAFEGUARD_COMPACTION);
+}
+
 function runOverrideStderr(
   dockerLog: string[],
   image: string,
@@ -248,6 +284,7 @@ test(
         image,
         contract: [
           "baseline config hash validates",
+          "pinned OpenClaw accepts and loads managed inference safeguard compaction",
           "model/API/context/max-token/reasoning overrides patch openclaw.json",
           "CORS origin override extends gateway.controlUi.allowedOrigins",
           "combined overrides apply atomically",
@@ -277,6 +314,7 @@ test(
       const baselineContextWindow = baselineFirstModel.contextWindow;
       const baselineOriginCount = allowedOrigins(baseline).length;
 
+      assertManagedInferenceCompactionRuntime(dockerLog, image);
       expect(runConfigHashCheck(dockerLog, image, "baseline")).toBe("OK");
 
       const overrideModel = "anthropic/claude-sonnet-4-6";

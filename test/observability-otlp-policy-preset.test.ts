@@ -45,6 +45,7 @@ describe("backend-neutral OTLP observability policy preset", () => {
       "claude-code",
       "discord",
       "github",
+      "gmail",
       "huggingface",
       "jira",
       "local-inference",

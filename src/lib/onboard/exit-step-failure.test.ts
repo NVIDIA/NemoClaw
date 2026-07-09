@@ -27,17 +27,21 @@ const restoreOriginalHome =
       };
 let tmpDir: string;
 let session: typeof sessionModule;
+let machineEvents: typeof import("./machine/events");
 
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exit-step-failure-"));
   process.env.HOME = tmpDir;
   vi.resetModules();
   session = await import("../state/onboard-session");
+  machineEvents = await import("./machine/events");
+  machineEvents.clearOnboardMachineEventListeners();
   session.clearSession();
   resetOnboardResumeHintForTests();
 });
 
 afterEach(() => {
+  machineEvents.clearOnboardMachineEventListeners();
   session.clearSession();
   fs.rmSync(tmpDir, { recursive: true, force: true });
   restoreOriginalHome();
@@ -119,15 +123,34 @@ describe("terminal step failure helper", () => {
   });
 
   it("leaves sessions without a started step untouched", () => {
-    const markStepFailed = vi.fn(() => session.createSession());
+    const finalizeIncompleteOnboardStep = vi.fn(() => session.createSession());
 
     expect(
       markLastStartedStepFailed(
-        { loadSession: () => session.createSession(), markStepFailed },
+        { loadSession: () => session.createSession(), finalizeIncompleteOnboardStep },
         "boom",
       ),
     ).toBeNull();
-    expect(markStepFailed).not.toHaveBeenCalled();
+    expect(finalizeIncompleteOnboardStep).not.toHaveBeenCalled();
+  });
+
+  it("records exactly one failed transition even if the exit backstop fires twice", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "inference" }));
+    const emitted: string[] = [];
+    machineEvents.addOnboardMachineEventListener((event) => emitted.push(event.type));
+
+    markLastStartedStepFailed(session, "Onboarding exited before the step completed.");
+    const afterFirst = requireLoadedSession();
+    const revisionAfterFirst = afterFirst.machine.revision;
+    expect(afterFirst.machine.state).toBe("failed");
+
+    // A second backstop invocation must not re-transition an already-terminal
+    // machine or bump the revision again.
+    markLastStartedStepFailed(session, "Onboarding exited before the step completed.");
+    const afterSecond = requireLoadedSession();
+    expect(afterSecond.machine.state).toBe("failed");
+    expect(afterSecond.machine.revision).toBe(revisionAfterFirst);
+    expect(emitted).toEqual(["state.failed", "onboard.failed"]);
   });
 });
 
@@ -226,7 +249,7 @@ const resumableSession = { lastStepStarted: "inference" };
 registerIncompleteOnboardExitFailureHandler(
   {
     loadSession: () => resumableSession,
-    markStepFailed: () => resumableSession,
+    finalizeIncompleteOnboardStep: () => resumableSession,
   },
   () => false,
   "Onboarding exited before the step completed.",

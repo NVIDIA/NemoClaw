@@ -23,9 +23,11 @@ export function isCredentialShapedName(name: string): boolean {
 // instead of maintaining their own partial assignment regexes.
 export const SUPPORTED_CREDENTIAL_ENV_NAMES: ReadonlySet<string> = new Set([
   "NGC_API_KEY",
+  "NEMOCLAW_PROVIDER_KEY",
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
   "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
   "GOOGLE_API_KEY",

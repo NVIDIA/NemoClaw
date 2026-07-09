@@ -110,7 +110,7 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Choose inference and integrations">
-    The wizard supports NVIDIA Endpoints, OpenAI, OpenAI-compatible endpoints, Anthropic, Anthropic-compatible endpoints, Google Gemini, local Ollama, and configured model-router profiles.
+    The wizard supports NVIDIA Endpoints, OpenRouter, OpenAI, OpenAI-compatible endpoints, Anthropic, Anthropic-compatible endpoints, Google Gemini, local Ollama, and configured model-router profiles.
     Export the relevant API key before starting the installer when you do not want the wizard to prompt for it.
     Refer to [Inference Options](../inference/inference-options) for provider requirements, model choices, and local-server setup.
 
@@ -213,6 +213,7 @@ Use these details when your first-run path needs more control.
 
     If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell, requires a fresh backup of every registered sandbox before it changes the gateway, and runs `nemoclaw upgrade-sandboxes --auto` after the host upgrade.
     Successful recovery rebuilds stale sandboxes, restores validated backups for registered sandboxes that are not Ready, and skips generic onboarding rather than creating an additional sandbox or requesting a new provider credential.
+    If the recovery pass exits 0 but a recorded sandbox is not found on its own recorded gateway, such as after `nemoclaw uninstall` removed the gateway and Docker image while preserving `sandboxes.json`, the installer finishes with `Installation completed with warnings` and remediation guidance instead of claiming the sandbox was recovered.
     For pre-fingerprint OpenClaw and Hermes registry entries, confirm that every listed sandbox used a NemoClaw-managed image before recovery onto the current managed image.
     In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of printed names only after you verify every named sandbox used a managed image.
     Legacy managed-image confirmation never overrides recorded custom-image evidence.
@@ -223,13 +224,14 @@ Use these details when your first-run path needs more control.
 
     ```text
       1) NVIDIA Endpoints
-      2) OpenAI
-      3) Other OpenAI-compatible endpoint
-      4) Anthropic
-      5) Other Anthropic-compatible endpoint
-      6) Google Gemini
-      7) Local Ollama (localhost:11434)
-      8) Model Router (experimental)
+      2) OpenRouter
+      3) OpenAI
+      4) Other OpenAI-compatible endpoint
+      5) Anthropic
+      6) Other Anthropic-compatible endpoint
+      7) Google Gemini
+      8) Local Ollama (localhost:11434)
+      9) Model Router (experimental)
       Choose [1]:
     ```
 
@@ -245,8 +247,9 @@ Use these details when your first-run path needs more control.
     | Option | Use when | Credential variable |
     |---|---|---|
     | NVIDIA Endpoints | You want hosted models from `build.nvidia.com`, including hosted Nemotron models. | `NVIDIA_INFERENCE_API_KEY` |
+    | OpenRouter | You want OpenRouter as a managed hosted OpenAI-compatible provider. | `OPENROUTER_API_KEY` |
     | OpenAI | You want the OpenAI API at `https://api.openai.com/v1`. | `OPENAI_API_KEY` |
-    | Other OpenAI-compatible endpoint | You have OpenRouter, LocalAI, llama.cpp, vLLM, NIM, SGLang, an enterprise gateway, or another `/v1/chat/completions` endpoint. | `COMPATIBLE_API_KEY` |
+    | Other OpenAI-compatible endpoint | You have LocalAI, llama.cpp, vLLM, NIM, SGLang, an enterprise gateway, or another `/v1/chat/completions` endpoint. | `COMPATIBLE_API_KEY` |
     | Anthropic | You want the Anthropic Messages API. | `ANTHROPIC_API_KEY` |
     | Other Anthropic-compatible endpoint | You have a Claude proxy, Bedrock-compatible gateway, or a self-hosted `/v1/messages` endpoint. | `COMPATIBLE_ANTHROPIC_API_KEY` |
     | Google Gemini | You want Google's OpenAI-compatible Gemini endpoint. | `GEMINI_API_KEY` |
