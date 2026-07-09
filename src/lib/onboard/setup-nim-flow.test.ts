@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../agent/defs";
+import { OPENROUTER_FEATURED_MODELS_URL } from "../inference/openrouter";
 import type { VllmProfile } from "../inference/vllm";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import type { InferenceProviderHostState } from "./provider-host-state";
@@ -21,6 +22,12 @@ const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
     providerName: "openai-api",
     endpointUrl: "https://api.openai.com/v1",
     credentialEnv: "OPENAI_API_KEY",
+  },
+  openrouter: {
+    label: "OpenRouter",
+    providerName: "openrouter-api",
+    endpointUrl: "https://openrouter.ai/api/v1",
+    credentialEnv: "OPENROUTER_API_KEY",
   },
   custom: {
     label: "Other OpenAI-compatible endpoint",
@@ -163,6 +170,14 @@ describe("createSetupNim", () => {
 
     expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
       defaultModel: ultra,
+      writeLine: log,
+    });
+    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
+      catalogLabel: "OpenRouter's featured model catalog",
+      catalogUrl: OPENROUTER_FEATURED_MODELS_URL,
+      defaultModel: ultra,
+      loadingMessage: "  Loading OpenRouter's featured model catalog...",
+      retiredModelIds: [],
       writeLine: log,
     });
   });

@@ -7,6 +7,7 @@ import { buildInferenceProviderMenu } from "./provider-menu";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: { label: "NVIDIA Endpoints" },
+  openrouter: { label: "OpenRouter" },
   openai: { label: "OpenAI" },
   custom: { label: "Other OpenAI-compatible endpoint" },
   anthropic: { label: "Anthropic" },
@@ -47,6 +48,7 @@ describe("buildInferenceProviderMenu", () => {
     expect(result.hermesProviderAvailable).toBe(false);
     expect(result.options.map((option) => option.key)).toEqual([
       "build",
+      "openrouter",
       "openai",
       "custom",
       "anthropic",
@@ -72,6 +74,7 @@ describe("buildInferenceProviderMenu", () => {
     expect(result.hermesProviderAvailable).toBe(true);
     expect(result.options.map((option) => option.key)).toEqual([
       "build",
+      "openrouter",
       "openai",
       "custom",
       "anthropic",

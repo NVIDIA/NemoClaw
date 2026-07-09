@@ -147,6 +147,66 @@ Provider-composed `_provider_*` entries are excluded because OpenShell reserves 
 Existing presets and the baseline remain in place.
 The preset file under `presets/` also persists across sandbox recreations.
 
+### Custom Recipe: URL-Based MCP Server
+
+Adding a Streamable HTTP MCP server URL to OpenClaw (for example `https://mcp.example.com/mcp`) can result in the sandbox proxy denying the CONNECT tunnel with `HTTP 403 Forbidden` because the target host is not in the default allowlist.
+The symptom in `~/.openclaw/logs` or in the MCP tool output is:
+
+```text
+CONNECT tunnel failed, response 403
+```
+
+This recipe applies only when URL-based MCP traffic uses the sandbox proxy and fails with that CONNECT 403 response.
+An OAuth MCP login failure such as `getaddrinfo EAI_AGAIN`, or any direct-DNS path that bypasses the proxy, is a separate transport problem and is not fixed by widening this allowlist.
+
+Add a preset with the MCP host, the exact Streamable HTTP MCP route, the HTTP methods that route uses (`GET` and `POST`), and only the process binary that opens the connection:
+
+```yaml
+preset:
+  name: my-mcp
+  description: "Custom URL-based MCP server"
+network_policies:
+  my_mcp:
+    name: my_mcp
+    endpoints:
+      - host: mcp.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/mcp" }
+          - allow: { method: POST, path: "/mcp" }
+    binaries:
+      - { path: /usr/local/bin/node }
+```
+
+Save it under `nemoclaw-blueprint/policies/presets/my-mcp.yaml` and apply it to the running sandbox:
+
+```bash
+$$nemoclaw my-assistant policy-add --from-file nemoclaw-blueprint/policies/presets/my-mcp.yaml
+```
+
+NemoClaw prompts for confirmation because the preset targets a custom host that is not part of the vetted allowlist, then reports `Widening sandbox egress — adding: mcp.example.com`.
+For a publicly routed host that passes the separate SSRF checks, re-invoke the MCP tool and confirm that the CONNECT tunnel to `mcp.example.com:443` succeeds.
+
+<Note>
+The `binaries` list must include only the process that opens the connection.
+The example assumes the Node runtime opens the MCP connection, so it lists `/usr/local/bin/node`; use `/usr/local/bin/openclaw` instead if that executable is the connection opener in your installation.
+MCP client tools invoked directly from a shell need their own binary path, such as `/usr/bin/curl`.
+Confirm the paths inside the sandbox with `$$nemoclaw my-assistant exec -- which node` and `$$nemoclaw my-assistant exec -- which openclaw`, since the sandbox image and install method can change these locations.
+A preset that lists only the endpoint but no matching binary widens the allowlist but no process is authorized to use it, so requests still fail.
+OpenShell uses `protocol: rest` for this HTTP-based policy even though Streamable HTTP MCP carries JSON-RPC rather than REST semantics.
+</Note>
+
+<Warning>
+Keep each rule scoped to the exact MCP endpoint, such as `/mcp`; do not replace it with `/**` unless the server contract genuinely requires every path.
+An allowlist entry does not disable OpenShell's SSRF protection or create host routes.
+If the MCP hostname resolves to a private, loopback, or link-local address, adding the policy alone does not make it reachable; establish the required host or VPN route and follow your deployment's approved private-destination configuration.
+Refer to [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service) for routing and private-destination diagnostics.
+`preset.name` must be a lowercase RFC 1123 label (letters, digits, and hyphens; no underscores).
+The `network_policies` key can use underscores because that field feeds the policy schema rather than the preset filename.
+</Warning>
+
 ### Export, Edit, and Set the Base Policy
 
 Use this path only when you cannot add a file under the NemoClaw source tree.

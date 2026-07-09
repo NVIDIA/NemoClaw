@@ -90,7 +90,13 @@ In both Docker-driver modes, the sandbox is a Docker container, not a Kubernetes
 The in-container `/tmp/nemoclaw-gateway-local` marker is written only by entrypoint paths that actually launch an in-container gateway.
 Terminal runtimes may not write it.
 NemoClaw does not treat sandbox environment hints such as `OPENSHELL_DRIVERS` as authoritative for gateway ownership.
-Legacy non-Docker-driver installs still use the k3s-based gateway path; the diagram below shows the standard Docker-driver topology.
+Legacy non-Docker-driver installs still use the k3s-based gateway path.
+In that topology, the `openshell-cluster-nemoclaw` container runs an embedded k3s cluster that includes the OpenShell gateway, an `agent-sandbox-controller` workload, and a Kubernetes custom resource definition named `sandboxes.agents.x-k8s.io`.
+Each NemoClaw sandbox appears as a `Sandbox` custom resource in the `openshell` namespace, and the controller reconciles that resource into the corresponding agent pod.
+For example, `kubectl get sandboxes.agents.x-k8s.io -n openshell` inside the legacy cluster container lists the sandbox resources, and `kubectl describe pod -n openshell <sandbox-pod>` reports `Controlled By: Sandbox/<name>`.
+That Kubernetes resource path is a legacy implementation detail of the non-Docker-driver gateway, and it is not present in the default Docker-driver topology.
+
+The diagram below shows the standard Docker-driver topology.
 
 ```mermaid
 graph TB

@@ -512,6 +512,20 @@ If the container runtime restricts `ulimit` modification, the entrypoint logs a 
 
 <AgentOnly variant="deepagents">
 
+### Deep Agents Resource Limit Enforcement
+
+Managed Deep Agents uses stricter enforcement than the best-effort entrypoint behavior described above.
+The managed Deep Agents image applies the 512-process and 65,536-file-descriptor caps to the long-running sandbox entrypoint tree and to direct managed `dcode` launches.
+It also applies and verifies the caps in Bash login and interactive shells because fresh `openshell sandbox exec` and connect shells do not inherit the dcode entrypoint child's lowered limits.
+For managed Deep Agents, successful verification requires both the soft and hard limits to equal 512 processes and 65,536 file descriptors; a lower inherited file-descriptor default such as 1,024 is not accepted as successful hardening.
+
+If the image-baked resource-limit helper is missing or the effective limits do not match policy after hardening, the Deep Agents entrypoint and direct managed launcher refuse to start.
+The entrypoint and launcher complete this verification before proxy setup or user-supplied commands run.
+A login or interactive shell remains available when the helper is missing or its limits cannot be verified, but it prints `[SECURITY] Sandbox resource limits were NOT hardened for this shell.`
+OpenShell creates those fresh exec and connect processes outside the entrypoint tree, so an image layer cannot make them inherit the entrypoint child's lowered limits.
+The shell compatibility exception can be removed when OpenShell guarantees that every exec and connect process starts under enforced caps or exposes a fail-closed resource-limit contract.
+Set hard `nproc` and `nofile` limits at the container runtime when you require fail-closed enforcement.
+
 ### Deep Agents Thread Auto-Approval Capability
 
 Managed Deep Agents sandboxes separate the host-configured capability from the active approval state of each TUI thread.

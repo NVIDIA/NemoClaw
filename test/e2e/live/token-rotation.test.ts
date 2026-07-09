@@ -11,7 +11,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
-// Keep this free-standing and direct: the the contract is the real CLI +
+// Keep this free-standing and direct: the contract is the real CLI +
 // OpenShell/provider boundary for messaging credential reuse/rotation, not the
 // typed registry target steady-state probe path. The test drives the real
 // `nemoclaw onboard` CLI with fake provider tokens, preserving the provider
