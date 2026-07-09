@@ -355,7 +355,10 @@ export function streamSandboxCreate(
           let ready = false;
           try {
             ready = !!options.readyCheck?.();
-          } catch {
+          } catch (error) {
+            emitTraceEvent("sandbox_create_ready_check_error", {
+              message: redact(error instanceof Error ? error.message : String(error)),
+            });
             return;
           }
           if (ready) {

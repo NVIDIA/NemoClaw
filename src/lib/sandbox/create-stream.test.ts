@@ -171,6 +171,41 @@ describe("sandbox-create-stream", () => {
     expect(child.unref).toHaveBeenCalled();
   });
 
+  it("traces ready-check errors and keeps polling without forcing ready", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const traceEvent = vi.fn();
+    const readyCheck = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("Authorization: Bearer secret-token");
+      })
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
+      spawnImpl: () => child,
+      readyCheck,
+      pollIntervalMs: 5,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      traceEvent,
+      logLine: vi.fn(),
+    });
+
+    child.stdout.emit("data", Buffer.from("  Building image sandbox\n"));
+    await vi.advanceTimersByTimeAsync(6);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(traceEvent).toHaveBeenCalledWith("sandbox_create_ready_check_error", {
+      message: "Authorization: Bearer secr********",
+    });
+
+    await vi.advanceTimersByTimeAsync(12);
+
+    await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("does not recover a non-zero close before required startup output appears", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", vmEnv, {
