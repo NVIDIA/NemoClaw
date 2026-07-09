@@ -86,12 +86,11 @@ describe("rebuild transaction boundary", () => {
     const transition = interrupted.transactionStore.transition.bind(interrupted.transactionStore);
     const interruptedTransition = vi
       .spyOn(interrupted.transactionStore, "transition")
-      .mockImplementation(async (sandboxName, revision, phase, receipts) => {
-        if (phase === "replacement_created") {
-          throw new Error("simulated process interruption before replacement receipt");
-        }
-        return transition(sandboxName, revision, phase, receipts);
-      });
+      .mockImplementation((sandboxName, revision, phase, receipts) =>
+        phase === "replacement_created"
+          ? Promise.reject(new Error("simulated process interruption before replacement receipt"))
+          : transition(sandboxName, revision, phase, receipts),
+      );
     await expect(
       interrupted.rebuildSandbox("alpha", ["--yes"], {
         throwOnError: true,
