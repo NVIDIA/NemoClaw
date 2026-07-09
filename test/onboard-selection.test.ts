@@ -3037,7 +3037,7 @@ const { setupNim } = require(${onboardPath});
         "https://ollama.public.test:11434/v1",
         "my-model",
         "ollama-key",
-        EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS,
+        { ...EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS, calibrateTimeouts: true },
       );
     } finally {
       restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);
@@ -3094,7 +3094,7 @@ const { setupNim } = require(${onboardPath});
         "https://openai-proxy.example.com/v1",
         "gpt-4o",
         "sk-test",
-        EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS,
+        { ...EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS, calibrateTimeouts: true },
       );
     } finally {
       restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);

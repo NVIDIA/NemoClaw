@@ -148,7 +148,10 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       ) {
         errors.push("report-to-pr must hold only pull-requests: write");
       }
-      if (job.if !== "${{ always() && github.event_name == 'workflow_dispatch' }}") {
+      if (
+        job.if !==
+        "${{ always() && github.event_name == 'workflow_dispatch' && !inputs.risk_shadow }}"
+      ) {
         errors.push("report-to-pr must run only for manual workflow dispatches");
       }
       const report = findStep(job, "Post E2E target results to PR");
@@ -212,7 +215,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   const permissions = permissionMap(job.permissions);
   if (
     job.if !==
-    "${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}"
+    "${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.risk_shadow)) }}"
   ) {
     errors.push("scorecard must run after scheduled and manual E2E executions");
   }

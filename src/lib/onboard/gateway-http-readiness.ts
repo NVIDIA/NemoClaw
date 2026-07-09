@@ -10,9 +10,9 @@
  * (regression of #2020) for the original motivation.
  */
 
+import fs from "node:fs";
 import http from "node:http";
 import http2 from "node:http2";
-import fs from "node:fs";
 import path from "node:path";
 
 import { getGatewayHttpEndpoint, getGatewayHttpsEndpoint } from "../core/gateway-address";
@@ -76,9 +76,10 @@ export function isGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
+  signal?: AbortSignal,
 ): Promise<boolean> {
   return withTraceSpan("nemoclaw.gateway.http_probe", { timeout_ms: timeoutMs, url, method }, () =>
-    isGatewayHttpReadyImpl(timeoutMs, url, method),
+    isGatewayHttpReadyImpl(timeoutMs, url, method, signal),
   );
 }
 
@@ -86,6 +87,7 @@ function isGatewayHttpReadyImpl(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -98,13 +100,19 @@ function isGatewayHttpReadyImpl(
       settled = true;
       resolve(ready);
     };
-    const request = http
-      .request(url, { method }, (res) => {
-        res.resume();
-        const code = res.statusCode || 0;
-        settle(GATEWAY_HTTP_ALIVE_CODES.has(code));
-      })
-      .on("error", () => settle(false));
+    let request: http.ClientRequest;
+    try {
+      request = http
+        .request(url, { method, signal }, (res) => {
+          res.resume();
+          const code = res.statusCode || 0;
+          settle(GATEWAY_HTTP_ALIVE_CODES.has(code));
+        })
+        .on("error", () => settle(false));
+    } catch {
+      settle(false);
+      return;
+    }
     request.setTimeout(effectiveTimeout, () => {
       request.destroy();
       settle(false);
