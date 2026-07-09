@@ -18,11 +18,8 @@ function writeTempAgentManifest(name: string, contents: string): void {
 }
 
 afterEach(() => {
-  while (tempAgentDirs.length > 0) {
-    const agentDir = tempAgentDirs.pop();
-    if (agentDir) {
-      fs.rmSync(agentDir, { recursive: true, force: true });
-    }
+  for (const agentDir of tempAgentDirs.splice(0)) {
+    fs.rmSync(agentDir, { recursive: true, force: true });
   }
 });
 
