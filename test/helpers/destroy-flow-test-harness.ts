@@ -103,6 +103,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const resolve = requireDist("../../adapters/openshell/resolve.js");
   const runtime = requireDist("../../adapters/openshell/runtime.js");
   const destroyGateway = requireDist("./destroy-gateway.js");
+  const credentialStore = requireDist("../../credentials/store.js");
   const sandboxProviderCleanup = requireDist("../../onboard/sandbox-provider-cleanup.js");
   const nim = requireDist("../../inference/nim.js");
   const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
@@ -115,6 +116,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const mcpBridge = requireDist("./mcp-bridge.js");
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
+  vi.spyOn(credentialStore, "prompt").mockResolvedValue("yes");
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: true,
     sessions: [{ pid: 1 }],

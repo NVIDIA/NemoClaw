@@ -37,6 +37,7 @@ describe("destroySandbox flow", () => {
       ? delete process.env.OPENSHELL_GATEWAY
       : (process.env.OPENSHELL_GATEWAY = originalGatewayEnv);
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     resetDestroyModuleCache();
   });
 
@@ -59,6 +60,31 @@ describe("destroySandbox flow", () => {
     const harness = createDestroyHarness();
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+    );
+  });
+
+  it("cleans the final gateway for forced macOS destroys (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const harness = createDestroyHarness();
+
+    await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+    );
+  });
+
+  it("cleans the final gateway for environment-driven non-interactive macOS destroys (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
+    const harness = createDestroyHarness();
+
+    await expect(harness.destroySandbox("alpha", {})).resolves.toBeUndefined();
 
     expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
       "nemoclaw-19080",
