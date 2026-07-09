@@ -682,6 +682,14 @@ test(
       const redactedRuleCapture = secrets.redact(ruleCapture.contents, [apiKey]);
       const redactedPolicyCapture = secrets.redact(policyCapture.contents, [apiKey]);
       const plainApprovalCapture = stripTerminalControl(redactedApprovalCapture);
+      const approvedPolicyVersion =
+        redactedPolicyCapture.match(/ISSUE6194_APPROVED_POLICY_VERSION=([0-9]+)/u)?.[1] ?? null;
+      const activePolicyVersion =
+        redactedPolicyCapture.match(/ISSUE6194_ACTIVE_POLICY_VERSION=([0-9]+)/u)?.[1] ?? null;
+      const observedPolicyStatus =
+        redactedPolicyCapture.match(/ISSUE6194_POLICY_STATUS=([a-z]+)/u)?.[1] ?? null;
+      const policyStatusAttempts =
+        redactedPolicyCapture.match(/ISSUE6194_POLICY_STATUS_ATTEMPT=/gu)?.length ?? 0;
       const approvalCombined = `${resultText(approval)}\n${plainApprovalCapture}\n${redactedTriggerCapture}\n${redactedRuleCapture}\n${redactedPolicyCapture}`;
       await artifacts.writeText(
         "issue6194-openshell-approval-capture.log",
@@ -704,6 +712,13 @@ test(
         ruleCaptureNonEmpty: redactedRuleCapture.length > 0,
         policyCaptureExists: policyCapture.exists,
         policyCaptureNonEmpty: redactedPolicyCapture.length > 0,
+        approvedPolicyVersion,
+        activePolicyVersion,
+        observedPolicyStatus,
+        policyStatusAttempts,
+        policyStatusLoaded: redactedPolicyCapture.includes("ISSUE6194_POLICY_STATUS=loaded"),
+        policyVersionActive:
+          approvedPolicyVersion !== null && approvedPolicyVersion === activePolicyVersion,
         postApprovalEndpoint: ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
         postApprovalExpectedHttpStatus: 401,
         postApprovalHttpStatus401: redactedPolicyCapture.includes(
@@ -717,6 +732,7 @@ test(
         endpointRendered: approvalCombined.includes("ISSUE6194_MARK network_rule_endpoint"),
         detailBinary: approvalCombined.includes("ISSUE6194_MARK network_rule_detail_binary"),
         approvalProcessed: approvalCombined.includes("ISSUE6194_MARK network_approval_processed"),
+        policyLoaded: approvalCombined.includes("ISSUE6194_MARK network_policy_loaded"),
         policyUpdated: approvalCombined.includes("ISSUE6194_MARK network_policy_updated"),
         cleanExit: approvalCombined.includes("ISSUE6194_MARK openshell_clean_exit"),
       });
@@ -746,6 +762,22 @@ test(
       expect(approvalCombined, "OpenShell approval input must be processed").toContain(
         "ISSUE6194_MARK network_approval_processed",
       );
+      expect(
+        approvedPolicyVersion,
+        "approval acknowledgement must identify its assigned policy revision",
+      ).not.toBeNull();
+      expect(
+        redactedPolicyCapture,
+        "acknowledged policy revision must reach loaded status before the retry",
+      ).toContain("ISSUE6194_POLICY_STATUS=loaded");
+      expect(
+        activePolicyVersion,
+        "loaded active policy revision must match the approval acknowledgement",
+      ).toBe(approvedPolicyVersion);
+      expect(
+        approvalCombined,
+        "post-approval probe must wait for the acknowledged policy revision to become active",
+      ).toContain("ISSUE6194_MARK network_policy_loaded");
       expect(
         redactedPolicyCapture,
         "approved running policy must allow the exact post-approval Atlassian probe",

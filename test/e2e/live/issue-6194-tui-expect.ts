@@ -240,20 +240,68 @@ expect_or_exit $termSpawn {Binary:[^\\r\\n]*/usr/bin/curl} network_rule_detail_b
 expect_exact_or_exit $termSpawn $networkHost network_rule_detail_endpoint 82 83
 expect_or_exit $termSpawn {\\[a\\][^\\r\\n]*Approve} network_rule_approve_action 84 85
 send -i $termSpawn -- "a"
-expect_or_exit $termSpawn {Approved[^\\r\\n]*'[^']+'[^\\r\\n]*policy v[0-9]+} network_approval_processed 86 87
-# The terminal acknowledgement only proves that the approval action was
-# accepted. Retry the exact documented Atlassian probe so the target also
-# proves that the running policy now permits the request. An unauthenticated
-# 401 is the expected success signal for this endpoint.
-spawn -noecho openshell sandbox exec --name $sandbox --no-tty --timeout 40 -- /usr/bin/curl -sS --connect-timeout 5 --max-time 30 -o /dev/null -w {ISSUE6194_POLICY_HTTP_STATUS=%{http_code}\\n} $networkEndpoint
+expect {
+  -i $termSpawn
+  -nocase -re {Approved[^\\r\\n]*'[^']+'[^\\r\\n]*policy v([0-9]+)} {
+    set approvedPolicyVersion $expect_out(1,string)
+    mark network_approval_processed
+  }
+  timeout {
+    stop_spawn $termSpawn
+    exit 86
+  }
+  eof {
+    catch {wait -i $termSpawn}
+    exit 87
+  }
+}
+# The approval RPC assigns a policy revision before the sandbox loads it.
+# Poll that exact revision through the read-only policy API until both its
+# status and the active version prove convergence. Preserve every bounded
+# attempt so timeout and failed-revision diagnostics remain reviewable.
+set policyStatusOutput "ISSUE6194_APPROVED_POLICY_VERSION=$approvedPolicyVersion\\n"
+set policyLoaded 0
+set policyTerminalStatus timeout
+for {set attempt 1} {$attempt <= 10} {incr attempt} {
+  set policyGetFailed [catch {exec timeout 2 openshell policy get $sandbox --rev $approvedPolicyVersion --output json} candidate]
+  append policyStatusOutput "ISSUE6194_POLICY_STATUS_ATTEMPT=$attempt\\n$candidate\\n"
+  set versionPattern [format {"version"[[:space:]]*:[[:space:]]*%s([[:space:]]|,)} $approvedPolicyVersion]
+  set activePattern [format {"active_version"[[:space:]]*:[[:space:]]*%s([[:space:]]|,)} $approvedPolicyVersion]
+  set versionMatches [regexp $versionPattern $candidate]
+  set statusLoaded [regexp {"status"[[:space:]]*:[[:space:]]*"loaded"} $candidate]
+  set activeMatches [regexp $activePattern $candidate]
+  if {!$policyGetFailed && $versionMatches && $statusLoaded && $activeMatches} {
+    append policyStatusOutput "ISSUE6194_ACTIVE_POLICY_VERSION=$approvedPolicyVersion\\n"
+    append policyStatusOutput "ISSUE6194_POLICY_STATUS=loaded\\n"
+    set policyLoaded 1
+    break
+  }
+  if {!$policyGetFailed && [regexp {"status"[[:space:]]*:[[:space:]]*"(failed|superseded)"} $candidate _ terminalStatus]} {
+    set policyTerminalStatus $terminalStatus
+    break
+  }
+  after 500
+}
+if {!$policyLoaded} {
+  append policyStatusOutput "ISSUE6194_POLICY_STATUS=$policyTerminalStatus\\n"
+  write_capture $policyCapture $policyStatusOutput
+  puts "ISSUE6194_DIAGNOSTIC approved policy revision did not become active: $policyStatusOutput"
+  stop_spawn $termSpawn
+  exit 90
+}
+mark network_policy_loaded
+# Retry the exact documented Atlassian probe once the acknowledged policy
+# revision is active. An unauthenticated 401 is the expected success signal.
+spawn -noecho openshell sandbox exec --name $sandbox --no-tty --timeout 20 -- /usr/bin/curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w {ISSUE6194_POLICY_HTTP_STATUS=%{http_code}\\n} $networkEndpoint
 set policySpawn $spawn_id
 set policyOutput ""
 set savedTimeout $timeout
-set timeout 45
+set timeout 25
 expect {
   -i $policySpawn
   eof { set policyOutput $expect_out(buffer) }
   timeout {
+    write_capture $policyCapture $policyStatusOutput
     stop_spawn $policySpawn
     stop_spawn $termSpawn
     exit 88
@@ -261,11 +309,11 @@ expect {
 }
 set timeout $savedTimeout
 catch {wait -i $policySpawn} policyWait
-write_capture $policyCapture $policyOutput
+write_capture $policyCapture "$policyStatusOutput$policyOutput"
 if {![regexp {ISSUE6194_POLICY_HTTP_STATUS=401(\\r?\\n|$)} $policyOutput]} {
   puts "ISSUE6194_DIAGNOSTIC approved policy did not permit the exact endpoint: $policyOutput"
   stop_spawn $termSpawn
-  exit 90
+  exit 91
 }
 mark network_policy_updated
 send -i $termSpawn -- "q"

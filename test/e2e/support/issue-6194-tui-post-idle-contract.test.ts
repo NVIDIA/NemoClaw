@@ -40,6 +40,12 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(liveSource).toContain('artifacts.writeText("issue6194-openshell-policy-retry.log"');
     expect(liveSource).toContain("postApprovalEndpoint: ISSUE6194_NETWORK_APPROVAL_ENDPOINT");
     expect(liveSource).toContain("postApprovalExpectedHttpStatus: 401");
+    expect(liveSource).toContain("approvedPolicyVersion,");
+    expect(liveSource).toContain("activePolicyVersion,");
+    expect(liveSource).toContain("observedPolicyStatus,");
+    expect(liveSource).toContain("policyStatusAttempts,");
+    expect(liveSource).toContain("policyStatusLoaded:");
+    expect(liveSource).toContain("policyVersionActive:");
     expect(liveSource).toContain('artifactName: "live-issue2603-repro"');
     expect(liveSource).toContain('artifacts.writeJson("issue2603-trace.json"');
   });
@@ -202,27 +208,61 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "expect_or_exit $termSpawn {\\[a\\][^\\r\\n]*Approve} network_rule_approve_action",
     );
     expect(script).toContain('send -i $termSpawn -- "a"');
+    expect(script).toContain("-nocase -re {Approved[^\\r\\n]*'[^']+'[^\\r\\n]*policy v([0-9]+)}");
+    expect(script).toContain("set approvedPolicyVersion $expect_out(1,string)");
     expect(script).toContain(
-      "expect_or_exit $termSpawn {Approved[^\\r\\n]*'[^']+'[^\\r\\n]*policy v[0-9]+} network_approval_processed",
+      'set policyStatusOutput "ISSUE6194_APPROVED_POLICY_VERSION=$approvedPolicyVersion\\n"',
+    );
+    expect(script).toContain("for {set attempt 1} {$attempt <= 10} {incr attempt}");
+    expect(script).toContain(
+      "exec timeout 2 openshell policy get $sandbox --rev $approvedPolicyVersion --output json",
     );
     expect(script).toContain(
-      "spawn -noecho openshell sandbox exec --name $sandbox --no-tty --timeout 40 -- /usr/bin/curl -sS --connect-timeout 5 --max-time 30 -o /dev/null -w {ISSUE6194_POLICY_HTTP_STATUS=%{http_code}\\n} $networkEndpoint",
+      'append policyStatusOutput "ISSUE6194_POLICY_STATUS_ATTEMPT=$attempt\\n$candidate\\n"',
+    );
+    expect(script).toContain("set policyTerminalStatus timeout");
+    expect(script).toContain(
+      'set versionPattern [format {"version"[[:space:]]*:[[:space:]]*%s([[:space:]]|,)} $approvedPolicyVersion]',
+    );
+    expect(script).toContain(
+      'set activePattern [format {"active_version"[[:space:]]*:[[:space:]]*%s([[:space:]]|,)} $approvedPolicyVersion]',
+    );
+    expect(script).toContain(
+      'append policyStatusOutput "ISSUE6194_ACTIVE_POLICY_VERSION=$approvedPolicyVersion\\n"',
+    );
+    expect(script).toContain('append policyStatusOutput "ISSUE6194_POLICY_STATUS=loaded\\n"');
+    expect(script).toContain(
+      'append policyStatusOutput "ISSUE6194_POLICY_STATUS=$policyTerminalStatus\\n"',
+    );
+    expect(script).toContain('regexp {"status"[[:space:]]*:[[:space:]]*"loaded"} $candidate');
+    expect(script).toContain("write_capture $policyCapture $policyStatusOutput");
+    expect(script).toContain("ISSUE6194_DIAGNOSTIC approved policy revision did not become active");
+    expect(script).toContain(
+      "spawn -noecho openshell sandbox exec --name $sandbox --no-tty --timeout 20 -- /usr/bin/curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w {ISSUE6194_POLICY_HTTP_STATUS=%{http_code}\\n} $networkEndpoint",
     );
     expect(script).toContain("set policySpawn $spawn_id");
     expect(script).toContain("expect {\n  -i $policySpawn\n");
     expect(script).toContain("catch {wait -i $policySpawn} policyWait");
-    expect(script).toContain("write_capture $policyCapture $policyOutput");
+    expect(script).toContain('write_capture $policyCapture "$policyStatusOutput$policyOutput"');
     expect(script).toContain("regexp {ISSUE6194_POLICY_HTTP_STATUS=401(\\r?\\n|$)} $policyOutput");
     expect(script).not.toContain("{Approved '[^']+'");
     expect(script).not.toContain('send -i $termSpawn -- "A"');
     expect(script).not.toContain('send -i $termSpawn -- "y"');
 
     const approvalAcknowledged = script.indexOf("network_approval_processed");
+    const postApprovalStatus = script.indexOf(
+      "exec timeout 2 openshell policy get $sandbox --rev $approvedPolicyVersion --output json",
+    );
+    const postApprovalLoaded = script.indexOf("mark network_policy_loaded");
     const postApprovalRetry = script.indexOf("ISSUE6194_POLICY_HTTP_STATUS=%{http_code}");
-    const postApprovalCapture = script.indexOf("write_capture $policyCapture $policyOutput");
+    const postApprovalCapture = script.indexOf(
+      'write_capture $policyCapture "$policyStatusOutput$policyOutput"',
+    );
     const postApprovalVerified = script.indexOf("mark network_policy_updated");
     const postApprovalOrder = [
       approvalAcknowledged,
+      postApprovalStatus,
+      postApprovalLoaded,
       postApprovalRetry,
       postApprovalCapture,
       postApprovalVerified,
@@ -247,6 +287,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "network_rule_detail_endpoint",
       "network_rule_approve_action",
       "network_approval_processed",
+      "network_policy_loaded",
       "network_policy_updated",
       "openshell_clean_exit",
     ];
@@ -261,7 +302,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       /expect \{\n\s+-i \$(?:target|curlSpawn|policySpawn|termSpawn)\n/gu,
     );
 
-    expect(spawnScopedWaits).toHaveLength(6);
+    expect(spawnScopedWaits).toHaveLength(7);
     expect(script).not.toMatch(/\bexpect -i \$/u);
     expect(script).toContain("-nocase -ex $value { mark $markName }");
     expect(script).not.toContain("-nocase -exact");
