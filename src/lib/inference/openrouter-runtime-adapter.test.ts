@@ -1,0 +1,137 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import http from "node:http";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { OPENROUTER_DEFAULT_HEADERS } from "./openrouter";
+import { createOpenRouterRuntimeAdapterServer } from "./openrouter-runtime-adapter";
+
+const servers: http.Server[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    servers.map(
+      (server) =>
+        new Promise<void>((resolve) => {
+          server.close(() => resolve());
+        }),
+    ),
+  );
+  servers.length = 0;
+});
+
+function listen(server: http.Server): Promise<string> {
+  servers.push(server);
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("expected TCP address");
+      resolve(`http://127.0.0.1:${address.port}`);
+    });
+  });
+}
+
+function readRequestBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+describe("OpenRouter Runtime adapter", () => {
+  it("forwards chat completions with OpenRouter attribution headers (#5826)", async () => {
+    const upstreamRequests: Array<{
+      method: string | undefined;
+      url: string | undefined;
+      headers: http.IncomingHttpHeaders;
+      body: string;
+    }> = [];
+    const upstream = http.createServer(async (req, res) => {
+      upstreamRequests.push({
+        method: req.method,
+        url: req.url,
+        headers: req.headers,
+        body: await readRequestBody(req),
+      });
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "X-Upstream-Trace": "ok",
+      });
+      res.end(JSON.stringify({ id: "chatcmpl-test", choices: [] }));
+    });
+    const upstreamBaseUrl = await listen(upstream);
+    const adapter = createOpenRouterRuntimeAdapterServer({
+      upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
+    });
+    const adapterBaseUrl = await listen(adapter);
+    const payload = JSON.stringify({
+      model: "moonshotai/kimi-k2.6",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const response = await fetch(`${adapterBaseUrl}/v1/chat/completions?trace=1`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer sk-or-test",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://example.invalid/",
+        "X-OpenRouter-Title": "Wrong Title",
+      },
+      body: payload,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-upstream-trace")).toBe("ok");
+    await expect(response.json()).resolves.toMatchObject({ id: "chatcmpl-test" });
+    expect(upstreamRequests).toHaveLength(1);
+    expect(upstreamRequests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/v1/chat/completions?trace=1",
+      body: payload,
+    });
+    expect(upstreamRequests[0].headers.authorization).toBe("Bearer sk-or-test");
+    expect(upstreamRequests[0].headers["http-referer"]).toBe(OPENROUTER_DEFAULT_HEADERS[0][1]);
+    expect(upstreamRequests[0].headers["x-openrouter-title"]).toBe(
+      OPENROUTER_DEFAULT_HEADERS[1][1],
+    );
+  });
+
+  it("requires bearer auth for runtime paths and exposes safe health (#5826)", async () => {
+    const upstreamHandler = vi.fn((_req: http.IncomingMessage, res: http.ServerResponse) =>
+      res.end("unexpected"),
+    );
+    const upstream = http.createServer(upstreamHandler);
+    const upstreamBaseUrl = await listen(upstream);
+    const adapter = createOpenRouterRuntimeAdapterServer({
+      upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    const health = await fetch(`${adapterBaseUrl}/health`);
+    expect(health.status).toBe(200);
+    const healthBody = (await health.json()) as Record<string, unknown>;
+    expect(healthBody).toMatchObject({
+      ok: true,
+      adapter: "openrouter-runtime",
+      headerNames: ["HTTP-Referer", "X-OpenRouter-Title"],
+    });
+    expect(JSON.stringify(healthBody)).not.toContain("sk-or-test");
+
+    const missingAuth = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(missingAuth.status).toBe(401);
+
+    const unsupported = await fetch(`${adapterBaseUrl}/v1/models`, {
+      headers: { Authorization: "Bearer sk-or-test" },
+    });
+    expect(unsupported.status).toBe(404);
+    expect(upstreamHandler).not.toHaveBeenCalled();
+  });
+});

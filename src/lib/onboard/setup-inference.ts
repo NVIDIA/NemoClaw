@@ -59,6 +59,7 @@ type ProviderBranchDeps = Pick<
     | "promptValidationRecovery"
     | "classifyApplyFailure"
     | "bedrockRuntimeOnboard"
+    | "openrouterRuntimeOnboard"
   > &
   Pick<
     VllmDeps,
@@ -350,6 +351,7 @@ export function createSetupInference(
               credentialEnv,
               reuseGatewayCredentialWithoutLocalKey:
                 options.reuseGatewayCredentialWithoutLocalKey === true,
+              skipHostInferenceSmoke: options.skipHostInferenceSmoke === true,
               preferredInferenceApi: options.preferredInferenceApi ?? null,
               pinnedAddresses: endpointPinnedAddresses,
             },
@@ -361,6 +363,7 @@ export function createSetupInference(
               classifyApplyFailure: deps.classifyApplyFailure,
               LOCAL_INFERENCE_TIMEOUT_SECS: deps.localInferenceTimeoutSecs,
               bedrockRuntimeOnboard: deps.bedrockRuntimeOnboard,
+              openrouterRuntimeOnboard: deps.openrouterRuntimeOnboard,
               redact: deps.redact,
               compactText: deps.compactText,
               probeOpenAiLikeEndpoint: deps.probeOpenAiLikeEndpoint,

@@ -32,6 +32,7 @@ export interface GatewayPortValidationOptions {
   ollamaPort: number;
   ollamaProxyPort: number;
   bedrockRuntimeAdapterPort: number;
+  openrouterRuntimeAdapterPort: number;
 }
 
 /**
@@ -61,6 +62,11 @@ export const BEDROCK_RUNTIME_ADAPTER_PORT = parsePort(
   "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
   11436,
 );
+/** OpenRouter header-injection adapter port (default 11437, override via NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT). */
+export const OPENROUTER_RUNTIME_ADAPTER_PORT = parsePort(
+  "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+  11437,
+);
 
 export function validateGatewayPort(
   envVar: string,
@@ -78,6 +84,7 @@ export function validateGatewayPort(
     { label: "Ollama inference", port: 11434 },
     { label: "Ollama auth proxy", port: 11435 },
     { label: "Bedrock Runtime adapter", port: 11436 },
+    { label: "OpenRouter Runtime adapter", port: 11437 },
   ];
   const reservedDefault = reservedDefaults.find((entry) => entry.port === port);
   if (reservedDefault) {
@@ -94,6 +101,10 @@ export function validateGatewayPort(
     {
       envVar: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
       port: options.bedrockRuntimeAdapterPort,
+    },
+    {
+      envVar: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+      port: options.openrouterRuntimeAdapterPort,
     },
   ];
   const conflict = conflicts.find((entry) => entry.port === port);
@@ -125,4 +136,5 @@ export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GA
   ollamaPort: OLLAMA_PORT,
   ollamaProxyPort: OLLAMA_PROXY_PORT,
   bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+  openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
 });

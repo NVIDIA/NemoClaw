@@ -88,6 +88,11 @@ During interactive NVIDIA Endpoints onboarding, NemoClaw loads NVIDIA's public f
 OpenRouter uses the same catalog-backed picker flow with its own OpenRouter featured model catalog, provider route, and credential check.
 NVIDIA Endpoints excludes NVIDIA-retired or unsafe choices and corrects known catalog lag before displaying the result.
 OpenRouter does not inherit the NVIDIA-only retired-model filter, so a model can appear in OpenRouter onboarding after it leaves NVIDIA Endpoints.
+For OpenRouter runtime traffic, NemoClaw starts or reuses a local host adapter on port `11437` by default and registers OpenShell with `OPENAI_BASE_URL=http://host.openshell.internal:11437/v1`.
+The adapter receives OpenShell's normal `Authorization: Bearer <OPENROUTER_API_KEY>` header, forwards requests to `https://openrouter.ai/api/v1`, and injects the OpenRouter attribution headers `HTTP-Referer` and `X-OpenRouter-Title`.
+The adapter does not store the API key.
+It exposes a host health endpoint and writes logs to `~/.nemoclaw/openrouter-runtime-adapter.log`.
+Set `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` before onboarding to use a different host port.
 If the catalog is unavailable, malformed, or contains no safe model IDs, the wizard warns you and uses the bundled fallback list shown below.
 Nemotron 3 Super remains the shared default for OpenClaw and Hermes when it is present.
 LangChain Deep Agents Code uses Nemotron 3 Ultra as its NVIDIA Endpoints default.
@@ -272,7 +277,7 @@ OpenRouter credentials are validated as non-empty `sk-or-` keys.
 |---|---|
 | OpenAI | Tries `/responses` first, then `/chat/completions`. |
 | NVIDIA Endpoints | Validates through `/v1/chat/completions` only; NemoClaw skips the `/v1/responses` probe because NVIDIA Build does not expose `/v1/responses` (returns 404 for every model). |
-| OpenRouter | Validates through `/v1/chat/completions` only. NemoClaw skips the `/v1/responses` probe and uses managed Chat Completions for OpenClaw, Hermes, and Deep Agents Code. |
+| OpenRouter | Host-side catalog, model, and smoke validation use `/v1/chat/completions` only. NemoClaw skips the `/v1/responses` probe and uses managed Chat Completions for OpenClaw, Hermes, and Deep Agents Code. |
 | Google Gemini | Validates through Gemini's OpenAI-compatible chat-completions path only; NemoClaw skips the `/v1/responses` probe because Gemini does not support the Responses API. |
 | Other OpenAI-compatible endpoint | Tries `/v1/responses` first with a tool-calling probe; falls back to `/v1/chat/completions`. Selected runtime API defaults to `/v1/chat/completions`; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
 | Other Anthropic-compatible endpoint | For agents that support Anthropic Messages, including OpenClaw, tries `/v1/messages` with a non-streaming request, then repeats the request with `stream: true` and validates the SSE event sequence. Set `NEMOCLAW_REASONING=true` to skip the streaming check for reasoning-only endpoints. For Hermes and OpenAI-compatible-only agents, validates `/v1/chat/completions`, the surface used by the managed OpenAI frontend. |

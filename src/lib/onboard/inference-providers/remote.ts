@@ -121,6 +121,7 @@ export async function setupRemoteProviderInference(
     endpointUrl: string | null;
     credentialEnv: string | null;
     reuseGatewayCredentialWithoutLocalKey?: boolean;
+    skipHostInferenceSmoke?: boolean;
     preferredInferenceApi?: string | null;
     pinnedAddresses?: readonly string[];
   },
@@ -133,6 +134,7 @@ export async function setupRemoteProviderInference(
     endpointUrl,
     credentialEnv,
     reuseGatewayCredentialWithoutLocalKey,
+    skipHostInferenceSmoke,
     preferredInferenceApi,
     pinnedAddresses,
   } = args;
@@ -152,6 +154,7 @@ export async function setupRemoteProviderInference(
     classifyApplyFailure,
     LOCAL_INFERENCE_TIMEOUT_SECS,
     bedrockRuntimeOnboard,
+    openrouterRuntimeOnboard,
     redact,
     compactText,
   } = deps;
@@ -181,6 +184,28 @@ export async function setupRemoteProviderInference(
     log,
   });
   if (bedrockSetup.handled) return { done: true, result: bedrockSetup.result };
+  const openrouterCredentialEnv = credentialEnv || config.credentialEnv;
+  const openrouterCredentialValue =
+    provider === "openrouter-api" ? hydrateCredentialEnv(openrouterCredentialEnv) : null;
+  const openrouterSetup = await openrouterRuntimeOnboard.setupOpenRouterRuntimeInference({
+    sandboxName,
+    provider,
+    model,
+    credentialEnv: openrouterCredentialEnv,
+    credentialValue: openrouterCredentialValue,
+    reuseGatewayCredentialWithoutLocalKey,
+    skipHostInferenceSmoke,
+    isNonInteractive,
+    runOpenshell,
+    upsertProvider,
+    verifyInferenceRoute,
+    verifyOnboardInferenceSmoke,
+    updateSandbox: registry.updateSandbox,
+    exitProcess,
+    error,
+    log,
+  });
+  if (openrouterSetup.handled) return { done: true, result: openrouterSetup.result };
   // #6294: an OpenAI-/chat/completions-only agent (dcode) coerced off Anthropic
   // Messages must talk to the gateway route over the openai_chat_completions
   // protocol, and OpenShell routes that protocol only for providers registered
