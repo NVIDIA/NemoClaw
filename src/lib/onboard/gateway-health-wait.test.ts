@@ -49,7 +49,7 @@ describe("waitForGatewayHealth", () => {
     await expect(waitForGatewayHealth(options)).resolves.toBe(true);
 
     expect(isGatewayHealthy).toHaveBeenCalledTimes(2);
-    expect(isGatewayHttpReady).toHaveBeenCalledTimes(1);
+    expect(isGatewayHttpReady).toHaveBeenCalledTimes(2);
     expect(options.sleepSeconds).toHaveBeenCalledTimes(1);
     expect(options.sleepSeconds).toHaveBeenCalledWith(2);
   });
@@ -112,12 +112,13 @@ describe("waitForGatewayHealth", () => {
 
     expect(isGatewayHealthy).toHaveBeenCalled();
     expect(isGatewayHealthy.mock.calls.length).toBeLessThan(10);
-    expect(options.isGatewayHttpReady).not.toHaveBeenCalled();
+    expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(isGatewayHealthy.mock.calls.length);
     expect(clock.sleeper).toHaveBeenCalled();
     expect(clock.sleeper.mock.calls.every(([seconds]) => seconds === 1)).toBe(true);
   });
 
   it("preserves the configured immediate probes when the interval is zero (#3768)", async () => {
+    const probeSignals: Array<AbortSignal | undefined> = [];
     const isGatewayHealthy = vi
       .fn<() => boolean>()
       .mockReturnValueOnce(false)
@@ -128,6 +129,10 @@ describe("waitForGatewayHealth", () => {
       healthPollCount: 3,
       healthPollIntervalSeconds: 0,
       isGatewayHealthy,
+      isGatewayHttpReady: vi.fn(async (signal?: AbortSignal) => {
+        probeSignals.push(signal);
+        return true;
+      }),
       now: vi.fn(() => Number.MAX_SAFE_INTEGER),
       sleepSeconds,
     });
@@ -135,10 +140,11 @@ describe("waitForGatewayHealth", () => {
     await expect(waitForGatewayHealth(options)).resolves.toBe(true);
 
     expect(isGatewayHealthy).toHaveBeenCalledTimes(3);
-    expect(options.isGatewayHttpReady).toHaveBeenCalledOnce();
+    expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(3);
     expect(sleepSeconds).toHaveBeenCalledTimes(2);
     expect(sleepSeconds).toHaveBeenNthCalledWith(1, 0);
     expect(sleepSeconds).toHaveBeenNthCalledWith(2, 0);
+    expect(probeSignals.map((signal) => signal?.aborted)).toEqual([true, true, false]);
     expect(formatGatewayHealthWaitLimit(3, 0)).toBe("3 immediate health probes");
   });
 
@@ -214,5 +220,67 @@ describe("waitForGatewayHealth", () => {
       ignoreError: true,
     });
     expect(isGatewayHealthy).toHaveBeenCalledWith("status", "named", "current");
+  });
+
+  it("starts the HTTP readiness probe before collecting OpenShell metadata", async () => {
+    const events: string[] = [];
+    const openshellOutputByCommand = new Map([
+      ["status", "status"],
+      ["gateway info -g nemoclaw", "named"],
+      ["gateway info", "current"],
+    ]);
+    const options = buildOptions({
+      isGatewayHttpReady: vi.fn(async () => {
+        events.push("http");
+        return true;
+      }),
+      runCaptureOpenshell: vi.fn((args: string[]) => {
+        const command = args.join(" ");
+        events.push(command);
+        return openshellOutputByCommand.get(command) ?? "";
+      }),
+    });
+
+    await expect(waitForGatewayHealth(options)).resolves.toBe(true);
+
+    expect(events).toEqual([
+      "http",
+      "gateway select nemoclaw",
+      "status",
+      "gateway info -g nemoclaw",
+      "gateway info",
+    ]);
+  });
+
+  it("aborts the HTTP readiness probe when OpenShell metadata is unhealthy", async () => {
+    const clock = createVirtualClock();
+    let observedSignal: AbortSignal | undefined;
+    let aborted = false;
+    const options = buildOptions({
+      healthPollCount: 1,
+      isGatewayHealthy: vi.fn(() => false),
+      isGatewayHttpReady: vi.fn(
+        (signal?: AbortSignal) =>
+          new Promise<boolean>((resolve) => {
+            observedSignal = signal;
+            signal?.addEventListener(
+              "abort",
+              () => {
+                aborted = true;
+                resolve(false);
+              },
+              { once: true },
+            );
+          }),
+      ),
+      now: clock.now,
+      sleepSeconds: clock.sleeper,
+    });
+
+    await expect(waitForGatewayHealth(options)).resolves.toBe(false);
+
+    expect(options.isGatewayHttpReady).toHaveBeenCalledOnce();
+    expect(observedSignal?.aborted).toBe(true);
+    expect(aborted).toBe(true);
   });
 });

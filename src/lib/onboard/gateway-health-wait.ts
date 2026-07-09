@@ -12,7 +12,7 @@ export interface GatewayHealthWaitOptions {
   healthPollCount: number;
   healthPollIntervalSeconds: number;
   isGatewayHealthy: (status: string, namedInfo: string, currentInfo: string) => boolean;
-  isGatewayHttpReady: () => Promise<boolean>;
+  isGatewayHttpReady: (signal?: AbortSignal) => Promise<boolean>;
   repairGatewayBootstrapSecrets: () => { repaired: boolean };
   runCaptureOpenshell: RunCaptureOpenshell;
   sleepSeconds: (seconds: number) => void;
@@ -96,6 +96,26 @@ export function createGatewayHealthWaitOptions(
   };
 }
 
+function startAbortableGatewayHttpProbe(
+  isGatewayHttpReady: GatewayHealthWaitOptions["isGatewayHttpReady"],
+): { abort: () => void; ready: Promise<boolean> } {
+  const controller = new AbortController();
+  let started: Promise<boolean>;
+  try {
+    started = Promise.resolve(isGatewayHttpReady(controller.signal));
+  } catch (error) {
+    started = Promise.reject(error);
+  }
+  const ready = started.catch((error: unknown) => {
+    if (controller.signal.aborted) return false;
+    throw error;
+  });
+  return {
+    abort: () => controller.abort(),
+    ready,
+  };
+}
+
 export async function waitForGatewayHealth({
   attachGatewayMetadataIfNeeded,
   gatewayClusterHealthcheckPassed,
@@ -124,13 +144,18 @@ export async function waitForGatewayHealth({
       } else if (gatewayClusterHealthcheckPassed()) {
         attachGatewayMetadataIfNeeded();
       }
+      const httpProbe = startAbortableGatewayHttpProbe(isGatewayHttpReady);
       runCaptureOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
       const status = runCaptureOpenshell(["status"], { ignoreError: true });
       const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
         ignoreError: true,
       });
       const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-      return isGatewayHealthy(status, namedInfo, currentInfo) && (await isGatewayHttpReady());
+      if (!isGatewayHealthy(status, namedInfo, currentInfo)) {
+        httpProbe.abort();
+        return false;
+      }
+      return await httpProbe.ready;
     }, waitOptions))
   );
 }
