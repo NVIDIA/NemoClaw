@@ -53,6 +53,7 @@ describe("rebuild replacement recovery decision", () => {
   it.each([
     ["old_deleted", "absent", "source", "missing", "create"],
     ["old_deleted", "absent", "missing", "unrelated", "create"],
+    ["old_deleted", "absent", "target", "unrelated", "create"],
     ["old_deleted", "ready", "target", "matching", "adopt"],
     ["replacement_created", "ready", "replacement", "matching", "resume"],
     ["replacement_created", "absent", "replacement", "matching", "recreate"],

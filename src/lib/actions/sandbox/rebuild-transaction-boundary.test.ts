@@ -180,9 +180,14 @@ describe("rebuild transaction boundary", () => {
         recoveryManifest: makePreparedRecoveryManifest(),
       }),
     ).rejects.toThrow("Recreate failed");
-
+    const interruptedRecord = interrupted.transactionStore.load("alpha")!;
     const resumed = createRebuildFlowHarness({
       staleRecovery: true,
+      sandboxEntry: {
+        policies: ["normalized-target"],
+        toolDisclosure: interruptedRecord.intent.target.toolDisclosure,
+        observabilityEnabled: interruptedRecord.intent.target.observabilityEnabled,
+      },
       preDeleteLatestManifest: { ...makePreparedRecoveryManifest(), snapshotVersion: 1 },
     });
     resumed.session.toolDisclosure = "direct";

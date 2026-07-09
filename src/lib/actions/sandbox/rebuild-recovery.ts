@@ -77,7 +77,7 @@ export function decideRebuildRecovery(input: {
   const { transaction, live, registry, session } = input;
   if (transaction.phase === "old_deleted") {
     if (live === "absent") {
-      if (registry === "source" || registry === "missing") return { action: "create" };
+      if (["source", "missing", "target"].includes(registry)) return { action: "create" };
       return {
         action: "refuse",
         code:
