@@ -181,7 +181,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true });
   const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
-  const sandboxEntry = {
+  const modelsCustomOpenClawImage =
+    typeof overrides.sandboxEntry?.fromDockerfile === "string" &&
+    (!overrides.sandboxEntry.agent || overrides.sandboxEntry.agent === "openclaw");
+  const customOpenClawPluginProvenance = modelsCustomOpenClawImage
+    ? { openclawImagePluginInstalls: [] }
+    : {};
+  const currentSandboxEntry = {
     name: "alpha",
     provider: "ollama-local",
     model: "nvidia/nemotron",
@@ -193,9 +199,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     dashboardPort: 18789,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
+    ...customOpenClawPluginProvenance,
     ...(overrides.sandboxEntry ?? {}),
   };
-  vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
+  const readCurrentSandboxEntry = () => structuredClone(currentSandboxEntry);
+  vi.spyOn(registry, "getSandbox").mockImplementation(readCurrentSandboxEntry);
   const initialDefaultSandbox = overrides.defaultSandbox ?? null;
   const preDeleteDefaultSandbox =
     overrides.preDeleteDefaultSandbox !== undefined
@@ -204,10 +212,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const initialDefaultSelectionRevision = overrides.defaultSelectionRevision ?? 10;
   const preDeleteDefaultSelectionRevision =
     overrides.preDeleteDefaultSelectionRevision ?? initialDefaultSelectionRevision;
-  const preDeleteSandboxEntry = overrides.preDeleteSandboxEntry ?? sandboxEntry;
+  const preDeleteSandboxEntry = overrides.preDeleteSandboxEntry ?? currentSandboxEntry;
   let currentDefaultSandbox = initialDefaultSandbox;
   let currentDefaultSelectionRevision = initialDefaultSelectionRevision;
-  const currentRegistryEntryNames = new Set([String(sandboxEntry.name)]);
+  const currentRegistryEntryNames = new Set([String(currentSandboxEntry.name)]);
   if (initialDefaultSandbox) currentRegistryEntryNames.add(initialDefaultSandbox);
   if (preDeleteDefaultSandbox) currentRegistryEntryNames.add(preDeleteDefaultSandbox);
   vi.spyOn(registry, "getDefault").mockImplementation(() => currentDefaultSandbox);
@@ -226,10 +234,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     const defaultSelectionRevision = isPreDeleteRead
       ? preDeleteDefaultSelectionRevision
       : initialDefaultSelectionRevision;
-    const selectedEntry = isPreDeleteRead ? preDeleteSandboxEntry : sandboxEntry;
+    const selectedEntry = isPreDeleteRead ? preDeleteSandboxEntry : currentSandboxEntry;
     return {
       sandboxes: {
-        alpha: selectedEntry,
+        alpha: structuredClone(selectedEntry),
         ...(defaultSandbox && defaultSandbox !== "alpha"
           ? { [defaultSandbox]: { name: defaultSandbox } }
           : {}),
@@ -239,7 +247,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     };
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
-  const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  const registryUpdateSpy = vi
+    .spyOn(registry, "updateSandbox")
+    .mockImplementation((_name, updates) => {
+      Object.assign(currentSandboxEntry, updates);
+      return true;
+    });
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation((...args: unknown[]) => {
@@ -280,9 +293,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     detected: false,
     sessions: [],
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
-    expectedVersion: "0.2.0",
-    sandboxVersion: "0.1.0",
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation(() => {
+    Object.assign(currentSandboxEntry, overrides.entryUpdatesAfterVersionCheck ?? {});
+    return (
+      overrides.versionCheck ?? {
+        expectedVersion: "0.2.0",
+        sandboxVersion: "0.1.0",
+        isStale: true,
+        verificationFailed: false,
+        detectionMethod: "registry",
+      }
+    );
   });
   vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue(rebuildShieldsWindow);
   const relockSpy = vi
@@ -303,9 +324,22 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         failedDirs: [],
         failedFiles: [],
         manifest: {
+          agentType:
+            typeof overrides.sandboxEntry?.agent === "string"
+              ? overrides.sandboxEntry.agent
+              : "openclaw",
+          dir: "/sandbox/.openclaw",
           backupPath: "/tmp/nemoclaw-rebuild-backup",
           timestamp: "2026-06-01T00:00:00.000Z",
           policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
+          ...(modelsCustomOpenClawImage
+            ? {
+                reconcileOpenClawImagePluginProvenance: true,
+                openclawImagePluginInstalls: structuredClone(
+                  currentSandboxEntry.openclawImagePluginInstalls,
+                ),
+              }
+            : {}),
         },
       };
     });
@@ -324,16 +358,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(
     overrides.managedImageEvidence ?? true,
   );
-  const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
-    overrides.restoreSandboxState ??
-      (() => ({
-        success: true,
-        restoredDirs: ["workspace"],
-        restoredFiles: ["user.md"],
-        failedDirs: [],
-        failedFiles: [],
-      })),
-  );
+  const restoreSandboxStateSpy = vi
+    .spyOn(sandboxState, "restoreRecreatedSandboxState")
+    .mockImplementation(
+      overrides.restoreSandboxState ??
+        (() => ({
+          success: true,
+          restoredDirs: ["workspace"],
+          restoredFiles: ["user.md"],
+          failedDirs: [],
+          failedFiles: [],
+        })),
+    );
   const runOpenshellSpy = vi
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((args: unknown) => {

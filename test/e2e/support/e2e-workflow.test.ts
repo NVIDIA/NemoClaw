@@ -650,6 +650,7 @@ describe("e2e workflow boundary", () => {
     expect(inventory.allowedJobs).toContain("openshell-gateway-auth-contract");
     expect(inventory.allowedJobs).toContain("gateway-guard-recovery");
     expect(inventory.allowedJobs).toContain("upgrade-stale-sandbox");
+    expect(inventory.allowedJobs).toContain("openclaw-plugin-runtime-exdev");
     expect(inventory.targetToJob.get("openshell-gateway-auth-contract")).toBe(
       "openshell-gateway-auth-contract",
     );
@@ -658,6 +659,9 @@ describe("e2e workflow boundary", () => {
     expect(inventory.targetToJob.get("credential-migration")).toBe("credential-migration");
     expect(inventory.targetToJob.get("launchable-smoke")).toBe("launchable-smoke");
     expect(inventory.targetToJob.get("gateway-guard-recovery")).toBe("gateway-guard-recovery");
+    expect(inventory.targetToJob.get("openclaw-plugin-runtime-exdev")).toBe(
+      "openclaw-plugin-runtime-exdev",
+    );
     expect(
       inventory.allowedJobs.every((job) =>
         Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}).includes(job),

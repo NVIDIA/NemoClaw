@@ -78,7 +78,11 @@ const options = scenario === "prepared"
       ...common,
       resume: true,
       recreateSandbox: true,
-      preparedDcodeRebuild: { buildContext: preparedBuildContext, gatewayName: "nemoclaw" },
+      preparedDcodeRebuild: {
+        buildContext: preparedBuildContext,
+        gatewayName: "nemoclaw",
+        dcodeAutoApprovalMode: "disabled",
+      },
     }
   : scenario === "mismatch"
     ? {
@@ -88,6 +92,7 @@ const options = scenario === "prepared"
         preparedDcodeRebuild: {
           buildContext: preparedBuildContext,
           gatewayName: "nemoclaw-18080",
+          dcodeAutoApprovalMode: "disabled",
         },
       }
     : { ...common, fresh: true, sandboxName: "ordinary-dcode" };

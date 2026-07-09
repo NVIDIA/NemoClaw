@@ -10,6 +10,7 @@ import { createAgentSandbox } from "../../agent/onboard";
 import { GATEWAY_PORT } from "../../core/ports";
 import type { WebSearchConfig } from "../../inference/web-search";
 import { stageCreateSandboxBuildContext } from "../../onboard/build-context-stage";
+import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { prepareSandboxDockerfilePatch } from "../../onboard/sandbox-dockerfile-patch-flow";
 import type { SandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
 import { ROOT, redact } from "../../runner";
@@ -36,6 +37,7 @@ export type ManagedDcodeRebuildImageInput = {
   compatibleEndpointReasoning: "true" | "false" | null;
   webSearchConfig: WebSearchConfig | null;
   toolDisclosure: ToolDisclosure;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode;
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayPort?: number;
 };
@@ -49,6 +51,7 @@ export type ManagedDcodeRebuildImageDeps = {
 };
 
 export type PreparedDcodeRebuildImage = FingerprintedPreparedBuildContext & {
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode;
   dockerGpuPatchNetwork: string | null;
 };
 
@@ -147,6 +150,7 @@ export async function prepareManagedDcodeRebuildImage(
       preferredInferenceApi: input.preferredInferenceApi,
       webSearchConfig: input.webSearchConfig,
       toolDisclosure: input.toolDisclosure,
+      dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,
       hermesToolGateways: [],
       sandboxGpuConfig: input.sandboxGpuConfig,
       gatewayPort: input.gatewayPort ?? GATEWAY_PORT,
@@ -174,6 +178,7 @@ export async function prepareManagedDcodeRebuildImage(
         cleanupBuildCtx: cleanupBuildContext,
         buildId,
         contextFingerprint,
+        dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,
         verifyBuildCtx: createBuildContextVerifier(staged.buildCtx, contextFingerprint),
         dockerGpuPatchNetwork: process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK || null,
       },

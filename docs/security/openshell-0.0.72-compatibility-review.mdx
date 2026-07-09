@@ -92,8 +92,10 @@ The CONNECT path passes that returned list directly to `TcpStream::connect` at [
 The explicit HTTP-forward path carries the same returned list from [`crates/openshell-supervisor-network/src/proxy.rs:3885-3893`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L3885-L3893) to [`crates/openshell-supervisor-network/src/proxy.rs:4123-4125`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L4123-L4125).
 There is no second hostname resolution between validation and connection in either path.
 
-The stable and development `mcp-bridge` live lanes isolate that upstream contract from NemoClaw's MCP implementation before the OpenClaw scenario performs any managed MCP mutation.
-They apply a raw OpenShell `protocol: mcp` policy with `allowed_ips: [1.1.1.1]`, remap the hostname to a reachable private runner address, send a raw MCP `tools/list` request, require an exact HTTP 403, verify zero upstream requests without calling `nemoclaw mcp` or any agent adapter, and restore the exact base policy in `finally`.
+The stable `mcp-bridge` live lane isolates that upstream contract from NemoClaw's MCP implementation before the OpenClaw scenario performs any managed MCP mutation.
+The development lane first compares its installed moving OpenShell build with the reviewed child-visible credential manifest.
+An exact `0.0.72` match runs the same full lifecycle, while any other development version records the expected fail-closed compatibility result and skips managed MCP mutation.
+The full lifecycle applies a raw OpenShell `protocol: mcp` policy with `allowed_ips: [1.1.1.1]`, remaps the hostname to a reachable private runner address, sends a raw MCP `tools/list` request, requires an exact HTTP 403, verifies zero upstream requests without calling `nemoclaw mcp` or any agent adapter, and restores the exact base policy in `finally`.
 
 The live MCP scenario registers a hostname while it resolves to a pinned public address, remaps it to a reachable unpinned runner address, and sends an MCP `tools/list` request beneath each adapter runtime identity.
 OpenClaw uses the managed Node identity, Hermes uses its managed Python identity, and LangChain Deep Agents Code uses its managed virtual-environment Python identity.
@@ -106,5 +108,6 @@ The scenario requires an OpenShell HTTP 403 or CONNECT 403 for every adapter and
 - Policy tests cover `--base` command construction and MCP and JSON-RPC field preservation.
 - Blueprint tests prove the merged policy excludes reserved provider entries.
 - The live gateway authentication and gateway-upgrade scenarios run against `0.0.72`.
-- The stable and development MCP live lanes independently prove raw OpenShell `allowed_ips` rebinding denial with an exact HTTP 403 and zero upstream requests, then restore the base policy.
+- The stable MCP live lane proves raw OpenShell `allowed_ips` rebinding denial with an exact HTTP 403 and zero upstream requests, then restores the base policy.
+- The development MCP lane runs that full proof only when its moving OpenShell build matches the reviewed `0.0.72` credential boundary; otherwise it records the expected fail-closed version mismatch without managed MCP mutation.
 - The live MCP matrix proves DNS rebinding denial with zero upstream requests for OpenClaw, Hermes, and LangChain Deep Agents Code.

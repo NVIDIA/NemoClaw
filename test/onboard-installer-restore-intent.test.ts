@@ -8,18 +8,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 
+import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
+
 const repoRoot = path.join(import.meta.dirname, "..");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
-
-function writeExecutable(target: string, contents: string) {
-  fs.writeFileSync(target, contents, { mode: 0o755 });
-}
-
-function writeOkOpenshell(fakeBin: string) {
-  writeExecutable(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
-}
 
 describe("createSandbox installer restore intent", () => {
   it("non-interactive not-ready sandbox with installer restore intent skips the fresh backup, restores the pre-upgrade backup, and stays exec-usable for a workspace marker (#6114)", {
@@ -98,7 +92,7 @@ sandboxState.backupSandboxState = (name) => {
     manifest: { backupPath: "/tmp/fake-fresh-backup", timestamp: "2026-05-25T00:00:00Z" },
   };
 };
-sandboxState.restoreSandboxState = (name, backupPath) => {
+sandboxState.restoreRecreatedSandboxState = (name, backupPath) => {
   events.push({ kind: "restore", name, backupPath });
   return {
     success: true,

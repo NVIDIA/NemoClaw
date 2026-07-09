@@ -12,12 +12,14 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   DEEPAGENTS_FRESH_REONBOARD_CHECK,
   DEEPAGENTS_OBSERVABILITY_CHECK,
+  DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK,
 } from "./cloud-experimental-check-list.ts";
 
 const REQUIRED_CHECK_SKIP_PATTERN = /(^|\n).*\bSKIP\b/i;
 const DEFAULT_CHECK_TIMEOUT_MS = 180_000;
 const FRESH_REONBOARD_TIMEOUT_MS = 15 * 60_000;
 const OBSERVABILITY_TIMEOUT_MS = 8 * 60_000;
+const THREAD_AUTO_APPROVAL_TIMEOUT_MS = 35 * 60_000;
 
 export type CloudExperimentalChecksEvidence = {
   targetId: string;
@@ -89,6 +91,9 @@ export function assertRequiredCloudExperimentalResult(
 export function cloudExperimentalCheckTimeoutMs(scriptPath: string): number {
   if (scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK) return FRESH_REONBOARD_TIMEOUT_MS;
   if (scriptPath === DEEPAGENTS_OBSERVABILITY_CHECK) return OBSERVABILITY_TIMEOUT_MS;
+  if (scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK) {
+    return THREAD_AUTO_APPROVAL_TIMEOUT_MS;
+  }
   return DEFAULT_CHECK_TIMEOUT_MS;
 }
 

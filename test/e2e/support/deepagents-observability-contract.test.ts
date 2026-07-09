@@ -239,6 +239,11 @@ describe("Deep Agents observability policy proof", () => {
     ).toBe(true);
     expect(
       hasConfirmedOpenShellPolicyDenial(
+        'curl: (22) Th{"detail":"POST host.openshell.internal:4318/v1/traces not permitted by policy","error":"policy_denied"}e requested URL returned error: 403',
+      ),
+    ).toBe(true);
+    expect(
+      hasConfirmedOpenShellPolicyDenial(
         "nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'dcode-test'.",
       ),
     ).toBe(true);
@@ -281,6 +286,15 @@ describe("Deep Agents observability policy proof", () => {
     });
     expect(proxyDenial.status, proxyDenial.stderr).toBe(0);
     expect(proxyDenial.stdout.trim()).toBe("policy-denied");
+
+    const interleavedCurlDenial = spawnSync(tsx, [helper, "denial-state"], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+      input:
+        'curl: (22) The reque{"detail":"POST host.openshell.internal:4318/v1/traces not permitted by policy","error":"policy_denied"}sted URL returned error: 403\n',
+    });
+    expect(interleavedCurlDenial.status, interleavedCurlDenial.stderr).toBe(0);
+    expect(interleavedCurlDenial.stdout.trim()).toBe("policy-denied");
   });
 });
 
