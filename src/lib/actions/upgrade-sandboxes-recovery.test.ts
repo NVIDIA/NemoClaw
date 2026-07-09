@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import {
+  createRebuildFlowHarness,
+  installRebuildFlowTestHooks,
+} from "../../../test/helpers/rebuild-flow-test-harness";
+import { makePreparedRecoveryManifest } from "../actions/sandbox/rebuild-flow-test-fixtures";
 import * as coreVersion from "../core/version";
 import * as sandboxList from "../openshell-sandbox-list";
 import * as sandboxVersion from "../sandbox/version";
@@ -11,6 +15,8 @@ import * as sandboxState from "../state/sandbox";
 import { upgradeSandboxes, upgradeSandboxesDependencies } from "./upgrade-sandboxes";
 
 type UpgradeSandboxes = typeof upgradeSandboxes;
+
+installRebuildFlowTestHooks();
 
 function makeManifest(sandboxName: string) {
   const timestamp = `2026-07-01T06-50-4${sandboxName.length}-044Z`;
@@ -150,9 +156,9 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     }
   });
 
-  it("continues through all eligible sandboxes before reporting a recovery failure", async () => {
+  it("isolates a corrupt transaction while continuing unrelated recovery (#6437)", async () => {
     const harness = createRecoveryHarness(["alpha", "beta"]);
-    harness.rebuildSpy.mockRejectedValueOnce(new Error("alpha failed"));
+    harness.rebuildSpy.mockRejectedValueOnce(new Error("CORRUPT alpha transaction"));
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
@@ -161,9 +167,57 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
 
     expect(harness.rebuildSpy).toHaveBeenCalledTimes(2);
     expect(harness.rebuildSpy.mock.calls.map((call) => call[0])).toEqual(["alpha", "beta"]);
+    expect(harness.rebuildSpy.mock.calls[1]?.[2]).toEqual({
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "beta" }),
+    });
     expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to recover 'alpha': alpha failed"),
+      expect.stringContaining("Failed to recover 'alpha': CORRUPT alpha transaction"),
     );
+  });
+
+  it("continues an existing old_deleted transaction through the installer runner (#6437)", async () => {
+    let onboardAttempts = 0;
+    const flow = createRebuildFlowHarness({
+      staleRecovery: true,
+      onboard: () => {
+        onboardAttempts += 1;
+        return onboardAttempts === 1
+          ? Promise.reject(new Error("interrupt before replacement receipt"))
+          : undefined;
+      },
+    });
+
+    await expect(
+      flow.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Recreate failed");
+    const interrupted = flow.transactionStore.load("alpha");
+    expect(interrupted).toMatchObject({ status: "active", phase: "old_deleted" });
+
+    const resumed = createRebuildFlowHarness({ staleRecovery: true });
+    resumed.onboardSpy.mockClear();
+    const upgrade = createRecoveryHarness(["alpha"], {
+      latestBackup: makePreparedRecoveryManifest() as ReturnType<typeof makeManifest>,
+    });
+    upgrade.rebuildSpy.mockImplementation((...args) =>
+      resumed.rebuildSandbox(args[0], args[1], {
+        ...args[2],
+        transactionStore: flow.transactionStore,
+      }),
+    );
+
+    await expect(upgrade.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(flow.transactionStore.load("alpha")).toMatchObject({
+      transactionId: interrupted?.transactionId,
+      status: "completed",
+      phase: "completed",
+    });
+    expect(resumed.onboardSpy).toHaveBeenCalledOnce();
+    expect(upgrade.rebuildSpy).toHaveBeenCalledOnce();
   });
 
   it("fails closed for a probed v0.0.55 custom image with matching backup agent version", async () => {

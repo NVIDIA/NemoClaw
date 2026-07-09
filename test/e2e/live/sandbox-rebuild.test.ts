@@ -6,22 +6,29 @@ import os from "node:os";
 import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
-  latestRebuildBackupDir,
   listCredentialLeakPaths,
+  listRebuildBackupDirs,
   patchRegistrySandboxEntry,
   readRegistrySandboxEntry,
   restoreRegistryAndSession,
   snapshotRegistryAndSession,
 } from "../fixtures/phases/state-validation.ts";
+import {
+  readCompletedRebuildEvidence,
+  readInterruptedRebuildEvidence,
+  readRebuildRegistryEvidence,
+  sandboxContainerIds,
+  startRebuildAtDurableBoundary,
+} from "../fixtures/rebuild-recovery.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 // This dependent migration reuses the rebuild/state helper shape seeded by the
 // OpenClaw rebuild anchor while keeping the contract focused: onboard a real
-// sandbox, mark workspace state, force stale registry metadata, run the real
-// `nemoclaw <sandbox> rebuild --yes`, then verify state preservation, registry
-// refresh, and backup credential hygiene.
+// sandbox, mark workspace state, force stale registry metadata, then kill and
+// resume two real rebuild generations at the destructive recovery boundaries.
 
 const MARKER_FILE = "/sandbox/.openclaw/workspace/rebuild-marker.txt";
 const STALE_AGENT_VERSION = "0.0.1";
@@ -64,8 +71,22 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
+async function expectStoppedRebuild(
+  host: HostCliClient,
+  pid: number,
+  artifactName: string,
+): Promise<void> {
+  const state = await host.command("ps", ["-o", "stat=", "-p", String(pid)], {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 10_000,
+  });
+  expect(state.exitCode, resultText(state)).toBe(0);
+  expect(state.stdout.trim()).toMatch(/^T/u);
+}
+
 test(
-  "sandbox-rebuild: rebuild preserves marker state and refreshes registry metadata",
+  "sandbox rebuild recovers destructive process death without duplicate effects (#6437)",
   async ({
     artifacts,
     cleanup,
@@ -109,7 +130,9 @@ test(
         "real nemoclaw onboard with Docker/OpenShell",
         "openshell sandbox exec marker write/read",
         "local registry stale agentVersion mutation",
-        "real nemoclaw <sandbox> rebuild --yes",
+        "SIGSTOP/SIGKILL after durable old-sandbox deletion",
+        "SIGSTOP/SIGKILL after unjournaled replacement creation",
+        "ordinary public rebuild command recovery for both generations",
         "backup credential leak scan under ~/.nemoclaw/rebuild-backups",
       ],
     });
@@ -150,6 +173,8 @@ test(
       sandboxName: SANDBOX_NAME,
       timeoutMs: ONBOARD_TIMEOUT_MS,
     });
+    const home = process.env.HOME ?? os.homedir();
+    const initialRegistry = readRebuildRegistryEvidence(SANDBOX_NAME, home);
 
     const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
       artifactName: "phase-2-status-version-detection",
@@ -184,24 +209,64 @@ test(
     expect(staleStatus.exitCode, resultText(staleStatus)).toBe(0);
     expect(resultText(staleStatus)).toMatch(/rebuild/i);
 
+    const deletedProcess = await startRebuildAtDurableBoundary({
+      artifacts,
+      artifactName: "phase-5-rebuild-interrupt-old-deleted",
+      commandPath: host.commandPath,
+      env: sandboxRebuildEnv(apiKey),
+      phase: "old_deleted",
+      redact: (text) => secrets.redact(text, [apiKey]),
+      sandboxName: SANDBOX_NAME,
+      timeoutMs: REBUILD_TIMEOUT_MS,
+    });
+    cleanup.add("kill old_deleted rebuild process", async () => {
+      await deletedProcess.kill();
+    });
+    await expectStoppedRebuild(host, deletedProcess.pid, "phase-5-stopped-process-state");
+    const deletedEvidence = readInterruptedRebuildEvidence(SANDBOX_NAME, "old_deleted", home);
+    expect(
+      await sandboxContainerIds(host, SANDBOX_NAME, {
+        artifactName: "phase-5-old-sandbox-container-absence",
+        env: buildAvailabilityProbeEnv(),
+      }),
+    ).toEqual([]);
+    const deletedList = await sandbox.list({
+      artifactName: "phase-5-old-sandbox-openshell-absence",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        OPENSHELL_GATEWAY: deletedEvidence.target.gatewayName,
+      },
+    });
+    expect(resultText(deletedList)).not.toContain(SANDBOX_NAME);
+    expect(deletedEvidence).toMatchObject({
+      status: "active",
+      phase: "old_deleted",
+      receipts: { backup: true, oldSandboxDeletion: true, replacement: false },
+      replacement: null,
+    });
+    await artifacts.writeJson("phase-5-old-deleted-interruption.json", deletedEvidence);
+    await expect(deletedProcess.kill()).resolves.toMatchObject({ signal: "SIGKILL" });
+
     await lifecycle.rebuildSandbox(instance, {
-      artifactName: "phase-5-nemoclaw-rebuild",
+      artifactName: "phase-6-resume-old-deleted-through-public-command",
       env: sandboxRebuildEnv(apiKey),
       redactionValues: [apiKey],
       timeoutMs: REBUILD_TIMEOUT_MS,
     });
     await lifecycle.assertSandboxReadyAfterRebuild(instance, {
-      artifactNamePrefix: "phase-5-sandbox-ready-after-rebuild",
+      artifactNamePrefix: "phase-6-sandbox-ready-after-recovery",
       env: buildAvailabilityProbeEnv(),
       attempts: 12,
       delayMs: 5_000,
     });
 
     await stateValidation.expectMarkerFileContent(instance, MARKER_FILE, MARKER_CONTENT, {
-      artifactName: "phase-6-read-marker-after-rebuild",
+      artifactName: "phase-6-read-marker-after-recovery",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 60_000,
     });
+    const firstCompleted = readCompletedRebuildEvidence(SANDBOX_NAME, home);
+    await artifacts.writeJson("phase-6-first-completed-tombstone.json", firstCompleted);
 
     const updatedVersion = stateValidation.expectRegistryAgentVersionUpdated(
       SANDBOX_NAME,
@@ -213,14 +278,110 @@ test(
       updatedVersion,
     });
 
-    const backupDir = latestRebuildBackupDir(SANDBOX_NAME);
-    const leaks = listCredentialLeakPaths(backupDir, { extraSecrets: [apiKey] });
-    await artifacts.writeJson("phase-8-backup-credential-scan.json", {
-      backupDir: backupDir ?? null,
-      leaks,
-      note: backupDir ? undefined : "No backup directory found; former shell skipped this check.",
+    const replacementProcess = await startRebuildAtDurableBoundary({
+      artifacts,
+      artifactName: "phase-8-rebuild-interrupt-replacement-unjournaled",
+      commandPath: host.commandPath,
+      env: sandboxRebuildEnv(apiKey),
+      phase: "replacement_unjournaled",
+      redact: (text) => secrets.redact(text, [apiKey]),
+      sandboxName: SANDBOX_NAME,
+      timeoutMs: REBUILD_TIMEOUT_MS,
     });
-    expect(leaks, "backup files must not contain credential-shaped values").toEqual([]);
+    cleanup.add("kill replacement_unjournaled rebuild process", async () => {
+      await replacementProcess.kill();
+    });
+    await expectStoppedRebuild(host, replacementProcess.pid, "phase-8-stopped-process-state");
+    const replacementEvidence = readInterruptedRebuildEvidence(
+      SANDBOX_NAME,
+      "replacement_unjournaled",
+      home,
+    );
+    expect(replacementEvidence.transactionId).not.toBe(firstCompleted.transactionId);
+    const replacementContainers = await sandboxContainerIds(host, SANDBOX_NAME, {
+      artifactName: "phase-8-replacement-container-identity",
+      env: buildAvailabilityProbeEnv(),
+    });
+    expect(replacementContainers).toHaveLength(1);
+    const replacementList = await sandbox.list({
+      artifactName: "phase-8-replacement-ready",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        OPENSHELL_GATEWAY: replacementEvidence.target.gatewayName,
+      },
+    });
+    expect(resultText(replacementList)).toMatch(
+      new RegExp(`${SANDBOX_NAME}.*(?:Ready|Running)`, "u"),
+    );
+    expect(replacementEvidence.replacement).toMatchObject({
+      registryGatewayName: replacementEvidence.target.gatewayName,
+      registryGatewayPort: replacementEvidence.target.gatewayPort,
+      sessionTransactionId: replacementEvidence.transactionId,
+      sessionImageFingerprint: replacementEvidence.target.imageFingerprint,
+      sessionConfigurationFingerprint: replacementEvidence.target.configurationFingerprint,
+    });
+    await artifacts.writeJson(
+      "phase-8-replacement-unjournaled-interruption.json",
+      replacementEvidence,
+    );
+    await expect(replacementProcess.kill()).resolves.toMatchObject({ signal: "SIGKILL" });
+
+    const adoptedContainerId = replacementContainers[0]!;
+    const adopted = await lifecycle.rebuildSandbox(instance, {
+      artifactName: "phase-9-adopt-replacement-through-public-command",
+      env: sandboxRebuildEnv(apiKey),
+      redactionValues: [apiKey],
+      timeoutMs: REBUILD_TIMEOUT_MS,
+    });
+    expect(resultText(adopted)).not.toMatch(/Deleting old sandbox|Creating new sandbox/u);
+    await lifecycle.assertSandboxReadyAfterRebuild(instance, {
+      artifactNamePrefix: "phase-9-sandbox-ready-after-adoption",
+      env: buildAvailabilityProbeEnv(),
+      attempts: 12,
+      delayMs: 5_000,
+    });
+    expect(
+      await sandboxContainerIds(host, SANDBOX_NAME, {
+        artifactName: "phase-9-adopted-container-identity",
+        env: buildAvailabilityProbeEnv(),
+      }),
+    ).toEqual([adoptedContainerId]);
+    await stateValidation.expectMarkerFileContent(instance, MARKER_FILE, MARKER_CONTENT, {
+      artifactName: "phase-9-read-marker-after-adoption",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+
+    const secondCompleted = readCompletedRebuildEvidence(SANDBOX_NAME, home);
+    expect(secondCompleted.transactionId).toBe(replacementEvidence.transactionId);
+    expect(secondCompleted.transactionId).not.toBe(firstCompleted.transactionId);
+    await artifacts.writeJson("phase-10-completed-generations.json", {
+      retainedCompletedTombstones: [firstCompleted, secondCompleted],
+    });
+
+    const finalRegistry = readRebuildRegistryEvidence(SANDBOX_NAME, home);
+    expect(finalRegistry).toMatchObject({
+      agent: initialRegistry.agent,
+      defaultSandbox: initialRegistry.defaultSandbox,
+      gatewayName: initialRegistry.gatewayName,
+      gatewayPort: initialRegistry.gatewayPort,
+      agentVersion: updatedVersion,
+      nemoclawVersion: initialRegistry.nemoclawVersion,
+      observabilityEnabled: initialRegistry.observabilityEnabled,
+      policies: initialRegistry.policies,
+      toolDisclosure: initialRegistry.toolDisclosure,
+    });
+
+    const backupScans = listRebuildBackupDirs(SANDBOX_NAME).map((backupDir) => ({
+      backupDir,
+      leaks: listCredentialLeakPaths(backupDir, { extraSecrets: [apiKey] }),
+    }));
+    await artifacts.writeJson("phase-11-backup-credential-scans.json", backupScans);
+    expect(backupScans.length).toBeGreaterThanOrEqual(2);
+    expect(
+      backupScans.flatMap(({ leaks }) => leaks),
+      "backup files must not contain credential-shaped values",
+    ).toEqual([]);
 
     async function stateValidationWriteMarker(): Promise<void> {
       await stateValidation.writeMarkerFile(instance, MARKER_FILE, MARKER_CONTENT, {
@@ -235,5 +396,5 @@ test(
       });
     }
   },
-  TEST_TIMEOUT_MS * 3,
+  TEST_TIMEOUT_MS * 5,
 );

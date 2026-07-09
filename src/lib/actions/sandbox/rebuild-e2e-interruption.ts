@@ -4,6 +4,7 @@
 /** Testing-only process-death checkpoint; inert unless the shared E2E gate is enabled. */
 export type RebuildInterruptionPhase =
   | "delete_unjournaled"
+  | "old_deleted"
   | "prepared"
   | "replacement_created"
   | "replacement_unjournaled"
@@ -11,7 +12,7 @@ export type RebuildInterruptionPhase =
   | "state_restored";
 
 export function maybePauseForRebuildInterruption(phase: RebuildInterruptionPhase): void {
-  if (process.env.VITEST !== "true") return;
+  if (process.env.VITEST !== "true" && process.env.NEMOCLAW_RUN_LIVE_E2E !== "1") return;
   const fixtureRoot = process.env.NEMOCLAW_REBUILD_PROCESS_FIXTURE;
   if (!fixtureRoot || fixtureRoot !== process.env.HOME) return;
   if (process.env.NEMOCLAW_E2E_FAILURE_INJECTION !== "1") return;

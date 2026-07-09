@@ -159,9 +159,7 @@ export async function runRebuildDestroyPhase(
   }
   maybePauseForRebuildInterruption("delete_unjournaled");
   await onDeleted();
-  // The registry row is durable rebuild intent. The inner onboard run observes
-  // that the sandbox is absent and replaces the row only after creation. Keep
-  // it for every agent so process death cannot discard recovery metadata.
+  // Keep the registry row as durable intent until inner onboard replaces it.
   log("Preserving registry entry across sandbox recreation");
   log(
     `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,

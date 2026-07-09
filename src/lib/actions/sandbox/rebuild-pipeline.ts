@@ -253,6 +253,7 @@ async function rebuildSandboxUnlocked(
         onDeleted: async () => {
           sandboxStillExists = false;
           await transaction.markDeleted();
+          maybePauseForRebuildInterruption("old_deleted");
         },
       });
       if (!mcpPreparation) return;

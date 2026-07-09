@@ -60,6 +60,10 @@
     "reason": "Internal E2E-only sentinel that tells CI to route the repository NVIDIA_INFERENCE_API_KEY secret through the hosted inference-api.nvidia.com OpenAI-compatible endpoint. Not user-facing."
   },
   {
+    "name": "NEMOCLAW_RUN_LIVE_E2E",
+    "reason": "Repository live-E2E opt-in consumed by Vitest collection and guarded failure-injection hooks. It is a test-runner control, not a supported NemoClaw runtime configuration variable."
+  },
+  {
     "name": "NEMOCLAW_COMPAT_MODEL",
     "reason": "Internal E2E/test override for the model used by OpenAI-compatible endpoint scenarios. User-facing custom endpoint model selection is collected through onboard prompts or NEMOCLAW_MODEL."
   },

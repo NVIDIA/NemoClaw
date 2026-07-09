@@ -4,20 +4,19 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import { buildAvailabilityProbeEnv } from "../availability-env.ts";
-import type { ArtifactSink } from "../artifacts.ts";
-import {
-  resultText,
-  trustedProviderEndpoint,
-  type GatewayClient,
-  type HostCliClient,
-  type SandboxClient,
-} from "../clients/index.ts";
-import type { ShellProbeResult } from "../shell-probe.ts";
+import { shellQuote } from "../../../../src/lib/core/shell-quote";
 import { probesForState, requireExpectedState } from "../../registry/expected-states.ts";
 import type { ExpectedState, StateProbeId } from "../../registry/types.ts";
-import { shellQuote } from "../../../../src/lib/core/shell-quote";
+import type { ArtifactSink } from "../artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import {
+  type GatewayClient,
+  type HostCliClient,
+  resultText,
+  type SandboxClient,
+  trustedProviderEndpoint,
+} from "../clients/index.ts";
+import type { ShellProbeResult } from "../shell-probe.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
 // Mirror of `src/lib/state/registry.ts::REGISTRY_FILE`. The fixture
@@ -216,15 +215,20 @@ export function latestRebuildBackupDir(
   sandboxName: string,
   options: RebuildBackupOptions = {},
 ): string | undefined {
+  return listRebuildBackupDirs(sandboxName, options).at(-1);
+}
+
+export function listRebuildBackupDirs(
+  sandboxName: string,
+  options: RebuildBackupOptions = {},
+): string[] {
   const sandboxRoot = path.join(options.backupRoot ?? defaultRebuildBackupsRoot(), sandboxName);
-  if (!fs.existsSync(sandboxRoot)) return undefined;
-  const latest = fs
+  if (!fs.existsSync(sandboxRoot)) return [];
+  return fs
     .readdirSync(sandboxRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort()
-    .at(-1);
-  return latest ? path.join(sandboxRoot, latest) : undefined;
+    .map((entry) => path.join(sandboxRoot, entry.name))
+    .sort();
 }
 
 export function readRebuildBackupManifest(backupDir: string): Record<string, unknown> {
