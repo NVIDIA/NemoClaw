@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -36,7 +37,7 @@ interface AuditResult {
 function reviewedOpenClawVersion(): string {
   const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile"), "utf-8");
   const version = dockerfile.match(/^ARG OPENCLAW_VERSION=([^\s]+)/m)?.[1];
-  if (!version) throw new Error("Dockerfile is missing ARG OPENCLAW_VERSION");
+  assert.ok(version, "Dockerfile is missing ARG OPENCLAW_VERSION");
   return version;
 }
 
@@ -54,10 +55,11 @@ function runOpenClawAudit(chatUiUrl: string): AuditResult {
 
   try {
     const version = reviewedOpenClawVersion();
-    const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, NPM_CONFIG_CACHE: cache };
-    for (const key of Object.keys(childEnv)) {
-      if (key.startsWith("VITEST") || key === "NODE_ENV") delete childEnv[key];
-    }
+    const childEnv = Object.fromEntries(
+      Object.entries({ ...process.env, HOME: home, NPM_CONFIG_CACHE: cache }).filter(
+        ([key]) => !key.startsWith("VITEST") && key !== "NODE_ENV",
+      ),
+    );
     const audit = spawnSync(
       "npm",
       [
@@ -77,11 +79,10 @@ function runOpenClawAudit(chatUiUrl: string): AuditResult {
         timeout: OPENCLAW_AUDIT_TIMEOUT_MS,
       },
     );
-    if (audit.error || audit.status !== 0 || !audit.stdout.trim()) {
-      throw new Error(
-        `OpenClaw audit failed: ${audit.error?.message || audit.stderr || audit.stdout || "empty output"}`,
-      );
-    }
+    const auditFailure = audit.error?.message || audit.stderr || audit.stdout || "empty output";
+    assert.equal(audit.error, undefined, `OpenClaw audit failed: ${auditFailure}`);
+    assert.equal(audit.status, 0, `OpenClaw audit failed: ${auditFailure}`);
+    assert.ok(audit.stdout.trim(), `OpenClaw audit failed: ${auditFailure}`);
     return JSON.parse(audit.stdout) as AuditResult;
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
