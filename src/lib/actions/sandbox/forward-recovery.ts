@@ -61,7 +61,23 @@ export function resolveSandboxDashboardPort(
  * confirms the new entry is running, false otherwise.
  */
 export function ensureSandboxPortForward(sandboxName: string): boolean {
-  return ensureSandboxPortForwardForPort(sandboxName, resolveSandboxDashboardPort(sandboxName));
+  const port = resolveSandboxDashboardPort(sandboxName);
+  const remoteBindRequested = process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0";
+  if (
+    remoteBindRequested &&
+    registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared !== true
+  ) {
+    console.error(
+      `  Refusing remote dashboard bind for '${sandboxName}': its generated configuration was not prepared for remote exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before reconnecting.`,
+    );
+    return false;
+  }
+  return ensureSandboxPortForwardForPort(
+    sandboxName,
+    port,
+    remoteBindRequested ? `0.0.0.0:${port}` : String(port),
+    remoteBindRequested,
+  );
 }
 
 /**
@@ -97,9 +113,14 @@ export function isSandboxPortForwardHealthy(
   );
 }
 
-export function ensureSandboxPortForwardForPort(sandboxName: string, port: number): boolean {
+export function ensureSandboxPortForwardForPort(
+  sandboxName: string,
+  port: number,
+  forwardTarget = String(port),
+  forceRestart = false,
+): boolean {
   let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port);
-  if (forwardHealth === true) return true;
+  if (forwardHealth === true && !forceRestart) return true;
   if (forwardHealth === "occupied") return false;
   const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
   const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
@@ -136,7 +157,9 @@ export function ensureSandboxPortForwardForPort(sandboxName: string, port: numbe
         stopState.health = isSandboxPortForwardHealthy(sandboxName, port);
         stopState.portReleased = !isLocalForwardReachable(port);
         return (
-          stopState.health === true || stopState.health === "occupied" || stopState.portReleased
+          (!forceRestart && stopState.health === true) ||
+          stopState.health === "occupied" ||
+          stopState.portReleased
         );
       },
       {
@@ -146,12 +169,12 @@ export function ensureSandboxPortForwardForPort(sandboxName: string, port: numbe
         backoffFactor: 1.5,
       },
     );
-    if (stopState.health === true) return true;
+    if (stopState.health === true && !forceRestart) return true;
     if (stopState.health === "occupied" || !stopSettled || !stopState.portReleased) return false;
   }
 
   const startResult = runOpenshell(
-    ["forward", "start", "--background", String(port), sandboxName],
+    ["forward", "start", "--background", forwardTarget, sandboxName],
     {
       ignoreError: true,
     },

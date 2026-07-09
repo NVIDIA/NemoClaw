@@ -174,6 +174,11 @@ export function patchStagedDockerfile(
     /^ARG CHAT_UI_URL=.*$/m,
     `ARG CHAT_UI_URL=${sanitizeDockerArg(chatUiUrl)}`,
   );
+  const dashboardBind = process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" ? "0.0.0.0" : "";
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_DASHBOARD_BIND=.*$/m,
+    `ARG NEMOCLAW_DASHBOARD_BIND=${dashboardBind}`,
+  );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_BASE_URL=.*$/m,
     `ARG NEMOCLAW_INFERENCE_BASE_URL=${sanitizeDockerArg(inferenceBaseUrl)}`,

@@ -3105,7 +3105,7 @@ Keep the OpenShell gateway on loopback and use `NEMOCLAW_DASHBOARD_BIND` when yo
 
 `NEMOCLAW_DASHBOARD_BIND` controls the dashboard or API port forward bind address.
 By default the forward stays on `127.0.0.1` (loopback only).
-Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before `$$nemoclaw onboard` (or `$$nemoclaw <sandbox> connect`) to bind the forward on all interfaces, which is useful when the host is reached over SSH or a cloud workstation.
+Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before `$$nemoclaw onboard` to prepare the sandbox for remote exposure and bind the forward on all interfaces. Use the same setting for later `$$nemoclaw <sandbox> connect` calls. A sandbox created without this opt-in must be recreated with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox` before a remote-bind connect is allowed.
 Only `0.0.0.0` enables the remote bind; other values are ignored.
 </AgentOnly>
 

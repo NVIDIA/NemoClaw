@@ -55,6 +55,7 @@ export interface CreatedSandboxRegistryEntryInput {
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   dashboardPort: number;
+  dashboardRemoteBindPrepared?: boolean;
   gatewayName: string;
   gatewayPort: number;
 }
@@ -143,6 +144,7 @@ export function buildCreatedSandboxRegistryEntry(
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
     dashboardPort: input.dashboardPort,
+    dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   };

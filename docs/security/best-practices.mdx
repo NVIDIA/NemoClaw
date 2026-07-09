@@ -655,7 +655,7 @@ NemoClaw binds the OpenShell gateway to loopback by default.
 | Aspect | Detail |
 |---|---|
 | Default | `NEMOCLAW_GATEWAY_BIND_ADDRESS=127.0.0.1`. |
-| What you can change | Keep Docker-driver gateways on loopback. Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` for remote dashboard/API access. |
+| What you can change | Keep Docker-driver gateways on loopback. Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` during onboarding and on later `connect` calls for remote dashboard/API access. Recreate a local-only sandbox before changing it to a remote bind. |
 | Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway; Docker-driver gateways on OpenShell 0.0.72 reject wildcard gateway binds while gateway JWT auth is active. |
 | Recommendation | Keep the gateway loopback default and expose only the dashboard forward when remote access is needed. |
 
@@ -684,7 +684,7 @@ The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS a
 | Recommendation | Use `https://` for any deployment accessible beyond `localhost`. The default local URL (`http://127.0.0.1:18789`) correctly allows insecure auth for local development. |
 
 OpenClaw's security audit keeps NemoClaw-managed loopback `allowInsecureAuth` findings and loopback-only explicit `NEMOCLAW_DISABLE_DEVICE_AUTH=1` opt-out findings visible as accepted findings instead of counting them as unexplained active findings.
-For audit reporting, NemoClaw treats either a non-loopback `CHAT_UI_URL` or `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` as remote dashboard exposure.
+For audit reporting, NemoClaw treats either a non-loopback `CHAT_UI_URL` or an onboard-time `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` as remote dashboard exposure. Use the same bind setting on later `connect` calls. If the sandbox was created without that setting, NemoClaw refuses the remote forward until you recreate it with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox`; this keeps the generated audit state aligned with the host exposure state.
 In that state, it does not add the loopback-only audit suppressions, so any resulting device-auth and insecure-auth findings remain active.
 The generated configuration uses exact audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
 The audit also reports that suppressions are active so you can review the accepted risk.
@@ -698,6 +698,7 @@ openclaw security audit --json | jq '.suppressedFindings'
 ```
 
 Remove the underlying risky condition when dashboard compatibility no longer requires it.
+Revisit these suppressions when OpenClaw can distinguish intentional loopback development HTTP from remote exposure, or when NemoClaw adopts HTTPS by default for local dashboards.
 
 ### Auto-Pair Client Allowlist
 
