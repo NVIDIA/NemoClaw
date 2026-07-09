@@ -86,7 +86,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     }
   });
 
-  it("allows plain OTLP endpoint URLs but rejects credential-bearing endpoint values", () => {
+  it("allows plain OTLP endpoint URLs but rejects credential-bearing endpoint values (`#6466`)", () => {
     // Regression for #6466: a plain OTLP collector URL is not a credential and
     // must pass the guard (the documented `--observability` flow sets one),
     // while a URL with embedded userinfo or a structured key-bearing blob is
@@ -127,6 +127,13 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
         expect(result.stderr).toContain(name);
         expect(fs.existsSync(rejectFixture.ranMarker)).toBe(false);
       }
+
+      // An empty value is treated as unset, not a credential.
+      const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-otlp-empty-"));
+      const emptyFixture = makeWrapperFixture(emptyDir);
+      const emptyResult = runWrapper(emptyFixture.wrapperPath, ["-n", "hi"], { [name]: "" });
+      expect(emptyResult.status, `${name}= (empty)`).toBe(0);
+      expect(fs.existsSync(emptyFixture.ranMarker)).toBe(true);
     }
   });
 

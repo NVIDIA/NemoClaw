@@ -488,8 +488,11 @@ assert_no_secret_runtime_env() {
       refuse_secret_env "runtime environment variable" "$name"
     fi
     if is_otlp_endpoint_name "$name"; then
-      is_bare_http_url_without_userinfo "$value" \
-        || refuse_secret_env "runtime environment variable" "$name"
+      # An empty value is treated as unset (matches the length check it
+      # replaces and the managed Python runtime), so only scan a set value.
+      if [ -n "$value" ] && ! is_bare_http_url_without_userinfo "$value"; then
+        refuse_secret_env "runtime environment variable" "$name"
+      fi
       continue
     fi
     if has_credential_name_context "$name" && [ ${#value} -ge 10 ] && ! is_allowed_openshell_runtime_value "$name" "$value"; then
@@ -556,8 +559,9 @@ assert_no_secret_env_file() {
       refuse_secret_env "$env_file" "$key"
     fi
     if is_otlp_endpoint_name "$key"; then
-      is_bare_http_url_without_userinfo "$value" \
-        || refuse_secret_env "$env_file" "$key"
+      if [ -n "$value" ] && ! is_bare_http_url_without_userinfo "$value"; then
+        refuse_secret_env "$env_file" "$key"
+      fi
       continue
     fi
     if has_credential_name_context "$key" && [ ${#value} -ge 10 ]; then
