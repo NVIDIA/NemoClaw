@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { patchStagedDockerfile } from "../src/lib/onboard/dockerfile-patch";
+import {
+  hasPreparedRemoteDashboardBind,
+  patchStagedDockerfile,
+} from "../src/lib/onboard/dockerfile-patch";
 import { prepareSandboxCreateLaunch } from "../src/lib/onboard/sandbox-create-launch";
 import { buildCreatedSandboxRegistryEntry } from "../src/lib/onboard/sandbox-registration";
 import { applyReusedSandboxDashboardState } from "../src/lib/onboard/sandbox-reuse";
@@ -82,6 +85,7 @@ describe("remote dashboard bind production lifecycle", () => {
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },
         dashboardPort: 18789,
+        dashboardRemoteBindPrepared: hasPreparedRemoteDashboardBind(dockerfile),
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
       });

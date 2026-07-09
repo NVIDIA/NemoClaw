@@ -90,6 +90,7 @@ const {
   selectResourceProfileForSandbox,
 }: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
 const {
+  hasPreparedRemoteDashboardBind,
   patchStagedDockerfile,
 }: typeof import("./onboard/dockerfile-patch") = require("./onboard/dockerfile-patch");
 const {
@@ -2806,6 +2807,7 @@ async function createSandboxWithBaseImageResolution(
     ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
     gatewayPort: GATEWAY_PORT,
   });
+  const dashboardRemoteBindPrepared = hasPreparedRemoteDashboardBind(stagedDockerfile);
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const { createResult, prebuild, effectiveDashboardPort, dockerGpuCreatePatch } =
     await runSandboxCreateStep(
@@ -3013,6 +3015,7 @@ async function createSandboxWithBaseImageResolution(
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
+          dashboardRemoteBindPrepared,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),

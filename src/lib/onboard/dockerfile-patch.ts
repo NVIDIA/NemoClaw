@@ -88,6 +88,12 @@ export function isValidProxyPort(value: string): boolean {
   return port >= 1 && port <= 65535;
 }
 
+export function hasPreparedRemoteDashboardBind(dockerfilePath: string): boolean {
+  return /^ARG NEMOCLAW_DASHBOARD_BIND=0\.0\.0\.0$/m.test(
+    readDockerfilePatchSnapshot(dockerfilePath).content,
+  );
+}
+
 export function patchStagedDockerfile(
   dockerfilePath: string,
   model: string,

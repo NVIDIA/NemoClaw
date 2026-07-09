@@ -144,8 +144,7 @@ export function buildCreatedSandboxRegistryEntry(
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
     dashboardPort: input.dashboardPort,
-    dashboardRemoteBindPrepared:
-      input.dashboardRemoteBindPrepared ?? process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0",
+    dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   };
