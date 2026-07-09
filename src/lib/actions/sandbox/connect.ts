@@ -17,8 +17,10 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { spawnExitCode } from "../../core/process-exit";
+import { shellQuote } from "../../core/shell-quote";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import {
+  formatInferenceRouteDriftForDisplay,
   parseGatewayInference,
   planInferenceRouteReconcile,
   sanitizeRouteValueForDisplay,
@@ -733,18 +735,19 @@ function ensureSandboxInferenceRouteUnlocked(
       if (plan.kind === "diverged") {
         // Shared gateway: re-point loudly (even when quiet) — silent revert was
         // #3726. Values sanitized: registry/gateway strings are untrusted.
-        const liveProvider = sanitizeRouteValueForDisplay(plan.live.provider);
-        const liveModel = sanitizeRouteValueForDisplay(plan.live.model);
-        console.error(
-          `  ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) ` +
-            `differs from the recorded route for sandbox '${sandboxName}' (${recordedRoute}).${R}`,
+        const display = formatInferenceRouteDriftForDisplay(
+          plan.live,
+          plan.recorded,
+          `for sandbox '${sandboxName}'`,
         );
+        const { liveProvider, liveModel } = display;
+        console.error(`  ${YW}Warning: ${display.warning}${R}`);
         console.error(
           `  ${YW}Aligning the gateway to ${recordedRoute}. To keep ` +
             `${liveProvider}/${liveModel}, set it the supported way:${R}`,
         );
         console.error(
-          `    ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
+          `    ${CLI_NAME} inference set --provider ${shellQuote(liveProvider)} --model ${shellQuote(liveModel)} --sandbox ${shellQuote(sandboxName)}`,
         );
       } else if (!quiet) {
         // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.

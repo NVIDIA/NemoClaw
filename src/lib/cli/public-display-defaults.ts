@@ -25,6 +25,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 40,
     },
   ],
+  completion: [
+    {
+      group: "Getting Started",
+      order: 1.75,
+      flags: "[bash|zsh|fish]",
+    },
+  ],
   "credentials:add": [
     {
       group: "Credentials",

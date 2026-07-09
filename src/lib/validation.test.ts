@@ -14,6 +14,7 @@ import {
   shouldForceCompletionsApi,
   shouldSkipResponsesProbe,
   validateNvidiaApiKeyValue,
+  validateOpenRouterApiKeyValue,
 } from "./validation";
 
 describe("classifyValidationFailure", () => {
@@ -431,11 +432,28 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("gemini-api")).toBe(true);
   });
 
+  it("skips the Responses probe for openrouter-api (OpenRouter uses Chat Completions here)", () => {
+    expect(shouldSkipResponsesProbe("openrouter-api")).toBe(true);
+  });
+
   it("does not skip the Responses probe for other providers", () => {
     expect(shouldSkipResponsesProbe("openai-api")).toBe(false);
     expect(shouldSkipResponsesProbe("anthropic-prod")).toBe(false);
     expect(shouldSkipResponsesProbe("compatible-endpoint")).toBe(false);
     expect(shouldSkipResponsesProbe("")).toBe(false);
+  });
+});
+
+describe("validateOpenRouterApiKeyValue", () => {
+  it("accepts OpenRouter sk-or keys", () => {
+    expect(validateOpenRouterApiKeyValue("sk-or-test")).toBeNull();
+  });
+
+  it("rejects missing or non-OpenRouter keys", () => {
+    expect(validateOpenRouterApiKeyValue("")).toBe("  OpenRouter API Key is required.");
+    expect(validateOpenRouterApiKeyValue("sk-test")).toBe(
+      "  Invalid OpenRouter API key. Must start with sk-or-",
+    );
   });
 });
 

@@ -115,6 +115,14 @@ run_dcode() {
 #       ends in a credential keyword (_KEY, _TOKEN, _SECRET, _PASSWORD,
 #       _PASSWD, _PASS, _CREDENTIAL) and the value is at least 10 chars (mirroring
 #       CONTEXT_PATTERNS minimum length).
+#     * OTLP endpoint variables (OTEL_EXPORTER_OTLP_ENDPOINT and its _TRACES_
+#       variant) carry a collector URL, not a credential, so the documented
+#       `--observability` flow can set one. is_safe_otlp_endpoint_url accepts
+#       ONLY a strict scheme://host[:port][/path] ASCII URL and refuses userinfo,
+#       query, fragment, percent-encoding, controls, non-ASCII, and oversized
+#       inputs (a value that cannot smuggle a credential in any field); the
+#       is_secret_shaped_value scan still runs first. The `_HEADERS` variants
+#       remain under the name-context refusal because they do carry auth material.
 #     * Managed messaging values (SLACK_BOT_TOKEN, SLACK_APP_TOKEN,
 #       TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN) are allowed only when the value
 #       matches the platform-specific token shape AND does not embed a
@@ -327,7 +335,7 @@ has_credential_name_context() {
     LANGSMITH_RUNS_ENDPOINTS | LANGCHAIN_RUNS_ENDPOINTS)
       return 0
       ;;
-    OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT | OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
+    OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
       return 0
       ;;
     *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASSWD | *_PASS | *_CREDENTIAL | *-API-KEY | *-KEY | *-TOKEN | *-SECRET | *-PASSWORD | *-PASSWD | *-PASS | *-CREDENTIAL)
@@ -349,6 +357,69 @@ is_allowed_openshell_runtime_value() {
   local name="$1"
   local value="$2"
   [ "$name" = "OPENSHELL_TLS_KEY" ] && [ "$value" = "$OPENSHELL_TLS_KEY_PATH" ]
+}
+
+# OTLP endpoint variables carry the collector URL, not a credential. The
+# documented `--observability` flow sets one (e.g.
+# http://host.openshell.internal:4318), so a clean bare http(s) URL must be
+# accepted rather than refused on length like a credential-named var. The
+# `_HEADERS` variants (which do carry auth material) stay under the generic
+# name-context refusal; only the `_ENDPOINT` variants get this URL allowance.
+is_otlp_endpoint_name() {
+  case "$1" in
+    OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) return 0 ;;
+  esac
+  return 1
+}
+
+# The only OTLP collector a managed sandbox can reach: the `--observability`
+# egress preset opens exactly this host, and the runtime hardcodes it. Restricting
+# to it (exact match, so no subdomain/suffix confusion) sidesteps DNS/IPv4/port
+# validation drift between Bash and Python and refuses every unreachable or
+# credential-smuggling host by construction (#6538 review).
+readonly OTLP_MANAGED_ENDPOINT_HOST="host.openshell.internal"
+
+# Accept ONLY http(s)://host.openshell.internal[:port][/path], where port is a
+# 1..65535 decimal with no leading zero and path uses a strict ASCII charset.
+# Everything else — any other host, userinfo (@), query (?), fragment (#),
+# percent-encoding (%), C0 controls, DEL, non-ASCII, backslashes, whitespace,
+# malformed host/port, or oversized input — is refused. The value-shape scan
+# (is_secret_shaped_value) still runs first. LC_ALL=C forces byte-wise ASCII so
+# UTF-8 collation cannot fold non-ASCII into [A-Za-z0-9]; the managed Python
+# runtime's _is_safe_otlp_endpoint_url mirrors this logic byte-for-byte.
+# The optional path may contain dot segments; that is intentional and safe here
+# because the path is delivered verbatim only to the exact managed collector
+# host and cannot traverse to another origin, so there is nothing to smuggle to.
+is_safe_otlp_endpoint_url() {
+  local value="$1" rest authority host port
+  local LC_ALL=C
+  [ "${#value}" -le 2048 ] || return 1
+  case "$value" in
+    http://*) rest="${value#http://}" ;;
+    https://*) rest="${value#https://}" ;;
+    *) return 1 ;;
+  esac
+  authority="${rest%%/*}"
+  if [ "$authority" != "$rest" ]; then
+    [[ "/${rest#*/}" =~ ^/[A-Za-z0-9._/-]*$ ]] || return 1
+  fi
+  host="${authority%%:*}"
+  [ "$host" = "$OTLP_MANAGED_ENDPOINT_HOST" ] || return 1
+  if [ "$host" != "$authority" ]; then
+    port="${authority#*:}"
+    [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ] || return 1
+  fi
+  return 0
+}
+
+# True if the value carries any C0 control (0x01-0x1F) or DEL (0x7F). NUL cannot
+# reach here — Bash drops it from a variable at read time — so it is out of the
+# claimed boundary by construction. Used to fail closed on dotenv OTLP values
+# before the generic trim/unquote could silently strip a smuggled trailing
+# TAB/VT/FF/CR (#6538 review). LC_ALL=C makes [[:cntrl:]] a byte-wise ASCII class.
+has_control_char() {
+  local LC_ALL=C
+  [[ "$1" =~ [[:cntrl:]] ]]
 }
 
 is_dynamic_dotenv_value() {
@@ -445,6 +516,14 @@ assert_no_secret_runtime_env() {
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
+    if is_otlp_endpoint_name "$name"; then
+      # An empty value is treated as unset (matches the length check it
+      # replaces and the managed Python runtime), so only scan a set value.
+      if [ -n "$value" ] && ! is_safe_otlp_endpoint_url "$value"; then
+        refuse_secret_env "runtime environment variable" "$name"
+      fi
+      continue
+    fi
     if has_credential_name_context "$name" && [ ${#value} -ge 10 ] && ! is_allowed_openshell_runtime_value "$name" "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
@@ -455,7 +534,7 @@ assert_no_secret_env_file() {
   local env_file="$DEEPAGENTS_ENV_FILE"
   [ -r "$env_file" ] || return 0
   local -a lines=()
-  local env_file_content line key value
+  local env_file_content line key value raw_value
   # Scan the whole file before line parsing so raw multiline blocks cannot put
   # their begin and end markers on different physical dotenv lines.
   env_file_content="$(<"$env_file")"
@@ -480,6 +559,10 @@ assert_no_secret_env_file() {
     key="${line%%=*}"
     [ "$key" != "$line" ] || continue
     value="${line#*=}"
+    # Preserve the value as written (still quoted, untrimmed) so the OTLP guard
+    # can fail closed on smuggled control characters before normalization strips
+    # them. The benign CRLF line terminator was already removed above.
+    raw_value="$value"
     key="$(trim_whitespace "$key")"
     value="$(trim_whitespace "$value")"
     case "$value" in
@@ -507,6 +590,17 @@ assert_no_secret_env_file() {
     fi
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "$env_file" "$key"
+    fi
+    if is_otlp_endpoint_name "$key"; then
+      # Fail closed on control characters carried in the raw dotenv value before
+      # the trim/unquote above could silently strip a trailing TAB/VT/FF/CR.
+      if has_control_char "$raw_value"; then
+        refuse_secret_env "$env_file" "$key"
+      fi
+      if [ -n "$value" ] && ! is_safe_otlp_endpoint_url "$value"; then
+        refuse_secret_env "$env_file" "$key"
+      fi
+      continue
     fi
     if has_credential_name_context "$key" && [ ${#value} -ge 10 ]; then
       refuse_secret_env "$env_file" "$key"

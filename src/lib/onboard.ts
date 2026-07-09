@@ -29,6 +29,7 @@ const {
   resolveCompatibleEndpointInput,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const setupNimFlow: typeof import("./onboard/setup-nim-flow") = require("./onboard/setup-nim-flow");
+const openrouterSelection: typeof import("./onboard/openrouter-selection") = require("./onboard/openrouter-selection");
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
@@ -141,8 +142,8 @@ const {
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const {
-  repairResumeMachineSnapshot,
-}: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
+  applySessionRecovery,
+}: typeof import("./onboard/session-recovery") = require("./onboard/session-recovery");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
   require("./onboard/bedrock-runtime");
 const {
@@ -325,9 +326,8 @@ const {
   rejectUnsupportedWindowsHostOllama,
   shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
-const {
-  waitForGatewayHealth,
-}: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
+const { waitForGatewayHealth }: typeof import("./onboard/gateway-health-wait") =
+  require("./onboard/gateway-health-wait");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
@@ -524,8 +524,11 @@ const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
-const { createFinalGatewayStartFailureHandler, reportLegacyGatewayStartResultFailure } =
-  require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
+const {
+  createFinalGatewayStartFailureHandler,
+  normalizeGatewayStartError,
+  reportLegacyGatewayStartResultFailure,
+} = require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
@@ -1475,18 +1478,8 @@ function attachGatewayMetadataIfNeeded({
   return false;
 }
 
-async function ensureNamedCredential(
-  envName: string | null,
-  label: string,
-  helpUrl: string | null = null,
-): Promise<string | typeof BACK_TO_SELECTION> {
-  return credentialPrompt.ensureNamedCredential(envName, label, helpUrl);
-}
-
 // parsePolicyPresetEnv — see urlUtils import above
 // isSafeModelId — see validation import above
-
-// getNonInteractiveProvider, getNonInteractiveModel — moved to onboard-providers.ts
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
@@ -1878,7 +1871,6 @@ async function startGatewayWithOptions(
             }s for first-time startup.`,
           );
         }
-
         if (
           await waitForGatewayHealth({
             attachGatewayMetadataIfNeeded,
@@ -1887,7 +1879,8 @@ async function startGatewayWithOptions(
             healthPollCount: healthWait.count,
             healthPollIntervalSeconds: healthWait.interval,
             isGatewayHealthy,
-            isGatewayHttpReady,
+            isGatewayHttpReady: (signal) =>
+              isGatewayHttpReady(undefined, undefined, undefined, signal),
             repairGatewayBootstrapSecrets,
             runCaptureOpenshell,
             sleepSeconds,
@@ -1896,7 +1889,7 @@ async function startGatewayWithOptions(
           return;
         }
 
-        throw new Error("Gateway failed to start");
+        throw new Error(`Gateway failed within ${healthWait.count * healthWait.interval}s.`);
       },
       {
         retries,
@@ -1912,11 +1905,9 @@ async function startGatewayWithOptions(
         },
       },
     );
-  } catch {
-    if (exitOnFailure) {
-      handleFinalGatewayStartFailure({ retries, dockerUnreachable });
-    }
-    throw new Error("Gateway failed to start");
+  } catch (error) {
+    if (exitOnFailure) handleFinalGatewayStartFailure({ retries, dockerUnreachable });
+    throw normalizeGatewayStartError(error);
   }
 
   console.log("  ✓ Gateway is healthy");
@@ -3236,7 +3227,7 @@ async function handleRoutedSelection(
     console.log("  Model Router accepts NVIDIA API keys (nvapi-...).");
     console.log("  Get one at https://build.nvidia.com");
     console.log("");
-    const routerCredentialResult = await ensureNamedCredential(
+    const routerCredentialResult = await credentialPrompt.ensureNamedCredential(
       routerCredentialEnv,
       "Model Router API key",
       null,
@@ -3595,17 +3586,20 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         { resolveProviderCredential, readRecordedInferenceRoute, readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell, args.gatewayName ?? GATEWAY_NAME), note },
       );
     } else {
-      const credentialResult = await ensureNamedCredential(
+      const credentialResult = await credentialPrompt.ensureNamedCredential(
         selectedCredentialEnv,
         `${remoteConfig.label} API key`,
         remoteConfig.helpUrl,
+        openrouterSelection.credentialValidatorForProvider(selected.key),
       );
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
     }
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
     let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
-    if (selected.key === "openai" || selected.key === "gemini") {
+    if (openrouterSelection.isOpenAiLikeRemoteProvider(selected.key)) {
       const modelAuthMode = getProbeAuthMode(state.provider);
       modelValidator = (candidate) => {
         state.model = candidate;
@@ -3615,7 +3609,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
           state.endpointUrl || remoteConfig.endpointUrl,
           candidate,
           getCredential(selectedCredentialEnv) || "",
-          ...(modelAuthMode ? [{ authMode: modelAuthMode }] : []),
+          openrouterSelection.openAiLikeModelValidationOptions(state.provider, modelAuthMode),
         );
       };
     } else if (selected.key === "anthropic") {
@@ -3632,6 +3626,9 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     while (true) {
       if (isNonInteractive()) {
         state.model = defaultModel;
+      } else if (openrouterSelection.isOpenRouterProvider(selected.key)) {
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        state.model = await openrouterSelection.selectModel({ state, requestedModel, recoveredFromSandbox, recoveredModel, remoteConfig, validateOpenAiLikeModel });
       } else if (remoteConfig.modelMode === "curated") {
         state.model = await promptRemoteModel(
           remoteConfig.label,
@@ -4222,7 +4219,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         createSession: onboardSession.createSession,
         saveSession: onboardSession.saveSession,
         updateSession: onboardSession.updateSession,
-        repairResumeMachineSnapshot,
+        applySessionRecovery,
         setOnboardBrandingAgent,
         getResumeConfigConflicts,
         recordResumeConflict: (conflict) => onboardRuntimeBoundary.recordResumeConflict(conflict),

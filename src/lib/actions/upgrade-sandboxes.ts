@@ -11,10 +11,15 @@ import {
   type UpgradeSandboxesOptions,
 } from "../domain/lifecycle/options";
 import {
+  classifyOrphanedRegistrySandboxes,
+  orphanedRegistryRemediation,
+  orphanedRegistrySummary,
+} from "../domain/maintenance/orphan-detection";
+import {
   classifyUpgradeableSandboxes,
+  describeStaleUpgrade,
   shouldSkipUpgradeConfirmation,
   splitRebuildableSandboxes,
-  type UpgradeSandboxCandidate,
 } from "../domain/maintenance/upgrade";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
@@ -69,24 +74,11 @@ function resolveCurrentNemoclawVersion(): string | null {
   }
 }
 
-/**
- * Build a human-readable description of why a sandbox needs rebuilding, covering
- * an outdated agent version, NemoClaw image/build drift, or both (#5026).
- */
-function describeStaleUpgrade(s: UpgradeSandboxCandidate): string {
-  const reasons = s.reasons ?? [];
-  const parts: string[] = [];
-  if (reasons.includes("agent-version")) {
-    parts.push(`v${s.current || "?"} → v${s.expected}`);
-  } else if (reasons.includes("image-drift") && s.current) {
-    // Agent version is current; make clear it is the NemoClaw image that drifted.
-    parts.push(`v${s.current} unchanged`);
-  }
-  if (reasons.includes("image-drift")) {
-    const from = s.imageCurrent ? `v${s.imageCurrent}` : "unknown build";
-    parts.push(`NemoClaw image ${from} → v${s.imageExpected}`);
-  }
-  return parts.join("; ");
+// Rendering over domain/maintenance/orphan-detection.ts (#6520).
+function printOrphanedRegistrySandboxes(orphans: registry.SandboxEntry[]): void {
+  if (orphans.length === 0) return;
+  console.log(`  ${YW}${orphanedRegistrySummary(orphans.map((sandbox) => sandbox.name))}${R}`);
+  console.log(`  ${D}${orphanedRegistryRemediation(CLI_NAME)}${R}`);
 }
 
 type PreparedBackupRecovery = {
@@ -283,6 +275,9 @@ export async function upgradeSandboxes(
     confirmedLegacyManagedNames.delete(name);
   }
   let recoveryCandidates: registry.SandboxEntry[] = [];
+  // Absent candidates the confirming second listing observed as Ready:
+  // reconnected mid-run, so neither recovery candidates nor orphans.
+  const becameReadyNames = new Set<string>();
   if (recoverPreparedBackups) {
     const gatewayEligible = sandboxes.filter((sandbox) =>
       isPreparedRecoveryCandidate(sandbox, liveNames, selectedGatewayName),
@@ -297,6 +292,10 @@ export async function upgradeSandboxes(
       absentCandidates,
       selectedGatewayName,
     );
+    const confirmedAbsentNames = new Set(confirmedAbsentCandidates.map((s) => s.name));
+    for (const sandbox of absentCandidates) {
+      if (!confirmedAbsentNames.has(sandbox.name)) becameReadyNames.add(sandbox.name);
+    }
     recoveryCandidates = [...nonReadyCandidates, ...confirmedAbsentCandidates];
   }
   const backupRecoveryAssessments = recoveryCandidates.map((sandbox) =>
@@ -314,12 +313,31 @@ export async function upgradeSandboxes(
     backupRecoveryAssessments.map((candidate) => candidate.sandbox.name),
   );
 
+  // #6520: see domain/maintenance/orphan-detection.ts; recovered sandboxes
+  // are excluded at print time.
+  const unobservedOwnGatewaySandboxes = classifyOrphanedRegistrySandboxes(sandboxes, {
+    observedNames: new Set([...liveNames, ...nonReadyLiveNames]),
+    reconnectedNames: becameReadyNames,
+    selectedGatewayName,
+    resolveGatewayBinding: resolveSandboxGatewayName,
+  });
+  // An orphan's version is unknown because the sandbox is gone, not because a
+  // probe is pending — listing it under "Unknown version" with start-and-rerun
+  // guidance would contradict the orphan block's remediation. Stale orphans
+  // stay in the stale list: their version drift is real information.
+  const orphanNames = new Set(unobservedOwnGatewaySandboxes.map((sandbox) => sandbox.name));
+  const unknownWithoutOrphans = unknown.filter((sandbox) => !orphanNames.has(sandbox.name));
+
   if (
     stale.length === 0 &&
-    unknown.length === 0 &&
+    unknownWithoutOrphans.length === 0 &&
     preparedRecoveries.length === 0 &&
     rejectedRecoveries.length === 0
   ) {
+    if (unobservedOwnGatewaySandboxes.length > 0) {
+      printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
+      return;
+    }
     console.log("  All sandboxes are up to date.");
     return;
   }
@@ -331,9 +349,9 @@ export async function upgradeSandboxes(
       console.log(`    ${s.name}  ${describeStaleUpgrade(s)}  (${status})`);
     }
   }
-  if (unknown.length > 0) {
+  if (unknownWithoutOrphans.length > 0) {
     console.log(`\n  ${YW}Unknown version:${R}`);
-    for (const s of unknown) {
+    for (const s of unknownWithoutOrphans) {
       const status = s.running ? `${G}running${R}` : `${D}stopped${R}`;
       console.log(`    ${s.name}  v? → v${s.expected}  (${status})`);
     }
@@ -356,9 +374,9 @@ export async function upgradeSandboxes(
 
   if (checkOnly) {
     if (stale.length > 0) console.log(`  ${stale.length} sandbox(es) need upgrading.`);
-    if (unknown.length > 0) {
+    if (unknownWithoutOrphans.length > 0) {
       console.log(
-        `  ${unknown.length} sandbox(es) could not be version-checked; start them and rerun, or rebuild manually.`,
+        `  ${unknownWithoutOrphans.length} sandbox(es) could not be version-checked; start them and rerun, or rebuild manually.`,
       );
     }
     if (preparedRecoveries.length > 0) {
@@ -371,6 +389,8 @@ export async function upgradeSandboxes(
         `  ${rejectedRecoveries.length} non-Ready sandbox(es) cannot be recovered automatically.`,
       );
     }
+    // Check mode must agree with auto mode on the orphan diagnosis (#6520).
+    printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
     console.log(`  Run \`${CLI_NAME} upgrade-sandboxes\` to rebuild them.`);
     return;
   }
@@ -389,12 +409,14 @@ export async function upgradeSandboxes(
     preparedRecoveries.length === 0 &&
     rejectedRecoveries.length === 0
   ) {
+    printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
     console.log("  No running stale sandboxes to rebuild.");
     return;
   }
 
   let rebuilt = 0;
   let failed = rejectedRecoveries.length;
+  const recoveredNames = new Set<string>();
   const work = [
     ...rebuildable.map((sandbox) => ({ sandbox, manifest: null })),
     ...preparedRecoveries.map((recovery) => ({
@@ -424,6 +446,7 @@ export async function upgradeSandboxes(
           : {}),
       });
       rebuilt++;
+      recoveredNames.add(sandbox.name);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       const verb = manifest ? "recover" : "rebuild";
@@ -433,6 +456,9 @@ export async function upgradeSandboxes(
   }
 
   console.log("");
+  printOrphanedRegistrySandboxes(
+    unobservedOwnGatewaySandboxes.filter((sandbox) => !recoveredNames.has(sandbox.name)),
+  );
   if (rebuilt > 0) console.log(`  ${G}✓${R} ${rebuilt} sandbox(es) rebuilt.`);
   if (failed > 0) console.log(`  ${YW}⚠${R} ${failed} sandbox(es) failed — see errors above.`);
   if (failed > 0) process.exit(1);

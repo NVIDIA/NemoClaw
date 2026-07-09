@@ -2,15 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../state/onboard-session";
-import {
-  LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
-  type StepMutationOptions,
-} from "../state/onboard-step-mutation";
 import { printOnboardResumeHint } from "./resume-hint";
 
 export interface ExitStepFailureSessionDeps {
   loadSession(): Pick<Session, "lastStepStarted"> | null;
-  markStepFailed(stepName: string, message?: string | null, options?: StepMutationOptions): Session;
+  finalizeIncompleteOnboardStep(stepName: string, message?: string | null): Session | null;
 }
 
 export interface OnboardExitFailureProcessLike {
@@ -28,13 +24,14 @@ export function markLastStartedStepFailed(
   message: string,
 ): Session | null {
   // Repairs the invalid state where onboard/rebuild exits nonzero after a step
-  // starts but before normal completion handlers can run. Keep the explicit
-  // legacy machine mutation until those process-exit paths have a single
-  // terminal lifecycle owner; covered by exit-step-failure, rebuild-flow, and
-  // onboard-exit-handler tests.
+  // starts but before normal completion handlers can run. Routes through the
+  // single terminal-failure owner (finalizeIncompleteOnboardStep), which
+  // validates the failed transition and is idempotent against an already
+  // terminal machine, rather than the legacy step-mutation escape hatch.
+  // Covered by exit-step-failure, rebuild-flow, and onboard-exit-handler tests.
   const failedStep = deps.loadSession()?.lastStepStarted;
   if (!failedStep) return null;
-  return deps.markStepFailed(failedStep, message, LEGACY_MACHINE_STEP_MUTATION_OPTIONS);
+  return deps.finalizeIncompleteOnboardStep(failedStep, message);
 }
 
 export function registerIncompleteOnboardExitFailureHandler(

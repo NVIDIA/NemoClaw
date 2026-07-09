@@ -74,7 +74,10 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     expect(steps).toHaveLength(8);
     expect(steps[0]).toEqual({
       uses: CHECKOUT_ACTION,
-      with: { "persist-credentials": false },
+      with: {
+        ref: "${{ inputs.checkout_sha || github.sha }}",
+        "persist-credentials": false,
+      },
     });
     expect(steps[1]?.name).toBe("Authenticate to Docker Hub");
     expect(steps[2]).toEqual({
