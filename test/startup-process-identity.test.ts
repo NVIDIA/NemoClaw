@@ -139,7 +139,9 @@ def supervised_scenario(
             guard._proc_pid_namespace_inode = original_namespace_reader
 
 entrypoint = b"bash\0/usr/local/bin/nemoclaw-start\0"
+direct_entrypoint = b"/usr/local/bin/nemoclaw-start\0"
 spoof = b"bash\0/tmp/nemoclaw-start-spoof\0"
+argv_spoof = b"python3\0/tmp/evil.py\0/usr/local/bin/nemoclaw-start\0"
 proof = {
     "remapped": scenario([(412, "424242", entrypoint, "trusted")]),
     "stale": scenario([(412, "999999", entrypoint, "trusted")]),
@@ -159,6 +161,9 @@ proof = {
 proof.update({
     "openshell_supervised": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
+    ]),
+    "openshell_supervised_direct": supervised_scenario([
+        (412, "424242", direct_entrypoint, 1000, 412, 1),
     ]),
     "openshell_landlock_all_namespaces_denied": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
@@ -190,6 +195,12 @@ proof.update({
     "openshell_spoof": supervised_scenario([
         (412, "424242", spoof, 1000, 412, 1),
     ]),
+    "openshell_argv_spoof": supervised_scenario([
+        (412, "424242", argv_spoof, 1000, 412, 1),
+    ]),
+    "openshell_nested_argv_spoof": supervised_scenario([
+        (412, "424242", argv_spoof, 1000, 1, 1, "nested"),
+    ]),
     "openshell_duplicate": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
         (413, "525252", entrypoint, 1000, 413, 1),
@@ -217,7 +228,16 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
+    const {
+      openshell_argv_spoof: openshellArgvSpoof,
+      openshell_nested_argv_spoof: openshellNestedArgvSpoof,
+      ...proof
+    } = JSON.parse(result.stdout);
+    if (name === "OpenClaw") {
+      expect(openshellArgvSpoof).toBe(false);
+      expect(openshellNestedArgvSpoof).toBe(false);
+    }
+    expect(proof).toEqual({
       remapped: true,
       stale: false,
       spoof: false,
@@ -227,6 +247,7 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       duplicate: false,
       bounded: false,
       openshell_supervised: true,
+      openshell_supervised_direct: true,
       openshell_landlock_all_namespaces_denied: true,
       openshell_landlock_supervisor_namespace_denied: true,
       openshell_wrong_supervisor: false,
