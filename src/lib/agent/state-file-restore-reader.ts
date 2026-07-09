@@ -83,6 +83,7 @@ const STATE_FILE_RESTORE_FIELDS = new Set([
   "require_fresh_headers",
 ]);
 const STATE_FILE_USER_KEY_FIELDS = new Set(["key", "type", "values", "min", "max", "max_length"]);
+const STATE_FILE_FRESH_HEADER_FIELDS = new Set(["match", "value"]);
 
 function readStateFileUserKey(raw: ManifestValue, field: string): StateFileUserKey {
   if (!isManifestRecord(raw)) {
@@ -199,9 +200,13 @@ function readStateFileFreshHeaders(
     if (!isManifestRecord(raw)) {
       throw new Error(`Agent manifest field '${itemField}' must be a string or object`);
     }
+    assertKnownFields(raw, STATE_FILE_FRESH_HEADER_FIELDS, itemField);
     const headerValue = readString(raw, "value");
     if (!headerValue) {
       throw new Error(`Agent manifest field '${itemField}.value' is required`);
+    }
+    if (raw.match !== undefined && typeof raw.match !== "string") {
+      throw new Error(`Agent manifest field '${itemField}.match' must be a string`);
     }
     const match = readString(raw, "match") ?? "exact";
     if (match !== "exact" && match !== "prefix") {
