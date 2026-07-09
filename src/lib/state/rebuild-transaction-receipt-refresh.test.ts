@@ -66,4 +66,19 @@ describe("RebuildTransactionStore replacement receipt refresh", () => {
       status: "completed",
     });
   });
+
+  it("refuses a compensated receipt that does not match the registered replacement", async () => {
+    const { store } = makeStore(undefined, () => false);
+    const replacement = await advanceToReplacement(store);
+
+    await expectCode(
+      () =>
+        store.refreshReplacementReceipt(
+          SANDBOX,
+          replacement.revision,
+          replacementReceipts().replacement!,
+        ),
+      "INVALID_TRANSITION",
+    );
+  });
 });

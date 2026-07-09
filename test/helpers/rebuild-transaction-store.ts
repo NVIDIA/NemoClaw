@@ -90,7 +90,11 @@ export function replacementReceipts(): RebuildTransactionReceiptsV1 {
   };
 }
 
-export function makeStore(root = tempDir()): {
+export function makeStore(
+  root = tempDir(),
+  replacementIdentityMatches: (sandboxName: string, identityFingerprint: string) => boolean = () =>
+    true,
+): {
   stateDir: string;
   store: RebuildTransactionStore;
 } {
@@ -102,6 +106,7 @@ export function makeStore(root = tempDir()): {
       stateDir,
       now: () => new Date(START + tick++ * 1_000),
       transactionId: () => TRANSACTION_ID,
+      replacementIdentityMatches,
     }),
   };
 }

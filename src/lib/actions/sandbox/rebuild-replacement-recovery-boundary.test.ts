@@ -243,9 +243,11 @@ describe("rebuild replacement recovery boundary", () => {
     expect(completed?.receipts.replacement?.identityFingerprint).not.toBe(
       transaction?.receipts.replacement?.identityFingerprint,
     );
-    expect(
-      ((resumed.session.metadata as Record<string, unknown>).rebuild as Record<string, unknown>)
-        .replacementFingerprint,
-    ).toBe(fingerprintRebuildReplacement(recreated as SandboxEntry));
+    expect((resumed.session.metadata as Record<string, unknown>).rebuild).toEqual({
+      transactionId: transaction?.transactionId,
+      imageFingerprint: transaction?.intent.target.imageFingerprint,
+      configurationFingerprint: transaction?.intent.target.configurationFingerprint,
+      replacementFingerprint: fingerprintRebuildReplacement(recreated as SandboxEntry),
+    });
   }, 10_000);
 });

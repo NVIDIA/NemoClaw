@@ -12,7 +12,11 @@ import type { ToolDisclosure } from "../tool-disclosure";
 import { ensureConfigDir } from "./config-io";
 import { withMcpLifecycleLock } from "./mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "./paths";
-import { normalizeRebuildTransactionReceipts } from "./rebuild-transaction-receipts";
+import {
+  normalizeRebuildTransactionReceipts,
+  type RebuildReplacementIdentityVerifier,
+  registeredRebuildReplacementMatches,
+} from "./rebuild-transaction-receipts";
 import {
   findReplacedRebuildReceipt,
   nextRebuildTransactionPhase,
@@ -144,6 +148,7 @@ export interface RebuildTransactionStoreOptions {
   stateDir?: string;
   now?: () => Date;
   transactionId?: () => string;
+  replacementIdentityMatches?: RebuildReplacementIdentityVerifier;
 }
 
 function transactionFileStem(sandboxName: string): string {
@@ -615,12 +620,15 @@ export class RebuildTransactionStore {
   private readonly stateDir: string;
   private readonly now: () => Date;
   private readonly transactionId: () => string;
+  private readonly replacementIdentityMatches: RebuildReplacementIdentityVerifier;
 
   constructor(options: RebuildTransactionStoreOptions = {}) {
     this.stateDir = options.stateDir ?? resolveNemoclawStateDir();
     ensureTransactionStateRoot(this.stateDir);
     this.now = options.now ?? (() => new Date());
     this.transactionId = options.transactionId ?? (() => crypto.randomUUID());
+    this.replacementIdentityMatches =
+      options.replacementIdentityMatches ?? registeredRebuildReplacementMatches;
   }
 
   async create(
@@ -764,6 +772,13 @@ export class RebuildTransactionStore {
           "INVALID_TRANSITION",
           sandboxName,
           `cannot refresh a replacement receipt from ${current.phase}`,
+        );
+      }
+      if (!this.replacementIdentityMatches(sandboxName, replacement.identityFingerprint)) {
+        throw transactionError(
+          "INVALID_TRANSITION",
+          sandboxName,
+          "replacement receipt does not match the registered sandbox",
         );
       }
       // The caller reconciled the old replacement as absent. Preserve prior

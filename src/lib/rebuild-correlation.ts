@@ -17,22 +17,39 @@ export interface RebuildSessionCorrelation {
   replacementFingerprint: string | null;
 }
 
-function correlationString(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
+const REBUILD_TRANSACTION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REBUILD_FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{64}$/;
+
+function correlationString(value: unknown, pattern: RegExp): string | null {
+  return typeof value === "string" && pattern.test(value) ? value : null;
+}
+
+function optionalCorrelationFingerprint(value: unknown): string | null | undefined {
+  return value == null
+    ? null
+    : (correlationString(value, REBUILD_FINGERPRINT_PATTERN) ?? undefined);
 }
 
 export function parseRebuildSessionCorrelation(value: unknown): RebuildSessionCorrelation | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  const transactionId = correlationString(record.transactionId);
-  const imageFingerprint = correlationString(record.imageFingerprint);
-  const configurationFingerprint = correlationString(record.configurationFingerprint);
-  return transactionId && imageFingerprint && configurationFingerprint
+  const transactionId = correlationString(record.transactionId, REBUILD_TRANSACTION_ID_PATTERN);
+  const imageFingerprint = correlationString(record.imageFingerprint, REBUILD_FINGERPRINT_PATTERN);
+  const configurationFingerprint = correlationString(
+    record.configurationFingerprint,
+    REBUILD_FINGERPRINT_PATTERN,
+  );
+  const replacementFingerprint = optionalCorrelationFingerprint(record.replacementFingerprint);
+  return transactionId &&
+    imageFingerprint &&
+    configurationFingerprint &&
+    replacementFingerprint !== undefined
     ? {
         transactionId,
         imageFingerprint,
         configurationFingerprint,
-        replacementFingerprint: correlationString(record.replacementFingerprint),
+        replacementFingerprint,
       }
     : null;
 }
@@ -67,15 +84,11 @@ export function fingerprintRebuildRegistryEntry(value: SandboxEntry): string {
   return fingerprintRebuildValue(JSON.parse(JSON.stringify(value)));
 }
 
-function normalizedAgent(agent: string | null | undefined): string {
-  return agent || "openclaw";
-}
-
 /** Receipt identity excludes mutable restore/finalization fields such as policies and MCP state. */
 export function fingerprintRebuildReplacement(entry: SandboxEntry): string {
   return fingerprintRebuildValue({
     name: entry.name,
-    agent: normalizedAgent(entry.agent),
+    agent: entry.agent ?? null,
     agentVersion: entry.agentVersion ?? null,
     nemoclawVersion: entry.nemoclawVersion ?? null,
     imageTag: entry.imageTag ?? null,

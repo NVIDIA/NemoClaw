@@ -6,7 +6,7 @@ import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { rebuildSessionCorrelation } from "../../rebuild-correlation";
 import { redactFull } from "../../security/redact";
-import * as onboardSession from "../../state/onboard-session";
+import { loadSession } from "../../state/onboard-session";
 import {
   type RebuildRegistryRecoveryV1,
   type RebuildTransactionRecordV1,
@@ -55,7 +55,8 @@ import {
   validatePreparedRecoveryManifest,
 } from "./rebuild-prepared-recovery";
 import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
-import { type RebuildRecoveryPlan, reconcileRebuildRecovery } from "./rebuild-recovery-plan";
+import type { RebuildRecoveryPlan } from "./rebuild-recovery-plan";
+import { prepareRebuildRecoveryPreflight } from "./rebuild-recovery-preflight";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 import {
   fingerprintRebuildRegistryEntry,
@@ -215,30 +216,17 @@ export async function runRebuildPreflightPhase(
     let retainOnboardLock = false;
     try {
       assertRebuildEntryUnchanged(sandboxName, confirmedEntrySnapshot, bail);
-      let recoveryPlan: RebuildRecoveryPlan | null = null;
-      const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
-      if (!liveState) return null;
-      const reconciliation = reconcileRebuildRecovery({
+      const recoveryPreflight = await prepareRebuildRecoveryPreflight({
         transaction: activeTransaction,
-        live: liveState.observation,
+        resolveLiveState: () => resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail),
         readRegistryEntry: () => registry.getSandbox(sandboxName),
-        readSession: onboardSession.loadSession,
+        readSession: loadSession,
         restoreRegistry: registry.restoreRebuildRegistryRecoveryIfMissing,
+        log,
+        bail,
       });
-      if (!reconciliation.ok) {
-        log("Durable rebuild recovery decision: refuse");
-        printRebuildPreflightFailure(
-          `the observed replacement cannot be proven to belong to rebuild transaction '${reconciliation.transactionId}' (${reconciliation.code}).`,
-          "Inspect the live sandbox, registry row, onboarding session, and validated backup; no recovery side effect was attempted.",
-          "Rebuild replacement recovery failed",
-          bail,
-        );
-        return null;
-      }
-      recoveryPlan = reconciliation.plan;
-      if (recoveryPlan) log(`Durable rebuild recovery decision: ${recoveryPlan.action}`);
-      if (recoveryPlan?.registryRestored)
-        log("Restored missing registry recovery metadata from the rebuild journal");
+      if (!recoveryPreflight) return null;
+      const { liveState, plan: recoveryPlan, replacementAlreadyPresent } = recoveryPreflight;
       const lockedRegistry = registry.load();
       const lockedRegistryEntry = lockedRegistry.sandboxes[sandboxName];
       if (!lockedRegistryEntry) {
@@ -283,7 +271,7 @@ export async function runRebuildPreflightPhase(
         rebuildCorrelation: activeTransaction
           ? rebuildSessionCorrelation(activeTransaction)
           : undefined,
-        replacementAlreadyPresent: recoveryPlan?.replacementAlreadyPresent,
+        replacementAlreadyPresent,
         log,
         bail,
       });
@@ -297,7 +285,7 @@ export async function runRebuildPreflightPhase(
           (registry.getSandbox(sandboxName) as RebuildSandboxEntry | null) ?? sandboxEntry;
       }
 
-      if (isDcodeRebuildAgent(rebuildAgent) && !recoveryPlan?.replacementAlreadyPresent) {
+      if (isDcodeRebuildAgent(rebuildAgent) && !replacementAlreadyPresent) {
         const recoveryRecreate = liveState.staleRecovery || effectiveRecoveryManifest !== null;
         const imageReady = await dcodePreflight.prepareImage(
           preparedTarget.targetConfig.resumeConfig,

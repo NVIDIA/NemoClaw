@@ -2,7 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { UnknownRecord } from "../core/json-types";
+import { fingerprintRebuildReplacement } from "../rebuild-correlation";
 import type { RebuildTransactionReceiptsV1 } from "./rebuild-transaction";
+import { getSandbox } from "./registry";
+
+export type RebuildReplacementIdentityVerifier = (
+  sandboxName: string,
+  identityFingerprint: string,
+) => boolean;
+
+export const registeredRebuildReplacementMatches: RebuildReplacementIdentityVerifier = (
+  sandboxName,
+  identityFingerprint,
+) => {
+  const entry = getSandbox(sandboxName);
+  return entry !== null && fingerprintRebuildReplacement(entry) === identityFingerprint;
+};
 
 export interface RebuildReceiptValidation {
   record(value: unknown, label: string, sandboxName: string): UnknownRecord;

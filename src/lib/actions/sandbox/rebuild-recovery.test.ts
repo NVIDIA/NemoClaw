@@ -7,6 +7,7 @@ import {
   fingerprintRebuildRegistryEntry,
   fingerprintRebuildReplacement,
   fingerprintRebuildValue,
+  parseRebuildSessionCorrelation,
 } from "../../rebuild-correlation";
 import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
 import type { SandboxEntry } from "../../state/registry";
@@ -33,6 +34,22 @@ function reverseObjectKeys(value: unknown): unknown {
 }
 
 describe("rebuild replacement recovery decision", () => {
+  it("rejects malformed persisted rebuild correlation identifiers (#6436)", () => {
+    const valid = {
+      transactionId: "11111111-1111-4111-8111-111111111111",
+      imageFingerprint: `sha256:${"a".repeat(64)}`,
+      configurationFingerprint: `sha256:${"b".repeat(64)}`,
+      replacementFingerprint: null,
+    };
+
+    expect(parseRebuildSessionCorrelation(valid)).toEqual(valid);
+    expect(parseRebuildSessionCorrelation({ ...valid, transactionId: "transaction" })).toBeNull();
+    expect(parseRebuildSessionCorrelation({ ...valid, imageFingerprint: "sha256:bad" })).toBeNull();
+    expect(
+      parseRebuildSessionCorrelation({ ...valid, replacementFingerprint: "sha256:bad" }),
+    ).toBeNull();
+  });
+
   it.each([
     ["old_deleted", "absent", "source", "missing", "create"],
     ["old_deleted", "absent", "missing", "unrelated", "create"],
@@ -48,6 +65,7 @@ describe("rebuild replacement recovery decision", () => {
   it.each([
     ["old_deleted", "ready", "target", "unrelated", "REBUILD_RECOVERY_SESSION_MISMATCH"],
     ["old_deleted", "ready", "source", "matching", "REBUILD_RECOVERY_REGISTRY_MISMATCH"],
+    ["old_deleted", "absent", "mismatch", "unrelated", "REBUILD_RECOVERY_REGISTRY_MISMATCH"],
     ["old_deleted", "not_ready", "target", "matching", "REBUILD_RECOVERY_LIVE_STATE_AMBIGUOUS"],
     [
       "old_deleted",
@@ -119,6 +137,9 @@ describe("rebuild replacement recovery decision", () => {
     expect(observeRebuildRegistry(record, source)).toBe("source");
     expect(observeRebuildRegistry(record, target)).toBe("target");
     expect(observeRebuildRegistry(record, { ...target, model: "other" })).toBe("mismatch");
+    expect(fingerprintRebuildReplacement({ ...target, agent: null })).not.toBe(
+      fingerprintRebuildReplacement({ ...target, agent: "openclaw" }),
+    );
     expect(
       observeRebuildRegistry(
         {

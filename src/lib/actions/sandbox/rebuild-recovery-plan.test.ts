@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { RebuildTransactionRecordV1 } from "../../state/rebuild-transaction";
 import { reconcileRebuildRecovery } from "./rebuild-recovery-plan";
+import { prepareRebuildRecoveryPreflight } from "./rebuild-recovery-preflight";
 
 function deletedTransaction(): RebuildTransactionRecordV1 {
   return {
@@ -47,5 +48,24 @@ describe("rebuild recovery plan orchestration", () => {
       plan: { action: "create", replacementAlreadyPresent: false, registryRestored: true },
     });
     expect(restoreRegistry).toHaveBeenCalledOnce();
+  });
+
+  it("refuses mismatched observed state without restoring registry metadata", async () => {
+    const restoreRegistry = vi.fn(() => true);
+
+    await expect(
+      prepareRebuildRecoveryPreflight({
+        transaction: deletedTransaction(),
+        resolveLiveState: async () => ({ staleRecovery: false, observation: "ready" }),
+        readRegistryEntry: () => null,
+        readSession: () => null,
+        restoreRegistry,
+        log: vi.fn(),
+        bail: (message) => {
+          throw new Error(message);
+        },
+      }),
+    ).rejects.toThrow("Rebuild replacement recovery failed");
+    expect(restoreRegistry).not.toHaveBeenCalled();
   });
 });
