@@ -70,6 +70,11 @@ export interface StreamableChildProcess {
 const CLASSIC_DOCKER_STEP_RE = /^\s*Step (\d+)\/(\d+) : (.+)$/;
 const BUILDKIT_STEP_RE = /^#(\d+)\s+(.+)$/;
 
+/**
+ * @deprecated Prefer the argv overload `streamSandboxCreate(command, args, env, options)` for
+ * trusted create paths. This legacy overload preserves shell-compatible callers by executing
+ * `bash -lc <command>`, so callers must not include unquoted user-controlled input.
+ */
 export function streamSandboxCreate(
   command: string,
   env?: NodeJS.ProcessEnv,
@@ -93,7 +98,9 @@ export function streamSandboxCreate(
   const env = hasArgs ? (envOrOptions as NodeJS.ProcessEnv) : (argsOrEnv as NodeJS.ProcessEnv);
   const options = hasArgs ? maybeOptions : (envOrOptions as StreamSandboxCreateOptions);
   if (options.onPoll && !options.failureCheck) {
-    throw new Error("streamSandboxCreate onPoll requires failureCheck");
+    throw new Error(
+      "streamSandboxCreate onPoll requires failureCheck (e.g., dockerGpuCreatePatch.createFailureMessage)",
+    );
   }
   const child: StreamableChildProcess = (options.spawnImpl ?? spawn)(spawnCommand, commandArgs, {
     cwd: ROOT,

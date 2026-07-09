@@ -105,7 +105,9 @@ describe("sandbox-create-stream ready gate", () => {
         dockerEnv,
         makePollingOptions(new FakeChild(), { readyCheck: () => false, onPoll: () => {} }),
       ),
-    ).toThrow("streamSandboxCreate onPoll requires failureCheck");
+    ).toThrow(
+      "streamSandboxCreate onPoll requires failureCheck (e.g., dockerGpuCreatePatch.createFailureMessage)",
+    );
   });
 
   it("runs poll side effects only after a not-ready poll", async () => {
