@@ -13,7 +13,14 @@ const {
 export function parseConfig(raw: string, format: string): ConfigObject {
   let parsed: ConfigValue | object;
   if (format === "yaml") {
-    parsed = require("yaml").parse(raw);
+    const YAML = require("yaml") as {
+      parse: (text: string) => ConfigValue | object;
+    };
+    try {
+      parsed = YAML.parse(raw);
+    } catch {
+      throw new Error("Invalid YAML configuration syntax.");
+    }
   } else if (format === "toml") {
     const TOML = require("smol-toml") as {
       parse: (text: string) => ConfigValue | object;

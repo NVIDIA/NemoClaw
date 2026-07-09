@@ -183,7 +183,7 @@ describe("configGet output redaction and gateway omission (#config-get)", () => 
   });
 });
 
-describe("configGet TOML parsing for dcode agents (#6548)", () => {
+describe("configGet parsing for manifest-declared formats (#6548)", () => {
   const registryPath = require.resolve("../state/registry");
   const agentDefsPath = require.resolve("../agent/defs");
   const registry = require(registryPath) as { getSandbox: (name: string) => unknown };
@@ -272,6 +272,22 @@ describe("configGet TOML parsing for dcode agents (#6548)", () => {
     const error = captureError(() => loadConfigGet()("dcode-sb"));
 
     expect(error.message).toContain("Invalid TOML configuration syntax.");
+    expect(error.message).not.toContain(secret);
+    expect(error.message).not.toContain(sourceLine);
+  });
+
+  it("does not echo credential-bearing source lines from malformed YAML", () => {
+    registry.getSandbox = () => ({ agent: "hermes" });
+    agentDefs.loadAgent = () => ({
+      configPaths: { dir: "/sandbox/.hermes", configFile: "config.yaml", format: "yaml" },
+    });
+    const secret = "nvapi-yamlabcdefghijklmnopqrstuvwxyz0123456789";
+    const sourceLine = `api_key: "${secret}" trailing-text`;
+    stubSandboxRawRead(sourceLine);
+
+    const error = captureError(() => loadConfigGet()("hermes-sb"));
+
+    expect(error.message).toContain("Invalid YAML configuration syntax.");
     expect(error.message).not.toContain(secret);
     expect(error.message).not.toContain(sourceLine);
   });
