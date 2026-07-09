@@ -205,10 +205,12 @@ mark network_request_completed
 set pendingOutput ""
 set pendingReady 0
 for {set attempt 0} {$attempt < 20} {incr attempt} {
-  if {[catch {exec openshell rule get $sandbox --status pending} candidate]} {
-    set pendingOutput $candidate
-  } else {
-    set pendingOutput $candidate
+  set pendingGetFailed [catch {exec openshell rule get $sandbox --status pending} candidate]
+  # OpenShell may color labels even when output is captured. Strip SGR before
+  # parsing and publishing the rule evidence so label/value matches remain
+  # deterministic across runner terminals and OpenShell render modes.
+  regsub -all {\\x1b\\[[0-9;]*m} $candidate "" pendingOutput
+  if {!$pendingGetFailed} {
     set chunkCount [regexp -all -line {^[[:space:]]*Chunk:} $pendingOutput]
     set oneChunk [regexp -nocase {Network Rules:[^\\r\\n]*1 chunk} $pendingOutput]
     set pendingStatus [regexp -nocase {Status:[[:space:]]*pending} $pendingOutput]

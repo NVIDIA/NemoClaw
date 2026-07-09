@@ -176,6 +176,14 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(script).toContain(
       "set chunkCount [regexp -all -line {^[[:space:]]*Chunk:} $pendingOutput]",
     );
+    const stripRuleSgr = script.indexOf(
+      'regsub -all {\\x1b\\[[0-9;]*m} $candidate "" pendingOutput',
+    );
+    const parseRuleLabels = script.indexOf(
+      "set chunkCount [regexp -all -line {^[[:space:]]*Chunk:} $pendingOutput]",
+    );
+    expect(stripRuleSgr).toBeGreaterThanOrEqual(0);
+    expect(parseRuleLabels).toBeGreaterThan(stripRuleSgr);
     expect(script).toContain("Network Rules:[^\\r\\n]*1 chunk");
     expect(script).toContain("Status:[[:space:]]*pending");
     expect(script).toContain("Binary:[[:space:]]*/usr/bin/curl");
