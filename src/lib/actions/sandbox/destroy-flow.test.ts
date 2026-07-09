@@ -102,6 +102,17 @@ describe("destroySandbox flow", () => {
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
   });
 
+  it("preserves the final gateway for native Windows unattended destroys (#4662)", async () => {
+    // Supported Windows execution uses WSL2, which reports `linux`. Keep an
+    // unexpected native `win32` host on the conservative non-macOS default.
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const harness = createDestroyHarness();
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  });
+
   it("preserves the final gateway when an interactive user declines cleanup (#2166)", async () => {
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "");
     const harness = createDestroyHarness({ promptResponses: ["yes", ""] });
