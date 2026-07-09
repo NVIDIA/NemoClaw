@@ -223,23 +223,23 @@ const GUARDS = [
   ["Hermes", path.resolve("agents/hermes/runtime-config-guard.py")],
 ] as const;
 
+function runIdentityHarness(guardPath: string) {
+  const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout);
+}
+
 describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
   it("authenticates exactly one root namespace init and rejects stale or spoofed identities (#2426)", () => {
-    const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
-
-    expect(result.status, result.stderr).toBe(0);
     const {
-      openshell_argv_spoof: openshellArgvSpoof,
-      openshell_nested_argv_spoof: openshellNestedArgvSpoof,
+      openshell_argv_spoof: _openshellArgvSpoof,
+      openshell_nested_argv_spoof: _openshellNestedArgvSpoof,
       ...proof
-    } = JSON.parse(result.stdout);
-    if (name === "OpenClaw") {
-      expect(openshellArgvSpoof).toBe(false);
-      expect(openshellNestedArgvSpoof).toBe(false);
-    }
+    } = runIdentityHarness(guardPath);
     expect(proof).toEqual({
       remapped: true,
       stale: false,
@@ -266,5 +266,14 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       openshell_required_child: true,
       openshell_wrong_required_child: false,
     });
+  });
+});
+
+describe("OpenClaw exact startup argv", () => {
+  it("rejects a trusted script path smuggled in an unrelated argv (#6565)", () => {
+    const proof = runIdentityHarness(path.resolve("scripts/openclaw-config-guard.py"));
+
+    expect(proof.openshell_argv_spoof).toBe(false);
+    expect(proof.openshell_nested_argv_spoof).toBe(false);
   });
 });
