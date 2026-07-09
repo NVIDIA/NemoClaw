@@ -68,8 +68,12 @@ COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 # login shells via /etc/profile.d, interactive shells via /etc/bash.bashrc.
 # A shell stays available if enforcement fails, matching the established
 # OpenClaw/Hermes compatibility contract, but the hook must emit a visible
-# security diagnostic. The managed entrypoint separately refuses to start if
-# the image-baked helper is absent, and the live dcode check covers both paths.
+# security diagnostic. OpenShell creates these exec/connect processes outside
+# the entrypoint tree, and this image layer cannot make them inherit a child's
+# lowered limits. Remove the warn-and-continue exception when OpenShell starts
+# every exec/connect process under enforced caps or exposes a fail-closed limit
+# contract. The managed entrypoint and direct launcher separately fail closed
+# if the helper is absent or the effective limits cannot be verified.
 # Mirrors the OpenClaw and Hermes base images. Ref: sandbox-rlimits.sh (#2173).
 # hadolint ignore=SC2028
 RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \

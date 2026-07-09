@@ -85,7 +85,11 @@ export function makeStartScriptFixture(
   expect(fixture).not.toContain("local marker_dir=/sandbox/.deepagents");
   fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
   fs.writeFileSync(portFile, "3128\n", "utf8");
-  fs.writeFileSync(rlimitLib, "harden_resource_limits() { :; }\n", "utf8");
+  fs.writeFileSync(
+    rlimitLib,
+    "harden_resource_limits() { :; }\nverify_resource_limits() { :; }\n",
+    "utf8",
+  );
   fs.chmodSync(hostFile, 0o444);
   fs.chmodSync(portFile, 0o444);
   fs.writeFileSync(scriptPath, fixture, "utf8");

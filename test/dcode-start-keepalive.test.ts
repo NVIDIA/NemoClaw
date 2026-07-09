@@ -28,7 +28,27 @@ function installDefaultRlimitHelper(
 ): void {
   fs.writeFileSync(
     helperPath,
-    `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }\n`,
+    [
+      `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }`,
+      `verify_resource_limits() { printf '%s\\n' verified >> ${JSON.stringify(markerPath)}; }`,
+      "",
+    ].join("\n"),
+    { mode: 0o444 },
+  );
+}
+
+function installFailingVerificationRlimitHelper(
+  helperPath: string,
+  markerPath: string,
+  _tempDir: string,
+): void {
+  fs.writeFileSync(
+    helperPath,
+    [
+      `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }`,
+      "verify_resource_limits() { printf '%s\\n' 'fixture verification failed' >&2; return 1; }",
+      "",
+    ].join("\n"),
     { mode: 0o444 },
   );
 }
@@ -101,7 +121,7 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(result.signal).toBe("SIGTERM");
     expect(result.status).toBeNull();
     expect(result.stdout).toContain("Setting up NemoClaw Deep Agents Code runtime...");
-    expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\n");
+    expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\nverified\n");
   });
 
   it("execs an explicitly supplied command instead of idling", () => {
@@ -113,7 +133,7 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("RAN_CMD");
-    expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\n");
+    expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\nverified\n");
   });
 
   it("refuses to launch when the required rlimit helper is missing (#6545)", () => {
@@ -134,6 +154,25 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(fs.existsSync(rlimitMarker)).toBe(false);
   });
 
+  it("refuses to launch when effective rlimits fail verification (#6545)", () => {
+    const { scriptPath, rlimitMarker } = makeStartFixture({
+      installRlimitHelper: installFailingVerificationRlimitHelper,
+    });
+    const result = spawnSync(scriptPath, ["printf", "SHOULD_NOT_RUN"], {
+      input: "",
+      timeout: 3000,
+      encoding: "utf-8",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
+    expect(result.stderr).toContain("fixture verification failed");
+    expect(result.stderr).toContain(
+      "[SECURITY] Effective sandbox resource limits remain above policy; refusing to start unhardened.",
+    );
+    expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\n");
+  });
+
   it("hardens resource limits before managed proxy startup work", () => {
     let rlimitsLog = "";
     const { scriptPath } = makeStartFixture({
@@ -145,6 +184,9 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
             "harden_resource_limits() {",
             `  printf 'called=1\\n' > ${JSON.stringify(rlimitsLog)}`,
             `  printf 'proxy_host=%s\\n' "\${PROXY_HOST-__unset__}" >> ${JSON.stringify(rlimitsLog)}`,
+            "}",
+            "verify_resource_limits() {",
+            `  printf 'verified=1\\n' >> ${JSON.stringify(rlimitsLog)}`,
             "}",
           ].join("\n"),
           { mode: 0o444 },
@@ -163,6 +205,8 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("RAN_CMD");
     expect(result.stderr).not.toContain("resource limits were NOT hardened");
-    expect(fs.readFileSync(rlimitsLog, "utf8")).toBe("called=1\nproxy_host=__unset__\n");
+    expect(fs.readFileSync(rlimitsLog, "utf8")).toBe(
+      "called=1\nproxy_host=__unset__\nverified=1\n",
+    );
   });
 });

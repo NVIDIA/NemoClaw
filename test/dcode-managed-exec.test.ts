@@ -20,7 +20,22 @@ type RlimitHelperInstaller = (helperPath: string, markerPath: string) => void;
 function installDefaultRlimitHelper(helperPath: string, markerPath: string): void {
   fs.writeFileSync(
     helperPath,
-    `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }\n`,
+    [
+      `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }`,
+      `verify_resource_limits() { printf '%s\\n' verified >> ${JSON.stringify(markerPath)}; }`,
+      "",
+    ].join("\n"),
+  );
+}
+
+function installFailingVerificationRlimitHelper(helperPath: string, markerPath: string): void {
+  fs.writeFileSync(
+    helperPath,
+    [
+      `harden_resource_limits() { printf '%s\\n' hardened > ${JSON.stringify(markerPath)}; }`,
+      "verify_resource_limits() { printf '%s\\n' 'fixture verification failed' >&2; return 1; }",
+      "",
+    ].join("\n"),
   );
 }
 
@@ -106,7 +121,7 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toBe("OBS=1 PROXY=http://managed-proxy.internal:3128");
       expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
-      expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\n");
+      expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\nverified\n");
       expect(fs.readFileSync(markerPath, "utf8")).toBe("1\n");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -138,7 +153,7 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toBe("OBS=__unset__ PROXY=http://managed-proxy.internal:3128");
       expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
-      expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\n");
+      expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\nverified\n");
       expect(fs.existsSync(markerPath)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -161,7 +176,7 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
       expect(result.stdout).toBe("");
       expect(result.stderr).toBe("dcode-managed-exec requires a command.\n");
       expect(fs.readFileSync(markerPath, "utf8")).toBe("1\n");
-      expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\n");
+      expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\nverified\n");
       expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -186,6 +201,31 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
         "[SECURITY] Required sandbox-rlimits.sh is missing; refusing to launch dcode unhardened.",
       );
       expect(fs.existsSync(rlimitMarkerPath)).toBe(false);
+      expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a direct managed launch when effective rlimits fail verification (#6545)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-managed-exec-"));
+    try {
+      const { launcherPath, rlimitMarkerPath, wrapperMarkerPath } = makeLauncherFixture(tempDir, {
+        installRlimitHelper: installFailingVerificationRlimitHelper,
+      });
+
+      const result = spawnSync(launcherPath, ["/bin/sh", "-c", "printf SHOULD_NOT_RUN"], {
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        encoding: "utf8",
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
+      expect(result.stderr).toContain("fixture verification failed");
+      expect(result.stderr).toContain(
+        "[SECURITY] Effective sandbox resource limits remain above policy; refusing to launch dcode unhardened.",
+      );
+      expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\n");
       expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
