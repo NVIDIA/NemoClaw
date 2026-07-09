@@ -384,6 +384,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(rlimitHook, "utf-8")).toContain(expectedRlimitShim);
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
+      expect(fs.readFileSync(bashrc, "utf-8")).toContain("# existing dcode bashrc");
       expectSystemRlimitHookEnforcesLimits(rlimitHook);
       expectSystemRlimitHookEnforcesLimits(bashrc);
       expectSystemRlimitHookBypassesShadowedUlimit(rlimitHook);

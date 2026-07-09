@@ -42,7 +42,11 @@ fi
 if [ -f "$_NEMOCLAW_SANDBOX_RLIMITS" ]; then
   # shellcheck source=scripts/lib/sandbox-rlimits.sh
   . "$_NEMOCLAW_SANDBOX_RLIMITS"
+  # shellcheck disable=SC2119 # harden_resource_limits' optional $1 selects
+  # quiet mode; it is not this entrypoint's own argument vector.
   harden_resource_limits
+else
+  echo "[SECURITY] sandbox-rlimits.sh not found; resource limits were NOT hardened" >&2
 fi
 unset _NEMOCLAW_SANDBOX_RLIMITS
 
