@@ -5,6 +5,14 @@ import { type SpawnOptions, spawn } from "node:child_process";
 
 import { redact } from "../security/redact";
 import { ROOT } from "../state/paths";
+import {
+  BUILD_PROGRESS_PATTERNS,
+  type CreatePhase,
+  matchesAny,
+  PULL_PROGRESS_PATTERNS,
+  UPLOAD_PROGRESS_PATTERNS,
+  VISIBLE_PROGRESS_PATTERNS,
+} from "./create-stream-progress";
 import { getReadyCheckOutputPatterns } from "./create-stream-ready-gate";
 
 export interface StreamSandboxCreateResult {
@@ -59,54 +67,8 @@ export interface StreamableChildProcess {
   on(event: "close", listener: (code: number | null) => void): this;
 }
 
-export const BUILD_PROGRESS_PATTERNS: readonly RegExp[] = [
-  /^ {2}Building image /,
-  /^ {2}Step \d+\/\d+ : /,
-  /^#\d+ \[/,
-  /^#\d+ (DONE|CACHED)\b/,
-];
-
-const UPLOAD_PROGRESS_PATTERNS: readonly RegExp[] = [
-  /^ {2}Pushing image /,
-  /^\s*\[progress\]/,
-  /^\s*(?:✓\s*)?Image .*available in the gateway/,
-];
-
-// Pull-phase indicators. Detect classic Docker pull output (`<tag>: Pulling
-// from <ref>`, `<id>: Pulling fs layer / Downloading / Extracting / Pull
-// complete`, `Status: Downloaded`, `Digest:`) plus BuildKit pull progress
-// (`#N resolve <ref>`, `#N sha256:<id> <size> / <total>`). The tag prefix
-// regex uses [^:\s]+ so non-lowercase tags (`v1.2.3`, `cuda-12.5`, `12.4`)
-// also match. See #1829.
-const PULL_PROGRESS_PATTERNS: readonly RegExp[] = [
-  /^\s*(?:[^:\s]+:\s+)?Pulling from \S+/,
-  /^\s*[a-f0-9]{6,}: (?:Pulling fs layer|Waiting|Downloading|Extracting|Pull complete|Verifying Checksum|Download complete)\b/,
-  /^\s*Status: (?:Downloaded|Image is up to date)/,
-  /^\s*Digest: sha256:[a-f0-9]{8,}/,
-  /^\s*#\d+\s+(?:resolve\s+\S+|sha256:[a-f0-9]+\s+[\d.]+\s*(?:B|KB|MB|GB)\s*\/)/,
-];
-
-const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
-  ...BUILD_PROGRESS_PATTERNS,
-  /^ {2}Context: /,
-  /^ {2}Gateway: /,
-  /^Successfully built /,
-  /^Successfully tagged /,
-  /^ {2}Built image /,
-  ...UPLOAD_PROGRESS_PATTERNS,
-  ...PULL_PROGRESS_PATTERNS,
-  /^Created sandbox: /,
-  /^Creating sandbox/i,
-  /^Starting sandbox/i,
-  /^✓ /,
-];
-
 const CLASSIC_DOCKER_STEP_RE = /^\s*Step (\d+)\/(\d+) : (.+)$/;
 const BUILDKIT_STEP_RE = /^#(\d+)\s+(.+)$/;
-
-function matchesAny(line: string, patterns: readonly RegExp[]) {
-  return patterns.some((pattern) => pattern.test(line));
-}
 
 export function streamSandboxCreate(
   command: string,
@@ -158,7 +120,6 @@ export function streamSandboxCreate(
   const silentPhaseMs = options.silentPhaseMs || 15000;
   const startedAt = Date.now();
   let lastOutputAt = startedAt;
-  type CreatePhase = "pull" | "build" | "upload" | "create" | "ready";
 
   let currentPhase: CreatePhase | null = null;
   let lastHeartbeatPhase: CreatePhase | null = null;
