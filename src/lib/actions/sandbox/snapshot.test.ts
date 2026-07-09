@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
+import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
 type OpenshellCaptureResult = {
   status: number | null;
@@ -16,16 +16,7 @@ type OpenshellCaptureResult = {
   error?: Error;
   signal?: NodeJS.Signals | null;
 };
-type SandboxRecord = {
-  name: string;
-  agent?: string | null;
-  gatewayName?: string | null;
-  imageTag?: string | null;
-  openshellDriver?: string | null;
-  observabilityEnabled?: boolean;
-  provider?: string | null;
-  model?: string | null;
-};
+type SandboxRecord = { name: string; observabilityEnabled?: boolean } & Record<string, unknown>;
 type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 
 function dcodeProbeOutput(state: DcodeProbeState, extra = ""): string {
@@ -139,9 +130,10 @@ const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
 });
-const streamSandboxCreateMock = vi.fn(async (..._args: unknown[]) => ({
+const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
   status: 0,
   output: "",
+  sawProgress: false,
   forcedReady: false,
 }));
 const dcodeSandboxEntry = {

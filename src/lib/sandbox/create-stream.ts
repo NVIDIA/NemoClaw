@@ -73,7 +73,8 @@ const BUILDKIT_STEP_RE = /^#(\d+)\s+(.+)$/;
 /**
  * @deprecated Prefer the argv overload `streamSandboxCreate(command, args, env, options)` for
  * trusted create paths. This legacy overload preserves shell-compatible callers by executing
- * `bash -lc <command>`, so callers must not include unquoted user-controlled input.
+ * `bash -lc <command>`, so callers must not include unquoted user-controlled input. Remove
+ * this transitional overload in the #6258 follow-up once external callers have migrated.
  */
 export function streamSandboxCreate(
   command: string,
