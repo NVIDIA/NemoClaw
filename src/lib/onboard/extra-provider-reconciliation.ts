@@ -18,7 +18,17 @@ export type ReconcileExtraProvidersDeps = {
   runOpenshell?: ExtraProviderRunOpenshell;
   listExtraProviders?: () => string[];
   nowMs?: () => number;
+  warn?: (message: string) => void;
 };
+
+type IndeterminateProbeReason =
+  | "aggregate-time-budget"
+  | "ambiguous-diagnostic"
+  | "diagnostic-capture-limit"
+  | "probe-process-error"
+  | "probe-threw"
+  | "timeout-or-signal"
+  | "unexpected-exit";
 
 function defaultRunOpenshell(
   args: string[],
@@ -120,7 +130,9 @@ function reportsExactProviderNotFound(output: string, providerName: string): boo
  * recorded name. Local registry state is never mutated: a provider omitted for
  * this create remains available for later retry. Probes share an aggregate time
  * budget; any names left after that budget are preserved. Sandbox creation is
- * still the final authority if gateway state changes after a probe.
+ * still the final authority if gateway state changes after a probe. Indeterminate
+ * outcomes emit one aggregate warning containing reason classes and a count,
+ * never gateway names, provider names, or raw diagnostics.
  */
 export function reconcileRegisteredExtraProviders(
   gatewayName: string,
@@ -133,10 +145,19 @@ export function reconcileRegisteredExtraProviders(
 
   const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
   const nowMs = deps.nowMs ?? monotonicNowMs;
+  const warn = deps.warn ?? ((message: string) => console.warn(message));
   const deadlineMs = nowMs() + PROVIDER_RECONCILIATION_BUDGET_MS;
-  return recorded.filter((name) => {
+  const indeterminateReasons = new Set<IndeterminateProbeReason>();
+  let indeterminateProviderCount = 0;
+  const preserveIndeterminate = (reason: IndeterminateProbeReason): true => {
+    indeterminateReasons.add(reason);
+    indeterminateProviderCount += 1;
+    return true;
+  };
+
+  const reconciled = recorded.filter((name) => {
     const remainingMs = deadlineMs - nowMs();
-    if (remainingMs <= 0) return true;
+    if (remainingMs <= 0) return preserveIndeterminate("aggregate-time-budget");
 
     let result: ReturnType<ExtraProviderRunOpenshell>;
     try {
@@ -148,14 +169,15 @@ export function reconcileRegisteredExtraProviders(
         timeout: Math.max(1, Math.min(PROVIDER_PROBE_TIMEOUT_MS, Math.floor(remainingMs))),
       });
     } catch {
-      return true;
+      return preserveIndeterminate("probe-threw");
     }
-    if (result.error) return true;
+    if (result.error) return preserveIndeterminate("probe-process-error");
     if (result.status === 0) return true;
     // OpenShell CLI command errors use exit 1. A null status means timeout or
     // signal termination, while any other exit is outside this diagnostic
     // contract; both are indeterminate and must preserve the provider.
-    if (result.status !== 1) return true;
+    if (result.status === null) return preserveIndeterminate("timeout-or-signal");
+    if (result.status !== 1) return preserveIndeterminate("unexpected-exit");
 
     const primaryDiagnosticParts = [result.stderr, result.stdout].map(outputText).filter(Boolean);
     const diagnosticParts =
@@ -165,9 +187,21 @@ export function reconcileRegisteredExtraProviders(
     if (
       diagnosticParts.some((part) => Buffer.byteLength(part) >= PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
     ) {
-      return true;
+      return preserveIndeterminate("diagnostic-capture-limit");
     }
     const diagnostic = diagnosticParts.join("\n");
-    return !reportsExactProviderNotFound(diagnostic, name);
+    return reportsExactProviderNotFound(diagnostic, name)
+      ? false
+      : preserveIndeterminate("ambiguous-diagnostic");
   });
+
+  if (indeterminateProviderCount > 0) {
+    warn(
+      "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
+        `(providerCount=${indeterminateProviderCount}; ` +
+        `reasonClasses=${[...indeterminateReasons].sort().join(",")}).`,
+    );
+  }
+
+  return reconciled;
 }

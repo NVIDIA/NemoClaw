@@ -106,6 +106,7 @@ describe("reconcileRegisteredExtraProviders", () => {
     const reconciled = reconcileRegisteredExtraProviders("nemoclaw", {
       listExtraProviders: () => [...recorded],
       runOpenshell,
+      warn: () => undefined,
     });
 
     expect(reconciled).toEqual(["healthy-provider", "indeterminate-provider"]);
@@ -159,6 +160,7 @@ describe("reconcileRegisteredExtraProviders", () => {
           "spoofed-command-provider",
         ],
         runOpenshell,
+        warn: () => undefined,
       }),
     ).toEqual(["mismatched-provider", "spoofed-command-provider"]);
   });
@@ -182,18 +184,52 @@ describe("reconcileRegisteredExtraProviders", () => {
     ).toEqual([]);
   });
 
-  it("fails open when a diagnostic stream reaches the capture limit (#6501)", () => {
-    const truncated = Buffer.from(
-      "Error: provider 'stale-provider' not found".padEnd(64 * 1024, " "),
+  it("fails open at the capture limit and parses an exact diagnostic below it (#6501)", () => {
+    const atLimit = Buffer.from(
+      "Error: provider 'at-limit-provider' not found".padEnd(64 * 1024, " "),
     );
-    const runOpenshell = vi.fn((): ProbeResult => ({ status: 1, stderr: truncated }));
+    const belowLimitMessage = "Error: provider 'below-limit-provider' not found";
+    const belowLimit = Buffer.from(belowLimitMessage.padStart(64 * 1024 - 1, " "));
+    const warn = vi.fn();
+    const runOpenshell = vi.fn((args: string[]): ProbeResult => {
+      return {
+        status: 1,
+        stderr: args.at(-1) === "at-limit-provider" ? atLimit : belowLimit,
+      };
+    });
 
     expect(
       reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => ["stale-provider"],
+        listExtraProviders: () => ["at-limit-provider", "below-limit-provider"],
         runOpenshell,
+        warn,
       }),
-    ).toEqual(["stale-provider"]);
+    ).toEqual(["at-limit-provider"]);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
+        "(providerCount=1; reasonClasses=diagnostic-capture-limit).",
+    );
+  });
+
+  it("bounds adversarial diagnostics before preserving an ambiguous provider (#6501)", {
+    timeout: 1_000,
+  }, () => {
+    const adversarialDiagnostic = `Error: provider '${"a".repeat(63 * 1024)}`;
+    const warn = vi.fn();
+    const runOpenshell = vi.fn((): ProbeResult => ({ status: 1, stderr: adversarialDiagnostic }));
+
+    expect(
+      reconcileRegisteredExtraProviders("nemoclaw", {
+        listExtraProviders: () => ["adversarial-provider"],
+        runOpenshell,
+        warn,
+      }),
+    ).toEqual(["adversarial-provider"]);
+    expect(warn).toHaveBeenCalledWith(
+      "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
+        "(providerCount=1; reasonClasses=ambiguous-diagnostic).",
+    );
   });
 
   it("accepts the exact gRPC not-found ordering without using broad name heuristics (#6501)", () => {
@@ -225,6 +261,7 @@ describe("reconcileRegisteredExtraProviders", () => {
       reconcileRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => ["ProviderA", "ProviderB"],
         runOpenshell,
+        warn: () => undefined,
       }),
     ).toEqual(["ProviderA"]);
   });
@@ -248,6 +285,7 @@ describe("reconcileRegisteredExtraProviders", () => {
         reconcileRegisteredExtraProviders("nemoclaw", {
           listExtraProviders: () => ["custom-provider"],
           runOpenshell,
+          warn: () => undefined,
         }),
         diagnostic,
       ).toEqual(["custom-provider"]);
@@ -255,6 +293,7 @@ describe("reconcileRegisteredExtraProviders", () => {
   });
 
   it("fails open for thrown, timed-out, and otherwise ambiguous probes (#6501)", () => {
+    const warn = vi.fn();
     const runOpenshell = vi.fn((args: string[]): ProbeResult => {
       switch (args.at(-1)) {
         case "thrown-provider":
@@ -300,13 +339,26 @@ describe("reconcileRegisteredExtraProviders", () => {
       reconcileRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => [...recorded],
         runOpenshell,
+        warn,
       }),
     ).toEqual(recorded);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
+        "(providerCount=6; " +
+        "reasonClasses=ambiguous-diagnostic,probe-process-error,probe-threw," +
+        "timeout-or-signal,unexpected-exit).",
+    );
+    expect(warn.mock.calls[0]?.[0]).not.toContain("nemoclaw");
+    for (const providerName of recorded) {
+      expect(warn.mock.calls[0]?.[0]).not.toContain(providerName);
+    }
   });
 
   it("bounds aggregate probe latency and preserves names left after the deadline (#6501)", () => {
     let now = 0;
     const timeouts: number[] = [];
+    const warn = vi.fn();
     const runOpenshell = vi.fn(
       (_args: string[], options?: Record<string, unknown>): ProbeResult => {
         const timeout = Number(options?.timeout);
@@ -322,10 +374,15 @@ describe("reconcileRegisteredExtraProviders", () => {
         listExtraProviders: () => [...recorded],
         nowMs: () => now,
         runOpenshell,
+        warn,
       }),
     ).toEqual(recorded);
     expect(runOpenshell).toHaveBeenCalledTimes(3);
     expect(timeouts).toEqual([5_000, 5_000, 5_000]);
+    expect(warn).toHaveBeenCalledWith(
+      "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
+        "(providerCount=5; reasonClasses=aggregate-time-budget,timeout-or-signal).",
+    );
   });
 
   it("enforces gateway containment before making any nonempty provider probe (#6501)", () => {
