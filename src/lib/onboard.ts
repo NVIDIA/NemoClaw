@@ -2909,6 +2909,7 @@ async function createSandboxWithBaseImageResolution(
       {
         sandboxName,
         readiness,
+        createStatus: createResult.status,
         timeoutSecs: sandboxReadyTimeoutSecs,
         restoreBackupPath,
         useDockerGpuPatch,

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { redact } from "../security/redact";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
 
 export type SandboxCreateFailureReportOptions = {
@@ -50,19 +51,21 @@ export function reportSandboxCreateFailure(
   deps.error(`  Sandbox creation failed (exit ${options.createStatus}).`);
   if (options.createOutput) {
     deps.error("");
-    deps.error(options.createOutput);
+    deps.error(redact(options.createOutput));
   }
   deps.printCreateFailureDiagnostics(options.sandboxName, {
     backupPath: options.restoreBackupPath,
   });
   deps.error("  Try:  openshell sandbox list        # check gateway state");
   deps.printRecoveryHints(options.createOutput, { createArgs: options.createArgs });
-  return deps.exitProcess(options.createStatus || 1);
+  return deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);
 }
 
 export type SandboxReadinessFailureReportOptions = {
   sandboxName: string;
   readiness: CreatedSandboxReadinessResult;
+  /** Exit status reported by the sandbox create stream before readiness polling. */
+  createStatus: number;
   timeoutSecs: number;
   restoreBackupPath: string | null;
   /** When the Docker-GPU create patch is active, cleanup is deferred to the patch. */
@@ -111,5 +114,6 @@ export function reportSandboxReadinessFailure(
     }
   }
   deps.error(`  Retry: ${deps.cliName()} onboard`);
-  return deps.exitProcess(1);
+  const exitCode = options.createStatus === 0 ? 1 : options.createStatus;
+  return deps.exitProcess(exitCode);
 }

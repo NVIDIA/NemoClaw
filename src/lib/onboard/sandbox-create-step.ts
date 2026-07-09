@@ -104,6 +104,8 @@ export async function runSandboxCreateStep(
       dockerGpuCreatePatch.maybeApplyDuringCreate();
       return false;
     },
+    // Terminal agents do not emit the normal VM startup marker; [] keeps the
+    // output-pattern gate open while undefined preserves driver defaults.
     readyCheckOutputPatterns: deps.isTerminalAgent(context.agent) ? [] : undefined,
     failureCheck: dockerGpuCreatePatch.createFailureMessage,
     traceEvent: deps.addTraceEvent,

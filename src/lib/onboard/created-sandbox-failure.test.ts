@@ -80,13 +80,21 @@ describe("reportSandboxCreateFailure", () => {
     expect(deps.warn).not.toHaveBeenCalled();
   });
 
-  it("echoes create output only when present", () => {
+  it("echoes redacted create output only when present", () => {
     // With output: leading blank + headline + blank + output echo + "Try:" hint = 5 error() calls.
     const withOutput = createFailureDeps();
     expect(() =>
-      reportSandboxCreateFailure(createFailureOptions({ createOutput: "detail" }), withOutput),
+      reportSandboxCreateFailure(
+        createFailureOptions({ createOutput: "failed with Authorization: Bearer secret-token" }),
+        withOutput,
+      ),
     ).toThrow(ExitSignal);
-    expect(withOutput.error).toHaveBeenCalledWith("detail");
+    expect(withOutput.error).toHaveBeenCalledWith(
+      "failed with Authorization: Bearer secr********",
+    );
+    expect(withOutput.error).not.toHaveBeenCalledWith(
+      "failed with Authorization: Bearer secret-token",
+    );
     expect(withOutput.error).toHaveBeenCalledTimes(5);
 
     // Without output: the echo block is skipped, so only 3 error() calls remain.
@@ -137,6 +145,7 @@ function readinessOptions(
   return {
     sandboxName: "alpha",
     readiness: NOT_READY,
+    createStatus: 0,
     timeoutSecs: 300,
     restoreBackupPath: null,
     useDockerGpuPatch: false,
@@ -176,5 +185,13 @@ describe("reportSandboxReadinessFailure", () => {
     expect(deps.printDockerGpuReadinessFailure).toHaveBeenCalledTimes(1);
     expect(deps.deleteSandbox).not.toHaveBeenCalled();
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
+  });
+
+  it("preserves a non-zero create-stream status when readiness later fails", () => {
+    const deps = readinessDeps();
+    expect(() =>
+      reportSandboxReadinessFailure(readinessOptions({ createStatus: 255 }), deps),
+    ).toThrow(ExitSignal);
+    expect(deps.exitProcess).toHaveBeenCalledWith(255);
   });
 });
