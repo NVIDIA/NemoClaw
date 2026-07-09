@@ -124,41 +124,47 @@ else:
   expect(result.stdout).toContain("group/world-writable");
 });
 
-it("wires the fixture-umask setup into every non-live project before other setup files (#6448)", () => {
-  // A config-contract guard: if a future edit drops or misorders the setup for a
-  // project, the permissive-umask failures would only resurface on hosts with a
-  // permissive ambient umask (CI at 0o022 would not catch it).
+// Named vitest projects (config objects), used by the config-contract guards
+// below. A future edit that drops or misorders the setup would otherwise only
+// resurface the permissive-umask failures on hosts with a permissive ambient
+// umask (CI at 0o022 would not catch it).
+function namedVitestProjects(): { name: string; setupFiles?: string[] }[] {
   const projects = (vitestConfig.test?.projects ?? []) as ProjectEntry[];
-  const setupFilesByName = new Map(
-    projects.map((project) => [project.test?.name, project.test?.setupFiles ?? []]),
-  );
+  return projects
+    .map((project) => project.test)
+    .filter((test): test is { name: string; setupFiles?: string[] } => test?.name !== undefined);
+}
 
+it("wires the fixture-umask setup first in every npm test project (#6448)", () => {
   // The exact set of projects `npm test` runs, kept in sync with package.json's
   // `scripts.test`. Each must pin the fixture umask first. (Parsing the npm test
   // command string here would trip the repo's source-shape test budget, so the
   // list is asserted explicitly and lives next to that command.)
+  const setupFilesByName = new Map(
+    namedVitestProjects().map((test) => [test.name, test.setupFiles ?? []]),
+  );
   for (const name of NPM_TEST_PROJECTS) {
     const setupFiles = setupFilesByName.get(name);
     expect(setupFiles, name).toContain(FIXTURE_UMASK_SETUP);
     expect(setupFiles?.indexOf(FIXTURE_UMASK_SETUP), name).toBe(0);
   }
+});
 
-  // Every other non-live project defined in the config must also be pinned first,
-  // so a newly added non-live project cannot silently miss the setup. Filters keep
-  // the test body linear (no branching) per the codebase-growth guardrail.
-  const namedProjects = projects
-    .map((project) => project.test)
-    .filter((test): test is { name: string; setupFiles?: string[] } => test?.name !== undefined);
-  for (const test of namedProjects.filter((entry) => !LIVE_PROJECTS.has(entry.name))) {
+it("pins the umask setup first in every non-live project and never in live ones (#6448)", () => {
+  // Independent contract from the explicit npm-test list: every non-live project
+  // defined in the config must pin the setup first (so a newly added non-live
+  // project cannot silently miss it), while the live/credential-bearing projects
+  // must never pin it (e2e-live handles real credentials and sets its own strict
+  // `umask 077` inline; e2e-branch-validation defines no setupFiles; neither has
+  // guard fixtures). Filters keep the test body linear (no branching) per the
+  // codebase-growth guardrail.
+  const projects = namedVitestProjects();
+  for (const test of projects.filter((entry) => !LIVE_PROJECTS.has(entry.name))) {
     const setupFiles = test.setupFiles ?? [];
     expect(setupFiles, test.name).toContain(FIXTURE_UMASK_SETUP);
     expect(setupFiles.indexOf(FIXTURE_UMASK_SETUP), test.name).toBe(0);
   }
-
-  // The live/credential-bearing projects must never be pinned (e2e-live handles
-  // real credentials and sets its own strict `umask 077` inline,
-  // e2e-branch-validation defines no setupFiles, and neither has guard fixtures).
-  for (const test of namedProjects.filter((entry) => LIVE_PROJECTS.has(entry.name))) {
+  for (const test of projects.filter((entry) => LIVE_PROJECTS.has(entry.name))) {
     expect(test.setupFiles ?? [], test.name).not.toContain(FIXTURE_UMASK_SETUP);
   }
 });
