@@ -33,7 +33,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for each configured model variant: the primary GPT-5.5 lane and the Nemotron Ultra lane.
 8. Opens one Pi session per model variant and reviews the PR in seven bounded turns: scope/risk map, correctness/state, security/trust, tests/regressions, CI/operations, finding reconciliation, and final JSON synthesis. Each turn starts with its user instruction, then exposes only that turn's deterministic context as real read-only tools.
-9. Requires intermediate turns to emit concise analysis before updating a shared finding ledger. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
+9. Requires intermediate turns to emit concise analysis before submitting every stage finding in one atomic ledger batch. The batch schema rejects surplus fields and commits only when every operation succeeds, so one invalid operation leaves the ledger unchanged. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
 10. Treats open ledger records as the canonical finding set. Final synthesis cannot silently add, drop, merge, reword, or reclassify those findings.
 11. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript.
 12. Retries synthesis once when the model output is malformed, drifts from the ledger, or contains low-quality placeholder fields.
@@ -105,7 +105,7 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 
 - `prompts/00-system.md` — system prompt sent to the advisor.
 - `prompts/01-scope-risk-map.md` through `prompts/07-synthesize-json.md` — the seven bounded review turns in execution order.
-- `prompts/*.synthetic-tool-results/` — bounded deterministic, domain-specific context payloads exposed as real tools after the matching user turn. The directory keeps its historical artifact name. The untrusted truncated diff appears only in the first turn, and repeated risk-plan projections use capped path samples.
+- `prompts/*.tool-results/` — bounded deterministic, domain-specific context payloads exposed as real tools after the matching user turn. The untrusted truncated diff appears only in the first turn, and repeated risk-plan projections use capped path samples.
 - `turns/01-scope-risk-map.txt` through `turns/07-synthesize-json.txt` — assistant output and completed/failed/timed-out status written as each primary turn settles.
 - `retry-prompts/` — retry synthesis prompt and context-tool payloads when the first output is malformed or low quality.
 - `retry-turns/` — assistant output and settled status from the optional retry synthesis conversation.

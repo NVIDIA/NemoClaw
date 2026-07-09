@@ -29,8 +29,8 @@ import {
 import { buildRiskPlan, type RiskPlan } from "../advisors/risk-plan.mts";
 import {
   type AdvisorCompletedTurn,
+  type AdvisorContextToolResult,
   type AdvisorPromptTurn,
-  type AdvisorSyntheticToolResult,
   advisorRunErrors,
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
@@ -414,12 +414,10 @@ async function main(): Promise<void> {
 
   let result: ReviewAdvisorResult | null = null;
   let retryReason: string | null = null;
-  let ledgerRetryRequired = false;
   try {
     const parsed = parseAdvisorResult(sdkResult.text || sdkResult.raw, artifacts.raw, metadata);
     const ledgerSnapshot = findingLedger.snapshot();
     const ledgerIssues = reviewLedgerConsistencyIssues(parsed, ledgerSnapshot);
-    ledgerRetryRequired = ledgerIssues.length > 0;
     const qualityIssues = [...reviewQualityIssues(parsed), ...ledgerIssues];
     result = withCanonicalReviewLedgerFindings(parsed, ledgerSnapshot);
     if (qualityIssues.length > 0) retryReason = qualityIssues.join("; ");
@@ -441,6 +439,7 @@ async function main(): Promise<void> {
       promptTurns: retryTurns,
     });
     let retryResult: RunAdvisorResult | undefined;
+    let postRetryLedgerMismatch = false;
     try {
       retryResult = await runAdvisorConversation({
         promptTurns: retryTurns,
@@ -468,6 +467,7 @@ async function main(): Promise<void> {
       const ledgerSnapshot = findingLedger.snapshot();
       const retryLedgerIssues = reviewLedgerConsistencyIssues(parsed, ledgerSnapshot);
       if (retryLedgerIssues.length > 0) {
+        postRetryLedgerMismatch = true;
         throw new Error(
           `canonical finding ledger mismatch after retry: ${retryLedgerIssues.join("; ")}`,
         );
@@ -482,24 +482,21 @@ async function main(): Promise<void> {
       }
     } catch (error: unknown) {
       const reason = error instanceof Error ? error.message : String(error);
-      if (ledgerRetryRequired || reason.startsWith("canonical finding ledger mismatch")) {
-        writeFailure(
-          `PR review advisor could not preserve the canonical finding ledger: ${reason}`,
-        );
-        process.exit(1);
-      }
       if (!retryResult) {
         fs.writeFileSync(
           artifacts.retryRaw,
           `PR review advisor retry failed; using first-pass result: ${reason}\n`,
         );
       }
-      if (result) {
-        result = recordRetryFailureOnFirstPass(result, reason);
-      } else {
-        writeFailure(reason);
+      if (!canPreserveCanonicalFirstPassAfterRetryFailure(result, postRetryLedgerMismatch)) {
+        writeFailure(
+          postRetryLedgerMismatch
+            ? `PR review advisor could not preserve the canonical finding ledger: ${reason}`
+            : reason,
+        );
         process.exit(1);
       }
+      result = recordRetryFailureOnFirstPass(result, reason);
     }
   }
 
@@ -770,6 +767,13 @@ export function retryReasonLogSummary(reason: string): string {
     .map((item) => item.trim())
     .filter(Boolean).length;
   return `Retrying PR review advisor synthesis after ${issueCount || 1} quality issue(s); full reason is in retry prompt artifacts.`;
+}
+
+export function canPreserveCanonicalFirstPassAfterRetryFailure(
+  result: ReviewAdvisorResult | null,
+  postRetryLedgerMismatch: boolean,
+): result is ReviewAdvisorResult {
+  return result !== null && !postRetryLedgerMismatch;
 }
 
 export function recordRetryFailureOnFirstPass(
@@ -1687,14 +1691,14 @@ export function buildPromptTurns({
     {
       name: "scope-risk-map",
       title: "map scope, drift, and deterministic risk",
-      syntheticToolResults: [
-        syntheticToolResult(
+      contextToolResults: [
+        contextToolResult(
           "pr_review_scope_risk_context",
           jsonContext(buildScopeRiskTurnContext(context)),
           "json",
           "scope and risk context",
         ),
-        syntheticToolResult(
+        contextToolResult(
           "pr_review_git_diff",
           diff || "<no diff available>",
           "diff",
@@ -1714,8 +1718,8 @@ Do not produce final JSON. Reply with at most 8 concise, evidence-backed stage-a
     {
       name: "correctness-state",
       title: "correctness, acceptance, and state transitions",
-      syntheticToolResults: [
-        syntheticToolResult(
+      contextToolResults: [
+        contextToolResult(
           "pr_review_correctness_state_context",
           jsonContext(buildCorrectnessTurnContext(context)),
           "json",
@@ -1735,8 +1739,8 @@ Do not produce final JSON. Reply with at most 8 concise, evidence-backed stage-a
     {
       name: "security-trust",
       title: "security and trust-boundary review",
-      syntheticToolResults: [
-        syntheticToolResult(
+      contextToolResults: [
+        contextToolResult(
           "pr_review_security_trust_context",
           jsonContext(buildSecurityTurnContext(context)),
           "json",
@@ -1756,8 +1760,8 @@ Do not produce final JSON. Reply with at most 12 concise, evidence-backed stage-
     {
       name: "tests-regressions",
       title: "tests and regression evidence",
-      syntheticToolResults: [
-        syntheticToolResult(
+      contextToolResults: [
+        contextToolResult(
           "pr_review_tests_regressions_context",
           jsonContext(buildTestsTurnContext(context)),
           "json",
@@ -1777,8 +1781,8 @@ Do not produce final JSON. Reply with at most 8 concise, evidence-backed stage-a
     {
       name: "ci-operations",
       title: "CI, workflow, and operational behavior",
-      syntheticToolResults: [
-        syntheticToolResult(
+      contextToolResults: [
+        contextToolResult(
           "pr_review_ci_operations_context",
           jsonContext(buildOperationsTurnContext(context)),
           "json",
@@ -1798,8 +1802,8 @@ Do not produce final JSON. Reply with at most 8 concise, evidence-backed stage-a
     {
       name: "reconcile-findings",
       title: "reconcile findings and contradictions",
-      syntheticToolResults: [
-        syntheticToolResult(
+      contextToolResults: [
+        contextToolResult(
           "pr_review_reconciliation_context",
           jsonContext(buildReconciliationTurnContext(context)),
           "json",
@@ -1819,14 +1823,14 @@ Do not produce final JSON. Reply with at most 12 concise stage-analysis bullets 
     {
       name: "synthesize-json",
       title: "synthesize the final advisor result",
-      syntheticToolResults: [
-        syntheticToolResult(
+      contextToolResults: [
+        contextToolResult(
           "pr_review_exact_metadata",
           exactMetadataFields(metadata),
           "text",
           "exact metadata fields",
         ),
-        syntheticToolResult(
+        contextToolResult(
           "pr_review_response_schema",
           JSON.stringify(schema),
           "json",
@@ -1844,7 +1848,7 @@ Return JSON matching the schema returned by the \`pr_review_response_schema\` to
     },
   ];
   return stages.map(({ title, prompt, ...stage }, index) => {
-    const contextToolNames = stage.syntheticToolResults?.map((result) => result.toolName) ?? [];
+    const contextToolNames = stage.contextToolResults?.map((result) => result.toolName) ?? [];
     const finalStage = stage.name === "synthesize-json";
     const ledgerToolName = finalStage ? "pr_review_read_ledger" : "pr_review_update_ledger";
     return {
@@ -1864,8 +1868,8 @@ function stageLedgerProtocol(contextTools: readonly string[], ledgerIntent: stri
     "Required stage protocol — perform these steps in order:",
     `1. Call the real ${tools} context tool${contextTools.length === 1 ? "" : "s"}. Do not substitute conversation memory or a prose summary for these calls.`,
     "2. Perform only this stage's analysis against the returned context and any narrowly needed read-only repository evidence, then emit the requested concise analysis bullets.",
-    `3. As the final action, call \`pr_review_update_ledger\` with the supported finding operations and emit no prose afterward. ${ledgerIntent}`,
-    "The turn is incomplete until the finding-ledger update succeeds. Use the operation schema exposed by the tool; do not invent a parallel finding format in prose. The ledger stores findings only; retain all non-finding conclusions in the visible analysis emitted before the update.",
+    `3. As the final action, call \`pr_review_update_ledger\` exactly once with one atomic \`operations\` list containing every supported finding operation from this stage, then emit no prose afterward. ${ledgerIntent}`,
+    "The turn is incomplete until the finding-ledger batch succeeds. Submit exactly one operation=none entry only when the stage found no ledger changes; never combine none with another operation. Do not invent a parallel finding format in prose. The ledger stores findings only; retain all non-finding conclusions in the visible analysis emitted before the update.",
   ].join("\n");
 }
 
@@ -1898,21 +1902,21 @@ export function buildRetryPromptTurns({
         "pr_review_response_schema",
         "pr_review_read_ledger",
       ],
-      syntheticToolResults: [
-        syntheticToolResult("pr_review_retry_reason", reason, "text", "retry reason"),
-        syntheticToolResult(
+      contextToolResults: [
+        contextToolResult("pr_review_retry_reason", reason, "text", "retry reason"),
+        contextToolResult(
           "pr_review_previous_output",
           previousRaw.slice(-40000),
           "text",
           "previous advisor output tail",
         ),
-        syntheticToolResult(
+        contextToolResult(
           "pr_review_exact_metadata",
           exactMetadataFields(metadata),
           "text",
           "exact metadata fields",
         ),
-        syntheticToolResult(
+        contextToolResult(
           "pr_review_response_schema",
           JSON.stringify(schema),
           "json",
@@ -1938,13 +1942,13 @@ function fencedBlock(content: string, language = ""): string {
   return `${fence}${language}\n${content}\n${fence}`;
 }
 
-function syntheticToolResult(
+function contextToolResult(
   toolName: string,
   content: string,
-  contentType: AdvisorSyntheticToolResult["contentType"],
+  contentType: AdvisorContextToolResult["contentType"],
   label?: string,
-): AdvisorSyntheticToolResult {
-  return { toolCallId: toolName, toolName, content, contentType, label };
+): AdvisorContextToolResult {
+  return { toolName, content, contentType, label };
 }
 
 function buildDriftTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
@@ -2102,15 +2106,15 @@ export function writePromptArtifacts({
     const filePath = path.join(promptDir, fileName);
     fs.writeFileSync(filePath, `${turn.prompt.trimEnd()}\n`);
 
-    if (turn.syntheticToolResults && turn.syntheticToolResults.length > 0) {
-      const toolResultDir = path.join(promptDir, `${ordinal}-${turnSlug}.synthetic-tool-results`);
+    if (turn.contextToolResults && turn.contextToolResults.length > 0) {
+      const toolResultDir = path.join(promptDir, `${ordinal}-${turnSlug}.tool-results`);
       fs.mkdirSync(toolResultDir, { recursive: true });
-      for (const [toolIndex, result] of turn.syntheticToolResults.entries()) {
+      for (const [toolIndex, result] of turn.contextToolResults.entries()) {
         const resultOrdinal = String(toolIndex + 1).padStart(2, "0");
-        const resultName = result.label || result.toolCallId || result.toolName;
+        const resultName = result.label || result.toolName;
         const resultSlug = promptArtifactSlug(resultName);
         const resultPath = path.join(toolResultDir, `${resultOrdinal}-${resultSlug}.md`);
-        fs.writeFileSync(resultPath, syntheticToolResultArtifact(result));
+        fs.writeFileSync(resultPath, contextToolResultArtifact(result));
       }
     }
   }
@@ -2131,12 +2135,11 @@ export function writeTurnArtifact(turnDir: string, turn: AdvisorCompletedTurn): 
   return filePath;
 }
 
-function syntheticToolResultArtifact(result: AdvisorSyntheticToolResult): string {
+function contextToolResultArtifact(result: AdvisorContextToolResult): string {
   return [
-    `# Synthetic tool result: ${result.label || result.toolCallId || result.toolName}`,
+    `# Context tool result: ${result.label || result.toolName}`,
     "",
     `- toolName: ${result.toolName}`,
-    result.toolCallId ? `- toolCallId: ${result.toolCallId}` : undefined,
     result.label ? `- label: ${result.label}` : undefined,
     `- contentType: ${result.contentType}`,
     "",

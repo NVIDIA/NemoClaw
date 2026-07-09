@@ -48,11 +48,9 @@ export function advisorRunErrors(result: RunAdvisorResult): string[] {
   ].filter((error): error is string => error !== undefined);
 }
 
-export type AdvisorSyntheticToolContentType = "diff" | "json" | "text";
+export type AdvisorContextToolContentType = "diff" | "json" | "text";
 
-export type AdvisorSyntheticToolResult = {
-  /** Legacy artifact identifier. Real runtime tool-call ids are assigned by the model provider. */
-  toolCallId?: string;
+export type AdvisorContextToolResult = {
   /** Specific read-only context tool name shown to the model and in session exports. */
   toolName: string;
   /** Human-readable label for artifacts/transcripts. Defaults to toolName. */
@@ -60,7 +58,7 @@ export type AdvisorSyntheticToolResult = {
   /** Text returned when the matching context tool is called. */
   content: string;
   /** Content language/format for artifacts and fixed tool-call metadata. */
-  contentType: AdvisorSyntheticToolContentType;
+  contentType: AdvisorContextToolContentType;
   /** Make the context tool return this content as an error. Defaults to false. */
   isError?: boolean;
 };
@@ -73,7 +71,7 @@ export type AdvisorPromptTurn = {
    * The runner sends the user prompt first, scopes the session to these context tools, and
    * fails the turn if the model omits any of them.
    */
-  syntheticToolResults?: AdvisorSyntheticToolResult[];
+  contextToolResults?: AdvisorContextToolResult[];
   /** Additional registered custom tools made available only for this turn. */
   activeToolNames?: string[];
   /** Additional tools that must finish successfully during this turn. */
@@ -225,12 +223,12 @@ export type AdvisorContextToolRuntime = {
 export function createAdvisorContextToolRuntime(
   promptTurns: AdvisorPromptTurn[],
 ): AdvisorContextToolRuntime {
-  const resultsByTurn = new Map<AdvisorPromptTurn, Map<string, AdvisorSyntheticToolResult>>();
-  const firstResultByName = new Map<string, AdvisorSyntheticToolResult>();
+  const resultsByTurn = new Map<AdvisorPromptTurn, Map<string, AdvisorContextToolResult>>();
+  const firstResultByName = new Map<string, AdvisorContextToolResult>();
 
   for (const turn of promptTurns) {
-    const results = new Map<string, AdvisorSyntheticToolResult>();
-    for (const result of turn.syntheticToolResults ?? []) {
+    const results = new Map<string, AdvisorContextToolResult>();
+    for (const result of turn.contextToolResults ?? []) {
       const toolName = sanitizeToolName(result.toolName);
       if (READ_ONLY_TOOLS.includes(toolName)) {
         throw new Error(
@@ -249,7 +247,7 @@ export function createAdvisorContextToolRuntime(
     resultsByTurn.set(turn, results);
   }
 
-  let activeResults = new Map<string, AdvisorSyntheticToolResult>();
+  let activeResults = new Map<string, AdvisorContextToolResult>();
   const customTools = [...firstResultByName].map(([toolName, firstResult]) => {
     const tool: ToolDefinition = {
       name: toolName,
@@ -724,7 +722,7 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
   return promptTurns.map((turn, index) => ({
     name: sanitizeTurnName(turn.name || `turn-${index + 1}`),
     prompt: turn.prompt,
-    syntheticToolResults: turn.syntheticToolResults,
+    contextToolResults: turn.contextToolResults,
     activeToolNames: normalizedToolNames(turn.activeToolNames),
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),

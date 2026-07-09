@@ -15,7 +15,7 @@ function contextTurn(name: string, content: string): AdvisorPromptTurn {
   return {
     name,
     prompt: `Turn ${name}`,
-    syntheticToolResults: [
+    contextToolResults: [
       { toolName: "pr_review_context", content, contentType: "json", label: `${name} context` },
     ],
   };

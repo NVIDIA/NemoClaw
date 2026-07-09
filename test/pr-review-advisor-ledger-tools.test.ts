@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import {
   reviewLedgerConsistencyIssues,
@@ -55,7 +56,7 @@ function finding() {
 }
 
 describe("PR review ledger tools", () => {
-  it("binds mutations to the runner stage and exposes the canonical snapshot", async () => {
+  it("binds mutations to the runner stage and exposes the canonical snapshot (#6446)", async () => {
     const ledger = createReviewFindingLedger();
     const controller = createReviewLedgerToolController(ledger);
     const update = tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL);
@@ -65,8 +66,12 @@ describe("PR review ledger tools", () => {
     const updated = await update.execute(
       "update-1",
       {
-        operation: "add",
-        finding: finding(),
+        operations: [
+          {
+            operation: "add",
+            finding: finding(),
+          },
+        ],
       },
       undefined,
       undefined,
@@ -87,13 +92,13 @@ describe("PR review ledger tools", () => {
     });
   });
 
-  it("records an explicit no-change receipt without mutating the ledger", async () => {
+  it("records an explicit no-change receipt without mutating the ledger (#6446)", async () => {
     const ledger = createReviewFindingLedger();
     const controller = createReviewLedgerToolController(ledger);
     controller.setStage("security-trust");
     const result = await tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
       "update-none",
-      { operation: "none", reason: "All nine security categories passed." },
+      { operations: [{ operation: "none", reason: "All nine security categories passed." }] },
       undefined,
       undefined,
       undefined as never,
@@ -109,9 +114,172 @@ describe("PR review ledger tools", () => {
     ]);
   });
 
-  it("detects synthesis drift and publishes the ledger's canonical finding", () => {
+  it("commits every independent stage finding in one atomic terminating batch (#6446)", async () => {
     const ledger = createReviewFindingLedger();
-    ledger.apply({ operation: "add", finding: finding() }, "correctness-state");
+    const controller = createReviewLedgerToolController(ledger);
+    controller.setStage("correctness-state");
+    const result = await tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
+      "update-many",
+      {
+        operations: [
+          { operation: "add", finding: finding() },
+          {
+            operation: "add",
+            finding: {
+              ...finding(),
+              file: "src/lib/timeout.ts",
+              line: 17,
+              title: "Timeout status is masked",
+              evidence: ["src/lib/timeout.ts:17 returns success after timeout"],
+            },
+          },
+        ],
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(result.terminate).toBe(true);
+    expect(result.details).toMatchObject({ revision: 2 });
+    expect(ledger.snapshot().findings).toMatchObject([
+      { id: "F-001", title: "Refusal status is masked" },
+      { id: "F-002", title: "Timeout status is masked" },
+    ]);
+  });
+
+  it("shows synthesis only open findings while preserving the full audit ledger (#6446)", async () => {
+    const ledger = createReviewFindingLedger();
+    ledger.applyBatch(
+      [
+        { operation: "add", finding: finding() },
+        {
+          operation: "add",
+          finding: {
+            ...finding(),
+            title: "Independent open finding",
+            evidence: ["src/lib/runner.ts:52 has a second independent defect"],
+          },
+        },
+      ],
+      "correctness-state",
+    );
+    const controller = createReviewLedgerToolController(ledger);
+    controller.setStage("reconcile-findings");
+    const reconciled = await tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
+      "resolve-one",
+      {
+        operations: [
+          {
+            operation: "resolve",
+            id: "F-001",
+            reason: "The reconciliation evidence proves the refusal is propagated.",
+            evidence: ["src/lib/runner.ts:42 now returns the refusal status"],
+          },
+        ],
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    controller.setStage("synthesize-json");
+
+    const result = await tool(controller.tools, REVIEW_LEDGER_READ_TOOL).execute(
+      "read-open",
+      {},
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(contentJson(reconciled)).toMatchObject({
+      revision: 3,
+      findings: [{ id: "F-002", status: "open", title: "Independent open finding" }],
+    });
+    expect(contentJson(result)).toMatchObject({
+      revision: 3,
+      findings: [{ id: "F-002", status: "open", title: "Independent open finding" }],
+    });
+    expect(ledger.snapshot().findings).toMatchObject([
+      { id: "F-001", status: "resolved" },
+      { id: "F-002", status: "open" },
+    ]);
+  });
+
+  it("rolls back the entire stage batch when a later operation fails (#6446)", () => {
+    const ledger = createReviewFindingLedger();
+
+    expect(() =>
+      ledger.applyBatch(
+        [
+          { operation: "add", finding: finding() },
+          { operation: "update", id: "F-999", patch: { title: "Cannot exist" } },
+        ],
+        "correctness-state",
+      ),
+    ).toThrow("Finding F-999 does not exist");
+    expect(ledger.snapshot()).toMatchObject({ revision: 0, findings: [], history: [] });
+  });
+
+  it("rejects surplus tool fields and strips internal fields from direct operations (#6446)", () => {
+    const ledger = createReviewFindingLedger();
+    const controller = createReviewLedgerToolController(ledger);
+    const update = tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL);
+    const validBatch = { operations: [{ operation: "add", finding: finding() }] };
+
+    expect(Check(update.parameters, validBatch)).toBe(true);
+    expect(Check(update.parameters, { ...validBatch, rogue: true })).toBe(false);
+    expect(
+      Check(update.parameters, {
+        operations: [{ operation: "add", finding: finding(), rogue: true }],
+      }),
+    ).toBe(false);
+    expect(
+      Check(update.parameters, {
+        operations: [{ operation: "add", finding: { ...finding(), status: "resolved" } }],
+      }),
+    ).toBe(false);
+    expect(
+      Check(update.parameters, {
+        operations: [{ operation: "update", id: "F-001", patch: { status: "resolved" } }],
+      }),
+    ).toBe(false);
+
+    ledger.applyBatch(
+      [
+        {
+          operation: "add",
+          finding: { ...finding(), status: "resolved", rogue: true },
+        } as never,
+      ],
+      "correctness-state",
+    );
+    ledger.applyBatch(
+      [
+        {
+          operation: "update",
+          id: "F-001",
+          patch: { title: "Updated title", status: "resolved" },
+          reason: "New evidence changes the title.",
+          evidence: ["src/lib/runner.ts:43 confirms the updated title"],
+        } as never,
+      ],
+      "correctness-state",
+    );
+    expect(ledger.snapshot().findings[0]).toMatchObject({
+      id: "F-001",
+      status: "open",
+      title: "Updated title",
+    });
+    expect(ledger.snapshot().findings[0]).not.toHaveProperty("rogue");
+    expect(ledger.snapshot().history[0]?.change).not.toHaveProperty("status");
+    expect(ledger.snapshot().history[0]?.change).not.toHaveProperty("rogue");
+    expect(ledger.snapshot().history[1]?.change).not.toHaveProperty("status");
+  });
+
+  it("detects synthesis drift and publishes the ledger's canonical finding (#6446)", () => {
+    const ledger = createReviewFindingLedger();
+    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
     const drifted = {
       summary: {
         recommendation: "merge_as_is",
@@ -147,40 +315,42 @@ describe("PR review ledger tools", () => {
     });
   });
 
-  it("requires a reason and new evidence to change a conclusion", () => {
+  it("requires a reason and new evidence to change a conclusion (#6446)", () => {
     const ledger = createReviewFindingLedger();
-    ledger.apply({ operation: "add", finding: finding() }, "correctness-state");
+    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
     const update = {
       operation: "update" as const,
       id: "F-001",
       patch: { severity: "blocker" as const },
     };
 
-    expect(() => ledger.apply(update, "reconcile-findings")).toThrow("requires a reason");
+    expect(() => ledger.applyBatch([update], "reconcile-findings")).toThrow("requires a reason");
     expect(() =>
-      ledger.apply(
-        { ...update, reason: "Tests found higher impact.", evidence: ["new test evidence"] },
+      ledger.applyBatch(
+        [{ ...update, reason: "Tests found higher impact.", evidence: ["new test evidence"] }],
         "tests-regressions",
       ),
     ).toThrow("Only reconcile-findings may reclassify");
     expect(() =>
-      ledger.apply(
-        { operation: "update", id: "F-001", patch: { title: "Reworded conclusion" } },
+      ledger.applyBatch(
+        [{ operation: "update", id: "F-001", patch: { title: "Reworded conclusion" } }],
         "correctness-state",
       ),
     ).toThrow("requires a reason");
     expect(() =>
-      ledger.apply(
-        { ...update, reason: "Acceptance makes this blocking.", evidence: finding().evidence },
+      ledger.applyBatch(
+        [{ ...update, reason: "Acceptance makes this blocking.", evidence: finding().evidence }],
         "reconcile-findings",
       ),
     ).toThrow("requires new evidence");
-    ledger.apply(
-      {
-        ...update,
-        reason: "Acceptance makes this blocking.",
-        evidence: ["Issue #6466 requires nonzero refusal status"],
-      },
+    ledger.applyBatch(
+      [
+        {
+          ...update,
+          reason: "Acceptance makes this blocking.",
+          evidence: ["Issue #6466 requires nonzero refusal status"],
+        },
+      ],
       "reconcile-findings",
     );
     expect(ledger.snapshot().findings[0]).toMatchObject({ id: "F-001", severity: "blocker" });
