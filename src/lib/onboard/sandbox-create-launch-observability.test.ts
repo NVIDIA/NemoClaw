@@ -57,4 +57,22 @@ describe("prepareSandboxCreateLaunch observability", () => {
     );
     expect(render("hermes", true).envArgs).not.toContain("NEMOCLAW_OBSERVABILITY=1");
   });
+
+  it("never trusts ambient DCode auto-approval as sandbox runtime input (#6478)", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "langchain-deepagents-code" } as any,
+      chatUiUrl: "",
+      createArgs: [],
+      env: { NEMOCLAW_DCODE_AUTO_APPROVAL: "thread-opt-in" },
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: vi.fn(() => "0"),
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    expect(result.envArgs.join("\n")).not.toContain("NEMOCLAW_DCODE_AUTO_APPROVAL");
+    expect(result.sandboxStartupCommand.join("\n")).not.toContain("NEMOCLAW_DCODE_AUTO_APPROVAL");
+  });
 });

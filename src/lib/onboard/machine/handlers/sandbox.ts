@@ -10,7 +10,6 @@ import {
   type WebSearchConfig as SharedWebSearchConfig,
   WEB_SEARCH_PROVIDER_ENV,
   webSearchConfigsEqual,
-  webSearchEnvFor,
   webSearchLabelFor,
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
@@ -19,6 +18,10 @@ import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/o
 import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import {
+  type DcodeAutoApprovalMode,
+  DEFAULT_DCODE_AUTO_APPROVAL_MODE,
+} from "../../dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../gateway-binding";
 import {
   type ManagedSandboxFeatureIssue,
@@ -39,6 +42,7 @@ import {
   applySandboxResumeDecision,
   decideSandboxResume,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
+  mcpRegistryRemovalBlockReason,
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
@@ -59,6 +63,7 @@ export interface SandboxStateOptions<
   authoritativePolicyTier?: string | null;
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   gatewayName: string;
   session: Session | null;
   sandboxName: string | null;
@@ -260,32 +265,6 @@ function effectiveHermesToolGatewaysForWebSearch(
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
 
-function mcpRegistryRemovalBlockReason(
-  decision: SandboxCreationDecision,
-  sandboxName: string | null,
-  webSearchConfig: SharedWebSearchConfig | null,
-  getSandboxRegistryEntry: (sandboxName: string) => SandboxEntry | null,
-): string | null {
-  if (decision.kind !== "recreate") return null;
-  if (!decision.removeRegistryEntry) return null;
-  if (!sandboxName) return null;
-  const mcpState = getSandboxRegistryEntry(sandboxName)?.mcp;
-  if (!mcpState) return null;
-
-  const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
-  if (selectedProvider) {
-    const credentialEnv = webSearchEnvFor(selectedProvider);
-    const collidingBridge = Object.values(mcpState.bridges).find((entry) =>
-      entry.env.includes(credentialEnv),
-    );
-    if (collidingBridge) {
-      return `  Cannot enable ${webSearchLabelFor(selectedProvider)}: MCP server '${collidingBridge.server}' already owns ${credentialEnv}. Use a distinct credential name.`;
-    }
-  }
-
-  return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
-}
-
 function observabilityRequestValidationError(
   issue: ManagedSandboxFeatureIssue | null,
 ): string | null {
@@ -306,6 +285,8 @@ class SandboxStateFlow<
   SandboxGpuConfig,
   ResourceProfile,
 > {
+  private dcodeAutoApprovalMode: DcodeAutoApprovalMode = DEFAULT_DCODE_AUTO_APPROVAL_MODE;
+
   constructor(
     private readonly options: SandboxStateOptions<
       Gpu,
@@ -421,6 +402,7 @@ class SandboxStateFlow<
       state,
       sandboxReuseState,
       registryEntry,
+      this.dcodeAutoApprovalMode,
       this.deps,
     );
     const decision = decideSandboxResume({
@@ -683,6 +665,10 @@ class SandboxStateFlow<
               ...(state.session?.observabilityRequestedExplicitly === true
                 ? { observabilityRequestedExplicitly: true as const }
                 : {}),
+              ...(!this.options.fromDockerfile &&
+              isDcodeAgent((this.options.agent as { name?: string } | null)?.name)
+                ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
+                : {}),
               ...(this.options.authoritativePolicyTier
                 ? { policyTier: this.options.authoritativePolicyTier }
                 : {}),
@@ -807,6 +793,11 @@ class SandboxStateFlow<
   }
 
   async run(): Promise<SandboxStateResult<WebSearchConfig>> {
+    this.dcodeAutoApprovalMode = dcodeResume.resolveAutoApprovalMode(
+      this.options,
+      this.options.sandboxName,
+      this.deps,
+    );
     const initialState = this.applyObservabilityRequest(this.prepareWebSearchSupport());
     const decision = this.resolveResumeDecision(initialState);
     const completedState =

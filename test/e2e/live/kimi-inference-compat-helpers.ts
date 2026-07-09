@@ -300,11 +300,11 @@ function completion(id: string, content: string): unknown {
 }
 
 function sendToolCall(res: http.ServerResponse, id: string, stream: boolean): void {
-  const toolCall = {
-    id: "call_kimi_exec",
+  const toolCalls = ["hostname", "date", "uptime"].map((command) => ({
+    id: `call_kimi_exec_${command}`,
     type: "function",
-    function: { name: "exec", arguments: JSON.stringify({ command: "hostname; date; uptime" }) },
-  };
+    function: { name: "exec", arguments: JSON.stringify({ command }) },
+  }));
   if (stream) {
     sendSse(res, [
       {
@@ -317,7 +317,14 @@ function sendToolCall(res: http.ServerResponse, id: string, stream: boolean): vo
         id,
         object: "chat.completion.chunk",
         model: KIMI_MODEL,
-        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, ...toolCall }] } }],
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: toolCalls.map((toolCall, index) => ({ index, ...toolCall })),
+            },
+          },
+        ],
       },
       {
         id,
@@ -335,7 +342,7 @@ function sendToolCall(res: http.ServerResponse, id: string, stream: boolean): vo
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content: null, tool_calls: [toolCall] },
+        message: { role: "assistant", content: null, tool_calls: toolCalls },
         finish_reason: "tool_calls",
       },
     ],

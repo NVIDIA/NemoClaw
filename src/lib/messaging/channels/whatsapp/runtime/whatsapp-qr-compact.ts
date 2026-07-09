@@ -143,51 +143,38 @@ function patchOpenClawQrTerminalRendererSource(source: string, integrity?: strin
     .replace(xLoopFrom, xLoopTo);
 }
 
-function createOpenClawQrTerminalLoaderSource() {
-  return `
-import { createHash } from "node:crypto";
-
-const REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256 = ${JSON.stringify(
-    REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
-  )};
-const isOpenClawQrTerminalRendererSource = ${isOpenClawQrTerminalRendererSource.toString()};
-const isReviewedOpenClawQrTerminalRendererIntegrity = ${isReviewedOpenClawQrTerminalRendererIntegrity.toString()};
-const describeOpenClawQrTerminalPatchSkip = ${describeOpenClawQrTerminalPatchSkip.toString()};
-const patchOpenClawQrTerminalRendererSource = ${patchOpenClawQrTerminalRendererSource.toString()};
-
-function decodeSource(source) {
+function decodeOpenClawQrTerminalSource(source) {
   if (typeof source === "string") return source;
-  if (source && typeof Buffer !== "undefined") return Buffer.from(source).toString("utf8");
-  return "";
-}
-
-function sha256Hex(source) {
-  return createHash("sha256").update(source).digest("hex");
-}
-
-function warnOpenClawQrPatchSkip(message) {
-  try {
-    process.stderr.write("[channels] WhatsApp compact-QR warning: " + message + "\\n");
-  } catch (_e) {
+  if (typeof Buffer !== "undefined") {
+    if (Buffer.isBuffer(source)) return source.toString("utf8");
+    if (source instanceof Uint8Array) return Buffer.from(source).toString("utf8");
+    if (source instanceof ArrayBuffer) return Buffer.from(source).toString("utf8");
   }
+  return null;
 }
 
-export async function load(url, context, nextLoad) {
-  const result = await nextLoad(url, context);
-  if (!result || result.format !== "module") return result;
-  const source = decodeSource(result.source);
-  if (!isOpenClawQrTerminalRendererSource(source)) return result;
-  const integrity = sha256Hex(source);
-  const skipReason = describeOpenClawQrTerminalPatchSkip(source, integrity);
-  if (skipReason) {
-    warnOpenClawQrPatchSkip(skipReason);
-    return result;
+function createOpenClawQrTerminalLoadHook(sha256Hex?) {
+  if (typeof sha256Hex !== "function") {
+    var createHash = require("node:crypto").createHash;
+    sha256Hex = function (source) {
+      return createHash("sha256").update(source).digest("hex");
+    };
   }
-  const patched = patchOpenClawQrTerminalRendererSource(source, integrity);
-  if (patched === source) return result;
-  return { ...result, source: patched };
-}
-	`;
+  return function load(url, context, nextLoad) {
+    var result = nextLoad(url, context);
+    if (!result || result.format !== "module") return result;
+    var source = decodeOpenClawQrTerminalSource(result.source);
+    if (source === null || !isOpenClawQrTerminalRendererSource(source)) return result;
+    var integrity = sha256Hex(source);
+    var skipReason = describeOpenClawQrTerminalPatchSkip(source, integrity);
+    if (skipReason) {
+      warnWhatsappQrCompact(skipReason);
+      return result;
+    }
+    var patched = patchOpenClawQrTerminalRendererSource(source, integrity);
+    if (patched === source) return result;
+    return { ...result, source: patched };
+  };
 }
 
 function warnWhatsappQrCompact(message) {
@@ -354,48 +341,55 @@ function resolvePatchedModule(request, loaded) {
 // The auto-install below still uses the exact same functions, so the runtime
 // hook behaves identically.
 export {
+  createOpenClawQrTerminalLoadHook,
+  describeOpenClawQrTerminalPatchSkip,
   hasOwn,
+  isOpenClawQrTerminalRendererSource,
   isQrcodePackage,
   isQrcodeTerminalPackage,
-  renderWhatsappCompactTerminalQr,
-  renderQrcodePackageTerminal,
   isReviewedOpenClawQrTerminalRendererIntegrity,
-  isOpenClawQrTerminalRendererSource,
-  describeOpenClawQrTerminalPatchSkip,
-  warnWhatsappQrCompact,
   patchOpenClawQrTerminalRendererSource,
-  REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
-  createOpenClawQrTerminalLoaderSource,
   patchQrcode,
   patchQrcodeTerminal,
+  REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256,
+  registerOpenClawQrTerminalSourceLoader,
+  renderQrcodePackageTerminal,
+  renderWhatsappCompactTerminalQr,
   resolvePatchedModule,
+  warnWhatsappQrCompact,
 };
 
-function installOpenClawQrTerminalSourceLoader(Module) {
-  if (process.__nemoclawWhatsappQrCompactSourceLoaderInstalled) return;
-  if (!Module || typeof Module.register !== "function") {
+function registerOpenClawQrTerminalSourceLoader(Module) {
+  // Keep this in the same synchronous hook chain as the Slack preload. Mixing
+  // Module.register()'s async loader with registerHooks() breaks OpenClaw's
+  // synchronous module loads because the async loader has no loadSync (#6467).
+  if (!Module || typeof Module.registerHooks !== "function") {
     warnWhatsappQrCompact(
       "OpenClaw QR renderer source loader registration is unavailable; explicit compact quiet-zone rewrite skipped",
     );
-    return;
+    return false;
   }
+
+  try {
+    Module.registerHooks({ load: createOpenClawQrTerminalLoadHook() });
+    return true;
+  } catch (_e) {
+    warnWhatsappQrCompact(
+      "OpenClaw QR renderer source loader registration failed; explicit compact quiet-zone rewrite skipped",
+    );
+    return false;
+  }
+}
+
+function installOpenClawQrTerminalSourceLoader(Module) {
+  if (process.__nemoclawWhatsappQrCompactSourceLoaderInstalled) return;
+  if (!registerOpenClawQrTerminalSourceLoader(Module)) return;
   try {
     Object.defineProperty(process, "__nemoclawWhatsappQrCompactSourceLoaderInstalled", {
       value: true,
     });
   } catch (_e) {
     process.__nemoclawWhatsappQrCompactSourceLoaderInstalled = true;
-  }
-
-  try {
-    var loaderSource = createOpenClawQrTerminalLoaderSource();
-    var loaderUrl =
-      "data:text/javascript;base64," + Buffer.from(loaderSource, "utf8").toString("base64");
-    Module.register(loaderUrl);
-  } catch (_e) {
-    warnWhatsappQrCompact(
-      "OpenClaw QR renderer source loader registration failed; explicit compact quiet-zone rewrite skipped",
-    );
   }
 }
 

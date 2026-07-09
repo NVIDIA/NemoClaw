@@ -38,12 +38,14 @@ import importlib.metadata
 from pathlib import Path
 import tomllib
 
+from deepagents.profiles import _builtin_profiles
 from deepagents.profiles.harness import _nvidia_nemotron_3_ultra
 from deepagents.profiles.harness.harness_profiles import _harness_profile_for_model
 from langchain_openai import ChatOpenAI
 
 CONFIG_PATH = Path("/sandbox/.deepagents/config.toml")
 EXPECTED_VERSIONS = {
+    "nemoclaw-deepagents-profile": "0.1.0",
     "deepagents-code": "0.1.34",
     "deepagents": "0.7.0a6",
 }
@@ -53,6 +55,9 @@ MANAGED_MODEL_IDS = (
 )
 EXPECTED_NATIVE_PROFILE_SHA256 = (
     "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
+)
+EXPECTED_BOOTSTRAP_SHA256 = (
+    "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf"
 )
 EXPECTED_MIDDLEWARE = [
     "NemotronProgressBudgetMiddleware",
@@ -73,9 +78,25 @@ for distribution, expected in EXPECTED_VERSIONS.items():
     actual = importlib.metadata.version(distribution)
     assert actual == expected, (distribution, actual)
 
+profile_entry_points = [
+    entry_point
+    for entry_point in importlib.metadata.entry_points(
+        group="deepagents.harness_profiles"
+    )
+    if entry_point.name == "nemoclaw-managed-aliases"
+]
+assert len(profile_entry_points) == 1, profile_entry_points
+profile_entry_point = profile_entry_points[0]
+assert profile_entry_point.value == "nemoclaw_deepagents_profile:register"
+assert profile_entry_point.dist is not None
+assert profile_entry_point.dist.metadata["Name"] == "nemoclaw-deepagents-profile"
+
 native_profile_path = Path(_nvidia_nemotron_3_ultra.__file__)
 native_profile_hash = hashlib.sha256(native_profile_path.read_bytes()).hexdigest()
 assert native_profile_hash == EXPECTED_NATIVE_PROFILE_SHA256, native_profile_hash
+bootstrap_path = Path(_builtin_profiles.__file__)
+bootstrap_hash = hashlib.sha256(bootstrap_path.read_bytes()).hexdigest()
+assert bootstrap_hash == EXPECTED_BOOTSTRAP_SHA256, bootstrap_hash
 
 config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 default_model = config["models"]["default"]
@@ -89,8 +110,24 @@ assert provider["enabled"] is True
 assert provider["params"] == {"use_responses_api": False}
 
 
+class ProfileOnlyChatOpenAI(ChatOpenAI):
+    """Fail closed if local profile resolution ever attempts inference."""
+
+    def _generate(self, *args, **kwargs):
+        raise AssertionError("profile contract attempted synchronous inference")
+
+    async def _agenerate(self, *args, **kwargs):
+        raise AssertionError("profile contract attempted asynchronous inference")
+
+    def _stream(self, *args, **kwargs):
+        raise AssertionError("profile contract attempted synchronous streaming")
+
+    async def _astream(self, *args, **kwargs):
+        raise AssertionError("profile contract attempted asynchronous streaming")
+
+
 def make_model(model_id):
-    return ChatOpenAI(
+    return ProfileOnlyChatOpenAI(
         model=model_id,
         api_key="nemoclaw-managed-placeholder",
         base_url=provider["base_url"],
@@ -122,11 +159,14 @@ for model_id in MANAGED_MODEL_IDS:
 unrelated = _harness_profile_for_model(make_model("gpt-4.1-mini"), None)
 assert unrelated.system_prompt_suffix is None
 assert middleware_names(unrelated) == []
+assert hashlib.sha256(native_profile_path.read_bytes()).hexdigest() == native_profile_hash
+assert hashlib.sha256(bootstrap_path.read_bytes()).hexdigest() == bootstrap_hash
 
 print(
     "NEMOCLAW_NEMOTRON_ULTRA_PROFILE_OK:"
     f"{default_model}:dcode={EXPECTED_VERSIONS['deepagents-code']}:"
-    f"deepagents={EXPECTED_VERSIONS['deepagents']}"
+    f"deepagents={EXPECTED_VERSIONS['deepagents']}:"
+    f"plugin={EXPECTED_VERSIONS['nemoclaw-deepagents-profile']}"
 )
 PY
 }

@@ -22,32 +22,96 @@ NemoClaw no longer vendors or overlays that source.
 
 - Native profile SHA-256: `c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
-- Managed-alias bootstrap SHA-256: `9d9e817143b330fd45345fcfa8276ea6fe5d6bc5a396f0438b0899a450e4744b`
+- First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
+- Adapter module SHA-256: `75ff7e7a5142cad4305126ccb1b8fc756306e82d4c559ddbc624012fb54ebfc4`
+- Adapter project metadata SHA-256: `7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686`
+- Adapter wheel license expression: `Apache-2.0`
+- Adapter dependency audit result: `No known vulnerabilities found`. Its only
+  requirements are the exact `deepagents-code==0.1.34` and
+  `deepagents==0.7.0a6` entries covered by the lockfile audit command above; no
+  additional third-party distribution is introduced.
 
-The build patch verifies those official artifacts, then registers the native
-profile under the two `openai:` model keys used by NemoClaw's managed
-OpenAI-compatible `ChatOpenAI` route. It is atomic, idempotent, and fails closed
-on version, source, bootstrap, or partial-state drift. The image build applies
-the patch and runs the complete profile and dispatch validator against the
-installed hash-locked wheels, while focused fixtures cover failure states.
-This build-time site-packages mutation is the deliberate managed-image adapter;
-the released package is never changed at runtime. The deleted source-backport
-license path, `LICENSE.langchain-deepagents`, is not staged into the image, and
-the image regression tests enforce that absence.
+### Test-only legacy license fixture limitation
+
+> **Removal condition:** Delete the test-only legacy license-table conversion in
+> `test/langchain-deepagents-code-nemotron-profile-plugin.test.ts` as soon as the
+> runner's system setuptools accepts PEP 639 license strings. Production never
+> uses this conversion.
+
+The adapter metadata intentionally uses the PEP 639 SPDX expression
+`license = "Apache-2.0"`, supported by its pinned production build backend.
+The real-wheel test substitutes the equivalent legacy table only for its
+offline, no-isolation wrong-version fixture with the runner's older system
+setuptools; this is a known fixture limitation, not production metadata. The
+production image builds the unchanged project with lock-pinned
+`setuptools==82.0.1`, and its isolated validator fails closed unless the
+installed wheel exposes `License-Expression: Apache-2.0`.
+
+The adapter is a private, first-party build-context package: NemoClaw does not
+publish it to a registry or resolve it from an index. The image verifies its
+reviewed source and project-metadata hashes, then builds it offline with
+`--no-index --no-deps --no-build-isolation`. There is therefore no separate
+published distribution for a registry audit to resolve. If that packaging
+boundary ever changes, the publishing workflow must build and audit the wheel
+before upload; index publication is not permitted without that release gate.
+
+The adapter project remains recoverable from the image's `COPY` layer after the
+later `RUN` removes its duplicate build tree; a failed build may likewise retain
+that layer in the trusted local cache. This is accepted because the project
+contains only non-secret, first-party Apache-2.0 source and metadata, and the
+installed Python module necessarily ships the same source in `site-packages`.
+A multi-stage build or secret mount would not make the shipped module
+confidential. Revisit this boundary if an adapter build input becomes
+secret-bearing or non-public.
+
+Before local build and installation, the managed image verifies that the build
+tree contains exactly the two individually copied adapter inputs, then checks
+both against the module and project-metadata hashes recorded above. Extra files
+cannot enter the wheel through the Docker build context. It then installs the
+first-party `nemoclaw-deepagents-profile` package
+without consulting an index. Its `deepagents.harness_profiles` entry
+point runs after built-in profiles are registered, reads the reviewed canonical
+profile through one exact-version/hash-gated private registry lookup, and uses
+Deep Agents' public registration API to map it to the two exact `openai:` model
+keys used by NemoClaw's managed OpenAI-compatible `ChatOpenAI` route. The
+released SDK has no public profile getter or alias API. The adapter does not add
+a provider-wide OpenAI profile.
+
+The adapter verifies the exact DCode and Deep Agents versions plus the official
+native-profile and bootstrap source hashes. It also binds the imported Deep
+Agents package to the distribution that supplied the reviewed version.
+Registration is atomic, idempotent, and rejects missing canonical, partial, or
+conflicting alias state. The image validator runs under isolated Python,
+verifies the installed entry-point metadata and adapter source hash before the
+upstream source checks, checks both upstream files again after profile loading,
+resolves the complete native middleware for both aliases, compiles a graph,
+proves parser/native dispatch parity, and confirms an unrelated OpenAI model
+receives no Ultra behavior. The Docker build separately imports the adapter,
+Deep Agents, and DCode under isolated Python immediately after installation;
+the validator then binds the installed module to its distribution and rechecks
+the module hash. A DCode-only CI regression builds the current, hash-locked
+`Dockerfile.base` instead of consuming a mutable registry tag, strips both
+upstream distributions, and proves the production build stops at that import
+gate before the later dependency-consistency check. The targeted E2E job invokes
+`scripts/check-dcode-profile-import-gate.sh` with real Docker before live tests;
+the fake-Docker unit suite separately pins its diagnostic failure branches.
+
+The reviewed native-profile and bootstrap files stay byte-for-byte unchanged.
+Focused fixtures cover the reviewed version/hash, missing-source,
+missing-canonical, partial/conflicting, rollback, and idempotence states. The
+deleted source-backport license path, `LICENSE.langchain-deepagents`, is not
+staged into the image, and image regression tests enforce that absence.
 
 Deep Agents Code `0.1.34` is the released consumer; prerelease risk is limited
 to its exact `deepagents==0.7.0a6` SDK pin. That risk is accepted because the
 consumer and SDK are hash locked, the dependency audit is clean, and all source,
-version, middleware, graph, and dispatch checks fail closed.
+version, middleware, graph, and dispatch contracts are enforced by the isolated
+image-build validator. That validator is the fail-closed gate because Deep
+Agents deliberately isolates and logs third-party plugin callback failures.
 
-The exact version and source-hash gates are also the executable lifecycle
-tracker for the alias bridge: any dependency change stops the image build with
-an explicit instruction to check for native managed-alias support, and requires
-this review to be updated. The admin-maintainer override for this
-source-of-truth decision records that the review is satisfied on the ancestor
-containing this policy
-([PR review](https://github.com/NVIDIA/NemoClaw/pull/6416#pullrequestreview-4649633900)).
-That approval accepts this mandatory dependency-review gate as sufficient
-removal accountability, so no standalone removal issue is used. When Deep
-Agents natively recognizes both managed keys, the dependency review removes the
-bridge instead of updating its versions or hashes.
+The exact version and source-hash gates remain the executable lifecycle check
+for the alias adapter: any dependency change stops the image build and requires
+this review to revalidate the managed adapter. Remove it instead of refreshing
+its hashes only if a future reviewed dependency already provides both exact
+mappings; no external contribution is required. Issue #6424 records the
+NemoClaw-owned replacement of the previous installed-bootstrap mutation.

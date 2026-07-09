@@ -21,6 +21,8 @@ const GATEWAY_ALREADY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
+const FORWARD_ALREADY_ABSENT =
+  /no (?:active )?forward|forward[^\n]*(?:not found|not running)|forward stop[^\n]*not running/i;
 
 export class HostCliClient {
   private readonly runner: CommandRunner;
@@ -149,6 +151,15 @@ export class HostCliClient {
     });
     if (destroy.exitCode === 0 || GATEWAY_ALREADY_ABSENT.test(resultText(destroy))) return;
     assertExitZero(destroy, `cleanup gateway registration ${gatewayName}`);
+  }
+
+  async cleanupForward(port: number, options: ShellProbeRunOptions = {}): Promise<void> {
+    const result = await this.command("openshell", ["forward", "stop", String(port)], {
+      ...options,
+      artifactName: options.artifactName ?? `cleanup-forward-${port}`,
+    });
+    if (result.exitCode === 0 || FORWARD_ALREADY_ABSENT.test(resultText(result))) return;
+    assertExitZero(result, `cleanup forward ${port}`);
   }
 
   async bestEffortCleanupSandbox(
