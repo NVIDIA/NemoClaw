@@ -15,6 +15,16 @@ This repo ships agent skills under `.agents/skills/`.
 Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 
+## Engineering Behavior
+
+Apply these principles to every coding task. Load `nemoclaw-contributor-engineering-guidelines` for the working procedure and examples.
+
+1. **Make assumptions reviewable.** State assumptions that materially affect behavior, security, compatibility, or public contracts. Surface meaningfully different interpretations and tradeoffs, and ask before implementation when resolving ambiguity would change the intended outcome.
+2. **Build the smallest sufficient change.** Meet the acceptance criteria through existing architecture and local patterns. Avoid speculative features, abstractions, or configuration; add complexity only when the current requirement demonstrates a need.
+3. **Keep changes issue-scoped.** Make every changed line support the problem or its required verification. Remove code made obsolete by the change, but keep drive-by refactoring, formatting, comment rewrites, and unrelated cleanup out; report unrelated debt separately and disclose scope deviations before implementing them.
+4. **Define and verify the outcome.** Translate the request into observable success criteria before implementation, reproduce defects when feasible, and use the narrowest stable evidence with relevant regression coverage. Iterate until the criteria are satisfied.
+5. **Root-cause escaped defects.** When QA discovers a defect, identify both the product root cause and why engineering did not detect it. Fix the root cause and the smallest durable detection gap, add regression evidence at the earliest stable boundary, add higher-level coverage only for a distinct integration boundary, and perform a bounded search for the same failure class. Record the root cause, detection gap, and prevention evidence without blame; do not require a heavyweight RCA for ordinary defects.
+
 ## Architecture
 
 | Path | Language | Purpose |
