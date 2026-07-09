@@ -369,6 +369,30 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining("onboard` to rebuild"));
   });
 
+  it("does not double-report an unknown-version orphan under the Unknown version list (#6520)", async () => {
+    // An orphan with no cached or probeable version would otherwise land in
+    // the "Unknown version" bucket ("start them and rerun") AND the orphan
+    // block (destroy/onboard) — conflicting guidance for the same record.
+    const harness = createRecoveryHarness(["my-assistant"], {
+      liveOutput: "other-box Ready",
+    });
+    vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "0");
+    vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+      sandboxVersion: null,
+      expectedVersion: "2026.5.27",
+      isStale: false,
+      verificationFailed: true,
+      detectionMethod: "registry",
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("were not found on their recorded gateway: my-assistant"),
+    );
+    expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining("Unknown version"));
+  });
+
   it("also flags a stale own-gateway orphan alongside the generic skip line (#6520)", async () => {
     // The versioned-reinstall repro (v0.0.77 sandbox, v0.0.76 tag): the
     // sandbox is stale+stopped, prints the generic skip line, and must ALSO

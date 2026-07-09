@@ -371,10 +371,16 @@ export async function upgradeSandboxes(
       return false;
     }
   });
+  // An orphan's version is unknown because the sandbox is gone, not because a
+  // probe is pending — listing it under "Unknown version" with start-and-rerun
+  // guidance would contradict the orphan block's remediation. Stale orphans
+  // stay in the stale list: their version drift is real information.
+  const orphanNames = new Set(unobservedOwnGatewaySandboxes.map((sandbox) => sandbox.name));
+  const unknownWithoutOrphans = unknown.filter((sandbox) => !orphanNames.has(sandbox.name));
 
   if (
     stale.length === 0 &&
-    unknown.length === 0 &&
+    unknownWithoutOrphans.length === 0 &&
     preparedRecoveries.length === 0 &&
     rejectedRecoveries.length === 0
   ) {
@@ -393,9 +399,9 @@ export async function upgradeSandboxes(
       console.log(`    ${s.name}  ${describeStaleUpgrade(s)}  (${status})`);
     }
   }
-  if (unknown.length > 0) {
+  if (unknownWithoutOrphans.length > 0) {
     console.log(`\n  ${YW}Unknown version:${R}`);
-    for (const s of unknown) {
+    for (const s of unknownWithoutOrphans) {
       const status = s.running ? `${G}running${R}` : `${D}stopped${R}`;
       console.log(`    ${s.name}  v? → v${s.expected}  (${status})`);
     }
@@ -418,9 +424,9 @@ export async function upgradeSandboxes(
 
   if (checkOnly) {
     if (stale.length > 0) console.log(`  ${stale.length} sandbox(es) need upgrading.`);
-    if (unknown.length > 0) {
+    if (unknownWithoutOrphans.length > 0) {
       console.log(
-        `  ${unknown.length} sandbox(es) could not be version-checked; start them and rerun, or rebuild manually.`,
+        `  ${unknownWithoutOrphans.length} sandbox(es) could not be version-checked; start them and rerun, or rebuild manually.`,
       );
     }
     if (preparedRecoveries.length > 0) {
