@@ -89,6 +89,49 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
 
+  it("uses the startup-command recreate path for non-GPU Hermes containers", () => {
+    const deps = makeDeps();
+    const result = {
+      ...deferredCreateResult(),
+      mode: {
+        kind: "startup-command" as const,
+        label: "persistent sandbox startup command",
+        device: "",
+        args: [],
+      },
+    };
+    const recreatePatch = vi.fn();
+    const recreateStartupPatch = vi.fn(() => result);
+
+    const patch = createDockerGpuSandboxCreatePatch({
+      enabled: false,
+      persistStartupCommand: true,
+      sandboxName: "alpha",
+      openshellSandboxCommand: ["env", "nemoclaw-start"],
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch,
+        recreateStartupPatch,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+
+    expect(recreatePatch).not.toHaveBeenCalled();
+    expect(recreateStartupPatch).toHaveBeenCalledWith(
+      {
+        sandboxName: "alpha",
+        openshellSandboxCommand: ["env", "nemoclaw-start"],
+        timeoutSecs: 60,
+        waitForSupervisor: false,
+      },
+      expect.objectContaining({ runCaptureOpenshell: deps.runCaptureOpenshell }),
+    );
+    expect(patch.selectedMode()?.kind).toBe("startup-command");
+  });
+
   it("rolls back to the backup container and surfaces rolledBack=true diagnostics when supervisorReady=false", () => {
     const deps = makeDeps();
     const result = deferredCreateResult();

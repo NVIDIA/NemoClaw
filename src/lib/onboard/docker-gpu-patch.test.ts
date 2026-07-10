@@ -23,6 +23,7 @@ import {
   getDockerGpuPatchNetworkMode,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   recreateOpenShellDockerSandboxWithGpu,
+  recreateOpenShellDockerSandboxWithStartupCommand,
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
@@ -647,6 +648,56 @@ describe("docker-gpu-patch", () => {
     expect(dockerRunDetached).toHaveBeenCalledWith(
       cloneArgs,
       expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("persists the startup command without adding GPU-only container privileges", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig = {
+      ...inspect.HostConfig,
+      CapAdd: [],
+      SecurityOpt: [],
+    };
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "ps") return "old-container-id\n";
+      if (args[0] === "inspect") return JSON.stringify([inspect]);
+      return "";
+    });
+    const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
+      status: 0,
+      stdout: "new-container-id\n",
+    }));
+
+    const result = recreateOpenShellDockerSandboxWithStartupCommand(
+      {
+        sandboxName: "alpha",
+        timeoutSecs: 1,
+        waitForSupervisor: false,
+        openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+      },
+      {
+        dockerCapture,
+        dockerRunDetached,
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        sleep: vi.fn(),
+        now: () => new Date("2026-07-10T00:00:00Z"),
+      },
+    );
+
+    expect(result.mode.kind).toBe("startup-command");
+    const cloneArgs = dockerRunDetached.mock.calls[0]?.[0] ?? [];
+    expect(cloneArgs).toEqual(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
+      ]),
+    );
+    expect(cloneArgs).not.toContain("--gpus");
+    expect(cloneArgs).toEqual(expect.arrayContaining(["--env", "NVIDIA_VISIBLE_DEVICES=void"]));
+    expect(cloneArgs).not.toEqual(expect.arrayContaining(["--cap-add", "SYS_PTRACE"]));
+    expect(cloneArgs).not.toEqual(
+      expect.arrayContaining(["--security-opt", "apparmor=unconfined"]),
     );
   });
 });

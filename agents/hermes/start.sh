@@ -418,6 +418,8 @@ ensure_gateway_log_stream() {
   fi
 }
 
+TIRITH_RETRY_MARKER_CLEARED=0
+
 retry_tirith_marker_if_needed() {
   local marker="${HERMES_DIR}/.tirith-install-failed"
   local reason
@@ -437,6 +439,28 @@ retry_tirith_marker_if_needed() {
   echo "[tirith-bootstrap] download_failed marker present; letting Hermes runtime fallback retry Tirith" >&2
   if ! rm -f "$marker" 2>/dev/null; then
     echo "[tirith-bootstrap] WARNING: could not remove retryable Tirith marker; Hermes gateway startup will continue" >&2
+  else
+    TIRITH_RETRY_MARKER_CLEARED=1
+  fi
+}
+
+finalize_tirith_marker_retry() {
+  local marker="${HERMES_DIR}/.tirith-install-failed"
+  local reason
+
+  [ "$TIRITH_RETRY_MARKER_CLEARED" -eq 1 ] || return 0
+  [ -e "$marker" ] || return 0
+  if [ -L "$marker" ] || [ ! -f "$marker" ]; then
+    echo "[tirith-bootstrap] WARNING: unsafe Tirith install marker recreated during retry; not reading it" >&2
+    return 0
+  fi
+
+  reason="$(head -n 1 "$marker" 2>/dev/null | tr -d '\r\n' || true)"
+  [ "$reason" = "download_failed" ] || return 0
+
+  echo "[tirith-bootstrap] Tirith retry completed with download_failed; clearing the handled retry marker" >&2
+  if ! rm -f "$marker" 2>/dev/null; then
+    echo "[tirith-bootstrap] WARNING: could not clear handled Tirith retry marker; Hermes gateway startup will continue" >&2
   fi
 }
 
@@ -2816,6 +2840,7 @@ bootstrap_hermes_gateway_current_user() {
 
   if wait_for_hermes_gateway_internal "$GATEWAY_PID" \
     && ensure_hermes_supervised_auxiliaries; then
+    finalize_tirith_marker_retry
     if ! commit_hermes_mcp_applied_if_pending; then
       echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
       hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
@@ -2951,6 +2976,7 @@ launch_hermes_gateway
 start_gateway_log_stream
 wait_for_hermes_gateway_internal "$GATEWAY_PID"
 ensure_hermes_supervised_auxiliaries
+finalize_tirith_marker_retry
 if ! commit_hermes_mcp_applied_if_pending; then
   echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
   stop_hermes_gateway_fail_closed
