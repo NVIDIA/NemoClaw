@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   applyHermesLightSkinConfig,
@@ -9,6 +10,7 @@ import {
   buildSandboxConnectEnv,
   hermesConfigUsesManagedLightSkin,
   NEMOCLAW_HERMES_LIGHT_SKIN_NAME,
+  NEMOCLAW_HERMES_LIGHT_SKIN_YAML,
   removeHermesLightSkinConfig,
   shouldApplyHermesLightSkin,
   shouldPrepareHermesLightSkin,
@@ -91,6 +93,18 @@ describe("sandbox connect environment helpers", () => {
     expect(buildHermesLightSkinConfig("model: test\n")).toBe(
       `model: test\ndisplay:\n  skin: ${NEMOCLAW_HERMES_LIGHT_SKIN_NAME}\n`,
     );
+  });
+
+  it("pins readable body and startup list colors in the managed Hermes light skin (#6380)", () => {
+    const skin = YAML.parse(NEMOCLAW_HERMES_LIGHT_SKIN_YAML) as {
+      colors: Record<string, string>;
+    };
+    expect(skin.colors).toMatchObject({
+      response_body: "#7A5A0F",
+      response_text: "#7A5A0F",
+      skill_list_text: "#7A5A0F",
+      tool_list_text: "#7A5A0F",
+    });
   });
 
   it("does not rewrite Hermes config when display.skin is already explicit (#6380)", () => {

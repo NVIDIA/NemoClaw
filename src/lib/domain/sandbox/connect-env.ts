@@ -6,6 +6,9 @@ import type { ConfigObject, ConfigValue } from "../../security/credential-filter
 
 export const NEMOCLAW_HERMES_LIGHT_SKIN_NAME = "nemoclaw-light";
 
+// Compatibility boundary: remove this NemoClaw-managed light skin once the
+// pinned Hermes version in agents/hermes/Dockerfile.base includes upstream
+// readable light-terminal defaults for assistant response and startup list text.
 export const NEMOCLAW_HERMES_LIGHT_SKIN_YAML = `name: ${NEMOCLAW_HERMES_LIGHT_SKIN_NAME}
 description: NemoClaw-managed Hermes light terminal compatibility skin
 colors:
@@ -15,7 +18,11 @@ colors:
   banner_dim: "#B8860B"
   banner_text: "#7A5A0F"
   prompt: "#7A5A0F"
+  response_text: "#7A5A0F"
+  response_body: "#7A5A0F"
   response_border: "#FFD700"
+  tool_list_text: "#7A5A0F"
+  skill_list_text: "#7A5A0F"
 `;
 
 function hasEnvValue(value: string | undefined): boolean {
