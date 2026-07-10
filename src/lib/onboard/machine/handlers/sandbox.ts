@@ -608,6 +608,28 @@ class SandboxStateFlow<
     return state.webSearchConfig;
   }
 
+  private buildSandboxCreateIntent(
+    state: SandboxStepState<WebSearchConfig>,
+    decision: SandboxCreationDecision,
+  ): SandboxCreateIntent {
+    return {
+      recreate: decision.kind !== "create",
+      toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+      observabilityEnabled: state.session?.observabilityEnabled === true,
+      ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
+      ...(state.session?.observabilityRequestedExplicitly === true
+        ? { observabilityRequestedExplicitly: true as const }
+        : {}),
+      ...(!this.options.fromDockerfile &&
+      isDcodeAgent((this.options.agent as { name?: string } | null)?.name)
+        ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
+        : {}),
+      ...(this.options.authoritativePolicyTier
+        ? { policyTier: this.options.authoritativePolicyTier }
+        : {}),
+    };
+  }
+
   private async createAndRecordSandbox(
     state: SandboxStepState<WebSearchConfig>,
     requestedSandboxName: string,
@@ -637,6 +659,7 @@ class SandboxStateFlow<
         current.messagingPlan = messagingPlan;
         return current;
       });
+      const createIntent = this.buildSandboxCreateIntent(state, decision);
       const sandboxName = await withSandboxPhaseTrace(
         requestedSandboxName,
         this.options.provider,
@@ -658,21 +681,7 @@ class SandboxStateFlow<
             resourceProfile,
             effectiveHermesToolGateways,
             this.options.hermesAuthMethod,
-            {
-              recreate: decision.kind !== "create",
-              toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
-              observabilityEnabled: state.session?.observabilityEnabled === true,
-              ...(state.session?.observabilityRequestedExplicitly === true
-                ? { observabilityRequestedExplicitly: true as const }
-                : {}),
-              ...(!this.options.fromDockerfile &&
-              isDcodeAgent((this.options.agent as { name?: string } | null)?.name)
-                ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
-                : {}),
-              ...(this.options.authoritativePolicyTier
-                ? { policyTier: this.options.authoritativePolicyTier }
-                : {}),
-            },
+            createIntent,
           ),
       );
       // createSandbox() owns the build fingerprint. In particular, reusing an

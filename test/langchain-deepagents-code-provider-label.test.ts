@@ -111,6 +111,10 @@ for upstream in (None, "", "bad provider!", " nvidia-prod", "nvidia-prod\\n", "x
 os.environ["NEMOCLAW_UPSTREAM_PROVIDER"] = "openai"
 assert _nemoclaw_managed.managed_display_provider("openai") == "openai"
 
+os.environ["NEMOCLAW_UPSTREAM_PROVIDER"] = "openrouter-api"
+assert _nemoclaw_managed.managed_display_provider("openai") == "openrouter"
+assert _nemoclaw_managed.managed_display_provider("openrouter") == "openrouter"
+
 os.environ["NEMOCLAW_UPSTREAM_PROVIDER"] = "compatible-anthropic-endpoint"
 assert _nemoclaw_managed.managed_display_provider("openai") == "compatible-anthropic-endpoint"
 

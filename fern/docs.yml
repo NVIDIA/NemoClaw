@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Fern site config. Mirrors the OpenShell Fern layout while the NemoClaw docs
-# are migrated from the legacy Sphinx/MyST source.
+# Fern site config for the NemoClaw documentation site.
 instances:
   - url: nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw
     multi-source: true
