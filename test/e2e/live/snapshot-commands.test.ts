@@ -23,6 +23,10 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import {
+  buildSnapshotCommandEnv,
+  type SnapshotInferenceFixture,
+} from "./snapshot-commands-helpers.ts";
 import { scanSnapshotCredentialLeaks } from "./snapshot-credential-scanner.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-snapshot";
@@ -38,33 +42,8 @@ const LIVE_TIMEOUT_MS = 30 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
 
-interface SnapshotInferenceFixture {
-  apiKey: string;
-  endpointUrl: string;
-  model: string;
-}
-
 function commandEnv(inference?: SnapshotInferenceFixture): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    ...buildAvailabilityProbeEnv(),
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_RECREATE_SANDBOX: "1",
-    NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-  };
-  delete env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE;
-  if (inference) {
-    Object.assign(env, {
-      COMPATIBLE_API_KEY: inference.apiKey,
-      NEMOCLAW_COMPAT_MODEL: inference.model,
-      NEMOCLAW_ENDPOINT_URL: inference.endpointUrl,
-      NEMOCLAW_MODEL: inference.model,
-      NEMOCLAW_PREFERRED_API: "openai-completions",
-      NEMOCLAW_PROVIDER: "custom",
-    });
-  }
-  return env;
+  return buildSnapshotCommandEnv(SANDBOX_NAME, inference);
 }
 
 async function bestEffort(run: () => Promise<unknown>): Promise<void> {
