@@ -7,6 +7,7 @@ import * as agentRuntime from "../../agent/runtime";
 import {
   buildSandboxInferenceRouteProbeArgs,
   classifyInferenceRouteFailureLabel,
+  isDcodeManagedExecMissingDetail,
   parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
 
@@ -41,6 +42,7 @@ export async function probeSandboxInferenceGatewayHealth(
       buildSandboxInferenceRouteProbeArgs(sandboxName, getSessionAgent(sandboxName)),
       {
         ignoreError: true,
+        includeStreams: true,
         timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
       },
     );
@@ -49,7 +51,16 @@ export async function probeSandboxInferenceGatewayHealth(
   }
   if (isCommandTimeout(result) || result.error) return null;
   const parsed = parseSandboxInferenceRouteProbeResult(result);
-  if (!parsed.healthy && !parsed.broken) return null;
+  if (!parsed.healthy && !parsed.broken) {
+    return isDcodeManagedExecMissingDetail(parsed.detail)
+      ? {
+          ok: false,
+          endpoint,
+          httpStatus: 0,
+          detail: parsed.detail,
+        }
+      : null;
+  }
   const status = parsed.httpStatus;
   if (parsed.healthy) {
     return {

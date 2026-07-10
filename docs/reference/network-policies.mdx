@@ -233,13 +233,17 @@ The flow has these steps:
 4. The operator approves or denies the request.
 5. If approved, the endpoint is added to the running policy for the session.
 
-To try this, run the walkthrough:
+To monitor requests as the agent runs, open the TUI:
 
 ```bash
-./scripts/walkthrough.sh
+openshell term
 ```
 
-This opens a split tmux session with the TUI on the left and the agent on the right.
+<AgentOnly variant="openclaw,hermes">
+
+For step-by-step navigation and approval controls, refer to [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests).
+
+</AgentOnly>
 
 ## Modifying the Policy
 

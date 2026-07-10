@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "openclaw": "2026.5.27",
-    "typescript": "5.9.3"
+    "typescript": "6.0.3"
   },
   "peerDependencies": {
     "openclaw": ">=2026.5.17"
