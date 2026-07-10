@@ -136,6 +136,12 @@ export interface BackupResult {
   manifest?: RebuildManifest;
   backedUpDirs: string[];
   failedDirs: string[];
+  // Per-dir failure cause for entries in failedDirs, keyed by dir name.
+  // Distinguishes "permission denied" (tar could not read the content) from
+  // "absent after extraction" (tar succeeded but the dir never materialized)
+  // so operators can tell an ownership problem from a missing dir (#6455).
+  // Dirs failed for other reasons may be absent from this map.
+  failedDirReasons?: Record<string, string>;
   // Set when the failure is a precondition (e.g. duplicate --name) rather
   // than a mid-backup error. CLI surfaces this to the user verbatim.
   error?: string;
@@ -730,8 +736,15 @@ function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
 }
 
-function failedDirsFromTarStderr(stderr: string, existingDirs: string[]): Set<string> {
-  const failed = new Set<string>();
+/** Failure cause: tar reported "Permission denied" while reading the dir. */
+export const BACKUP_FAILURE_PERMISSION_DENIED = "permission denied";
+/** Failure cause: tar reported other read errors for the dir. */
+export const BACKUP_FAILURE_TAR_READ_ERROR = "tar read error";
+/** Failure cause: tar succeeded but the dir never materialized on the host. */
+export const BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION = "absent after extraction";
+
+function failedDirsFromTarStderr(stderr: string, existingDirs: string[]): Map<string, string> {
+  const failed = new Map<string, string>();
   const dirs = [...existingDirs].sort((a, b) => b.length - a.length);
   for (const rawLine of stderr.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -743,12 +756,33 @@ function failedDirsFromTarStderr(stderr: string, existingDirs: string[]): Set<st
         message.startsWith(`${dirName}:`) ||
         message.startsWith(`${dirName}/`)
       ) {
-        failed.add(dirName);
+        // "permission denied" is the more actionable cause — keep it even if
+        // other read errors were attributed to the same dir first.
+        const reason = message.includes("Permission denied")
+          ? BACKUP_FAILURE_PERMISSION_DENIED
+          : BACKUP_FAILURE_TAR_READ_ERROR;
+        if (reason === BACKUP_FAILURE_PERMISSION_DENIED || !failed.has(dirName)) {
+          failed.set(dirName, reason);
+        }
         break;
       }
     }
   }
   return failed;
+}
+
+/**
+ * Render failed dirs/files for user-facing backup failure messages,
+ * appending the known per-dir cause: "identity (permission denied)".
+ * Items without a recorded cause render unchanged.
+ */
+export function formatFailedBackupItems(
+  failedItems: string[],
+  reasons: Record<string, string> | undefined,
+): string {
+  return failedItems
+    .map((item) => (reasons?.[item] ? `${item} (${reasons[item]})` : item))
+    .join(", ");
 }
 
 const SQLITE_BACKUP_PY = [
@@ -1128,6 +1162,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   const backedUpDirs: string[] = [];
   const failedDirs: string[] = [];
+  const failedDirReasons: Record<string, string> = {};
   const backedUpFiles: string[] = [];
   const failedFiles: string[] = [];
   let unreachable = false;
@@ -1341,6 +1376,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                 } else {
                   _log(`Dir ${d} missing from clean tar extraction — marking failed`);
                   failedDirs.push(d);
+                  failedDirReasons[d] = BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION;
                 }
               }
             } else {
@@ -1355,12 +1391,15 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                 failedDirs.push(...existingDirs);
               } else {
                 for (const d of existingDirs) {
-                  if (tarFailedDirs.has(d)) {
-                    _log(`Dir ${d} had tar read errors — marking failed`);
+                  const tarFailureReason = tarFailedDirs.get(d);
+                  if (tarFailureReason !== undefined) {
+                    _log(`Dir ${d} had tar read errors (${tarFailureReason}) — marking failed`);
                     failedDirs.push(d);
+                    failedDirReasons[d] = tarFailureReason;
                   } else if (!extractedDirs.has(d)) {
                     _log(`Dir ${d} missing from partial tar extraction — marking failed`);
                     failedDirs.push(d);
+                    failedDirReasons[d] = BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION;
                   } else {
                     backedUpDirs.push(d);
                   }
@@ -1425,6 +1464,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     manifest,
     backedUpDirs,
     failedDirs,
+    ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
     backedUpFiles,
     failedFiles,
   };

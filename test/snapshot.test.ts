@@ -591,6 +591,7 @@ process.exit(0);
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
       expect(backup.failedDirs).toEqual(["agents"]);
+      expect(backup.failedDirReasons).toEqual({ agents: "permission denied" });
       expect(backup.backedUpDirs).toEqual(["workspace", "extensions"]);
       expect(backup.manifest?.backedUpDirs).toEqual(["workspace", "extensions"]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "agents"))).toBe(true);
@@ -960,6 +961,10 @@ process.exit(0);
       expect(backup.success).toBe(false);
       expect(backup.backedUpDirs).toEqual(["extensions"]);
       expect(backup.failedDirs).toEqual(["agents", "workspace"]);
+      expect(backup.failedDirReasons).toEqual({
+        agents: "permission denied",
+        workspace: "absent after extraction",
+      });
       expect(backup.manifest?.backedUpDirs).toEqual(["extensions"]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "workspace"))).toBe(false);
     } finally {

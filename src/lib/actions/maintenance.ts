@@ -113,8 +113,11 @@ export async function backupAll(): Promise<void> {
         }
         unreachableRunning++;
       }
-      const failedItems = [...result.failedDirs, ...result.failedFiles];
-      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems.join(", ")})`);
+      const failedItems = sandboxState.formatFailedBackupItems(
+        [...result.failedDirs, ...result.failedFiles],
+        result.failedDirReasons,
+      );
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems})`);
       failed++;
     }
   }

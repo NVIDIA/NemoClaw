@@ -545,7 +545,11 @@ function runSnapshotCreate(
     } else {
       console.error("  Snapshot failed.");
       if (result.failedDirs.length > 0) {
-        console.error(`  Failed directories: ${result.failedDirs.join(", ")}`);
+        const failedDirs = sandboxState.formatFailedBackupItems(
+          result.failedDirs,
+          result.failedDirReasons,
+        );
+        console.error(`  Failed directories: ${failedDirs}`);
       }
       if (result.failedFiles.length > 0) {
         console.error(`  Failed files: ${result.failedFiles.join(", ")}`);

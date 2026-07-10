@@ -16,9 +16,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../state/registry", () => ({
   listSandboxes: mocks.listSandboxes,
 }));
-vi.mock("../state/sandbox", () => ({
+vi.mock("../state/sandbox", async (importOriginal) => ({
   backupSandboxState: mocks.backupSandboxState,
   BackupResult: {},
+  // Real formatter so the backup-failed message tests exercise the actual
+  // per-dir cause rendering (#6455).
+  formatFailedBackupItems: (await importOriginal<typeof import("../state/sandbox")>())
+    .formatFailedBackupItems,
 }));
 vi.mock("../openshell-sandbox-list", () => ({
   captureSandboxListWithGatewayPreflightOrExit: mocks.captureSandboxListWithGatewayPreflightOrExit,
@@ -382,6 +386,77 @@ describe("backupAll", () => {
     await expect(backupAll()).rejects.toThrow("exit:1");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("names the per-dir failure cause in the backup-failed message (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "clone-test" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["clone-test"]));
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "clone-test\n",
+    });
+    mocks.backupSandboxState.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      failedDirs: ["identity", "devices", "credentials"],
+      failedDirReasons: {
+        identity: "permission denied",
+        devices: "permission denied",
+        credentials: "absent after extraction",
+      },
+      backedUpFiles: [],
+      failedFiles: [],
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    const errorOutput = errorSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(errorOutput).toContain(
+      "backup failed (identity (permission denied), devices (permission denied), credentials (absent after extraction))",
+    );
+
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it("renders the backup-failed message unchanged when no failure causes are recorded", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-bad" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "sb-bad\n",
+    });
+    mocks.backupSandboxState.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      failedDirs: ["memories"],
+      backedUpFiles: [],
+      failedFiles: ["settings.json"],
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    const errorOutput = errorSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(errorOutput).toContain("backup failed (memories, settings.json)");
+
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
   });
 
   it.each([
