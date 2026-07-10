@@ -52,6 +52,8 @@ describe("cleanupGatewayAfterLastSandbox", () => {
         usePgrepFallback: false,
         stateDir,
         pidFile: path.join(stateDir, "openshell-gateway.pid"),
+        openShellGatewayName: "nemoclaw-8081",
+        openShellGatewayPort: 8081,
       },
     );
     expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {
@@ -86,6 +88,8 @@ describe("cleanupGatewayAfterLastSandbox", () => {
         usePgrepFallback: false,
         stateDir,
         pidFile: path.join(stateDir, "openshell-gateway.pid"),
+        openShellGatewayName: "nemoclaw-8081",
+        openShellGatewayPort: 8081,
       },
     );
     expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {

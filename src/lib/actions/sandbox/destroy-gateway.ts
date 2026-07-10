@@ -27,14 +27,23 @@ const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 // `nemoclaw-<port>` sandbox would read the default instance's pid file and
 // stop the wrong host gateway process. Returns null when the gateway name is
 // outside the NemoClaw namespace (the caller then keeps the defaults).
-function resolvePerGatewayStateDir(gatewayName: string): string | null {
+function resolvePerGatewayState(gatewayName: string): { port: number; stateDir: string } | null {
   const port = resolveGatewayPortFromName(gatewayName);
   if (port === null) return null;
   const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
   if (configured && configured.trim()) {
-    return path.resolve(configured.trim());
+    return { port, stateDir: path.resolve(configured.trim()) };
   }
-  return path.join(os.homedir(), ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
+  return {
+    port,
+    stateDir: path.join(
+      os.homedir(),
+      ".local",
+      "state",
+      "nemoclaw",
+      resolveGatewayStateDirName(port),
+    ),
+  };
 }
 
 export function selectGatewayForSandboxDestroy(
@@ -84,14 +93,24 @@ export function cleanupGatewayAfterLastSandbox(
     // possible on shared hosts) is not torn down by a NemoClaw `destroy`.
     // The uninstall path keeps the broader sweep on (run-plan.ts). The state
     // dir is per-gateway-name so a destroy of `nemoclaw-<port>` reads the
-    // per-port pid file rather than defaulting to the bare instance's.
-    const perGatewayStateDir = resolvePerGatewayStateDir(gatewayName);
-    const stopOptions: { usePgrepFallback: false; stateDir?: string; pidFile?: string } = {
+    // per-port pid file rather than defaulting to the bare instance's. The
+    // expected gateway name and port also gate `openshell gateway start`
+    // cmdlines so a stale pid file cannot kill another gateway instance.
+    const perGatewayState = resolvePerGatewayState(gatewayName);
+    const stopOptions: {
+      openShellGatewayName?: string;
+      openShellGatewayPort?: number;
+      usePgrepFallback: false;
+      stateDir?: string;
+      pidFile?: string;
+    } = {
       usePgrepFallback: false,
     };
-    if (perGatewayStateDir) {
-      stopOptions.stateDir = perGatewayStateDir;
-      stopOptions.pidFile = path.join(perGatewayStateDir, "openshell-gateway.pid");
+    if (perGatewayState) {
+      stopOptions.stateDir = perGatewayState.stateDir;
+      stopOptions.pidFile = path.join(perGatewayState.stateDir, "openshell-gateway.pid");
+      stopOptions.openShellGatewayName = gatewayName;
+      stopOptions.openShellGatewayPort = perGatewayState.port;
     }
     stopHostGatewayProcesses({}, stopOptions);
   }

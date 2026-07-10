@@ -20,14 +20,56 @@ export const DOCKER_DRIVER_GATEWAY_COMPAT_MOUNT_PATH = "/opt/nemoclaw/openshell-
 
 type ResolveExecutablePath = (value: string) => string | null;
 
+export interface OpenShellGatewayProcessTarget {
+  name?: string | null;
+  port?: number | string | null;
+}
+
 export function cleanGatewayProcessToken(token: string): string {
   return token.replace(/^['"]|['"]$/g, "").replace(/ \(deleted\)$/, "");
+}
+
+function cliFlagValue(tokens: string[], names: string[]): string | null {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    for (const name of names) {
+      if (token === name) {
+        return tokens[index + 1] ?? null;
+      }
+      if (token.startsWith(`${name}=`)) {
+        return token.slice(name.length + 1);
+      }
+    }
+  }
+  return null;
+}
+
+function openShellGatewayStartMatchesTarget(
+  tokens: string[],
+  target: OpenShellGatewayProcessTarget | undefined,
+): boolean {
+  if (!target || (!target.name && (target.port === undefined || target.port === null))) {
+    return true;
+  }
+
+  if (target.name) {
+    const actualName = cliFlagValue(tokens, ["--name"]);
+    if (actualName !== target.name) return false;
+  }
+
+  if (target.port !== undefined && target.port !== null) {
+    const actualPort = cliFlagValue(tokens, ["--port"]);
+    if (actualPort !== String(target.port)) return false;
+  }
+
+  return true;
 }
 
 export function gatewayProcessCmdlineMatches(
   cmdline: string,
   gatewayBin: string | null | undefined,
   opts: {
+    expectedOpenShellGateway?: OpenShellGatewayProcessTarget;
     processNames?: ReadonlySet<string>;
     resolveExecutablePath?: ResolveExecutablePath;
   } = {},
@@ -45,7 +87,7 @@ export function gatewayProcessCmdlineMatches(
     tokens[1] === "gateway" &&
     tokens[2] === "start"
   ) {
-    return true;
+    return openShellGatewayStartMatchesTarget(tokens, opts.expectedOpenShellGateway);
   }
 
   if (typeof gatewayBin === "string" && gatewayBin.length > 0) {
@@ -71,6 +113,9 @@ export function gatewayProcessCmdlineMatches(
 export function hostGatewayCmdlineMatches(
   cmdline: string,
   gatewayBin: string | null | undefined,
+  expectedOpenShellGateway?: OpenShellGatewayProcessTarget,
 ): boolean {
-  return gatewayProcessCmdlineMatches(cmdline, gatewayBin);
+  return gatewayProcessCmdlineMatches(cmdline, gatewayBin, {
+    expectedOpenShellGateway,
+  });
 }
