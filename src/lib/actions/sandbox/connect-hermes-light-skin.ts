@@ -102,7 +102,7 @@ export function prepareHermesLightTerminalSkin(
       warnHermesLightSkinFailure("update", error);
       return;
     }
-    removeHermesLightSkinFile(sandboxName);
+    if (!removeHermesLightSkinFile(sandboxName)) return;
     return;
   }
 
@@ -116,6 +116,6 @@ export function prepareHermesLightTerminalSkin(
     writeSandboxConfig(sandboxName, target, config);
   } catch (error) {
     warnHermesLightSkinFailure("update", error);
-    removeHermesLightSkinFile(sandboxName);
+    if (!removeHermesLightSkinFile(sandboxName)) return;
   }
 }

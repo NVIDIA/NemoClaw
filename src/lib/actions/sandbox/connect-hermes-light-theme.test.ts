@@ -164,6 +164,36 @@ describe("Hermes sandbox connect light terminal skin", () => {
     expectConnectSucceeded(harness, exitSpy);
   });
 
+  it("warns but continues when dark-terminal skin file cleanup fails (#6380)", async () => {
+    vi.stubEnv("COLORFGBG", "0;0");
+    const hermesConfig = {
+      display: { skin: NEMOCLAW_HERMES_LIGHT_SKIN_NAME },
+      model: "test",
+    };
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      hermesConfig,
+      sessionAgent: {
+        name: "hermes",
+        runtime: { kind: "terminal", interactive_command: "hermes" },
+      },
+    });
+    harness.runOpenshellSpy.mockImplementation((args: unknown) => {
+      const script = Array.isArray(args) ? String(args[7] ?? "") : "";
+      return script.includes('rm -f "$skin_dir/nemoclaw-light.yaml"')
+        ? { status: 2, error: new Error(`remove failed ${REDACTED_URL_CANARY}`) }
+        : { status: 0 };
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(skinRemoveCalls(harness)).toHaveLength(1);
+    expect(harness.writeSandboxConfigSpy).toHaveBeenCalledOnce();
+    expect(warningText(harness)).toContain("Could not remove Hermes light terminal skin");
+    expect(warningText(harness)).not.toContain("user:secret");
+    expectConnectSucceeded(harness, exitSpy);
+  });
+
   it("does not read or write Hermes config when a Hermes theme override is set (#6380)", async () => {
     vi.stubEnv("COLORFGBG", "0;15");
     vi.stubEnv("HERMES_TUI_THEME", "dark");
@@ -294,6 +324,36 @@ describe("Hermes sandbox connect light terminal skin", () => {
     expect(skinRemoveCalls(harness)).toHaveLength(1);
     expect(harness.writeSandboxConfigSpy).toHaveBeenCalledOnce();
     expect(warningText(harness)).toContain("Could not update Hermes light terminal skin");
+    expect(warningText(harness)).not.toContain("user:secret");
+    expectConnectSucceeded(harness, exitSpy);
+  });
+
+  it("warns when rollback cleanup fails after Hermes config update failure (#6380)", async () => {
+    vi.stubEnv("COLORFGBG", "0;15");
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      hermesConfig: { model: "test" },
+      sessionAgent: {
+        name: "hermes",
+        runtime: { kind: "terminal", interactive_command: "hermes" },
+      },
+    });
+    harness.writeSandboxConfigSpy.mockImplementationOnce(() => {
+      throw new Error(`update failed ${REDACTED_URL_CANARY}`);
+    });
+    harness.runOpenshellSpy.mockImplementation((args: unknown) => {
+      const script = Array.isArray(args) ? String(args[7] ?? "") : "";
+      return script.includes('rm -f "$skin_dir/nemoclaw-light.yaml"')
+        ? { status: 2, error: new Error(`remove failed ${REDACTED_URL_CANARY}`) }
+        : { status: 0 };
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(skinWriteCalls(harness)).toHaveLength(1);
+    expect(skinRemoveCalls(harness)).toHaveLength(1);
+    expect(warningText(harness)).toContain("Could not update Hermes light terminal skin");
+    expect(warningText(harness)).toContain("Could not remove Hermes light terminal skin");
     expect(warningText(harness)).not.toContain("user:secret");
     expectConnectSucceeded(harness, exitSpy);
   });
