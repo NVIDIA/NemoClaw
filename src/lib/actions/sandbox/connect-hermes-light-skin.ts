@@ -72,14 +72,11 @@ export function prepareHermesLightTerminalSkin(
     return;
   }
 
-  if (shouldApplyHermesLightSkin(agent, env, config)) {
-    const changed = applyHermesLightSkinConfig(config);
-    if (!changed && !hermesConfigUsesManagedLightSkin(config)) return;
-    if (!writeHermesLightSkinFile(sandboxName)) return;
-    if (!changed) return;
-  } else {
-    return;
-  }
+  if (!shouldApplyHermesLightSkin(agent, env, config)) return;
+  const changed = applyHermesLightSkinConfig(config);
+  if (!changed && !hermesConfigUsesManagedLightSkin(config)) return;
+  if (!writeHermesLightSkinFile(sandboxName)) return;
+  if (!changed) return;
 
   try {
     writeSandboxConfig(sandboxName, target, config);
