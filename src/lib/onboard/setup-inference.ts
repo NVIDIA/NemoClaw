@@ -434,7 +434,7 @@ export function createSetupInference(
         if (options.skipHostInferenceSmoke === true)
           deps.log("  Reusing existing gateway credential; skipping host inference smoke.");
         else
-          deps.verifyOnboardInferenceSmoke({
+          await deps.verifyOnboardInferenceSmoke({
             provider,
             model,
             endpointUrl,

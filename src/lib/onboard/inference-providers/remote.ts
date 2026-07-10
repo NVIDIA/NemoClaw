@@ -12,13 +12,13 @@ import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
 
-const { probeOpenAiLikeEndpoint } = require("../../inference/onboard-probes") as {
-  probeOpenAiLikeEndpoint: (
+const { probeOpenAiLikeEndpointOptimized } = require("../../inference/onboard-probes") as {
+  probeOpenAiLikeEndpointOptimized: (
     endpointUrl: string,
     model: string,
     apiKey: string,
     options?: Record<string, unknown>,
-  ) => { ok: boolean; message?: string };
+  ) => Promise<{ ok: boolean; message?: string }>;
 };
 
 type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message?: string };
@@ -216,7 +216,7 @@ export async function setupRemoteProviderInference(
   // Bedrock endpoints never reach here — the adapter branch above returns first.
   const useOpenAiSurface =
     provider === "compatible-anthropic-endpoint" && preferredInferenceApi === "openai-completions";
-  const probeOpenAiSurface = deps.probeOpenAiLikeEndpoint ?? probeOpenAiLikeEndpoint;
+  const probeOpenAiSurface = deps.probeOpenAiLikeEndpoint ?? probeOpenAiLikeEndpointOptimized;
   // The concrete modules type their openshell runners independently; the deps
   // runner is call-compatible with both, so bridge the nominal mismatch here.
   const readProviderMetadata =
@@ -269,10 +269,15 @@ export async function setupRemoteProviderInference(
         // route exercise the identical URL.
         const openAiSurfaceBaseUrl =
           getCompatibleAnthropicOpenAiSurfaceBaseUrl(resolvedEndpointUrl);
-        const surfaceProbe = probeOpenAiSurface(openAiSurfaceBaseUrl, model, credentialValue, {
-          skipResponsesProbe: true,
-          pinnedAddresses,
-        });
+        const surfaceProbe = await probeOpenAiSurface(
+          openAiSurfaceBaseUrl,
+          model,
+          credentialValue,
+          {
+            skipResponsesProbe: true,
+            pinnedAddresses,
+          },
+        );
         if (!surfaceProbe.ok) {
           providerResult = {
             ok: false,
