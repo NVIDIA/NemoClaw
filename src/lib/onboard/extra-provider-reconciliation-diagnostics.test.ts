@@ -82,6 +82,17 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
         "Error:   × code: 'Some requested entity was not found', message: \"provider 'stale-provider' not found\"",
     },
     {
+      label: "OpenShell provider-get generic not-found diagnostic",
+      provider: "stale-provider",
+      stderr:
+        "Error:   × code: 'Some requested entity was not found', message: \"provider not found\"",
+    },
+    {
+      label: "short targeted provider-get generic not-found diagnostic",
+      provider: "stale-provider",
+      stderr: "Error: provider not found",
+    },
+    {
       label: "provider name containing gateway",
       provider: "my-gateway-provider",
       stderr: "Error: provider 'my-gateway-provider' not found",
@@ -112,6 +123,7 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
       "Error: × code: 'Some requested entity was not found', message: \"gateway 'nemoclaw' not found while checking provider 'stale-provider'\"",
     ],
     ["transport plus provider text", "transport error\nError: provider 'stale-provider' not found"],
+    ["transport plus generic provider text", "transport error\nError: provider not found"],
     [
       "conflicting structured status",
       "Error: status: Unavailable, message: \"provider 'stale-provider' not found\"",

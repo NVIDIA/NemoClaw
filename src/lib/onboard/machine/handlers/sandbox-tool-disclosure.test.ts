@@ -106,7 +106,7 @@ describe("handleSandboxState tool disclosure", () => {
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).toHaveBeenCalledWith(
-      expect.anything(),
+      { type: "nvidia" },
       "model",
       "provider",
       "openai-completions",

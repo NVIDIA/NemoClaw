@@ -143,6 +143,23 @@ function providerNameFromMessage(line: string): string | null {
   return providerNameFromNotFoundText(text.slice(cursor));
 }
 
+function readMessageValue(line: string): string | null {
+  const text = stripDiagnosticPrefixes(line);
+  const markerIndex = text.toLowerCase().indexOf("message:");
+  if (markerIndex < 0) return null;
+  const quoted = readQuotedValue(text, markerIndex + "message:".length);
+  if (quoted) return quoted.value;
+  return text.slice(markerIndex + "message:".length).trim();
+}
+
+function lineReportsTargetedProviderGetNotFound(line: string): boolean {
+  const text = stripDiagnosticPrefixes(line);
+  if (normalizedNotFoundSuffix(text) === "provider not found") return true;
+  const status = structuredStatusValue(line);
+  if (!status || normalizeStatus(status) !== "notfound") return false;
+  return normalizedNotFoundSuffix(readMessageValue(line) ?? "") === "provider not found";
+}
+
 function commandNameAfterMarker(text: string, marker: string): string | null {
   const markerIndex = text.toLowerCase().indexOf(marker.toLowerCase());
   if (markerIndex < 0) return null;
@@ -209,6 +226,12 @@ export function reportsExactProviderNotFound(
     providerName,
   );
   if (wrappedIssueMatch !== null) return wrappedIssueMatch;
+  if (
+    diagnosticLines.length === 1 &&
+    lineReportsTargetedProviderGetNotFound(diagnosticLines[0] ?? "")
+  ) {
+    return true;
+  }
 
   return diagnosticLines.every((line) => providerNameFromNotFoundLine(line) === providerName);
 }
