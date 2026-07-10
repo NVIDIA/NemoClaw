@@ -432,9 +432,15 @@ print(block)
     }
   });
 
-  it("Option 3 docs expose reasoning mode for scripted compatible endpoints (#3279)", () => {
+  it("self-hosted setup docs expose reasoning mode for scripted compatible endpoints (#3279)", () => {
     const body = readFileSync(
-      path.join(import.meta.dirname, "..", "docs", "inference", "inference-options.mdx"),
+      path.join(
+        import.meta.dirname,
+        "..",
+        "docs",
+        "inference",
+        "local-compatible-inference-setup.mdx",
+      ),
       "utf-8",
     );
     expect(body).toContain("| `NEMOCLAW_REASONING` |");
