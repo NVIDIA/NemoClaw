@@ -133,6 +133,25 @@ export interface CreateOpenAiLikeAuthConfigOptions extends CreateCurlAuthConfigO
   extraHeaders?: readonly string[];
 }
 
+export interface OpenAiLikeExtraHeader {
+  name: string;
+  value: string;
+}
+
+export function parseOpenAiLikeExtraHeaders(
+  extraHeaders: readonly string[] = [],
+): OpenAiLikeExtraHeader[] {
+  return extraHeaders.map((header) => {
+    const sanitized = header.replace(/[\r\n]+/g, " ");
+    const separator = sanitized.indexOf(":");
+    if (separator <= 0) throw new Error("invalid OpenAI-like provider header");
+    return {
+      name: sanitized.slice(0, separator).trim(),
+      value: sanitized.slice(separator + 1).trim(),
+    };
+  });
+}
+
 export function createOpenAiLikeAuthConfig(
   apiKey: string,
   authMode?: OpenAiLikeAuthMode,
@@ -144,8 +163,8 @@ export function createOpenAiLikeAuthConfig(
   } else if (apiKey) {
     entries.push({ kind: "header", value: `Authorization: Bearer ${apiKey}` });
   }
-  for (const header of options.extraHeaders ?? []) {
-    entries.push({ kind: "header", value: header });
+  for (const { name, value } of parseOpenAiLikeExtraHeaders(options.extraHeaders)) {
+    entries.push({ kind: "header", value: `${name}: ${value}` });
   }
   return createCurlAuthConfig(entries, options);
 }

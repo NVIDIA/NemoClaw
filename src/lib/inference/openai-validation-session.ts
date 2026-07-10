@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CurlProbeResult } from "../adapters/http/probe";
+import { parseOpenAiLikeExtraHeaders } from "../adapters/http/auth-config";
 import {
   createValidationSession,
   type ValidationSessionOptions,
@@ -13,6 +14,7 @@ const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
 export interface OpenAiValidationOptions {
   authMode?: "bearer" | "query-param";
+  extraHeaders?: readonly string[];
   requireResponsesToolCalling?: boolean;
   requireChatCompletionsToolCalling?: boolean;
   skipResponsesProbe?: boolean;
@@ -141,17 +143,18 @@ function chatToolPayload(model: string): string {
 function requestAuth(
   rawUrl: string,
   apiKey: string,
-  authMode: OpenAiValidationOptions["authMode"],
+  options: OpenAiValidationOptions,
 ): { url: string; headers: Record<string, string> } {
   const url = new URL(rawUrl);
-  if (authMode === "query-param") {
+  const headers = Object.fromEntries(
+    parseOpenAiLikeExtraHeaders(options.extraHeaders).map(({ name, value }) => [name, value]),
+  );
+  if (options.authMode === "query-param") {
     if (apiKey) url.searchParams.set("key", apiKey);
-    return { url: url.toString(), headers: {} };
+    return { url: url.toString(), headers };
   }
-  return {
-    url: url.toString(),
-    headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
-  };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+  return { url: url.toString(), headers };
 }
 
 function streamingEventTypes(body: string): Set<string> {
@@ -255,7 +258,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
 
   try {
     if (!options.skipResponsesProbe) {
-      const auth = requestAuth(`${baseUrl}/responses`, apiKey, options.authMode);
+      const auth = requestAuth(`${baseUrl}/responses`, apiKey, options);
       const responses = await withTraceSpan(
         "nemoclaw.inference.validation_probe",
         { probe_name: "Responses API", api: "openai-responses" },
@@ -299,7 +302,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
       }
     }
 
-    const auth = requestAuth(`${baseUrl}/chat/completions`, apiKey, options.authMode);
+    const auth = requestAuth(`${baseUrl}/chat/completions`, apiKey, options);
     const chatBody =
       options.requireChatCompletionsToolCalling === true
         ? chatToolPayload(model)

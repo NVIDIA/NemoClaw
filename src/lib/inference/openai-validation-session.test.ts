@@ -383,4 +383,36 @@ describe("OpenAI validation keepalive sequence", () => {
       "query-secret",
     );
   });
+
+  it("preserves provider extra headers on the native validation request", async () => {
+    let observedReferer: string | undefined;
+    let observedTitle: string | undefined;
+    const server = http.createServer((request, response) => {
+      observedReferer = request.headers["http-referer"] as string | undefined;
+      observedTitle = request.headers["x-openrouter-title"] as string | undefined;
+      request.resume();
+      response.end('{"choices":[{"message":{"content":"OK"}}]}');
+    });
+    const port = await listen(server);
+    const harness = deps();
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "test-model",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        extraHeaders: [
+          "HTTP-Referer: https://github.com/NVIDIA/NemoClaw",
+          "X-OpenRouter-Title: NemoClaw",
+        ],
+      },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(observedReferer).toBe("https://github.com/NVIDIA/NemoClaw");
+    expect(observedTitle).toBe("NemoClaw");
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
 });
