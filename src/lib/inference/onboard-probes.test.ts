@@ -320,6 +320,16 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
+  it("uses max_completion_tokens for GPT-5 family and reasoning models (#6642)", () => {
+    for (const model of ["gpt-5.4", "azure/gpt-5.4", "o3-mini", "o1"]) {
+      expect(getChatCompletionsProbePayload(model)).toEqual({
+        model,
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        max_completion_tokens: 8,
+      });
+    }
+  });
+
   it("uses an extended validation budget for slow NVIDIA Build models", () => {
     for (const model of ["qwen/qwen3.5-397b-a17b", "deepseek-ai/deepseek-v4-flash"]) {
       const args = getChatCompletionsProbeCurlArgs({

@@ -1,0 +1,99 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Functional test for GPT-5-family reply-budget compat in
+// scripts/generate-openclaw-config.mts.
+//
+// Kept in its own focused file (rather than growing the already
+// budget-capped generate-openclaw-config.test.ts) so the gpt-5.4
+// max_completion_tokens routing behavior is easy to find and extend.
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { main } from "../scripts/generate-openclaw-config.mts";
+
+/** Minimal env vars required for a valid config generation run. */
+const BASE_ENV: Record<string, string> = {
+  NEMOCLAW_MODEL: "test-model",
+  NEMOCLAW_PROVIDER_KEY: "test-provider",
+  NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
+  CHAT_UI_URL: "http://127.0.0.1:18789",
+  NEMOCLAW_INFERENCE_BASE_URL: "http://localhost:8080",
+  NEMOCLAW_INFERENCE_API: "openai",
+  NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("{}").toString("base64"),
+  NEMOCLAW_PROXY_HOST: "10.200.0.1",
+  NEMOCLAW_PROXY_PORT: "3128",
+  NEMOCLAW_CONTEXT_WINDOW: "131072",
+  NEMOCLAW_MAX_TOKENS: "4096",
+  NEMOCLAW_REASONING: "false",
+  NEMOCLAW_AGENT_TIMEOUT: "600",
+};
+
+let tmpDir: string;
+
+function ensureFakeOpenClaw(): void {
+  const fakeOpenclaw = path.join(tmpDir, "openclaw");
+  fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+}
+
+function buildTestEnv(envOverrides: Record<string, string> = {}): Record<string, string> {
+  ensureFakeOpenClaw();
+  return {
+    PATH: `${tmpDir}:${process.env.PATH || "/usr/bin:/bin"}`,
+    ...BASE_ENV,
+    ...envOverrides,
+    HOME: tmpDir,
+  };
+}
+
+function withEnv<T>(env: Record<string, string>, fn: () => T): T {
+  const originalEnv = { ...process.env };
+  try {
+    for (const key of Object.keys(process.env)) {
+      delete process.env[key];
+    }
+    Object.assign(process.env, env);
+    return fn();
+  } finally {
+    for (const key of Object.keys(process.env)) {
+      delete process.env[key];
+    }
+    Object.assign(process.env, originalEnv);
+  }
+}
+
+function runConfigScript(envOverrides: Record<string, string> = {}): any {
+  const env = buildTestEnv(envOverrides);
+  withEnv(env, () => main());
+  const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+  return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+}
+
+describe("generate-openclaw-config.mts: GPT-5-family reply-budget compat", () => {
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gpt5-compat-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("routes gpt-5.4 reply budget to max_completion_tokens on managed inference (#6642)", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "gpt-5.4",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/gpt-5.4",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("null").toString("base64"),
+    });
+
+    expect(config.models.providers.inference.models[0].compat).toEqual({
+      maxTokensField: "max_completion_tokens",
+    });
+    expect(config.agents.defaults.model.primary).toBe("inference/gpt-5.4");
+  });
+});

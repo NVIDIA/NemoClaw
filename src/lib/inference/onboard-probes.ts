@@ -53,6 +53,7 @@ const {
   getExtendedNvidiaEndpointValidationProbeCurlArgs,
   getProbeProcessTimeoutMs,
 } = require("./probe-http-helpers");
+const { resolveMaxTokensField } = require("./max-tokens-field");
 
 const {
   getCurlTimingArgs,
@@ -360,6 +361,9 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
 
 function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {}) {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  // GPT-5/o-series (incl. Azure OpenAI) reject `max_tokens` and require
+  // `max_completion_tokens`; every other model still expects `max_tokens`.
+  const maxTokensField = resolveMaxTokensField(model);
   let authConfig;
   try {
     authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
@@ -436,7 +440,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
         // This strict gate is currently used for Local Ollama; if it expands to
         // reasoning models, add a thinking-suppression carve-out before lowering
         // this cap so reasoning traces cannot consume the whole budget (#4537).
-        max_tokens: 256,
+        [maxTokensField]: 256,
         stream: false,
       }),
       `${baseUrl}/chat/completions`,
@@ -504,10 +508,13 @@ function getChatCompletionsProbeTimingArgs(model, opts) {
 }
 
 function getChatCompletionsProbePayload(model) {
+  // GPT-5/o-series (incl. Azure OpenAI) reject `max_tokens` and require
+  // `max_completion_tokens`; every other model still expects `max_tokens`.
+  const maxTokensField = resolveMaxTokensField(model);
   const payload = {
     model,
     messages: [{ role: "user", content: "Reply with exactly: OK" }],
-    max_tokens: 8,
+    [maxTokensField]: 8,
   };
 
   if (isDeepSeekV4ProModel(model)) {
@@ -515,7 +522,7 @@ function getChatCompletionsProbePayload(model) {
       ...payload,
       temperature: 1,
       top_p: 0.95,
-      max_tokens: 8192,
+      [maxTokensField]: 8192,
       chat_template_kwargs: { thinking: false },
       stream: true,
     };
@@ -524,7 +531,7 @@ function getChatCompletionsProbePayload(model) {
   if (isKimiK26Model(model)) {
     return {
       ...payload,
-      max_tokens: 8,
+      [maxTokensField]: 8,
       chat_template_kwargs: { thinking: false },
     };
   }
