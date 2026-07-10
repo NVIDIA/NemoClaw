@@ -2692,7 +2692,14 @@ async function createSandboxWithBaseImageResolution(
         console.warn(`  Warning: failed to remove old sandbox image '${previousEntry.imageTag}'.`);
       }
     }
-    registry.removeSandbox(sandboxName);
+    if (
+      !registry.isPendingReservationForSession(
+        previousEntry,
+        onboardSession.loadSession()?.sessionId,
+      )
+    ) {
+      registry.removeSandbox(sandboxName);
+    }
   }
 
   // Stage build context — use the custom Dockerfile path when provided,

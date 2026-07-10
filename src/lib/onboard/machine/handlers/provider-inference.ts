@@ -172,6 +172,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
         credentialEnv: string | null;
         preferredInferenceApi: string | null;
         gatewayName: string;
+        reservationSessionId?: string;
       },
     ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
@@ -636,6 +637,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                   credentialEnv,
                   preferredInferenceApi,
                   gatewayName,
+                  reservationSessionId: session?.sessionId,
                 })
               : null;
           return { reupserted, reserved };
@@ -670,6 +672,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             credentialEnv,
             preferredInferenceApi,
             gatewayName,
+            reservationSessionId: session?.sessionId,
           });
         });
         if (!reserved) {

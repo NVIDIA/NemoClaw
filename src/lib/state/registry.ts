@@ -89,6 +89,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
   pendingRouteReservation?: true;
+  /** Onboard session that owns a pending reservation, so resume preserves its own row while abandoned reservations stay reconcilable. */
+  reservationSessionId?: string;
   createdAt?: string;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
@@ -553,6 +555,7 @@ type SandboxInferenceRouteReservation = Pick<
   "provider" | "model" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi"
 > & {
   gatewayName: string;
+  reservationSessionId?: string;
 };
 
 /**
@@ -571,6 +574,7 @@ export function reserveSandboxInferenceRoute(
     data.sandboxes[name] = {
       ...(existing ?? { name, pendingRouteReservation: true as const }),
       pendingRouteReservation: true,
+      reservationSessionId: route.reservationSessionId ?? existing?.reservationSessionId,
       provider: normalized.provider,
       model: normalized.model,
       endpointUrl: normalized.endpointUrl,
@@ -582,6 +586,17 @@ export function reserveSandboxInferenceRoute(
     save(data);
     return true;
   });
+}
+
+export function isPendingReservationForSession(
+  entry: SandboxEntry | null,
+  sessionId: string | null | undefined,
+): boolean {
+  return (
+    entry?.pendingRouteReservation === true &&
+    Boolean(sessionId) &&
+    entry.reservationSessionId === sessionId
+  );
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
