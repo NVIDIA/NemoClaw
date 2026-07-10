@@ -106,7 +106,7 @@ describe("handleSandboxState tool disclosure", () => {
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).toHaveBeenCalledWith(
-      expect.anything(),
+      { type: "nvidia" },
       "model",
       "provider",
       "openai-completions",
@@ -120,7 +120,12 @@ describe("handleSandboxState tool disclosure", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: requestedMode, observabilityEnabled: false },
+      {
+        recreate: true,
+        toolDisclosure: requestedMode,
+        observabilityEnabled: false,
+        extraProviders: [],
+      },
     );
   });
 

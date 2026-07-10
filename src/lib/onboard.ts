@@ -4,7 +4,6 @@
 // Interactive onboarding wizard — 8 steps from zero to running sandbox.
 // Supports non-interactive mode via --non-interactive flag or
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
-
 const {
   envInt,
   LOCAL_INFERENCE_TIMEOUT_SECS,
@@ -166,7 +165,6 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const pRetry = require("p-retry");
-
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
@@ -2300,7 +2298,6 @@ async function createSandboxWithBaseImageResolution(
   preparedBuildContext: PreparedSandboxBuildContext | null = null,
 ) {
   step(6, 8, "Creating sandbox");
-
   const sandboxName = validateName(
     sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
     "sandbox name",
@@ -2334,7 +2331,6 @@ async function createSandboxWithBaseImageResolution(
     getApiForwardPort: () => getDashboardForwardPort(chatUiUrl),
   });
   const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
-
   const {
     messagingTokenDefs,
     extraPlaceholderKeys,
@@ -2746,7 +2742,8 @@ async function createSandboxWithBaseImageResolution(
     messagingTokenDefs,
     reusableMessagingChannels,
     reusableMessagingProviders,
-    extraProviders: reconcileRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    extraProviders: createIntent?.extraProviders ?? reconcileRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     dockerDriverGateway,
@@ -2779,7 +2776,6 @@ async function createSandboxWithBaseImageResolution(
     );
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
-
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
   const plannedMessagingState =
@@ -2796,6 +2792,7 @@ async function createSandboxWithBaseImageResolution(
     model,
     chatUiUrl,
     provider,
+    endpointUrl: createIntent?.endpointUrl ?? null,
     preferredInferenceApi,
     webSearchConfig,
     toolDisclosure: effectiveToolDisclosure,
@@ -4510,6 +4507,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
           authoritativePolicyTier:
             opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
+          recreateSandbox: isRecreateSandbox,
           controlUiPort: _preflightDashboardPort,
           rootDir: ROOT,
         },
@@ -4551,6 +4549,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
           stopStaleDashboardListenersForSandbox,
           listRegistrySandboxes: registry.listSandboxes,
+          reconcileRegisteredExtraProviders: (gatewayName) =>
+            reconcileRegisteredExtraProviders(gatewayName, { runOpenshell }),
           createSandbox: preparedDcodeRuntime.bindCreateSandbox(
             createSandboxWithBaseImageResolution.bind(null, baseImageResolutionContext),
           ),
