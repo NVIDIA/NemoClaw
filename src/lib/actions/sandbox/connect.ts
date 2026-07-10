@@ -18,7 +18,6 @@ import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
-import { buildSandboxConnectEnv } from "../../domain/sandbox/connect-env";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import {
   formatInferenceRouteDriftForDisplay,
@@ -1179,7 +1178,7 @@ export async function connectSandbox(
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,
-    env: buildSandboxConnectEnv(agent, process.env),
+    env: { ...process.env },
   });
   exitWithConnectSpawnResult(sandboxName, result);
 }

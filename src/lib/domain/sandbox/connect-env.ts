@@ -4,10 +4,13 @@
 import type { ConfigObject, ConfigValue } from "../../security/credential-filter";
 
 export const NEMOCLAW_HERMES_LIGHT_SKIN_NAME = "nemoclaw-light";
+export const NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSION = "v2026.6.19";
 
 // Compatibility boundary: remove this NemoClaw-managed light skin once the
 // pinned Hermes version in agents/hermes/Dockerfile.base includes upstream
 // readable light-terminal defaults for assistant response and startup list text.
+// The paired unit test intentionally fails on a Hermes version bump so this
+// compatibility shim is re-reviewed instead of silently aging forward.
 export const NEMOCLAW_HERMES_LIGHT_SKIN_YAML = `name: ${NEMOCLAW_HERMES_LIGHT_SKIN_NAME}
 description: NemoClaw-managed Hermes light terminal compatibility skin
 colors:
@@ -57,6 +60,16 @@ export function applyHermesLightSkinConfig(config: ConfigObject): boolean {
   return true;
 }
 
+export function removeHermesLightSkinConfig(config: ConfigObject): boolean {
+  const display = config.display;
+  if (!isConfigRecord(display) || display.skin !== NEMOCLAW_HERMES_LIGHT_SKIN_NAME) {
+    return false;
+  }
+  delete display.skin;
+  if (Object.keys(display).length === 0) delete config.display;
+  return true;
+}
+
 export function hostTerminalLooksLight(env: NodeJS.ProcessEnv): boolean {
   const colorfgbg = String(env.COLORFGBG ?? "").trim();
   if (!colorfgbg) return false;
@@ -73,7 +86,6 @@ export function shouldInspectHermesLightSkinConfig(
 ): boolean {
   return (
     agent?.name === "hermes" &&
-    hostTerminalLooksLight(env) &&
     !hasEnvValue(env.HERMES_TUI_LIGHT) &&
     !hasEnvValue(env.HERMES_TUI_THEME)
   );
@@ -86,13 +98,19 @@ export function shouldApplyHermesLightSkin(
 ): boolean {
   return (
     shouldInspectHermesLightSkinConfig(agent, env) &&
+    hostTerminalLooksLight(env) &&
     (hermesConfigDisplaySkin(config) === null || hermesConfigUsesManagedLightSkin(config))
   );
 }
 
-export function buildSandboxConnectEnv(
-  _agent: { name?: string } | null | undefined,
+export function shouldRemoveHermesLightSkin(
+  agent: { name?: string } | null | undefined,
   env: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
-  return { ...env };
+  config: ConfigObject,
+): boolean {
+  return (
+    shouldInspectHermesLightSkinConfig(agent, env) &&
+    !hostTerminalLooksLight(env) &&
+    hermesConfigUsesManagedLightSkin(config)
+  );
 }

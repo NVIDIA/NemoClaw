@@ -28,7 +28,16 @@ function skinWriteCalls(harness: ConnectHarness, sandboxName = "alpha") {
     ([args]) =>
       Array.isArray(args) &&
       args.slice(0, 6).join(" ") === `sandbox exec --name ${sandboxName} -- sh` &&
-      String(args[7] ?? "").includes("nemoclaw-light.yaml"),
+      String(args[7] ?? "").includes('mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"'),
+  );
+}
+
+function skinRemoveCalls(harness: ConnectHarness, sandboxName = "alpha") {
+  return harness.runOpenshellSpy.mock.calls.filter(
+    ([args]) =>
+      Array.isArray(args) &&
+      args.slice(0, 6).join(" ") === `sandbox exec --name ${sandboxName} -- sh` &&
+      String(args[7] ?? "").includes('rm -f "$skin_dir/nemoclaw-light.yaml"'),
   );
 }
 
@@ -46,10 +55,13 @@ describe("Hermes sandbox connect light terminal skin", () => {
   const originalStdoutIsTty = process.stdout.isTTY;
 
   beforeEach(() => {
-    process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
     vi.stubEnv("HERMES_TUI_LIGHT", "");
     vi.stubEnv("HERMES_TUI_THEME", "");
-    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: true,
+    });
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as never);
@@ -62,7 +74,6 @@ describe("Hermes sandbox connect light terminal skin", () => {
       configurable: true,
       value: originalStdoutIsTty,
     });
-    delete process.env.NEMOCLAW_TEST_NO_SLEEP;
     delete require.cache[requireDist.resolve(connectModulePath)];
   });
 
@@ -127,7 +138,7 @@ describe("Hermes sandbox connect light terminal skin", () => {
     expectConnectSucceeded(harness, exitSpy);
   });
 
-  it("does not read or write Hermes config when reconnecting from a dark terminal (#6380)", async () => {
+  it("removes NemoClaw-managed Hermes light skin state when reconnecting from a dark terminal (#6380)", async () => {
     vi.stubEnv("COLORFGBG", "0;0");
     const hermesConfig = {
       display: { skin: NEMOCLAW_HERMES_LIGHT_SKIN_NAME },
@@ -144,14 +155,12 @@ describe("Hermes sandbox connect light terminal skin", () => {
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
-    expect(harness.resolveAgentConfigSpy).not.toHaveBeenCalled();
-    expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
+    expect(harness.resolveAgentConfigSpy).toHaveBeenCalledOnce();
+    expect(harness.readSandboxConfigSpy).toHaveBeenCalledOnce();
     expect(skinWriteCalls(harness)).toHaveLength(0);
-    expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
-    expect(hermesConfig).toEqual({
-      display: { skin: NEMOCLAW_HERMES_LIGHT_SKIN_NAME },
-      model: "test",
-    });
+    expect(skinRemoveCalls(harness)).toHaveLength(1);
+    expect(harness.writeSandboxConfigSpy).toHaveBeenCalledOnce();
+    expect(hermesConfig).toEqual({ model: "test" });
     expectConnectSucceeded(harness, exitSpy);
   });
 
@@ -210,7 +219,10 @@ describe("Hermes sandbox connect light terminal skin", () => {
     ]);
     expect(skinWriteCalls(harness, "alpha")).toHaveLength(1);
     expect(skinWriteCalls(harness, "beta")).toHaveLength(0);
-    expect(betaConfig).toEqual({ display: { skin: "beta-owned" }, model: "beta" });
+    expect(betaConfig).toEqual({
+      display: { skin: "beta-owned" },
+      model: "beta",
+    });
     expect(connectCalls(harness, "beta")).toHaveLength(0);
     expectConnectSucceeded(harness, exitSpy);
   });
@@ -279,6 +291,7 @@ describe("Hermes sandbox connect light terminal skin", () => {
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
     expect(skinWriteCalls(harness)).toHaveLength(1);
+    expect(skinRemoveCalls(harness)).toHaveLength(1);
     expect(harness.writeSandboxConfigSpy).toHaveBeenCalledOnce();
     expect(warningText(harness)).toContain("Could not update Hermes light terminal skin");
     expect(warningText(harness)).not.toContain("user:secret");

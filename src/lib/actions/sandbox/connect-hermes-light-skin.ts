@@ -9,8 +9,10 @@ import {
   applyHermesLightSkinConfig,
   hermesConfigUsesManagedLightSkin,
   NEMOCLAW_HERMES_LIGHT_SKIN_YAML,
+  removeHermesLightSkinConfig,
   shouldApplyHermesLightSkin,
   shouldInspectHermesLightSkinConfig,
+  shouldRemoveHermesLightSkin,
 } from "../../domain/sandbox/connect-env";
 import { readSandboxConfig, resolveAgentConfig, writeSandboxConfig } from "../../sandbox/config";
 import { redact } from "../../security/redact";
@@ -53,6 +55,26 @@ function writeHermesLightSkinFile(sandboxName: string): boolean {
   return false;
 }
 
+function removeHermesLightSkinFile(sandboxName: string): boolean {
+  const script = [
+    "set -eu",
+    'hermes_home="${HERMES_HOME:-/sandbox/.hermes}"',
+    'skin_dir="$hermes_home/skins"',
+    'rm -f "$skin_dir/nemoclaw-light.yaml"',
+  ].join("\n");
+  const result = runOpenshell(
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+    {
+      ignoreError: true,
+      stdio: "ignore",
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    },
+  );
+  if (result.status === 0 && !result.error && !result.signal) return true;
+  warnHermesLightSkinFailure("remove", result.error ?? `exit ${result.status ?? result.signal}`);
+  return false;
+}
+
 export function prepareHermesLightTerminalSkin(
   sandboxName: string,
   agent: ConnectAgent,
@@ -72,6 +94,18 @@ export function prepareHermesLightTerminalSkin(
     return;
   }
 
+  if (shouldRemoveHermesLightSkin(agent, env, config)) {
+    if (!removeHermesLightSkinConfig(config)) return;
+    try {
+      writeSandboxConfig(sandboxName, target, config);
+    } catch (error) {
+      warnHermesLightSkinFailure("update", error);
+      return;
+    }
+    removeHermesLightSkinFile(sandboxName);
+    return;
+  }
+
   if (!shouldApplyHermesLightSkin(agent, env, config)) return;
   const changed = applyHermesLightSkinConfig(config);
   if (!changed && !hermesConfigUsesManagedLightSkin(config)) return;
@@ -82,5 +116,6 @@ export function prepareHermesLightTerminalSkin(
     writeSandboxConfig(sandboxName, target, config);
   } catch (error) {
     warnHermesLightSkinFailure("update", error);
+    removeHermesLightSkinFile(sandboxName);
   }
 }

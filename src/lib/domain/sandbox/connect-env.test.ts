@@ -6,30 +6,17 @@ import YAML from "yaml";
 
 import {
   applyHermesLightSkinConfig,
-  buildSandboxConnectEnv,
   hermesConfigUsesManagedLightSkin,
   NEMOCLAW_HERMES_LIGHT_SKIN_NAME,
   NEMOCLAW_HERMES_LIGHT_SKIN_YAML,
+  removeHermesLightSkinConfig,
   shouldApplyHermesLightSkin,
   shouldInspectHermesLightSkinConfig,
+  shouldRemoveHermesLightSkin,
 } from "./connect-env";
 
 describe("sandbox connect environment helpers", () => {
-  it("keeps the connect environment unchanged; Hermes light skin is prepared in sandbox config (#6380)", () => {
-    expect(
-      buildSandboxConnectEnv(
-        { name: "hermes" },
-        { COLORFGBG: "0;15", TERM_PROGRAM: "Apple_Terminal" },
-      ),
-    ).toEqual(
-      expect.objectContaining({
-        COLORFGBG: "0;15",
-        TERM_PROGRAM: "Apple_Terminal",
-      }),
-    );
-  });
-
-  it("inspects Hermes config only for light terminals without user theme overrides (#6380)", () => {
+  it("inspects Hermes config only when NemoClaw owns the theme decision (#6380)", () => {
     expect(
       shouldInspectHermesLightSkinConfig(
         { name: "hermes" },
@@ -41,7 +28,7 @@ describe("sandbox connect environment helpers", () => {
         { name: "hermes" },
         { COLORFGBG: "0;0", TERM_PROGRAM: "Apple_Terminal" },
       ),
-    ).toBe(false);
+    ).toBe(true);
     for (const env of [{ HERMES_TUI_LIGHT: "0" }, { HERMES_TUI_THEME: "dark" }]) {
       expect(
         shouldInspectHermesLightSkinConfig({ name: "hermes" }, { COLORFGBG: "0;15", ...env }),
@@ -54,12 +41,17 @@ describe("sandbox connect environment helpers", () => {
 
   it("does not infer light mode from Apple Terminal without usable COLORFGBG (#6380)", () => {
     expect(
-      shouldInspectHermesLightSkinConfig({ name: "hermes" }, { TERM_PROGRAM: "Apple_Terminal" }),
+      shouldApplyHermesLightSkin(
+        { name: "hermes" },
+        { TERM_PROGRAM: "Apple_Terminal" },
+        { model: "test" },
+      ),
     ).toBe(false);
     expect(
-      shouldInspectHermesLightSkinConfig(
+      shouldApplyHermesLightSkin(
         { name: "hermes" },
         { COLORFGBG: "not-a-color", TERM_PROGRAM: "Apple_Terminal" },
+        { model: "test" },
       ),
     ).toBe(false);
   });
@@ -84,6 +76,29 @@ describe("sandbox connect environment helpers", () => {
     );
     expect(applyHermesLightSkinConfig(config)).toBe(true);
     expect(hermesConfigUsesManagedLightSkin(config)).toBe(true);
+  });
+
+  it("removes only the NemoClaw-managed Hermes light skin from config (#6380)", () => {
+    const config = {
+      display: { skin: NEMOCLAW_HERMES_LIGHT_SKIN_NAME, width: 100 },
+      model: "test",
+    };
+
+    expect(shouldRemoveHermesLightSkin({ name: "hermes" }, { COLORFGBG: "0;0" }, config)).toBe(
+      true,
+    );
+    expect(removeHermesLightSkinConfig(config)).toBe(true);
+    expect(config).toEqual({ display: { width: 100 }, model: "test" });
+  });
+
+  it("removes the empty display section when it only contains the managed Hermes skin (#6380)", () => {
+    const config = {
+      display: { skin: NEMOCLAW_HERMES_LIGHT_SKIN_NAME },
+      model: "test",
+    };
+
+    expect(removeHermesLightSkinConfig(config)).toBe(true);
+    expect(config).toEqual({ model: "test" });
   });
 
   it("preserves user-owned Hermes display skins (#6380)", () => {
