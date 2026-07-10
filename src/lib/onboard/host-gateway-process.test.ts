@@ -71,8 +71,8 @@ describe("stopHostGatewayProcesses", () => {
       ...psResponses(9999887, { exited }),
     ]);
     const { run } = makeRun(responses);
-    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
-      if (signal === "SIGTERM") exited.add(pid);
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid) => {
+      exited.add(pid);
       return true;
     });
     const log = vi.fn();
