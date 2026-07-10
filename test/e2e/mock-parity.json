@@ -3,6 +3,14 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/inference-routing.test.ts",
+      "fast": [
+        "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
+        "test/e2e/support/hosted-inference.test.ts",
+        "test/onboard-inference-gateway-scope.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/onboard-repair.test.ts",
       "fast": [
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",

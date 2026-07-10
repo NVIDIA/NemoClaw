@@ -1036,7 +1036,7 @@ test("TC-INF-09 custom OpenAI-compatible endpoint responds through inference.loc
       timeoutMs: 30_000,
     },
   );
-  const providerText = resultText(provider);
+  const providerText = resultText(provider).replace(/\u001b\[[0-9;]*m/g, "");
   expect(provider.exitCode, providerText).toBe(0);
   expect(providerText).toContain("Type: openai");
   expect(providerText).toContain("Credential keys: COMPATIBLE_API_KEY");
