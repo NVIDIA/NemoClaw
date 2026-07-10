@@ -59,6 +59,7 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     const checkout = step(job, "Checkout trusted controller");
     const workspace = step(job, "Create private controller workspace");
     const start = step(job, "Build plan and dispatch exact-commit E2E");
+    const startupFallback = step(job, "Close shadow check after controller startup failure");
     const wait = step(job, "Wait for correlated E2E run");
     const download = step(job, "Download correlated E2E evidence");
     const finish = step(job, "Complete exact-commit shadow check");
@@ -78,6 +79,11 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     expect(start.run).toContain('--commit "${{ github.event.after }}"');
     expect(start.run).toContain('--work-dir "${{ steps.workspace.outputs.work_dir }}"');
     expect(start["continue-on-error"]).not.toBe(true);
+    expect(startupFallback.if).toContain("always()");
+    expect(startupFallback.if).toContain("steps.start.outputs.check_id != ''");
+    expect(startupFallback.if).toContain("steps.start.outputs.dispatched != 'true'");
+    expect(startupFallback.if).toContain("steps.start.outputs.finalized != 'true'");
+    expect(startupFallback.run).toContain("post-merge-risk-gate.mts --mode abandon");
     expect(wait.run).toContain("timeout --signal=TERM --kill-after=30s 105m");
     expect(wait.run).toContain("--compact --interval 10 --exit-status");
     expect(wait["continue-on-error"]).toBe(true);

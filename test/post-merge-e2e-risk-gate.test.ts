@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -165,6 +165,36 @@ describe("post-merge E2E risk gate", () => {
       fs.chmodSync(workDir, 0o700);
       fs.rmSync(workDir, { recursive: true, force: true });
     }
+  });
+
+  it("emits a single-line escaped Actions annotation for controller errors", () => {
+    const missingWorkDir = path.join(os.tmpdir(), "nemoclaw-risk-missing%\nworkspace");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "tools/e2e-advisor/post-merge-risk-gate.mts",
+        "--mode",
+        "finish",
+        "--work-dir",
+        missingWorkDir,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_ACTIONS: "true" },
+      },
+    );
+
+    expect(result.status).toBe(1);
+    const annotations = result.stderr
+      .split(/\r?\n/gu)
+      .filter((line) =>
+        line.startsWith("::error title=Post-merge E2E risk gate controller failed::"),
+      );
+    expect(annotations).toHaveLength(1);
+    expect(annotations[0]).toContain("nemoclaw-risk-missing%25 workspace");
+    expect(annotations[0]).not.toMatch(/[\r\t]/u);
   });
 
   it("derives changed files from an exact checked-out commit range", () => {
