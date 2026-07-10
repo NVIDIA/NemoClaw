@@ -24,6 +24,14 @@
         "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts"
       ]
+    },
+    {
+      "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
+      "fast": [
+        "test/cli/dispatch-basics.test.ts",
+        "test/e2e/support/rlimit-connect-workflow-boundary.test.ts",
+        "test/sandbox-rlimit-hooks.test.ts"
+      ]
     }
   ]
 }

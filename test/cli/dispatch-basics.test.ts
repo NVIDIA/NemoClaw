@@ -402,7 +402,7 @@ describe("CLI dispatch", () => {
       let code = 0;
       let out = "";
       try {
-        execSync(`node "${CLI}" alpha connect 2>&1`, {
+        execSync(`node "${CLI}" connect 2>&1`, {
           encoding: "utf-8",
           stdio: "pipe",
           timeout: execTimeout(),
@@ -438,6 +438,122 @@ describe("CLI dispatch", () => {
         const output = stderr.join("\n");
         expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "hermes" });
         expect(output).toContain("Sandbox 'hermes' does not exist");
+        expect(output).toContain("Command order is: nemoclaw <sandbox-name> connect");
+        expect(output).toContain("Did you mean: nemoclaw alpha connect?");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["alpha"] },
+    );
+  });
+
+  it("connects to the default sandbox when connect is invoked without a sandbox name (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById }) => {
+        await dispatchCli(["connect"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["dcode-managed"],
+          expect.anything(),
+        );
+        expect(recoverRegistryEntries).not.toHaveBeenCalled();
+      },
+      { sandboxNames: ["dcode-managed"], defaultSandbox: "dcode-managed" },
+    );
+  });
+
+  it("forwards connect flags to the default sandbox on a bare connect invocation (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, runOclifCommandById }) => {
+        await dispatchCli(["connect", "--probe-only"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["dcode-managed", "--probe-only"],
+          expect.anything(),
+        );
+      },
+      {
+        sandboxNames: ["dcode-managed"],
+        defaultSandbox: "dcode-managed",
+        connectFlags: ["--probe-only"],
+      },
+    );
+  });
+
+  it("uses the first non-pending sandbox when no stored default is valid (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById }) => {
+        await dispatchCli(["connect"]);
+
+        expect(recoverRegistryEntries).not.toHaveBeenCalled();
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["alpha"],
+          expect.anything(),
+        );
+      },
+      {
+        sandboxNames: ["pending", "alpha", "beta"],
+        defaultSandbox: "missing",
+        pendingSandboxNames: ["pending"],
+      },
+    );
+  });
+
+  it("waits for pending-only sandbox setup instead of suggesting it as a default (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, recoverRegistryEntries, stderr }) => {
+        await expect(dispatchCli(["connect"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(recoverRegistryEntries).toHaveBeenCalledTimes(1);
+        expect(output).toContain("'nemoclaw connect' could not resolve a ready default sandbox.");
+        expect(output).toContain("Sandbox setup is still pending: alpha");
+        expect(output).toContain("Wait for onboarding to finish or remove the incomplete sandbox.");
+        expect(output).not.toContain("nemoclaw use");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["alpha"], pendingSandboxNames: ["alpha"] },
+    );
+  });
+
+  it("points bare connect at onboarding when no sandboxes are registered (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, recoverRegistryEntries, stderr }) => {
+        await expect(dispatchCli(["connect"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(recoverRegistryEntries).toHaveBeenCalledTimes(1);
+        expect(output).toContain("'nemoclaw connect' could not resolve a ready default sandbox.");
+        expect(output).toContain("Run 'nemoclaw onboard' to create one.");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+    );
+  });
+
+  it("keeps the name-first grammar for a sandbox literally named connect (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, getDefault, runOclifCommandById }) => {
+        await dispatchCli(["connect"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["connect"],
+          expect.anything(),
+        );
+        expect(getDefault).not.toHaveBeenCalled();
+      },
+      { sandboxNames: ["connect"], defaultSandbox: null },
+    );
+  });
+
+  it("explains connect command order when only the sandbox name follows connect (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["connect", "alpha"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
         expect(output).toContain("Command order is: nemoclaw <sandbox-name> connect");
         expect(output).toContain("Did you mean: nemoclaw alpha connect?");
         expect(exitSpy).toHaveBeenCalledWith(1);
