@@ -51,7 +51,7 @@ The wizard can detect a running daemon, install or upgrade Ollama on supported m
 Some model and template combinations can return tool calls as plain text under realistic agent load.
 OpenClaw onboarding validates structured tool calls and stops when the selected model does not provide the required behavior.
 
-Refer to [Set Up Ollama](local-inference/set-up-ollama).
+Refer to [Set Up Ollama](set-up-ollama).
 </AgentOnly>
 
 ## Choose vLLM
@@ -59,25 +59,25 @@ Refer to [Set Up Ollama](local-inference/set-up-ollama).
 Choose vLLM when you already operate a compatible server or want a managed container on a supported NVIDIA GPU host.
 NemoClaw forces the Chat Completions API path because the vLLM Responses endpoint does not run the configured tool-call parser.
 
-Refer to [Set Up vLLM](local-inference/set-up-vllm).
+Refer to [Set Up vLLM](set-up-vllm).
 
 ## Choose NVIDIA NIM
 
 Choose NVIDIA NIM when you want a managed NIM container and your host has a NIM-capable NVIDIA GPU.
 The path is experimental, requires NGC registry access, and can fail when a selected image does not publish a manifest for the host architecture.
 
-Refer to [Set Up NVIDIA NIM](local-inference/set-up-nvidia-nim).
+Refer to [Set Up NVIDIA NIM](set-up-nvidia-nim).
 
 ## Use Another Server
 
 Use a custom endpoint when your server is not one of the managed local options.
 NemoClaw supports servers that expose an OpenAI-compatible API and supports compatible Anthropic routes with agent-specific runtime requirements.
 
-- [Set Up an OpenAI-Compatible Endpoint](custom-endpoints/set-up-openai-compatible-endpoint).
-- [Set Up an Anthropic-Compatible Endpoint](custom-endpoints/set-up-anthropic-compatible-endpoint).
-- [Choose a Compatible Inference API](custom-endpoints/choose-compatible-inference-api).
+- [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint).
+- [Set Up an Anthropic-Compatible Endpoint](../custom-endpoints/set-up-anthropic-compatible-endpoint).
+- [Choose a Compatible Inference API](../custom-endpoints/choose-compatible-inference-api).
 
 ## Related Topics
 
-- [Configure Inference Timeouts](manage-inference/configure-inference-timeouts) for slow local models and long sandbox startup times.
-- [Verify the Inference Route](validate-and-troubleshoot/verify-inference-route) after onboarding.
+- [Configure Inference Timeouts](../manage-inference/configure-inference-timeouts) for slow local models and long sandbox startup times.
+- [Verify the Inference Route](../validate-and-troubleshoot/verify-inference-route) after onboarding.

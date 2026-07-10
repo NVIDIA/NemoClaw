@@ -199,15 +199,17 @@ describe("inference setup navigation", () => {
     const bullet = release.slice(bulletStart, bulletEnd);
 
     expect(bullet).toContain("[Set Up Ollama](../inference/local-inference/set-up-ollama)");
-    expect(bullet).toContain("[Choose a Local Inference Server](../inference/local-inference)");
+    expect(bullet).toContain(
+      "[Choose a Local Inference Server](../inference/local-inference/choose-local-inference-server)",
+    );
   });
 
   it("routes local options to focused setup pages", () => {
     const markdown = fs.readFileSync(localChoicePath, "utf8");
 
-    expect(markdown).toContain("[Set Up Ollama](local-inference/set-up-ollama)");
-    expect(markdown).toContain("[Set Up vLLM](local-inference/set-up-vllm)");
-    expect(markdown).toContain("[Set Up NVIDIA NIM](local-inference/set-up-nvidia-nim)");
+    expect(markdown).toContain("[Set Up Ollama](set-up-ollama)");
+    expect(markdown).toContain("[Set Up vLLM](set-up-vllm)");
+    expect(markdown).toContain("[Set Up NVIDIA NIM](set-up-nvidia-nim)");
   });
 
   it("uses a loopback-only bind for the raw model server example", () => {

@@ -18,34 +18,34 @@ Use this section to choose a route, configure it, manage an existing sandbox, an
 
 Start here when you need to understand the route or compare providers and models.
 
-- [How Inference Routing Works](inference/learn-and-choose/how-inference-routing-works) explains the host-managed path from the sandbox to the selected provider.
-- [Choose an Inference Provider](inference/learn-and-choose/choose-inference-provider) compares the available provider classes.
-- [Choose a Model](inference/learn-and-choose/choose-model) provides task-fit guidance for curated hosted models.
+- [How Inference Routing Works](learn-and-choose/how-inference-routing-works) explains the host-managed path from the sandbox to the selected provider.
+- [Choose an Inference Provider](learn-and-choose/choose-inference-provider) compares the available provider classes.
+- [Choose a Model](learn-and-choose/choose-model) provides task-fit guidance for curated hosted models.
 
 ## Set Up Inference
 
 Choose the setup group that matches where your model runs.
 
-- [Hosted Inference](inference/hosted-inference/use-nvidia-endpoints) covers NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Model Router.
-- [Custom Endpoints](inference/custom-endpoints/set-up-openai-compatible-endpoint) covers OpenAI-compatible and Anthropic-compatible servers.
+- [Hosted Inference](hosted-inference/use-nvidia-endpoints) covers NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Model Router.
+- [Custom Endpoints](custom-endpoints/set-up-openai-compatible-endpoint) covers OpenAI-compatible and Anthropic-compatible servers.
 
 <AgentOnly variant="openclaw,hermes">
-- [Local Inference](inference/local-inference) covers Ollama, vLLM, and NVIDIA NIM.
+- [Choose a Local Inference Server](local-inference/choose-local-inference-server) compares Ollama, vLLM, and NVIDIA NIM.
 </AgentOnly>
 
 <AgentOnly variant="deepagents">
-- [Local Inference](inference/local-inference) covers vLLM and NVIDIA NIM.
+- [Choose a Local Inference Server](local-inference/choose-local-inference-server) compares vLLM and NVIDIA NIM.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-- [Hermes Provider](inference/hosted-inference/use-hermes-provider) covers the provider registered during Hermes onboarding.
+- [Hermes Provider](hosted-inference/use-hermes-provider) covers the provider registered during Hermes onboarding.
 </AgentOnly>
 
 ## Manage and Validate
 
 Use the management and validation groups after you create a sandbox.
 
-- [View the Active Inference Route](inference/manage-inference/view-active-inference-route) shows the provider and model that OpenShell currently uses.
-- [Switch Models](inference/manage-inference/switch-models) changes the active model for an existing sandbox.
-- [Understand Provider Validation](inference/validate-and-troubleshoot/understand-provider-validation) explains the checks that run before sandbox creation.
-- [Verify the Sandbox Inference Route](inference/validate-and-troubleshoot/verify-inference-route) confirms that the configured route works from the sandbox.
+- [View the Active Inference Route](manage-inference/view-active-inference-route) shows the provider and model that OpenShell currently uses.
+- [Switch Models](manage-inference/switch-models) changes the active model for an existing sandbox.
+- [Understand Provider Validation](validate-and-troubleshoot/understand-provider-validation) explains the checks that run before sandbox creation.
+- [Verify the Sandbox Inference Route](validate-and-troubleshoot/verify-inference-route) confirms that the configured route works from the sandbox.
