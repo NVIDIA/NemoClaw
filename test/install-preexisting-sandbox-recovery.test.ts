@@ -25,7 +25,7 @@ function runRecoveryBeforeOnboard(
   fs.writeFileSync(
     cli,
     `#!/usr/bin/env bash
-printf 'restore=%s argv=%s\n' "\${NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE:-}" "$*" >> "${callLog}"
+printf 'restore=%s confirmed=%s argv=%s\n' "\${NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE:-}" "\${NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES:-}" "$*" >> "${callLog}"
 if [ "\${1:-}" = "upgrade-sandboxes" ]; then
   if [ ${recoveryExitCode} -ne 0 ]; then
     printf "Failed to recover 'broken-box': prepared backup restore failed\n" >&2
@@ -57,6 +57,7 @@ exit 0
     fix_npm_permissions() { :; }
     preinstall_backup_and_retire_legacy_gateway() {
       _PREEXISTING_SANDBOX_COUNT=${preexistingCount}
+      _LEGACY_MANAGED_RECOVERY_NAMES_JSON='["legacy-box"]'
     }
     install_nemoclaw() { :; }
     verify_nemoclaw() { _CLI_PATH="${cli}"; }
@@ -83,21 +84,23 @@ exit 0
 }
 
 describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
-  it("runs automatic recovery before generic onboarding", () => {
+  it("uses successful automatic recovery instead of generic onboarding", () => {
     const result = runRecoveryBeforeOnboard(2, 0);
 
     expect(result.status, result.output).toBe(0);
     expect(result.calls).toEqual([
-      "restore=1 argv=upgrade-sandboxes --auto",
-      "restore=1 argv=onboard",
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
     ]);
+    expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
   });
 
   it("stops before onboarding when any automatic recovery fails", () => {
     const result = runRecoveryBeforeOnboard(2, 7);
 
     expect(result.status).toBe(1);
-    expect(result.calls).toEqual(["restore=1 argv=upgrade-sandboxes --auto"]);
+    expect(result.calls).toEqual([
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+    ]);
     expect(result.output).toContain("Failed to recover 'broken-box'");
     expect(result.output).toContain("Generic onboarding will not run");
     expect(result.output).toContain(
@@ -109,6 +112,6 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     const result = runRecoveryBeforeOnboard(0, 7);
 
     expect(result.status, result.output).toBe(0);
-    expect(result.calls).toEqual(["restore=1 argv=onboard"]);
+    expect(result.calls).toEqual(["restore=1 confirmed= argv=onboard"]);
   });
 });

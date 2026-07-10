@@ -8,6 +8,7 @@
  */
 
 import { DASHBOARD_PORT } from "./core/ports";
+import { buildSshForwardHintLines } from "./onboard/ssh-forward-hint";
 import type { SandboxEntry } from "./state/registry";
 
 type DashboardAuth = "url_token" | "session" | "none";
@@ -29,6 +30,8 @@ export interface DashboardUrlCommandDeps {
   log?: (message: string) => void;
   /** Optional stderr sink -- defaults to console.error. */
   error?: (message: string) => void;
+  /** Environment used to detect an SSH session for the port-forward hint. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface DashboardUrlCommandOptions {
@@ -131,6 +134,13 @@ export function runDashboardUrlCommand(
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
 
+  const printSshForwardHint = (port: number, accessUrl: string | null): void => {
+    const hint = buildSshForwardHintLines({ port, accessUrl, env: deps.env });
+    if (!hint) return;
+    log("");
+    for (const line of hint) log(line);
+  };
+
   let sandbox: Pick<SandboxEntry, "agent" | "dashboardPort"> | null = null;
   if (deps.getSandbox) {
     try {
@@ -168,6 +178,7 @@ export function runDashboardUrlCommand(
     }
     log("  Dashboard URL:");
     log(`  ${url}`);
+    printSshForwardHint(port, accessUrl);
     return;
   }
 
@@ -195,5 +206,6 @@ export function runDashboardUrlCommand(
 
   log("  Dashboard URL:");
   log(`  ${url}`);
+  printSshForwardHint(port, accessUrl);
   error(SECURITY_WARNING);
 }

@@ -885,6 +885,31 @@ function validateIssue4434HostDependencies(errors: string[], jobs: WorkflowRecor
   );
 }
 
+function validateOpenclawTuiChatCorrelationHostDependencies(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "openclaw-tui-chat-correlation";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push(`workflow missing ${jobName} job`);
+    return;
+  }
+  const steps = asSteps(job.steps);
+  validateInlineHostDependencyInstall(
+    errors,
+    jobName,
+    steps,
+    "Install OpenClaw TUI host dependencies",
+    ["expect"],
+  );
+  const install = requireJobStep(errors, jobName, steps, "Install OpenClaw TUI host dependencies");
+  const prepare = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
+  if (install && prepare && steps.indexOf(install) >= steps.indexOf(prepare)) {
+    errors.push(`${jobName} host dependencies must be installed before workspace prep`);
+  }
+}
+
 function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "common-egress-agent";
   const job = asRecord(jobs[jobName]);
@@ -2048,8 +2073,14 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     );
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
-    if (checkoutIndex < 0 || authIndex !== checkoutIndex + 1) {
-      errors.push(`${jobName} Docker Hub auth must run immediately after checkout`);
+    const expectedAuthIndex =
+      jobName === "jetson-nvmap-gpu" ? checkoutIndex + 2 : checkoutIndex + 1;
+    if (checkoutIndex < 0 || authIndex !== expectedAuthIndex) {
+      errors.push(
+        jobName === "jetson-nvmap-gpu"
+          ? `${jobName} Docker Hub auth must run immediately after the Jetson dispatch guard`
+          : `${jobName} Docker Hub auth must run immediately after checkout`,
+      );
     }
     if (authIndex < 0 || cleanupIndex <= authIndex) {
       errors.push(`${jobName} Docker Hub cleanup must run after authentication and test work`);
@@ -3393,6 +3424,82 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
 }
 
+function validateAllowJetsonRunnerQueueInput(
+  errors: string[],
+  dispatchInputs: WorkflowRecord,
+): void {
+  const input = requireInput(errors, dispatchInputs, "allow_jetson_runner_queue");
+  if (input.type !== "boolean") {
+    errors.push("workflow_dispatch allow_jetson_runner_queue input must be boolean");
+  }
+  if (input.default !== false) {
+    errors.push("workflow_dispatch allow_jetson_runner_queue input must default to false");
+  }
+  const description = stringValue(input.description);
+  if (
+    !description.includes("Repository administrators") ||
+    !description.includes("Jetson runner") ||
+    !description.includes("authoritative") ||
+    !description.includes("NVIDIA/NemoClaw Settings -> Actions -> Runners") ||
+    !description.includes("timeout-minutes")
+  ) {
+    errors.push(
+      "workflow_dispatch allow_jetson_runner_queue input must identify repository administrators and NVIDIA/NemoClaw Settings -> Actions -> Runners as the authoritative runner inventory, and document queued timeout behavior",
+    );
+  }
+}
+
+function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecord): void {
+  validateFreeStandingJobSelector(errors, jobs, "jetson-nvmap-gpu", "jetson-nvmap-gpu", true);
+
+  const job = asRecord(jobs["jetson-nvmap-gpu"]);
+  const guardedRunsOn =
+    "${{ inputs.allow_jetson_runner_queue && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}";
+  if (job["runs-on"] !== guardedRunsOn) {
+    errors.push(
+      "jetson-nvmap-gpu job must use ubuntu-latest unless allow_jetson_runner_queue is true",
+    );
+  }
+
+  const steps = asSteps(job.steps);
+  const guard = namedStep(steps, "Guard Jetson runner dispatch");
+  const checkoutIndex = steps.findIndex((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  const guardIndex = steps.findIndex((step) => step.name === "Guard Jetson runner dispatch");
+  const dockerAuthIndex = steps.findIndex((step) => step.name === DOCKER_HUB_AUTH_STEP);
+  if (!guard) {
+    errors.push("jetson-nvmap-gpu job missing step: Guard Jetson runner dispatch");
+    return;
+  }
+  if (checkoutIndex < 0 || guardIndex <= checkoutIndex) {
+    errors.push("jetson-nvmap-gpu dispatch guard must run after checkout");
+  }
+  if (dockerAuthIndex >= 0 && guardIndex >= dockerAuthIndex) {
+    errors.push("jetson-nvmap-gpu dispatch guard must run before Docker Hub auth");
+  }
+  if (guard.if !== "${{ !inputs.allow_jetson_runner_queue }}") {
+    errors.push(
+      "jetson-nvmap-gpu dispatch guard must run unless allow_jetson_runner_queue is true",
+    );
+  }
+  if (
+    asRecord(guard.env).JETSON_E2E_RUNNER_LABEL !==
+    "${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}"
+  ) {
+    errors.push(
+      "jetson-nvmap-gpu dispatch guard must receive the configured Jetson runner label",
+    );
+  }
+  requireRunContains(errors, guard, "allow_jetson_runner_queue=true");
+  requireRunContains(errors, guard, "timeout-minutes");
+  requireRunContains(errors, guard, "repository administrator");
+  requireRunContains(errors, guard, "authoritative");
+  requireRunContains(errors, guard, "NVIDIA/NemoClaw Settings -> Actions -> Runners");
+  requireRunContains(errors, guard, "${JETSON_E2E_RUNNER_LABEL}");
+  requireRunDoesNotContain(errors, guard, "linux-arm64-gpu-jetson-orin-latest-1");
+}
+
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
@@ -3412,6 +3519,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
+  validateAllowJetsonRunnerQueueInput(errors, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("default-enabled jobs")) {
@@ -3579,9 +3687,77 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   requireRunContains(errors, configureTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
   requireRunContains(errors, configureTrace, '>> "${GITHUB_ENV}"');
 
+  const dcodeHostDependencies = requireStep(
+    errors,
+    steps,
+    "Install Deep Agents Code TUI host dependencies",
+  );
+  validateInlineHostDependencyInstall(
+    errors,
+    "live",
+    steps,
+    "Install Deep Agents Code TUI host dependencies",
+    ["expect"],
+  );
+  if (
+    dcodeHostDependencies?.if !==
+    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
+  ) {
+    errors.push("live DCode TUI host dependencies must be scoped to the typed DCode target");
+  }
+
   const prepareWorkspace = requireStep(errors, steps, "Prepare E2E workspace");
+  if (
+    dcodeHostDependencies &&
+    prepareWorkspace &&
+    steps.indexOf(dcodeHostDependencies) >= steps.indexOf(prepareWorkspace)
+  ) {
+    errors.push("live DCode TUI host dependencies must be installed before workspace prep");
+  }
+
+  const dcodeProfileImportGate = requireStep(
+    errors,
+    steps,
+    "Verify DCode profile import gate rejects missing base dependencies",
+  );
+  if (
+    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "NEMOCLAW_DCODE_PROFILE_GATE_BASE_IMAGE")
+  ) {
+    errors.push(
+      "live DCode profile import gate must build the reviewed repository base without an override",
+    );
+  }
+  if (
+    dcodeProfileImportGate?.["if"] !==
+    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
+  ) {
+    errors.push("live DCode profile import gate must be scoped to the typed DCode target");
+  }
+  if (dcodeProfileImportGate?.shell !== "bash") {
+    errors.push("live DCode profile import gate must use bash");
+  }
+  if (
+    stringValue(dcodeProfileImportGate?.run).trim() !==
+    "bash scripts/check-dcode-profile-import-gate.sh"
+  ) {
+    errors.push("live DCode profile import gate must run the reviewed negative-build script");
+  }
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
+  if (
+    prepareWorkspace &&
+    dcodeProfileImportGate &&
+    steps.indexOf(prepareWorkspace) >= steps.indexOf(dcodeProfileImportGate)
+  ) {
+    errors.push("live DCode profile import gate must run after workspace prep");
+  }
+  if (
+    dcodeProfileImportGate &&
+    runVitest &&
+    steps.indexOf(dcodeProfileImportGate) >= steps.indexOf(runVitest)
+  ) {
+    errors.push("live DCode profile import gate must run before live E2E tests");
+  }
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
     errors.push("live E2E step must pass matrix.id through TARGET_ID env");
@@ -3723,6 +3899,33 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     }
   }
 
+  const cloudOnboardSteps = asSteps(asRecord(jobs["cloud-onboard"]).steps);
+  validateInlineHostDependencyInstall(
+    errors,
+    "cloud-onboard",
+    cloudOnboardSteps,
+    "Install cloud-onboard DCode TUI host dependencies",
+    ["expect"],
+  );
+  const cloudOnboardHostDependencies = requireStep(
+    errors,
+    cloudOnboardSteps,
+    "Install cloud-onboard DCode TUI host dependencies",
+  );
+  const cloudOnboardPrepareWorkspace = requireStep(
+    errors,
+    cloudOnboardSteps,
+    "Prepare E2E workspace",
+  );
+  if (
+    cloudOnboardHostDependencies &&
+    cloudOnboardPrepareWorkspace &&
+    cloudOnboardSteps.indexOf(cloudOnboardHostDependencies) >=
+      cloudOnboardSteps.indexOf(cloudOnboardPrepareWorkspace)
+  ) {
+    errors.push("cloud-onboard DCode TUI host dependencies must precede workspace prep");
+  }
+
   validateOpenShellVersionPinJob(errors, jobs);
   validateOnboardNegativePathsJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
@@ -3753,6 +3956,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     "issue-4434-tui-unreachable-inference",
   );
   validateIssue4434HostDependencies(errors, jobs);
+  validateOpenclawTuiChatCorrelationHostDependencies(errors, jobs);
   validateDiagnosticsJob(errors, jobs);
   validateModelRouterProviderRoutedInferenceJob(errors, jobs);
   validateSnapshotCommandsJob(errors, jobs);
@@ -3775,13 +3979,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
 
   validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest", "gateway-health-honest");
 
-  const jetsonJob = asRecord(jobs["jetson-nvmap-gpu"]);
-  if (jetsonJob.needs !== "generate-matrix") {
-    errors.push("jetson-nvmap-gpu job must depend on generate-matrix");
-  }
-  if (jetsonJob.if !== explicitOnlyFreeStandingJobIf("jetson-nvmap-gpu", "jetson-nvmap-gpu")) {
-    errors.push("jetson-nvmap-gpu job must run only when explicitly selected");
-  }
+  validateJetsonRunnerDispatchGuard(errors, jobs);
 
   const sandboxRlimitConnectJob = asRecord(jobs["sandbox-rlimits-connect"]);
   if (sandboxRlimitConnectJob.needs !== "generate-matrix") {

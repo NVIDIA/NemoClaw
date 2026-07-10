@@ -107,6 +107,7 @@ describe("setupRemoteProviderInference", () => {
 
   it.each([
     ["IPv6 loopback", "http://[::1]:8000/v1", "http://host.openshell.internal:8000/v1"],
+    ["default HTTP port", "http://localhost/v1", "http://host.openshell.internal/v1"],
     [
       "first unprivileged port",
       "http://localhost:1024/v1",
@@ -151,7 +152,7 @@ describe("setupRemoteProviderInference", () => {
     );
   });
 
-  it("uses the gateway alias when reusing an existing loopback compatible provider (#5744)", async () => {
+  it("repairs an existing loopback compatible provider with the gateway alias (#5744)", async () => {
     const deps = makeDeps();
 
     await expect(
@@ -168,7 +169,13 @@ describe("setupRemoteProviderInference", () => {
       ),
     ).resolves.toEqual({ done: false });
 
-    expect(deps.upsertProvider).not.toHaveBeenCalled();
+    expect(deps.upsertProvider).toHaveBeenCalledWith(
+      "compatible-endpoint",
+      "openai",
+      "COMPATIBLE_API_KEY",
+      "http://host.openshell.internal:8000/v1",
+      {},
+    );
     expect(deps.runOpenshell).toHaveBeenNthCalledWith(
       1,
       ["provider", "get", "compatible-endpoint"],
@@ -240,7 +247,6 @@ describe("setupRemoteProviderInference", () => {
   it.each([
     ["HTTPS loopback", "compatible-endpoint", "https://localhost:8000/v1"],
     ["non-loopback host", "compatible-endpoint", "http://10.0.0.1:8000/v1"],
-    ["missing explicit port", "compatible-endpoint", "http://localhost/v1"],
     ["privileged port", "compatible-endpoint", "http://localhost:1023/v1"],
     ["IPv6 zone ID", "compatible-endpoint", "http://[::1%25eth0]:8000/v1"],
     ["embedded URL credentials", "compatible-endpoint", "http://user:pass@localhost:8000/v1"],

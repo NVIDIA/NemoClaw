@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
   readGatewayProviderMetadata,
 } from "./gateway-provider-metadata";
@@ -19,6 +20,29 @@ const COMPLETE_OUTPUT = [
 ].join("\n");
 
 describe("gateway provider metadata", () => {
+  it("matches only an exact non-secret provider binding (#6289)", () => {
+    const metadata = parseGatewayProviderMetadata(
+      "Name: compatible-anthropic-endpoint\nType: openai\nCredential keys: COMPATIBLE_ANTHROPIC_API_KEY\nConfig keys: OPENAI_BASE_URL",
+    );
+    const expected = {
+      name: "compatible-anthropic-endpoint",
+      type: "openai",
+      credentialKey: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "OPENAI_BASE_URL",
+    };
+
+    expect(matchesGatewayProviderBinding(metadata, expected)).toBe(true);
+    expect(matchesGatewayProviderBinding({ ...metadata!, type: "anthropic" }, expected)).toBe(
+      false,
+    );
+    expect(
+      matchesGatewayProviderBinding(
+        { ...metadata!, configKeys: ["OPENAI_BASE_URL", "EXTRA_FLAG"] },
+        expected,
+      ),
+    ).toBe(false);
+  });
+
   it("parses one complete ANSI-decorated provider identity", () => {
     expect(parseGatewayProviderMetadata(COMPLETE_OUTPUT)).toEqual({
       name: "compatible-endpoint",
@@ -83,6 +107,22 @@ describe("gateway provider metadata", () => {
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+  });
+
+  it("scopes provider inspection to an explicit non-default gateway", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: COMPLETE_OUTPUT }));
+
+    expect(
+      readGatewayProviderMetadata("compatible-endpoint", runOpenshell, "nemoclaw-9090"),
+    ).toEqual(parseGatewayProviderMetadata(COMPLETE_OUTPUT));
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "get", "-g", "nemoclaw-9090", "compatible-endpoint"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
   });
 
   it("accepts providers with no credential or config bindings", () => {

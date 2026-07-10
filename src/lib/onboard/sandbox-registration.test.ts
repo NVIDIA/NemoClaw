@@ -26,6 +26,13 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       schemaVersion: 1 as const,
       plan: { sandboxName: "demo" },
     };
+    const openclawImagePluginInstalls = [
+      {
+        id: "weather",
+        installPath: "/sandbox/.openclaw/extensions/weather",
+        loadPaths: ["/opt/weather-plugin"],
+      },
+    ];
 
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
@@ -42,7 +49,11 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:123",
+      openclawImagePluginInstalls,
       appliedPolicies: ["discord", "slack"],
+      observabilityEnabled: true,
+      dcodeAutoApprovalMode: "thread-opt-in",
+      policyTier: "restricted",
       webSearchEnabled: true,
       fromDockerfile: "/tmp/Dockerfile.custom",
       hermesAuthMethod: "api_key",
@@ -65,8 +76,12 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
+      openclawImagePluginInstalls,
       policies: ["discord", "slack"],
       toolDisclosure: "progressive",
+      observabilityEnabled: true,
+      dcodeAutoApprovalMode: "thread-opt-in",
+      policyTier: "restricted",
       webSearchEnabled: true,
       fromDockerfile: "/tmp/Dockerfile.custom",
       hermesAuthMethod: "api_key",
@@ -85,6 +100,11 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.agent).toBeNull();
     expect(entry.agentVersion).toBeTruthy();
     expect(entry.nemoclawVersion).toBeTruthy();
+    expect(entry.openclawImagePluginInstalls).not.toBe(openclawImagePluginInstalls);
+    expect(entry.openclawImagePluginInstalls?.[0]).not.toBe(openclawImagePluginInstalls[0]);
+    expect(entry.openclawImagePluginInstalls?.[0]?.loadPaths).not.toBe(
+      openclawImagePluginInstalls[0]?.loadPaths,
+    );
     expect(entry.messaging).toBe(plannedMessagingState);
     const rawEntry = entry as unknown as Record<string, unknown>;
     expect(rawEntry.messagingChannels).toBeUndefined();
@@ -142,6 +162,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.fromDockerfile).toBeNull();
     expect(entry.hermesAuthMethod).toBeNull();
     expect(entry.toolDisclosure).toBe("progressive");
+    expect(entry.observabilityEnabled).toBe(false);
+    expect(entry.dcodeAutoApprovalMode).toBeUndefined();
   });
 
   it("carries a durable MCP rebuild manifest into the replacement registry entry", () => {
@@ -318,6 +340,7 @@ describe("registerCreatedSandbox", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: null,
+      openclawImagePluginInstalls: [],
       appliedPolicies: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
@@ -330,5 +353,6 @@ describe("registerCreatedSandbox", () => {
 
     expect(registerSandbox).toHaveBeenCalledWith(entry);
     expect(entry.name).toBe("demo");
+    expect(entry.openclawImagePluginInstalls).toEqual([]);
   });
 });

@@ -108,7 +108,24 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     // example NVIDIA publishes for this checkpoint. The previous value
     // (262000) was an undocumented round-down with no headroom rationale.
     maxModelLen: 262144,
-    modelArgs: ["--gpu-memory-utilization", "0.7", "--load-format", "fastsafetensors"],
+    // `--enable-auto-tool-choice` + `--tool-call-parser qwen3_coder` match
+    // the vLLM launch example on the model card at
+    // https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8. Without
+    // them a plain completion succeeds (HTTP 200) but any agent request
+    // that sends `tool_choice: "auto"` fails HTTP 400 with vLLM's
+    // "'auto' tool choice requires --enable-auto-tool-choice and
+    // --tool-call-parser to be set" (#6314) — which blocks every agent
+    // tool-call flow on the generic-Linux managed vLLM default (Spark and
+    // Station defaults already pin their own tool-call parser).
+    modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
+      "--load-format",
+      "fastsafetensors",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+    ],
     gated: false,
     platforms: ["spark", "station", "linux"],
   },
@@ -183,8 +200,19 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--async-scheduling",
       "--enable-prefix-caching",
       "--enable-auto-tool-choice",
+      // `qwen3_coder`, not `qwen3_xml` (#6457). On DGX Spark this checkpoint's
+      // tool-call frames do not round-trip through vLLM's `qwen3_xml` parser: it
+      // logs `qwen3xml_tool_parser.py:303 Error when parsing XML elements: not
+      // well-formed (invalid token)` and emits truncated/extra-`}` tool
+      // arguments, so Deep Agents Code headless (`dcode -n`) tool calls fail
+      // with `POST /v1/chat/completions 400 Bad Request`
+      // (`json.decoder.JSONDecodeError: Extra data`) and `dcode` exits 1.
+      // `qwen3_coder` matches this Qwen3.6-family checkpoint's emitted tool-call
+      // format — the parser the other Qwen3.6 recipes in this registry already
+      // use (Qwen3.6-27B-FP8, Nemotron-3-Nano-4B). Validated end-to-end on real
+      // DGX Spark (GB10); see PR verification notes for the `dcode -n` transcript.
       "--tool-call-parser",
-      "qwen3_xml",
+      "qwen3_coder",
       "--reasoning-parser",
       "qwen3",
       "--speculative-config",

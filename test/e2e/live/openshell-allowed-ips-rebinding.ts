@@ -4,17 +4,17 @@
 import fs from "node:fs";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
-
 import YAML from "yaml";
-
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { discoverHostAddress } from "../fixtures/host-address.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   type DnsRebindingHostsFixture,
@@ -41,10 +41,6 @@ type RawOpenShellEndpoint = Record<string, unknown> & {
 
 function isMapping(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function resultText(result: Pick<ShellProbeResult, "stderr" | "stdout">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 function parseRawPolicy(yaml: string): RawOpenShellPolicy {
@@ -146,26 +142,7 @@ export function buildRawOpenShellAllowedIpsRebindingProbeScript(targetUrl: strin
 }
 
 async function hostAddressForSandbox(host: HostCliClient): Promise<string> {
-  const probe = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        'ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk \'{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}\')"',
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "ip_addr=\"$(hostname -I 2>/dev/null | awk '{print $1}')\"",
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "echo 127.0.0.1",
-      ].join("\n"),
-    ],
-    {
-      artifactName: "raw-openshell-rebinding-host-address",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(probe.exitCode, resultText(probe)).toBe(0);
-  return probe.stdout.trim();
+  return (await discoverHostAddress(host)).address;
 }
 
 async function closeServer(server: Server): Promise<void> {

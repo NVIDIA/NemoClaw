@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type MockInstance, vi } from "vitest";
+import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
+import type { VersionCheckResult } from "../../src/lib/sandbox/version";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
 
 export type RebuildSandbox =
@@ -27,6 +29,7 @@ export type RebuildFlowSession = Record<string, unknown> & {
   steps: Record<string, RebuildFlowStep>;
 };
 export type RebuildFlowOverrides = {
+  entryUpdatesAfterVersionCheck?: Record<string, unknown>;
   applyPreset?: (presetName: string) => boolean;
   baseImagePreflight?: {
     ok: boolean;
@@ -64,6 +67,7 @@ export type RebuildFlowOverrides = {
   ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
   managedImageEvidence?: boolean;
   staleRecovery?: boolean;
+  reconciledSandboxGatewayState?: SandboxGatewayState;
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
@@ -80,6 +84,7 @@ export type RebuildFlowOverrides = {
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
   hermesProviderExists?: boolean;
+  versionCheck?: VersionCheckResult;
   hydrateCredentialEnv?: (credentialEnv: string) => string | null;
   customImagePreflight?: RebuildImagePreflightResult;
   defaultSelectionRevision?: number;
@@ -100,7 +105,7 @@ export type RebuildFlowHarness = {
   ensureValidatedBraveSearchCredentialSpy: MockInstance;
   hydrateCredentialEnvSpy: MockInstance;
   logSpy: MockInstance;
-  markStepFailedSpy: MockInstance;
+  finalizeIncompleteOnboardStepSpy: MockInstance;
   onboardSpy: MockInstance;
   registryUpdateSpy: MockInstance;
   setDefaultSpy: MockInstance;
@@ -173,15 +178,18 @@ export function createRebuildFlowSession(machineSnapshotVersion: number): Rebuil
   };
 }
 export function installTerminalStepFailureMock(
-  onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
+  onboardSession: { finalizeIncompleteOnboardStep: (...args: unknown[]) => unknown },
   session: RebuildFlowSession,
 ): MockInstance {
   return vi
-    .spyOn(onboardSession, "markStepFailed")
-    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
+    .spyOn(onboardSession, "finalizeIncompleteOnboardStep")
+    .mockImplementation((stepName: unknown, message: unknown) => {
+      if (session.machine.state === "failed" || session.machine.state === "complete") {
+        return session;
+      }
       const stepKey = String(stepName);
-      const step = session.steps[stepKey] ?? createStep("pending");
-      session.steps[stepKey] = step;
+      const step = session.steps[stepKey];
+      if (!step) return session;
       step.status = "failed";
       step.error = typeof message === "string" ? message : null;
       session.status = "failed";
@@ -190,10 +198,8 @@ export function installTerminalStepFailureMock(
         message: typeof message === "string" ? message : null,
         recordedAt: "2026-06-01T00:02:00.000Z",
       };
-      const updateMachine =
-        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
-      session.machine.state = updateMachine ? "failed" : session.machine.state;
-      session.machine.revision += updateMachine ? 1 : 0;
+      session.machine.state = "failed";
+      session.machine.revision += 1;
       return session;
     });
 }

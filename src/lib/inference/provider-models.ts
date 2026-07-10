@@ -20,6 +20,7 @@ export const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 export interface ProviderModelOptions {
   runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
   buildEndpointUrl?: string;
+  extraHeaders?: readonly string[];
   /** When "query-param", send the API key as a ?key= URL parameter instead of
    *  an Authorization: Bearer header. Required for Google Gemini which rejects
    *  requests carrying both auth methods. See issue #1960. */
@@ -28,7 +29,9 @@ export interface ProviderModelOptions {
 
 function buildOpenAiLikeAuthConfig(apiKey: string, options: ProviderModelOptions): CurlAuthConfig {
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
-  return createOpenAiLikeAuthConfig(normalizedKey, options.authMode);
+  return createOpenAiLikeAuthConfig(normalizedKey, options.authMode, {
+    extraHeaders: options.extraHeaders,
+  });
 }
 
 function fetchResultFromError(error: unknown): ModelCatalogFetchResult {

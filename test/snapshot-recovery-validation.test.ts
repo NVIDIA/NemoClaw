@@ -81,6 +81,90 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     });
   });
 
+  it("round-trips validated OpenClaw image-plugin provenance through recovery", () => {
+    const openclawImagePluginInstalls = [
+      {
+        id: "weather",
+        installPath: "/sandbox/.openclaw/extensions/weather",
+        loadPaths: [],
+      },
+      {
+        id: "npm-plugin",
+        installPath: "/sandbox/.openclaw/npm/node_modules/npm-plugin",
+        loadPaths: [],
+      },
+    ];
+    writeBackup("alpha", "2026-07-01T06-50-42-045Z", {
+      reconcileOpenClawImagePluginProvenance: true,
+      openclawImagePluginInstalls,
+    });
+    const latest = sandboxState.getLatestBackup("alpha");
+
+    expect(latest?.openclawImagePluginInstalls).toEqual(openclawImagePluginInstalls);
+    expect(latest?.reconcileOpenClawImagePluginProvenance).toBe(true);
+    expect(sandboxState.validateRebuildRecoveryManifest("alpha", "openclaw", latest!)).toEqual({
+      ok: true,
+      manifest: expect.objectContaining({
+        reconcileOpenClawImagePluginProvenance: true,
+        openclawImagePluginInstalls,
+      }),
+    });
+  });
+
+  it("rejects a marked manifest without explicit image-plugin provenance", () => {
+    const manifest = writeBackup("alpha", "2026-07-01T06-50-42-045Z", {
+      reconcileOpenClawImagePluginProvenance: true,
+    });
+
+    expect(sandboxState.getLatestBackup("alpha")).toBeNull();
+    expect(
+      sandboxState.restoreRecreatedSandboxState("alpha", String(manifest.backupPath), {
+        targetAgentType: "openclaw",
+        freshOpenClawImagePluginInstalls: [],
+      }),
+    ).toMatchObject({
+      success: false,
+      error: sandboxState.OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR,
+    });
+  });
+
+  it.each([
+    ["a non-array value", { weather: "/sandbox/.openclaw/extensions/weather" }],
+    [
+      "an unsafe plugin id",
+      [
+        {
+          id: "../weather",
+          installPath: "/sandbox/.openclaw/extensions/weather",
+          loadPaths: [],
+        },
+      ],
+    ],
+    [
+      "a relative install path",
+      [{ id: "weather", installPath: "extensions/weather", loadPaths: [] }],
+    ],
+    [
+      "duplicate install paths",
+      [
+        {
+          id: "weather",
+          installPath: "/sandbox/.openclaw/extensions/weather",
+          loadPaths: [],
+        },
+        {
+          id: "weather-copy",
+          installPath: "/sandbox/.openclaw/extensions/weather",
+          loadPaths: [],
+        },
+      ],
+    ],
+  ])("rejects image-plugin provenance with %s", (_case, openclawImagePluginInstalls) => {
+    writeBackup("alpha", "2026-07-01T06-50-42-046Z", { openclawImagePluginInstalls });
+
+    expect(sandboxState.getLatestBackup("alpha")).toBeNull();
+  });
+
   it("rejects a persisted manifest that disappears or becomes malformed after discovery", () => {
     const candidate = writeBackup("alpha", "2026-07-01T06-50-42-044Z", {
       agentVersion: "2026.5.27",
@@ -146,5 +230,50 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "0.0.71" })).toBe(true);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: null })).toBe(false);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "  " })).toBe(false);
+    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: 123 } as never)).toBe(
+      false,
+    );
+    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: {} } as never)).toBe(
+      false,
+    );
+  });
+
+  it("allows legacy managed-image recovery only with per-row authority and no custom image (#6114)", () => {
+    expect(
+      sandboxState.isManagedImageRecoveryAllowed(
+        { nemoclawVersion: "0.0.71", fromDockerfile: undefined },
+        false,
+      ),
+    ).toBe(true);
+    expect(
+      sandboxState.isManagedImageRecoveryAllowed(
+        { nemoclawVersion: "0.0.71", fromDockerfile: "/tmp/custom.Dockerfile" },
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      sandboxState.isManagedImageRecoveryAllowed(
+        { nemoclawVersion: null, fromDockerfile: undefined },
+        true,
+      ),
+    ).toBe(true);
+    expect(
+      sandboxState.isManagedImageRecoveryAllowed(
+        { nemoclawVersion: null, fromDockerfile: null },
+        true,
+      ),
+    ).toBe(true);
+    expect(
+      sandboxState.isManagedImageRecoveryAllowed(
+        { nemoclawVersion: null, fromDockerfile: undefined },
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      sandboxState.isManagedImageRecoveryAllowed(
+        { nemoclawVersion: null, fromDockerfile: "/tmp/custom.Dockerfile" },
+        true,
+      ),
+    ).toBe(false);
   });
 });

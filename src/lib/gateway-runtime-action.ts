@@ -2,13 +2,40 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { stripAnsi } from "./adapters/openshell/client";
-import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
+import * as openshellRuntime from "./adapters/openshell/runtime";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "./adapters/openshell/timeouts";
 import { GATEWAY_PORT } from "./core/ports";
 import { resolveGatewayName, resolveGatewayPortFromName } from "./onboard/gateway-binding";
+
+type StartGatewayForRecoveryOptions = {
+  gatewayName?: string;
+  gatewayPort?: number;
+};
+
+type LegacyOnboardModule = {
+  startGatewayForRecovery(options?: StartGatewayForRecoveryOptions): Promise<void>;
+};
+
+/**
+ * Injectable boundary for OpenShell calls and the deliberately lazy onboarding
+ * recovery path. Source-backed tests spy here without loading the onboard graph
+ * or invalidating the CommonJS module cache before every test.
+ */
+export const gatewayRuntimeDependencies = {
+  captureOpenshell(...args: Parameters<typeof openshellRuntime.captureOpenshell>) {
+    return openshellRuntime.captureOpenshell(...args);
+  },
+  runOpenshell(...args: Parameters<typeof openshellRuntime.runOpenshell>) {
+    return openshellRuntime.runOpenshell(...args);
+  },
+  async startGatewayForRecovery(options?: StartGatewayForRecoveryOptions): Promise<void> {
+    const onboard = (await import("./onboard")) as unknown as LegacyOnboardModule;
+    return onboard.startGatewayForRecovery(options);
+  },
+};
 
 /** Whether `gateway info` output names the given NemoClaw gateway. */
 function hasNamedGateway(output = "", gatewayName = "nemoclaw"): boolean {
@@ -41,16 +68,19 @@ export function getNamedGatewayLifecycleState(
   // When ignoring probe errors we must still capture stderr — OpenShell writes
   // the `Status:`/`Gateway:` lines there, and `ignoreError` would otherwise
   // drop stderr and break the healthy/connected classification.
-  const status = captureOpenshell(["status"], {
+  const status = gatewayRuntimeDependencies.captureOpenshell(["status"], {
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     ignoreError,
     includeStderr: ignoreError,
   });
-  const gatewayInfo = captureOpenshell(["gateway", "info", "-g", gatewayName], {
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    ignoreError,
-    includeStderr: ignoreError,
-  });
+  const gatewayInfo = gatewayRuntimeDependencies.captureOpenshell(
+    ["gateway", "info", "-g", gatewayName],
+    {
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      ignoreError,
+      includeStderr: ignoreError,
+    },
+  );
   const cleanStatus = stripAnsi(status.output);
   const activeGateway = getActiveGatewayName(status.output);
   const connected = /^\s*Status:\s*Connected\b/im.test(cleanStatus);
@@ -124,7 +154,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     return { recovered: false, before, after: before, attempted: false };
   }
 
-  runOpenshell(["gateway", "select", gatewayName], {
+  gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
@@ -141,17 +171,8 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
   );
 
   if (shouldStartGateway) {
-    // Keep this lazy to avoid the deliberate onboard -> runner -> gateway
-    // recovery cycle at module-import time. Lifecycle helpers do not need to
-    // load the full onboarding graph until recovery actually starts.
-    const { startGatewayForRecovery } = (await import("./onboard")) as unknown as {
-      startGatewayForRecovery: (startOptions?: {
-        gatewayName?: string;
-        gatewayPort?: number;
-      }) => Promise<void>;
-    };
     try {
-      await startGatewayForRecovery({
+      await gatewayRuntimeDependencies.startGatewayForRecovery({
         gatewayName,
         gatewayPort: resolveGatewayPortFromName(gatewayName) ?? undefined,
       });
@@ -159,7 +180,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       // Fall through to the lifecycle re-check below so we preserve the
       // existing recovery result shape and emit the correct classification.
     }
-    runOpenshell(["gateway", "select", gatewayName], {
+    gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
       ignoreError: true,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });

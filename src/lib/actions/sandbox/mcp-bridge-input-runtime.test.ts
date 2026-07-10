@@ -98,6 +98,30 @@ describe("MCP input runtime boundaries", () => {
     }
   });
 
+  it("rejects the redundant undocumented --probe flag for add (#6379)", async () => {
+    const priorExitCode = process.exitCode;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      process.exitCode = undefined;
+      await dispatchMcpBridgeCommand("missing-sandbox", [
+        "add",
+        "github",
+        "--url",
+        "https://mcp.example.test/mcp",
+        "--env",
+        "GITHUB_TOKEN",
+        "--probe",
+      ]);
+      expect(process.exitCode).toBe(2);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Usage: nemoclaw <sandbox> mcp add"),
+      );
+    } finally {
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+    }
+  });
+
   it("documents force cleanup without promising residual registry removal", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {

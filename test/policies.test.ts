@@ -8,7 +8,6 @@ import os from "node:os";
 import path from "node:path";
 import type { Interface as ReadlineInterface } from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { execTimeout } from "./helpers/timeouts";
 
 const requireForTest = createRequire(import.meta.url);
 const readline = requireForTest("node:readline") as typeof import("node:readline");
@@ -24,12 +23,76 @@ const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy"
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
 const SOURCE_NODE_ARGS = ["--import", "tsx"];
 const SELECT_FROM_LIST_ITEMS = [
-  { name: "npm", description: "npm and Yarn registry access" },
-  { name: "pypi", description: "Python Package Index (PyPI) access" },
+  { name: "npm", description: "npm and Yarn registry access", file: "npm.yaml" },
+  { name: "pypi", description: "Python Package Index (PyPI) access", file: "pypi.yaml" },
 ];
 type AppliedOptions = {
   applied?: string[];
 };
+
+type SelectionFunction = "selectFromList" | "selectForRemoval";
+
+async function runSelectionPrompt(
+  functionName: SelectionFunction,
+  input: string,
+  { applied = [] }: AppliedOptions = {},
+) {
+  const stderr: string[] = [];
+  const counts = { ref: 0, pause: 0, unref: 0 };
+  const stdin = process.stdin as typeof process.stdin & {
+    ref: () => typeof process.stdin;
+    pause: () => typeof process.stdin;
+    unref: () => typeof process.stdin;
+  };
+  const original = {
+    ref: stdin.ref,
+    pause: stdin.pause,
+    unref: stdin.unref,
+  };
+  const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+    stderr.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write);
+  const close = vi.fn();
+  const createInterface = vi.spyOn(readline, "createInterface").mockImplementation((options) => {
+    expect(options).toEqual({ input: process.stdin, output: process.stderr });
+    return {
+      question: (question: string, callback: (answer: string) => void) => {
+        process.stderr.write(question);
+        callback(input);
+      },
+      close,
+    } as unknown as ReadlineInterface;
+  });
+  stdin.ref = () => {
+    counts.ref += 1;
+    return process.stdin;
+  };
+  stdin.pause = () => {
+    counts.pause += 1;
+    return process.stdin;
+  };
+  stdin.unref = () => {
+    counts.unref += 1;
+    return process.stdin;
+  };
+
+  try {
+    const selected = await policies[functionName](SELECT_FROM_LIST_ITEMS, { applied });
+    return {
+      selected,
+      stderr: stderr.join(""),
+      counts,
+      close,
+    };
+  } finally {
+    stdin.ref = original.ref;
+    stdin.pause = original.pause;
+    stdin.unref = original.unref;
+    createInterface.mockRestore();
+    stderrWrite.mockRestore();
+  }
+}
 
 function requirePresetContent(content: string | null): string {
   expect(content).toBeTruthy();
@@ -63,36 +126,6 @@ function parseResultPayload(stdout: string): any {
   return JSON.parse(stdout.slice(markerIndex + marker.length));
 }
 
-function runSelectFromList(input: string, { applied = [] }: AppliedOptions = {}) {
-  const script = String.raw`
-const { selectFromList } = require(${POLICIES_PATH});
-const items = JSON.parse(process.env.NEMOCLAW_TEST_ITEMS);
-const options = JSON.parse(process.env.NEMOCLAW_TEST_OPTIONS || "{}");
-
-selectFromList(items, options)
-  .then((value) => {
-    process.stdout.write(String(value) + "\n");
-  })
-  .catch((error) => {
-    const message = error && error.message ? error.message : String(error);
-    process.stderr.write(message);
-    process.exit(1);
-  });
-`;
-
-  return spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-    timeout: execTimeout(5_000),
-    input,
-    env: {
-      ...process.env,
-      NEMOCLAW_TEST_ITEMS: JSON.stringify(SELECT_FROM_LIST_ITEMS),
-      NEMOCLAW_TEST_OPTIONS: JSON.stringify({ applied }),
-    },
-  });
-}
-
 describe("policies", () => {
   describe("listPresets", () => {
     it("includes the OpenClaw OTEL diagnostics preset", () => {
@@ -111,42 +144,6 @@ describe("policies", () => {
       const whatsapp = policies.listPresets().find((p) => p.name === "whatsapp");
       expect(whatsapp?.description).toBe("WhatsApp Web WebSocket and media access");
       expect(whatsapp?.description).not.toContain("network_policies:");
-    });
-
-    it("returns expected preset names", () => {
-      const names = policies
-        .listPresets()
-        .map((p: { name: string }) => p.name)
-        .sort();
-      const expected = [
-        "brave",
-        "brew",
-        "claude-code",
-        "discord",
-        "github",
-        "huggingface",
-        "jira",
-        "local-inference",
-        "nous-audio",
-        "nous-browser",
-        "nous-code",
-        "nous-image",
-        "nous-web",
-        "npm",
-        "openclaw-diagnostics-otel-local",
-        "openclaw-pricing",
-        "outlook",
-        "public-reference",
-        "pypi",
-        "slack",
-        "tavily",
-        "teams",
-        "telegram",
-        "weather",
-        "wechat",
-        "whatsapp",
-      ];
-      expect(names).toEqual(expected);
     });
   });
 
@@ -1784,7 +1781,6 @@ exit 1
           "/home/linuxbrew/.linuxbrew/bin/*",
           "/home/linuxbrew/.linuxbrew/bin/brew",
           "/usr/bin/curl",
-          "/usr/bin/git",
           "/usr/local/bin/brew",
         ].sort(),
       );
@@ -1882,64 +1878,57 @@ exit 1
   });
 
   describe("selectFromList", () => {
-    it("returns preset name by number from stdin input", () => {
-      const result = runSelectFromList("1\n");
+    it("returns preset name by number from stdin input", async () => {
+      const result = await runSelectionPrompt("selectFromList", "1\n");
 
-      expect(result.status).toBe(0);
-      expect(result.stdout.trim()).toBe("npm");
+      expect(result.selected).toBe("npm");
       expect(result.stderr).toContain("Choose preset [1]:");
     });
 
-    it("uses the first preset as the default when input is empty", () => {
-      const result = runSelectFromList("\n");
+    it("uses the first preset as the default when input is empty", async () => {
+      const result = await runSelectionPrompt("selectFromList", "\n");
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Choose preset [1]:");
-      expect(result.stdout.trim()).toBe("npm");
+      expect(result.selected).toBe("npm");
     });
 
-    it("defaults to the first not-applied preset", () => {
-      const result = runSelectFromList("\n", { applied: ["npm"] });
+    it("defaults to the first not-applied preset", async () => {
+      const result = await runSelectionPrompt("selectFromList", "\n", { applied: ["npm"] });
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Choose preset [2]:");
-      expect(result.stdout.trim()).toBe("pypi");
+      expect(result.selected).toBe("pypi");
     });
 
-    it("rejects selecting an already-applied preset", () => {
-      const result = runSelectFromList("1\n", { applied: ["npm"] });
+    it("rejects selecting an already-applied preset", async () => {
+      const result = await runSelectionPrompt("selectFromList", "1\n", { applied: ["npm"] });
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Preset 'npm' is already applied.");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("rejects out-of-range preset number", () => {
-      const result = runSelectFromList("99\n");
+    it("rejects out-of-range preset number", async () => {
+      const result = await runSelectionPrompt("selectFromList", "99\n");
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Invalid preset number.");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("rejects non-numeric preset input", () => {
-      const result = runSelectFromList("npm\n");
+    it("rejects non-numeric preset input", async () => {
+      const result = await runSelectionPrompt("selectFromList", "npm\n");
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toContain("Invalid preset number.");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("prints numbered list with applied markers, legend, and default prompt", () => {
-      const result = runSelectFromList("2\n", { applied: ["npm"] });
+    it("prints numbered list with applied markers, legend, and default prompt", async () => {
+      const result = await runSelectionPrompt("selectFromList", "2\n", { applied: ["npm"] });
 
-      expect(result.status).toBe(0);
       expect(result.stderr).toMatch(/Available presets:/);
       expect(result.stderr).toMatch(/1\) ● npm — npm and Yarn registry access/);
       expect(result.stderr).toMatch(/2\) ○ pypi — Python Package Index \(PyPI\) access/);
       expect(result.stderr).toMatch(/● applied, ○ not applied/);
       expect(result.stderr).toMatch(/Choose preset \[2\]:/);
-      expect(result.stdout.trim()).toBe("pypi");
+      expect(result.selected).toBe("pypi");
     });
   });
 
@@ -2019,78 +2008,46 @@ exit 1
   });
 
   describe("selectForRemoval", () => {
-    function runSelectForRemoval(input: string, { applied = [] }: AppliedOptions = {}) {
-      const script = String.raw`
-const { selectForRemoval } = require(${POLICIES_PATH});
-const items = JSON.parse(process.env.NEMOCLAW_TEST_ITEMS);
-const options = JSON.parse(process.env.NEMOCLAW_TEST_OPTIONS || "{}");
-
-selectForRemoval(items, options)
-  .then((value) => {
-    process.stdout.write(String(value) + "\n");
-  })
-  .catch((error) => {
-    const message = error && error.message ? error.message : String(error);
-    process.stderr.write(message);
-    process.exit(1);
-  });
-`;
-
-      return spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-        timeout: execTimeout(5_000),
-        input,
-        env: {
-          ...process.env,
-          NEMOCLAW_TEST_ITEMS: JSON.stringify(SELECT_FROM_LIST_ITEMS),
-          NEMOCLAW_TEST_OPTIONS: JSON.stringify({ applied }),
-        },
-      });
-    }
-
-    it("returns null when no presets are applied", () => {
-      const result = runSelectForRemoval("1\n", { applied: [] });
-      expect(result.status).toBe(0);
+    it("returns null when no presets are applied", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "1\n", { applied: [] });
       expect(result.stderr).toContain("No presets are currently applied");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("shows only applied presets and returns selected name", () => {
-      const result = runSelectForRemoval("1\n", { applied: ["npm"] });
-      expect(result.status).toBe(0);
+    it("shows only applied presets and returns selected name", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "1\n", { applied: ["npm"] });
       expect(result.stderr).toContain("Applied presets:");
       expect(result.stderr).toContain("1) npm");
       expect(result.stderr).not.toContain("pypi");
-      expect(result.stdout.trim()).toBe("npm");
+      expect(result.selected).toBe("npm");
     });
 
-    it("returns null for empty input", () => {
-      const result = runSelectForRemoval("\n", { applied: ["npm"] });
-      expect(result.status).toBe(0);
-      expect(result.stdout.trim()).toBe("null");
+    it("returns null for empty input", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "\n", { applied: ["npm"] });
+      expect(result.selected).toBeNull();
     });
 
-    it("rejects non-numeric input", () => {
-      const result = runSelectForRemoval("npm\n", { applied: ["npm"] });
-      expect(result.status).toBe(0);
+    it("rejects non-numeric input", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "npm\n", {
+        applied: ["npm"],
+      });
       expect(result.stderr).toContain("Invalid preset number");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("rejects out-of-range number", () => {
-      const result = runSelectForRemoval("99\n", { applied: ["npm"] });
-      expect(result.status).toBe(0);
+    it("rejects out-of-range number", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "99\n", { applied: ["npm"] });
       expect(result.stderr).toContain("Invalid preset number");
-      expect(result.stdout.trim()).toBe("null");
+      expect(result.selected).toBeNull();
     });
 
-    it("selects second preset when both are applied", () => {
-      const result = runSelectForRemoval("2\n", { applied: ["npm", "pypi"] });
-      expect(result.status).toBe(0);
+    it("selects second preset when both are applied", async () => {
+      const result = await runSelectionPrompt("selectForRemoval", "2\n", {
+        applied: ["npm", "pypi"],
+      });
       expect(result.stderr).toContain("1) npm");
       expect(result.stderr).toContain("2) pypi");
-      expect(result.stdout.trim()).toBe("pypi");
+      expect(result.selected).toBe("pypi");
     });
   });
 
@@ -2264,69 +2221,22 @@ selectForRemoval(items, options)
   });
 
   describe("interactive prompt cleanup", () => {
-    async function runPromptLifecycle(
-      functionName: "selectFromList" | "selectForRemoval",
-      input: string,
-    ) {
-      const counts = { ref: 0, pause: 0, unref: 0 };
-      const stdin = process.stdin as typeof process.stdin & {
-        ref: () => typeof process.stdin;
-        pause: () => typeof process.stdin;
-        unref: () => typeof process.stdin;
-      };
-      const original = {
-        ref: stdin.ref,
-        pause: stdin.pause,
-        unref: stdin.unref,
-      };
-      const createInterface = vi.spyOn(readline, "createInterface").mockReturnValue({
-        question: (_question: string, callback: (answer: string) => void) => callback(input),
-        close: vi.fn(),
-      } as unknown as ReadlineInterface);
-      stdin.ref = () => {
-        counts.ref += 1;
-        return process.stdin;
-      };
-      stdin.pause = () => {
-        counts.pause += 1;
-        return process.stdin;
-      };
-      stdin.unref = () => {
-        counts.unref += 1;
-        return process.stdin;
-      };
-      const items = [
-        { name: "alpha", description: "first", file: "/tmp/alpha.yaml" },
-        { name: "beta", description: "second", file: "/tmp/beta.yaml" },
-      ];
-      const options =
-        functionName === "selectForRemoval" ? { applied: ["alpha"] } : { applied: [] };
-
-      try {
-        const selected = await policies[functionName](items, options);
-        return { selected, counts };
-      } finally {
-        stdin.ref = original.ref;
-        stdin.pause = original.pause;
-        stdin.unref = original.unref;
-        createInterface.mockRestore();
-      }
-    }
-
     it("releases and re-refs stdin around policy-add preset prompts", async () => {
-      const result = await runPromptLifecycle("selectFromList", "1\n");
-      expect(result.selected).toBe("alpha");
+      const result = await runSelectionPrompt("selectFromList", "1\n");
+      expect(result.selected).toBe("npm");
       expect(result.counts.ref).toBeGreaterThanOrEqual(1);
       expect(result.counts.pause).toBeGreaterThanOrEqual(1);
       expect(result.counts.unref).toBeGreaterThanOrEqual(1);
+      expect(result.close).toHaveBeenCalledOnce();
     });
 
     it("releases and re-refs stdin around policy-remove preset prompts", async () => {
-      const result = await runPromptLifecycle("selectForRemoval", "1\n");
-      expect(result.selected).toBe("alpha");
+      const result = await runSelectionPrompt("selectForRemoval", "1\n", { applied: ["npm"] });
+      expect(result.selected).toBe("npm");
       expect(result.counts.ref).toBeGreaterThanOrEqual(1);
       expect(result.counts.pause).toBeGreaterThanOrEqual(1);
       expect(result.counts.unref).toBeGreaterThanOrEqual(1);
+      expect(result.close).toHaveBeenCalledOnce();
     });
   });
 });

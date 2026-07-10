@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 
 export interface NotReadyRecreateInput {
@@ -52,6 +53,47 @@ export class NotReadySandboxError extends Error {
   }
 }
 
+export class UnsafeCustomImagePluginBackupError extends Error {
+  readonly hints: readonly string[];
+
+  constructor(sandboxName: string, backupPath: string | null) {
+    super(`Custom-image backup for '${sandboxName}' lacks verified OpenClaw plugin provenance.`);
+    this.name = "UnsafeCustomImagePluginBackupError";
+    this.hints = [
+      `  The pre-upgrade backup for custom OpenClaw sandbox '${sandboxName}' lacks verified plugin provenance.`,
+      "  Automatic recreation is blocked before delete so image-owned plugins cannot be restored as user state.",
+      "  The sandbox and backup are untouched — no data was lost.",
+      backupPath
+        ? `  Recover manually from: ${backupPath}`
+        : "  No valid pre-upgrade backup was found; inspect the existing sandbox before manual recovery.",
+      "  To preserve state, onboard the custom image under a new sandbox name and manually migrate only user-owned state.",
+      "  Or, after taking an independent manual backup, explicitly accept destructive same-name recreation with NEMOCLAW_RECREATE_WITHOUT_BACKUP=1.",
+    ];
+  }
+}
+
+function assertNotReadyBackupPluginProvenance(
+  sandboxName: string,
+  backup: sandboxState.SnapshotEntry | null,
+  entry: SandboxEntry | null,
+  requireOpenClawImagePluginProvenance: boolean,
+): void {
+  const customOpenClaw =
+    requireOpenClawImagePluginProvenance ||
+    (Boolean(entry?.fromDockerfile) && (!entry?.agent || entry.agent === "openclaw"));
+  if (!backup) {
+    if (customOpenClaw) throw new UnsafeCustomImagePluginBackupError(sandboxName, null);
+    return;
+  }
+  const markedCustomImageBackup = backup.reconcileOpenClawImagePluginProvenance === true;
+  if (
+    (customOpenClaw || markedCustomImageBackup) &&
+    !sandboxState.hasAuthoritativeOpenClawImagePluginProvenance(backup)
+  ) {
+    throw new UnsafeCustomImagePluginBackupError(sandboxName, backup.backupPath);
+  }
+}
+
 export function installerRestoreOnRecreateFromEnv(env: NodeJS.ProcessEnv): boolean {
   return env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
 }
@@ -59,6 +101,8 @@ export function installerRestoreOnRecreateFromEnv(env: NodeJS.ProcessEnv): boole
 export interface PreUpgradeBackupSelectInput {
   liveExists: boolean;
   hasExistingRegistryEntry: boolean;
+  existingSandboxEntry?: SandboxEntry | null;
+  requireOpenClawImagePluginProvenance?: boolean;
   sandboxName: string;
   note: (message: string) => void;
 }
@@ -102,6 +146,12 @@ export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInp
     return null;
   }
   const latest = sandboxState.getLatestBackup(input.sandboxName);
+  assertNotReadyBackupPluginProvenance(
+    input.sandboxName,
+    latest,
+    input.existingSandboxEntry ?? null,
+    input.requireOpenClawImagePluginProvenance === true,
+  );
   if (latest?.backupPath) {
     input.note(
       `  Found pre-upgrade backup for '${input.sandboxName}'; it will be restored after recreation.`,
@@ -123,9 +173,19 @@ export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInp
 export function applyNonInteractiveNotReadyDecision(
   sandboxName: string,
   note: (message: string) => void,
+  existingSandboxEntry: SandboxEntry | null = null,
+  requireOpenClawImagePluginProvenance = false,
 ): string | null {
   const installerRestoreOnRecreate = installerRestoreOnRecreateFromEnv(process.env);
   const latest = installerRestoreOnRecreate ? sandboxState.getLatestBackup(sandboxName) : null;
+  if (installerRestoreOnRecreate) {
+    assertNotReadyBackupPluginProvenance(
+      sandboxName,
+      latest,
+      existingSandboxEntry,
+      requireOpenClawImagePluginProvenance,
+    );
+  }
   const decision = decideNonInteractiveNotReadyAction({
     sandboxName,
     installerRestoreOnRecreate,
@@ -156,14 +216,25 @@ export type NonInteractiveNotReadyOutcome =
 export function resolveNotReadyOutcome(
   sandboxName: string,
   note: (message: string) => void,
+  existingSandboxEntry: SandboxEntry | null = null,
+  requireOpenClawImagePluginProvenance = false,
 ): NonInteractiveNotReadyOutcome {
   try {
     return {
       kind: "proceed",
-      restoreBackupPath: applyNonInteractiveNotReadyDecision(sandboxName, note),
+      restoreBackupPath: applyNonInteractiveNotReadyDecision(
+        sandboxName,
+        note,
+        existingSandboxEntry,
+        requireOpenClawImagePluginProvenance,
+      ),
     };
   } catch (error) {
-    if (!(error instanceof NotReadySandboxError)) throw error;
+    if (
+      !(error instanceof NotReadySandboxError) &&
+      !(error instanceof UnsafeCustomImagePluginBackupError)
+    )
+      throw error;
     return { kind: "blocked", hints: error.hints };
   }
 }

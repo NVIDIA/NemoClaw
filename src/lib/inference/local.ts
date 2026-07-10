@@ -9,12 +9,26 @@
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
+import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime";
 import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
-import type { CaptureResult } from "../runner";
+import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
+import { sleepSeconds } from "../core/wait";
+import { containerCanReachHostLoopback, isWsl } from "../platform";
+import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
+import { detectNvidiaPlatform } from "./nim";
+import {
+  anyRegistryModelFits,
+  effectiveGpuMemoryMB,
+  fittableOllamaModelTags,
+  largestFittableOllamaModelTag,
+  modelFitsAvailableMemory,
+  OLLAMA_MODEL_REGISTRY,
+  SMALLEST_OLLAMA_MODEL_TAG,
+} from "./ollama-model-registry";
 import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 import {
   applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
@@ -27,25 +41,6 @@ import {
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
 
 export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
-
-const { shellQuote, runCapture, runCaptureEx } = require("../runner");
-
-import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
-import { sleepSeconds } from "../core/wait";
-import {
-  anyRegistryModelFits,
-  effectiveGpuMemoryMB,
-  fittableOllamaModelTags,
-  largestFittableOllamaModelTag,
-  modelFitsAvailableMemory,
-  OLLAMA_MODEL_REGISTRY,
-  SMALLEST_OLLAMA_MODEL_TAG,
-} from "./ollama-model-registry";
-
-const { containerCanReachHostLoopback, isWsl } = require("../platform");
-const { detectContainerRuntimeFromDockerInfo } =
-  require("../adapters/docker/runtime") as typeof import("../adapters/docker/runtime");
-const { detectNvidiaPlatform } = require("./nim");
 
 /**
  * Port containers use to reach Ollama. Returns the raw Ollama port when the
@@ -84,7 +79,7 @@ export const SMALL_OLLAMA_MODEL = SMALLEST_OLLAMA_MODEL_TAG;
 export const DEFAULT_OLLAMA_MODEL = assertRegistryTag("nemotron-3-nano:30b");
 export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 
-export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
+export type RunCaptureFn = (cmd: readonly string[], opts?: { ignoreError?: boolean }) => string;
 
 export {
   getInstalledOllamaVersion,

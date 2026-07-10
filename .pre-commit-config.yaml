@@ -171,7 +171,7 @@ repos:
         name: Repository checks
         entry: npm run checks
         language: system
-        files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.tsx?$|scripts/.*\.(cjs|js|mjs|ts|tsx)$|test/.*\.(cjs|js|mjs|ts|tsx)$|nemoclaw/src/.*\.tsx?$)
+        files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
         pass_filenames: false
         priority: 10
 

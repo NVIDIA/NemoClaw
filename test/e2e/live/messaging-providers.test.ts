@@ -13,7 +13,6 @@ import fs from "node:fs";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   accountBool,
   accountString,
@@ -55,9 +54,7 @@ import {
 import { runInstalledSlackRuntimeProof } from "./messaging-providers-slack-runtime-proof.ts";
 import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram-runtime-proof.ts";
 
-const runLiveTest = shouldRunLiveE2E() ? test : test.skip;
-
-runLiveTest(
+test(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
   testTimeoutOptions(LIVE_TIMEOUT_MS),
   async ({ artifacts, cleanup, host, sandbox, skip }) => {
@@ -550,39 +547,46 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M-W10: WeChat accounts index contains configured account",
     );
 
-    const runtimeChannels = await sandboxOutput(
+    const runtimeChannelsResult = await runSandboxShell(
       sandbox,
-      "timeout 45 openclaw channels list --all --json --no-color 2>/dev/null || true",
-      "openclaw-channels-list-messaging-providers",
-      redactionValues,
+      "timeout 45 openclaw channels list --all --json --no-color",
+      {
+        artifactName: "openclaw-channels-list-messaging-providers",
+        redactionValues,
+      },
     );
+    expectExitZero(runtimeChannelsResult, "OpenClaw channels list");
+    const runtimeChannels = runtimeChannelsResult.stdout.trim();
     if (!runtimeChannels) {
-      await skipNote(artifacts, skips, "M6e-M6h: OpenClaw channels list returned no output");
-    } else {
-      const parsedRuntime = JSON.parse(runtimeChannels) as {
-        chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
-      };
-      for (const [assertionId, channel, accountId] of [
-        ["M6e", "telegram", "default"],
-        ["M6f", "discord", "default"],
-        ["M6g", "slack", "default"],
-      ] as const) {
-        const entry = parsedRuntime.chat?.[channel];
-        check(
-          entry?.installed === true &&
-            entry.origin === "configured" &&
-            Array.isArray(entry.accounts) &&
-            entry.accounts.includes(accountId),
-          `${assertionId}: OpenClaw channels list reports ${channel} installed/configured`,
-        );
-      }
-      const whatsappRuntime = parsedRuntime.chat?.whatsapp;
-      check(
-        whatsappRuntime?.installed === true &&
-          (whatsappRuntime.origin === "available" || whatsappRuntime.origin === "configured"),
-        "M6h: OpenClaw channels list reports WhatsApp plugin installed",
+      throw new Error(
+        `OpenClaw channels list did not emit channel state:\n${
+          runtimeChannelsResult.stderr.trim() || "stderr was empty"
+        }`,
       );
     }
+    const parsedRuntime = JSON.parse(runtimeChannels) as {
+      chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
+    };
+    for (const [assertionId, channel, accountId] of [
+      ["M6e", "telegram", "default"],
+      ["M6f", "discord", "default"],
+      ["M6g", "slack", "default"],
+    ] as const) {
+      const entry = parsedRuntime.chat?.[channel];
+      check(
+        entry?.installed === true &&
+          entry.origin === "configured" &&
+          Array.isArray(entry.accounts) &&
+          entry.accounts.includes(accountId),
+        `${assertionId}: OpenClaw channels list reports ${channel} installed/configured`,
+      );
+    }
+    const whatsappRuntime = parsedRuntime.chat?.whatsapp;
+    check(
+      whatsappRuntime?.installed === true &&
+        (whatsappRuntime.origin === "available" || whatsappRuntime.origin === "configured"),
+      "M6h: OpenClaw channels list reports WhatsApp plugin installed",
+    );
 
     // Probe the allowed Telegram bot API path (/bot<token>/**). The bare root
     // path is blocked by the Telegram egress policy by design (asserted by M14),

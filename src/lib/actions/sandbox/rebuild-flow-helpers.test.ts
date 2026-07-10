@@ -1,39 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
-type RebuildFlowHelpersModule = typeof import("./rebuild-flow-helpers");
-type SandboxStateModule = typeof import("../../state/sandbox");
-type UserManagedFilesProbeModule = typeof import("../../state/user-managed-files-probe");
+import * as agentDefs from "../../agent/defs";
+import * as agentOnboard from "../../agent/onboard";
+import * as gatewayRuntime from "../../gateway-runtime-action";
+import * as sandboxState from "../../state/sandbox";
+import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
+import {
+  backupSandboxStateForRebuild,
+  ensureRebuildAgentBaseImage,
+  ensureRebuildTargetGatewaySelected,
+  pinRebuildAgentBaseImageForRecreate,
+  warnUnpreservedUserManagedFiles,
+} from "./rebuild-flow-helpers";
 
-const requireDist = createRequire(import.meta.url);
-const rebuildFlowHelpersPath = "./rebuild-flow-helpers.js";
-const sandboxStatePath = "../../state/sandbox.js";
-const userManagedFilesProbePath = "../../state/user-managed-files-probe.js";
-
-function loadRebuildFlowHelpers(): RebuildFlowHelpersModule {
-  delete require.cache[requireDist.resolve(rebuildFlowHelpersPath)];
-  return requireDist(rebuildFlowHelpersPath);
-}
-
-// Warm the CommonJS dependency graph outside the first test's timeout. Tests
-// still reload this entry module after installing dependency spies.
-loadRebuildFlowHelpers();
-delete require.cache[requireDist.resolve(rebuildFlowHelpersPath)];
-
-function loadSandboxState(): SandboxStateModule {
-  return requireDist(sandboxStatePath);
-}
-
-function loadUserManagedFilesProbe(): UserManagedFilesProbeModule {
-  return requireDist(userManagedFilesProbePath);
-}
-
-function makeBackupResult(): ReturnType<SandboxStateModule["backupSandboxState"]> {
+function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> {
   return {
     success: true,
     backedUpDirs: [".state"],
@@ -46,7 +29,7 @@ function makeBackupResult(): ReturnType<SandboxStateModule["backupSandboxState"]
       timestamp: "2026-06-01T00-00-00-000Z",
       agentType: "langchain-deepagents-code",
       agentVersion: null,
-      expectedVersion: "0.1.30",
+      expectedVersion: "0.1.34",
       stateDirs: [".state"],
       backedUpDirs: [".state"],
       stateFiles: [{ path: "config.toml", strategy: "copy" }],
@@ -55,13 +38,11 @@ function makeBackupResult(): ReturnType<SandboxStateModule["backupSandboxState"]
       blueprintDigest: null,
       policyPresets: [],
       customPolicies: [],
-    } as ReturnType<SandboxStateModule["backupSandboxState"]>["manifest"],
+    } as ReturnType<typeof sandboxState.backupSandboxState>["manifest"],
   };
 }
 
-function makeSandboxEntry(): Parameters<
-  RebuildFlowHelpersModule["backupSandboxStateForRebuild"]
->[1] {
+function makeSandboxEntry(): Parameters<typeof backupSandboxStateForRebuild>[1] {
   return {
     name: "alpha",
     agent: "langchain-deepagents-code",
@@ -70,7 +51,7 @@ function makeSandboxEntry(): Parameters<
     policies: [],
     customPolicies: [],
     nimContainer: null,
-  } as unknown as Parameters<RebuildFlowHelpersModule["backupSandboxStateForRebuild"]>[1];
+  } satisfies Parameters<typeof backupSandboxStateForRebuild>[1];
 }
 
 function makeBail(): (msg: string, code?: number) => never {
@@ -94,14 +75,12 @@ describe("rebuild target gateway preflight", () => {
   });
 
   it("health-checks and pins the sandbox's persisted gateway", async () => {
-    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
     const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
-      before: { state: "connected_other" },
-      after: { state: "healthy_named" },
+      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
+      after: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
       attempted: true,
     });
-    const { ensureRebuildTargetGatewaySelected } = loadRebuildFlowHelpers();
 
     await expect(
       ensureRebuildTargetGatewaySelected(
@@ -117,14 +96,12 @@ describe("rebuild target gateway preflight", () => {
   });
 
   it("fails closed when the target gateway cannot become healthy", async () => {
-    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
     vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: false,
-      before: { state: "connected_other" },
-      after: { state: "missing_named" },
+      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
+      after: { state: "missing_named", status: "", gatewayInfo: "", activeGateway: null },
       attempted: true,
     });
-    const { ensureRebuildTargetGatewaySelected } = loadRebuildFlowHelpers();
 
     await expect(
       ensureRebuildTargetGatewaySelected(
@@ -157,9 +134,7 @@ describe("rebuild agent base image preflight", () => {
   });
 
   function mockBaseImagePreflight(imageRef: string) {
-    const agentDefs = requireDist("../../agent/defs.js");
-    const agentOnboard = requireDist("../../agent/onboard.js");
-    vi.spyOn(agentDefs, "loadAgent").mockReturnValue({ name: "hermes" });
+    vi.spyOn(agentDefs, "loadAgent").mockReturnValue({ name: "hermes" } as never);
     const ensureAgentBaseImage = vi
       .spyOn(agentOnboard, "ensureAgentBaseImage")
       .mockReturnValue({ imageTag: imageRef, built: true });
@@ -172,7 +147,6 @@ describe("rebuild agent base image preflight", () => {
   it("forces a repository-local build and returns its exact ref when no override exists", () => {
     const imageRef = "nemoclaw-hermes-sandbox-base-local:12345678";
     const { ensureAgentBaseImage } = mockBaseImagePreflight(imageRef);
-    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail());
 
@@ -189,7 +163,6 @@ describe("rebuild agent base image preflight", () => {
     const { ensureAgentBaseImage, pinAgentSandboxBaseImageRef } =
       mockBaseImagePreflight(mutableRef);
     pinAgentSandboxBaseImageRef.mockReturnValue(immutableRef);
-    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail());
 
@@ -201,7 +174,6 @@ describe("rebuild agent base image preflight", () => {
   });
 
   it("pins the preflighted ref only for recreation and restores caller state", () => {
-    const { pinRebuildAgentBaseImageForRecreate } = loadRebuildFlowHelpers();
     const env: NodeJS.ProcessEnv = {
       [overrideEnvVar]: "nemoclaw-hermes-sandbox-base-local:image-caller",
     };
@@ -222,7 +194,6 @@ describe("rebuild agent base image preflight", () => {
   });
 
   it("removes a scoped recreation pin when the caller had no override", () => {
-    const { pinRebuildAgentBaseImageForRecreate } = loadRebuildFlowHelpers();
     const env: NodeJS.ProcessEnv = {};
     const restore = pinRebuildAgentBaseImageForRecreate(
       {
@@ -239,6 +210,94 @@ describe("rebuild agent base image preflight", () => {
   });
 });
 
+describe("backupSandboxStateForRebuild with --force", () => {
+  let warnSpy: MockInstance;
+  let errorSpy: MockInstance;
+  let backupSpy: MockInstance;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    backupSpy = vi.spyOn(sandboxState, "backupSandboxState");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns null (skip) when backup fails completely and force is set", () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: ["config.toml"],
+      manifest: null,
+    });
+    const result = backupSandboxStateForRebuild(
+      "alpha",
+      makeSandboxEntry(),
+      false,
+      () => undefined,
+      () => true,
+      makeBail(),
+      { force: true },
+    );
+
+    expect(result).toBeNull();
+    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(warnLines.some((line: string) => line.includes("--force was specified"))).toBe(true);
+  });
+
+  it("aborts with hint when backup fails completely without force", () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+    });
+    expect(() =>
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      ),
+    ).toThrow("bail: Failed to back up sandbox state.");
+
+    const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(errorLines.some((line: string) => line.includes("rebuild --force"))).toBe(true);
+  });
+
+  it("aborts without force even when force option is explicitly false", () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+    });
+    expect(() =>
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+        { force: false },
+      ),
+    ).toThrow("bail: Failed to back up sandbox state.");
+  });
+});
+
 describe("warnUnpreservedUserManagedFiles", () => {
   let warnSpy: MockInstance;
   let logSpy: MockInstance;
@@ -251,10 +310,8 @@ describe("warnUnpreservedUserManagedFiles", () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const sandboxState = loadSandboxState();
     backupSpy = vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue(makeBackupResult());
-    const probeModule = loadUserManagedFilesProbe();
-    probeSpy = vi.spyOn(probeModule, "probeUserManagedFiles").mockReturnValue({
+    probeSpy = vi.spyOn(userManagedFilesProbe, "probeUserManagedFiles").mockReturnValue({
       declared: [],
       existing: [],
     });
@@ -270,7 +327,6 @@ describe("warnUnpreservedUserManagedFiles", () => {
       existing: [".env", ".mcp.json"],
     });
 
-    const { warnUnpreservedUserManagedFiles } = loadRebuildFlowHelpers();
     warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
     expect(probeSpy).toHaveBeenCalledOnce();
@@ -292,7 +348,6 @@ describe("warnUnpreservedUserManagedFiles", () => {
       existing: [],
     });
 
-    const { warnUnpreservedUserManagedFiles } = loadRebuildFlowHelpers();
     warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
     expect(probeSpy).toHaveBeenCalledOnce();
@@ -303,7 +358,6 @@ describe("warnUnpreservedUserManagedFiles", () => {
   it("emits no warning when agent declares no user-managed files", () => {
     probeSpy.mockReturnValue({ declared: [], existing: [] });
 
-    const { warnUnpreservedUserManagedFiles } = loadRebuildFlowHelpers();
     warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
     expect(probeSpy).toHaveBeenCalledOnce();
@@ -312,7 +366,6 @@ describe("warnUnpreservedUserManagedFiles", () => {
   });
 
   it("skips probe when staleRecovery short-circuits the backup", () => {
-    const { backupSandboxStateForRebuild } = loadRebuildFlowHelpers();
     const result = backupSandboxStateForRebuild(
       "alpha",
       makeSandboxEntry(),
@@ -328,7 +381,6 @@ describe("warnUnpreservedUserManagedFiles", () => {
   });
 
   it("does not probe during backup before managed MCP adapter entries are scrubbed", () => {
-    const { backupSandboxStateForRebuild } = loadRebuildFlowHelpers();
     const result = backupSandboxStateForRebuild(
       "alpha",
       makeSandboxEntry(),
@@ -348,7 +400,6 @@ describe("warnUnpreservedUserManagedFiles", () => {
       throw new Error("ssh boom");
     });
 
-    const { warnUnpreservedUserManagedFiles } = loadRebuildFlowHelpers();
     expect(() => warnUnpreservedUserManagedFiles("alpha", () => undefined)).not.toThrow();
 
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
@@ -374,7 +425,6 @@ describe("warnUnpreservedUserManagedFiles", () => {
       error: "Pre-backup audit rejected an unsafe symlink",
     });
 
-    const { backupSandboxStateForRebuild } = loadRebuildFlowHelpers();
     expect(() =>
       backupSandboxStateForRebuild(
         "alpha",

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -25,7 +26,8 @@ const PRELOAD_SOURCE = path.join(
 // `openclaw`), NOT `qrcode-terminal`. The plugin's onQr callback calls
 // renderQrTerminal() → qrcode.toString(text, { type: "terminal", small }) and
 // the bundled @openclaw/whatsapp passes NO `small`, so it defaults to full
-// size. These tests prove the preload patches that real package shape. End-to-
+// size. These tests prove the preload intercepts that real package shape and
+// renders via qrcode.create() with a four-module quiet zone. End-to-
 // end proof that this shrinks a *real* rendered QR lives in
 // test/e2e/live/whatsapp-qr-compact.test.ts, which drives the actual
 // upstream renderer at the version bundled in Dockerfile.base. Ref: NemoClaw#4522.
@@ -45,6 +47,8 @@ function writeFakeModules(root: string): void {
     path.join(qrcodeDir, "index.js"),
     [
       "const calls = [];",
+      "const createCalls = [];",
+      "const dataUrlCalls = [];",
       "module.exports = {",
       "  // qrcode's real signatures: toString(text, [opts], [cb]).",
       "  toString(text, opts, cb) {",
@@ -55,10 +59,47 @@ function writeFakeModules(root: string): void {
       "    return Promise.resolve(out);",
       "  },",
       "  // Presence of create() is how the preload distinguishes qrcode from",
-      "  // qrcode-terminal; it never calls through to it here.",
-      "  create() { return { modules: { size: 0 } }; },",
+      "  // qrcode-terminal. The preload uses it for patched terminal renders.",
+      "  create(text, opts) {",
+      "    createCalls.push(opts || {});",
+      "    return { modules: { size: 2, data: [true, false, false, true] } };",
+      "  },",
+      "  toDataURL(text) {",
+      "    dataUrlCalls.push(text);",
+      "    return Promise.resolve(`data:image/png;base64,STUB(${text})`);",
+      "  },",
       "  __calls: calls,",
+      "  __createCalls: createCalls,",
+      "  __dataUrlCalls: dataUrlCalls,",
       "};",
+    ].join("\n"),
+  );
+
+  fs.writeFileSync(
+    path.join(root, "openclaw-qr-terminal.mjs"),
+    [
+      'const qrCodeRuntimeLoader = { load: async () => (await import("qrcode")).default ?? (await import("qrcode")) };',
+      "async function loadQrCodeRuntime() {",
+      "  return await qrCodeRuntimeLoader.load();",
+      "}",
+      "function normalizeQrText(text) {",
+      "  if (typeof text !== 'string') throw new TypeError('QR text must be a string.');",
+      "  return text;",
+      "}",
+      "const COMPACT_MARGIN_MODULES = 1;",
+      "function renderCompactTerminalQr(modules) {",
+      "  return `compact-margin:${COMPACT_MARGIN_MODULES}:size:${modules.size}`;",
+      "}",
+      "async function renderQrTerminal(input, opts = {}) {",
+      "  const text = normalizeQrText(input);",
+      "  const qrCode = await loadQrCodeRuntime();",
+      "  if (opts.small === true) return renderCompactTerminalQr(qrCode.create(text).modules);",
+      "  return await qrCode.toString(text, {",
+      "    small: false,",
+      "    type: 'terminal'",
+      "  });",
+      "}",
+      "export { renderQrTerminal };",
     ].join("\n"),
   );
 
@@ -124,6 +165,7 @@ await dyn.toString("payload", { type: "terminal", small: true });  // already sm
 await dyn.toString("payload", { type: "svg" });                // non-terminal
 await dyn.toString("payload");                                 // no opts at all
 result.qrcode = dyn.__calls;
+result.qrcodeCreate = dyn.__createCalls;
 
 // 2) CommonJS require — same module object, same patch.
 const cjs = require("qrcode");
@@ -138,6 +180,16 @@ result.qrcodeTerminal = term.__calls;
 process.stdout.write(JSON.stringify(result));
 `;
 
+const OPENCLAW_QR_RENDERER_PROBE = `
+const result = {};
+const renderer = await import("./openclaw-qr-terminal.mjs");
+result.compact = await renderer.renderQrTerminal("payload", { small: true });
+const dyn = (await import("qrcode")).default ?? (await import("qrcode"));
+result.qrcodeCreate = dyn.__createCalls;
+result.qrcodeDataUrl = dyn.__dataUrlCalls;
+process.stdout.write(JSON.stringify(result));
+`;
+
 describe("WhatsApp compact-QR preload (qrcode package)", () => {
   const baseline = runProbe(QRCODE_PROBE, { withPreload: false });
   const patched = runProbe(QRCODE_PROBE, { withPreload: true });
@@ -149,26 +201,27 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
     expect(baseline.qrcode[0].small).toBeUndefined();
   });
 
-  it("forces small:true on a terminal render with no small option", () => {
-    expect(patched.qrcode[0]).toEqual({ type: "terminal", small: true });
+  it("renders terminal output through qrcode.create instead of qrcode.toString small mode", () => {
+    expect(patched.qrcodeCreate).toEqual([{}, {}, {}]);
+    expect(patched.qrcode).toEqual([{ type: "svg" }, {}]);
   });
 
-  it("overrides an explicit small:false terminal render back to compact", () => {
-    expect(patched.qrcode[1]).toEqual({ type: "terminal", small: true });
+  it("keeps explicit small:false terminal renders on the custom compact path", () => {
+    expect(patched.qrcodeCreate[1]).toEqual({});
   });
 
-  it("leaves an already-compact terminal render unchanged", () => {
-    expect(patched.qrcode[2]).toEqual({ type: "terminal", small: true });
+  it("keeps already-compact terminal renders on the custom compact path", () => {
+    expect(patched.qrcodeCreate[2]).toEqual({});
   });
 
   it("does NOT touch non-terminal renders (svg/png/utf8 data URIs)", () => {
     // svg render — small must not be injected; other channels/flows rely on it.
-    expect(patched.qrcode[3]).toEqual({ type: "svg" });
-    expect(patched.qrcode[3].small).toBeUndefined();
+    expect(patched.qrcode[0]).toEqual({ type: "svg" });
+    expect(patched.qrcode[0].small).toBeUndefined();
   });
 
   it("does NOT inject small when no type is given (defaults to non-terminal)", () => {
-    expect(patched.qrcode[4]).toEqual({});
+    expect(patched.qrcode[1]).toEqual({});
   });
 
   it("patches the same module object for require() and dynamic import()", () => {
@@ -178,6 +231,17 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
   it("also forces small:true on the qrcode-terminal generate() fallback", () => {
     expect(patched.qrcodeTerminal[0]).toEqual({ small: true });
     expect(patched.qrcodeTerminal[1]).toEqual({ small: true });
+  });
+
+  it("does not source-patch an unreviewed OpenClaw-looking renderer", () => {
+    const baselineRenderer = runProbe(OPENCLAW_QR_RENDERER_PROBE, { withPreload: false });
+    const patchedRenderer = runProbe(OPENCLAW_QR_RENDERER_PROBE, { withPreload: true });
+
+    expect(baselineRenderer.compact).toBe("compact-margin:1:size:2");
+    expect(baselineRenderer.qrcodeDataUrl).toEqual([]);
+    expect(patchedRenderer.compact).toBe("compact-margin:1:size:2");
+    expect(patchedRenderer.compact).not.toContain("data:image/png");
+    expect(patchedRenderer.qrcodeDataUrl).toEqual([]);
   });
 
   it("is idempotent when the preload is required twice", () => {
@@ -193,7 +257,8 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
       );
       expect(r.status).toBe(0);
       const twice = JSON.parse(r.stdout.trim());
-      expect(twice.qrcode[0]).toEqual({ type: "terminal", small: true });
+      expect(twice.qrcodeCreate).toEqual([{}, {}, {}]);
+      expect(twice.qrcode).toEqual([{ type: "svg" }, {}]);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -210,22 +275,39 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
 
 // Extract the sandbox-side `openclaw()` guard function from the single-quoted
 // heredoc so we can exercise the WhatsApp login branch without a live sandbox.
-function extractGuardFunction(src: string): string {
+function extractGuardFunction(src: string, trustedGatewayUrl: string): string {
   const begin = src.indexOf("# nemoclaw-configure-guard begin");
   const end = src.indexOf("# nemoclaw-configure-guard end");
   if (begin === -1 || end === -1 || end <= begin) {
     throw new Error("Expected nemoclaw-configure-guard markers in scripts/nemoclaw-start.sh");
   }
-  return src.slice(begin, end);
+  const guardSource = src.slice(begin, end);
+  const injectionStartMarker =
+    "GUARDENVEOF\n    # nemoclaw-trusted-gateway-literal-injection begin";
+  const injectionEndMarker =
+    "    # nemoclaw-trusted-gateway-literal-injection end\n    cat <<'GUARDENVEOF'\n";
+  const injectionStart = guardSource.indexOf(injectionStartMarker);
+  const injectionEnd = guardSource.indexOf(injectionEndMarker, injectionStart);
+  assert(
+    injectionStart !== -1 && injectionEnd !== -1,
+    "Expected the generated trusted gateway literal injection markers",
+  );
+  return `${guardSource.slice(0, injectionStart)}            _nemoclaw_whatsapp_trusted_url=${JSON.stringify(trustedGatewayUrl)}\n${guardSource.slice(injectionEnd + injectionEndMarker.length)}`;
 }
 
 describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const guard = extractGuardFunction(src);
 
   function runGuard(
     args: string[],
-    opts: { gatewayUrl?: string; preloadPresent?: boolean; fakeExit?: number },
+    opts: {
+      gatewayUrl?: string;
+      insecurePublicWs?: string;
+      privateGatewayUrl?: string;
+      insecurePrivateWs?: string;
+      preloadPresent?: boolean;
+      fakeExit?: number;
+    },
   ): { status: number; stdout: string; stderr: string; preloadPath: string } {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wa-guard-"));
     try {
@@ -239,6 +321,8 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
           "#!/usr/bin/env bash",
           'echo "FAKE_OPENCLAW_ARGS=$*"',
           'echo "FAKE_OPENCLAW_NODE_OPTIONS=${NODE_OPTIONS:-}"',
+          'echo "FAKE_OPENCLAW_GATEWAY_URL=${OPENCLAW_GATEWAY_URL:-unset}"',
+          'echo "FAKE_OPENCLAW_INSECURE_WS=${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-unset}"',
           `exit ${opts.fakeExit ?? 0}`,
         ].join("\n"),
         { mode: 0o755 },
@@ -251,7 +335,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
 
       // The guard body hardcodes literal /tmp paths (single-quoted heredoc);
       // redirect them to temp files for the test.
-      const guardBody = guard
+      const guardBody = extractGuardFunction(src, opts.privateGatewayUrl ?? "")
         .replaceAll("/tmp/nemoclaw-whatsapp-qr-compact.js", preloadPath)
         .replaceAll("/tmp/nemoclaw-messaging-connect-preloads.list", connectPreloadsPath);
 
@@ -264,6 +348,17 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       } else {
         wrapperLines.push("unset OPENCLAW_GATEWAY_URL");
       }
+      wrapperLines.push(
+        opts.insecurePublicWs !== undefined
+          ? `export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${JSON.stringify(opts.insecurePublicWs)}`
+          : "unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
+        opts.privateGatewayUrl !== undefined
+          ? `export NEMOCLAW_OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.privateGatewayUrl)}`
+          : "unset NEMOCLAW_OPENCLAW_GATEWAY_URL",
+        opts.insecurePrivateWs !== undefined
+          ? `export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${JSON.stringify(opts.insecurePrivateWs)}`
+          : "unset NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
+      );
       wrapperLines.push(
         guardBody,
         `openclaw ${args.map((a) => JSON.stringify(a)).join(" ")}`,
@@ -293,11 +388,11 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
   });
 
-  it("refuses to pair when OPENCLAW_GATEWAY_URL is missing", () => {
+  it("refuses to pair when no public or private gateway URL is available (#4504)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       preloadPresent: true,
     });
-    expect(r.stderr).toContain("OPENCLAW_GATEWAY_URL is not set");
+    expect(r.stderr).toContain("gateway URL is not set");
     expect(r.stdout).toContain("GUARD_EXIT=1");
     // Must not attempt the login when the gateway env is missing.
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
@@ -326,7 +421,43 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       preloadPresent: true,
     });
     expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
+    expect(r.stdout).toContain(`FAKE_OPENCLAW_GATEWAY_URL=${goodUrl}`);
     expect(r.stdout).toContain("GUARD_EXIT=0");
+  });
+
+  it("reinjects the NemoClaw-private gateway URL and private-WS flag for WhatsApp (#4504)", () => {
+    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
+      privateGatewayUrl: "ws://10.200.0.2:18790",
+      insecurePrivateWs: "1",
+      preloadPresent: true,
+    });
+    expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=ws://10.200.0.2:18790");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=1");
+    expect(r.stdout).toContain("GUARD_EXIT=0");
+  });
+
+  it("preserves an explicit public gateway override without borrowing the private opt-in (#4504)", () => {
+    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
+      gatewayUrl: "wss://explicit.example.test:443",
+      privateGatewayUrl: "ws://10.200.0.2:18790",
+      insecurePrivateWs: "1",
+      preloadPresent: true,
+    });
+    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=wss://explicit.example.test:443");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=unset");
+  });
+
+  it("preserves the insecure-WS marker explicitly coupled to a public override (#4504)", () => {
+    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
+      gatewayUrl: "ws://explicit.example.test:18790",
+      insecurePublicWs: "explicit-marker",
+      privateGatewayUrl: "ws://10.200.0.2:18790",
+      insecurePrivateWs: "1",
+      preloadPresent: true,
+    });
+    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=ws://explicit.example.test:18790");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=explicit-marker");
   });
 
   it("injects the compact-QR preload into NODE_OPTIONS for the login", () => {

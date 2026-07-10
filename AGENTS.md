@@ -52,6 +52,7 @@ Package-specific guides:
 | Run fast source tests | `npm run test:fast` |
 | Run integration tests | `npm run test:integration` |
 | Run package contracts | `npm run test:package` |
+| Run E2E support tests | `npx vitest run --project e2e-support` |
 | Run live E2E targets | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
 | Run repo-wide pre-commit and coverage checks | `npm run check` |
@@ -81,7 +82,8 @@ Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 3. **`installer-integration`** — installer tests that spawn real `install.sh` processes
 4. **`package-contract`** — `test/package-contract/**/*.test.ts` — the only non-live lane that imports compiled CLI/plugin artifacts
 5. **`plugin`** — `nemoclaw/src/**/*.test.ts` — plugin unit tests co-located with source
-6. **`e2e-support`** — fast tests for the E2E fixture/support layer
+6. **`e2e-support`** — fast tests for the E2E fixture/support layer; this project runs in the
+   aggregate checks for code-changing PRs and code-changing pushes to `main`
 7. **`e2e-live`** — opt-in live targets that mutate real external state
 8. **`e2e-branch-validation`** — opt-in validation on an ephemeral Brev instance
 
@@ -168,10 +170,11 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 ### Before Making Changes
 
 1. Read `CONTRIBUTING.md` for the full contributor guide
-2. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
-3. Run `npm run dev:doctor` to verify the contributor environment without changing it
-4. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
-5. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
+2. Apply its engineering posture to every coding task: surface material assumptions and outcome-changing ambiguity, make the smallest issue-scoped change, prove observable success criteria, and for QA-escaped defects address both the product root cause and the detection gap
+3. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
+4. Run `npm run dev:doctor` to verify the contributor environment without changing it
+5. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
+6. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
 
 ### Git and GitHub Access Failures
 

@@ -17,6 +17,7 @@ import {
 } from "./sandbox-prebuild";
 
 type OpenshellShellCommand = (args: string[]) => string;
+type OpenshellArgv = (args: string[]) => string[];
 
 // These non-secret scheduler controls are intentionally forwarded for bounded
 // live-test and operator tuning. Keep this as an exact allowlist: the host's
@@ -42,6 +43,7 @@ function appendOpenClawAutoPairRuntimeEnvArgs(
 
 export interface SandboxCreateLaunchInput {
   agent: AgentDefinition | null | undefined;
+  observabilityEnabled?: boolean;
   chatUiUrl: string;
   createArgs: readonly string[];
   sandboxName?: string;
@@ -51,11 +53,13 @@ export interface SandboxCreateLaunchInput {
   hermesDashboardState: HermesDashboardOnboardState;
   manageDashboard?: boolean;
   openshellShellCommand: OpenshellShellCommand;
+  openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
 }
 
 export interface SandboxCreateLaunch {
   createCommand: string;
+  createArgv: string[];
   effectiveDashboardPort: string;
   envArgs: string[];
   sandboxEnv: Record<string, string>;
@@ -117,6 +121,12 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     if (sandboxName) {
       envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
     }
+    envArgs.push(
+      formatEnvAssignment(
+        "NEMOCLAW_OBSERVABILITY",
+        input.observabilityEnabled === true ? "1" : "0",
+      ),
+    );
   }
 
   appendExtraPlaceholderKeysEnvArg(envArgs, input.extraPlaceholderKeys, formatEnvAssignment);
@@ -132,16 +142,15 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
   const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
-  const createCommand = `${input.openshellShellCommand([
-    "sandbox",
-    "create",
-    ...input.createArgs,
-    "--",
-    ...sandboxStartupCommand,
-  ])} 2>&1`;
+  const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
+  const createCommand = `${input.openshellShellCommand(openshellArgs)} 2>&1`;
+  const createArgv = input.openshellArgv
+    ? input.openshellArgv(openshellArgs)
+    : ["bash", "-lc", createCommand];
 
   return {
     createCommand,
+    createArgv,
     effectiveDashboardPort,
     envArgs,
     sandboxEnv,

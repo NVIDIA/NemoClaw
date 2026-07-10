@@ -302,7 +302,17 @@ def _proc_pid_namespace_inode(proc_pid_fd: int) -> int | None:
 
 
 def _cmdline_is_nemoclaw_start(raw: bytes) -> bool:
-    return any(argument in NEMOCLAW_START_ARGV for argument in raw.split(b"\0"))
+    normalized = raw.rstrip(b"\0")
+    arguments = tuple(normalized.split(b"\0")) if normalized else ()
+    # Docker appends CMD arguments after ENTRYPOINT. Authenticate the canonical
+    # startup script position while allowing those opaque trailing arguments.
+    direct = bool(arguments) and arguments[0] in NEMOCLAW_START_ARGV
+    bash = (
+        len(arguments) >= 2
+        and arguments[0] in {b"bash", b"/bin/bash", b"/usr/bin/bash"}
+        and arguments[1] in NEMOCLAW_START_ARGV
+    )
+    return direct or bash
 
 
 def _cmdline_is_openshell_supervisor(raw: bytes) -> bool:
@@ -635,6 +645,7 @@ def _pinned_process_matches_supervised_nonroot_start(
             and second_status[0] == expected_effective_uid
             and first_status[1][-1] == numeric_pid
             and second_status[1][-1] == numeric_pid
+            and first_cmdline == second_cmdline
             and _cmdline_is_nemoclaw_start(first_cmdline)
             and _cmdline_is_nemoclaw_start(second_cmdline)
             and namespace_matches
@@ -2653,7 +2664,7 @@ def seal_restart(
         try:
             _verify_strict_hash(hermes_dir, hash_file)
         except StrictHashMismatchError:
-            if purpose != "config-write" or expected_config_sha256 is None:
+            if purpose not in ("config-write", "shields-mutable") or expected_config_sha256 is None:
                 raise
             _reconcile_nonroot_startup_api_key_hash(
                 hermes_dir,
@@ -3441,8 +3452,23 @@ def begin_shields_transition(
             rollback_mode or "mutable",
         )
 
+    # A fresh managed non-root Hermes start mints exactly one API_SERVER_KEY and
+    # refreshes its sandbox-owned compatibility anchor, while the root-owned
+    # strict anchor deliberately remains unchanged. The first shields-down is
+    # the next root transaction and must admit that same narrowly reviewed
+    # reconciliation as write-config. Derive the expected config digest from
+    # the existing strict anchor so shields can never bless config drift.
+    strict_config_sha256, _strict_env_sha256, _strict_mcp_state = _parse_config_hash(
+        _read_hash_file(hash_file),
+        os.path.join(hermes_dir, "config.yaml"),
+        os.path.join(hermes_dir, ".env"),
+    )
     original_locked = seal_restart(
-        hermes_dir, hash_file, state_file, purpose="shields-mutable"
+        hermes_dir,
+        hash_file,
+        state_file,
+        purpose="shields-mutable",
+        expected_config_sha256=strict_config_sha256,
     )
     try:
         state_data = _load_restart_state(state_file)

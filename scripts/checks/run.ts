@@ -27,6 +27,11 @@ const CHECKS: readonly CheckCommand[] = [
     ],
   },
   {
+    name: "local-credential-helper-pin",
+    command: TSX,
+    args: ["scripts/checks/local-credential-helper-pin.ts"],
+  },
+  {
     name: "no-coverage-ignore",
     command: TSX,
     args: ["scripts/checks/no-coverage-ignore.ts"],
@@ -47,6 +52,11 @@ const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/no-test-dist-imports.ts"],
   },
   {
+    name: "test-create-require-budget",
+    command: TSX,
+    args: ["scripts/checks/test-create-require-budget.ts"],
+  },
+  {
     name: "vitest-project-overlap",
     command: TSX,
     args: ["scripts/checks/vitest-project-overlap.ts"],
@@ -55,6 +65,11 @@ const CHECKS: readonly CheckCommand[] = [
     name: "test-title-style",
     command: TSX,
     args: ["scripts/checks/test-title-style.ts"],
+  },
+  {
+    name: "no-unit-blocks-in-live-e2e",
+    command: TSX,
+    args: ["scripts/checks/no-unit-blocks-in-live-e2e.ts"],
   },
 ];
 

@@ -50,14 +50,36 @@
 #     redacts credential-shaped fields natively or `buildHermesConfig` stops
 #     emitting an inline `api_key` value.
 #
+# Source-of-truth note for the `_translate_resumed_oneshot` parser
+# differential risk (NVIDIA/NemoClaw#5254):
+#   - Invalid state: upstream Hermes currently accepts top-level resumed or
+#     continued one-shot flags but persists the turn in a new session instead
+#     of appending to the selected session; the wrapper therefore parses a
+#     small allowlist of Hermes argv forms so it can route only those affected
+#     invocations through Hermes' native `chat --query` append path.
+#   - Risk accepted: upstream Hermes flag parsing may diverge from this
+#     wrapper's allowlist. The wrapper fails closed to unchanged passthrough on
+#     ambiguity, so the safe fallback is preserving Hermes' native behavior,
+#     but that may lose the resume/continue append workaround until the
+#     allowlist is updated.
+#   - Mitigations: the Dockerfile performs build-time AST validation of the
+#     wrapper flag constants, probes the pinned `hermes --help` surfaces, and
+#     the wrapper suite covers routed forms plus fail-closed cases with 20+
+#     unit tests.
+#   - Tracking: keep monitoring upstream Hermes flag stability while this
+#     localized compatibility layer exists.
+#   - Removal condition: delete this translation when Hermes natively appends
+#     top-level resumed or continued one-shot turns to the selected session.
+#
 # Scope of the masker: structured key-labelled secret fields (api_key,
 # api_secret, access_token, auth_token, client_secret, secret_key, secret,
 # token, password, bearer, authorization, credential — including
 # hyphen/underscore/camelCase variants) in Python-dict, JSON, YAML key:value,
-# env-style key=value, and YAML block-scalar shapes; plus, as defence in
-# depth, every free-form `sk-`-prefixed token of length >= 8. Non-`sk-`
-# token families in free prose are not redacted — that is the upstream
-# Hermes CLI's responsibility.
+# env-style key=value, and YAML block-scalar shapes (`|`, `|-`, `|+`, `|2`,
+# `|2-`, `|2+`, `|-2`, and folded `>` equivalents); plus, as defence in depth,
+# every free-form `sk-`-prefixed token of length >= 8. Non-`sk-` token families
+# in free prose are not redacted — that is the upstream Hermes CLI's
+# responsibility.
 #
 # The same gateway runtime-env guard also runs in the nemoclaw-start
 # entrypoint (`agents/hermes/start.sh:validate_hermes_runtime_env_secret_boundary`)
@@ -68,13 +90,13 @@
 # bypass: every path that launches the gateway now passes through the same
 # single-source-of-truth validator before the port is bound.
 #
-# Only the `gateway` and `config show` subcommands are intercepted; all
-# other hermes subcommands (dashboard, --version, ...) pass straight
-# through unchanged.
+# Only a small set of top-level commands are intercepted; all other hermes
+# subcommands (dashboard, --version, ...) pass straight through unchanged.
 
 import os
 import subprocess
 import sys
+import tempfile
 
 _INSTALLED_REAL = "/usr/local/bin/hermes.real"
 _INSTALLED_GUARD = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
@@ -121,6 +143,19 @@ def _resolve_trusted_python3() -> str | None:
 
 
 _MASKER_STDERR_ALLOWED_PREFIX = "[SECURITY]"
+_MASKER_STDERR_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _read_masker_stderr(file_obj, stream_name: str) -> tuple[bytes, bool]:
+    file_obj.seek(0)
+    raw = file_obj.read(_MASKER_STDERR_MAX_BYTES + 1)
+    if len(raw) > _MASKER_STDERR_MAX_BYTES:
+        print(
+            f"[SECURITY] Refusing hermes config show: output masker stderr exceeded {_MASKER_STDERR_MAX_BYTES} bytes ({stream_name})",
+            file=sys.stderr,
+        )
+        return raw[:_MASKER_STDERR_MAX_BYTES], True
+    return raw, False
 
 
 def _forward_sanitised_masker_stderr(raw: bytes, fallback: str) -> None:
@@ -154,42 +189,68 @@ def _run_config_show(real_hermes: str, guard_path: str, argv: list[str]) -> int:
     # EOF when Hermes finishes writing. The masker itself buffers in
     # memory and only writes on success, so a mid-stream crash never
     # produces a partial secret on either stream. Each masker's own stderr
-    # is captured to a pipe so we can filter it before forwarding — a
+    # is captured to a temporary file so we can filter it before forwarding — a
     # raw `stderr=sys.stderr.fileno()` would leak Python tracebacks on an
-    # unhandled exception.
+    # unhandled exception, while a pipe could deadlock if a masker writes a
+    # large diagnostic before the parent drains it.
     masker_argv = [python3, "-I", guard_path, "mask-config-output"]
-    masker_stdout = subprocess.Popen(
-        masker_argv,
-        stdin=subprocess.PIPE,
-        stdout=sys.stdout.fileno(),
-        stderr=subprocess.PIPE,
-    )
-    masker_stderr = subprocess.Popen(
-        masker_argv,
-        stdin=subprocess.PIPE,
-        stdout=sys.stderr.fileno(),
-        stderr=subprocess.PIPE,
-    )
-    try:
-        proc = subprocess.Popen(
-            [real_hermes, *argv],
-            stdout=masker_stdout.stdin,
-            stderr=masker_stderr.stdin,
+    with (
+        tempfile.TemporaryFile() as stdout_masker_stderr_file,
+        tempfile.TemporaryFile() as stderr_masker_stderr_file,
+    ):
+        masker_stdout = subprocess.Popen(
+            masker_argv,
+            stdin=subprocess.PIPE,
+            stdout=sys.stdout.fileno(),
+            stderr=stdout_masker_stderr_file,
         )
-    finally:
-        if masker_stdout.stdin is not None:
-            masker_stdout.stdin.close()
-        if masker_stderr.stdin is not None:
-            masker_stderr.stdin.close()
-    proc.wait()
-    # Read each masker's captured stderr before wait() returns so the
-    # pipe drains and the masker is not blocked writing into a full buffer.
-    # communicate() cannot be used here because the stdin pipe was already
-    # closed for ownership transfer.
-    stdout_masker_stderr = masker_stdout.stderr.read() if masker_stdout.stderr else b""
-    stderr_masker_stderr = masker_stderr.stderr.read() if masker_stderr.stderr else b""
-    masker_stdout.wait()
-    masker_stderr.wait()
+        masker_stderr = subprocess.Popen(
+            masker_argv,
+            stdin=subprocess.PIPE,
+            stdout=sys.stderr.fileno(),
+            stderr=stderr_masker_stderr_file,
+        )
+        try:
+            proc = subprocess.Popen(
+                [real_hermes, *argv],
+                stdout=masker_stdout.stdin,
+                stderr=masker_stderr.stdin,
+            )
+        except OSError as exc:
+            if masker_stdout.stdin is not None:
+                masker_stdout.stdin.close()
+            if masker_stderr.stdin is not None:
+                masker_stderr.stdin.close()
+            for masker in (masker_stdout, masker_stderr):
+                try:
+                    masker.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    masker.terminate()
+                    masker.wait(timeout=5)
+            print(
+                "[SECURITY] Refusing hermes config show: failed to exec Hermes "
+                f"({exc.__class__.__name__})",
+                file=sys.stderr,
+            )
+            return 126
+        else:
+            if masker_stdout.stdin is not None:
+                masker_stdout.stdin.close()
+            if masker_stderr.stdin is not None:
+                masker_stderr.stdin.close()
+        proc.wait()
+        masker_stdout.wait()
+        masker_stderr.wait()
+        stdout_masker_stderr, stdout_masker_stderr_too_large = _read_masker_stderr(
+            stdout_masker_stderr_file,
+            "stdout",
+        )
+        stderr_masker_stderr, stderr_masker_stderr_too_large = _read_masker_stderr(
+            stderr_masker_stderr_file,
+            "stderr",
+        )
+    if stdout_masker_stderr_too_large or stderr_masker_stderr_too_large:
+        return 1
     if masker_stdout.returncode != 0:
         _forward_sanitised_masker_stderr(
             stdout_masker_stderr,
@@ -216,6 +277,169 @@ def _run_gateway_guard(guard_path: str) -> int:
     return subprocess.call([python3, "-I", guard_path, "runtime-env"])
 
 
+_VALUE_FLAGS = {
+    "-m": "--model",
+    "--model": "--model",
+    "--provider": "--provider",
+    "-t": "--toolsets",
+    "--toolsets": "--toolsets",
+    "-s": "--skills",
+    "--skills": "--skills",
+    "-r": "--resume",
+    "--resume": "--resume",
+}
+# Keep this allowlist aligned with the top-level flags accepted by the pinned
+# Hermes Agent CLI in agents/hermes/Dockerfile.base (HERMES_VERSION=v2026.6.19,
+# HERMES_SEMVER=0.17.0) and agents/hermes/manifest.yaml (expected_version
+# "0.17.0"). Unknown flags deliberately fail closed by passing the original argv
+# through to upstream Hermes.
+_BOOLEAN_FLAGS = {
+    "--worktree",
+    "-w",
+    "--accept-hooks",
+    "--yolo",
+    "--pass-session-id",
+    "--ignore-user-config",
+    "--ignore-rules",
+}
+
+
+def _split_flag_value(arg: str) -> tuple[str, str] | None:
+    if not arg.startswith("--") or "=" not in arg:
+        return None
+    name, value = arg.split("=", 1)
+    return name, value
+
+
+def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
+    """Route resumed oneshot invocations through Hermes' native chat resume path.
+
+    Upstream Hermes handles top-level `-z/--oneshot` before the normal
+    `--resume`/`--continue` chat shortcut. In affected versions the resumed
+    session is available as context, but the one-shot turn is persisted under a
+    newly generated session id. The `chat --query --quiet --resume ...` path is
+    the native non-interactive route that appends to the selected session, so
+    translate only the composed top-level form and leave plain one-shot
+    invocations untouched.
+
+    NemoClaw owns this installed wrapper, not the prebuilt Hermes Agent binary
+    inside the sandbox base image, so the wrapper is the smallest compatibility
+    boundary available here. NemoClaw #5254 is the local removal tracker; avoid
+    adding unofficial upstream repository links here per the repo's no external
+    project links rule. Delete this translation once the pinned Hermes runtime
+    natively appends top-level `--resume/-c` plus `-z/--oneshot` turns to the
+    selected session without creating a fresh session id. Until then, wrapper
+    argv tests cover the routed form and the fail-closed cases; live sandbox
+    validation verifies the persisted `sessions list/export` behavior.
+
+    Preserve approval-related user intent instead of inferring it here:
+    `--yolo` and `--accept-hooks` are forwarded only when the original argv
+    included those flags. The underlying Hermes one-shot policy can change
+    across releases, so this compatibility layer avoids broadening approvals.
+    """
+    oneshot_prompt: str | None = None
+    resume_args: list[str] = []
+    passthrough: list[str] = []
+    saw_resume = False
+    saw_continue = False
+    saw_oneshot = False
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+
+        if arg == "--":
+            return None
+
+        split = _split_flag_value(arg)
+        if split is not None:
+            name, value = split
+            if name == "--oneshot":
+                if saw_oneshot:
+                    return None
+                saw_oneshot = True
+                oneshot_prompt = value
+            elif name == "--continue":
+                if not value:
+                    return None
+                if saw_resume or saw_continue:
+                    return None
+                saw_continue = True
+                resume_args.extend(["--continue", value])
+            elif name in _VALUE_FLAGS:
+                canonical = _VALUE_FLAGS[name]
+                if canonical == "--resume":
+                    if not value:
+                        return None
+                    if saw_resume or saw_continue:
+                        return None
+                    saw_resume = True
+                    resume_args.extend([canonical, value])
+                else:
+                    passthrough.extend([canonical, value])
+            else:
+                return None
+            i += 1
+            continue
+
+        if arg in ("-z", "--oneshot"):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                return None
+            if saw_oneshot:
+                return None
+            saw_oneshot = True
+            oneshot_prompt = argv[i + 1]
+            i += 2
+            continue
+
+        if arg in _VALUE_FLAGS:
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                return None
+            canonical = _VALUE_FLAGS[arg]
+            value = argv[i + 1]
+            if not value:
+                return None
+            if canonical == "--resume":
+                if saw_resume or saw_continue:
+                    return None
+                saw_resume = True
+                resume_args.extend([canonical, value])
+            else:
+                passthrough.extend([canonical, value])
+            i += 2
+            continue
+
+        if arg in ("-c", "--continue"):
+            if saw_resume or saw_continue:
+                return None
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                return None
+            value = argv[i + 1]
+            if not value:
+                return None
+            saw_continue = True
+            resume_args.append("--continue")
+            resume_args.append(value)
+            i += 2
+            continue
+
+        if arg in _BOOLEAN_FLAGS:
+            passthrough.append(arg)
+            i += 1
+            continue
+
+        # A positional command means this is not the top-level one-shot form.
+        return None
+
+    if not oneshot_prompt or not (saw_resume or saw_continue):
+        return None
+
+    translated = ["chat", "--query", oneshot_prompt, "--quiet"]
+    translated.extend(resume_args)
+    translated.extend(passthrough)
+    return translated
+
+
 def main(argv: list[str]) -> int:
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
@@ -225,8 +449,20 @@ def main(argv: list[str]) -> int:
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
             return rc
-    os.execv(real_hermes, [real_hermes, *argv])
-    return 1
+    translated = _translate_resumed_oneshot(argv)
+    if translated is not None:
+        exec_argv = translated
+    else:
+        exec_argv = argv
+    try:
+        os.execv(real_hermes, [real_hermes, *exec_argv])
+    except OSError as exc:
+        print(
+            f"[SECURITY] Refusing to run hermes: failed to exec Hermes binary at {real_hermes}: {exc}",
+            file=sys.stderr,
+        )
+        return 126
+    return 126
 
 
 if __name__ == "__main__":

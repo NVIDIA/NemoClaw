@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { availableParallelism } from "node:os";
 import path from "node:path";
 
 import { defineConfig } from "vitest/config";
@@ -9,6 +10,8 @@ import {
   shouldRunBranchValidationE2E,
   shouldRunLiveE2E,
 } from "./test/e2e/fixtures/live-project-gate.ts";
+import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
+import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
@@ -16,7 +19,6 @@ const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === 
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2E = shouldRunLiveE2E();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
-const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
@@ -31,9 +33,21 @@ const typedSourceTransform = {
     include: /\.(?:[cm]?ts|[jt]sx)$/,
   },
 };
-const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
-  .filter(Boolean)
-  .join(" ");
+const sourceNodeOptions = sourceLoaderNodeOptions(process.env.NODE_OPTIONS);
+// Pin the file-creation umask of every non-live test worker to exactly 0o022 —
+// the conventional CI baseline — so Hermes/OpenClaw guard fixtures are created
+// with deterministic modes regardless of the developer's ambient umask (e.g. a
+// permissive 0002 on Ubuntu 24.04 would otherwise make them group-writable and
+// the guard would reject them). The live/credential-bearing E2E projects are
+// intentionally excluded below and keep their own stricter umask handling. See
+// test/helpers/normalize-fixture-umask.ts (#6448).
+const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
+const integrationProjectScheduling = resolveIntegrationProjectScheduling({
+  isCi,
+  npmLifecycleEvent: process.env.npm_lifecycle_event,
+  argv: process.argv.slice(2),
+  availableParallelism: availableParallelism(),
+});
 
 export default defineConfig({
   test: {
@@ -52,7 +66,7 @@ export default defineConfig({
           name: "cli",
           alias: canonicalOpenShellPolicyAlias,
           testTimeout: testTimeout(),
-          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
+          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**"],
         },
@@ -65,17 +79,12 @@ export default defineConfig({
           // Source-backed process fixtures can exceed the unit-test budget
           // when several coverage shards transpile and spawn them concurrently.
           testTimeout: testTimeout(15_000),
-          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
-          // Integration fixtures often spawn short Node programs. Keep those
-          // programs on the same source graph as their parent test process.
-          // The integration suite shells out heavily, and stacking multiple
-          // forks of the require-hook transpile cache on the 7 GiB ubuntu
-          // runner reliably exhausts physical RAM when coverage is on.
-          // Disable file parallelism for the integration project so the test
-          // files run serially against a single worker (vitest 4 dropped
-          // poolOptions.forks.singleFork; fileParallelism: false is the
-          // documented replacement).
-          fileParallelism: false,
+          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
+          // Integration fixtures often spawn short Node programs. Coverage
+          // stays serial because concurrent source-loader forks exhaust the
+          // 7 GiB CI runner. The canonical local full suite instead runs this
+          // project as a bounded four-worker phase after the other projects.
+          ...integrationProjectScheduling,
           env: { NODE_OPTIONS: sourceNodeOptions },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
@@ -98,6 +107,7 @@ export default defineConfig({
         test: {
           name: "installer-integration",
           alias: canonicalOpenShellPolicyAlias,
+          setupFiles: [fixtureUmaskSetup],
           include: [
             "test/install-express-prompt.test.ts",
             "test/install-build-dependency-preflight.test.ts",
@@ -114,6 +124,7 @@ export default defineConfig({
         test: {
           name: "package-contract",
           alias: canonicalOpenShellPolicyAlias,
+          setupFiles: [fixtureUmaskSetup],
           include: ["test/package-contract/**/*.test.ts"],
         },
       },
@@ -122,6 +133,7 @@ export default defineConfig({
         test: {
           name: "plugin",
           alias: canonicalOpenShellPolicyAlias,
+          setupFiles: [fixtureUmaskSetup],
           include: ["nemoclaw/src/**/*.test.ts"],
         },
       },
@@ -133,7 +145,7 @@ export default defineConfig({
           name: "e2e-support",
           alias: canonicalOpenShellPolicyAlias,
           testTimeout: testTimeout(),
-          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
+          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           include: ["test/e2e/support/**/*.test.ts"],
         },
       },
@@ -142,6 +154,17 @@ export default defineConfig({
         test: {
           name: "e2e-live",
           alias: canonicalOpenShellPolicyAlias,
+          // Register the typed-source require hook in the worker so live suites
+          // can import source modules that resolve siblings via a runtime
+          // `require("../module")` (e.g. inference/ollama-runtime-context.ts).
+          // Use setupFiles rather than NODE_OPTIONS so the hook stays in-process
+          // and never leaks `--require` into the real CLI subprocesses under
+          // test. Mirrors the `cli` project.
+          //
+          // Intentionally excludes the fixture-umask setup: live E2E has no
+          // guard-fixture suites and handles real credentials, so it must keep
+          // the caller's umask (and sets its own strict `umask 077` inline).
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
           // Live targets mutate host, Docker, gateway, and sandbox state. A
           // whole-test retry reuses that state and can hide the first failure

@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CLI_NAME } from "./cli/branding";
+import { noteOnboardResumeHintShown } from "./onboard/resume-hint";
 
 import { classifySandboxCreateFailure, planSandboxCreateRecovery } from "./validation";
 
@@ -100,6 +101,9 @@ export function printSandboxCreateRecoveryHints(
     createArgs?: readonly string[];
   } = {},
 ): void {
+  // Every branch below prints tailored `--resume` recovery guidance, so suppress
+  // the generic incomplete-exit backstop (#6003).
+  noteOnboardResumeHintShown();
   const failure = classifySandboxCreateFailure(output);
   if (failure.kind === "image_upload_container_missing") {
     const { arm64ImageRefWorkaround } = planSandboxCreateRecovery(failure, { platform, arch });

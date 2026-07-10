@@ -14,9 +14,11 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
-export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
+export { REPO_ROOT };
+
+export const CLI = CLI_ENTRYPOINT;
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-kimi-compat";
 validateSandboxName(SANDBOX_NAME);
 export const KIMI_MODEL = process.env.NEMOCLAW_KIMI_MODEL ?? "moonshotai/kimi-k2.6";
@@ -298,11 +300,11 @@ function completion(id: string, content: string): unknown {
 }
 
 function sendToolCall(res: http.ServerResponse, id: string, stream: boolean): void {
-  const toolCall = {
-    id: "call_kimi_exec",
+  const toolCalls = ["hostname", "date", "uptime"].map((command) => ({
+    id: `call_kimi_exec_${command}`,
     type: "function",
-    function: { name: "exec", arguments: JSON.stringify({ command: "hostname; date; uptime" }) },
-  };
+    function: { name: "exec", arguments: JSON.stringify({ command }) },
+  }));
   if (stream) {
     sendSse(res, [
       {
@@ -315,7 +317,14 @@ function sendToolCall(res: http.ServerResponse, id: string, stream: boolean): vo
         id,
         object: "chat.completion.chunk",
         model: KIMI_MODEL,
-        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, ...toolCall }] } }],
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: toolCalls.map((toolCall, index) => ({ index, ...toolCall })),
+            },
+          },
+        ],
       },
       {
         id,
@@ -333,7 +342,7 @@ function sendToolCall(res: http.ServerResponse, id: string, stream: boolean): vo
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content: null, tool_calls: [toolCall] },
+        message: { role: "assistant", content: null, tool_calls: toolCalls },
         finish_reason: "tool_calls",
       },
     ],

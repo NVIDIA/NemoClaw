@@ -83,6 +83,48 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     }
   });
 
+  it("reuses OpenRouter when its distinct provider name is registered as OpenAI-compatible (#5826)", () => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        selectedKey: "openrouter",
+        selectedProvider: "openrouter-api",
+        recoveredProvider: "openrouter-api",
+        expectedCredentialEnv: "OPENROUTER_API_KEY",
+        gatewayProvider: {
+          name: "openrouter-api",
+          type: "openai",
+          credentialKeys: ["OPENROUTER_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+        },
+        endpointIdentity: undefined,
+      }),
+    ).toMatchObject({
+      kind: "reuse-gateway-credential",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("rejects recovered OpenRouter responses routes because onboarding forces chat completions (#5826)", () => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        selectedKey: "openrouter",
+        selectedProvider: "openrouter-api",
+        recoveredProvider: "openrouter-api",
+        recoveredPreferredInferenceApi: "openai-responses",
+        expectedCredentialEnv: "OPENROUTER_API_KEY",
+        gatewayProvider: {
+          name: "openrouter-api",
+          type: "openai",
+          credentialKeys: ["OPENROUTER_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+        },
+        endpointIdentity: undefined,
+      }),
+    ).toMatchObject({ kind: "reject" });
+  });
+
   it.each([
     ["explicit selection", { recoveredFromSandbox: false }],
     ["provider mismatch", { recoveredProvider: "openai-api" }],
@@ -262,7 +304,28 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     });
   });
 
-  it("accepts the deliberate compatible-Anthropic completions recovery", () => {
+  it("accepts the coerced compatible-Anthropic completions recovery with the OpenAI-surface identity (#6294)", () => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        selectedKey: "anthropicCompatible",
+        selectedProvider: "compatible-anthropic-endpoint",
+        recoveredProvider: "compatible-anthropic-endpoint",
+        recoveredPreferredInferenceApi: "openai-completions",
+        expectedProviderType: "anthropic",
+        expectedCredentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        gatewayProvider: {
+          name: "compatible-anthropic-endpoint",
+          type: "openai",
+          credentialKeys: ["COMPATIBLE_ANTHROPIC_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+        },
+        endpointIdentity: { ...completeRecovery.endpointIdentity, flavor: "anthropic" },
+      }),
+    ).toMatchObject({ kind: "reuse-gateway-credential" });
+  });
+
+  it("rejects a stale Anthropic-surface identity for a coerced completions route so re-registration heals it (#6294)", () => {
     expect(
       assessRecoveredProviderCredentialReuse({
         ...completeRecovery,
@@ -279,6 +342,38 @@ describe("assessRecoveredProviderCredentialReuse", () => {
           configKeys: ["ANTHROPIC_BASE_URL"],
         },
         endpointIdentity: { ...completeRecovery.endpointIdentity, flavor: "anthropic" },
+      }),
+    ).toMatchObject({
+      kind: "reject",
+      reason:
+        "provider 'compatible-anthropic-endpoint' is still registered for the Anthropic " +
+        "Messages surface; export COMPATIBLE_ANTHROPIC_API_KEY so onboarding can " +
+        "re-register it for the OpenAI-compatible route",
+    });
+  });
+
+  it("keeps the legacy Bedrock completions recovery expectation on the Anthropic identity", () => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        selectedKey: "anthropicCompatible",
+        selectedProvider: "compatible-anthropic-endpoint",
+        recoveredProvider: "compatible-anthropic-endpoint",
+        recoveredPreferredInferenceApi: "openai-completions",
+        expectedProviderType: "anthropic",
+        expectedCredentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        gatewayProvider: {
+          name: "compatible-anthropic-endpoint",
+          type: "anthropic",
+          credentialKeys: ["COMPATIBLE_ANTHROPIC_API_KEY"],
+          configKeys: ["ANTHROPIC_BASE_URL"],
+        },
+        endpointIdentity: {
+          ...completeRecovery.endpointIdentity,
+          flavor: "anthropic",
+          selected: "https://bedrock-runtime.us-east-1.amazonaws.com",
+          recovered: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        },
       }),
     ).toMatchObject({ kind: "reuse-gateway-credential" });
   });

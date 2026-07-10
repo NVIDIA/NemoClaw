@@ -7,31 +7,30 @@
 // Without this gate, a destructive sandbox rebuild can run and fail late at
 // Dockerfile patching.
 //
-// policy-channel.ts loads several dependencies through CommonJS `require()`.
-// Load the source module and its dependencies through the shared source hook
-// so `vi.spyOn` observes one require cache without depending on a CLI build.
-
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireSource = createRequire(import.meta.url);
-const D = (p: string) => requireSource(`../../${p}`);
+import * as runtime from "../../adapters/openshell/runtime";
+import * as defs from "../../agent/defs";
+import * as store from "../../credentials/store";
+import * as policy from "../../policy";
+import * as registry from "../../state/registry";
+import { addSandboxChannel } from "./policy-channel";
+import { policyChannelDependencies } from "./policy-channel-dependencies";
 
-const registry = D("state/registry.js");
-const providers = D("onboard/providers.js");
-const runtime = D("adapters/openshell/runtime.js");
-const defs = D("agent/defs.js");
-const rebuild = D("actions/sandbox/rebuild.js");
-const policy = D("policy/index.js");
-const store = D("credentials/store.js");
+function agentFixture(name: string): defs.AgentDefinition {
+  return { name } as defs.AgentDefinition;
+}
 
-const { addSandboxChannel } = D("actions/sandbox/policy-channel.js") as {
-  addSandboxChannel: (
-    name: string,
-    options?: { channel?: string; dryRun?: boolean; force?: boolean },
-  ) => Promise<void>;
-};
+function successfulOpenshellResult(): ReturnType<typeof runtime.runOpenshell> {
+  return {
+    pid: 0,
+    output: [null, "", ""],
+    stdout: "",
+    stderr: "",
+    status: 0,
+    signal: null,
+  };
+}
 
 let exitMock: MockInstance;
 let errSpy: MockInstance;
@@ -64,10 +63,8 @@ beforeEach(() => {
 
   getSandboxMock = vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "da-test" });
   updateSandboxMock = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-  upsertMock = vi.spyOn(providers, "upsertMessagingProviders").mockImplementation(() => undefined);
-  runOpenshellMock = vi
-    .spyOn(runtime, "runOpenshell")
-    .mockReturnValue({ status: 0, stdout: "", stderr: "" });
+  upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
+  runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
   loadPresetForSandboxMock = vi
     .spyOn(policy, "loadPresetForSandbox")
     .mockReturnValue("network_policies:\n  stub: {}\n");
@@ -78,7 +75,7 @@ beforeEach(() => {
   getCredentialMock = vi.spyOn(store, "getCredential").mockReturnValue(null);
   saveCredentialMock = vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("");
-  rebuildMock = vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
+  rebuildMock = vi.spyOn(policyChannelDependencies, "rebuildSandbox").mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -87,9 +84,7 @@ afterEach(() => {
 
 describe("addSandboxChannel agent gate", () => {
   it("rejects an unknown agent before any preset, mutation, provider, credential, or rebuild call", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "custom-agent",
-    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("custom-agent"));
 
     let caught: unknown;
     try {
@@ -118,9 +113,7 @@ describe("addSandboxChannel agent gate", () => {
   });
 
   it("rejects an agent that is not listed by any channel manifest before any mutation", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "future-agent",
-    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("future-agent"));
 
     let caught: unknown;
     try {
@@ -138,9 +131,7 @@ describe("addSandboxChannel agent gate", () => {
   });
 
   it("does not gate messaging-capable agents (openclaw flows past the agent check)", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "openclaw",
-    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("openclaw"));
 
     let caught: unknown;
     try {

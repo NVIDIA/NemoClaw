@@ -52,7 +52,7 @@ jobs:
   review:
     name: PR review advisor (${{ matrix.advisor.label }})
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -79,16 +79,14 @@ jobs:
       # normal dependency review so a compromised upstream release cannot run
       # automatically in this secret-bearing job.
       PI_SDK_VERSION: "0.74.0"
+      # Keep the grep tool deterministic for the pinned Ubuntu runner. A newer
+      # package must be reviewed and updated explicitly instead of floating.
+      RIPGREP_VERSION: "14.1.0-1"
       PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
       PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
-      # This job is advisory and must not be configured as a required status
-      # check. It waits for required checks before model analysis so summaries
-      # are based on settled CI instead of an immediate pending snapshot.
-      PR_REVIEW_ADVISOR_WAIT_FOR_REQUIRED_CHECKS: "1"
-      PR_REVIEW_ADVISOR_WAIT_TIMEOUT_MS: "900000"
-      PR_REVIEW_ADVISOR_WAIT_POLL_MS: "30000"
-      PR_REVIEW_ADVISOR_WAIT_ADDITIONAL_CONTEXTS: "E2E recommendation"
-      PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS: "checks,commit-lint,dco-check,check-hash,changes"
+      # CI status is captured as point-in-time GitHub context. Historical
+      # PR_REVIEW_ADVISOR_WAIT_* variables were never consumed by the advisor,
+      # so do not claim that this job waits for required checks to settle.
       PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
       PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
       PR_REVIEW_ADVISOR_COMMENT_MARKER: ${{ matrix.advisor.comment_marker }}
@@ -139,6 +137,18 @@ jobs:
           TARGET_PR: ${{ inputs.target_pr }}
           TARGET_BASE: ${{ inputs.target_base }}
         run: |
+          if [[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::target_repo must match owner/repo with GitHub-safe characters"
+            exit 1
+          fi
+          if [[ ! "$TARGET_PR" =~ ^[0-9]+$ ]]; then
+            echo "::error::target_pr must be decimal digits"
+            exit 1
+          fi
+          if [[ -z "$TARGET_BASE" || "$TARGET_BASE" == -* || "$TARGET_BASE" == /* || "$TARGET_BASE" == *..* || "$TARGET_BASE" == *:* || "$TARGET_BASE" =~ [[:space:]] || ! "$TARGET_BASE" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::target_base must be a safe branch/ref token"
+            exit 1
+          fi
           TARGET_DIR=/tmp/pr-review-advisor-target
           rm -rf "$TARGET_DIR"
           mkdir -p "$TARGET_DIR"
@@ -152,6 +162,11 @@ jobs:
 
       - name: Install Pi SDK
         run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "ripgrep=${RIPGREP_VERSION}"
+          fi
+          rg --version
           PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
           npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-05-14T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
           rm -rf "$ADVISOR_DIR/node_modules"
@@ -265,3 +280,13 @@ jobs:
           name: ${{ matrix.advisor.artifact_name }}
           path: artifacts/${{ matrix.advisor.artifact_dir }}/
           if-no-files-found: warn
+
+      - name: Verify advisor analysis outcome
+        if: always()
+        env:
+          ANALYSIS_OUTCOME: ${{ steps.analysis.outcome }}
+        run: |
+          if [ "$ANALYSIS_OUTCOME" != "success" ]; then
+            echo "::error::PR review advisor analysis did not complete: outcome=$ANALYSIS_OUTCOME"
+            exit 1
+          fi

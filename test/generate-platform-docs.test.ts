@@ -8,6 +8,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  buildPublishedRouteIndex,
+  resolvePageLinksByText,
+} from "../scripts/check-docs-published-routes.ts";
 import { resolveAgentNameAlias } from "../src/lib/agent/defs";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-platform-docs.py");
@@ -428,9 +432,15 @@ print(block)
     }
   });
 
-  it("Option 3 docs expose reasoning mode for scripted compatible endpoints (#3279)", () => {
+  it("self-hosted setup docs expose reasoning mode for scripted compatible endpoints (#3279)", () => {
     const body = readFileSync(
-      path.join(import.meta.dirname, "..", "docs", "inference", "inference-options.mdx"),
+      path.join(
+        import.meta.dirname,
+        "..",
+        "docs",
+        "inference",
+        "local-compatible-inference-setup.mdx",
+      ),
       "utf-8",
     );
     expect(body).toContain("| `NEMOCLAW_REASONING` |");
@@ -458,5 +468,38 @@ print(block)
         "Reference section in docs/index.yml does not register reference/platform-support.mdx",
       ).toMatch(/path:\s*reference\/platform-support\.mdx/);
     }
+  });
+
+  it("Deep Agents Platform Support quickstart link resolves through the published quickstart slug", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const matrix = JSON.parse(
+      readFileSync(path.join(repoRoot, "ci", "platform-matrix.json"), "utf-8"),
+    );
+    const deepAgentsRow = (matrix.agents ?? []).find(
+      (row: { name: string }) => row.name === "LangChain Deep Agents Code",
+    );
+    expect(deepAgentsRow?.notes).toContain(
+      "[the quickstart](/user-guide/deepagents/get-started/quickstart)",
+    );
+
+    const platformSupport = readFileSync(
+      path.join(repoRoot, "docs", "reference", "platform-support.mdx"),
+      "utf-8",
+    );
+    expect(platformSupport).toContain(
+      "[the quickstart](/user-guide/deepagents/get-started/quickstart)",
+    );
+
+    const links = resolvePageLinksByText(
+      "reference/platform-support.mdx",
+      "the quickstart",
+      buildPublishedRouteIndex(),
+    );
+    expect(links).toContainEqual({
+      target: "/user-guide/deepagents/get-started/quickstart",
+      fromRoute: "/user-guide/deepagents/reference/platform-support",
+      resolved: "/user-guide/deepagents/get-started/quickstart",
+      published: true,
+    });
   });
 });

@@ -14,7 +14,7 @@ export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-
 
 // See docs/security/openshell-0.0.72-compatibility-review.mdx for the source-of-truth review.
 export const DOCKER_DRIVER_GATEWAY_CONFIG_NAME = "openshell-gateway.toml";
-export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 3600;
+export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 0;
 
 function tomlString(value: string): string {
   return JSON.stringify(value);

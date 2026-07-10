@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { HERMES_TOOL_GATEWAY_PRESET_NAMES } from "./hermes-managed-tools";
+import { DCODE_ONLY_POLICY_PRESETS, isDcodeAgent } from "./observability-policy-presets";
 import { isOpenclawAgent, OPENCLAW_ONLY_POLICY_PRESETS } from "./openclaw-otel-policy-presets";
 
 export { OPENCLAW_ONLY_POLICY_PRESETS };
@@ -16,6 +17,7 @@ export function setupPolicyPresetAppliesToAgent(
 ): boolean {
   const name = presetName.trim().toLowerCase();
   if (HERMES_TOOL_GATEWAY_PRESET_NAMES.has(name)) return isHermesAgent(agent);
+  if (DCODE_ONLY_POLICY_PRESETS.has(name)) return isDcodeAgent(agent);
   if (OPENCLAW_ONLY_POLICY_PRESETS.has(name)) return isOpenclawAgent(agent);
   return true;
 }

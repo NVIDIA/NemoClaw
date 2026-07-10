@@ -7,9 +7,9 @@
  * dragging the rest of the local-inference helpers along.
  */
 
-const { runCapture } = require("../runner");
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { OLLAMA_PORT } from "../core/ports";
+import { runCapture } from "../runner";
 
 export type OllamaVersionRunCapture = (
   cmd: readonly string[],

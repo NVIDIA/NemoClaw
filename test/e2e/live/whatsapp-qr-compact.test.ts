@@ -9,16 +9,16 @@ import path from "node:path";
 import { expect, test } from "vitest";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // reporter-workflow coverage guard for #4522 installs the exact OpenClaw /
 // @openclaw/whatsapp versions bundled by Dockerfile.base and measures the real
 // upstream terminal QR renderer with and without the NemoClaw compact preload.
 // It intentionally does not require a WhatsApp account, phone scan, sandbox,
-// Docker, or NVIDIA_INFERENCE_API_KEY: the the contract is the renderer boundary.
+// Docker, or NVIDIA_INFERENCE_API_KEY: the contract is the renderer boundary.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
-const PRELOAD = path.join(
+const PRELOAD_SOURCE = path.join(
   REPO_ROOT,
   "src",
   "lib",
@@ -29,12 +29,61 @@ const PRELOAD = path.join(
   "whatsapp-qr-compact.ts",
 );
 const INSTALL_TIMEOUT_MS = 180_000;
+const TSC_TIMEOUT_MS = 60_000;
 const PROBE_TIMEOUT_MS = 30_000;
 const COMPACT_MAX_ROWS = Number.parseInt(process.env.WHATSAPP_QR_COMPACT_MAX_ROWS ?? "40", 10);
 const OVERSIZE_MIN_ROWS = Number.parseInt(process.env.WHATSAPP_QR_OVERSIZE_MIN_ROWS ?? "50", 10);
 
 const PROBE_SOURCE = `import { renderQrTerminal } from "openclaw/plugin-sdk/media-runtime";
 const strip = (s) => s.replace(/\\x1b\\[[0-9;]*m/g, "");
+const chars = (s) => [...s];
+const leadingSpaces = (line) => {
+  let count = 0;
+  for (const ch of chars(line)) {
+    if (ch !== " ") return count;
+    count += 1;
+  }
+  return count;
+};
+const trailingSpaces = (line) => {
+  let count = 0;
+  for (const ch of chars(line).reverse()) {
+    if (ch !== " ") return count;
+    count += 1;
+  }
+  return count;
+};
+const profileTerminalQr = (raw) => {
+  const out = strip(raw);
+  const lines = out.split("\\n");
+  const width = Math.max(...lines.map((l) => chars(l).length));
+  const padded = lines.map((l) => chars(l).join("").padEnd(width, " "));
+  const allWhite = (line) => chars(line).every((ch) => ch === " ");
+  const contentLines = padded.filter((line) => !allWhite(line));
+  const topRows = padded.findIndex((line) => !allWhite(line));
+  let bottomRows = 0;
+  for (let i = padded.length - 1; i >= 0; i -= 1) {
+    if (!allWhite(padded[i])) break;
+    bottomRows += 1;
+  }
+  const quietEdges = contentLines.length === 0 ? {
+    leftModules: null,
+    rightModules: null,
+    topModules: null,
+    bottomModules: null,
+  } : {
+    leftModules: Math.min(...contentLines.map(leadingSpaces)),
+    rightModules: Math.min(...contentLines.map(trailingSpaces)),
+    topModules: topRows * 2,
+    bottomModules: bottomRows * 2,
+  };
+  return {
+    rows: lines.length,
+    cols: width,
+    ...quietEdges,
+    dataImageFallback: out.includes("data:image/png"),
+  };
+};
 // ref,noiseKey,signedIdentityKey,advSecret — the four comma-joined fields a
 // baileys WhatsApp Web QR carries; long and dense like the real payload.
 const qr =
@@ -42,11 +91,14 @@ const qr =
   "Xy90".repeat(11) + "=," + "Qr5T".repeat(9) + "=";
 // Call exactly as the plugin does at session login: renderQrTerminal(qr), with
 // no { small }, so this exercises the real default rather than a contrived opt-in.
-const out = strip(await renderQrTerminal(qr));
-const lines = out.split("\\n");
+const loginDefault = profileTerminalQr(await renderQrTerminal(qr));
+// Also exercise OpenClaw's explicit compact branch. The QR renderer owns this
+// { small: true } path directly, so this is where the four-edge quiet-zone
+// source rewrite must prove itself against the reviewed bundle.
+const explicitSmall = profileTerminalQr(await renderQrTerminal(qr, { small: true }));
 process.stdout.write(JSON.stringify({
-  rows: lines.length,
-  cols: Math.max(...lines.map((l) => [...l].length)),
+  loginDefault,
+  explicitSmall,
 }));
 `;
 
@@ -56,9 +108,14 @@ type CommandResult = {
   stderr: string;
 };
 
-type Dimensions = {
+type QrProfile = {
   rows: number;
   cols: number;
+  leftModules: number | null;
+  rightModules: number | null;
+  topModules: number | null;
+  bottomModules: number | null;
+  dataImageFallback: boolean;
 };
 
 function runCommand(
@@ -131,22 +188,79 @@ async function fileContains(root: string, needle: string): Promise<boolean> {
   return false;
 }
 
-function parseDimensions(stdout: string, label: string): Dimensions {
-  const parsed = JSON.parse(stdout.trim()) as Partial<Dimensions>;
-  expect(typeof parsed.rows, `${label} rows must be numeric`).toBe("number");
-  expect(typeof parsed.cols, `${label} cols must be numeric`).toBe("number");
-  return parsed as Dimensions;
+type QrProbeResult = {
+  loginDefault: QrProfile;
+  explicitSmall: QrProfile;
+};
+
+function expectProfile(value: Partial<QrProfile> | undefined, label: string): QrProfile {
+  expect(typeof value?.rows, `${label} rows must be numeric`).toBe("number");
+  expect(typeof value?.cols, `${label} cols must be numeric`).toBe("number");
+  expect(typeof value?.dataImageFallback, `${label} fallback marker must be boolean`).toBe(
+    "boolean",
+  );
+  return value as QrProfile;
+}
+
+function expectCompactProfile(value: Partial<QrProfile> | undefined, label: string): QrProfile {
+  expect(typeof value?.leftModules, `${label} left quiet zone must be numeric`).toBe("number");
+  expect(typeof value?.rightModules, `${label} right quiet zone must be numeric`).toBe("number");
+  expect(typeof value?.topModules, `${label} top quiet zone must be numeric`).toBe("number");
+  expect(typeof value?.bottomModules, `${label} bottom quiet zone must be numeric`).toBe("number");
+  return expectProfile(value, label);
+}
+
+function parseProbeResult(stdout: string, label: string): QrProbeResult {
+  const parsed = JSON.parse(stdout.trim()) as Partial<QrProbeResult>;
+  return {
+    loginDefault: expectProfile(parsed.loginDefault, `${label} loginDefault`),
+    explicitSmall: expectCompactProfile(parsed.explicitSmall, `${label} explicitSmall`),
+  };
+}
+
+function parseCompactProbeResult(stdout: string, label: string): QrProbeResult {
+  const parsed = JSON.parse(stdout.trim()) as Partial<QrProbeResult>;
+  return {
+    loginDefault: expectCompactProfile(parsed.loginDefault, `${label} loginDefault`),
+    explicitSmall: expectCompactProfile(parsed.explicitSmall, `${label} explicitSmall`),
+  };
+}
+
+async function compileProductionPreload(workdir: string): Promise<string> {
+  const outDir = path.join(workdir, "compiled-runtime-preloads");
+  const compile = await runCommand(
+    path.join(REPO_ROOT, "node_modules", ".bin", "tsc"),
+    ["-p", path.join(REPO_ROOT, "tsconfig.runtime-preloads.json"), "--outDir", outDir],
+    { cwd: REPO_ROOT, timeoutMs: TSC_TIMEOUT_MS },
+  );
+  expect(compile.status, `runtime preload compile failed\n${compile.stderr}`).toBe(0);
+  const preload = path.join(
+    outDir,
+    "lib",
+    "messaging",
+    "channels",
+    "whatsapp",
+    "runtime",
+    "whatsapp-qr-compact.js",
+  );
+  expect(await pathExists(preload), `compiled compact-QR preload missing: ${preload}`).toBe(true);
+  return preload;
 }
 
 test(
   "WhatsApp pairing QR renders compact with the NemoClaw preload",
-  testTimeoutOptions(INSTALL_TIMEOUT_MS + PROBE_TIMEOUT_MS * 2),
+  testTimeoutOptions(INSTALL_TIMEOUT_MS + TSC_TIMEOUT_MS + PROBE_TIMEOUT_MS * 2),
   async () => {
-    expect(await pathExists(PRELOAD), `compact-QR preload missing: ${PRELOAD}`).toBe(true);
+    expect(
+      await pathExists(PRELOAD_SOURCE),
+      `compact-QR preload source missing: ${PRELOAD_SOURCE}`,
+    ).toBe(true);
     const openclawVersion = await readBundledOpenClawVersion();
 
     const workdir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-wa-qr-e2e-"));
     try {
+      const preload = await compileProductionPreload(workdir);
+
       await fs.writeFile(
         path.join(workdir, "package.json"),
         `${JSON.stringify({ name: "wa-qr-e2e", version: "1.0.0", private: true })}\n`,
@@ -178,24 +292,36 @@ test(
         timeoutMs: PROBE_TIMEOUT_MS,
       });
       expect(baseline.status, `baseline probe failed\n${baseline.stderr}`).toBe(0);
-      const baselineDimensions = parseDimensions(baseline.stdout, "baseline");
+      const baselineProbe = parseProbeResult(baseline.stdout, "baseline");
       expect(
-        baselineDimensions.rows,
-        `baseline QR should reproduce the oversized form (${baselineDimensions.rows} rows)`,
+        baselineProbe.loginDefault.rows,
+        `baseline QR should reproduce the oversized form (${baselineProbe.loginDefault.rows} rows)`,
       ).toBeGreaterThanOrEqual(OVERSIZE_MIN_ROWS);
+      expect(baselineProbe.explicitSmall.leftModules).toBeLessThan(4);
+      expect(baselineProbe.explicitSmall.topModules).toBeLessThan(4);
 
       const patched = await runCommand("node", ["probe.mjs"], {
         cwd: workdir,
-        env: { NODE_OPTIONS: `--require ${PRELOAD}` },
+        env: { NODE_OPTIONS: `--require ${preload}` },
         timeoutMs: PROBE_TIMEOUT_MS,
       });
       expect(patched.status, `patched probe failed\n${patched.stderr}`).toBe(0);
-      const patchedDimensions = parseDimensions(patched.stdout, "patched");
+      const patchedProbe = parseCompactProbeResult(patched.stdout, "patched");
       expect(
-        patchedDimensions.rows,
-        `compact QR should fit the scan frame (${patchedDimensions.rows} rows)`,
+        patchedProbe.loginDefault.rows,
+        `compact QR should fit the scan frame (${patchedProbe.loginDefault.rows} rows)`,
       ).toBeLessThanOrEqual(COMPACT_MAX_ROWS);
-      expect(patchedDimensions.rows).toBeLessThan(baselineDimensions.rows);
+      expect(patchedProbe.loginDefault.rows).toBeLessThan(baselineProbe.loginDefault.rows);
+      expect(patchedProbe.loginDefault.leftModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.loginDefault.rightModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.loginDefault.topModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.loginDefault.bottomModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.loginDefault.dataImageFallback).toBe(false);
+      expect(patchedProbe.explicitSmall.leftModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.explicitSmall.rightModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.explicitSmall.topModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.explicitSmall.bottomModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.explicitSmall.dataImageFallback).toBe(false);
     } finally {
       await fs.rm(workdir, { recursive: true, force: true });
     }

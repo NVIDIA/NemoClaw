@@ -3,9 +3,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { describe, it } from "vitest";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import {
   type SandboxClient,
   trustedSandboxShellScript,
@@ -13,14 +13,19 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import {
+  agentSectionContainsToken,
+  isAgentVerificationFailClosed,
+  isExternalProviderValidationFailure,
+  shouldSkipExternalAgentVerificationFailure,
+  VERIFY_PHRASE,
+} from "../support/skill-agent-classifiers.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
-// Keep this as a direct live test: the the contract is skill fixture
+// Keep this as a direct live test: the contract is skill fixture
 // injection into a real OpenClaw sandbox plus an agent turn that must read
 // hands off to this live target.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const ADD_SKILL_SCRIPT = path.join(
   REPO_ROOT,
   "test",
@@ -42,7 +47,6 @@ const VERIFY_SKILL_SCRIPT = path.join(
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-skill-agent";
 validateSandboxName(SANDBOX_NAME);
 const SKILL_ID = "skill-smoke-fixture";
-const VERIFY_PHRASE = "SKILL_SMOKE_VERIFY_K9X2";
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const AGENT_VERIFY_TIMEOUT_MS = 4 * 60_000;
 const MAX_ATTEMPTS = Number.parseInt(process.env.E2E_SKILL_AGENT_MAX_ATTEMPTS ?? "3", 10);
@@ -51,60 +55,8 @@ const RETRY_SLEEP_MS =
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-function resultText(result: { stdout: string; stderr: string }): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isExternalAgentVerificationFlake(text: string): boolean {
-  // Only provider/model/transport timeout signatures are skippable, and only
-  // after the fixture is proven present. OpenClaw tool/runtime errors must fail
-  // this migration guard because the contract is that the real agent can read
-  // SKILL.md and return the token. This tolerance can be narrowed once the live
-  // provider/agent turn is consistently non-429/non-timeout in scheduled runs.
-  return /LLM idle timeout|request timed out|fetch timeout|model did not produce a response|ssh\/agent exit 124|exit 124|HTTP 429|\b429\b|rate[- ]?limit|quota|temporarily unavailable/i.test(
-    text,
-  );
-}
-
-function isAgentVerificationFailClosed(text: string): boolean {
-  // Preserve the existing helper's fail-closed ordering: a non-zero helper
-  // result that reports tool/security/runtime failure must not be turned into
-  // success just because the agent transcript also echoed the token.
-  return /SsrFBlockedError|Blocked hostname|Blocked: resolves to|transport error|provider error|ECONNREFUSED|EAI_AGAIN|gateway unavailable/i.test(
-    text,
-  );
-}
-
-function shouldSkipExternalAgentVerificationFailure(
-  text: string,
-  fixturePresent: boolean,
-): boolean {
-  return (
-    fixturePresent && !isAgentVerificationFailClosed(text) && isExternalAgentVerificationFlake(text)
-  );
-}
-
-function isExternalProviderValidationFailure(text: string): boolean {
-  // Onboarding can fail before sandbox creation when the external NVIDIA
-  // endpoint validation is rate-limited or unavailable. Treat only those
-  // live-service states as inconclusive; repo-local onboarding errors still
-  // fail. This can be narrowed when endpoint validation stops producing
-  // intermittent 429/timeout failures in scheduled live runs.
-  return (
-    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
-    /HTTP 429|rate limit|quota|temporarily unavailable|timed out|timeout/i.test(text)
-  );
-}
-
-function agentSectionContainsToken(agentOutput: string): boolean {
-  const match = agentOutput.match(/--- agent stdout\/stderr[\s\S]*?--- end ---/);
-  if (!match) return false;
-  const collapsed = match[0].replace(/[\n\r`"']/g, "").toLowerCase();
-  return collapsed.includes(VERIFY_PHRASE.toLowerCase());
 }
 
 function buildVerifySkillFixtureScript(): string {
@@ -150,49 +102,7 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-describe("skill-agent live test local classifiers", () => {
-  it("does not treat helper fail-closed output as a skippable provider flake", () => {
-    const output = `--- agent stdout/stderr\nSsrFBlockedError\n${VERIFY_PHRASE}\n--- end ---`;
-
-    expect(isAgentVerificationFailClosed(output)).toBe(true);
-    expect(shouldSkipExternalAgentVerificationFailure(output, true)).toBe(false);
-  });
-
-  it("skips only timeout-like agent verification failures after fixture presence is proven", () => {
-    const timeoutOutput = `--- agent stdout/stderr\nLLM idle timeout\n--- end ---`;
-
-    expect(shouldSkipExternalAgentVerificationFailure(timeoutOutput, false)).toBe(false);
-    expect(shouldSkipExternalAgentVerificationFailure(timeoutOutput, true)).toBe(true);
-    expect(shouldSkipExternalAgentVerificationFailure("require is not defined", true)).toBe(false);
-    expect(shouldSkipExternalAgentVerificationFailure("HTTP 429 rate limit", true)).toBe(true);
-    expect(
-      shouldSkipExternalAgentVerificationFailure("SsrFBlockedError plus request timed out", true),
-    ).toBe(false);
-  });
-
-  it("skips only NVIDIA endpoint validation outages during onboarding", () => {
-    expect(
-      isExternalProviderValidationFailure(
-        "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429",
-      ),
-    ).toBe(true);
-    expect(isExternalProviderValidationFailure("local docker preflight timed out")).toBe(false);
-    expect(
-      isExternalProviderValidationFailure("NVIDIA Endpoints endpoint validation failed."),
-    ).toBe(false);
-  });
-
-  it("matches the token only inside the delimited agent section", () => {
-    expect(agentSectionContainsToken(`helper echoed ${VERIFY_PHRASE}`)).toBe(false);
-    expect(
-      agentSectionContainsToken(`--- agent stdout/stderr\n\`${VERIFY_PHRASE}\`\n--- end ---`),
-    ).toBe(true);
-  });
-});
-
-const runSkillAgentTest = shouldRunLiveE2E() ? test : test.skip;
-
-runSkillAgentTest(
+test(
   "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     expect(
@@ -222,9 +132,8 @@ runSkillAgentTest(
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "skill-agent",
-      runner: "vitest",
       boundary: "direct-cli-onboard-sandbox-skill-and-agent-turn",
       contract: [
         "Docker is available before onboarding",
@@ -310,7 +219,7 @@ runSkillAgentTest(
     );
     const onboardText = resultText(onboard);
     if (onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText)) {
-      await artifacts.writeJson("target-result.json", {
+      await artifacts.target.complete({
         id: "skill-agent",
         status: "skipped",
         reason: "external-provider-validation-unavailable-before-sandbox-skill-check",
@@ -376,7 +285,7 @@ runSkillAgentTest(
     if (!agentOk) {
       const fixturePresent = await verifySkillFixturePresent(sandbox, SANDBOX_NAME);
       if (shouldSkipExternalAgentVerificationFailure(lastAgentOutput, fixturePresent)) {
-        await artifacts.writeJson("target-result.json", {
+        await artifacts.target.complete({
           id: "skill-agent",
           status: "skipped",
           reason: "external-agent-verification-flake-after-fixture-present",
@@ -393,7 +302,7 @@ runSkillAgentTest(
       `Agent did not return ${VERIFY_PHRASE}; last exit ${lastExitCode}\n${lastAgentOutput.slice(-12_000)}`,
     ).toBe(true);
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "skill-agent",
       status: "passed",
       assertions: {

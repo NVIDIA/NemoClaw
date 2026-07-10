@@ -56,6 +56,12 @@ export type ModelValidationResult = ModelValidationSuccess | ModelValidationFail
 export interface SandboxCreateIntent {
   readonly recreate: boolean;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
+  readonly observabilityEnabled: boolean;
+  /** Present only when the operator explicitly selected observability on or off. */
+  readonly observabilityRequestedExplicitly?: true;
+  readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
+  /** Internal authoritative rebuild tier used before replacement registration completes. */
+  readonly policyTier?: string | null;
 }
 
 export type OnboardOptions = {
@@ -72,6 +78,8 @@ export type OnboardOptions = {
   preparedDcodeRebuild?: import("./prepared-dcode-rebuild").PreparedDcodeRebuildHandoff;
   /** Internal authoritative registry route captured before rebuild deletion. */
   rebuildRegistryInferenceRoute?: import("./rebuild-route-handoff").RebuildRouteHandoff | null;
+  /** Internal one-shot authority to upsert a provider observed missing during rebuild preflight. */
+  rebuildProviderReconfigure?: import("./rebuild-route-handoff").RebuildProviderReconfigureHandoff;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
   resume?: boolean;
@@ -83,6 +91,12 @@ export type OnboardOptions = {
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;
+  observabilityEnabled?: boolean | null;
+  /** Internal provenance for an authoritative observability value. */
+  observabilityRequestedExplicitly?: boolean;
+  dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode | null;
+  /** Internal authoritative rebuild tier; never exposed as an onboard CLI option. */
+  policyTier?: string | null;
   controlUiPort?: number | null;
   gpu?: boolean;
   noGpu?: boolean;

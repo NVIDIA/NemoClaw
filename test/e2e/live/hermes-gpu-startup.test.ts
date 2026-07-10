@@ -8,17 +8,17 @@ import {
   type HostCliClient,
   resultText,
   type SandboxClient,
+  trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertHermesGpuStartupProof,
   HERMES_GPU_EXTRA_PLACEHOLDER_KEYS,
 } from "./hermes-gpu-startup-proof.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const GATEWAY_CLEANUP_MODULE = path.join(REPO_ROOT, "dist/lib/actions/sandbox/destroy-gateway.js");
 // Clean runners do not have OpenShell until install.sh runs. Tool absence is
 // accepted here only because the bind probe below and the later no-reuse log
@@ -171,145 +171,141 @@ done`;
   );
 }
 
-test.skipIf(!shouldRunLiveE2E())(
-  "hermes-gpu-startup: selected OpenShell GPU route reaches stable Ready state",
-  { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox }) => {
-    await artifacts.writeJson("target.json", {
-      id: "hermes-gpu-startup",
-      runner: "vitest",
-      boundary: "install.sh --non-interactive --fresh + Hermes GPU-supervised startup",
-      sandboxName: SANDBOX_NAME,
-      inference: "hermetic fake OpenAI-compatible endpoint",
-      gpuRoute: GPU_ROUTE,
-    });
+test("hermes-gpu-startup: selected OpenShell GPU route reaches stable Ready state", {
+  timeout: LIVE_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, sandbox }) => {
+  await artifacts.target.declare({
+    id: "hermes-gpu-startup",
+    boundary: "install.sh --non-interactive --fresh + Hermes GPU-supervised startup",
+    sandboxName: SANDBOX_NAME,
+    inference: "hermetic fake OpenAI-compatible endpoint",
+    gpuRoute: GPU_ROUTE,
+  });
 
-    await cleanupHermes(host, sandbox, "pre-cleanup");
+  await cleanupHermes(host, sandbox, "pre-cleanup");
 
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "phase-1-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(dockerInfo.exitCode, resultText(dockerInfo)).toBe(0);
+  const dockerInfo = await host.command("docker", ["info"], {
+    artifactName: "phase-1-docker-info",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(dockerInfo.exitCode, resultText(dockerInfo)).toBe(0);
 
-    const hostAddressProbe = await host.command(
-      "bash",
-      [
-        "-lc",
-        [
-          'ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk \'{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}\')"',
-          'test -n "$ip_addr" || ip_addr="$(hostname -I 2>/dev/null | awk \'{print $1}\')"',
-          'test -n "$ip_addr"',
-          'printf "%s\\n" "$ip_addr"',
-        ].join("\n"),
-      ],
-      {
-        artifactName: "phase-1-sandbox-reachable-host-address",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(hostAddressProbe.exitCode, resultText(hostAddressProbe)).toBe(0);
-    const hostAddress = hostAddressProbe.stdout.trim().split(/\s+/)[0];
-    expect(hostAddress).toBeTruthy();
+  const hostAddress = "host.openshell.internal";
 
-    const fake = await startFakeOpenAiCompatibleServer({
-      apiKey: FAKE_API_KEY,
-      forbiddenMarkers: [EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
-      host: "0.0.0.0",
-      model: FAKE_MODEL,
-      publicHost: hostAddress,
-      requireAuth: true,
-    });
-    cleanup.add("close fake OpenAI-compatible endpoint", async () => {
-      await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
-      await fake.close();
-    });
-    cleanup.add(`destroy Hermes sandbox ${SANDBOX_NAME}`, async () => {
-      await cleanupHermes(host, sandbox, "cleanup");
-    });
-    await artifacts.writeJson("fake-openai-compatible.json", {
-      baseUrl: fake.baseUrl,
-      model: FAKE_MODEL,
-      publicHost: hostAddress,
-    });
+  const fake = await startFakeOpenAiCompatibleServer({
+    apiKey: FAKE_API_KEY,
+    forbiddenMarkers: [EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
+    host: "0.0.0.0",
+    model: FAKE_MODEL,
+    publicHost: hostAddress,
+    requireAuth: true,
+  });
+  cleanup.add("close fake OpenAI-compatible endpoint", async () => {
+    await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
+    await fake.close();
+  });
+  cleanup.add(`destroy Hermes sandbox ${SANDBOX_NAME}`, async () => {
+    await cleanupHermes(host, sandbox, "cleanup");
+  });
+  await artifacts.writeJson("fake-openai-compatible.json", {
+    baseUrl: fake.baseUrl,
+    model: FAKE_MODEL,
+    publicHost: hostAddress,
+  });
 
-    const env = commandEnv({
-      COMPATIBLE_API_KEY: FAKE_API_KEY,
-      NEMOCLAW_COMPAT_MODEL: FAKE_MODEL,
-      NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
-      NEMOCLAW_MODEL: FAKE_MODEL,
-      NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(","),
-      NEMOCLAW_POLICY_MODE: "suggested",
-      NEMOCLAW_PREFERRED_API: "openai-completions",
-      NEMOCLAW_PROVIDER: "custom",
-      [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[0]]: EXTRA_PLACEHOLDER_TOKEN_A,
-      [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[1]]: EXTRA_PLACEHOLDER_TOKEN_B,
-    });
-    const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
-      artifactName: "phase-2-install-hermes-gpu-startup",
-      cwd: REPO_ROOT,
-      env,
-      redactionValues: [FAKE_API_KEY, EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
-      timeoutMs: 60 * 60_000,
-    });
-    const preRollbackDiagnosticsDir =
-      resultText(install).match(/Pre-rollback diagnostics saved:\s*(\S+)/)?.[1] ?? "";
-    await (install.exitCode !== 0
-      ? captureFailedGpuContainer(host, preRollbackDiagnosticsDir)
-      : Promise.resolve());
-    expect(install.exitCode, resultText(install)).toBe(0);
+  const env = commandEnv({
+    COMPATIBLE_API_KEY: FAKE_API_KEY,
+    NEMOCLAW_COMPAT_MODEL: FAKE_MODEL,
+    NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
+    NEMOCLAW_MODEL: FAKE_MODEL,
+    NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(","),
+    NEMOCLAW_POLICY_MODE: "suggested",
+    NEMOCLAW_PREFERRED_API: "openai-completions",
+    NEMOCLAW_PROVIDER: "custom",
+    [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[0]]: EXTRA_PLACEHOLDER_TOKEN_A,
+    [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[1]]: EXTRA_PLACEHOLDER_TOKEN_B,
+  });
+  const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
+    artifactName: "phase-2-install-hermes-gpu-startup",
+    cwd: REPO_ROOT,
+    env,
+    redactionValues: [FAKE_API_KEY, EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
+    timeoutMs: 60 * 60_000,
+  });
+  const preRollbackDiagnosticsDir =
+    resultText(install).match(/Pre-rollback diagnostics saved:\s*(\S+)/)?.[1] ?? "";
+  await (install.exitCode !== 0
+    ? captureFailedGpuContainer(host, preRollbackDiagnosticsDir)
+    : Promise.resolve());
+  expect(install.exitCode, resultText(install)).toBe(0);
 
-    const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
-      artifactName: "phase-3-nemoclaw-status",
+  const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
+    artifactName: "phase-3-nemoclaw-status",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(status.exitCode, resultText(status)).toBe(0);
+
+  await assertHermesGpuStartupProof({
+    env: commandEnv(),
+    gpuRoute: GPU_ROUTE,
+    host,
+    install,
+    sandbox,
+    sandboxName: SANDBOX_NAME,
+    status,
+  });
+
+  const inference = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
+        {
+          model: FAKE_MODEL,
+          messages: [{ role: "user", content: "reply with OK" }],
+          max_tokens: 8,
+        },
+      )}'`,
+    ),
+    {
+      artifactName: "phase-5-authenticated-inference-post",
       env: commandEnv(),
-      timeoutMs: 60_000,
-    });
-    expect(status.exitCode, resultText(status)).toBe(0);
+      timeoutMs: 90_000,
+    },
+  );
+  expect(inference.exitCode, resultText(inference)).toBe(0);
 
-    await assertHermesGpuStartupProof({
-      env: commandEnv(),
-      gpuRoute: GPU_ROUTE,
-      host,
-      install,
-      sandbox,
-      sandboxName: SANDBOX_NAME,
-      status,
-    });
+  const fakeRequests = fake.requests();
+  const inferencePosts = fakeRequests.filter(
+    (request) =>
+      request.method === "POST" &&
+      ["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"].includes(
+        request.path,
+      ),
+  );
+  expect(
+    inferencePosts.length,
+    `expected authenticated fake inference POST, got ${JSON.stringify(fakeRequests)}`,
+  ).toBeGreaterThan(0);
+  expect(inferencePosts.filter((request) => request.auth !== "ok")).toEqual([]);
+  expect(inferencePosts.filter((request) => request.authorizationSent !== true)).toEqual([]);
+  expect(inferencePosts.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0)).toEqual([]);
+  expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
+  expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
 
-    const fakeRequests = fake.requests();
-    const inferencePosts = fakeRequests.filter(
-      (request) =>
-        request.method === "POST" &&
-        ["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"].includes(
-          request.path,
-        ),
-    );
-    expect(
-      inferencePosts.length,
-      `expected authenticated fake inference POST, got ${JSON.stringify(fakeRequests)}`,
-    ).toBeGreaterThan(0);
-    expect(inferencePosts.filter((request) => request.auth !== "ok")).toEqual([]);
-    expect(inferencePosts.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0)).toEqual(
-      [],
-    );
-    expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
-    expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
-
-    await artifacts.writeJson("target-result.json", {
-      id: "hermes-gpu-startup",
-      assertions: {
-        selectedGpuRouteVerified: true,
-        openshellReady: true,
-        sandboxCudaVerified: true,
-        extraPlaceholderCommandRoundTripValid: true,
-        stableSingleContainer: true,
-        startupConfigHashesValid: true,
-        supervisorTopologyValid: true,
-        authenticatedInferenceRequestVerified: true,
-        placeholderTokensAbsentFromInference: true,
-      },
-    });
-  },
-);
+  await artifacts.target.complete({
+    id: "hermes-gpu-startup",
+    assertions: {
+      selectedGpuRouteVerified: true,
+      openshellReady: true,
+      sandboxCudaVerified: true,
+      extraPlaceholderCommandRoundTripValid: true,
+      stableSingleContainer: true,
+      startupConfigHashesValid: true,
+      supervisorTopologyValid: true,
+      authenticatedInferenceRequestVerified: true,
+      placeholderTokensAbsentFromInference: true,
+    },
+  });
+});

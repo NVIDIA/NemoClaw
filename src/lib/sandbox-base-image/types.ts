@@ -26,6 +26,7 @@ export type SandboxBaseImageResolutionMetadata = {
   ref: string;
   digest: string | null;
   source: SandboxBaseImageResolutionSource;
+  pinnedRemoteRef?: string;
   imageId: string;
   os: string;
   architecture: string;
@@ -37,6 +38,7 @@ export type SandboxBaseImageResolutionMetadata = {
 export type ResolveBaseImageOptions = {
   imageName: string;
   dockerfilePath: string;
+  inputPaths?: string[];
   localTag: string;
   envVar?: string;
   label?: string;
@@ -56,6 +58,7 @@ export type SandboxBaseImageResolution = {
   ref: string;
   digest: string | null;
   source: SandboxBaseImageResolutionSource;
+  pinnedRemoteRef?: string;
   glibcVersion: string | null;
   metadata?: SandboxBaseImageResolutionMetadata;
 };
@@ -74,6 +77,7 @@ export type BaseImageResolutionValidation =
       ok: false;
       reason:
         | "key_mismatch"
+        | "pinned_ref_mismatch"
         | "requirements_changed"
         | "abi_incompatible"
         | "local_image_changed"

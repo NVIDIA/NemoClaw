@@ -10,20 +10,18 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
 const SANDBOX_A = process.env.NEMOCLAW_CGP_SANDBOX_A ?? "e2e-cgp-a";
 const SANDBOX_B = process.env.NEMOCLAW_CGP_SANDBOX_B ?? "e2e-cgp-b";
 const GATEWAY_PORT_A = process.env.NEMOCLAW_E2E_GATEWAY_PORT_A ?? "8080";
@@ -33,7 +31,6 @@ const PHASE_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_PHASE_TIMEOUT_MS ?? 1_2
 const PROBE_ATTEMPTS = Number(process.env.NEMOCLAW_E2E_PROBE_ATTEMPTS ?? 12);
 const PROBE_DELAY_MS = Number(process.env.NEMOCLAW_E2E_PROBE_DELAY_SECONDS ?? 5) * 1_000;
 const TEST_TIMEOUT_MS = 90 * 60_000;
-const liveTest = shouldRunLiveE2E() ? test : test.skip;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 validateSandboxName(SANDBOX_A);
@@ -41,10 +38,6 @@ validateSandboxName(SANDBOX_B);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function resultText(result: { stdout: string; stderr: string }): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -146,26 +139,35 @@ async function waitForSandboxReady(
   gatewayName: string,
   artifactPrefix: string,
 ): Promise<string> {
-  let lastPhase = "missing";
-  let lastOutput = "";
-  for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt += 1) {
-    const result = await sandbox.openshell(["sandbox", "list", "-g", gatewayName], {
-      artifactName: `${artifactPrefix}-attempt-${attempt}`,
-      env: openshellEnvForGateway(gatewayName),
-      timeoutMs: 30_000,
+  try {
+    const result = await pollUntil({
+      artifactPrefix,
+      attempts: PROBE_ATTEMPTS,
+      delayMs: PROBE_DELAY_MS,
+      probe: async (_attempt, artifactName) => {
+        const probe = await sandbox.openshell(["sandbox", "list", "-g", gatewayName], {
+          artifactName,
+          env: openshellEnvForGateway(gatewayName),
+          timeoutMs: 30_000,
+        });
+        const output = resultText(probe);
+        return { output, phase: sandboxPhaseFromList(output, sandboxName) ?? "missing" };
+      },
+      accept: ({ phase }) => phase === "Ready" || phase === "Running",
+      terminal: ({ phase }) =>
+        phase === "Error" || phase === "Failed" || phase === "CrashLoopBackOff"
+          ? `${sandboxName} reached terminal phase '${phase}' on ${gatewayName}`
+          : undefined,
     });
-    lastOutput = resultText(result);
-    const phase = sandboxPhaseFromList(lastOutput, sandboxName);
-    if (phase) lastPhase = phase;
-    if (phase === "Ready" || phase === "Running") return phase;
-    if (phase === "Error" || phase === "Failed" || phase === "CrashLoopBackOff") {
-      throw new Error(`${sandboxName} reached terminal phase '${phase}' on ${gatewayName}`);
-    }
-    if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
+    return result.value.phase;
+  } catch (error) {
+    if (!(error instanceof PollingError)) throw error;
+    if (error.reason === "terminal") throw error;
+    const last = error.lastAttempt?.value;
+    throw new Error(
+      `${sandboxName} did not reach Ready/Running on ${gatewayName}; last phase '${last?.phase ?? "missing"}'\n${last?.output ?? ""}`,
+    );
   }
-  throw new Error(
-    `${sandboxName} did not reach Ready/Running on ${gatewayName}; last phase '${lastPhase}'\n${lastOutput}`,
-  );
 }
 
 async function expectPortListening(
@@ -267,150 +269,136 @@ async function bestEffortCleanup(
   }
 }
 
-liveTest(
-  "concurrent gateway ports: onboards two sandboxes on isolated gateways and dashboards",
-  { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, skip }) => {
-    expect(
-      fs.existsSync(CLI_DIST_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
+test("concurrent gateway ports: onboards two sandboxes on isolated gateways and dashboards", {
+  timeout: TEST_TIMEOUT_MS,
+}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  expect(
+    fs.existsSync(CLI_DIST_ENTRYPOINT),
+    "run `npm run build:cli` before live repo CLI targets",
+  ).toBe(true);
 
-    await prerequisiteOrSkip(host, skip, "docker", ["info"], "prereq-docker-info");
-    await prerequisiteOrSkip(
-      host,
-      skip,
-      "bash",
-      ["-lc", "command -v openshell"],
-      "prereq-openshell",
-    );
-    await prerequisiteOrSkip(
-      host,
-      skip,
-      process.execPath,
-      [CLI_ENTRYPOINT, "--version"],
-      "prereq-nemoclaw-version",
-    );
+  await prerequisiteOrSkip(host, skip, "docker", ["info"], "prereq-docker-info");
+  await prerequisiteOrSkip(host, skip, "bash", ["-lc", "command -v openshell"], "prereq-openshell");
+  await prerequisiteOrSkip(
+    host,
+    skip,
+    process.execPath,
+    [CLI_ENTRYPOINT, "--version"],
+    "prereq-nemoclaw-version",
+  );
 
-    const gatewayA = gatewayNameForPort(GATEWAY_PORT_A);
-    const gatewayB = gatewayNameForPort(GATEWAY_PORT_B);
-    const fake = await startFakeOpenAiCompatibleServer({
-      port: Number(process.env.NEMOCLAW_E2E_FAKE_PORT ?? 0),
-    });
-    await artifacts.writeJson("target.json", {
-      id: "concurrent-gateway-ports",
-      runner: "vitest",
-      boundary: "direct-cli-docker-openshell-multiple-gateways-dashboard-forwards",
-      contract: [
-        "sandbox A onboards on the default NemoClaw gateway and dashboard port",
-        "sandbox B onboards with NEMOCLAW_GATEWAY_PORT on a non-default gateway",
-        "both sandboxes, gateways, and dashboard forwards coexist without port collision",
-        "destroying sandbox B leaves sandbox A healthy on the default gateway",
-      ],
-      gatewayA,
-      gatewayB,
-      fakeBaseUrl: fake.baseUrl,
-    });
-    cleanup.add("close fake OpenAI-compatible endpoint", async () => {
-      await artifacts.writeJson("fake-openai-requests.json", fake.requests());
-      await fake.close();
-    });
-    cleanup.add("remove concurrent gateway sandboxes and gateways", async () => {
-      await bestEffortCleanup(host, sandbox, gatewayA, gatewayB);
-    });
-
+  const gatewayA = gatewayNameForPort(GATEWAY_PORT_A);
+  const gatewayB = gatewayNameForPort(GATEWAY_PORT_B);
+  const fake = await startFakeOpenAiCompatibleServer({
+    port: Number(process.env.NEMOCLAW_E2E_FAKE_PORT ?? 0),
+  });
+  await artifacts.target.declare({
+    id: "concurrent-gateway-ports",
+    boundary: "direct-cli-docker-openshell-multiple-gateways-dashboard-forwards",
+    contract: [
+      "sandbox A onboards on the default NemoClaw gateway and dashboard port",
+      "sandbox B onboards with NEMOCLAW_GATEWAY_PORT on a non-default gateway",
+      "both sandboxes, gateways, and dashboard forwards coexist without port collision",
+      "destroying sandbox B leaves sandbox A healthy on the default gateway",
+    ],
+    gatewayA,
+    gatewayB,
+    fakeBaseUrl: fake.baseUrl,
+  });
+  cleanup.add("close fake OpenAI-compatible endpoint", async () => {
+    await artifacts.writeJson("fake-openai-requests.json", fake.requests());
+    await fake.close();
+  });
+  cleanup.add("remove concurrent gateway sandboxes and gateways", async () => {
     await bestEffortCleanup(host, sandbox, gatewayA, gatewayB);
+  });
 
-    const onboardA = await runOnboard(
-      host,
-      SANDBOX_A,
-      GATEWAY_PORT_A,
-      fake.baseUrl,
-      "phase-1-onboard-sandbox-a",
-    );
-    expect(onboardA.exitCode, resultText(onboardA)).toBe(0);
-    const phaseA = await waitForSandboxReady(
-      sandbox,
-      SANDBOX_A,
-      gatewayA,
-      "phase-1-sandbox-a-ready",
-    );
-    expect(["Ready", "Running"]).toContain(phaseA);
+  await bestEffortCleanup(host, sandbox, gatewayA, gatewayB);
 
-    const listAfterA = await command(host, ["list"], {
-      artifactName: "phase-1-nemoclaw-list-after-a",
-      timeoutMs: 60_000,
-    });
-    expect(listAfterA.exitCode, resultText(listAfterA)).toBe(0);
-    const dashboardA = dashboardPortFromList(listAfterA.stdout, SANDBOX_A);
-    expect(dashboardA, listAfterA.stdout).toBe(DASHBOARD_PORT_A);
-    await expectPortListening(host, GATEWAY_PORT_A, "phase-1-gateway-port-a-listening");
+  const onboardA = await runOnboard(
+    host,
+    SANDBOX_A,
+    GATEWAY_PORT_A,
+    fake.baseUrl,
+    "phase-1-onboard-sandbox-a",
+  );
+  expect(onboardA.exitCode, resultText(onboardA)).toBe(0);
+  const phaseA = await waitForSandboxReady(sandbox, SANDBOX_A, gatewayA, "phase-1-sandbox-a-ready");
+  expect(["Ready", "Running"]).toContain(phaseA);
 
-    const onboardB = await runOnboard(
-      host,
-      SANDBOX_B,
-      GATEWAY_PORT_B,
-      fake.baseUrl,
-      "phase-2-onboard-sandbox-b",
-    );
-    expect(onboardB.exitCode, resultText(onboardB)).toBe(0);
+  const listAfterA = await command(host, ["list"], {
+    artifactName: "phase-1-nemoclaw-list-after-a",
+    timeoutMs: 60_000,
+  });
+  expect(listAfterA.exitCode, resultText(listAfterA)).toBe(0);
+  const dashboardA = dashboardPortFromList(listAfterA.stdout, SANDBOX_A);
+  expect(dashboardA, listAfterA.stdout).toBe(DASHBOARD_PORT_A);
+  await expectPortListening(host, GATEWAY_PORT_A, "phase-1-gateway-port-a-listening");
 
-    const phaseAAfterB = await waitForSandboxReady(
-      sandbox,
-      SANDBOX_A,
-      gatewayA,
-      "phase-3-sandbox-a-still-ready",
-    );
-    const phaseBAfterB = await waitForSandboxReady(
-      sandbox,
-      SANDBOX_B,
-      gatewayB,
-      "phase-3-sandbox-b-ready",
-    );
-    expect(["Ready", "Running"]).toContain(phaseAAfterB);
-    expect(["Ready", "Running"]).toContain(phaseBAfterB);
-    await expectPortListening(host, GATEWAY_PORT_A, "phase-3-gateway-port-a-still-listening");
-    await expectPortListening(host, GATEWAY_PORT_B, "phase-3-gateway-port-b-listening");
+  const onboardB = await runOnboard(
+    host,
+    SANDBOX_B,
+    GATEWAY_PORT_B,
+    fake.baseUrl,
+    "phase-2-onboard-sandbox-b",
+  );
+  expect(onboardB.exitCode, resultText(onboardB)).toBe(0);
 
-    const listBoth = await command(host, ["list"], {
-      artifactName: "phase-3-nemoclaw-list-both-sandboxes",
-      timeoutMs: 60_000,
-    });
-    expect(listBoth.exitCode, resultText(listBoth)).toBe(0);
-    expect(outputIncludesSandbox(listBoth.stdout, SANDBOX_A), listBoth.stdout).toBe(true);
-    expect(outputIncludesSandbox(listBoth.stdout, SANDBOX_B), listBoth.stdout).toBe(true);
-    const dashboardAAfterB = dashboardPortFromList(listBoth.stdout, SANDBOX_A);
-    const dashboardB = dashboardPortFromList(listBoth.stdout, SANDBOX_B);
-    expect(dashboardAAfterB, listBoth.stdout).toBe(dashboardA);
-    expect(dashboardB, listBoth.stdout).toBeTruthy();
-    expect(dashboardB).not.toBe(dashboardA);
+  const phaseAAfterB = await waitForSandboxReady(
+    sandbox,
+    SANDBOX_A,
+    gatewayA,
+    "phase-3-sandbox-a-still-ready",
+  );
+  const phaseBAfterB = await waitForSandboxReady(
+    sandbox,
+    SANDBOX_B,
+    gatewayB,
+    "phase-3-sandbox-b-ready",
+  );
+  expect(["Ready", "Running"]).toContain(phaseAAfterB);
+  expect(["Ready", "Running"]).toContain(phaseBAfterB);
+  await expectPortListening(host, GATEWAY_PORT_A, "phase-3-gateway-port-a-still-listening");
+  await expectPortListening(host, GATEWAY_PORT_B, "phase-3-gateway-port-b-listening");
 
-    const destroyB = await command(host, [SANDBOX_B, "destroy", "--yes"], {
-      artifactName: "phase-4-destroy-sandbox-b",
-      env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
-      timeoutMs: 5 * 60_000,
-    });
-    expect(destroyB.exitCode, resultText(destroyB)).toBe(0);
+  const listBoth = await command(host, ["list"], {
+    artifactName: "phase-3-nemoclaw-list-both-sandboxes",
+    timeoutMs: 60_000,
+  });
+  expect(listBoth.exitCode, resultText(listBoth)).toBe(0);
+  expect(outputIncludesSandbox(listBoth.stdout, SANDBOX_A), listBoth.stdout).toBe(true);
+  expect(outputIncludesSandbox(listBoth.stdout, SANDBOX_B), listBoth.stdout).toBe(true);
+  const dashboardAAfterB = dashboardPortFromList(listBoth.stdout, SANDBOX_A);
+  const dashboardB = dashboardPortFromList(listBoth.stdout, SANDBOX_B);
+  expect(dashboardAAfterB, listBoth.stdout).toBe(dashboardA);
+  expect(dashboardB, listBoth.stdout).toBeTruthy();
+  expect(dashboardB).not.toBe(dashboardA);
 
-    const phaseAAfterDestroyB = await waitForSandboxReady(
-      sandbox,
-      SANDBOX_A,
-      gatewayA,
-      "phase-4-sandbox-a-still-ready-after-b-destroy",
-    );
-    expect(["Ready", "Running"]).toContain(phaseAAfterDestroyB);
-    await expectPortListening(host, GATEWAY_PORT_A, "phase-4-gateway-port-a-still-listening");
+  const destroyB = await command(host, [SANDBOX_B, "destroy", "--yes"], {
+    artifactName: "phase-4-destroy-sandbox-b",
+    env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
+    timeoutMs: 5 * 60_000,
+  });
+  expect(destroyB.exitCode, resultText(destroyB)).toBe(0);
 
-    await artifacts.writeJson("target-result.json", {
-      id: "concurrent-gateway-ports",
-      assertions: {
-        sandboxAOnboarded: onboardA.exitCode === 0,
-        sandboxBOnboarded: onboardB.exitCode === 0,
-        sandboxAPreserved: ["Ready", "Running"].includes(phaseAAfterB),
-        sandboxBReady: ["Ready", "Running"].includes(phaseBAfterB),
-        dashboardPortsDistinct: Boolean(dashboardA && dashboardB && dashboardA !== dashboardB),
-        sandboxAPreservedAfterDestroyB: ["Ready", "Running"].includes(phaseAAfterDestroyB),
-      },
-    });
-  },
-);
+  const phaseAAfterDestroyB = await waitForSandboxReady(
+    sandbox,
+    SANDBOX_A,
+    gatewayA,
+    "phase-4-sandbox-a-still-ready-after-b-destroy",
+  );
+  expect(["Ready", "Running"]).toContain(phaseAAfterDestroyB);
+  await expectPortListening(host, GATEWAY_PORT_A, "phase-4-gateway-port-a-still-listening");
+
+  await artifacts.target.complete({
+    id: "concurrent-gateway-ports",
+    assertions: {
+      sandboxAOnboarded: onboardA.exitCode === 0,
+      sandboxBOnboarded: onboardB.exitCode === 0,
+      sandboxAPreserved: ["Ready", "Running"].includes(phaseAAfterB),
+      sandboxBReady: ["Ready", "Running"].includes(phaseBAfterB),
+      dashboardPortsDistinct: Boolean(dashboardA && dashboardB && dashboardA !== dashboardB),
+      sandboxAPreservedAfterDestroyB: ["Ready", "Running"].includes(phaseAAfterDestroyB),
+    },
+  });
+});

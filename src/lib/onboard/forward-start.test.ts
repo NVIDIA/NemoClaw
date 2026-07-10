@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildDetachedForwardStartSpawn,
   looksLikeForwardPortConflict,
+  looksLikeUntrackedForward,
   runDetachedForwardStartWithDiagnostics,
   runDetachedForwardStartWithPortReleaseRetries,
 } from "./forward-start";
@@ -298,6 +299,142 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
       (process as { kill: typeof process.kill }).kill = realKill;
     }
   });
+
+  it("confirms an untracked forward via the live-port probe (#6099)", () => {
+    // openshell established the SSH tunnel but could not track it, so the
+    // forward never appears in `openshell forward list`. The spawn writes
+    // openshell's "not tracked" notice to stderr; with the local port live,
+    // the helper should confirm the forward instead of timing out.
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "! Could not discover backgrounded SSH process; forward may be running but is not tracked\n",
+      );
+      return { pid: 777 };
+    });
+    const sleep = vi.fn();
+    const isPortListening = vi.fn().mockReturnValue(true);
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 10_000, pollIntervalMs: 10, sleepMs: sleep, isPortListening },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBe("ok-port-live");
+    expect(result.pid).toBe(777);
+    expect(isPortListening).toHaveBeenCalledWith(18789);
+  });
+
+  it("prefers a port conflict over the untracked-forward fallback (#6099)", () => {
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "EADDRINUSE: address already in use; forward may be running but is not tracked\n",
+      );
+      return { pid: 779 };
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+    const realKill = process.kill;
+    (process as { kill: typeof process.kill }).kill = vi.fn() as unknown as typeof process.kill;
+
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 30, pollIntervalMs: 10, sleepMs: vi.fn(), isPortListening },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("spawn-conflict");
+      expect(isPortListening).not.toHaveBeenCalled();
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
+  });
+
+  it("rate-limits failed live-port probes while waiting (#6099)", () => {
+    let now = 0;
+    const realNow = Date.now;
+    Date.now = () => now;
+    try {
+      const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+      const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+        fs.writeSync(stderr, "forward may be running but is not tracked\n");
+        return { pid: 780 };
+      });
+      const isPortListening = vi.fn().mockReturnValue(false);
+
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        {
+          overallTimeoutMs: 16_000,
+          pollIntervalMs: 500,
+          sleepMs: (ms) => {
+            now += ms;
+          },
+          isPortListening,
+        },
+      );
+
+      expect(result.reason).toBe("timeout");
+      expect(isPortListening).toHaveBeenCalledTimes(4);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it("keeps waiting (then times out) when openshell reports untracked but the port is not live", () => {
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "Could not discover backgrounded SSH process; forward may be running but is not tracked\n",
+      );
+      return { pid: 778 };
+    });
+    const sleep = vi.fn();
+    const isPortListening = vi.fn().mockReturnValue(false);
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 30, pollIntervalMs: 10, sleepMs: sleep, isPortListening },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+    expect(isPortListening).toHaveBeenCalled();
+  });
+
+  it("does not consult the port probe unless openshell reports an untracked forward", () => {
+    // A plain empty list (no "not tracked" notice) must NOT trigger the
+    // live-port fallback — otherwise an unrelated listener on the port could be
+    // mistaken for the forward. This guards the gate on looksLikeUntrackedForward.
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockReturnValue({ pid: 42 });
+    const sleep = vi.fn();
+    const isPortListening = vi.fn().mockReturnValue(true);
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 30, pollIntervalMs: 10, sleepMs: sleep, isPortListening },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+    expect(isPortListening).not.toHaveBeenCalled();
+  });
 });
 
 describe("runDetachedForwardStartWithPortReleaseRetries", () => {
@@ -383,5 +520,21 @@ describe("looksLikeForwardPortConflict", () => {
   it("returns false for unrelated errors", () => {
     expect(looksLikeForwardPortConflict("transport: connection refused")).toBe(false);
     expect(looksLikeForwardPortConflict("")).toBe(false);
+  });
+});
+
+describe("looksLikeUntrackedForward", () => {
+  it("matches openshell's untracked-forward notice", () => {
+    expect(
+      looksLikeUntrackedForward(
+        "! Could not discover backgrounded SSH process; forward may be running but is not tracked",
+      ),
+    ).toBe(true);
+    expect(looksLikeUntrackedForward("forward may be running but is not tracked")).toBe(true);
+  });
+
+  it("returns false for unrelated diagnostics", () => {
+    expect(looksLikeUntrackedForward("forward did not appear in list within 180000ms")).toBe(false);
+    expect(looksLikeUntrackedForward("")).toBe(false);
   });
 });

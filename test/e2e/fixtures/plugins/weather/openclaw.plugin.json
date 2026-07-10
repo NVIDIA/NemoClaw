@@ -1,0 +1,19 @@
+{
+  "id": "weather",
+  "name": "NemoClaw E2E Weather",
+  "version": "1.0.0",
+  "description": "Registers a deterministic weather tool for custom-image lifecycle tests",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "get_weather"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

@@ -436,6 +436,53 @@ describe("deleteProviderWithRecovery", () => {
       { sandbox: "stuck-sandbox", output: "gateway unreachable" },
     ]);
   });
+
+  it("force-detaches when every attached sandbox is inside the allowed set", () => {
+    const calls: string[][] = [];
+    let attempt = 0;
+    const runOpenshell = vi.fn((args: string[]) => {
+      calls.push(args);
+      const isDelete = args[0] === "provider" && args[1] === "delete";
+      const firstDeleteFails = isDelete && ++attempt === 1;
+      return firstDeleteFails
+        ? {
+            status: 1,
+            stdout: "",
+            stderr:
+              "Error: status: FailedPrecondition, message: \"provider 'p' is attached to sandbox(es): mine\"",
+          }
+        : { status: 0, stdout: "", stderr: "" };
+    });
+
+    const result = deleteProviderWithRecovery("p", { runOpenshell, allowedSandboxes: ["mine"] });
+
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual([
+      ["provider", "delete", "p"],
+      ["sandbox", "provider", "detach", "mine", "p"],
+      ["provider", "delete", "p"],
+    ]);
+  });
+
+  it("fails closed without detaching when a sandbox outside the allowed set appears (security)", () => {
+    const calls: string[][] = [];
+    const runOpenshell = vi.fn((args: string[]) => {
+      calls.push(args);
+      return {
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error: status: FailedPrecondition, message: \"provider 'p' is attached to sandbox(es): mine, someone-else\"",
+      };
+    });
+
+    const result = deleteProviderWithRecovery("p", { runOpenshell, allowedSandboxes: ["mine"] });
+
+    expect(result.ok).toBe(false);
+    expect(result.recoveryFailures).toEqual([]);
+    // Only the initial delete ran; no `sandbox provider detach` was issued.
+    expect(calls).toEqual([["provider", "delete", "p"]]);
+  });
 });
 
 describe("emitProviderDetachResidualHint", () => {

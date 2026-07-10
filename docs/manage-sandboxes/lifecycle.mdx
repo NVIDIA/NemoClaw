@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Manage Sandbox Lifecycle"
 sidebar-title: "Manage Sandbox Lifecycle"
-description: "List sandboxes, check health, inspect logs, manage dashboard ports, reconfigure providers, rebuild safely, upgrade sandboxes, and uninstall NemoClaw."
-description-agent: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall."
-keywords: ["manage nemoclaw sandboxes", "nemoclaw status", "nemoclaw list", "nemoclaw dashboard port", "nemoclaw rebuild", "nemoclaw upgrade sandboxes", "nemoclaw uninstall"]
+description: "List sandboxes, check health, inspect logs, reconfigure providers, rebuild safely, upgrade sandboxes, and uninstall NemoClaw."
+description-agent: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards when present, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall."
+keywords: ["manage nemoclaw sandboxes", "nemoclaw status", "nemoclaw list", "nemoclaw rebuild", "nemoclaw upgrade sandboxes", "nemoclaw uninstall"]
 content:
   type: "how_to"
 skill:
@@ -19,12 +19,18 @@ Use this guide after you finish the [OpenClaw quickstart](../get-started/quickst
 <AgentOnly variant="hermes">
 Use this guide after you finish [Quickstart with Hermes](../get-started/quickstart).
 </AgentOnly>
+<AgentOnly variant="deepagents">
+Use this guide after you finish [Quickstart with Deep Agents](../get-started/quickstart).
+</AgentOnly>
 It covers ongoing sandbox operations such as listing sandboxes, checking health, managing ports, rebuilding safely, upgrading, and uninstalling.
 <AgentOnly variant="openclaw">
 When a workflow uses the lower-level OpenShell CLI, refer to [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw` and `openshell`.
 </AgentOnly>
 <AgentOnly variant="hermes">
 When a workflow uses the lower-level OpenShell CLI, refer to [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw`, `nemoclaw`, and `openshell`.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+When a workflow uses the lower-level OpenShell CLI, refer to [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw`, `nemo-deepagents`, and `openshell`.
 </AgentOnly>
 
 ## List Sandboxes
@@ -35,7 +41,10 @@ List every sandbox registered on this host:
 $$nemoclaw list
 ```
 
-The list shows each sandbox's model, provider, policy presets, active SSH session indicator, and dashboard URL when NemoClaw records a dashboard port.
+The list shows each sandbox's model, provider, policy presets, and active SSH session indicator.
+<AgentOnly variant="openclaw,hermes">
+It also shows the dashboard URL when NemoClaw records a dashboard port.
+</AgentOnly>
 Use JSON output for scripts:
 
 ```bash
@@ -44,7 +53,10 @@ $$nemoclaw list --json
 
 ## Check Sandbox Health
 
-Check a specific sandbox's health, inference route, active connections, live policy, update status, and messaging-channel overlap warnings:
+Check a specific sandbox's health, inference route, active connections, live policy, and update status:
+<AgentOnly variant="openclaw,hermes">
+For messaging agents, the command also reports messaging-channel overlap warnings.
+</AgentOnly>
 
 ```bash
 $$nemoclaw my-assistant status
@@ -76,6 +88,9 @@ The log command reads both OpenClaw gateway output and OpenShell audit events, s
 <AgentOnly variant="hermes">
 The log command reads both Hermes gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
 </AgentOnly>
+<AgentOnly variant="deepagents">
+The log command reads Deep Agents sandbox output and OpenShell audit events, so policy denials appear beside terminal-runtime logs.
+</AgentOnly>
 
 ## Collect Diagnostics
 
@@ -91,7 +106,9 @@ Use `--quick` for a smaller local summary:
 $$nemoclaw debug --quick --sandbox my-assistant
 ```
 
-The debug command gathers system information, Docker state, gateway logs, and sandbox status.
+The debug command gathers system information, Docker state, sandbox logs, and sandbox status.
+
+<AgentOnly variant="openclaw,hermes">
 
 ## Manage Dashboard Ports
 
@@ -107,24 +124,55 @@ To list active forwards across all sandboxes, run the following command.
 openshell forward list
 ```
 
+</AgentOnly>
+
 ## Run Multiple Sandboxes
 
+<AgentOnly variant="openclaw,hermes">
 Each sandbox needs its own dashboard port because `openshell forward` refuses to bind a port that another sandbox already uses.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Deep Agents sandboxes do not expose a dashboard port.
+The first `nemo-deepagents onboard` run can use the default sandbox name from the wizard.
+When you create another Deep Agents sandbox, choose a distinct sandbox name in the wizard or pass `--name` in scripted runs.
+</AgentOnly>
 <AgentOnly variant="openclaw">
 When the default port is already held by another sandbox, `$$nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
 </AgentOnly>
 <AgentOnly variant="hermes">
 When the default API port is already held by another sandbox, `$$nemoclaw onboard` scans for the next free port and records it for the sandbox.
 </AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
 Gateway and dashboard cleanup is scoped by sandbox name and port.
 A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
+NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Gateway cleanup is scoped by sandbox name and port.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 ```bash
 $$nemoclaw onboard                                      # first sandbox uses 18789
 $$nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
 ```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+nemo-deepagents onboard
+# For an additional named sandbox:
+nemo-deepagents onboard --name <sandbox-name>
+```
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 To choose a specific port, pass `--control-ui-port`:
 
@@ -141,28 +189,36 @@ NEMOCLAW_DASHBOARD_PORT=19000 $$nemoclaw onboard
 
 For full details on port conflicts and overrides, refer to [Port already in use](../reference/troubleshooting#port-already-in-use).
 
+</AgentOnly>
+
 ## Reconfigure or Recover
 
 Recover from a misconfigured sandbox without re-running the full onboard wizard or destroying workspace state.
 
 ### Change Inference Model or API
 
+<AgentOnly variant="openclaw,hermes">
 Change the active model or provider at runtime without rebuilding the sandbox:
 
 ```bash
 $$nemoclaw inference set --model <model> --provider <provider>
 ```
 
+</AgentOnly>
+<AgentOnly variant="deepagents">
+For Deep Agents, recreate the sandbox when you change the provider or model so `/sandbox/.deepagents/config.toml` and the OpenShell route stay aligned:
+
+```bash
+nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox
+```
+
+</AgentOnly>
 Refer to [Switch Inference Providers](../inference/switch-inference-providers) for provider-specific model IDs and API compatibility notes.
 
 ### Restart the Gateway and Port Forward
 
 <AgentOnly variant="openclaw">
 If `$$nemoclaw <name> status` reports the sandbox is alive but the gateway is not running, run the recover command instead of opening a shell.
-</AgentOnly>
-<AgentOnly variant="hermes">
-If `$$nemoclaw <name> status` reports the sandbox is alive but the Hermes gateway is not running, run the recover command instead of opening a shell.
-</AgentOnly>
 
 ```bash
 $$nemoclaw <sandbox-name> recover
@@ -171,12 +227,37 @@ $$nemoclaw <sandbox-name> recover
 The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
 It is idempotent and safe to script.
 If the gateway is already healthy, `recover` exits after the probe and does not restart it.
-For built-in OpenClaw and Hermes sandboxes, recovery sends an authenticated request through registry-scoped privileged direct-container control.
+For built-in OpenClaw sandboxes, recovery sends an authenticated request through registry-scoped privileged direct-container control.
 The request reaches either the root PID 1 supervisor in a direct root-entrypoint container or the installed root controller in an OpenShell-managed container.
 It does not fall back to ordinary `openshell sandbox exec` or a manual relaunch inside the sandbox.
 Refer to [`$$nemoclaw <name> recover`](../reference/commands#$$nemoclaw-name-recover) for details.
 
-Use `gateway restart` when you intentionally need a supported OpenClaw or Hermes gateway to reload runtime configuration or plugins.
+Use `gateway restart` when you intentionally need a supported OpenClaw gateway to reload runtime configuration or plugins.
+
+```bash
+$$nemoclaw <sandbox-name> gateway restart
+```
+
+The restart command asks the topology-specific controller to stop the tracked gateway child, wait for the entrypoint to launch a replacement, and prove listener and HTTP health.
+The host then checks or recovers host-side dashboard, messaging, and agent forwards.
+Refer to [`$$nemoclaw <name> gateway restart`](../reference/commands#$$nemoclaw-name-gateway-restart) for details.
+</AgentOnly>
+<AgentOnly variant="hermes">
+If `$$nemoclaw <name> status` reports the sandbox is alive but the Hermes gateway is not running, run the recover command instead of opening a shell.
+
+```bash
+$$nemoclaw <sandbox-name> recover
+```
+
+The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
+It is idempotent and safe to script.
+If the gateway is already healthy, `recover` exits after the probe and does not restart it.
+For built-in Hermes sandboxes, recovery sends an authenticated request through registry-scoped privileged direct-container control.
+The request reaches either the root PID 1 supervisor in a direct root-entrypoint container or the installed root controller in an OpenShell-managed container.
+It does not fall back to ordinary `openshell sandbox exec` or a manual relaunch inside the sandbox.
+Refer to [`$$nemoclaw <name> recover`](../reference/commands#$$nemoclaw-name-recover) for details.
+
+Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.
 
 ```bash
 $$nemoclaw <sandbox-name> gateway restart
@@ -188,7 +269,8 @@ For Hermes, the entrypoint supervisor owns the gateway, dashboard process, inter
 The nonroot managed supervisor repairs those processes continuously, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five exits within 60 seconds until sandbox recreation.
 The host does not start the in-sandbox processes independently.
 Refer to [`$$nemoclaw <name> gateway restart`](../reference/commands#$$nemoclaw-name-gateway-restart) for details.
-
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 In the direct root-entrypoint topology, the gateway uses a separate `gateway` UID and restart receives the root-only seal.
 In the OpenShell-managed topology, OpenShell is PID 1 and nonroot `nemoclaw-start`, the gateway, and the agent use the same sandbox UID.
 The installed root controller validates the stable process shape, targets the exact observed child with a pidfd, preflights config, and proves replacement health.
@@ -200,6 +282,13 @@ If a direct-container sandbox uses an older image without the matching superviso
 ```bash
 $$nemoclaw <sandbox-name> rebuild --yes
 ```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Deep Agents sandboxes are terminal runtimes and do not expose an OpenClaw or Hermes in-sandbox gateway.
+Use `nemo-deepagents <sandbox-name> status`, `logs`, `connect`, and `rebuild` for recovery.
+If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
+</AgentOnly>
 
 ### Reset a Stored Credential
 
@@ -221,13 +310,31 @@ If you changed the underlying Dockerfile, upgraded OpenClaw, or want to pick up 
 <AgentOnly variant="hermes">
 If you changed the underlying Dockerfile, upgraded Hermes, or want to pick up a new base image without losing your sandbox's state files, use `rebuild` instead of destroying and recreating:
 </AgentOnly>
+<AgentOnly variant="deepagents">
+If you changed the underlying Dockerfile, upgraded Deep Agents Code, enabled Tavily Search, or want to pick up a new base image without losing manifest-defined Deep Agents state, use `rebuild` instead of destroying and recreating:
+</AgentOnly>
 
 ```bash
 $$nemoclaw <sandbox-name> rebuild
 ```
 
+<AgentOnly variant="openclaw">
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.
-If NemoClaw cannot archive any requested state path, it reports the backup failure and stops before deleting the original sandbox.
+</AgentOnly>
+<AgentOnly variant="hermes">
+The rebuild command preserves Hermes state and registered policies while recreating the container.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The rebuild command preserves manifest-defined Deep Agents state, regenerates `config.toml`, reconstructs managed MCP projection state, and reapplies registered policies while recreating the container.
+</AgentOnly>
+If an archive command produces some usable entries, NemoClaw preserves those entries and reports the manifest-defined paths that could not be archived.
+If backup fails before producing any usable entry, NemoClaw stops before deleting the original sandbox unless you explicitly pass `--force`.
+
+<Warning>
+`rebuild --force` can continue after a total backup failure by recreating the sandbox from recorded registry metadata without restoring prior sandbox state.
+Use this recovery path only when losing uncommitted or otherwise unsnapshotted state is acceptable.
+</Warning>
+
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
 A detached auto-lock timer remains the recovery authority until NemoClaw commits a successful shields-up state, including when the host rebuild process exits unexpectedly.
 <AgentOnly variant="hermes">
@@ -266,10 +373,16 @@ If a support workflow asks you to pass the maintained tag explicitly, set `NEMOC
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash
 ```
 
-Before upgrade work, the installer runs `$$nemoclaw backup-all` when the installed CLI supports it.
-After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` before generic onboarding.
-If an existing sandbox is non-Ready, the automatic path requires a validated latest backup whose sandbox and agent identity match the registry and positive evidence that NemoClaw managed the image.
-The installer attempts every eligible recovery, exits with a nonzero status if any recovery fails, and does not continue to generic onboarding after that failure.
+Before upgrade work, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
+If any sandbox is skipped or fails, the installer exits before it changes the gateway.
+After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` to reconcile the existing sandboxes.
+If an existing sandbox is not Ready, the automatic path requires a validated latest backup whose sandbox and agent identity match the registry and positive evidence that NemoClaw managed the image.
+For a listed pre-fingerprint OpenClaw or Hermes registry entry, you can provide that evidence through the installer's explicit managed-image confirmation.
+In a non-interactive run, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
+Legacy managed-image confirmation never overrides recorded custom-image evidence.
+A custom OpenClaw sandbox can be recovered only when the selected validated backup independently carries complete authoritative image-plugin provenance; otherwise recovery stops before deletion.
+The installer attempts every eligible recovery, exits with a nonzero status if any recovery fails, and skips generic onboarding after successful recovery.
+A third outcome exists: when a recorded sandbox is not observed in any phase on its own recorded gateway (typically because a prior uninstall removed the gateway and Docker image while preserving `sandboxes.json`), the recovery pass exits 0 but reports the sandbox as not found rather than recovered, and the installer finishes with `Installation completed with warnings` plus remediation guidance (`$$nemoclaw <name> destroy`, then `$$nemoclaw onboard`) instead of claiming success.
 For manual upgrade flows, create a snapshot first and then run the update or rebuild command you need:
 
 ```bash
@@ -309,6 +422,7 @@ For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY sh
 `--yes` stays non-destructive by design.
 It only acknowledges the global confirmation prompt and never purges preserved user data on its own.
 Full purge always requires an explicit `--destroy-user-data` or the matching env var, so existing automation using `--yes` retains its safe behaviour.
+Preserving `sandboxes.json` does not preserve the gateway registration, provider registrations, or Docker image its recorded sandboxes depend on; uninstall warns that those records cannot be recovered automatically on reinstall, and the remediation is `$$nemoclaw <name> destroy` followed by `$$nemoclaw onboard`.
 For a full host-side file reference, see [Host Files and State](../reference/host-files-and-state).
 Refer to the [Commands reference](../reference/commands#$$nemoclaw-uninstall) for the full preservation contract.
 </Note>
@@ -331,7 +445,19 @@ Refer to [`$$nemoclaw uninstall` vs. the hosted `uninstall.sh`](../reference/com
 
 ## Related Topics
 
+<AgentOnly variant="openclaw,hermes">
+
 - [Set Up Messaging Channels](messaging-channels) to connect Telegram, Discord, or Slack.
 - [Workspace Files](workspace-files) for persistent OpenClaw files inside the sandbox.
 - [Backup and Restore](backup-restore) for snapshot and restore workflows.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) for observability tools.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+- [Workspace Files](workspace-files) for Deep Agents state, skills, memory, and managed config files.
+- [Backup and Restore](backup-restore) for snapshot and restore workflows.
+- [Set Up MCP Servers](set-up-mcp-servers) for managed MCP configuration.
+- [Commands reference](../reference/commands) for lifecycle command flags.
+
+</AgentOnly>

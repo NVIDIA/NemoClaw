@@ -9,6 +9,12 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import {
+  closeServer,
+  writeJsonResponse as jsonResponse,
+  listenServer as listenOnRandomPort,
+  readRequestBody,
+} from "../fixtures/http-protocol.ts";
 
 type TestServer = http.Server | https.Server;
 
@@ -103,48 +109,12 @@ const MCP_EMPTY_RESULT_BY_METHOD: Record<string, unknown> = {
   "messages/listen": {},
 };
 
-function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-async function readRequestBody(req: http.IncomingMessage): Promise<string> {
-  return await new Promise((resolve) => {
-    let body = "";
-    req.setEncoding("utf8");
-    req.on("data", (chunk: string) => {
-      body += chunk;
-    });
-    req.on("end", () => resolve(body));
-  });
-}
-
 function requireTcpPort(server: TestServer, label: string): number {
   const address = server.address();
   if (!address || typeof address === "string") {
     throw new Error(`${label} did not bind to a TCP port`);
   }
   return (address as AddressInfo).port;
-}
-
-function closeServer(server: TestServer): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
-
-async function listenOnRandomPort(server: TestServer): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "0.0.0.0", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
 }
 
 function delay(ms: number): Promise<void> {
