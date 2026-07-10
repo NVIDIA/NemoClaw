@@ -25,6 +25,18 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+function remoteBindDockerfile(...postGeneratorInstructions: string[]): string {
+  return [
+    "FROM scratch",
+    "ARG NEMOCLAW_MODEL=",
+    "ARG CHAT_UI_URL=",
+    "ARG NEMOCLAW_DASHBOARD_BIND=",
+    "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
+    "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+    ...postGeneratorInstructions,
+  ].join("\n");
+}
+
 describe("remote dashboard bind production lifecycle", () => {
   it("carries the audited remote-exposure signal through image and sandbox creation (#6024)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
@@ -194,6 +206,67 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
+  it("rejects Node rewrites after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-node-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      remoteBindDockerfile(
+        `RUN node -e "require('node:fs').writeFileSync('/sandbox/.openclaw/openclaw.json','{}')"`,
+      ),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Python rewrites after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-python-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      remoteBindDockerfile(
+        `RUN python3 -c "import json; json.dump({}, open('/sandbox/.openclaw/openclaw.json','w'))"`,
+      ),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects tee rewrites after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-tee-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      remoteBindDockerfile("RUN printf '{}' | tee /sandbox/.openclaw/openclaw.json >/dev/null"),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("allows final-stage config metadata updates after the remote-bind generator (#6024)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-metadata-"));
@@ -210,6 +283,28 @@ describe("remote dashboard bind production lifecycle", () => {
         "RUN chmod 660 /sandbox/.openclaw/openclaw.json",
         "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash",
       ].join("\n"),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).not.toThrow();
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(true);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("allows the managed token/proxy patch and hash refresh after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-managed-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      remoteBindDockerfile(
+        `RUN python3 -c " import json, os; path = os.path.expanduser('~/.openclaw/openclaw.json'); cfg = json.load(open(path)); cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; proxy_host = os.environ.get('NEMOCLAW_PROXY_HOST') or '10.200.0.1'; proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; cfg['proxy'] = { 'enabled': True, 'proxyUrl': f'http://{proxy_host}:{proxy_port}', 'loopbackMode': 'gateway-only', }; json.dump(cfg, open(path, 'w'), indent=2); os.chmod(path, 0o600)"`,
+        "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash && chmod 660 /sandbox/.openclaw/.config-hash && chown sandbox:sandbox /sandbox/.openclaw/.config-hash",
+      ),
     );
 
     try {
