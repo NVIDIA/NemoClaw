@@ -16,6 +16,8 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-repair";
 const OTHER_SANDBOX_NAME = process.env.NEMOCLAW_OTHER_SANDBOX_NAME ?? "e2e-repair-other";
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
+const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+const STALE_EXTRA_PROVIDER = "e2e-stale-extra-provider";
 const LIVE_TIMEOUT_MS = 70 * 60_000;
 
 validateSandboxName(SANDBOX_NAME);
@@ -58,6 +60,34 @@ function onboardEnv(sandboxName: string, fakeBaseUrl: string, extra: NodeJS.Proc
   });
 }
 
+function readRegistry(): { extraProviders?: unknown; [key: string]: unknown } {
+  return fs.existsSync(REGISTRY_FILE)
+    ? (JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+        extraProviders?: unknown;
+        [key: string]: unknown;
+      })
+    : { sandboxes: {}, defaultSandbox: null };
+}
+
+function readExtraProviders(): string[] {
+  const value = readRegistry().extraProviders;
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function updateExtraProviders(update: (providers: Set<string>) => void): string[] {
+  const registry = readRegistry();
+  const providers = new Set(readExtraProviders());
+  update(providers);
+  const sorted = [...providers].sort();
+  if (sorted.length > 0) registry.extraProviders = sorted;
+  else delete registry.extraProviders;
+  fs.mkdirSync(path.dirname(REGISTRY_FILE), { recursive: true });
+  fs.writeFileSync(REGISTRY_FILE, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
+  return sorted;
+}
+
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
   for (const name of [SANDBOX_NAME, OTHER_SANDBOX_NAME]) {
     await nemoclaw(host, [name, "destroy", "--yes"], `cleanup-destroy-${name}`).catch(
@@ -85,6 +115,7 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
       timeoutMs: 60_000,
     })
     .catch(() => undefined);
+  updateExtraProviders((providers) => providers.delete(STALE_EXTRA_PROVIDER));
   fs.rmSync(SESSION_FILE, { force: true });
 }
 
@@ -111,6 +142,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     contracts: [
       "forced policy-step failure leaves a resumable session",
       "resume recreates a recorded sandbox that was removed underneath it",
+      "resume repair filters exact stale extra-provider records without mutating registry state",
       "resume rejects a different requested sandbox name",
       "resume rejects provider/model overrides that conflict with recorded state",
     ],
@@ -156,6 +188,12 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   });
   expect(sandboxAfterFailure.exitCode, resultText(sandboxAfterFailure)).toBe(0);
 
+  const seededExtraProviders = updateExtraProviders((providers) =>
+    providers.add(STALE_EXTRA_PROVIDER),
+  );
+  await artifacts.writeJson("phase-1-stale-extra-providers-seeded.json", seededExtraProviders);
+  expect(seededExtraProviders).toContain(STALE_EXTRA_PROVIDER);
+
   await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
     artifactName: "phase-2-delete-recorded-sandbox",
     env: env(),
@@ -175,6 +213,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");
   expect(resultText(repair)).toContain("Recorded sandbox state is unavailable; recreating it");
   expect(resultText(repair)).toContain("Creating sandbox");
+  expect(readExtraProviders()).toContain(STALE_EXTRA_PROVIDER);
 
   const status = await nemoclaw(host, [SANDBOX_NAME, "status"], "phase-2-status-after-repair");
   expect(status.exitCode, resultText(status)).toBe(0);

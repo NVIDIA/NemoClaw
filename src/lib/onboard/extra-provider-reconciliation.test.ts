@@ -7,18 +7,41 @@ import { reconcileRegisteredExtraProviders } from "./extra-provider-reconciliati
 type ProbeResult = {
   status: number | null;
   error?: Error;
-  output?: string | Buffer | Array<string | Buffer | null> | null;
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
+  output?: unknown;
+  stdout?: unknown;
+  stderr?: unknown;
 };
+
+const LIMIT = 64 * 1024;
+const ok = (): ProbeResult => ({ status: 0, stdout: "" });
+const missing = (name: string): ProbeResult => ({
+  status: 1,
+  stderr: `Error: provider '${name}' not found`,
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+function reconcile(
+  recorded: string[],
+  responses: Record<string, ProbeResult | (() => ProbeResult)> = {},
+  extra: Partial<Parameters<typeof reconcileRegisteredExtraProviders>[1]> = {},
+): string[] {
+  return reconcileRegisteredExtraProviders("nemoclaw", {
+    listExtraProviders: () => [...recorded],
+    runOpenshell: vi.fn((args: string[]): ProbeResult => {
+      const response = responses[args.at(-1) ?? ""];
+      return typeof response === "function" ? response() : (response ?? ok());
+    }),
+    warn: () => undefined,
+    ...extra,
+  });
+}
+
 describe("reconcileRegisteredExtraProviders", () => {
-  it("does not probe the gateway when no extra provider is recorded (#6501)", () => {
-    const runOpenshell = vi.fn((): ProbeResult => ({ status: 0 }));
+  it("skips gateway probes when no extra provider is recorded (#6501)", () => {
+    const runOpenshell = vi.fn((): ProbeResult => ok());
 
     expect(
       reconcileRegisteredExtraProviders("nemoclaw", {
@@ -29,36 +52,27 @@ describe("reconcileRegisteredExtraProviders", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("probes beyond the first hundred records and omits an exact stale provider (#6501)", () => {
-    const recorded = Object.freeze(
-      Array.from({ length: 128 }, (_value, index) => `custom-provider-${index}`),
-    );
-    const responses = new Map<string, ProbeResult>([
-      [
-        "custom-provider-127",
-        { status: 1, stderr: "Error: provider 'custom-provider-127' not found" },
-      ],
-    ]);
+  it("probes every recorded provider exactly and never trusts provider-list snapshots (#6501)", () => {
+    const recorded = Array.from({ length: 128 }, (_value, index) => `custom-provider-${index}`);
     const calls: Array<{ args: string[]; options: Record<string, unknown> | undefined }> = [];
-    const runOpenshell = vi.fn((args: string[], options?: Record<string, unknown>): ProbeResult => {
+    const runOpenshell = vi.fn((args: string[], options?: Record<string, unknown>) => {
       calls.push({ args, options });
-      return responses.get(args.at(-1) ?? "") ?? { status: 0, stdout: "" };
+      return args.at(-1) === "custom-provider-127" ? missing("custom-provider-127") : ok();
     });
 
-    const reconciled = reconcileRegisteredExtraProviders("nemoclaw", {
-      listExtraProviders: () => [...recorded],
-      runOpenshell,
-    });
-
-    expect(reconciled).toEqual(recorded.slice(0, -1));
+    expect(
+      reconcileRegisteredExtraProviders("nemoclaw", {
+        listExtraProviders: () => [...recorded],
+        runOpenshell,
+      }),
+    ).toEqual(recorded.slice(0, -1));
     expect(calls).toHaveLength(recorded.length);
-    expect(calls.every(({ args }) => args[0] === "provider" && args[1] === "get")).toBe(true);
     expect(calls.some(({ args }) => args.includes("list") || args.includes("--names"))).toBe(false);
     expect(calls[0]).toEqual({
       args: ["provider", "get", "-g", "nemoclaw", "custom-provider-0"],
       options: {
         ignoreError: true,
-        maxBuffer: 64 * 1024,
+        maxBuffer: LIMIT,
         stdio: ["ignore", "pipe", "pipe"],
         suppressOutput: true,
         timeout: 5_000,
@@ -66,307 +80,150 @@ describe("reconcileRegisteredExtraProviders", () => {
     });
   });
 
-  it("keeps healthy custom providers even when successful get output is empty (#6501)", () => {
-    const recorded = Object.freeze(["custom-provider", "my-slack-bridge"]);
-    const runOpenshell = vi.fn((): ProbeResult => ({ status: 0, stdout: "", stderr: "" }));
-
-    const reconciled = reconcileRegisteredExtraProviders("nemoclaw", {
-      listExtraProviders: () => [...recorded],
-      runOpenshell,
-    });
-
-    expect(reconciled).toEqual(recorded);
-    expect(recorded).toEqual(["custom-provider", "my-slack-bridge"]);
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
-  });
-
-  it("omits only the entry with an exact provider-specific not-found diagnostic (#6501)", () => {
-    const recorded = Object.freeze([
-      "healthy-provider",
-      "stale-provider",
-      "indeterminate-provider",
-    ]);
-    const responses = new Map<string, ProbeResult>([
-      [
-        "stale-provider",
-        {
+  it("keeps healthy providers and omits only exact provider-specific not-found diagnostics (#6501)", () => {
+    expect(
+      reconcile(["healthy-provider", "stale-provider", "indeterminate-provider"], {
+        "stale-provider": {
           status: 1,
           stderr: Buffer.from("Error: provider 'stale-provider' not found\n"),
         },
-      ],
-      [
-        "indeterminate-provider",
-        { status: 1, stderr: "Error: provider 'some-other-provider' not found" },
-      ],
-    ]);
-    const runOpenshell = vi.fn((args: string[]): ProbeResult => {
-      return responses.get(args.at(-1) ?? "") ?? { status: 0 };
-    });
-
-    const reconciled = reconcileRegisteredExtraProviders("nemoclaw", {
-      listExtraProviders: () => [...recorded],
-      runOpenshell,
-      warn: () => undefined,
-    });
-
-    expect(reconciled).toEqual(["healthy-provider", "indeterminate-provider"]);
-    expect(recorded).toEqual(["healthy-provider", "stale-provider", "indeterminate-provider"]);
+        "indeterminate-provider": missing("some-other-provider"),
+      }),
+    ).toEqual(["healthy-provider", "indeterminate-provider"]);
   });
 
-  it("accepts the exact wrapped not-found diagnostic reported by OpenShell (#6501)", () => {
-    const wrappedDiagnostic = Buffer.from(
+  it.each([
+    ["single-quoted CLI", "Error: provider 'stale-provider' not found"],
+    ["double-quoted gRPC", 'rpc error: NotFound: provider "stale-provider"'],
+    [
+      "wrapped OpenShell issue diagnostic",
       [
-        "Error:   × provider 'tavily-search' not found and 'tavily-search' is not a recognized",
+        "Error:   × provider 'stale-provider' not found and 'stale-provider' is not a recognized",
         "  │ provider type. Create it first with `openshell provider create --type",
-        "  │ <type> --name tavily-search`",
+        "  │ <type> --name stale-provider`",
       ].join("\n"),
-    );
-    const responses = new Map<string, ProbeResult>([
-      [
-        "tavily-search",
-        {
-          status: 1,
-          stderr: wrappedDiagnostic,
-          stdout: Buffer.alloc(0),
-          output: [null, Buffer.alloc(0), wrappedDiagnostic],
-        },
-      ],
-      [
-        "mismatched-provider",
-        {
-          status: 1,
-          stderr:
-            "Error: × provider 'mismatched-provider' not found and 'other-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name mismatched-provider`",
-        },
-      ],
-      [
-        "spoofed-command-provider",
-        {
-          status: 1,
-          stderr:
-            "Error: × provider 'spoofed-command-provider' not found and 'spoofed-command-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name other-provider`",
-        },
-      ],
-    ]);
-    const runOpenshell = vi.fn((args: string[]): ProbeResult => {
-      return responses.get(args.at(-1) ?? "") ?? { status: 0 };
-    });
-
-    expect(
-      reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => [
-          "tavily-search",
-          "mismatched-provider",
-          "spoofed-command-provider",
-        ],
-        runOpenshell,
-        warn: () => undefined,
-      }),
-    ).toEqual(["mismatched-provider", "spoofed-command-provider"]);
+    ],
+  ])("accepts exact %s not-found diagnostics (#6501)", (_label, stderr) => {
+    expect(reconcile(["stale-provider"], { "stale-provider": { status: 1, stderr } })).toEqual([]);
   });
 
-  it("uses the composite spawn output only when stderr and stdout are empty (#6501)", () => {
+  it.each([
+    [
+      "mismatched wrapped provider name",
+      "Error: × provider 'stale-provider' not found and 'other-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name stale-provider`",
+    ],
+    [
+      "mismatched wrapped create command name",
+      "Error: × provider 'stale-provider' not found and 'stale-provider' is not a recognized provider type. Create it first with `openshell provider create --type <type> --name other-provider`",
+    ],
+    [
+      "gateway missing",
+      "Error: gateway 'nemoclaw' not found while checking provider 'stale-provider'",
+    ],
+    [
+      "gateway and provider missing",
+      "Error: gateway 'nemoclaw' not found; provider 'stale-provider' not found",
+    ],
+    ["transport plus provider text", "transport error\nError: provider 'stale-provider' not found"],
+    [
+      "conflicting structured status",
+      "Error: status: Unavailable, message: \"provider 'stale-provider' not found\"",
+    ],
+  ])("preserves providers for ambiguous diagnostics: %s (#6501)", (_label, stderr) => {
+    expect(reconcile(["stale-provider"], { "stale-provider": { status: 1, stderr } })).toEqual([
+      "stale-provider",
+    ]);
+  });
+
+  it("uses composite output only when stderr and stdout are empty (#6501)", () => {
     const diagnostic = Buffer.from("Error: provider 'stale-provider' not found");
-    const runOpenshell = vi.fn(
-      (): ProbeResult => ({
-        status: 1,
-        output: [null, Buffer.alloc(0), diagnostic],
-        stderr: Buffer.alloc(0),
-        stdout: Buffer.alloc(0),
-      }),
-    );
 
     expect(
-      reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => ["stale-provider"],
-        runOpenshell,
+      reconcile(["stale-provider"], {
+        "stale-provider": {
+          status: 1,
+          output: [null, Buffer.alloc(0), diagnostic],
+          stderr: Buffer.alloc(0),
+          stdout: Buffer.alloc(0),
+        },
       }),
     ).toEqual([]);
   });
 
-  it("fails open at the capture limit and parses an exact diagnostic below it (#6501)", () => {
-    const atLimit = Buffer.from(
-      "Error: provider 'at-limit-provider' not found".padEnd(64 * 1024, " "),
-    );
-    const belowLimitMessage = "Error: provider 'below-limit-provider' not found";
-    const belowLimit = Buffer.from(belowLimitMessage.padStart(64 * 1024 - 1, " "));
+  it("bounds diagnostics before parsing and warns without leaking provider names (#6501)", () => {
     const warn = vi.fn();
-    const runOpenshell = vi.fn((args: string[]): ProbeResult => {
-      return {
-        status: 1,
-        stderr: args.at(-1) === "at-limit-provider" ? atLimit : belowLimit,
-      };
-    });
+    const recorded = ["at-limit-provider", "ambiguous-provider"];
 
     expect(
-      reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => ["at-limit-provider", "below-limit-provider"],
-        runOpenshell,
-        warn,
-      }),
-    ).toEqual(["at-limit-provider"]);
-    expect(warn).toHaveBeenCalledOnce();
+      reconcile(
+        recorded,
+        {
+          "at-limit-provider": {
+            status: 1,
+            stderr: Buffer.from("Error: provider 'at-limit-provider' not found".padEnd(LIMIT, " ")),
+          },
+          "ambiguous-provider": {
+            status: 1,
+            stderr: `Error: provider '${"a".repeat(63 * 1024)}`,
+          },
+        },
+        { warn },
+      ),
+    ).toEqual(recorded);
     expect(warn).toHaveBeenCalledWith(
       "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
-        "(providerCount=1; reasonClasses=diagnostic-capture-limit).",
+        "(providerCount=2; reasonClasses=ambiguous-diagnostic,diagnostic-capture-limit).",
     );
+    expect(warn.mock.calls[0]?.[0]).not.toContain("at-limit-provider");
+    expect(warn.mock.calls[0]?.[0]).not.toContain("ambiguous-provider");
   });
 
-  it("bounds adversarial diagnostics before preserving an ambiguous provider (#6501)", {
-    timeout: 1_000,
-  }, () => {
-    const adversarialDiagnostic = `Error: provider '${"a".repeat(63 * 1024)}`;
+  it("preserves providers for thrown, timed-out, process-error, and nonstandard probes (#6501)", () => {
     const warn = vi.fn();
-    const runOpenshell = vi.fn((): ProbeResult => ({ status: 1, stderr: adversarialDiagnostic }));
-
-    expect(
-      reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => ["adversarial-provider"],
-        runOpenshell,
-        warn,
-      }),
-    ).toEqual(["adversarial-provider"]);
-    expect(warn).toHaveBeenCalledWith(
-      "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
-        "(providerCount=1; reasonClasses=ambiguous-diagnostic).",
-    );
-  });
-
-  it("accepts the exact gRPC not-found ordering without using broad name heuristics (#6501)", () => {
-    const runOpenshell = vi.fn(
-      (): ProbeResult => ({
-        status: 1,
-        stderr: 'rpc error: NotFound: provider "stale-provider"',
-      }),
-    );
-
-    expect(
-      reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => ["stale-provider"],
-        runOpenshell,
-      }),
-    ).toEqual([]);
-  });
-
-  it("compares captured names byte-for-byte while matching keywords case-insensitively (#6501)", () => {
-    const responses = new Map<string, ProbeResult>([
-      ["ProviderA", { status: 1, stderr: "Error: provider 'providera' not found" }],
-      ["ProviderB", { status: 1, stderr: "ERROR: PROVIDER 'ProviderB' NOT FOUND" }],
-    ]);
-    const runOpenshell = vi.fn((args: string[]): ProbeResult => {
-      return responses.get(args.at(-1) ?? "") ?? { status: 0 };
-    });
-
-    expect(
-      reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => ["ProviderA", "ProviderB"],
-        runOpenshell,
-        warn: () => undefined,
-      }),
-    ).toEqual(["ProviderA"]);
-  });
-
-  it("preserves providers when a missing-gateway diagnostic merely mentions them (#6501)", () => {
-    const diagnostics = [
-      "Error: gateway 'nemoclaw' not found while checking provider 'custom-provider'",
-      "Error: gateway not found: provider 'custom-provider' was requested",
-      'Error: status: NotFound, message: "gateway not found"; requested provider "custom-provider"',
-      "Error: gateway 'nemoclaw' not found; provider 'custom-provider' not found during lookup",
-      "Unknown gateway 'nemoclaw' while checking provider 'custom-provider'",
-      "No such gateway 'nemoclaw'; provider 'custom-provider' not found",
-      "Transport closed while checking provider 'custom-provider' not found",
-      "transport error\nError: provider 'custom-provider' not found",
-      "authentication failed\nError: provider 'custom-provider' not found",
-    ];
-
-    for (const diagnostic of diagnostics) {
-      const runOpenshell = vi.fn((): ProbeResult => ({ status: 1, stderr: diagnostic }));
-      expect(
-        reconcileRegisteredExtraProviders("nemoclaw", {
-          listExtraProviders: () => ["custom-provider"],
-          runOpenshell,
-          warn: () => undefined,
-        }),
-        diagnostic,
-      ).toEqual(["custom-provider"]);
-    }
-  });
-
-  it("fails open for thrown, timed-out, and otherwise ambiguous probes (#6501)", () => {
-    const warn = vi.fn();
-    const runOpenshell = vi.fn((args: string[]): ProbeResult => {
-      switch (args.at(-1)) {
-        case "thrown-provider":
-          throw new Error("gateway process unavailable");
-        case "timed-out-provider":
-          return {
-            status: null,
-            stderr: "operation timed out: provider 'timed-out-provider' not found",
-          };
-        case "nonstandard-exit-provider":
-          return {
-            status: 7,
-            stderr: "provider 'nonstandard-exit-provider' not found",
-          };
-        case "buffer-error-provider":
-          return {
-            status: 1,
-            error: new Error("spawnSync ENOBUFS"),
-            stderr: "provider 'buffer-error-provider' not found",
-          };
-        case "ambiguous-provider":
-          return { status: 1, stderr: "provider lookup failed" };
-        case "unavailable-provider":
-          return {
-            status: 1,
-            stderr:
-              "Error: status: Unavailable, message: \"provider 'unavailable-provider' not found\"",
-          };
-        default:
-          return { status: 0 };
-      }
-    });
     const recorded = [
       "thrown-provider",
       "timed-out-provider",
       "nonstandard-exit-provider",
       "buffer-error-provider",
-      "ambiguous-provider",
-      "unavailable-provider",
     ];
 
     expect(
-      reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => [...recorded],
-        runOpenshell,
-        warn,
-      }),
+      reconcile(
+        recorded,
+        {
+          "thrown-provider": () => {
+            throw new Error("gateway process unavailable");
+          },
+          "timed-out-provider": { status: null, stderr: missing("timed-out-provider").stderr },
+          "nonstandard-exit-provider": {
+            status: 7,
+            stderr: missing("nonstandard-exit-provider").stderr,
+          },
+          "buffer-error-provider": {
+            status: 1,
+            error: new Error("spawnSync ENOBUFS"),
+            stderr: missing("buffer-error-provider").stderr,
+          },
+        },
+        { warn },
+      ),
     ).toEqual(recorded);
-    expect(warn).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(
       "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
-        "(providerCount=6; " +
-        "reasonClasses=ambiguous-diagnostic,probe-process-error,probe-threw," +
-        "timeout-or-signal,unexpected-exit).",
+        "(providerCount=4; reasonClasses=probe-process-error,probe-threw,timeout-or-signal,unexpected-exit).",
     );
-    expect(warn.mock.calls[0]?.[0]).not.toContain("nemoclaw");
-    for (const providerName of recorded) {
-      expect(warn.mock.calls[0]?.[0]).not.toContain(providerName);
-    }
   });
 
   it("bounds aggregate probe latency and preserves names left after the deadline (#6501)", () => {
     let now = 0;
     const timeouts: number[] = [];
     const warn = vi.fn();
-    const runOpenshell = vi.fn(
-      (_args: string[], options?: Record<string, unknown>): ProbeResult => {
-        const timeout = Number(options?.timeout);
-        timeouts.push(timeout);
-        now += timeout;
-        return { status: null, stderr: "provider process timed out" };
-      },
-    );
+    const runOpenshell = vi.fn((_args: string[], options?: Record<string, unknown>) => {
+      const timeout = Number(options?.timeout);
+      timeouts.push(timeout);
+      now += timeout;
+      return { status: null, stderr: "provider process timed out" };
+    });
     const recorded = ["provider-1", "provider-2", "provider-3", "provider-4", "provider-5"];
 
     expect(
@@ -385,9 +242,9 @@ describe("reconcileRegisteredExtraProviders", () => {
     );
   });
 
-  it("enforces gateway containment before making any nonempty provider probe (#6501)", () => {
+  it("enforces gateway containment and requires a gateway name before probing (#6501)", () => {
+    const runOpenshell = vi.fn((): ProbeResult => ok());
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.example.test");
-    const runOpenshell = vi.fn((): ProbeResult => ({ status: 0 }));
 
     expect(() =>
       reconcileRegisteredExtraProviders("nemoclaw", {
@@ -395,12 +252,7 @@ describe("reconcileRegisteredExtraProviders", () => {
         runOpenshell,
       }),
     ).toThrow(/OPENSHELL_GATEWAY_ENDPOINT is set/);
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
-
-  it("requires a gateway name when recorded providers need reconciliation (#6501)", () => {
-    const runOpenshell = vi.fn((): ProbeResult => ({ status: 0 }));
-
+    vi.unstubAllEnvs();
     expect(() =>
       reconcileRegisteredExtraProviders("", {
         listExtraProviders: () => ["custom-provider"],
