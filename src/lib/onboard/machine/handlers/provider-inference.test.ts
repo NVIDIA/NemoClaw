@@ -383,6 +383,7 @@ describe("handleProviderInferenceState", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       gatewayName: "nemoclaw",
+      reservationSessionId: expect.any(String),
     });
   });
 
@@ -1055,6 +1056,7 @@ describe("handleProviderInferenceState", () => {
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: null,
       gatewayName: "nemoclaw",
+      reservationSessionId: expect.any(String),
     });
   });
 
