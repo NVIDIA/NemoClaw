@@ -220,7 +220,8 @@ On supported Linux hosts with NVIDIA GPUs, the onboard wizard can also install o
 
 ### Use an Existing vLLM Server
 
-For an already-running vLLM server, run `$$nemoclaw onboard` and select **Local vLLM [experimental]** from the provider list.
+For an already-running vLLM server, run `$$nemoclaw onboard` and select **Local vLLM** from the provider list.
+On generic hosts, you see an experimental label on the entry; on DGX Spark or DGX Station, you do not.
 If vLLM is already running, NemoClaw detects the running model and validates the endpoint.
 When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that value for the configured context window unless you set `NEMOCLAW_CONTEXT_WINDOW` yourself.
 
